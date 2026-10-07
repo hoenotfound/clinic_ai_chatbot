@@ -309,6 +309,7 @@ async function installApi(page, {
   initialMessagesByContact = new Map([[101, [inboundMessage()]]]),
   imageSendFailure = null,
   imageSendDelayMs = 0,
+  documentSendDelayMs = 0,
   voiceSendFailure = null,
 } = {}) {
   await installRealtimeHarness(page);
@@ -326,6 +327,7 @@ async function installApi(page, {
   const unexpected = [];
   const messageFetchCounts = new Map();
   const mediaRequests = [];
+  const documentRequests = [];
   const voiceRequests = [];
 
   function fulfill(route, body, status = 200) {
@@ -522,6 +524,46 @@ async function installApi(page, {
       return fulfill(route, message, 201);
     }
 
+    const documentMatch = path.match(/^\/api\/conversations\/(\d+)\/document$/);
+    if (documentMatch && method === "POST") {
+      const contactId = Number(documentMatch[1]);
+      const bodyBuffer = request.postDataBuffer() || Buffer.alloc(0);
+      const raw = bodyBuffer.toString("latin1");
+      documentRequests.push({
+        contactId,
+        contentType: request.headers()["content-type"] || "",
+        raw,
+        bodyBuffer,
+      });
+
+      if (documentSendDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, documentSendDelayMs));
+      }
+
+      const captionMatch = raw.match(/name="caption"\r\n\r\n([^\r\n]*)/);
+      const filenameMatch = raw.match(/name="document"; filename="([^"]+)"/);
+      const caption = captionMatch?.[1] || "";
+      const filename = filenameMatch?.[1] || "document.pdf";
+      const message = {
+        id: nextMessageId++,
+        role: "assistant",
+        content: caption,
+        sent_by_username: STAFF_USER.username,
+        created_at: new Date().toISOString(),
+        media_url: null,
+        media_base64: null,
+        media_mime_type: "application/pdf",
+        media_filename: filename,
+        has_media_attachment: true,
+        whatsapp_message_id: "wamid.document.success",
+        delivery_status: "sent",
+        delivery_error: null,
+        delivered: true,
+      };
+      addMessage(contactId, message);
+      return fulfill(route, message, 201);
+    }
+
     const voiceMatch = path.match(/^\/api\/conversations\/(\d+)\/voice$/);
     if (voiceMatch && method === "POST") {
       const contactId = Number(voiceMatch[1]);
@@ -585,6 +627,7 @@ async function installApi(page, {
     calls,
     unexpected,
     mediaRequests,
+    documentRequests,
     voiceRequests,
     addMessage,
     setDeliveryStatus,
@@ -610,6 +653,14 @@ function imagePayload(name = "test-photo.png") {
     name,
     mimeType: "image/png",
     buffer: ONE_PIXEL_PNG,
+  };
+}
+
+function pdfPayload(name = "consultation-form.pdf") {
+  return {
+    name,
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n% test document\n"),
   };
 }
 
@@ -797,13 +848,65 @@ test("realtime event for another conversation updates its list item without repl
   expectNoUnexpectedApi(apiState);
 });
 
+test("Inbox composer follows WhatsApp-style attachment keyboard and mic/send behavior", async ({ page }) => {
+  const apiState = await installApi(page);
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const composer = page.locator("textarea").first();
+  const attachButton = page.getByRole("button", { name: "Attach photo, video, or file" });
+  const micButton = page.getByRole("button", { name: "Record a voice message" });
+  const cameraButton = page.getByRole("button", { name: "Open camera" });
+
+  await expect(attachButton).toBeVisible();
+  await expect(micButton).toBeVisible();
+  if ((page.viewportSize()?.width ?? 0) < 640) {
+    await expect(cameraButton).toBeVisible();
+  } else {
+    await expect(cameraButton).toBeHidden();
+  }
+  await expect(page.getByRole("button", { name: "Send message" })).toHaveCount(0);
+
+  await composer.focus();
+  await expect(composer).toBeFocused();
+  await attachButton.click();
+  await expect(composer).not.toBeFocused();
+
+  const attachmentDialog = page.getByRole("dialog", { name: "Attachment options" });
+  await expect(attachmentDialog).toBeVisible();
+  await expect(page.getByRole("button", { name: "Return to keyboard" })).toBeVisible();
+  await expect(attachmentDialog.getByRole("button", { name: "Photos" })).toBeVisible();
+  await expect(attachmentDialog.getByRole("button", { name: "Camera" })).toBeVisible();
+  await expect(attachmentDialog.getByRole("button", { name: "Video" })).toBeVisible();
+  await expect(attachmentDialog.getByRole("button", { name: "Document" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Return to keyboard" }).click();
+  await expect(attachmentDialog).toBeHidden();
+  await expect(composer).toBeFocused();
+
+  await attachButton.click();
+  await expect(attachmentDialog).toBeVisible();
+  await composer.focus();
+  await expect(attachmentDialog).toBeHidden();
+
+  await composer.fill("WhatsApp style send state");
+  await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Record a voice message" })).toHaveCount(0);
+
+  await composer.fill("");
+  await expect(page.getByRole("button", { name: "Record a voice message" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toHaveCount(0);
+  expectNoUnexpectedApi(apiState);
+});
+
 test("staff can preview an image and send it as multipart with its caption", async ({ page }) => {
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
   await openInboxConversation(page);
 
-  const input = page.locator('input[type="file"][accept="image/*"]');
+  const input = page.locator('input[type="file"][accept*="image/*"]');
   await input.setInputFiles(imagePayload("consultation-photo.png"));
 
   await expect(page.getByAltText("Selected attachment")).toBeVisible();
@@ -866,7 +969,7 @@ test("pasted WebP is normalized to a WhatsApp-compatible image before upload", a
   expect(pastedType).toBe("image/webp");
   await expect(page.getByAltText("Selected attachment")).toBeVisible();
   await expect(page.getByText(/^pasted-image-\d+\.(?:jpg|png)$/)).toBeVisible();
-  await expect(page.getByText("Caption optional", { exact: true })).toBeVisible();
+  await expect(page.getByText("Photo · Caption optional", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Send message" }).click();
 
@@ -889,11 +992,11 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
 
   expect(jpegFrameEncoding(PROGRESSIVE_JPEG)).toBe("progressive");
 
-  const input = page.locator('input[type="file"][accept="image/*"]');
+  const input = page.locator('input[type="file"][accept*="image/*"]');
   await input.setInputFiles(progressiveJpegPayload());
 
   await expect(page.getByText(/^progressive-photo\.(?:jpg|png)$/)).toBeVisible();
-  await expect(page.getByText("Caption optional", { exact: true })).toBeVisible();
+  await expect(page.getByText("Photo · Caption optional", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Send message" }).click();
 
   expect(apiState.mediaRequests).toHaveLength(1);
@@ -922,7 +1025,7 @@ test("a delayed failed image send never overwrites a newer staff draft", async (
   await page.goto("/inbox");
   await openInboxConversation(page);
 
-  const input = page.locator('input[type="file"][accept="image/*"]');
+  const input = page.locator('input[type="file"][accept*="image/*"]');
   await input.setInputFiles(imagePayload("slow-failure.png"));
 
   const composer = page.getByPlaceholder("Add a caption…");
@@ -951,7 +1054,7 @@ test("failed image upload keeps the selected image and caption ready for retry",
   await page.goto("/inbox");
   await openInboxConversation(page);
 
-  const input = page.locator('input[type="file"][accept="image/*"]');
+  const input = page.locator('input[type="file"][accept*="image/*"]');
   await input.setInputFiles(imagePayload("retry-photo.png"));
 
   const caption = page.getByPlaceholder("Add a caption…");
@@ -966,23 +1069,97 @@ test("failed image upload keeps the selected image and caption ready for retry",
   expectNoUnexpectedApi(apiState);
 });
 
-test("staff can record, preview and send a voice message as multipart", async ({ page }) => {
+test("document upload uses a local optimistic card and preserves the filename after send and reload", async ({ page }) => {
+  const apiState = await installApi(page, { documentSendDelayMs: 500 });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const input = page.locator('input[type="file"][accept*=".pdf"]');
+  await input.setInputFiles(pdfPayload("consultation-form.pdf"));
+
+  await expect(page.getByText("consultation-form.pdf", { exact: true })).toBeVisible();
+  const caption = page.getByPlaceholder("Add a caption…");
+  await caption.fill("Please review this file");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  const optimisticCard = page.locator('a').filter({ hasText: "consultation-form.pdf" }).last();
+  await expect(optimisticCard).toBeVisible();
+  await expect(optimisticCard).not.toHaveAttribute("href", /optimistic-/);
+
+  await expect.poll(() => apiState.documentRequests.length).toBe(1);
+  await expect(page.getByText("Please review this file", { exact: true }).last()).toBeVisible();
+
+  const storedCard = page.locator('a').filter({ hasText: "consultation-form.pdf" }).last();
+  await expect(storedCard).toHaveAttribute(
+    "href",
+    /\/api\/conversations\/101\/messages\/\d+\/media$/
+  );
+
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Conversation with Alex Customer" })
+  ).toBeVisible();
+  await expect(page.getByText("consultation-form.pdf", { exact: true }).last()).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("document forward picker hides Messenger and Instagram conversations", async ({ page }) => {
+  const documentMessage = {
+    ...outboundMessage({ id: 22, content: "Please review" }),
+    media_mime_type: "application/pdf",
+    media_filename: "consultation-form.pdf",
+    has_media_attachment: true,
+  };
+  const instagram = conversation({
+    contactId: 202,
+    name: "Instagram Customer",
+    number: "ig-202",
+    channel: "instagram",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), instagram],
+    initialMessagesByContact: new Map([[101, [inboundMessage(), documentMessage]]]),
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const thread = page.getByRole("region", { name: "Conversation with Alex Customer" });
+  const documentCard = thread.getByText("consultation-form.pdf", { exact: true });
+  await expect(documentCard).toBeVisible();
+  const bubble = documentCard.locator("xpath=ancestor::div[contains(@class,'group')][1]");
+  await bubble.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: /Forward/ }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Forward message" });
+  await expect(dialog.getByText("Documents can be forwarded to WhatsApp only", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Instagram Customer", { exact: false })).toHaveCount(0);
+  await expect(dialog.getByText("Alex Customer", { exact: false })).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Close forward message" }).click();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("staff can record preview and send voice from the inline WhatsApp-style composer", async ({ page }) => {
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
   await openInboxConversation(page);
 
   await page.getByRole("button", { name: "Record a voice message" }).click();
-  await expect(page.getByText("Recording voice message", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel voice recording" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop voice recording" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Stop" }).click();
+  await page.getByRole("button", { name: "Stop voice recording" }).click();
 
-  await expect(page.getByText(/Voice message ·/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Send voice" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Play voice preview" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Discard voice message" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send voice message" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Send voice" }).click();
+  await page.getByRole("button", { name: "Send voice message" }).click();
 
-  await expect(page.getByRole("button", { name: "Send voice" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send voice message" })).toHaveCount(0);
   expect(apiState.voiceRequests).toHaveLength(1);
   expect(apiState.voiceRequests[0].contactId).toBe(101);
   expect(apiState.voiceRequests[0].contentType).toMatch(/^multipart\/form-data; boundary=/);
@@ -1008,10 +1185,11 @@ test("closed WhatsApp reply window blocks image selection and voice recording", 
   await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Attach an image" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Record a voice message" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Attach photo, video, or file" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Record a voice message" })).toHaveCount(0);
 
-  const input = page.locator('input[type="file"][accept="image/*"]');
+  const input = page.locator('input[type="file"][accept*="image/*"]');
   await input.setInputFiles(imagePayload("blocked-photo.png"));
 
   await expect(page.getByAltText("Selected attachment")).toHaveCount(0);
@@ -1028,11 +1206,11 @@ test("stalled mandatory JPEG preparation clears safely and leaves the composer u
   await page.goto("/inbox");
   await openInboxConversation(page);
   await page.evaluate(() => { window.createImageBitmap = () => new Promise(() => {}); });
-  await page.locator('input[type="file"][accept="image/*"]').setInputFiles(progressiveJpegPayload("stalled.jpeg"));
-  await expect(page.getByText("Preparing for faster upload…", { exact: true })).toBeVisible();
+  await page.locator('input[type="file"][accept*="image/*"]').setInputFiles(progressiveJpegPayload("stalled.jpeg"));
+  await expect(page.getByText("Preparing…", { exact: true })).toBeVisible();
   await expect(page.getByText(/Image preparation took too long/)).toBeVisible({ timeout: 15000 });
   await expect(page.getByAltText("Selected attachment")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Attach an image" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Attach photo, video, or file" })).toBeEnabled();
   expect(apiState.mediaRequests).toHaveLength(0);
   expectNoUnexpectedApi(apiState);
 });
@@ -1042,7 +1220,7 @@ test("optional compression can time out and send the valid original PNG", async 
   await page.goto("/inbox");
   await openInboxConversation(page);
   await page.evaluate(() => { window.createImageBitmap = () => new Promise(() => {}); });
-  await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
+  await page.locator('input[type="file"][accept*="image/*"]').setInputFiles({
     name: "large.png", mimeType: "image/png", buffer: Buffer.concat([ONE_PIXEL_PNG, Buffer.alloc(1600000)]),
   });
   await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled({ timeout: 3000 });

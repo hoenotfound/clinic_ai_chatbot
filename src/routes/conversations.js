@@ -1,5 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
+const fs = require("node:fs/promises");
+const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
@@ -15,6 +17,7 @@ const whatsapp = require("../services/whatsappService");
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { prepareStoredInboxImage } = require("../services/inboxImagePreparationService");
+const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
@@ -38,6 +41,89 @@ const SEND_REJECTED_ERROR =
 const MAX_DELIVERY_STATUS_IDS = 500;
 const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+const MAX_INBOX_VIDEO_UPLOAD_BYTES = followUpVideoPreparation.MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES;
+const MAX_INBOX_DOCUMENT_BYTES = 16 * 1024 * 1024;
+const INBOX_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+  "text/csv",
+]);
+const INBOX_DOCUMENT_EXTENSIONS = new Set([
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv",
+]);
+
+function inboxDocumentExtension(filename) {
+  const match = String(filename || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match?.[1] || "";
+}
+
+function isAllowedInboxDocument(file) {
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const extension = inboxDocumentExtension(file?.originalname);
+  return (
+    INBOX_DOCUMENT_MIME_TYPES.has(mimeType) ||
+    ((mimeType === "" || mimeType === "application/octet-stream") &&
+      INBOX_DOCUMENT_EXTENSIONS.has(extension))
+  );
+}
+
+function normalizedInboxDocumentMimeType(file) {
+  const raw = String(file?.mimetype || "").toLowerCase();
+  if (raw && raw !== "application/octet-stream") return raw;
+  const extension = inboxDocumentExtension(file?.originalname);
+  const mimeByExtension = {
+    pdf: "application/pdf",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    txt: "text/plain",
+    csv: "text/csv",
+  };
+  return mimeByExtension[extension] || raw || "application/octet-stream";
+}
+
+function safeInboxFilename(filename, fallback = "document") {
+  const cleaned = String(filename || "")
+    .replace(/[\\/\u0000-\u001f\u007f]/g, "_")
+    .trim()
+    .slice(0, 240);
+  return cleaned || fallback;
+}
+
+function isInboxDocumentMimeType(mimeType) {
+  const type = String(mimeType || "").toLowerCase();
+  return Boolean(
+    type &&
+    !type.startsWith("image/") &&
+    !type.startsWith("audio/") &&
+    !type.startsWith("video/")
+  );
+}
+
+function documentFilenameForMimeType(mimeType) {
+  const type = String(mimeType || "").toLowerCase();
+  const extensions = {
+    "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "text/plain": "txt",
+    "text/csv": "csv",
+  };
+  return `document.${extensions[type] || "bin"}`;
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -56,6 +142,32 @@ const voiceUpload = multer({
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("audio/")) {
       return cb(new Error("Only audio recordings are allowed."));
+    }
+    cb(null, true);
+  },
+});
+
+const inboxVideoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, os.tmpdir()),
+    filename: (req, file, cb) =>
+      cb(null, `inbox-video-${process.pid}-${randomUUID()}.mp4`),
+  }),
+  limits: { fileSize: MAX_INBOX_VIDEO_UPLOAD_BYTES },
+  fileFilter: (req, file, cb) => {
+    if (String(file.mimetype || "").toLowerCase() !== "video/mp4") {
+      return cb(new Error("Only MP4 videos are allowed."));
+    }
+    cb(null, true);
+  },
+});
+
+const inboxDocumentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_INBOX_DOCUMENT_BYTES },
+  fileFilter: (req, file, cb) => {
+    if (!isAllowedInboxDocument(file)) {
+      return cb(new Error("Unsupported document type. Please use PDF, Word, Excel, PowerPoint, TXT, or CSV."));
     }
     cb(null, true);
   },
@@ -419,7 +531,31 @@ async function sendStoredMessage(contact, message, options = {}) {
       contact,
       message.media_key,
       skipCaption ? undefined : (message.content || undefined),
-      "video.mp4",
+      message.media_filename || null,
+      socialProviderSendOptions(message, contact, {
+        ...options,
+        skipCaption,
+        videoMimeType: mimeType,
+      })
+    );
+  }
+
+  if (
+    message.media_key &&
+    mimeType &&
+    !mimeType.startsWith("image/") &&
+    !mimeType.startsWith("audio/") &&
+    !mimeType.startsWith("video/")
+  ) {
+    const storedBuffer = await mediaStorage.downloadMedia(message.media_key, {
+      maxBytes: MAX_INBOX_DOCUMENT_BYTES,
+    });
+    return channelMessaging.sendDocumentBuffer(
+      contact,
+      storedBuffer,
+      mimeType,
+      message.media_filename || documentFilenameForMimeType(mimeType),
+      skipCaption ? undefined : (message.content || undefined),
       socialProviderSendOptions(message, contact, { ...options, skipCaption })
     );
   }
@@ -699,12 +835,21 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
     const mimeType =
       mediaRef.media_mime_type || media.contentType || "application/octet-stream";
 
-    res.set({
+    const responseHeaders = {
       "Accept-Ranges": media.acceptRanges || "bytes",
       "Cache-Control": "private, max-age=3600, immutable",
       "Content-Type": mimeType,
       "X-Content-Type-Options": "nosniff",
-    });
+    };
+    if (mediaRef.media_filename) {
+      const filename = safeInboxFilename(mediaRef.media_filename, "attachment");
+      const asciiFilename = filename
+        .replace(/[^\x20-\x7e]/g, "_")
+        .replace(/["\\]/g, "_");
+      responseHeaders["Content-Disposition"] =
+        `inline; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+    }
+    res.set(responseHeaders);
     if (media.contentLength !== null) {
       res.set("Content-Length", String(media.contentLength));
     }
@@ -1611,7 +1756,6 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
   }
 
   let targetMediaKey = null;
-  let fallbackMediaAttachment = null;
   let mediaCopyMs = null;
   if (sourceMessage.media_key) {
     const copyStartedAt = Date.now();
@@ -1623,18 +1767,20 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
       );
       mediaCopyMs = Date.now() - copyStartedAt;
     } catch (copyErr) {
-      // Keep forwarding available if R2's server-side copy is temporarily
-      // unavailable. This fallback is intentionally the only path that
-      // downloads the original bytes into Render.
+      // A copied video/document must still have a durable target key before
+      // provider delivery. Download once and re-upload to the target contact
+      // instead of relying on an in-memory attachment that stored-media send
+      // paths cannot address.
       console.warn(
-        `[Inbox forward] R2 server-side copy failed for message ${sourceMessage.id}; falling back to buffered copy:`,
+        `[Inbox forward] R2 server-side copy failed for message ${sourceMessage.id}; falling back to buffered re-upload:`,
         copyErr
       );
       const buffer = await mediaStorage.downloadMedia(sourceMessage.media_key);
-      fallbackMediaAttachment = {
-        mimeType: sourceMessage.media_mime_type,
+      targetMediaKey = await mediaStorage.uploadMedia(
         buffer,
-      };
+        sourceMessage.media_mime_type,
+        { contactId: targetContact.id }
+      );
       mediaCopyMs = Date.now() - copyStartedAt;
     }
   }
@@ -1652,13 +1798,13 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
           null,
           username,
           sourceMessage.media_url || null,
-          fallbackMediaAttachment ||
-            (targetMediaKey
-              ? { mimeType: sourceMessage.media_mime_type }
-              : null),
+          targetMediaKey
+            ? { mimeType: sourceMessage.media_mime_type }
+            : null,
           {
             isForwarded: true,
             mediaKey: targetMediaKey,
+            mediaFilename: sourceMessage.media_filename || null,
           }
         );
         const finalContact =
@@ -1685,9 +1831,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
     contact_id: saved.contact_id,
     content: forwardedContent,
     media_key: targetMediaKey,
-    media_base64: fallbackMediaAttachment
-      ? fallbackMediaAttachment.buffer.toString("base64")
-      : null,
+    media_base64: null,
     delivery_error: null,
     reply_to_provider_message_id: null,
     is_forwarded: true,
@@ -1804,6 +1948,21 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
 
     const targets = targetChecks.map((item) => item.target);
+    if (
+      sourceMessage.media_key &&
+      isInboxDocumentMimeType(sourceMessage.media_mime_type)
+    ) {
+      const unsupportedTargets = targets.filter(
+        (target) => (target.channel || "whatsapp") !== "whatsapp"
+      );
+      if (unsupportedTargets.length) {
+        return res.status(400).json({
+          error: "Documents can only be forwarded to WhatsApp conversations.",
+          code: "document_forward_channel_unsupported",
+        });
+      }
+    }
+
     const queuedAt = performance.now();
     const results = await mapWithConcurrency(targets, 3, async (target) => {
       try {
@@ -1943,6 +2102,31 @@ function handleVoiceUpload(req, res, next) {
       return res.status(400).json({ error: "Voice recording is too large. Please keep it under 16MB." });
     }
     return res.status(400).json({ error: err.message || "Failed to upload voice recording." });
+  });
+}
+
+function handleVideoUpload(req, res, next) {
+  req.inboxMediaTimings = inboxMediaTimings(req);
+  res.set("X-Inbox-Request-Id", req.inboxMediaTimings.requestId);
+  inboxVideoUpload.single("video")(req, res, (err) => {
+    if (!err) return next();
+    if (req.file?.path) fs.unlink(req.file.path).catch(() => {});
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "Video is too large. Please choose an MP4 file under 50MB." });
+    }
+    return res.status(400).json({ error: err.message || "Failed to upload video." });
+  });
+}
+
+function handleDocumentUpload(req, res, next) {
+  req.inboxMediaTimings = inboxMediaTimings(req);
+  res.set("X-Inbox-Request-Id", req.inboxMediaTimings.requestId);
+  inboxDocumentUpload.single("document")(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "Document is too large. Please keep it under 16MB." });
+    }
+    return res.status(400).json({ error: err.message || "Failed to upload document." });
   });
 }
 
@@ -2238,6 +2422,299 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   } catch (err) {
     console.error("Failed to send staff image:", err);
     res.status(500).json({ error: "Something went wrong sending this image." });
+  }
+});
+
+router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
+  const timings = req.inboxMediaTimings || inboxMediaTimings(req);
+  try {
+    const contact = await timedMediaStage(
+      timings,
+      "contactLookupMs",
+      () => contactsRepo.getContactById(req.params.contactId),
+      true
+    );
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if (!req.file?.path) {
+      return res.status(400).json({ error: "An MP4 video is required." });
+    }
+
+    const reply = await timedMediaStage(
+      timings,
+      "replyLookupMs",
+      () => resolveReplyTarget(contact, req.body?.replyToMessageId, res),
+      true
+    );
+    if (!reply.ok) return;
+    if (!(await timedMediaStage(
+      timings,
+      "policyMs",
+      () => requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)),
+      true
+    ))) return;
+
+    aiReplyCancellation.cancelForContact(contact);
+
+    const videoFilename = safeInboxFilename(req.file.originalname, "video.mp4");
+    const preparedVideo = await timedMediaStage(
+      timings,
+      "videoPreparationMs",
+      () => followUpVideoPreparation.prepareFollowUpVideoFile(req.file.path, {
+        originalBytes: req.file.size,
+      })
+    );
+    let mediaKey = null;
+    let videoMessagePersisted = false;
+    let prepared;
+    try {
+      mediaKey = await timedMediaStage(
+        timings,
+        "r2Ms",
+        () => mediaStorage.uploadMedia(preparedVideo.buffer, "video/mp4", {
+          contactId: contact.id,
+        })
+      );
+
+      prepared = await timedMediaStage(
+        timings,
+        "initialSaveMs",
+        () => telegramImmediateAlertRepo.withContactAlertLock(
+          contact.id,
+          async () => {
+            const currentContact = await contactsRepo.getContactById(contact.id);
+            if (!currentContact) throw new Error("Contact disappeared before the video could be sent.");
+            const preparedContact = await prepareStaffSend(currentContact, req.session.username);
+            const saved = await conversationStore.appendMessageForContact(
+              preparedContact.id,
+              "assistant",
+              String(req.body?.caption || "").trim(),
+              null,
+              req.session.username,
+              null,
+              { mimeType: "video/mp4" },
+              {
+                mediaKey,
+                mediaFilename: videoFilename,
+                replyToProviderMessageId: reply.target?.whatsapp_message_id || null,
+              }
+            );
+            videoMessagePersisted = true;
+
+            let finalContact = preparedContact;
+            try {
+              finalContact =
+                await finalizeStaffSendState(preparedContact.id, req.session.username) ||
+                preparedContact;
+            } catch (finalizeErr) {
+              console.error(
+                `Failed to finalize Staff Assist before video send for contact ${preparedContact.id}:`,
+                finalizeErr
+              );
+            }
+            return { preparedContact: finalContact, saved };
+          },
+          undefined,
+          timings
+        ),
+        true
+      );
+    } catch (err) {
+      if (mediaKey && !videoMessagePersisted) {
+        await mediaStorage.deleteMedia(mediaKey).catch((cleanupErr) => {
+          console.error(`Failed to clean up unsaved staff video media ${mediaKey}:`, cleanupErr);
+        });
+      }
+      throw err;
+    }
+
+    const sendResult = await timedMediaStage(
+      timings,
+      "providerMs",
+      () => channelMessaging.sendVideoByStoredKey(
+        prepared.preparedContact,
+        mediaKey,
+        String(req.body?.caption || "").trim() || undefined,
+        videoFilename,
+        socialProviderSendOptions(prepared.saved, prepared.preparedContact, {
+          purpose: whatsappPolicy.manualStaffPurpose(prepared.preparedContact),
+          replyToProviderMessageId: reply.target?.whatsapp_message_id || null,
+          requestId: timings.requestId,
+          inboxMediaTimings: timings,
+        })
+      )
+    );
+
+    const finalMessage = await finishInboxMediaSend(
+      prepared.saved,
+      sendResult,
+      prepared.preparedContact,
+      req.session.username,
+      timings
+    );
+    res.status(201).json({
+      ...finalMessage,
+      compressed: preparedVideo.compressed === true,
+      original_bytes: preparedVideo.originalBytes,
+      stored_bytes: preparedVideo.storedBytes,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+      delivery_unknown: sendResult.unknown === true || sendResult.ambiguous === true,
+    });
+  } catch (err) {
+    console.error("Failed to send staff video:", err);
+    const clientErrors = new Set([
+      "INVALID_FOLLOW_UP_VIDEO",
+      "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE",
+      "FOLLOW_UP_VIDEO_TOO_LONG",
+      "FOLLOW_UP_VIDEO_STILL_TOO_LARGE",
+    ]);
+    res.status(clientErrors.has(err?.code) ? 400 : 500).json({
+      error: err?.message || "Something went wrong sending this video.",
+      code: err?.code || null,
+    });
+  } finally {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+  }
+});
+
+router.post("/:contactId/document", handleDocumentUpload, async (req, res) => {
+  const timings = req.inboxMediaTimings || inboxMediaTimings(req);
+  try {
+    const contact = await timedMediaStage(
+      timings,
+      "contactLookupMs",
+      () => contactsRepo.getContactById(req.params.contactId),
+      true
+    );
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({
+        error: "Document attachments are currently supported for WhatsApp conversations only.",
+        code: "document_channel_unsupported",
+      });
+    }
+    if (!req.file?.buffer) {
+      return res.status(400).json({ error: "A document file is required." });
+    }
+
+    const reply = await timedMediaStage(
+      timings,
+      "replyLookupMs",
+      () => resolveReplyTarget(contact, req.body?.replyToMessageId, res),
+      true
+    );
+    if (!reply.ok) return;
+    if (!(await timedMediaStage(
+      timings,
+      "policyMs",
+      () => requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)),
+      true
+    ))) return;
+
+    aiReplyCancellation.cancelForContact(contact);
+    const mimeType = normalizedInboxDocumentMimeType(req.file);
+    const documentFilename = safeInboxFilename(
+      req.file.originalname,
+      documentFilenameForMimeType(mimeType)
+    );
+    const caption = String(req.body?.caption || "").trim();
+    let mediaKey = null;
+    let documentMessagePersisted = false;
+    let prepared;
+    try {
+      mediaKey = await timedMediaStage(
+        timings,
+        "r2Ms",
+        () => mediaStorage.uploadMedia(req.file.buffer, mimeType, { contactId: contact.id })
+      );
+
+      prepared = await timedMediaStage(
+        timings,
+        "initialSaveMs",
+        () => telegramImmediateAlertRepo.withContactAlertLock(
+          contact.id,
+          async () => {
+            const currentContact = await contactsRepo.getContactById(contact.id);
+            if (!currentContact) throw new Error("Contact disappeared before the document could be sent.");
+            const preparedContact = await prepareStaffSend(currentContact, req.session.username);
+            const saved = await conversationStore.appendMessageForContact(
+              preparedContact.id,
+              "assistant",
+              caption,
+              null,
+              req.session.username,
+              null,
+              { mimeType },
+              {
+                mediaKey,
+                mediaFilename: documentFilename,
+                replyToProviderMessageId: reply.target?.whatsapp_message_id || null,
+              }
+            );
+            documentMessagePersisted = true;
+
+            let finalContact = preparedContact;
+            try {
+              finalContact =
+                await finalizeStaffSendState(preparedContact.id, req.session.username) ||
+                preparedContact;
+            } catch (finalizeErr) {
+              console.error(
+                `Failed to finalize Staff Assist before document send for contact ${preparedContact.id}:`,
+                finalizeErr
+              );
+            }
+            return { preparedContact: finalContact, saved };
+          },
+          undefined,
+          timings
+        ),
+        true
+      );
+    } catch (err) {
+      if (mediaKey && !documentMessagePersisted) {
+        await mediaStorage.deleteMedia(mediaKey).catch((cleanupErr) => {
+          console.error(`Failed to clean up unsaved staff document media ${mediaKey}:`, cleanupErr);
+        });
+      }
+      throw err;
+    }
+
+    const sendResult = await timedMediaStage(
+      timings,
+      "providerMs",
+      () => channelMessaging.sendDocumentBuffer(
+        prepared.preparedContact,
+        req.file.buffer,
+        mimeType,
+        documentFilename,
+        caption || undefined,
+        socialProviderSendOptions(prepared.saved, prepared.preparedContact, {
+          purpose: whatsappPolicy.manualStaffPurpose(prepared.preparedContact),
+          replyToProviderMessageId: reply.target?.whatsapp_message_id || null,
+          requestId: timings.requestId,
+          inboxMediaTimings: timings,
+        })
+      )
+    );
+
+    const finalMessage = await finishInboxMediaSend(
+      prepared.saved,
+      sendResult,
+      prepared.preparedContact,
+      req.session.username,
+      timings
+    );
+    res.status(201).json({
+      ...finalMessage,
+      media_filename: documentFilename,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+      delivery_unknown: sendResult.unknown === true || sendResult.ambiguous === true,
+    });
+  } catch (err) {
+    console.error("Failed to send staff document:", err);
+    res.status(500).json({ error: "Something went wrong sending this document." });
   }
 });
 

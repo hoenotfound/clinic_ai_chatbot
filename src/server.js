@@ -354,11 +354,15 @@ function dedupeIncomingBatch(items) {
 
 function canGenerateAutomatedReplyForIncoming(item) {
   const incoming = unwrapIncoming(item);
-  // A sticker is a real customer turn for unread/follow-up semantics, but the
-  // bot must not invent meaning from the artwork. If a sticker lands at the end
-  // of a typing burst, reply to the last text/voice/photo turn instead of
-  // suppressing that useful reply just because the sticker was last.
-  return incoming?.mediaType !== "sticker";
+  // Stickers and captionless videos are real customer turns for unread/follow-up
+  // semantics, but the bot must not invent meaning from media it does not
+  // interpret. If either lands at the end of a typing burst, reply to the last
+  // text/voice/photo/captioned-video turn instead.
+  if (incoming?.mediaType === "sticker") return false;
+  if (incoming?.mediaType === "video" && !String(incoming?.text || "").trim()) {
+    return false;
+  }
+  return true;
 }
 
 async function processIncomingBatch(items) {
@@ -639,6 +643,57 @@ async function processIncomingMessage(
       );
     }
 
+    if (mediaType === "video") {
+      const media = await channelMessaging.downloadIncomingMedia(incoming);
+      text = incoming.text
+        ? `🎥 ${incoming.text}`
+        : `🎥 [${customerLabel} sent a video]`;
+
+      if (media) {
+        const downloadedMime = String(media.mimeType || "")
+          .split(";")[0]
+          .trim()
+          .toLowerCase();
+        mediaAttachment = {
+          mimeType: downloadedMime.startsWith("video/")
+            ? downloadedMime
+            : "video/mp4",
+          buffer: media.buffer,
+        };
+
+        try {
+          await conversationStore.updateInboundMessage(
+            contact.id,
+            savedInbound.id,
+            text,
+            mediaAttachment
+          );
+        } catch (videoStorageErr) {
+          // The durable inbound placeholder is already visible in the Inbox.
+          // Storage failure should not trigger a misleading AI/system reply.
+          console.error(
+            `Failed to store WhatsApp video media for ${channel}:${from}; keeping the durable placeholder:`,
+            videoStorageErr
+          );
+          await contactsRepo.setAttention(
+            contact.id,
+            true,
+            `A ${customerSingular} video could not be stored. Staff review is needed.`
+          );
+          mediaAttachment = null;
+        }
+      } else {
+        console.warn(
+          `Could not download WhatsApp video ${incoming.mediaId || id || "without media id"} for ${from}; keeping the durable placeholder.`
+        );
+        await contactsRepo.setAttention(
+          contact.id,
+          true,
+          `A ${customerSingular} video could not be downloaded. Staff review is needed.`
+        );
+      }
+    }
+
     if (mediaType === "sticker") {
       const media = await channelMessaging.downloadIncomingMedia(incoming);
       text = `🙂 [${customerLabel} sent a sticker]`;
@@ -684,10 +739,11 @@ async function processIncomingMessage(
       }
     }
 
-    // Photos without captions and stickers contain no textual intent that can
-    // safely support a sales-temperature decision.
+    // Photos/videos without captions and stickers contain no textual intent
+    // that can safely support a sales-temperature decision.
     const temperatureReviewEligible = Boolean(text.trim()) && !(
       (mediaType === "image" && !incoming.text) ||
+      (mediaType === "video" && !incoming.text) ||
       mediaType === "sticker"
     );
 
@@ -703,10 +759,13 @@ async function processIncomingMessage(
       }
     }
 
-    const currentKeywordReason =
-      mediaType === "sticker" ? null : checkKeywordTriggers(text);
-    const urgentSafety =
+    const hasInterpretableText =
       mediaType !== "sticker" &&
+      !(mediaType === "video" && !String(incoming.text || "").trim());
+    const currentKeywordReason =
+      hasInterpretableText ? checkKeywordTriggers(text) : null;
+    const urgentSafety =
+      hasInterpretableText &&
       (isUrgentSafetyMessage(text) || inheritedKeywordReason === URGENT_SAFETY_REASON);
     keywordReason = urgentSafety
       ? URGENT_SAFETY_REASON
@@ -731,6 +790,26 @@ async function processIncomingMessage(
         }
       );
       console.log(`Skipping AI reply for ${channel}:${from} — conversation is in human mode.`);
+      return { wasFirstMessage, keywordReason };
+    }
+
+    if (mediaType === "video" && !String(incoming.text || "").trim()) {
+      // The Inbox can play the stored video, but the AI does not inspect video
+      // frames or audio. Keep captionless videos as genuine inbound turns
+      // without inventing a response from media content it cannot interpret.
+      // Surface the turn to staff while leaving AI ownership unchanged so the
+      // next normal customer message can still be handled automatically.
+      if (!contact.needs_attention) {
+        const attentionContact = await contactsRepo.setAttention(
+          contact.id,
+          true,
+          `${customerLabel} sent a video that requires staff review.`
+        );
+        if (attentionContact) contact = attentionContact;
+      }
+      console.log(
+        `Stored WhatsApp video for ${channel}:${from} without generating an AI reply.`
+      );
       return { wasFirstMessage, keywordReason };
     }
 

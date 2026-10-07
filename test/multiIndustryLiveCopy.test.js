@@ -78,6 +78,14 @@ test("stored inbound media placeholders use the active customer term", () => {
     "📷 [Customer sent a photo]"
   );
   assert.equal(
+    initialInboundText({ mediaType: "video" }, renovation),
+    "🎥 [Customer sent a video]"
+  );
+  assert.equal(
+    initialInboundText({ mediaType: "video", text: "Please check this" }, renovation),
+    "🎥 Please check this"
+  );
+  assert.equal(
     initialInboundText({ mediaType: "sticker" }, renovation),
     "🙂 [Customer sent a sticker]"
   );

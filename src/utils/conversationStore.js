@@ -24,6 +24,30 @@ function isStickerRow(row) {
   return /sent a sticker\]$/i.test(String(row?.content || "").trim());
 }
 
+function aiContextTextForRow(row) {
+  const content = String(row?.content || "");
+  const mimeType = String(row?.media_mime_type || "").toLowerCase();
+  const trimmed = content.trim();
+  const isVideoTurn =
+    mimeType.startsWith("video/") ||
+    /^🎥(?:\s|$)/u.test(trimmed);
+  if (row?.role !== "user" || !isVideoTurn) {
+    return content;
+  }
+  const captionless =
+    /^🎥\s*\[[^\]]+ sent a video\]$/i.test(trimmed);
+  if (captionless) {
+    return "🎥 [Customer sent a video. The AI cannot inspect the video's visual or audio content. Do not infer what it shows or sounds like. If the customer refers to the video, say you cannot view its contents and ask them to describe the relevant part in text.]";
+  }
+
+  const caption = trimmed.replace(/^🎥\s*/u, "").trim();
+  if (!caption) {
+    return "🎥 [Customer sent a video. The AI cannot inspect the video's visual or audio content. Do not infer what it shows or sounds like.]";
+  }
+
+  return `🎥 [Customer sent a video. The AI cannot inspect the video's visual or audio content. Customer caption: ${caption}]`;
+}
+
 function aiVisibleRows(rows) {
   return (rows || []).filter(
     (row) =>
@@ -81,11 +105,12 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
 
   return rows.map((r, i) => {
     const media = photoMedia.get(i);
-    if (!media) return { role: r.role, content: r.content };
+    const contextText = aiContextTextForRow(r);
+    if (!media) return { role: r.role, content: contextText };
     return {
       role: r.role,
       content: [
-        { type: "text", text: r.content || "" },
+        { type: "text", text: contextText },
         { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
       ],
     };
@@ -139,6 +164,7 @@ async function appendMessageForContact(
       replyToProviderMessageId: options.replyToProviderMessageId || null,
       isForwarded: options.isForwarded === true,
       mediaKey: options.mediaKey || null,
+      mediaFilename: options.mediaFilename || null,
     }
   );
 
@@ -225,6 +251,7 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
 }
 
 module.exports = {
+  aiContextTextForRow,
   aiVisibleRows,
   getHistory,
   getHistoryForContact,

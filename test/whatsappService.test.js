@@ -62,6 +62,39 @@ test("parses messages from every webhook entry and change", () => {
   assert.equal(parsed[2].mediaId, "audio-3");
 });
 
+test("parses inbound WhatsApp videos as supported media with caption and forwarding metadata", () => {
+  const [video] = parseIncomingMessages({
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: "6019", profile: { name: "Video Customer" } }],
+          messages: [{
+            id: "message-video-1",
+            from: "6019",
+            type: "video",
+            video: {
+              id: "video-media-1",
+              caption: "This is the area I meant",
+            },
+            context: { forwarded: true },
+          }],
+        },
+      }],
+    }],
+  });
+
+  assert.deepEqual(video, {
+    id: "message-video-1",
+    from: "6019",
+    profileName: "Video Customer",
+    isForwarded: true,
+    text: "This is the area I meant",
+    mediaId: "video-media-1",
+    mediaType: "video",
+    unsupportedType: null,
+  });
+});
+
 test("preserves WhatsApp quoted-reply and forwarded context on inbound messages", () => {
   const [quoted, forwarded] = parseIncomingMessages({
     entry: [{

@@ -20,17 +20,26 @@ import {
   AlertIcon,
   ArrowLeftIcon,
   BotIcon,
+  CameraIcon,
   ChatOutlineIcon,
   ChevronDownIcon,
   CloseIcon,
+  DocumentIcon,
   FlagIcon,
   ImageIcon,
+  KeyboardIcon,
   MailIcon,
   MicrophoneIcon,
   MoreIcon,
+  PauseIcon,
+  PlayIcon,
+  PlusIcon,
   SearchIcon,
   SendIcon,
+  StopIcon,
+  TrashIcon,
   UserIcon,
+  VideoIcon,
 } from "../components/InboxIcons";
 
 const MESSAGE_PAGE_SIZE = 50;
@@ -52,6 +61,9 @@ const inboxRequestId = () => globalThis.crypto?.randomUUID?.() || `image-${Date.
 const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
+const MAX_INBOX_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_INBOX_DOCUMENT_BYTES = 16 * 1024 * 1024;
+const INBOX_DOCUMENT_EXTENSIONS = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv"]);
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
 
 const STATUS_FILTERS = [
@@ -62,11 +74,17 @@ const STATUS_FILTERS = [
   { key: "attention", label: "Needs attention" },
 ];
 
-function displayDeliveryError(value) {
+function displayDeliveryError(value, mediaMimeType = "") {
   const raw = String(value || "").trim();
   const prefix = "partial_caption_sent|";
   if (!raw.startsWith(prefix)) return raw;
   const detail = raw.slice(prefix.length).trim();
+  const isVideo = String(mediaMimeType || "").toLowerCase().startsWith("video/");
+  if (isVideo) {
+    return detail
+      ? `The caption was sent, but the video failed to send. ${detail}`
+      : "The caption was sent, but the video failed to send.";
+  }
   return detail
     ? `The caption was sent, but the image failed to send. ${detail}`
     : "The caption was sent, but the image failed to send.";
@@ -147,6 +165,7 @@ function replyPreviewText(message) {
   const content = String(message.content || "").trim();
   if (mimeType.startsWith("audio/")) return content || "Voice message";
   if (mimeType.startsWith("video/")) return content || "Video";
+  if (mimeType && !mimeType.startsWith("image/")) return content || "Document";
   if (mimeType === "image/webp") return "Sticker";
   if (mimeType.startsWith("image/")) {
     const placeholder = /\[[^\]]+sent (?:a photo|a sticker)\]$/iu.test(content);
@@ -1172,6 +1191,81 @@ export default function Inbox() {
     }
   }
 
+  async function handleSendAttachment(file, kind, caption, replyToMessageId = null) {
+    if (selectedId == null || !file || !kind) return;
+    const contactId = selectedId;
+    const requestId = inboxRequestId();
+    const optimisticId = makeOptimisticId();
+    const previewUrl = kind === "video" ? URL.createObjectURL(file) : null;
+    let previewRetained = false;
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
+    const mimeType = kind === "video" ? "video/mp4" : (file.type || "application/octet-stream");
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: optimisticId,
+        role: "assistant",
+        content: caption,
+        sent_by_username: username,
+        created_at: new Date().toISOString(),
+        media_url: null,
+        media_base64: null,
+        media_mime_type: mimeType,
+        has_media_attachment: false,
+        media_filename: file.name,
+        previewUrl,
+        reply_to_provider_message_id: replyTarget?.whatsapp_message_id || null,
+        reply_preview: replyPreview,
+        _optimistic: true,
+        _uploading: true,
+      },
+    ]);
+
+    try {
+      const result = await enqueueOutbound(
+        contactId,
+        () => kind === "video"
+          ? api.sendVideo(contactId, file, caption, replyToMessageId, requestId)
+          : api.sendDocument(contactId, file, caption, replyToMessageId, requestId),
+        requestId
+      );
+      const visibleResult = {
+        ...result,
+        ...(replyPreview ? { reply_preview: replyPreview } : {}),
+        ...(result.media_filename ? {} : { media_filename: file.name }),
+        _requestId: requestId,
+        _responseAt: performance.now(),
+      };
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) =>
+          mergeMessages(prev.filter((message) => message.id !== optimisticId), [visibleResult])
+        );
+      }
+      void refreshConversations();
+      const label = kind === "video" ? "Video" : "Document";
+      if (result?.delivery_unknown === true) {
+        showToast(`${label} send could not be confirmed. Check the customer chat before retrying to avoid duplicates.`, "warning");
+      } else if (result?.delivered === false) {
+        showToast(`${label} was saved but delivery failed. Please try resending.`, "warning");
+      } else if (kind === "video" && result?.compressed === true) {
+        showToast("Video compressed and sent.", "info");
+      }
+    } catch (err) {
+      console.error(`Failed to send ${kind} attachment:`, err);
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) => prev.filter((message) => message.id !== optimisticId));
+      }
+      showToast(err.message || `Couldn't send that ${kind}.`, "error");
+      throw err;
+    } finally {
+      if (previewUrl && !previewRetained) URL.revokeObjectURL(previewUrl);
+    }
+  }
+
   async function handleSendVoice(recording, mimeType, replyToMessageId = null) {
     if (selectedId == null || !recording) return;
     const contactId = selectedId;
@@ -1270,6 +1364,7 @@ export default function Inbox() {
         onRetryMessage={handleRetryMessage}
         onSend={handleSend}
         onSendImage={handleSendImage}
+        onSendAttachment={handleSendAttachment}
         onSendVoice={handleSendVoice}
         onForwardMessage={handleForwardMessage}
         onOpenContactDetails={() => setContactDetailsOpen(true)}
@@ -1882,6 +1977,7 @@ function ThreadView({
   onRetryMessage,
   onSend,
   onSendImage,
+  onSendAttachment,
   onSendVoice,
   onForwardMessage,
   onOpenContactDetails,
@@ -1895,7 +1991,10 @@ function ThreadView({
   const threadScrollRef = useRef(null);
   const shouldStickToBottomRef = useRef(true);
   const fileInputRef = useRef(null);
+  const videoInputRef = useRef(null);
+  const documentInputRef = useRef(null);
   const textareaRef = useRef(null);
+  const voiceAudioRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordingStreamRef = useRef(null);
   const recordingChunksRef = useRef([]);
@@ -1915,6 +2014,10 @@ function ThreadView({
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
   const [imagePreparing, setImagePreparing] = useState(false);
+  const [attachmentFile, setAttachmentFile] = useState(null);
+  const [attachmentKind, setAttachmentKind] = useState(null);
+  const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState(null);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -1922,6 +2025,8 @@ function ThreadView({
   const [voiceMimeType, setVoiceMimeType] = useState("");
   const [voiceDuration, setVoiceDuration] = useState(0);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
+  const [voicePreviewPlaying, setVoicePreviewPlaying] = useState(false);
+  const [voicePreviewElapsed, setVoicePreviewElapsed] = useState(0);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
@@ -1953,18 +2058,19 @@ function ThreadView({
     : "";
   const composerPlaceholder = policyBlocksComposer
     ? `${messagingPolicy.channelLabel} reply unavailable`
-    : imageFile
+    : imageFile || attachmentFile
     ? "Add a caption…"
     : contact?.mode === "human"
     ? "Message…"
     : "Reply…";
   const composerLabel = policyBlocksComposer
     ? `${messagingPolicy.channelLabel} reply unavailable`
-    : imageFile
-    ? "Add a caption to the selected image"
+    : imageFile || attachmentFile
+    ? "Add a caption to the selected attachment"
     : contact?.mode === "human"
     ? `Message this ${customerSingular}`
     : "Reply manually while AI stays on";
+  const hasComposerPayload = Boolean(draft.trim() || imageFile || attachmentFile);
 
   useEffect(() => {
     setPolicyNow(Date.now());
@@ -1979,6 +2085,7 @@ function ThreadView({
   useEffect(() => {
     setReplyingTo(null);
     setForwardingMessage(null);
+    setAttachmentMenuOpen(false);
   }, [contact?.contact_id]);
 
   useEffect(() => {
@@ -1989,14 +2096,28 @@ function ThreadView({
 
   useEffect(() => {
     if (!policyBlocksComposer) return;
+    setAttachmentMenuOpen(false);
     cancelRecording();
     clearVoice();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [policyBlocksComposer]);
 
+  useEffect(() => {
+    if (!attachmentMenuOpen) return undefined;
+    function handleAttachmentMenuKeyDown(event) {
+      if (event.key === "Escape") setAttachmentMenuOpen(false);
+    }
+    document.addEventListener("keydown", handleAttachmentMenuKeyDown);
+    return () => document.removeEventListener("keydown", handleAttachmentMenuKeyDown);
+  }, [attachmentMenuOpen]);
+
   useEffect(() => () => {
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
   }, [imagePreviewUrl]);
+
+  useEffect(() => () => {
+    if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
+  }, [attachmentPreviewUrl]);
 
   useEffect(() => () => {
     if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
@@ -2071,6 +2192,7 @@ function ThreadView({
     // Selecting a new attachment is a user composer edit. An older queued
     // send that fails later must not restore its caption onto this new photo.
     draftEditVersionRef.current += 1;
+    clearAttachment();
     if (file.size > MAX_IMAGE_BYTES) {
       onToast("That image is larger than 16MB — please choose a smaller file.", "error");
       return;
@@ -2212,10 +2334,90 @@ function ThreadView({
     }
   }
 
+  function clearAttachment() {
+    if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
+    setAttachmentFile(null);
+    setAttachmentKind(null);
+    setAttachmentPreviewUrl(null);
+  }
+
+  async function selectNonImageAttachment(file) {
+    if (!file) return;
+    if (policyBlocksComposer) {
+      onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
+    if (isStartingRecording || isRecording || voiceBlob) {
+      onToast("Finish or remove the voice message before adding an attachment.", "warning");
+      return;
+    }
+
+    const type = String(file.type || "").toLowerCase();
+    const extension = String(file.name || "").toLowerCase().split(".").pop() || "";
+    const isVideo = type === "video/mp4" || extension === "mp4";
+    if (isVideo) {
+      if (file.size > MAX_INBOX_VIDEO_BYTES) {
+        onToast("That video is larger than 50MB. Please choose a smaller MP4.", "error");
+        return;
+      }
+      clearImage();
+      clearAttachment();
+      draftEditVersionRef.current += 1;
+      setAttachmentFile(file);
+      setAttachmentKind("video");
+      setAttachmentPreviewUrl(URL.createObjectURL(file));
+      return;
+    }
+
+    if (!INBOX_DOCUMENT_EXTENSIONS.has(extension)) {
+      onToast("Please choose an image, MP4 video, PDF, Word, Excel, PowerPoint, TXT, or CSV file.", "error");
+      return;
+    }
+    if ((contact?.channel || "whatsapp") !== "whatsapp") {
+      onToast("Documents can currently be sent from WhatsApp conversations only. Photos and MP4 videos work on this channel.", "warning");
+      return;
+    }
+    if (file.size > MAX_INBOX_DOCUMENT_BYTES) {
+      onToast("That document is larger than 16MB. Please choose a smaller file.", "error");
+      return;
+    }
+
+    clearImage();
+    clearAttachment();
+    draftEditVersionRef.current += 1;
+    setAttachmentFile(file);
+    setAttachmentKind("document");
+  }
+
+  function openPhotoPicker({ camera = false } = {}) {
+    setAttachmentMenuOpen(false);
+    const input = fileInputRef.current;
+    if (!input) return;
+    if (camera) input.setAttribute("capture", "environment");
+    else input.removeAttribute("capture");
+    input.click();
+  }
+
+  function openVideoPicker() {
+    setAttachmentMenuOpen(false);
+    videoInputRef.current?.click();
+  }
+
+  function openDocumentPicker() {
+    setAttachmentMenuOpen(false);
+    documentInputRef.current?.click();
+  }
+
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    await selectImageFile(file);
+    e.target.removeAttribute?.("capture");
+    if (!file) return;
+    if (String(file.type || "").startsWith("image/")) {
+      await selectImageFile(file);
+      return;
+    }
+    await selectNonImageAttachment(file);
   }
 
   async function handleComposerPaste(event) {
@@ -2258,11 +2460,47 @@ function ThreadView({
   }
 
   function clearVoice() {
+    const audio = voiceAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
     if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
     setVoiceBlob(null);
     setVoiceMimeType("");
     setVoiceDuration(0);
     setVoicePreviewUrl(null);
+    setVoicePreviewPlaying(false);
+    setVoicePreviewElapsed(0);
+  }
+
+  async function toggleVoicePreviewPlayback() {
+    const audio = voiceAudioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      try {
+        await audio.play();
+        setVoicePreviewPlaying(true);
+      } catch {
+        onToast("Couldn't play this voice preview.", "error");
+      }
+      return;
+    }
+    audio.pause();
+    setVoicePreviewPlaying(false);
+  }
+
+  function openAttachmentMenu() {
+    textareaRef.current?.blur();
+    setAttachmentMenuOpen(true);
+  }
+
+  function returnToKeyboard() {
+    setAttachmentMenuOpen(false);
+    // iOS only opens the software keyboard when focus happens directly in the
+    // user's tap/click handler. Deferring this with rAF can focus the field
+    // visually without restoring the keyboard.
+    textareaRef.current?.focus({ preventScroll: true });
   }
 
   function stopRecording() {
@@ -2284,12 +2522,14 @@ function ThreadView({
 
   async function startRecording() {
     if (sending || isRecording || recordingStartingRef.current) return;
+    textareaRef.current?.blur();
+    setAttachmentMenuOpen(false);
     if (policyBlocksComposer) {
       onToast(messagingPolicy.explanation, "warning");
       return;
     }
-    if (imageFile) {
-      onToast("Remove the selected image before recording a voice message.", "warning");
+    if (imageFile || attachmentFile) {
+      onToast("Remove the selected attachment before recording a voice message.", "warning");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -2367,6 +2607,8 @@ function ThreadView({
         setVoiceBlob(blob);
         setVoiceMimeType(mimeType);
         setVoiceDuration(duration);
+        setVoicePreviewElapsed(0);
+        setVoicePreviewPlaying(false);
         setVoicePreviewUrl(URL.createObjectURL(blob));
       });
 
@@ -2509,13 +2751,15 @@ function ThreadView({
     e.preventDefault();
     const text = draft.trim();
     if (sending || imagePreparing || isStartingRecording || isRecording || voiceBlob) return;
-    if (!text && !imageFile) return;
+    if (!text && !imageFile && !attachmentFile) return;
     if (policyBlocksComposer) {
       onToast(messagingPolicy.explanation, "warning");
       return;
     }
 
     const selectedImage = imageFile;
+    const selectedAttachment = attachmentFile;
+    const selectedAttachmentKind = attachmentKind;
     const selectedReply = replyingTo;
     const contactIdAtSend = contact?.contact_id;
     const draftEditVersionAtSend = draftEditVersionRef.current;
@@ -2530,12 +2774,20 @@ function ThreadView({
       // its own upload/send progress, just like a native messaging app.
       const sendPromise = selectedImage
         ? onSendImage(selectedImage, text, selectedReply?.id || null)
+        : selectedAttachment
+        ? onSendAttachment(
+            selectedAttachment,
+            selectedAttachmentKind,
+            text,
+            selectedReply?.id || null
+          )
         : onSend(text, selectedReply?.id || null);
 
       if (mountedRef.current) {
         setDraft("");
         setReplyingTo(null);
         if (selectedImage) clearImage();
+        if (selectedAttachment) clearAttachment();
       }
 
       // Yield once so React paints the cleared composer/optimistic bubble before
@@ -2566,6 +2818,15 @@ function ThreadView({
             setImagePreviewUrl(
               (current) => current || URL.createObjectURL(selectedImage)
             );
+          }
+          if (selectedAttachment) {
+            setAttachmentFile((current) => current || selectedAttachment);
+            setAttachmentKind((current) => current || selectedAttachmentKind);
+            if (selectedAttachmentKind === "video") {
+              setAttachmentPreviewUrl(
+                (current) => current || URL.createObjectURL(selectedAttachment)
+              );
+            }
           }
         }
       }
@@ -2878,78 +3139,235 @@ function ThreadView({
               </button>
             </div>
           )}
-          {isStartingRecording && (
-            <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-[var(--color-primary-light)] px-3 py-2.5">
-              <Spinner className="text-[var(--color-primary)]" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold">Starting microphone…</p>
-                <p className="text-[11px] text-[var(--color-text-muted)]">Allow microphone access if your browser asks.</p>
-              </div>
-              <button type="button" onClick={cancelRecording} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-white">Cancel</button>
-            </div>
-          )}
-          {isRecording && (
-            <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5">
-              <span className="relative flex h-3 w-3 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" /><span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" /></span>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-red-600">Recording voice message</p>
-                <p className="text-[11px] text-[var(--color-text-muted)]">{formatDuration(recordingSeconds)} / {formatDuration(MAX_VOICE_SECONDS)}</p>
-              </div>
-              <button type="button" onClick={cancelRecording} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-white">Cancel</button>
-              <button type="button" onClick={stopRecording} className="rounded-lg bg-red-500 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-red-600">Stop</button>
-            </div>
-          )}
-          {voicePreviewUrl && !isRecording && (
-            <div className="mb-2.5 flex flex-col gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5 sm:flex-row sm:items-center">
-              <audio controls src={voicePreviewUrl} className="h-9 w-full min-w-0 sm:max-w-[260px]" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">Voice message · {formatDuration(voiceDuration)}</p>
-              </div>
-              <div className="flex shrink-0 items-center justify-end gap-2">
-                <button type="button" onClick={clearVoice} disabled={sending} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-white disabled:opacity-50">Remove</button>
-                <button type="button" onClick={sendRecordedVoice} disabled={sending || policyBlocksComposer} className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
-                  {sending && <Spinner />}{sending ? "Sending…" : "Send voice"}
-                </button>
-              </div>
-            </div>
-          )}
           {imagePreviewUrl && (
-            <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
-              <img src={imagePreviewUrl} alt="Selected attachment" className="h-14 w-14 rounded-lg border border-[var(--color-border)] object-cover" />
+            <div data-composer-media="true" className="mb-2 flex items-center gap-2 rounded-[18px] border border-[var(--color-border)] bg-white px-2.5 py-2 shadow-sm">
+              <img src={imagePreviewUrl} alt="Selected attachment" className="h-11 w-11 rounded-xl object-cover" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium">{imageFile.name}</p>
-                <p className="text-[11px] text-[var(--color-text-muted)]">
-                  {imagePreparing ? "Preparing for faster upload…" : "Caption optional"}
+                <p className="truncate text-xs font-semibold">{imageFile.name}</p>
+                <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+                  {imagePreparing ? "Preparing…" : "Photo · Caption optional"}
                 </p>
               </div>
-              <button type="button" onClick={clearImage} disabled={sending} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-white disabled:opacity-50">Remove</button>
+              <button type="button" onClick={clearImage} disabled={sending} aria-label="Remove selected image" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] disabled:opacity-50"><CloseIcon className="h-4 w-4" /></button>
             </div>
           )}
-          <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
+          {attachmentFile && (
+            <div data-composer-media="true" className="mb-2 flex items-center gap-2 rounded-[18px] border border-[var(--color-border)] bg-white px-2.5 py-2 shadow-sm">
+              {attachmentKind === "video" && attachmentPreviewUrl ? (
+                <video src={attachmentPreviewUrl} muted playsInline preload="metadata" className="h-11 w-11 rounded-xl bg-black object-cover" />
+              ) : (
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]"><DocumentIcon className="h-5 w-5" /></div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold">{attachmentFile.name}</p>
+                <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+                  {attachmentKind === "video"
+                    ? (attachmentFile.size > 16 * 1024 * 1024 ? "Video · Will compress automatically" : "Video · Caption optional")
+                    : "Document · Caption optional"}
+                </p>
+              </div>
+              <button type="button" onClick={clearAttachment} disabled={sending} aria-label="Remove selected attachment" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] disabled:opacity-50"><CloseIcon className="h-4 w-4" /></button>
+            </div>
+          )}
+          <div className={`relative ${attachmentMenuOpen ? "z-[60]" : ""}`}>
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
-            <button type="button" onClick={startRecording} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={handleDraftChange}
-              onPaste={handleComposerPaste}
-              disabled={isStartingRecording || isRecording || !!voiceBlob}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit(e);
-                }
-              }}
-              placeholder={composerPlaceholder}
-              aria-label={composerLabel}
-              rows={1}
-              className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
-            />
-            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : imagePreparing ? "Preparing image" : "Send message"} aria-label="Send message" className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-0 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-4 sm:text-sm">
-              {sending || imagePreparing ? <Spinner /> : <SendIcon className="h-4 w-4" />}
-              <span className="hidden sm:inline">{imagePreparing ? "Preparing…" : sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
-            </button>
+            <input ref={videoInputRef} type="file" accept="video/mp4" onChange={handleFilePicked} className="hidden" />
+            <input ref={documentInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" onChange={handleFilePicked} className="hidden" />
+
+            {isStartingRecording || isRecording || voiceBlob ? (
+              <div className="relative z-[60] flex items-end gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={isStartingRecording || isRecording ? cancelRecording : clearVoice}
+                  disabled={sending}
+                  aria-label={isStartingRecording || isRecording ? "Cancel voice recording" : "Discard voice message"}
+                  className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full text-[var(--color-text-muted)] transition active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)] hover:text-[var(--color-danger)] disabled:opacity-40"
+                >
+                  <TrashIcon className="h-5 w-5" />
+                </button>
+
+                <div className="flex min-h-11 min-w-0 flex-1 items-center rounded-[22px] border border-[var(--color-border)] bg-white px-3">
+                  {isStartingRecording ? (
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <Spinner className="shrink-0 text-[var(--color-primary)]" />
+                      <span className="truncate text-sm text-[var(--color-text-muted)]">Starting microphone…</span>
+                    </div>
+                  ) : isRecording ? (
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <span className="relative flex h-2.5 w-2.5 shrink-0">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-70" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+                      </span>
+                      <span className="w-10 shrink-0 text-xs font-semibold tabular-nums text-red-600">{formatDuration(recordingSeconds)}</span>
+                      <div className="flex min-w-0 flex-1 items-center justify-center gap-[3px]" aria-hidden="true">
+                        {[5, 10, 14, 8, 17, 11, 19, 7, 15, 9, 13, 6, 18, 10, 14, 8].map((height, index) => (
+                          <span key={index} className="w-[2px] rounded-full bg-red-400/70" style={{ height: `${height}px` }} />
+                        ))}
+                      </div>
+                      <span className="hidden shrink-0 text-[10px] text-[var(--color-text-muted)] sm:inline">Recording</span>
+                    </div>
+                  ) : (
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <audio
+                        ref={voiceAudioRef}
+                        src={voicePreviewUrl || undefined}
+                        className="hidden"
+                        onTimeUpdate={() => setVoicePreviewElapsed(voiceAudioRef.current?.currentTime || 0)}
+                        onPlay={() => setVoicePreviewPlaying(true)}
+                        onPause={() => setVoicePreviewPlaying(false)}
+                        onEnded={() => {
+                          setVoicePreviewPlaying(false);
+                          setVoicePreviewElapsed(0);
+                          if (voiceAudioRef.current) voiceAudioRef.current.currentTime = 0;
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={toggleVoicePreviewPlayback}
+                        aria-label={voicePreviewPlaying ? "Pause voice preview" : "Play voice preview"}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] transition hover:bg-[var(--color-bg)]"
+                      >
+                        {voicePreviewPlaying ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="ml-0.5 h-4 w-4" />}
+                      </button>
+                      <div className="flex min-w-0 flex-1 items-center justify-center gap-[3px]" aria-hidden="true">
+                        {[6, 12, 9, 17, 11, 7, 18, 13, 8, 16, 10, 14, 7, 17, 11, 8].map((height, index) => (
+                          <span key={index} className="w-[2px] rounded-full bg-[var(--color-primary)]/45" style={{ height: `${height}px` }} />
+                        ))}
+                      </div>
+                      <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-[var(--color-text-muted)]">
+                        {formatDuration(Math.floor(voicePreviewPlaying || voicePreviewElapsed > 0 ? voicePreviewElapsed : voiceDuration))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <span data-scheduled-message-composer-slot="true" className="contents" />
+                {isStartingRecording ? (
+                  <button
+                    type="button"
+                    disabled
+                    aria-label="Starting microphone"
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-white opacity-55"
+                  >
+                    <Spinner />
+                  </button>
+                ) : isRecording ? (
+                  <button
+                    type="button"
+                    onClick={stopRecording}
+                    aria-label="Stop voice recording"
+                    className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full bg-[var(--color-primary)] text-white shadow-sm transition active:bg-[var(--color-primary-hover)] hover:bg-[var(--color-primary-hover)]"
+                  >
+                    <StopIcon className="h-[18px] w-[18px]" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={sendRecordedVoice}
+                    disabled={sending || policyBlocksComposer}
+                    aria-label="Send voice message"
+                    className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full bg-[var(--color-primary)] text-white shadow-sm transition active:bg-[var(--color-primary-hover)] hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+                  >
+                    {sending ? <Spinner /> : <SendIcon className="h-[19px] w-[19px]" />}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="relative z-[60] flex items-end gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={attachmentMenuOpen ? returnToKeyboard : openAttachmentMenu}
+                  disabled={sending || imagePreparing || policyBlocksComposer}
+                  title={policyBlocksComposer ? messagingPolicy.explanation : attachmentMenuOpen ? "Return to keyboard" : "Attach photo, video, or file"}
+                  aria-label={attachmentMenuOpen ? "Return to keyboard" : "Attach photo, video, or file"}
+                  aria-expanded={attachmentMenuOpen}
+                  className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full text-[var(--color-primary)] transition active:bg-[var(--color-primary-light)] hover:bg-[var(--color-primary-light)] disabled:opacity-40"
+                >
+                  {attachmentMenuOpen ? <KeyboardIcon className="h-[22px] w-[22px]" /> : <PlusIcon className="h-6 w-6" />}
+                </button>
+
+                <div className="flex min-h-11 min-w-0 flex-1 items-end rounded-[22px] border border-[var(--color-border)] bg-white px-2 transition-colors focus-within:border-[var(--color-primary)]">
+                  <textarea
+                    ref={textareaRef}
+                    value={draft}
+                    onChange={handleDraftChange}
+                    onPaste={handleComposerPaste}
+                    disabled={policyBlocksComposer}
+                    onFocus={() => {
+                      if (attachmentMenuOpen) setAttachmentMenuOpen(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e);
+                      }
+                    }}
+                    placeholder={composerPlaceholder}
+                    aria-label={composerLabel}
+                    rows={1}
+                    className="max-h-32 min-h-[42px] min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-2 py-[11px] text-sm leading-5 outline-none"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => openPhotoPicker({ camera: true })}
+                  disabled={sending || imagePreparing || policyBlocksComposer}
+                  title={policyBlocksComposer ? messagingPolicy.explanation : "Open camera"}
+                  aria-label="Open camera"
+                  className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-40 sm:hidden"
+                >
+                  <CameraIcon className="h-[21px] w-[21px]" />
+                </button>
+
+                <span data-scheduled-message-composer-slot="true" className="contents" />
+                {hasComposerPayload || policyBlocksComposer ? (
+                  <button
+                    type="submit"
+                    disabled={sending || imagePreparing || policyBlocksComposer}
+                    title={policyBlocksComposer ? messagingPolicy.explanation : imagePreparing ? "Preparing image" : "Send message"}
+                    aria-label="Send message"
+                    className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full bg-[var(--color-primary)] text-white shadow-sm transition-colors active:bg-[var(--color-primary-hover)] hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {sending || imagePreparing ? <Spinner /> : <SendIcon className="h-[19px] w-[19px]" />}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startRecording}
+                    disabled={sending || imagePreparing || policyBlocksComposer}
+                    title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"}
+                    aria-label="Record a voice message"
+                    className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full bg-[var(--color-primary)] text-white shadow-sm transition-colors active:bg-[var(--color-primary-hover)] hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+                  >
+                    <MicrophoneIcon className="h-[20px] w-[20px]" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {attachmentMenuOpen && !isStartingRecording && !isRecording && !voiceBlob && (
+              <>
+                <button
+                  type="button"
+                  className="fixed inset-0 z-[50] cursor-default bg-transparent"
+                  onClick={() => setAttachmentMenuOpen(false)}
+                  aria-label="Close attachment menu"
+                />
+                <div
+                  role="dialog"
+                  aria-label="Attachment options"
+                  className="relative z-[60] mt-2 rounded-[24px] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 shadow-[0_-8px_28px_rgba(24,39,33,0.10)] sm:absolute sm:bottom-[calc(100%+0.75rem)] sm:left-0 sm:mt-0 sm:w-[360px] sm:rounded-2xl sm:p-4 sm:shadow-[0_18px_48px_rgba(24,39,33,0.18)]"
+                >
+                  <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                    <ComposerAttachmentOption icon={ImageIcon} label="Photos" onClick={() => openPhotoPicker()} />
+                    <ComposerAttachmentOption icon={CameraIcon} label="Camera" onClick={() => openPhotoPicker({ camera: true })} />
+                    <ComposerAttachmentOption icon={VideoIcon} label="Video" onClick={openVideoPicker} />
+                    <ComposerAttachmentOption icon={DocumentIcon} label="Document" onClick={openDocumentPicker} />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </form>
@@ -2963,6 +3381,21 @@ function ThreadView({
         onConfirm={handleForwardConfirm}
       />
     </section>
+  );
+}
+
+function ComposerAttachmentOption({ icon: Icon, label, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-w-0 touch-manipulation flex-col items-center gap-2 rounded-2xl px-1 py-2 text-center transition active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)]"
+    >
+      <span className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] shadow-sm sm:h-12 sm:w-12">
+        <Icon className="h-6 w-6" />
+      </span>
+      <span className="text-[11px] font-medium text-[var(--color-text)] sm:text-xs">{label}</span>
+    </button>
   );
 }
 
@@ -2997,7 +3430,15 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
   if (!message) return null;
 
   const normalizedQuery = query.trim().toLowerCase();
+  const forwardMimeType = String(message.media_mime_type || "").toLowerCase();
+  const forwardingDocument = Boolean(
+    forwardMimeType &&
+    !forwardMimeType.startsWith("image/") &&
+    !forwardMimeType.startsWith("audio/") &&
+    !forwardMimeType.startsWith("video/")
+  );
   const choices = (conversations || []).filter((item) => {
+    if (forwardingDocument && (item.channel || "whatsapp") !== "whatsapp") return false;
     if (!normalizedQuery) return true;
     return [
       displayName(item),
@@ -3073,7 +3514,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
             className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:text-sm"
           />
           <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
-            <span>Select up to 10 conversations</span>
+            <span>{forwardingDocument ? "Documents can be forwarded to WhatsApp only" : "Select up to 10 conversations"}</span>
             <span className="font-semibold text-[var(--color-primary)]">{selectedIds.length} selected</span>
           </div>
         </div>
@@ -3209,8 +3650,20 @@ function MessageBubble({
     : sentByStaff
     ? message.sent_by_username
     : "AI";
-  const isAudio = message.media_mime_type?.startsWith("audio/");
-  const isVideo = message.media_mime_type?.startsWith("video/");
+  const mediaMimeType = String(message.media_mime_type || "").toLowerCase();
+  const isAudio = mediaMimeType.startsWith("audio/");
+  const isVideo = mediaMimeType.startsWith("video/");
+  const isImage = mediaMimeType.startsWith("image/") || (!mediaMimeType && !!message.media_url);
+  const isDocument = Boolean(
+    (message.has_media_attachment ||
+      message.media_base64 ||
+      message.previewUrl ||
+      message.media_filename ||
+      message._optimistic) &&
+    !isAudio &&
+    !isVideo &&
+    !isImage
+  );
   const isSticker =
     String(message.media_mime_type || "").toLowerCase() === "image/webp" &&
     /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
@@ -3226,11 +3679,14 @@ function MessageBubble({
     ? api.messageMediaUrl(contactId, message.id)
     : null;
   const permanentImageSrc =
-    message.media_url || (!isAudio && !isVideo ? storedMediaSrc : null);
+    message.media_url || (isImage ? storedMediaSrc : null);
   const imageSrc =
-    message.previewUrl && !storedImageLoaded
+    isImage && message.previewUrl && !storedImageLoaded
       ? message.previewUrl
-      : permanentImageSrc || message.previewUrl;
+      : permanentImageSrc || (isImage ? message.previewUrl : null);
+  const videoSrc = isVideo
+    ? (message._uploading ? message.previewUrl : (storedMediaSrc || message.previewUrl))
+    : null;
   useEffect(() => () => {
     if (message.previewUrl && !message._optimistic) URL.revokeObjectURL(message.previewUrl);
   }, [message.previewUrl, message._optimistic]);
@@ -3414,14 +3870,29 @@ function MessageBubble({
         )}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
-        ) : isVideo && storedMediaSrc ? (
-          <video
-            controls
-            preload="metadata"
-            playsInline
-            src={storedMediaSrc}
-            className="mb-1.5 max-h-72 w-full max-w-full rounded-lg bg-black"
-          />
+        ) : isVideo && videoSrc ? (
+          <div className="relative mb-1.5">
+            <video
+              controls
+              preload="metadata"
+              playsInline
+              src={videoSrc}
+              className="max-h-72 w-full max-w-full rounded-lg bg-black"
+            />
+            {message._uploading && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
+          </div>
+        ) : isDocument ? (
+          <a
+            href={storedMediaSrc || undefined}
+            target={storedMediaSrc ? "_blank" : undefined}
+            rel={storedMediaSrc ? "noreferrer" : undefined}
+            className={`mb-1.5 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-xs font-semibold ${isPatient ? "border-[var(--color-border)] bg-white text-[var(--color-text)]" : "border-white/25 bg-white/10 text-white"}`}
+            onClick={(event) => { if (!storedMediaSrc) event.preventDefault(); }}
+          >
+            <span aria-hidden="true">📄</span>
+            <span className="min-w-0 flex-1 truncate">{message.media_filename || "Open document"}</span>
+            {message._uploading && <Spinner className="h-3.5 w-3.5" />}
+          </a>
         ) : (
           hasImage && (
             <div className="relative mb-1.5">
@@ -3483,7 +3954,7 @@ function MessageBubble({
             {message.delivery_error && (
               <p
                 className="mt-1 text-[10px] leading-snug opacity-80"
-                title={displayDeliveryError(message.delivery_error)}
+                title={displayDeliveryError(message.delivery_error, message.media_mime_type)}
               >
                 {displayDeliveryError(message.delivery_error)}
               </p>
