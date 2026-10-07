@@ -1117,7 +1117,7 @@ function FollowUpMessageMode({
   ];
 
   return (
-    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+    <div className="mt-5 border-t border-[var(--color-border)] pt-5">
       <div>
         <p className="text-sm font-semibold">Message type</p>
         <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
@@ -1422,7 +1422,7 @@ function FollowUpMediaPicker({
   }
 
   return (
-    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+    <div className="mt-5 border-t border-[var(--color-border)] pt-5">
       <div>
         <p className="text-sm font-semibold">{label}</p>
         <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
@@ -1511,10 +1511,13 @@ function StepSummaryChips({ step }) {
     ? step.serviceOverrides.length
     : 0;
   const chips = [
-    step?.messageMode === "ai" ? "AI" : "Fixed",
-    followUpMediaSummary(step),
+    ...(step?.messageMode === "ai" ? ["AI"] : []),
+    ...(step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
     ...(serviceCount ? [`${serviceCount} service${serviceCount === 1 ? "" : "s"}`] : []),
   ];
+
+  if (!chips.length) return null;
+
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {chips.map((chip) => (
@@ -1788,6 +1791,7 @@ function FollowUpTool({
   const [expandedStepIndex, setExpandedStepIndex] = useState(null);
   const [previewStepIndex, setPreviewStepIndex] = useState(0);
   const [previewServiceName, setPreviewServiceName] = useState("");
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
 
   const allSteps = [
     {
@@ -2059,7 +2063,7 @@ function FollowUpTool({
               className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
             />
 
-            <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+            <div className="mt-5 border-t border-[var(--color-border)] pt-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -2353,152 +2357,154 @@ function FollowUpTool({
           </Card>
         </div>
 
-        <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
-          <Card>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
-                <h2 className="mt-1 font-display text-sm font-bold">Follow-up {safePreviewIndex + 1}</h2>
+        <aside className="xl:sticky xl:top-6 xl:self-start">
+          <button
+            type="button"
+            aria-label="Toggle follow-up preview"
+            aria-expanded={mobilePreviewOpen}
+            onClick={() => setMobilePreviewOpen((current) => !current)}
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3.5 text-left shadow-sm xl:hidden"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-bold">Preview message</p>
+              <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+                Follow-up {safePreviewIndex + 1} · {followUpTimingSummary(previewStep)}
+              </p>
+            </div>
+            <span className="shrink-0 text-xs font-semibold text-[var(--color-primary)]">
+              {mobilePreviewOpen ? "Hide" : "Open"}
+            </span>
+          </button>
+
+          <div className={`${mobilePreviewOpen ? "mt-3 block" : "hidden"} xl:mt-0 xl:block`}>
+            <Card>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
+                  <h2 className="mt-1 font-display text-sm font-bold">Follow-up {safePreviewIndex + 1}</h2>
+                </div>
+                <div className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1">
+                  {allSteps.map((_, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      aria-label={`Preview Follow-up ${index + 1}`}
+                      onClick={() => {
+                        setPreviewStepIndex(index);
+                        setPreviewServiceName("");
+                      }}
+                      className={`min-w-8 rounded-md px-2 py-1 text-[10px] font-bold ${safePreviewIndex === index ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1">
-                {allSteps.map((_, index) => (
+
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                <span className="font-semibold">{followUpTimingSummary(previewStep)}</span>
+                {previewStep?.messageMode === "ai" && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">AI</span>
+                )}
+                {previewMediaSource?.videoKey && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Video</span>
+                )}
+                {!previewMediaSource?.videoKey && previewMediaSource?.imageUrl && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Image</span>
+                )}
+                {(previewStep?.serviceOverrides || []).length > 0 && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">
+                    {previewStep.serviceOverrides.length} service{previewStep.serviceOverrides.length === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Preview language">
+                {FOLLOW_UP_LANGUAGES.map((language) => (
                   <button
-                    key={index}
+                    key={language.key}
                     type="button"
-                    aria-label={`Preview Follow-up ${index + 1}`}
-                    onClick={() => {
-                      setPreviewStepIndex(index);
-                      setPreviewServiceName("");
-                    }}
-                    className={`min-w-8 rounded-md px-2 py-1 text-[10px] font-bold ${safePreviewIndex === index ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                    role="tab"
+                    aria-selected={translationLanguage === language.key}
+                    onClick={() => setTranslationLanguage(language.key)}
+                    className={`shrink-0 border-b-2 px-2 py-1.5 text-[10px] font-semibold ${translationLanguage === language.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
                   >
-                    {index + 1}
+                    {language.label}
                   </button>
                 ))}
               </div>
-            </div>
 
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">
-                {previewStep?.messageMode === "ai" ? "AI fallback" : "Fixed"}
-              </span>
-              <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">
-                {FOLLOW_UP_LANGUAGES.find((item) => item.key === translationLanguage)?.label || "English"}
-              </span>
-              <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">
-                {followUpMediaSummary(previewMediaSource)}
-              </span>
-            </div>
+              {(previewStep?.serviceOverrides || []).length > 0 && (
+                <div className="mt-3">
+                  <label className="text-[10px] font-semibold text-[var(--color-text-muted)]">Preview version</label>
+                  <select
+                    value={previewServiceName}
+                    onChange={(event) => setPreviewServiceName(event.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs outline-none focus:border-[var(--color-primary)]"
+                  >
+                    <option value="">Default</option>
+                    {(previewStep.serviceOverrides || []).map((item) => (
+                      <option key={item.serviceName} value={item.serviceName}>
+                        {item.serviceName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-            <div className="mt-3 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Preview language">
-              {FOLLOW_UP_LANGUAGES.map((language) => (
-                <button
-                  key={language.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={translationLanguage === language.key}
-                  onClick={() => setTranslationLanguage(language.key)}
-                  className={`shrink-0 border-b-2 px-2 py-1.5 text-[10px] font-semibold ${translationLanguage === language.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
-                >
-                  {language.label}
-                </button>
-              ))}
-            </div>
+              {previewStep?.messageMode === "ai" && (
+                <p className="mt-3 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                  AI writes the live message from the conversation. This preview shows the configured fallback.
+                </p>
+              )}
 
-            {(previewStep?.serviceOverrides || []).length > 0 && (
-              <div className="mt-3">
-                <label className="text-[10px] font-semibold text-[var(--color-text-muted)]">Preview version</label>
-                <select
-                  value={previewServiceName}
-                  onChange={(event) => setPreviewServiceName(event.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs outline-none focus:border-[var(--color-primary)]"
-                >
-                  <option value="">Default</option>
-                  {(previewStep.serviceOverrides || []).map((item) => (
-                    <option key={item.serviceName} value={item.serviceName}>
-                      {item.serviceName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {previewStep?.messageMode === "ai" && (
-              <p className="mt-3 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                AI writes the live message from the conversation. This shows the configured fallback.
-              </p>
-            )}
-
-            <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
-              <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
-                {previewMediaSource?.imageUrl && (
-                  <img src={previewMediaSource.imageUrl} alt="" className="max-h-56 w-full object-cover" />
-                )}
-                {previewMediaSource?.videoKey && (
-                  <video
-                    key={previewVideoUrl}
-                    src={previewVideoUrl}
-                    controls
-                    preload="metadata"
-                    playsInline
-                    className="max-h-56 w-full bg-black object-contain"
-                  />
-                )}
-                <div className="px-3.5 py-2.5">
-                  <p className="mb-1 text-[10px] font-semibold text-white/70">
-                    {previewServiceName ? `Automated follow-up · ${previewServiceName}` : "Automated follow-up"}
-                  </p>
-                  <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+              <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
+                <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
+                  {previewMediaSource?.imageUrl && (
+                    <img src={previewMediaSource.imageUrl} alt="" className="max-h-56 w-full object-cover" />
+                  )}
+                  {previewMediaSource?.videoKey && (
+                    <video
+                      key={previewVideoUrl}
+                      src={previewVideoUrl}
+                      controls
+                      preload="metadata"
+                      playsInline
+                      className="max-h-56 w-full bg-black object-contain"
+                    />
+                  )}
+                  <div className="px-3.5 py-2.5">
+                    <p className="mb-1 text-[10px] font-semibold text-white/70">
+                      {previewServiceName ? `Automated follow-up · ${previewServiceName}` : "Automated follow-up"}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          </Card>
 
-          <Card>
-            <h2 className="font-display text-sm font-bold">Sequence</h2>
-            <div className="mt-4 space-y-2">
-              {allSteps.map((step, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  onClick={() => {
-                    setPreviewStepIndex(index);
-                    setPreviewServiceName("");
-                  }}
-                  className={`w-full rounded-xl px-3 py-2.5 text-left transition ${safePreviewIndex === index ? "bg-[var(--color-primary-light)]" : "bg-[var(--color-bg)] hover:bg-white"}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs font-semibold">Follow-up {index + 1}</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">{followUpTimingSummary(step)}</span>
-                  </div>
-                  <StepSummaryChips step={step} />
-                </button>
-              ))}
-            </div>
-          </Card>
-
-          <Card>
-            <h2 className="font-display text-sm font-bold">Before it sends</h2>
-            <ul className="mt-4 space-y-3">
-              <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
-              <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send while the permitted reply window is open." />
-              <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review." />
-            </ul>
-            <details className="group mt-3 border-t border-[var(--color-border)] pt-3">
-              <summary className="cursor-pointer list-none text-xs font-semibold text-[var(--color-primary)]">
-                <span className="group-open:hidden">View all sending rules</span>
-                <span className="hidden group-open:inline">Hide additional rules</span>
-              </summary>
-              <ul className="mt-3 space-y-3">
-                <Rule text="If AI decides to skip or request human review, the remaining steps for that conversation cycle stop too." />
-                <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
-                <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
-                <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-                <Rule text="WhatsApp opt-outs remain a hard stop." />
-                <Rule text="Saving does not add follow-ups to older conversations." />
-              </ul>
-            </details>
-          </Card>
+              <details className="group mt-4 border-t border-[var(--color-border)] pt-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-semibold">
+                  <span>Sending rules</span>
+                  <span className="text-[var(--color-primary)]">
+                    <span className="group-open:hidden">View</span>
+                    <span className="hidden group-open:inline">Hide</span>
+                  </span>
+                </summary>
+                <ul className="mt-3 space-y-3">
+                  <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
+                  <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send while the permitted reply window is open." />
+                  <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review." />
+                  <Rule text="If AI decides to skip or request human review, the remaining steps for that conversation cycle stop too." />
+                  <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
+                  <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
+                  <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
+                  <Rule text="WhatsApp opt-outs remain a hard stop." />
+                  <Rule text="Saving does not add follow-ups to older conversations." />
+                </ul>
+              </details>
+            </Card>
+          </div>
+        </aside>
         </aside>
       </div>
     </ToolShell>
