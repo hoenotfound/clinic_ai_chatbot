@@ -428,7 +428,7 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
 
   await runAutomatedFollowUps();
 
-  assert.equal(aiCalls, 1);
+  assert.equal(aiCalls, 0);
   assert.equal(
     claimInput.content,
     "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧"
@@ -3110,7 +3110,7 @@ test("AI-mode targeted media keeps the configured caption after AI safety review
 
   await runAutomatedFollowUps();
 
-  assert.equal(aiCalls, 0);
+  assert.equal(aiCalls, 1);
   assert.equal(claimInput.messageMode, "fixed");
   assert.equal(claimInput.targetedService, "Pelvic Care");
   assert.equal(claimInput.content, "Pelvic Care configured video caption");
