@@ -1349,11 +1349,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         });
     } else {
       const retryPurpose =
-        message.sent_by_username &&
-        message.is_automated_follow_up !== true &&
-        message.is_scheduled_message !== true
-          ? whatsappPolicy.manualStaffPurpose(contact)
-          : "service";
+        message.is_automated_follow_up === true
+          ? "marketing"
+          : message.sent_by_username &&
+              message.is_scheduled_message !== true
+            ? whatsappPolicy.manualStaffPurpose(contact)
+            : "service";
       if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
       performRetrySend = (activeContact) =>
