@@ -133,7 +133,18 @@ async function findCandidates({
              )
            ORDER BY recent_inbound.created_at DESC, recent_inbound.id DESC
            LIMIT 5
-         ) AS recent_inbound_messages
+         ) AS recent_inbound_messages,
+         ARRAY(
+           SELECT service_inbound.content
+           FROM messages service_inbound
+           WHERE service_inbound.contact_id = c.id
+             AND service_inbound.role = 'user'
+             AND service_inbound.id <= latest_inbound.id
+             AND service_inbound.created_at >=
+                 latest_inbound.created_at - interval '24 hours'
+           ORDER BY service_inbound.created_at DESC, service_inbound.id DESC
+           LIMIT 10
+         ) AS recent_service_messages
        FROM contacts c
        JOIN LATERAL (
          SELECT id, created_at
@@ -249,6 +260,7 @@ async function findCandidates({
        trigger_message_id,
        trigger_message_content,
        recent_inbound_messages,
+       recent_service_messages,
        treatment_interest,
        next_follow_up_step
      FROM conversation_state
