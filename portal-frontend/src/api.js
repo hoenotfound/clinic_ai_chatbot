@@ -243,6 +243,24 @@ export const api = {
     }
     return res.json();
   },
+  uploadFollowUpVideo: async (file) => {
+    const form = new FormData();
+    form.append("video", file);
+
+    const res = await fetch(`${BASE}/config/automated-follow-up/video`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      throw error;
+    }
+    return res.json();
+  },
   translateFollowUp: (message) =>
     request("/config/automated-follow-up/translations", {
       method: "POST",
