@@ -960,6 +960,8 @@ async function sendCandidate(candidate) {
                   delayMinutes: step.delayMinutes,
                   previousDelayMinutes:
                     stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+                  timingMode: step.timingMode,
+                  beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
                   triggerMode: settings.triggerMode,
                   activatedAt: settings.activatedAt,
                 });
