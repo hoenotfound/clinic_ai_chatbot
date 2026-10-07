@@ -1186,7 +1186,8 @@ test("closed WhatsApp reply window blocks image selection and voice recording", 
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Attach photo, video, or file" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Record a voice message" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Record a voice message" })).toHaveCount(0);
 
   const input = page.locator('input[type="file"][accept*="image/*"]');
   await input.setInputFiles(imagePayload("blocked-photo.png"));
