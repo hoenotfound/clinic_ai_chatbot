@@ -1223,18 +1223,18 @@ router.get("/automated-follow-up/video-preview", async (req, res) => {
       return res.status(503).send("Video storage is not configured.");
     }
 
-    const buffer = await mediaStorage.downloadMedia(key, {
-      maxBytes: followUpVideoPreparation.MAX_WHATSAPP_VIDEO_BYTES,
+    // Keep the permanent R2 object private, but let the authenticated staff
+    // browser stream it directly for a few minutes. This avoids proxying up to
+    // 16MB through Render just to render the Tools preview and preserves R2
+    // byte-range playback/seeking.
+    const url = mediaStorage.createPresignedGetUrl(key, {
+      expiresSeconds: 5 * 60,
     });
-    res.set("Content-Type", "video/mp4");
     res.set("Cache-Control", "private, no-store");
-    res.set("Content-Disposition", "inline");
-    return res.send(buffer);
+    res.set("Referrer-Policy", "no-referrer");
+    return res.redirect(302, url);
   } catch (err) {
-    if (err?.code === "MEDIA_TOO_LARGE") {
-      return res.status(413).send("Video is too large to preview.");
-    }
-    console.error("Failed to serve private follow-up video preview:", err);
+    console.error("Failed to create private follow-up video preview:", err);
     return res.status(500).send("Something went wrong.");
   }
 });
