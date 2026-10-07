@@ -269,17 +269,8 @@ function configuredServicesMentionedInText(value) {
   return [...matched.values()];
 }
 
-function followUpServiceContext(candidate) {
-  const customerMessages = Array.isArray(candidate.recent_service_messages)
-    ? candidate.recent_service_messages
-    : Array.isArray(candidate.recent_inbound_messages)
-      ? candidate.recent_inbound_messages
-      : [];
-
-  // Customer wording is authoritative. Walk newest -> oldest so a generic
-  // "price?" can inherit the service the customer named earlier, while an
-  // explicit comparison in the newest relevant message still fails closed.
-  for (const message of customerMessages) {
+function serviceMentionFromMessages(messages) {
+  for (const message of Array.isArray(messages) ? messages : []) {
     const matches = configuredServicesMentionedInText(message);
     if (matches.length === 1) {
       return { serviceName: matches[0], mentioned: true };
@@ -288,16 +279,37 @@ function followUpServiceContext(candidate) {
       return { serviceName: null, mentioned: true };
     }
   }
+  return { serviceName: null, mentioned: false };
+}
 
-  // Outbound content is only a fallback. Package captions often list included
-  // services such as pelvis + uterus + moxibustion, so never guess when the
-  // anchor itself names more than one configured service.
+function followUpServiceContext(candidate) {
+  // The current customer exchange is authoritative. An explicit service switch
+  // or comparison here must never be overridden by older history.
+  const currentCustomer = serviceMentionFromMessages(
+    candidate.recent_inbound_messages
+  );
+  if (currentCustomer.mentioned) return currentCustomer;
+
+  // A single service in the latest outbound anchor is strong current context
+  // (for example a 3D result/ad reply). A multi-service package anchor is not:
+  // its included treatments should not hijack the customer's primary interest.
   const anchorMatches = configuredServicesMentionedInText(
     candidate.trigger_message_content
   );
   if (anchorMatches.length === 1) {
     return { serviceName: anchorMatches[0], mentioned: true };
   }
+
+  // When the current customer turn is generic ("price?", "how much?") and the
+  // anchor lists several package components, carry forward the most recent
+  // customer-named service from the last 24 hours. This is what keeps a Pelvic
+  // Care enquiry targeted even when the package caption also mentions uterus
+  // care or moxibustion.
+  const recentCustomer = serviceMentionFromMessages(
+    candidate.recent_service_messages
+  );
+  if (recentCustomer.mentioned) return recentCustomer;
+
   if (anchorMatches.length > 1) {
     return { serviceName: null, mentioned: true };
   }
