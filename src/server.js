@@ -797,6 +797,16 @@ async function processIncomingMessage(
       // The Inbox can play the stored video, but the AI does not inspect video
       // frames or audio. Keep captionless videos as genuine inbound turns
       // without inventing a response from media content it cannot interpret.
+      // Surface the turn to staff while leaving AI ownership unchanged so the
+      // next normal customer message can still be handled automatically.
+      if (!contact.needs_attention) {
+        const attentionContact = await contactsRepo.setAttention(
+          contact.id,
+          true,
+          `${customerLabel} sent a video that requires staff review.`
+        );
+        if (attentionContact) contact = attentionContact;
+      }
       console.log(
         `Stored WhatsApp video for ${channel}:${from} without generating an AI reply.`
       );
