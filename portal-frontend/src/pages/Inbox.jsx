@@ -3140,7 +3140,7 @@ function ThreadView({
             </div>
           )}
           {imagePreviewUrl && (
-            <div className="mb-2 flex items-center gap-2 rounded-[18px] border border-[var(--color-border)] bg-white px-2.5 py-2 shadow-sm">
+            <div data-composer-media="true" className="mb-2 flex items-center gap-2 rounded-[18px] border border-[var(--color-border)] bg-white px-2.5 py-2 shadow-sm">
               <img src={imagePreviewUrl} alt="Selected attachment" className="h-11 w-11 rounded-xl object-cover" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-semibold">{imageFile.name}</p>
@@ -3152,7 +3152,7 @@ function ThreadView({
             </div>
           )}
           {attachmentFile && (
-            <div className="mb-2 flex items-center gap-2 rounded-[18px] border border-[var(--color-border)] bg-white px-2.5 py-2 shadow-sm">
+            <div data-composer-media="true" className="mb-2 flex items-center gap-2 rounded-[18px] border border-[var(--color-border)] bg-white px-2.5 py-2 shadow-sm">
               {attachmentKind === "video" && attachmentPreviewUrl ? (
                 <video src={attachmentPreviewUrl} muted playsInline preload="metadata" className="h-11 w-11 rounded-xl bg-black object-cover" />
               ) : (
@@ -3235,12 +3235,13 @@ function ThreadView({
                         ))}
                       </div>
                       <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-[var(--color-text-muted)]">
-                        {formatDuration(Math.floor(voicePreviewPlaying ? voicePreviewElapsed : voiceDuration))}
+                        {formatDuration(Math.floor(voicePreviewPlaying || voicePreviewElapsed > 0 ? voicePreviewElapsed : voiceDuration))}
                       </span>
                     </div>
                   )}
                 </div>
 
+                <span data-scheduled-message-composer-slot="true" className="contents" />
                 {isStartingRecording ? (
                   <button
                     type="button"
@@ -3291,6 +3292,7 @@ function ThreadView({
                     value={draft}
                     onChange={handleDraftChange}
                     onPaste={handleComposerPaste}
+                    disabled={policyBlocksComposer}
                     onFocus={() => {
                       if (attachmentMenuOpen) setAttachmentMenuOpen(false);
                     }}
@@ -3318,7 +3320,8 @@ function ThreadView({
                   <CameraIcon className="h-[21px] w-[21px]" />
                 </button>
 
-                {hasComposerPayload ? (
+                <span data-scheduled-message-composer-slot="true" className="contents" />
+                {hasComposerPayload || policyBlocksComposer ? (
                   <button
                     type="submit"
                     disabled={sending || imagePreparing || policyBlocksComposer}
