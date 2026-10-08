@@ -1,3 +1,4 @@
+const { verboseInboxMediaLogs } = require("../utils/inboxMediaLogging");
 const contactsRepo = require("../db/contactsRepo");
 const messagingRuntimeHealthRepo = require("../db/messagingRuntimeHealthRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
@@ -111,7 +112,7 @@ async function trackSocialOutbound(channel, operation) {
 
 async function freeformGuard(contact, purpose = "service", inboxTimings = null) {
   const startedAt = performance.now();
-  if (inboxTimings) console.info("[Inbox media stage]", JSON.stringify({
+  if (inboxTimings && verboseInboxMediaLogs()) console.info("[Inbox media stage]", JSON.stringify({
     requestId: inboxTimings.requestId, target: contact?.id,
     stage: "providerPolicyMs", status: "started",
   }));
@@ -147,7 +148,7 @@ async function freeformGuard(contact, purpose = "service", inboxTimings = null) 
   } finally {
     if (inboxTimings) {
       inboxTimings.providerPolicyMs = Math.round(performance.now() - startedAt);
-      console.info("[Inbox media stage]", JSON.stringify({
+      if (verboseInboxMediaLogs()) console.info("[Inbox media stage]", JSON.stringify({
         requestId: inboxTimings.requestId, target: contact?.id,
         stage: "providerPolicyMs", status: "finished", elapsedMs: inboxTimings.providerPolicyMs,
       }));
