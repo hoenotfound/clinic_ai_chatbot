@@ -80,10 +80,22 @@ function inferConfiguredServiceFromText(value, config = clinicConfig) {
   return covering.length === 1 ? covering[0].serviceName : null;
 }
 
-function cleanScoredTreatmentInterest(value) {
+function cleanScoredTreatmentInterest(value, config = clinicConfig) {
   if (typeof value !== "string") return null;
   const cleaned = value.trim().slice(0, 160);
-  return cleaned || null;
+  if (!cleaned) return null;
+
+  const normalized = normalizeServiceText(cleaned);
+  const exactService = (Array.isArray(config?.services) ? config.services : [])
+    .map((service) => typeof service?.name === "string" ? service.name.trim() : "")
+    .find((serviceName) => normalizeServiceText(serviceName) === normalized);
+  if (exactService) return exactService;
+
+  // The scoring prompt requires an exact configured name, but fail safely if a
+  // provider returns extra wording. Resolve only when that wording still points
+  // to one unambiguous configured service; otherwise preserve the current CRM
+  // value instead of writing a free-form or multi-service string.
+  return inferConfiguredServiceFromText(cleaned, config);
 }
 
 module.exports = {
