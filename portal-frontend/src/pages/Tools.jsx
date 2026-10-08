@@ -2650,7 +2650,7 @@ function FollowUpTool({
                       templateRules: [
                         ...(current.freeEntry?.templateRules || []),
                         { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
-                          serviceName: config?.services?.[0]?.name || "",
+                          serviceName: services?.[0]?.name || "",
                           templateName: "", mediaUrl: "" }
                       ],
                     },
@@ -2680,7 +2680,7 @@ function FollowUpTool({
                         }
                       }))}>
                       <option value="">Select treatment</option>
-                      {(config?.services || []).map((service) =>
+                      {(services || []).map((service) =>
                         <option key={service.name} value={service.name}>{service.name}</option>)}
                     </select>
                   </label>
