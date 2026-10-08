@@ -37,88 +37,103 @@ function selectedService(candidate, services, aliases = []) {
   const saved = norm(candidate.treatment_interest);
   return services.find((service) => norm(service.name) === saved)?.name || null;
 }
-// A pricing graphic is a response to expressed commercial interest, not a
-// default treatment-education follow-up. Only the customer's own messages
-// qualify; CRM ad attribution alone must never trigger promotional pricing.
-const PRICING_INTEREST_RE = /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|收費|费用|費用|报价|報價|折扣|优惠|優惠|配套|套餐|特价|特價|how\s+much|price|pricing|cost|fee|fees|quote|quotation|promotion|promo|discount|package|packages|voucher|budget|harga|berapa|kos|pakej|promosi|diskaun|rm\s*\d)/iu;
-
+// Pricing reminders are scheduled treatment follow-ups. They must NOT depend
+// on whether the customer proactively asked about a price.
 function hasPricingInterest(messages) {
-  // Package-name inference may also recognize the service name itself, which
-  // must NOT count as a request for pricing. Require explicit commercial words.
-  return (Array.isArray(messages) ? messages : [])
-    .some((message) => PRICING_INTEREST_RE.test(String(message || "")));
+  return (Array.isArray(messages) ? messages : []).some((message) =>
+    /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|費用|优惠|優惠|套餐|配套|how\\s+much|pricing|price|cost|package|promo|harga|berapa|pakej|promosi|rm\\s*\\d)/iu
+      .test(String(message || ""))
+  );
 }
 
 function evaluatePricingReminder({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
   const service = selectedService(candidate, services, aliases);
-  if (!service) return { offer: null, reason: "ambiguous_service" };
+  if (!service) return { offer: null, offers: [], reason: "ambiguous_service" };
   const matching = (Array.isArray(promotions) ? promotions : []).filter(
     (promotion) => norm(promotion.linkedService) === norm(service)
   );
-  if (matching.length !== 1) return { offer: null, reason: "missing_promotion" };
+  if (matching.length !== 1) return { offer: null, offers: [], reason: "missing_promotion" };
 
   const packages = promotionPackages(matching[0]);
-  if (!packages.length) return { offer: null, reason: "missing_promotion" };
-  if (!hasPricingInterest(candidate.recent_customer_messages)) {
-    return { offer: null, reason: "no_pricing_interest" };
-  }
-  let selected;
-  if (packages.length === 1) {
-    selected = packages[0];
-  } else {
-    // Fail closed on a comparison, even if the customer mentions both options.
-    for (const message of candidate.recent_customer_messages || []) {
-      const mentioned = findMentionedPromotionPackages(packages, String(message || ""));
-      if (mentioned.length > 1) return { offer: null, reason: "ambiguous_package" };
-      if (mentioned.length === 1) {
-        selected = mentioned[0];
-        break;
-      }
-    }
-  }
-  if (!selected) return { offer: null, reason: "ambiguous_package" };
-  const media = resolveLocalizedMedia(selected, language);
-  if (!media?.imageUrl || !media?.caption) {
-    return { offer: null, reason: "missing_promotion" };
-  }
-  const variants = mediaVariants(selected);
-  const identities = [...new Set(
-    variants.map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean)
-  )];
-  const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
-    .filter((message) =>
-      // Cancelled is an internal pre-send abort, not an attempted delivery.
-      // It must never suppress a real future pricing graphic.
-      norm(message.delivery_status) !== "cancelled" &&
-      identities.includes(imageIdentity(message.media_url)) &&
-      String(message.content || "").trim()
-    );
+  if (!packages.length) return { offer: null, offers: [], reason: "missing_promotion" };
 
-  const knownAccepted = previous.some((message) => {
-    const status = norm(message.delivery_status);
-    return ["sent", "delivered", "read"].includes(status) ||
-      (status === "pending" && Boolean(message.whatsapp_message_id));
-  });
-  if (knownAccepted) return { offer: null, reason: "already_sent" };
-  if (previous.length > 0) {
-    // A failed/unknown/pending-without-provider-id record is not proof of
-    // delivery. Never silently count it as sent or blindly retry it.
-    return { offer: null, reason: "delivery_review" };
+  // Only the exact two-package 骨盆调理 promotion sends A and B when the
+  // customer hasn't selected one. Never broadcast all packages of other
+  // services or turn a 3D-versus-9D comparison into a combination purchase.
+  const pelvisAB = norm(service) === norm("骨盆调理") &&
+    packages.length === 2 &&
+    packages.some((item) => norm(item.name) === "package a") &&
+    packages.some((item) => norm(item.name) === "package b");
+
+  let explicit = null;
+  let ambiguous = false;
+  for (const message of candidate.recent_customer_messages || []) {
+    const mentioned = findMentionedPromotionPackages(packages, String(message || ""));
+    if (mentioned.length > 1) { ambiguous = true; break; }
+    if (mentioned.length === 1) { explicit = mentioned[0]; break; }
   }
-  return {
-    reason: null,
-    offer: {
+  if (ambiguous && !pelvisAB) {
+    return { offer: null, offers: [], reason: "ambiguous_package" };
+  }
+  const selected = packages.length === 1
+    ? packages
+    : pelvisAB && (ambiguous || !explicit)
+      ? packages
+      : explicit ? [explicit] : [];
+  if (!selected.length) return { offer: null, offers: [], reason: "ambiguous_package" };
+
+  const configuredOffers = selected.map((item) => {
+    const media = resolveLocalizedMedia(item, language);
+    if (!media?.imageUrl || !media?.caption || !item.name) return null;
+    const identities = [...new Set(
+      mediaVariants(item).map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean)
+    )];
+    return {
       serviceName: service,
       promotionName: matching[0].name,
-      packageName: selected.name,
+      packageName: item.name,
       caption: media.caption,
       imageUrl: media.imageUrl,
       identities,
-    },
-  };
+    };
+  });
+  // Do not send only A when Package B is misconfigured.
+  if (configuredOffers.some((offer) => !offer)) {
+    return { offer: null, offers: [], reason: "missing_promotion" };
+  }
+  // Prevent two configured packages from claiming the same graphic.
+  if (new Set(configuredOffers.map((offer) => imageIdentity(offer.imageUrl))).size !== configuredOffers.length) {
+    return { offer: null, offers: [], reason: "ambiguous_package" };
+  }
+
+  const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
+    .filter((message) => norm(message.delivery_status) !== "cancelled" &&
+      String(message.content || "").trim());
+  let needsReview = false;
+  const offers = configuredOffers.filter((offer) => {
+    const matchingMedia = previous.filter((message) =>
+      offer.identities.includes(imageIdentity(message.media_url))
+    );
+    if (!matchingMedia.length) return true;
+    const accepted = matchingMedia.some((message) => {
+      const status = norm(message.delivery_status);
+      return ["sent", "delivered", "read"].includes(status) ||
+        (status === "pending" && Boolean(message.whatsapp_message_id));
+    });
+    if (accepted) return false;
+    needsReview = true;
+    return false;
+  });
+  // If delivery of one graphic is uncertain, do not blindly continue the
+  // package set. Staff must check whether the missing media reached WhatsApp.
+  if (needsReview) return { offer: null, offers: [], reason: "delivery_review" };
+  if (!offers.length) return { offer: null, offers: [], reason: "already_sent" };
+
+  return { offer: offers[0], offers, reason: null };
 }
 
 function selectPricingOffer(options) {
-  return evaluatePricingReminder(options).offer;
+  const result = evaluatePricingReminder(options);
+  return result.offers.length === 1 ? result.offers[0] : null;
 }
 module.exports = { evaluatePricingReminder, selectPricingOffer, imageIdentity, selectedService, hasPricingInterest };
