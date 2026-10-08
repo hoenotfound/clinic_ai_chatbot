@@ -24,6 +24,8 @@ test("recordAiUsage stores only bounded usage metadata fields", async () => {
     outputTokens: 87,
     thinkingTokens: 0,
     cachedTokens: 12,
+    cacheMetadataPresent: true,
+    promptPrefixHash: "0123456789abcdef",
     totalTokens: 1321,
     latencyMs: 640,
   }, database);
@@ -42,6 +44,8 @@ test("recordAiUsage stores only bounded usage metadata fields", async () => {
     12,
     1321,
     640,
+    true,
+    "0123456789abcdef",
   ]);
 });
 
@@ -55,6 +59,11 @@ test("getAiUsageSummary returns totals plus model, purpose and failure-cause bre
       output_tokens: "500",
       thinking_tokens: "0",
       cached_tokens: "200",
+      cache_metadata_present_requests: 4,
+      cache_metadata_missing_requests: 2,
+      cache_metadata_unknown_requests: 1,
+      cache_hit_requests: 3,
+      distinct_prompt_prefixes: 2,
       total_tokens: "4500",
       average_latency_ms: "720",
     }] },
@@ -89,6 +98,11 @@ test("getAiUsageSummary returns totals plus model, purpose and failure-cause bre
 
   assert.equal(summary.requests, 10);
   assert.equal(summary.totalTokens, 4500);
+  assert.equal(summary.cacheMetadataPresentRequests, 4);
+  assert.equal(summary.cacheMetadataMissingRequests, 2);
+  assert.equal(summary.cacheMetadataUnknownRequests, 1);
+  assert.equal(summary.cacheHitRequests, 3);
+  assert.equal(summary.distinctPromptPrefixes, 2);
   assert.equal(summary.averageLatencyMs, 720);
   assert.deepEqual(summary.byModel[0], {
     provider: "gemini",
@@ -109,4 +123,13 @@ test("getAiUsageSummary returns totals plus model, purpose and failure-cause bre
     { failureKind: "model_unavailable", requests: 2 },
     { failureKind: "rate_limit", requests: 1 },
   ]);
+});
+
+test("legacy events remain cache-metadata unknown, never silently false",async()=>{
+  const captured=[];
+  await recordAiUsage({provider:"gemini",model:"m",purpose:"customer_reply",status:"success",cachedTokens:0,promptPrefixHash:"raw patient prompt"},{
+    async query(sql,params){captured.push(params);return {rows:[]};}
+  });
+  assert.equal(captured[0][11],null);
+  assert.equal(captured[0][12],null);
 });
