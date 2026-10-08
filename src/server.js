@@ -30,7 +30,10 @@ const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger
 const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
-const { detectConversationLanguage } = require("./utils/chatLanguage");
+const {
+  detectConversationLanguage,
+  shouldGenerateLocalizedIntro,
+} = require("./utils/chatLanguage");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -872,6 +875,12 @@ async function processIncomingMessage(
         .map((message) => message.content)
     );
     const isFirstMessage = forceFirstMessage || history.length === 1;
+    const customerMessages = history.filter((message) => message?.role === "user");
+    const newestCustomerText = customerMessages.at(-1)?.content || text;
+    const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
+      newestCustomerText,
+      clinicConfig.introMessage
+    );
 
     // High-confidence urgent safety phrases must not depend on an AI provider.
     // Bypass model generation completely so outages/capacity failures cannot
@@ -918,6 +927,7 @@ async function processIncomingMessage(
 
       const rawAiReply = await ai.getReply(history, {
         isFirstMessage,
+        generateFirstIntro,
         channel,
         metaAdContext,
       });
@@ -945,7 +955,7 @@ async function processIncomingMessage(
       }
     }
 
-    const reply = isFirstMessage && !urgentSafety
+    const reply = isFirstMessage && !urgentSafety && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
 
@@ -1188,6 +1198,7 @@ async function processIncomingMessage(
           serviceQuery,
           serviceQuerySource,
           metaAdCreativeService,
+          customerText: text,
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
