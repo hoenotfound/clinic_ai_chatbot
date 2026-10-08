@@ -332,3 +332,36 @@ test("language-only and greeting-only messages never trigger result images even 
     assert.equal(checked, false, "must reject before any storage queries");
   }
 });
+
+
+test("model service-query flag cannot trigger results for admin-only messages", async () => {
+  for (const customerText of [
+    "What is your contact information?",
+    "Can I get your phone number?",
+    "More details about opening hours please",
+    "Boleh tahu nombor telefon?",
+    "请问营业时间？",
+  ]) {
+    let attempted = false;
+    const result = await resolveResultMediaForReply({
+      customerText,
+      serviceQuery: true,
+      serviceQuerySource: "customer_message",
+      metaAdCreativeService: treatment,
+      priceQuery: false,
+      packageQuery: false,
+      treatment,
+      flagged: false,
+      bookingReady: false,
+      keywordReason: null,
+      needsAttention: false,
+      textSendSucceeded: true,
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      contactId: 42,
+      wasMediaRecentlySent: async () => { attempted = true; return false; },
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(result, null, customerText);
+    assert.equal(attempted, false);
+  }
+});
