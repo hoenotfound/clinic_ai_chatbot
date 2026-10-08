@@ -3,10 +3,17 @@ import { api } from "../api";
 import Spinner from "./Spinner";
 import {
   buildWhatsAppBusinessAppLoginOptions,
-  classifyWhatsAppEmbeddedSignupEvent,
   loadMetaSdk,
   parseWhatsAppEmbeddedSignupMessage,
 } from "../utils/whatsappEmbeddedSignup";
+import {
+  createWhatsAppEmbeddedSignupAttempt,
+  expireWhatsAppSignupAttempt,
+  receiveWhatsAppSignupAuthorization,
+  receiveWhatsAppSignupMessage,
+} from "../utils/whatsappEmbeddedSignupAttempt";
+
+const META_COMPLETION_WAIT_MS = 12000;
 
 function formatTime(value) {
   if (!value) return "—";
@@ -44,10 +51,9 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
   const [result, setResult] = useState(null);
 
   const nonceRef = useRef(null);
-  const codeRef = useRef(null);
-  const sessionInfoRef = useRef(null);
+  const activeAttemptRef = useRef(null);
+  const nextAttemptIdRef = useRef(0);
   const submittingRef = useRef(false);
-  const standardSignupRef = useRef(false);
   const completionTimerRef = useRef(null);
 
   const clearCompletionTimer = useCallback(() => {
@@ -78,133 +84,139 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
 
   useEffect(() => {
     void loadConfig();
-    return () => clearCompletionTimer();
+    return () => {
+      activeAttemptRef.current = null;
+      clearCompletionTimer();
+    };
   }, [loadConfig, clearCompletionTimer]);
 
-  const completeIfReady = useCallback(async () => {
-    const code = codeRef.current;
-    const sessionInfo = sessionInfoRef.current;
-    const nonce = nonceRef.current;
-    if (!code || !sessionInfo || !nonce || submittingRef.current) return;
+  const handleOutcome = useCallback((attempt, outcome) => {
+    if (activeAttemptRef.current !== attempt || outcome.kind === "ignored") return;
+    clearCompletionTimer();
 
-    submittingRef.current = true;
-    setConnecting(true);
-    setStage("Validating the authorized WhatsApp Business account…");
-    setError("");
+    if (outcome.kind === "waiting") {
+      setStage(
+        attempt.code
+          ? "Meta authorization received. Waiting for the Business App completion event…"
+          : "Meta reported a signup completion. Waiting for the authorization code…"
+      );
+      completionTimerRef.current = window.setTimeout(() => {
+        if (activeAttemptRef.current !== attempt) return;
+        const expired = expireWhatsAppSignupAttempt(attempt);
+        handleOutcome(attempt, expired);
+      }, META_COMPLETION_WAIT_MS);
+      return;
+    }
 
-    try {
-      const completed = await api.completeWhatsAppCoexistenceOnboarding({
-        code,
-        nonce,
-        sessionInfo,
-      });
-      setResult(completed);
+    // A completed, cancelled or timed-out attempt must not consume late events
+    // from that attempt. Neither of the non-coexistence outcomes reaches the API.
+    activeAttemptRef.current = null;
+
+    if (outcome.kind === "coexistence") {
+      submittingRef.current = true;
+      setConnecting(true);
       setNotice("");
-      setStage("Authorization validated. Nothing has been activated yet.");
-      clearCompletionTimer();
-    } catch (err) {
-      setError(err.message || "WhatsApp coexistence onboarding could not be validated.");
-      setStage("");
-      void loadConfig();
-    } finally {
-      submittingRef.current = false;
-      setConnecting(false);
+      setError("");
+      setStage("Meta finished Business App onboarding. Validating the authorization…");
+      void (async () => {
+        try {
+          const completed = await api.completeWhatsAppCoexistenceOnboarding({
+            code: outcome.code,
+            nonce: outcome.nonce,
+            sessionInfo: outcome.sessionInfo,
+          });
+          setResult(completed);
+          setStage("Authorization validated. Nothing has been activated yet.");
+        } catch (err) {
+          setError(err.message || "WhatsApp coexistence onboarding could not be validated.");
+          setStage("");
+          void loadConfig();
+        } finally {
+          submittingRef.current = false;
+          setConnecting(false);
+        }
+      })();
+      return;
+    }
+
+    setConnecting(false);
+    setStage("");
+
+    if (outcome.kind === "standard") {
+      setError("");
+      setNotice("standard");
+      return;
+    }
+    if (outcome.kind === "unconfirmed") {
+      setError("");
+      setNotice("unconfirmed");
+      return;
+    }
+
+    setNotice("");
+    if (outcome.kind === "missing_code") {
+      setError(
+        outcome.cancelled
+          ? "Meta login was cancelled or blocked. No authorization code was received."
+          : "Meta did not provide an authorization code. This signup is not connected. Check the Meta popup and try again."
+      );
+    } else if (outcome.kind === "conflict") {
+      setError("Meta sent conflicting signup completion events. Nothing was connected. Close other Meta signup popups before trying again.");
+    } else if (outcome.kind === "error") {
+      setError(outcome.message || "Meta reported an error during WhatsApp Embedded Signup.");
+    } else if (outcome.kind === "cancel") {
+      setError("WhatsApp Embedded Signup was cancelled before completion.");
     }
   }, [loadConfig, clearCompletionTimer]);
 
   useEffect(() => {
     function onMessage(event) {
+      const attempt = activeAttemptRef.current;
+      if (!attempt || submittingRef.current) return;
+
       const payload = parseWhatsAppEmbeddedSignupMessage(event);
       if (!payload) return;
-
-      const outcome = classifyWhatsAppEmbeddedSignupEvent(payload);
-
-      if (outcome === "coexistence") {
-        standardSignupRef.current = false;
-        sessionInfoRef.current = payload;
-        setNotice("");
-        setStage("Meta finished Business App onboarding. Securing the authorization…");
-        void completeIfReady();
-        return;
-      }
-
-      if (outcome === "standard") {
-        // A normal Cloud API signup may also return an authorization code.
-        // Never submit that code as a Business App coexistence authorization.
-        if (sessionInfoRef.current || submittingRef.current) return;
-        standardSignupRef.current = true;
-        clearCompletionTimer();
-        setConnecting(false);
-        setStage("");
-        setError("");
-        setNotice("standard");
-        return;
-      }
-
-      if (outcome === "error" || outcome === "cancel") {
-        clearCompletionTimer();
-        setConnecting(false);
-        setStage("");
-        setNotice("");
-        setError(
-          outcome === "error"
-            ? payload.data?.error_message || "Meta reported an error during WhatsApp Embedded Signup."
-            : "WhatsApp Embedded Signup was cancelled before completion."
-        );
-      }
+      handleOutcome(attempt, receiveWhatsAppSignupMessage(attempt, payload));
     }
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [completeIfReady, clearCompletionTimer]);
+  }, [handleOutcome]);
 
   function launchSignup() {
-    if (!config?.configured || !sdkReady || !window.FB?.login || connecting) return;
+    if (!config?.configured || !sdkReady || !window.FB?.login || connecting || submittingRef.current) return;
 
     clearCompletionTimer();
+    const attempt = createWhatsAppEmbeddedSignupAttempt(
+      ++nextAttemptIdRef.current,
+      nonceRef.current
+    );
+    activeAttemptRef.current = attempt;
     setError("");
     setNotice("");
     setResult(null);
     setConnecting(true);
     setStage("Complete the Meta popup using the existing WhatsApp Business app number.");
-    codeRef.current = null;
-    sessionInfoRef.current = null;
-    standardSignupRef.current = false;
-    submittingRef.current = false;
 
-    window.FB.login(
-      (response) => {
-        // Meta's postMessage can arrive before the FB.login callback.
-        if (standardSignupRef.current) return;
-        const code = response?.authResponse?.code;
-        if (!code) {
-          setConnecting(false);
-          setStage("");
-          setError(
-            response?.status === "unknown"
-              ? "Meta login was cancelled, blocked, or did not finish."
-              : "Meta did not return an Embedded Signup authorization code."
-          );
-          return;
-        }
-
-        codeRef.current = code;
-        setStage("Meta authorization received. Waiting for the Business App completion event…");
-        void completeIfReady();
-
+    try {
+      window.FB.login(
+        (response) => {
+          // This closure belongs to one launch; callbacks from previous popup
+          // attempts cannot complete or overwrite the current attempt.
+          if (activeAttemptRef.current !== attempt) return;
+          handleOutcome(attempt, receiveWhatsAppSignupAuthorization(attempt, response));
+        },
+        buildWhatsAppBusinessAppLoginOptions(config)
+      );
+    } catch (err) {
+      if (activeAttemptRef.current === attempt) {
+        activeAttemptRef.current = null;
         clearCompletionTimer();
-        completionTimerRef.current = window.setTimeout(() => {
-          completionTimerRef.current = null;
-          if (!sessionInfoRef.current && !submittingRef.current && !standardSignupRef.current) {
-            setConnecting(false);
-            setStage("");
-            setError("");
-            setNotice("unconfirmed");
-          }
-        }, 12000);
-      },
-      buildWhatsAppBusinessAppLoginOptions(config)
-    );
+        setConnecting(false);
+        setStage("");
+        setError(err.message || "Meta Embedded Signup could not be launched.");
+      }
+    }
   }
 
   const latest = result?.attempt || config?.latestAttempt || null;
@@ -273,12 +285,12 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
         <div role="status" className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs leading-5 text-[var(--color-text)]">
           <p className="font-semibold">
             {notice === "standard"
-              ? "Standard WhatsApp Cloud API signup completed"
+              ? "Meta reported a standard Cloud API signup"
               : "Meta authorization received, but coexistence not confirmed"}
           </p>
           <p className="mt-1">
             {notice === "standard"
-              ? "Meta completed a standard Cloud API signup, not WhatsApp Business App coexistence. For a new number, continue with the regular WhatsApp Cloud API setup using its WABA and phone credentials. To use coexistence, first use an eligible number already active in the WhatsApp Business mobile app."
+              ? "Meta reported a standard Cloud API signup, not Business App coexistence. This screen has not exchanged the code, verified the WABA, or connected the number to DA Chatbot. For a new number, use the regular WhatsApp Cloud API setup to verify and configure its WABA, phone number and token. To use coexistence, first use an eligible number active in the WhatsApp Business mobile app."
               : "No WhatsApp Business App completion event reached this page. If you used a new number, follow regular Cloud API setup. If the number was already active in the WhatsApp Business app, check the Embedded Signup configuration and try again only after confirming eligibility."}
           </p>
           <p className="mt-1 font-medium">
