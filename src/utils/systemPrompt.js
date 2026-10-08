@@ -6,6 +6,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
     return {
       isFirstMessage: optionsOrFirstMessage,
+      generateFirstIntro: false,
       channel: "whatsapp",
       surface: "conversation",
       publicReplyEnabled: true,
@@ -17,6 +18,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
   }
   return {
     isFirstMessage: Boolean(optionsOrFirstMessage?.isFirstMessage),
+    generateFirstIntro: optionsOrFirstMessage?.generateFirstIntro === true,
     channel: optionsOrFirstMessage?.channel || "whatsapp",
     surface: optionsOrFirstMessage?.surface || "conversation",
     publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
@@ -1035,7 +1037,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   if (normalizedOptions.surface === "follow_up") {
     return buildFollowUpPrompt(normalizedOptions);
   }
-  const { isFirstMessage, channel } = normalizedOptions;
+  const { isFirstMessage, channel, generateFirstIntro } = normalizedOptions;
   const context = getBusinessContext();
   const { terminology: terms, conversion } = context;
   const conversationContext = normalizedOptions.conversationContext;
@@ -1224,12 +1226,14 @@ ${appointmentLocationOutputRule}
 CURRENT TURN CONTEXT:
 - You are currently replying on ${channelLabel(channel)}.
 - ${isFirstMessage
-    ? `This is the first AI reply. The business intro ("${introMessage}") is added automatically by the application before your reply is sent. Do not introduce yourself again or repeat the business name in a greeting. Go straight into answering what the ${terms.customerSingular} asked.`
+    ? generateFirstIntro
+      ? `This is the first AI reply. The configured business intro ("${introMessage}") is not appended because it is in a different language from the customer's request. Greet the customer naturally in their requested language, mention the business name once, and then address the customer. Keep the entire greeting and answer in that language except for official service names.`
+      : `This is the first AI reply. The business intro ("${introMessage}") is added automatically by the application before your reply is sent. Do not introduce yourself again or repeat the business name in a greeting. Go straight into answering what the ${terms.customerSingular} asked.`
     : `This is an ongoing conversation. Do not re-introduce yourself or repeat the business name; continue the chat naturally.`}
 ${metaAdContextSection(normalizedOptions.metaAdContext)}
 
 LANGUAGE:
-Write the "reply" in whichever language the ${terms.customerSingular} writes in — English, Bahasa Malaysia, or Chinese (Simplified). If they mix languages (common in Malaysia), mirror that mix naturally. Keep it short and appropriate to ${channelLabel(channel)} chat — a few sentences, not an email.
+Write the "reply" in whichever language the ${terms.customerSingular} writes in — English, Bahasa Malaysia, or Chinese (Simplified). An explicit language request such as "English" or "BM" overrides the language of service names and previous conversation turns. If they mix languages (common in Malaysia), mirror that mix naturally. Keep it short and appropriate to ${channelLabel(channel)} chat — a few sentences, not an email.
 
 Your job is to answer questions warmly and accurately, and actively guide genuinely interested ${terms.customerPlural} toward ${conversion.label} using the configured playbook. Any next step that requires staff confirmation must remain unconfirmed until a team member or connected system confirms it.`;
 }
