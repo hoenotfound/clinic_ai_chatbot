@@ -67,6 +67,7 @@ async function runSuccessfulPriceTurn() {
     const resultBundle = await resolveResultMediaForReply({
       priceQuery: true,
       packageQuery: false,
+      customerText: "3D多少钱？",
       treatment,
       flagged: false,
       bookingReady: false,
