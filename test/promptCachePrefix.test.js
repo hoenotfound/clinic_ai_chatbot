@@ -61,7 +61,7 @@ test("constant FAQ/guardrail prefix comes before service-specific sections and s
     assert.ok(a.indexOf("FREQUENTLY ASKED QUESTIONS:") < a.indexOf("BUSINESS INFO:"));
     assert.ok(a.indexOf("RULES (never break these):") < a.indexOf("BUSINESS INFO:"));
     assert.equal((a.match(/FREQUENTLY ASKED QUESTIONS:/g)||[]).length,1);
-    assert.equal((a.match(/RULES \\(never break these\\):/g)||[]).length,1);
+    assert.equal(a.split("RULES (never break these):").length - 1,1);
     assert.notEqual(a,b,"service-aware prompt detail must remain distinct");
     assert.equal(promptPrefixFingerprint(p.request),promptPrefixFingerprint(f.request),"shared long prefix must remain identical");
     assert.match(a,/PELVIS_PRICE RM388/);
