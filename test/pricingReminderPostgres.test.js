@@ -126,9 +126,9 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     };
     // Recheck real timing and Meta acceptance at the atomic claim boundary,
     // not merely at discovery time (callback/worker races are possible).
-    await client.query("UPDATE messages SET created_at=now()-interval '4 minutes' WHERE id=104");
+    await client.query("UPDATE messages SET created_at=now()-interval '4 minutes',provider_accepted_at=now()-interval '4 minutes' WHERE id=104");
     assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}),null);
-    await client.query("UPDATE messages SET created_at=now()-interval '10 minutes',delivery_status='failed',whatsapp_message_id=NULL WHERE id=104");
+    await client.query("UPDATE messages SET created_at=now()-interval '10 minutes',provider_accepted_at=now()-interval '10 minutes',delivery_status='failed',whatsapp_message_id=NULL WHERE id=104");
     assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}),null);
     await client.query("UPDATE messages SET delivery_status='pending',whatsapp_message_id='wamid.final' WHERE id=104");
     const saved = await pricingRepo.claim({ candidate, offer, activatedAt, triggerMode:"all", settings });
