@@ -247,6 +247,8 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
                (302,3,'assistant','Final',now()-interval '12 minutes','sent',
                   'instagram:mid.302',now()-interval '8 minutes',true,301,3);
     `);
+    assert.equal((await pricingRepo.listEligible({activatedAt,triggerMode:"all"})).length,0,
+      "Existing clinics must not gain social pricing candidates without opt-in");
     for (const [contactId, channel, recipientId, anchorId, inboundId, finalId] of [
       [2,'facebook','fb-customer',201,200,202],
       [3,'instagram','ig-customer',301,300,302],
