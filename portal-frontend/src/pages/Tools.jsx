@@ -2365,8 +2365,8 @@ function FollowUpTool({
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
                   WhatsApp only. Send the correct active Promotions image only
-                  when the customer has expressed pricing interest and the graphic
-                  was not already sent. Never send outside the 24-hour reply window.
+                  when the treatment is clear and the graphic was not already sent.
+                  For unclear pelvic package choice, show both package prices.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
                   Requires three configured follow-ups. Multiple packages require
@@ -2551,7 +2551,7 @@ function FollowUpTool({
                   <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
                   <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
                   <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-                  <Rule text="The optional pricing reminder can run either before Follow-up 3 or 5 minutes after it, depending on the selected mode. It requires customer pricing interest and an open WhatsApp reply window." />
+                  <Rule text="The optional pricing reminder can run either before Follow-up 3 or 5 minutes after it, depending on the selected mode. It requires a matched treatment and an open WhatsApp reply window." />
                   <Rule text="WhatsApp opt-outs remain a hard stop." />
                   <Rule text="Saving does not add follow-ups to older conversations." />
                 </ul>
