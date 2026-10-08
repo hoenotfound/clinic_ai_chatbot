@@ -21,11 +21,12 @@ function logInboxMediaSummary(timings, details = {}) {
     bytes: details.bytes ?? timings.bytes ?? null,
     outcome,
     httpStatus: details.httpStatus ?? null,
+    ...(timings.persistenceIssue ? { persistenceIssue: true } : {}),
     totalMs: Math.max(0, Date.now() - (timings.startedAtMs || Date.now())),
     stageMs,
     ...(timings.failedStage ? { failedStage: timings.failedStage } : {}),
   };
-  const isProblem = !["accepted", "submitted"].includes(outcome) ||
+  const isProblem = !["accepted", "submitted"].includes(outcome) || timings.persistenceIssue === true ||
     (summary.httpStatus !== null && summary.httpStatus >= 400);
   (isProblem ? console.warn : console.info)("[Inbox media summary]", JSON.stringify(summary));
 }
