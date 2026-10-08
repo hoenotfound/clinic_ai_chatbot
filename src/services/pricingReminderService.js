@@ -72,8 +72,9 @@ function publish(message, reason) {
   });
 }
 
-async function sendPricingReminder(candidate, offer, settings) {
-  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active) return;
+async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
+  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
+      !canSendAfterFinal(candidate, new Date(), imageCount)) return;
   const saved = await pricingRepo.claim({
     candidate,
     offer,
@@ -100,8 +101,12 @@ async function sendPricingReminder(candidate, offer, settings) {
           Number(settings.steps[2].beforeWindowExpiryMinutes) ||
         (live.additionalSteps?.[1]?.timingMode || "after_reply") !==
           settings.steps[2].timingMode ||
+        (live.pricingReminder?.requirePricingInterest !== false) !==
+          (settings.pricingReminder?.requirePricingInterest !== false) ||
+        (live.pricingReminder?.sendBothPelvicPackages === true) !==
+          (settings.pricingReminder?.sendBothPelvicPackages === true) ||
         quietHoursStatus(new Date(), live.quietHours).active ||
-        !canSendAfterFinal(candidate)) return false;
+        !canSendAfterFinal(candidate, new Date(), imageCount)) return false;
 
     // Changes to a promotion or current interest must not send stale prices.
     const current = chooseOffer(candidate, settings);
@@ -191,8 +196,10 @@ async function sendSecondPricing(candidate, first, offer, settings) {
     if (!live?.enabled || live.pricingReminder?.enabled!==true ||
         live.activatedAt!==settings.activatedAt ||
         live.pricingReminder?.activatedAt!==settings.pricingReminder?.activatedAt ||
-        live.pricingReminder?.requirePricingInterest!==settings.pricingReminder?.requirePricingInterest ||
-        live.pricingReminder?.sendBothPelvicPackages!==settings.pricingReminder?.sendBothPelvicPackages ||
+        (live.pricingReminder?.requirePricingInterest!==false)!==
+          (settings.pricingReminder?.requirePricingInterest!==false) ||
+        (live.pricingReminder?.sendBothPelvicPackages===true)!==
+          (settings.pricingReminder?.sendBothPelvicPackages===true) ||
         quietHoursStatus(new Date(),live.quietHours).active ||
         !canSendAfterFinal(candidate)) return false;
     const selected=evaluateOffer(candidate,settings).offers||[];
@@ -251,15 +258,14 @@ async function runPricingReminders(settings, now = new Date()) {
     try {
       const due = new Date(candidate.due_at).getTime();
       if (!Number.isFinite(due)) continue;
-      // A late final testimonial cannot reopen the WhatsApp window. Skip
-      // rather than trying to send the price first or using a template.
+      const { offer, offers = [], reason } = evaluateOffer(candidate,settings);
+      // Reserve a larger margin when two images need separate Meta calls.
       const safeEnd = Date.parse(candidate.inbound_at)
         + (24 * 60 - (offers.length > 1 ? FIRST_GRAPHIC_SAFETY_MINUTES : WINDOW_SAFETY_MINUTES)) * 60_000;
       if (!Number.isFinite(safeEnd) || due >= safeEnd || now.getTime() >= safeEnd) {
         await skipCandidate(candidate, "insufficient_window");
         continue;
       }
-      const { offer, offers = [], reason } = evaluateOffer(candidate,settings);
       if (!offer) {
         if (due <= now.getTime()) await skipCandidate(candidate, reason);
         continue;
@@ -270,8 +276,8 @@ async function runPricingReminders(settings, now = new Date()) {
         }
         continue;
       }
-      if (canSendAfterFinal(candidate, now)) {
-        const first=await sendPricingReminder(candidate,offer,settings);
+      if (canSendAfterFinal(candidate, now, offers.length)) {
+        const first=await sendPricingReminder(candidate,offer,settings,offers.length);
         if (first && offers.length > 1) await sendSecondPricing(candidate,first,offers[1],settings);
       }
     } catch (err) {
