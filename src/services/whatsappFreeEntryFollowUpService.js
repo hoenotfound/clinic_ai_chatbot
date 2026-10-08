@@ -4,6 +4,7 @@ const clinicConfig = require("../config/clinicConfig");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const whatsappTemplates = require("./whatsappTemplateService");
 const messagesRepo = require("../db/messagesRepo");
+const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
@@ -424,7 +425,11 @@ async function run({ now = new Date() } = {}) {
       const spec = template ? { ...preferred, language: template.language } : preferred;
       if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates)) {
         result.skipped++;
-        console.warn("[WhatsApp FEP] Approved static template/media missing for slot", slotHours);
+        const reason = template ? "unsupported_or_unavailable_media" : "approved_language_variant_missing";
+        await freeEntryReport.recordSkip(candidate.contact_id,
+          candidate.first_reply_message_id, slotHours, reason).catch((error) =>
+            console.warn("[WhatsApp FEP] failed to record skip:", error?.message));
+        console.warn("[WhatsApp FEP] skipped", candidate.contact_id, slotHours, reason);
         continue;
       }
       const outcome = await processCandidate(candidate, active, template, now, spec);
