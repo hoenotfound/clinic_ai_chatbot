@@ -26,6 +26,7 @@ test("recordAiUsage stores only bounded usage metadata fields", async () => {
     cachedTokens: 12,
     cacheMetadataPresent: true,
     promptPrefixHash: "0123456789abcdef",
+    responseDisposition: "accepted",
     totalTokens: 1321,
     latencyMs: 640,
   }, database);
@@ -46,6 +47,7 @@ test("recordAiUsage stores only bounded usage metadata fields", async () => {
     640,
     true,
     "0123456789abcdef",
+    "accepted",
   ]);
 });
 
@@ -64,6 +66,10 @@ test("getAiUsageSummary returns totals plus model, purpose and failure-cause bre
       cache_metadata_unknown_requests: 1,
       cache_hit_requests: 3,
       distinct_prompt_prefixes: 2,
+      accepted_responses: 5,
+      rejected_responses: 1,
+      discarded_responses: 1,
+      aborted_requests: 2,
       total_tokens: "4500",
       average_latency_ms: "720",
     }] },
@@ -103,6 +109,10 @@ test("getAiUsageSummary returns totals plus model, purpose and failure-cause bre
   assert.equal(summary.cacheMetadataUnknownRequests, 1);
   assert.equal(summary.cacheHitRequests, 3);
   assert.equal(summary.distinctPromptPrefixes, 2);
+  assert.equal(summary.acceptedResponses, 5);
+  assert.equal(summary.rejectedResponses, 1);
+  assert.equal(summary.discardedResponses, 1);
+  assert.equal(summary.abortedRequests, 2);
   assert.equal(summary.averageLatencyMs, 720);
   assert.deepEqual(summary.byModel[0], {
     provider: "gemini",
@@ -132,4 +142,5 @@ test("legacy events remain cache-metadata unknown, never silently false",async()
   });
   assert.equal(captured[0][11],null);
   assert.equal(captured[0][12],null);
+  assert.equal(captured[0][13],null);
 });
