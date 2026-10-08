@@ -612,7 +612,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
 
   const requestedFreeEntry = requested.freeEntry ?? current?.freeEntry ?? {
     enabled: false, templateName: "", language: "zh_CN",
-    slotsHours: [36, 60, 84, 108, 132, 156],
+    slotsHours: [26, 50, 74, 98, 122, 146],
   };
   if (!isFreeEntryFollowUpConfig(requestedFreeEntry)) return null;
   const freeEntryName = requestedFreeEntry.templateName.trim();
