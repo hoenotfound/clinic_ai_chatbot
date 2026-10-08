@@ -27,14 +27,14 @@ test("does not resend a delivered or pending pricing image", () => {
   assert.equal(imageIdentity("https://foo.test/promo-images/30?x=1"), "/promo-images/30");
 });
 test("single package uses promotion graphic and caption", () => {
-  assert.equal(select({treatment_interest:"3D 小颜术", recent_customer_messages:["Hello"]})?.caption, "RM488");
+  assert.equal(select({treatment_interest:"3D 小颜术", recent_customer_messages:["3D 小颜术 how much?"]})?.caption, "RM488");
 });
 
 test("uncertain and failed media require staff review, never silent success", () => {
   for (const status of ["unknown", "failed", "pending"]) {
     const candidate = {
       treatment_interest:"3D 小颜术",
-      recent_customer_messages:["3D please"],
+      recent_customer_messages:["3D price please"],
       sent_media:[{media_url:"https://host.example/promo-images/32",
         content:"RM488", delivery_status:status, whatsapp_message_id:null}],
     };
@@ -48,7 +48,7 @@ test("uncertain and failed media require staff review, never silent success", ()
     promotions, services,
     candidate:{
       treatment_interest:"3D 小颜术",
-      recent_customer_messages:["3D please"],
+      recent_customer_messages:["3D price please"],
       sent_media:[{media_url:"https://host.example/promo-images/32",
         content:"RM488", delivery_status:"pending", whatsapp_message_id:"wamid.accepted"}],
     },
@@ -59,7 +59,7 @@ test("uncertain and failed media require staff review, never silent success", ()
 test("the latest clear treatment mention overrides an older CRM interest", () => {
   const result = select({
     treatment_interest:"骨盆调理",
-    recent_customer_messages:["3D 小颜术 interested","骨盆调理 之前有兴趣"],
+    recent_customer_messages:["3D 小颜术 价钱多少?","骨盆调理 之前有兴趣"],
   });
   assert.equal(result?.serviceName, "3D 小颜术");
 });
@@ -79,4 +79,33 @@ test("recognizes the combined 3D + 9D offer rather than sending a single-treatme
   });
   assert.equal(offer?.serviceName,"3D + 9D 组合");
   assert.equal(offer?.caption,"Combo offer");
+});
+
+test("does not send a promotional graphic if the customer only asked about suitability", () => {
+  for (const phrase of ["我想了解 3D 小颜术效果", "骨盆调理适合产后吗", "3D 小颜术能不能改善下颚线", "Can I visit the clinic for an assessment?"]) {
+    const service = phrase.includes("骨盆") ? "骨盆调理" : "3D 小颜术";
+    const decision = evaluatePricingReminder({
+      services, promotions, language: "zh",
+      candidate: {treatment_interest:service,recent_customer_messages:[phrase]},
+    });
+    assert.equal(decision.reason, "no_pricing_interest");
+    assert.equal(decision.offer, null);
+  }
+});
+
+test("pricing intent supports Chinese, English, Malay, package selection and RM amounts", () => {
+  for (const phrase of ["3D 价格多少", "3D how much?", "3D harga berapa", "3D RM488 还有吗", "3D punya promo?"]) {
+    assert.equal(select({treatment_interest:"3D 小颜术",recent_customer_messages:[phrase]})?.caption,"RM488",phrase);
+  }
+  assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package B price please"]})?.caption,"RM288");
+});
+
+test("CRM treatment alone, empty history and ad attribution never establish pricing intent", () => {
+  for (const recent_customer_messages of [[],[],["3D 适合吗?"]]) {
+    const decision=evaluatePricingReminder({
+      services, promotions, language:"zh",
+      candidate:{treatment_interest:"3D 小颜术",recent_customer_messages,ad_name:"3D RM488 promo"},
+    });
+    assert.equal(decision.reason,"no_pricing_interest");
+  }
 });

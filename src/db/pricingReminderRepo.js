@@ -290,6 +290,7 @@ async function recordDecision({ candidate, reason }) {
   const allowed = new Set([
     "already_sent", "delivery_review", "ambiguous_service",
     "ambiguous_package", "missing_promotion", "insufficient_window",
+    "no_pricing_interest",
   ]);
   if (!allowed.has(reason)) throw new TypeError("Unsupported pricing decision.");
   const result = await pool.query(
