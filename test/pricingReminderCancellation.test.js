@@ -26,7 +26,8 @@ test("pre-send database verification error safely discards an unsent claim for l
     inbound_at:new Date(Date.now()-12*3600000).toISOString(),
   };
   const offer = { imageUrl: "https://example.test/promo.png", caption: "RM388", packageName:"Package A" };
-  const settings = { activatedAt: "2026-10-08T00:00:00Z", pricingReminder: { activatedAt: "2026-10-08T00:00:00Z" }, triggerMode: "all" };
+  // Explicitly disable quiet hours: these cancellation tests must work when CI runs overnight.
+  const settings = { activatedAt: "2026-10-08T00:00:00Z", pricingReminder: { activatedAt: "2026-10-08T00:00:00Z" }, triggerMode: "all", quietHours: { enabled: false, start: "00:00", end: "07:00" } };
   try {
     clinic.automatedFollowUp = {quietHours:{enabled:false,start:"00:00",end:"07:00"}};
     pricingRepo.claim = async () => ({ id:101,contact_id:42,delivery_status:null });
@@ -80,7 +81,7 @@ test("a normal pre-send cancellation discards the unsent claim without a provide
         third_accepted_at:new Date(Date.now()-10*60000).toISOString(),
         inbound_at:new Date(Date.now()-12*3600000).toISOString()},
       {imageUrl:"https://example.test/promo.png",caption:"RM388"},
-      {activatedAt:"2026-10-08T00:00:00Z",pricingReminder:{activatedAt:"2026-10-08T00:00:00Z"}}
+      {activatedAt:"2026-10-08T00:00:00Z",pricingReminder:{activatedAt:"2026-10-08T00:00:00Z"},quietHours:{enabled:false,start:"00:00",end:"07:00"}}
     );
     assert.equal(discarded,1);
     assert.equal(statuses,0);
