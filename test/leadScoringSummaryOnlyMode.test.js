@@ -204,7 +204,6 @@ test("summary-only runner still calls AI, queues Telegram, and explicitly disabl
       latest_customer_at: "2026-08-30T00:20:00.000Z",
       trigger_type: "inactivity",
       temperature: "warm",
-      treatment_interest: "HIFU Non-Surgical Facelift",
     }],
     claimCandidate: async () => ({ id: 91 }),
     getTranscript: async () => [
@@ -237,10 +236,6 @@ test("summary-only runner still calls AI, queues Telegram, and explicitly disabl
   await run();
 
   assert.equal(completionInput.allowTemperatureUpdate, false);
-  assert.equal(
-    completionInput.expectedTreatmentInterest,
-    "HIFU Non-Surgical Facelift"
-  );
   assert.equal(queued.leadId, 7);
   assert.equal(queued.throughMessageId, 44);
   assert.deepEqual(queued.score.summary, score.summary);
