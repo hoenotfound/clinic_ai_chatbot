@@ -1,6 +1,12 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
+const clinicConfig = require("../config/clinicConfig");
+function reserveFinalPricingWindow() {
+  const config=clinicConfig.automatedFollowUp;
+  return config?.enabled === true && config?.pricingReminder?.enabled === true;
+}
+
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
@@ -292,6 +298,9 @@ async function findCandidates({
                )
              )
            END <= latest_inbound_created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "(next_follow_up_step <> 3 OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}
      ORDER BY
        CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
@@ -464,7 +473,10 @@ async function getNextCandidateDueAt({
                  trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
                )
              )
-           END <= latest_inbound_created_at + interval '23 hours 50 minutes'`,
+           END <= latest_inbound_created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "(next_follow_up_step <> 3 OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}`,
     [delays, triggerMode, activatedAt, modes, expiryOffsets]
   );
   return result.rows[0]?.due_at || null;
@@ -682,6 +694,9 @@ async function saveIfStillEligible({
                )
              )
            END <= latest_inbound.created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "($5::integer <> 3 OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}
        AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
        AND COALESCE(progress.has_blocking_claim, false) = false
@@ -948,6 +963,9 @@ async function recordAiDecisionIfStillEligible({
                  )
                )
              END <= latest_inbound.created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "($3::integer <> 3 OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}
          AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
          AND COALESCE(progress.max_step, 0) + 1 = $3
          AND COALESCE(progress.has_blocking_claim, false) = false
