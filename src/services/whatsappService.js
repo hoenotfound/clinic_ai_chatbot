@@ -2,6 +2,7 @@ const GRAPH_API_VERSION = "v26.0";
 const DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS = 15 * 1000;
 const { normalizeWhatsAppReferral } = require("../utils/leadAttribution");
+const { verboseInboxMediaLogs } = require("../utils/inboxMediaLogging");
 
 const TRANSIENT_SEND_HTTP_STATUSES = new Set([429]);
 const TRANSIENT_SEND_ERROR_CODES = new Set([131000, 131016]);
@@ -53,9 +54,9 @@ async function fetchWithTimeout(
     ]);
   } finally {
     clearTimeout(timer);
-    if (diagnostics) {
+    if (diagnostics && (verboseInboxMediaLogs() || controller.signal.aborted || status === null || status >= 400)) {
       const totalMs = Math.round(performance.now() - startedAt);
-      console.info("[WhatsApp media timing]", JSON.stringify({
+      (controller.signal.aborted || status === null || status >= 400 ? console.warn : console.info)("[WhatsApp media timing]", JSON.stringify({
         ...diagnostics,
         headersMs,
         bodyMs: headersMs == null ? null : totalMs - headersMs,
