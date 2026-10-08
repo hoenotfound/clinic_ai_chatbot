@@ -1,9 +1,33 @@
+const { createHash } = require("node:crypto");
 const { pool } = require("../db/db");
 const aiUsageRepo = require("../db/aiUsageRepo");
 
 function tokenCount(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+}
+
+// Do not conflate the SDK omitting a cache-count field with Gemini reporting
+// an actual zero. 0 means "reported, but no cached tokens"; null means unknown.
+function hasReportedCacheCount(usage, ...names) {
+  return names.some((name) =>
+    Object.prototype.hasOwnProperty.call(usage, name) &&
+    usage[name] !== null &&
+    usage[name] !== undefined &&
+    Number.isFinite(Number(usage[name])) &&
+    Number(usage[name]) >= 0
+  );
+}
+
+function promptPrefixFingerprint(request) {
+  const systemInstruction = request?.config?.systemInstruction;
+  if (typeof systemInstruction !== "string" || !systemInstruction) return null;
+  // Only an opaque digest of a fixed-length prefix is persisted. Never log
+  // customer messages, provider keys or clinic instructions.
+  return createHash("sha256")
+    .update(systemInstruction.slice(0, 8192), "utf8")
+    .digest("hex")
+    .slice(0, 16);
 }
 
 function usageFromResponse(response) {
@@ -13,6 +37,7 @@ function usageFromResponse(response) {
     outputTokens: tokenCount(usage.candidatesTokenCount),
     thinkingTokens: tokenCount(usage.thoughtsTokenCount),
     cachedTokens: tokenCount(usage.cachedContentTokenCount),
+    cacheMetadataPresent: hasReportedCacheCount(usage, "cachedContentTokenCount"),
     totalTokens: tokenCount(usage.totalTokenCount),
   };
 }
@@ -24,6 +49,7 @@ function usageFromInteraction(interaction) {
     outputTokens: tokenCount(usage.total_output_tokens ?? usage.totalOutputTokens),
     thinkingTokens: tokenCount(usage.total_thought_tokens ?? usage.totalThoughtTokens),
     cachedTokens: tokenCount(usage.total_cached_tokens ?? usage.totalCachedTokens),
+    cacheMetadataPresent: hasReportedCacheCount(usage, "total_cached_tokens", "totalCachedTokens"),
     totalTokens: tokenCount(usage.total_tokens ?? usage.totalTokens),
   };
 }
@@ -143,6 +169,7 @@ async function generateGeminiContent(
         failureKind: null,
         latencyMs: Math.max(0, clock() - startedAt),
         ...usageFromResponse(response),
+        ...(promptPrefixFingerprint(request) ? { promptPrefixHash: promptPrefixFingerprint(request) } : {}),
       },
       { database, repository }
     );
@@ -184,6 +211,7 @@ async function createGeminiInteraction(
         failureKind: null,
         latencyMs: Math.max(0, clock() - startedAt),
         ...usageFromInteraction(interaction),
+        ...(promptPrefixFingerprint(request) ? { promptPrefixHash: promptPrefixFingerprint(request) } : {}),
       },
       { database, repository }
     );
@@ -212,6 +240,7 @@ module.exports = {
   generateGeminiContent,
   getUsageSummary,
   providerErrorCode,
+  promptPrefixFingerprint,
   queueUsage,
   tokenCount,
   usageFromInteraction,
