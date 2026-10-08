@@ -207,6 +207,7 @@ function getActiveSettings() {
     pricingReminder: {
       enabled: settings.pricingReminder?.enabled === true,
       activatedAt: settings.pricingReminder?.activatedAt || null,
+      socialActivatedAt: settings.pricingReminder?.socialActivatedAt || null,
       requirePricingInterest: settings.pricingReminder?.requirePricingInterest !== false,
       sendBothPelvicPackages: settings.pricingReminder?.sendBothPelvicPackages === true,
       enableSocialChannels: settings.pricingReminder?.enableSocialChannels === true,
