@@ -2377,6 +2377,21 @@ function FollowUpTool({
                   separately when the choice is unclear. Never send outside the
                   channel's 24-hour reply window or during quiet hours.
                 </p>
+                {form.additionalSteps?.length === 2 &&
+                  form.additionalSteps[1]?.timingMode === "before_window_expiry" &&
+                  Number(form.additionalSteps[1]?.beforeWindowExpiryMinutes) === 240 &&
+                  form.quietHours?.enabled !== false &&
+                  form.quietHours?.start === "00:00" &&
+                  form.quietHours?.end === "07:00" &&
+                  form.pricingReminder?.enabled === true && (
+                    <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                      Timing example: customer last replied at 8:00 AM, Follow-up 2 sent
+                      at 2:00 PM. The 20-hour testimonial target falls at 4:00 AM,
+                      so Follow-up 3 moves to 11:30 PM and pricing is eligible
+                      at 11:35 PM after Meta acceptance. Late Follow-up 2 sends,
+                      provider delays or closed reply windows may prevent delivery.
+                    </p>
+                  )}
               </div>
               <Switch
                 checked={form.pricingReminder?.enabled === true}
