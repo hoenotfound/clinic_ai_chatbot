@@ -19,6 +19,42 @@ const FREE_MARKER = /(?:\b(?:free|complimentary|percuma|gratis)\b|免费|免費|
 const MERIDIAN_ITEM = /(?:经络按摩|經絡按摩|\bmeridian(?:\s+\w+){0,2}\s+(?:massage|therapy)\b|\burut(?:an)?\s+meridian\b)/iu;
 const TRANSLATED_FREE_MERIDIAN = /(?:\b(?:free|complimentary|percuma|gratis)\b[\s\S]{0,75}\b(?:meridian(?:\s+\w+){0,2}\s+(?:massage|therapy)|urut(?:an)?\s+meridian)\b|\b(?:meridian(?:\s+\w+){0,2}\s+(?:massage|therapy)|urut(?:an)?\s+meridian)\b[\s\S]{0,75}\b(?:free|complimentary|percuma|gratis)\b|(?:免费|免費|赠送|贈送|附送).{0,40}(?:经络按摩|經絡按摩)|(?:经络按摩|經絡按摩).{0,40}(?:免费|免費|赠送|贈送|附送))/iu;
 
+// A first-trial/free inclusion may be limited to new customers even without
+// "only"/"仅限". Verify the eligibility wording as well as the service itself.
+const FIRST_TRIAL_SOURCE = /(?:首次(?:体验|體驗|到店|来店|來店|护理|護理|治疗|治療|消费|消費|使用|预约|預約)?|初次(?:体验|體驗|到店|护理|護理)?|第一次(?:体验|體驗|到店|来店|來店|护理|護理)?|首访|首訪|新(?:顾客|顧客|客户|客戶|客人)|first[-\s]+(?:time|trial|visit|session|treatment|appointment)|new[-\s]+(?:customer|client|patient)|(?:pelanggan|pesakit)\s+baru|(?:kali|lawatan|rawatan|percubaan)\s+pertama)/iu;
+const FIRST_TRIAL_TRANSLATION = /(?:first[-\s]+(?:time|trial|visit|session|treatment|appointment)|new[-\s]+(?:customers?|clients?|patients?)|(?:pelanggan|pesakit)\s+baru|(?:kali|lawatan|rawatan|percubaan)\s+pertama|首次(?:体验|體驗|到店|护理|護理)?|初次(?:体验|體驗)?|第一次(?:体验|體驗)?|新(?:顾客|顧客|客户|客戶|客人))/iu;
+
+// Reject the *meaning* of a negated inclusion, even if the literal words
+// "free meridian massage" appear. Never send the contradictory AI text.
+const NEGATED_INCLUSION = /(?:\b(?:not|never|isn['’]?t|aren['’]?t|won['’]?t|without|unavailable|excluded|excluding|extra\s+(?:payment|charge|fee)|additional\s+(?:payment|charge|fee)|(?:need|needs|required|must|have)\s+to\s+pay|pay\s+(?:extra|additional)|not\s+free|not\s+included|not\s+available|not\s+offered|no\s+free)\b|不(?:包含|包括|赠送|贈送|提供|免费|免費)|沒有|没有|需(?:额外|額外)?付费|需要(?:额外|額外)?付款|不可免费|不可免費|\b(?:tidak|tak|bukan)\s+(?:termasuk|percuma|disediakan|diberi)\b|\b(?:kena|perlu)\s+bayar\b)/iu;
+
+function sourcePromisesFreeMeridian(source) {
+  return FREE_MARKER.test(source) && MERIDIAN_ITEM.test(source);
+}
+
+function replyClauses(response) {
+  return String(response || "").split(/[\n。！？!?;；]+/u).map((part) => part.trim()).filter(Boolean);
+}
+
+function hasContradictoryFreeMeridianClaim(source, response) {
+  if (!sourcePromisesFreeMeridian(source)) return false;
+  return replyClauses(response).some(
+    (part) =>
+      (TRANSLATED_FREE_MERIDIAN.test(part) || MERIDIAN_ITEM.test(part)) &&
+      NEGATED_INCLUSION.test(part)
+  );
+}
+
+function hasVerifiedFreeMeridian(source, response) {
+  const hasFirstTrialCondition = FIRST_TRIAL_SOURCE.test(source);
+  return replyClauses(response).some((part) =>
+    TRANSLATED_FREE_MERIDIAN.test(part) &&
+    !NEGATED_INCLUSION.test(part) &&
+    (!hasFirstTrialCondition || FIRST_TRIAL_TRANSLATION.test(part))
+  );
+}
+
+
 function missingProtectedOfferClaims(original, generatedReply) {
   const source = String(original || "");
   const response = String(generatedReply || "");
@@ -35,7 +71,7 @@ function missingProtectedOfferClaims(original, generatedReply) {
     const freeMeridian = FREE_MARKER.test(clause) && MERIDIAN_ITEM.test(clause);
     const hasOtherOfferConditions =
       /(?:\b(?:voucher|coupon|gift|bonus|discount|valid|subject|terms|conditions|only)\b|优惠券|優惠券|代金券|抵用券|礼券|禮券|限时|限時|仅限|僅限|只限|新客|條件|条件)/iu.test(clause);
-    if (freeMeridian && !hasOtherOfferConditions && TRANSLATED_FREE_MERIDIAN.test(response)) {
+    if (freeMeridian && !hasOtherOfferConditions && hasVerifiedFreeMeridian(source, response)) {
       continue;
     }
     missing.push(clause);
@@ -68,6 +104,15 @@ function preserveOriginalIntroFacts(configuredIntro, generatedReply) {
   const original = String(configuredIntro || "").trim();
   const reply = String(generatedReply || "").trim();
   const missing = missingProtectedIntroFacts(original, reply);
+  // Don't append the correct source after an actively contradictory AI claim:
+  // the customer could otherwise see both "not included" and "included".
+  if (original && hasContradictoryFreeMeridianClaim(original, reply)) {
+    return {
+      reply: original,
+      usedOriginalFallback: true,
+      missingCount: Math.max(1, missing.length),
+    };
+  }
   if (!original || missing.length === 0 || reply.includes(original)) {
     return { reply, usedOriginalFallback: false, missingCount: 0 };
   }
