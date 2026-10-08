@@ -500,3 +500,63 @@ test("explicit 3D + 9D creative resolves the configured combination, not its com
     services, aliases,
   ), null);
 });
+
+test("locally saved lead interest fills a missing ad name without trusting arbitrary text", async () => {
+  const services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }];
+  const aliases = [{ alias: "骨盆", officialService: "骨盆调理" }];
+  const repo = {
+    async getForContactCurrentLead(id) {
+      assert.equal(id, 71);
+      return {
+        source: "meta_ads",
+        meta_ad_id: "unresolved-ad",
+        ad_name: null,
+        headline: null,
+        body: null,
+        treatment_interest: "骨盆调理",
+      };
+    },
+  };
+  const context = await loadMetaAdReplyContext(71, { repo, services, aliases });
+  assert.deepEqual(context, {
+    headline: null, body: null, serviceHint: "骨盆调理",
+    serviceHintSource: "lead_interest",
+  });
+  assert.equal(resolveMetaAdCreativeService(context, services, aliases), null);
+  const turn = buildConversationPromptContext(
+    [{ role: "user", content: "English" }],
+    { services, aliases, promotions: [], metaAdContext: context }
+  );
+  assert.deepEqual(turn.relevantServiceNames, ["骨盆调理"]);
+
+  const unknown = normalizeMetaAdReplyContext({
+    source: "meta_ads", treatment_interest: "pelvic maybe",
+    headline: null, body: null, ad_name: null,
+  }, { services, aliases });
+  assert.equal(unknown, null);
+
+  const organic = normalizeMetaAdReplyContext({
+    source: "instagram_organic", treatment_interest: "骨盆调理",
+  }, { services, aliases });
+  assert.equal(organic, null);
+});
+
+test("creative ambiguity never falls back to an unrelated stored lead treatment", () => {
+  const services = [
+    { name: "骨盆调理" }, { name: "3D 小颜术" }, { name: "9D 逆龄抗衰" },
+  ];
+  const context = normalizeMetaAdReplyContext({
+    source: "meta_ads", headline: "3D 小颜术 and 9D 逆龄抗衰",
+    body: null, ad_name: null, treatment_interest: "骨盆调理",
+  }, { services });
+  assert.equal(context.serviceHint, undefined);
+  assert.equal(resolveMetaAdCreativeService(context, services), null);
+});
+
+test("localized first intro preserves all configured details in both AI provider prompts", () => {
+  const prompt = buildSystemPrompt({ isFirstMessage: true, generateFirstIntro: true, channel: "whatsapp" });
+  assert.match(prompt, /faithful translation of this entire configured intro/);
+  assert.match(prompt, /prices, promotion conditions, free inclusions, locations, hours/);
+  assert.match(prompt, /phone numbers, amounts, URLs, codes/);
+  assert.match(prompt, /Never shorten, silently omit, change, or invent/);
+});
