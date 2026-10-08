@@ -49,7 +49,7 @@ test("worker has durable attempt, marketing and billed-message safety guards", (
   assert.match(code, /ON CONFLICT \(first_reply_message_id, slot_hours\) DO NOTHING/);
   assert.match(code, /lead\.marketing_consent = 'opted_in'/);
   assert.match(code, /evidence\.pricing_type = 'free_entry_point'/);
-  assert.match(code, /prior_billing\\.billable IS DISTINCT FROM false/);
+  assert.match(code, /prior_billing\.billable IS DISTINCT FROM false/);
   assert.match(code, /quietHoursStatus/);
   assert.match(code, /checkTemplateAllowed|sendApprovedTemplate/);
   assert.match(code, /item.category === "MARKETING"/);
