@@ -864,3 +864,43 @@ test("Meta Graph requests never put Page access tokens in query strings", () => 
   assert.doesNotMatch(source, /[?&]access_token=/);
   assert.match(source, /Authorization:\s*`Bearer \$\{config\.token\}`/);
 });
+
+for (const channel of ["facebook","instagram"]) {
+  test(`${channel} image failure preserves an accepted caption receipt`,async(t)=>{
+    const prefix=channel==="facebook"?"FACEBOOK":"INSTAGRAM";
+    const tokenKey=`${prefix}_PAGE_ACCESS_TOKEN`;
+    const pageKey=`${prefix}_PAGE_ID`;
+    const oldToken=process.env[tokenKey],oldPage=process.env[pageKey];
+    const oldFetch=global.fetch;
+    t.after(()=>{
+      global.fetch=oldFetch;
+      if(oldToken===undefined)delete process.env[tokenKey];
+      else process.env[tokenKey]=oldToken;
+      if(oldPage===undefined)delete process.env[pageKey];
+      else process.env[pageKey]=oldPage;
+    });
+    process.env[tokenKey]="test-token";
+    process.env[pageKey]="page-123";
+    let requests=0;
+    global.fetch=async(_url,options)=>{
+      requests++;
+      const body=JSON.parse(options.body);
+      assert.equal(body.recipient.id,"customer");
+      if(requests===1){
+        assert.equal(body.message.text,"RM388");
+        return {ok:true,status:200,text:async()=>JSON.stringify({message_id:"mid.caption"})};
+      }
+      assert.equal(body.message.attachment.type,"image");
+      return {ok:false,status:400,text:async()=>JSON.stringify({error:{message:"media rejected"}})};
+    };
+    const receipts=[];
+    const result=await meta.sendImage(channel,"customer","https://example.test/promo.png","RM388",{
+      onProviderMessageId:async id=>receipts.push(id),
+    });
+    assert.equal(requests,2);
+    assert.equal(result.success,false);
+    assert.equal(result.partialCaptionSent,true);
+    assert.equal(result.captionProviderMessageId,"mid.caption");
+    assert.deepEqual(receipts,["mid.caption"]);
+  });
+}
