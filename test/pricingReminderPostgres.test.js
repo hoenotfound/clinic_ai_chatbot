@@ -165,6 +165,54 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       candidate:crowdedCandidates[0],offer,activatedAt,triggerMode:"all",settings,
     }), null);
 
+    // Post-final mode must wait for provider-accepted Step 3 AND at least 5m,
+    // without requiring a 2h gap before Step 3 (that is the old mode).
+    await client.query(`
+      UPDATE messages SET created_at=now()-interval '2 minutes' WHERE id=103;
+      INSERT INTO messages (id,contact_id,role,content,created_at,delivery_status,
+        whatsapp_message_id,is_automated_follow_up,
+        automated_follow_up_for_message_id,automated_follow_up_step)
+      VALUES (104,1,'assistant','Testimonial',now()-interval '2 minutes',
+        'pending','wamid.final',true,101,3);
+    `);
+    const postFinal = {
+      ...settings,
+      pricingReminder: { mode: "after_final" },
+    };
+    const earlyCandidates = await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",settings:postFinal,
+    });
+    assert.equal(earlyCandidates.length,1);
+    assert.equal(await pricingRepo.claim({
+      candidate:earlyCandidates[0],offer,activatedAt,triggerMode:"all",settings:postFinal,
+    }),null, "pricing cannot be claimed before the 5-minute gap");
+
+    await client.query("UPDATE messages SET created_at=now()-interval '10 minutes' WHERE id=104");
+    const postFinalCandidates = await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",settings:postFinal,
+    });
+    assert.equal(postFinalCandidates.length,1);
+    const postFinalCandidate = postFinalCandidates[0];
+    const postFinalSaved = await pricingRepo.claim({
+      candidate:postFinalCandidate,offer,activatedAt,triggerMode:"all",settings:postFinal,
+    });
+    assert.ok(postFinalSaved);
+    assert.equal(await pricingRepo.isClaimStillEligible({
+      messageId:postFinalSaved.id,contactId:1,anchorId:101,inboundId:100,
+      imageIdentities:offer.identities,treatmentInterest:postFinalCandidate.treatment_interest,
+      finalDueAt:postFinalCandidate.final_due_at,whatsappNumber:postFinalCandidate.whatsapp_number,
+      afterFinal:true,
+    }),true);
+
+    // A revoked/unknown final provider acceptance must stop pre-send checks.
+    await client.query("UPDATE messages SET delivery_status='unknown', whatsapp_message_id=NULL WHERE id=104");
+    assert.equal(await pricingRepo.isClaimStillEligible({
+      messageId:postFinalSaved.id,contactId:1,anchorId:101,inboundId:100,
+      imageIdentities:offer.identities,treatmentInterest:postFinalCandidate.treatment_interest,
+      finalDueAt:postFinalCandidate.final_due_at,whatsappNumber:postFinalCandidate.whatsapp_number,
+      afterFinal:true,
+    }),false);
+
     // The pricing reminder must not keep the original message undeletable.
     await client.query("DELETE FROM messages WHERE id=101");
     const rowsAfterDelete = await client.query(
