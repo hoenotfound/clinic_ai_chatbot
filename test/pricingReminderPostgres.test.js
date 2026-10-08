@@ -213,7 +213,11 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     const crowdedCandidates = await pricingRepo.listEligible({
       activatedAt,triggerMode:"all",settings,
     });
-    assert.equal(crowdedCandidates.length,0);
+    // Recently expired pricing remains discoverable for a one-time
+    // insufficient_window analytics decision; it must never reach Meta.
+    assert.equal(crowdedCandidates.length,1);
+    assert.ok(new Date(crowdedCandidates[0].due_at).getTime() >
+      new Date(crowdedCandidates[0].inbound_at).getTime() + 23*3600000 + 50*60000);
 
     // The pricing reminder must not keep the original message undeletable.
     await client.query("DELETE FROM messages WHERE id=101");
