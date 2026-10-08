@@ -17,6 +17,7 @@ const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 const { normalizeQuietHours } = require("../utils/quietHours");
+const { SUPPORTED_LANGUAGES, validateTemplateRules } = require("../utils/freeEntryTemplateSelection");
 const {
   findAmbiguousPromotionPackageTerm,
   findOverlappingPromotionFollowUpPair,
@@ -376,8 +377,10 @@ function isFreeEntryFollowUpConfig(value) {
       value.slotsHours.length < 1 || value.slotsHours.length > 6 ||
       value.slotsHours.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
       new Set(value.slotsHours).size !== value.slotsHours.length ||
-      (value.enabled && (!/^[a-z0-9_]+$/.test(value.templateName) ||
-        !/^(?:[a-z]{2,3}_[A-Z]{2}|ms)$/.test(value.language)))) return false;
+      !SUPPORTED_LANGUAGES.has(value.language) ||
+      (value.enabled && !/^[a-z0-9_]+$/.test(value.templateName)) ||
+      !validateTemplateRules(value.templateRules || [], value.slotsHours,
+        configRepo.getConfig()?.services || [])) return false;
   return true;
 }
 
@@ -616,12 +619,19 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   };
   if (!isFreeEntryFollowUpConfig(requestedFreeEntry)) return null;
   const freeEntryName = requestedFreeEntry.templateName.trim();
+  const templateRules = (requestedFreeEntry.templateRules || []).map((rule) => ({
+    slotHours: rule.slotHours,
+    serviceName: rule.serviceName.trim(),
+    templateName: rule.templateName.trim(),
+    mediaUrl: (rule.mediaUrl || "").trim(),
+  }));
   const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
   const freeEntryHours = [...requestedFreeEntry.slotsHours].sort((a, b) => a - b);
   const unchangedFreeEntry = current?.freeEntry?.enabled === true &&
     current.freeEntry.templateName === freeEntryName &&
     current.freeEntry.language === freeEntryLanguage &&
     JSON.stringify(current.freeEntry.slotsHours) === JSON.stringify(freeEntryHours) &&
+    JSON.stringify(current.freeEntry.templateRules || []) === JSON.stringify(templateRules) &&
     typeof current.freeEntry.activatedAt === "string" &&
     !Number.isNaN(Date.parse(current.freeEntry.activatedAt));
   const freeEntry = {
@@ -629,6 +639,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     templateName: freeEntryName,
     language: freeEntryLanguage,
     slotsHours: freeEntryHours,
+    templateRules,
     activatedAt: requestedFreeEntry.enabled === true
       ? unchangedFreeEntry ? current.freeEntry.activatedAt : new Date().toISOString()
       : null,
