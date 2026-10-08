@@ -132,6 +132,13 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     // Verify the unique decision record and avoid repeated human-review alerts.
     await client.query("DELETE FROM messages WHERE id=$1", [saved.id]);
     await client.query("UPDATE leads SET treatment_interest='3D 小颜术' WHERE contact_id=1");
+    // Staff takeover and marketing opt-outs must never become candidates.
+    await client.query("UPDATE contacts SET mode='human' WHERE id=1");
+    assert.equal((await pricingRepo.listEligible({ activatedAt,triggerMode:"all",settings })).length, 0);
+    await client.query("UPDATE contacts SET mode='ai', whatsapp_marketing_opt_out_at=now() WHERE id=1");
+    assert.equal((await pricingRepo.listEligible({ activatedAt,triggerMode:"all",settings })).length, 0);
+    await client.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL WHERE id=1");
+
     const reviewDecision = await pricingRepo.recordDecision({
       candidate, reason:"delivery_review",
     });
