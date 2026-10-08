@@ -1013,7 +1013,10 @@ async function setSocialProviderMessageId(
     );
     const result = await client.query(
       `UPDATE messages
-       SET whatsapp_message_id = $2, delivery_status = $3, delivery_error = NULL
+       SET whatsapp_message_id = $2, delivery_status = $3, delivery_error = NULL,
+           social_accepted_at = CASE
+             WHEN whatsapp_message_id IS DISTINCT FROM $2 OR social_accepted_at IS NULL
+             THEN clock_timestamp() ELSE social_accepted_at END
        WHERE id = $1
        RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
       [messageId, providerMessageId, deliveryStatus]

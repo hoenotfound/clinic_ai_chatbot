@@ -30,7 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false },
+  pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -176,6 +176,7 @@ function normalizeFollowUpSettings(value = {}) {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
       sendBothPelvicPackages:value?.pricingReminder?.sendBothPelvicPackages === true,
+      enableSocialChannels:value?.pricingReminder?.enableSocialChannels === true,
     },
   };
 }
@@ -825,6 +826,7 @@ export default function Tools() {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
             sendBothPelvicPackages:form.pricingReminder?.sendBothPelvicPackages === true,
+            enableSocialChannels:form.pricingReminder?.enableSocialChannels === true,
           },
         },
       });
@@ -2366,15 +2368,30 @@ function FollowUpTool({
               <div className="min-w-0">
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                  WhatsApp only. Send at least 5 minutes after Meta accepts Follow-up 3,
-                  when the customer's treatment is identifiable. Whether a price
-                  enquiry is required is configurable for each clinic.
+                  WhatsApp by default; optionally Messenger and Instagram. Send at least
+                  5 minutes after Meta accepts Follow-up 3, when the treatment
+                  is identifiable. A price enquiry is optional per clinic.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
                   Requires an accepted Follow-up 3. Pelvic Package A/B can be sent
                   separately when the choice is unclear. Never send outside the
-                  WhatsApp reply window or during quiet hours.
+                  channel's 24-hour reply window or during quiet hours.
                 </p>
+                {form.additionalSteps?.length === 2 &&
+                  form.additionalSteps[1]?.timingMode === "before_window_expiry" &&
+                  Number(form.additionalSteps[1]?.beforeWindowExpiryMinutes) === 240 &&
+                  form.quietHours?.enabled !== false &&
+                  form.quietHours?.start === "00:00" &&
+                  form.quietHours?.end === "07:00" &&
+                  form.pricingReminder?.enabled === true && (
+                    <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                      Timing example: customer last replied at 8:00 AM, Follow-up 2 sent
+                      at 2:00 PM. The 20-hour testimonial target falls at 4:00 AM,
+                      so Follow-up 3 moves to 11:30 PM and pricing is eligible
+                      at 11:35 PM after Meta acceptance. Late Follow-up 2 sends,
+                      provider delays or closed reply windows may prevent delivery.
+                    </p>
+                  )}
               </div>
               <Switch
                 checked={form.pricingReminder?.enabled === true}
@@ -2389,6 +2406,26 @@ function FollowUpTool({
               />
             </div>
             <div className="mt-3 space-y-3 rounded-xl border border-[var(--color-border)] p-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold">Include Messenger and Instagram</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Off by default for existing clinics. Sends only inside each channel's
+                    normal 24-hour window. Saving this change starts a fresh pricing cycle.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.pricingReminder?.enableSocialChannels === true}
+                  ariaLabel="Include Messenger and Instagram pricing reminders"
+                  onChange={() => setForm((current) => ({
+                    ...current,
+                    pricingReminder: {
+                      ...current.pricingReminder,
+                      enableSocialChannels:current.pricingReminder?.enableSocialChannels !== true,
+                    },
+                  }))}
+                />
+              </div>
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold">Require a customer price enquiry</p>

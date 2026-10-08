@@ -199,6 +199,31 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
       error: uploaded.error,
     };
   }
+  // Upload alone does not contact the customer. Recheck immediately before
+  // the Send API request, since the reply window or staff owner may change.
+  if (typeof options.preSendCheck === "function") {
+    try {
+      if (await options.preSendCheck() !== true) {
+        return {
+          success: false,
+          wamid: null,
+          externalMessageId: null,
+          cancelled: true,
+          error: "Attachment send cancelled because eligibility changed during upload.",
+        };
+      }
+    } catch (err) {
+      console.error("Final attachment eligibility check failed:", err);
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        cancelled: true,
+        preSendCheckFailed: true,
+        error: "Attachment send cancelled because final eligibility could not be verified.",
+      };
+    }
+  }
   return sendAttachmentId(channel, recipientId, type, uploaded.attachmentId, options);
 }
 

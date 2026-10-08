@@ -47,9 +47,9 @@ function createInboundMessageClaimService({
   reengagement = leadReengagementAlertService,
   config = clinicConfig,
 } = {}) {
-  function whatsappOptOutScope(incoming) {
+  function customerOptOutScope(incoming) {
     if (
-      (incoming?.channel || "whatsapp") !== "whatsapp" ||
+      !["whatsapp", "facebook", "instagram"].includes(incoming?.channel || "whatsapp") ||
       incoming?.mediaType != null
     ) {
       return null;
@@ -78,7 +78,7 @@ function createInboundMessageClaimService({
     // A clear stop/unsubscribe request is terminal for this inbound turn. Keep
     // the customer's message durable and visible, mark it unread/attention,
     // then complete its processing job without generating any outbound reply.
-    const optOutScope = whatsappOptOutScope(incoming);
+    const optOutScope = customerOptOutScope(incoming);
     if (optOutScope) {
       const source = incoming?.buttonPayload
         ? "customer_quick_reply"
@@ -92,7 +92,7 @@ function createInboundMessageClaimService({
       } catch (err) {
         // Even when the consent-state write has a transient failure, fail
         // closed for this turn and never continue into an outbound AI reply.
-        console.error(`Failed to record WhatsApp opt-out for contact ${contact.id}:`, err);
+        console.error(`Failed to record ${channel} opt-out for contact ${contact.id}:`, err);
       }
 
       try {
@@ -100,11 +100,11 @@ function createInboundMessageClaimService({
           contact.id,
           true,
           optOutScope === "marketing"
-            ? "Customer opted out of WhatsApp marketing. Service and utility messages remain available, but do not send promotions without a new explicit marketing opt-in."
-            : "Customer opted out of WhatsApp messages. Do not send proactive messages without a new explicit opt-in."
+            ? "Customer opted out of promotional messages. Do not send marketing until the customer opts in again."
+            : "Customer opted out of messages. Do not send proactive messages without a new explicit opt-in."
         );
       } catch (err) {
-        console.error(`Failed to flag WhatsApp opt-out for contact ${contact.id}:`, err);
+        console.error(`Failed to flag ${channel} opt-out for contact ${contact.id}:`, err);
       }
 
       try {
@@ -345,7 +345,7 @@ function createInboundMessageClaimService({
 
     // Opt-outs never enter the outbound-processing lease; they are completed
     // directly by prepareStoredInbound with no automated response.
-    if (whatsappOptOutScope(incoming)) {
+    if (customerOptOutScope(incoming)) {
       return prepareStoredInbound(durableClaim);
     }
 

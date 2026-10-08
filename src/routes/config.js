@@ -384,7 +384,9 @@ function isAutomatedFollowUpConfig(value) {
         (value.pricingReminder.requirePricingInterest !== undefined &&
           typeof value.pricingReminder.requirePricingInterest !== "boolean") ||
         (value.pricingReminder.sendBothPelvicPackages !== undefined &&
-          typeof value.pricingReminder.sendBothPelvicPackages !== "boolean"))) ||
+          typeof value.pricingReminder.sendBothPelvicPackages !== "boolean") ||
+        (value.pricingReminder.enableSocialChannels !== undefined &&
+          typeof value.pricingReminder.enableSocialChannels !== "boolean"))) ||
     !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
   ) {
     return false;
@@ -601,11 +603,15 @@ function prepareAutomatedFollowUpConfig(requested, current) {
         (requestedPricing.requirePricingInterest !== undefined &&
           typeof requestedPricing.requirePricingInterest !== "boolean") ||
         (requestedPricing.sendBothPelvicPackages !== undefined &&
-          typeof requestedPricing.sendBothPelvicPackages !== "boolean"))) return null;
+          typeof requestedPricing.sendBothPelvicPackages !== "boolean") ||
+        (requestedPricing.enableSocialChannels !== undefined &&
+          typeof requestedPricing.enableSocialChannels !== "boolean"))) return null;
   const requirePricingInterest = requestedPricing?.requirePricingInterest ??
     (current?.pricingReminder?.requirePricingInterest !== false);
   const sendBothPelvicPackages = requestedPricing?.sendBothPelvicPackages ??
     (current?.pricingReminder?.sendBothPelvicPackages === true);
+  const enableSocialChannels = requestedPricing?.enableSocialChannels ??
+    (current?.pricingReminder?.enableSocialChannels === true);
   const pricingEnabled = requestedPricing === undefined
     ? current?.pricingReminder?.enabled === true
     : requestedPricing.enabled === true;
@@ -617,6 +623,17 @@ function prepareAutomatedFollowUpConfig(requested, current) {
         typeof current.pricingReminder.activatedAt === "string" &&
         !Number.isNaN(Date.parse(current.pricingReminder.activatedAt))
           ? current.pricingReminder.activatedAt
+          : new Date().toISOString()
+      : null;
+  // Social opt-in starts a distinct cohort, without resetting queued WhatsApp pricing.
+  const socialActivation =
+    pricingEnabled && enableSocialChannels
+      ? current?.pricingReminder?.enabled === true &&
+        current.pricingReminder.enableSocialChannels === true &&
+        current.pricingReminder.activatedAt === pricingActivation &&
+        typeof current.pricingReminder.socialActivatedAt === "string" &&
+        !Number.isNaN(Date.parse(current.pricingReminder.socialActivatedAt))
+          ? current.pricingReminder.socialActivatedAt
           : new Date().toISOString()
       : null;
 
@@ -669,7 +686,8 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     ...firstStep,
     additionalSteps,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
-      requirePricingInterest, sendBothPelvicPackages },
+      socialActivatedAt: socialActivation,
+      requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
     activatedAt: enabled
       ? continuingCurrentActivation
         ? current.activatedAt
