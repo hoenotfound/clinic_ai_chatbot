@@ -2581,6 +2581,30 @@ function FollowUpTool({
                       ))}
                     </div>
                   ) : null}
+                  {(freeEntryStatus.contactDetails || []).length > 0 ? (
+                    <div className="mt-3">
+                      <p className="text-[11px] font-semibold">Recent lead eligibility and maximum expiry</p>
+                      <div className="mt-1 max-h-44 overflow-y-auto space-y-1 text-[11px]">
+                        {freeEntryStatus.contactDetails.map((row) => (
+                          <div key={row.contact_id}
+                            className="rounded-lg border border-[var(--color-border)] p-2">
+                            <p>Contact #{row.contact_id}
+                              {row.treatment_interest ? ` · ${row.treatment_interest}` : ""}
+                            </p>
+                            <p className="text-[var(--color-text-muted)]">
+                              {String(row.eligibility_reason || "unknown").replaceAll("_", " ")}
+                              {row.last_skip_reason ? ` · Last skip: ${row.last_skip_reason.replaceAll("_", " ")}` : ""}
+                            </p>
+                            <p className="text-[var(--color-text-muted)]">
+                              {row.free_entry_max_expires_at
+                                ? `Max expiry: ${new Date(row.free_entry_max_expires_at).toLocaleString("en-MY", {timeZone:"Asia/Kuala_Lumpur"})}`
+                                : "No confirmed free-entry start"}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
                     Confirmation reflects past Meta callbacks, not a guarantee of future free sends.
                     Never automatically treat ad clicks as marketing opt-in.
