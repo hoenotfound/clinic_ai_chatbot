@@ -13,6 +13,8 @@ const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
 const commentAutomationReadiness = require("../services/commentAutomationReadinessService");
+const freeEntryReportRepo = require("../db/whatsappFreeEntryReportRepo");
+const { freeEntryEnabled } = require("../utils/whatsappFreeEntryWindow");
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
@@ -1130,6 +1132,26 @@ router.post("/automated-follow-up/translations", async (req, res) => {
     console.error("Failed to translate automated follow-up:", err);
     res.status(502).json({
       error: "The translations could not be generated. Please try again.",
+    });
+  }
+});
+
+router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
+  try {
+    const report = await freeEntryReportRepo.summarize();
+    const clinic = configRepo.getConfig().automatedFollowUp?.freeEntry;
+    return res.json({
+      ...report,
+      enabledInTools: clinic?.enabled === true,
+      enabledOnServer: freeEntryEnabled(),
+      periodMaxHours: 168,
+      note: "Ad referral does not establish marketing opt-in or guarantee that later Meta sends are free.",
+    });
+  } catch (error) {
+    console.error("Failed to fetch WhatsApp free-entry follow-up status:", error);
+    return res.status(503).json({
+      error: "Extended follow-up eligibility and billing status could not be checked.",
+      code: "free_entry_status_unavailable",
     });
   }
 });
