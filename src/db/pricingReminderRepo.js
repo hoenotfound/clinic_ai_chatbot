@@ -106,6 +106,9 @@ WITH eligible AS (
  ) lead ON true
  WHERE c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL
    AND c.needs_attention = false
+   AND COALESCE(c.mode,'ai') <> 'human'
+   AND c.whatsapp_opt_out_at IS NULL
+   AND c.whatsapp_marketing_opt_out_at IS NULL
    AND anchor.delivery_status IS DISTINCT FROM 'failed'
    AND anchor.created_at >= $1::timestamptz
    AND ($2::text = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -182,6 +185,9 @@ async function claim({ candidate, offer, activatedAt, triggerMode, settings }) {
      WHERE inbound.id=$6 AND anchor.id=$2
        AND c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
        AND c.needs_attention=false
+         AND COALESCE(c.mode,'ai') <> 'human'
+         AND c.whatsapp_opt_out_at IS NULL
+         AND c.whatsapp_marketing_opt_out_at IS NULL
        AND anchor.created_at >= $7::timestamptz
        AND ($8='all' OR anchor.sent_by_username IS NOT NULL)
        AND now() < inbound.created_at + interval '23 hours 50 minutes'
@@ -232,7 +238,10 @@ async function isClaimStillEligible({
        JOIN contacts c ON c.id=m.contact_id
        WHERE m.id=$1 AND m.contact_id=$2 AND m.pricing_reminder_anchor_id=$3
          AND m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL
-         AND c.needs_attention=false AND c.channel='whatsapp'
+         AND c.needs_attention=false
+         AND COALESCE(c.mode,'ai') <> 'human'
+         AND c.whatsapp_opt_out_at IS NULL
+         AND c.whatsapp_marketing_opt_out_at IS NULL AND c.channel='whatsapp'
          AND c.whatsapp_number = $8::text
          AND now() + interval '${MINUTES_BEFORE_FINAL} minutes' <= $7::timestamptz
          AND COALESCE((SELECT l.treatment_interest FROM leads l
