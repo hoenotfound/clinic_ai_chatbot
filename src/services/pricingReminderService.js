@@ -203,7 +203,9 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
         : "Delivery failed: the pricing graphic was rejected. Review in Inbox."
     );
   }
-  return Boolean(result?.success &&
+  // Do not advance to Package B without a durable receipt for Package A.
+  // Meta may have accepted the send, so failed persistence needs staff review.
+  return Boolean(updated && result?.success && statusForPricingSend(result) === "sent" &&
     (channel === "whatsapp" ? result.wamid : result.externalMessageId));
 }
 
