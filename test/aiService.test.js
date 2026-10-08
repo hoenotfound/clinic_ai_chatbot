@@ -22,6 +22,7 @@ const {
   isRetryableAiError,
   resetGeminiModelHealth,
   runCandidate,
+  runGeminiModelAttempt,
   runGeminiReply,
 } = require("../src/services/aiService");
 
