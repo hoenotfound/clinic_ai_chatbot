@@ -295,8 +295,12 @@ async function processCandidate(candidate, active, template, now = new Date(), e
     };
     message = await messagesRepo.saveMessage(
       candidate.contact_id, "assistant", built.preview,
-      null, "Automation", null, null, null,
-      { whatsappTemplate: metadata, initialDeliveryStatus: "unknown",
+      null, "Automation",
+      spec.mediaKey ? null : (spec.mediaUrl || null),
+      null, spec.mediaKey ? "video/mp4" :
+        template.header?.format === "VIDEO" ? "video/mp4" : null,
+      { mediaKey: spec.mediaKey || null, whatsappTemplate: metadata,
+        initialDeliveryStatus: "unknown",
         initialDeliveryError: "Awaiting WhatsApp template delivery confirmation." }
     );
     await pool.query(
