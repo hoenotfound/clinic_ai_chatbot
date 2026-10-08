@@ -6,6 +6,15 @@ This integration lets a business keep using the WhatsApp Business mobile app whi
 
 The admin portal now exposes **Setup Status → WhatsApp Business App coexistence**. This is an authorization and validation step only.
 
+**Use an existing WhatsApp Business mobile app number.** Coexistence is not the setup flow
+for a newly purchased number entered directly into Meta, including a new virtual number.
+For those numbers, use the ordinary WhatsApp Cloud API onboarding process. An authorized
+Meta popup does not prove coexistence: a normal Cloud API signup returns the `FINISH`
+session event, whereas Business App coexistence requires
+`FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`. If Meta returns a code but no completion
+event reaches the portal, neither signup type can be confirmed from that code alone.
+Never auto-enable coexistence or change runtime credentials from either result.
+
 Required server environment:
 
 ```env
