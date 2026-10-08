@@ -6,7 +6,7 @@ const realtimeEvents = require("../src/utils/realtimeEvents");
 const leadScoringRepo = require("../src/db/leadScoringRepo");
 
 const summary = {
-  treatmentInterest: "HIFU",
+  treatmentInterest: "HIFU Non-Surgical Facelift",
   preferredBranch: "Puchong",
   preferredAppointment: "Tomorrow at 12pm",
   mainConcern: "Face lifting",
@@ -75,7 +75,7 @@ test("completed scores persist the structured summary and include it in audit me
   const leadUpdate = queries.find(({ sql }) => /UPDATE leads/.test(sql));
   assert.ok(leadUpdate);
   assert.match(leadUpdate.sql, /treatment_interest = COALESCE\(\$4, treatment_interest\)/);
-  assert.equal(leadUpdate.params[3], "HIFU");
+  assert.equal(leadUpdate.params[3], "HIFU Non-Surgical Facelift");
 
   const scoreUpdate = queries.find(({ sql }) => /SET status = 'completed'/.test(sql));
   assert.ok(scoreUpdate);
