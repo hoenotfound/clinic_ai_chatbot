@@ -178,7 +178,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
   return result.rows[0] || null;
 }
 
-async function isClaimStillEligible({ messageId, contactId, anchorId, inboundId }) {
+async function isClaimStillEligible({ messageId, contactId, anchorId, inboundId, imageIdentities = [] }) {
   const result = await pool.query(
     `SELECT EXISTS (
        SELECT 1 FROM messages m
@@ -199,7 +199,24 @@ async function isClaimStillEligible({ messageId, contactId, anchorId, inboundId 
            WHERE f.automated_follow_up_for_message_id=$3 AND f.automated_follow_up_step=3)
          AND NOT EXISTS(SELECT 1 FROM follow_up_ai_decisions d
            WHERE d.contact_id=$2 AND d.trigger_message_id=$3 AND d.action IN ('skip','human_review'))
-     ) AS eligible`, [messageId,contactId,anchorId,inboundId]);
+         AND NOT EXISTS (
+           SELECT 1 FROM (
+             SELECT l.is_closed,l.appointment_status,s.stage_type,s.system_key
+             FROM leads l LEFT JOIN pipeline_stages s ON s.id=l.stage_id
+             WHERE l.contact_id=$2 ORDER BY l.created_at DESC,l.id DESC LIMIT 1
+           ) lead
+           WHERE lead.is_closed=true OR COALESCE(lead.stage_type,'open')<>'open'
+             OR (COALESCE(lead.appointment_status,'none') NOT IN ('reschedule','cancelled')
+               AND (COALESCE(lead.system_key,'') IN ('appointment_set','visited')
+                 OR COALESCE(lead.appointment_status,'none') IN ('set','visited')))
+         )
+         AND NOT EXISTS (SELECT 1 FROM messages prior
+           WHERE prior.contact_id=$2 AND prior.id<>$1 AND prior.role='assistant'
+             AND prior.media_url IS NOT NULL AND prior.content IS NOT NULL
+             AND prior.content <> ''
+             AND split_part(regexp_replace(prior.media_url, '^https?://[^/]+', ''), '?',1)
+               =ANY($5::text[]))
+     ) AS eligible`, [messageId,contactId,anchorId,inboundId,imageIdentities]);
   return result.rows[0]?.eligible === true;
 }
 
