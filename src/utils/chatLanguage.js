@@ -90,6 +90,11 @@ function detectExplicitLanguagePreference(input) {
   if (/^(?:english|english pls|english please|in english|speak english|reply in english|please (?:reply|speak) in english|can (?:you|u) (?:reply|speak) in english)$/iu.test(single)) return "en";
   if (/^(?:bm|bahasa|bahasa malaysia|bahasa melayu|malay|in malay|in bahasa|speak malay|reply in malay|please (?:reply|speak) in (?:malay|bahasa malaysia))$/iu.test(single)) return "ms";
   if (/^(?:中文|华语|華語|国语|國語|普通话|普通話|讲中文|講中文|用中文|请用中文|請用中文|中文回复|中文回覆|mandarin|chinese|in chinese|speak chinese|reply in chinese)$/iu.test(single)) return "zh";
+  // A language selection followed by a comma and a service question is also
+  // an explicit preference, but not a greeting-only enquiry.
+  if (/^english(?: please| pls)?[,，:]\s*\S/iu.test(single)) return "en";
+  if (/^(?:bm|bahasa malaysia|bahasa melayu|malay)(?: please)?[,，:]\s*\S/iu.test(single)) return "ms";
+  if (/^(?:中文|华语|華語|mandarin|chinese)(?:回复|回覆| please)?[,，:]\s*\S/iu.test(single)) return "zh";
   // A clear request can accompany a service question, but general mentions of
   // a language (e.g. "English version of the price list") aren't commands.
   if (/^(?:please |can (?:you|u) |could (?:you|u) )?(?:reply|speak|respond|answer)(?: to me)? in english\b/iu.test(single)) return "en";
@@ -104,7 +109,10 @@ function isGreetingOrLanguageOnly(input) {
   const withoutGreeting = text
     .replace(/^(?:(?:hi|hello|hey|hai|你好|您好|嗨|哈喽|哈囉|salam|assalamualaikum)[!！,.，。\s]*)/iu, "")
     .trim();
-  if (detectExplicitLanguagePreference(withoutGreeting || text)) return true;
+  const candidate = (withoutGreeting || text).replace(/[!！.。?？]+$/u, "").trim();
+  if (detectExplicitLanguagePreference(candidate)) {
+    return /^(?:english(?: (?:pls|please))?|in english|speak english|reply in english|please (?:reply|speak) in english|can (?:you|u) (?:reply|speak) in english|bm|bahasa(?: malaysia| melayu)?|malay|in malay|in bahasa|speak malay|reply in malay|please (?:reply|speak) in (?:malay|bahasa malaysia)|中文|华语|華語|国语|國語|普通话|普通話|讲中文|講中文|用中文|请用中文|請用中文|中文回复|中文回覆|mandarin|chinese|in chinese|speak chinese|reply in chinese)$/iu.test(candidate);
+  }
   return /^(?:hi|hello|hey|hai|你好|您好|嗨|哈喽|哈囉|salam|assalamualaikum|👋|👍)[!！,.，。\s👋😊🙂]*$/iu.test(text);
 }
 
