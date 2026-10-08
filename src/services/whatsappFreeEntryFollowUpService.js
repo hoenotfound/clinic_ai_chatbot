@@ -202,8 +202,8 @@ async function listCandidates(active, database = pool, contactId = null, { exclu
   return query.rows;
 }
 
-async function claim(candidate, slotHours, active) {
-  const client = await pool.connect();
+async function claim(candidate, slotHours, active, database = pool) {
+  const client = await database.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
