@@ -132,7 +132,10 @@ const candidateSql = `
       WHERE staff_reply.contact_id = c.id
         AND staff_reply.role = 'assistant'
         AND staff_reply.sent_by_username IS NOT NULL
-        AND staff_reply.sent_by_username <> 'Automation'
+        AND EXISTS (
+          SELECT 1 FROM users human_staff
+          WHERE human_staff.username = staff_reply.sent_by_username
+        )
         AND (staff_reply.created_at, staff_reply.id) >
           (first_reply.created_at, first_reply.id)
     )
@@ -147,12 +150,14 @@ const candidateSql = `
         WHERE prior.first_reply_message_id = first_reply.id
           AND prior.slot_hours = slot.hours
       )
-      AND now() >= first_reply.created_at + slot.hours * interval '1 hour'
+      AND now() >= first_reply.created_at +
+        (slot.hours - CASE WHEN slot.hours = (SELECT max(n) FROM unnest($4::integer[]) AS n)
+         THEN 12 ELSE 0 END) * interval '1 hour'
       AND now() < first_reply.created_at + (slot.hours + 12) * interval '1 hour'
       AND now() >= last_inbound.created_at + interval '24 hours'
     ))
   ORDER BY first_reply.created_at ASC, c.id ASC
-  LIMIT $3::integer
+  LIMIT $3::integer OFFSET $7::integer
 `;
 
 function settings(env = process.env) {
@@ -195,10 +200,12 @@ function selectedSlot(candidate, slots, now = new Date()) {
   return null;
 }
 
-async function listCandidates(active, database = pool, contactId = null, { excludeMessageId = null, currentAttemptId = null } = {}) {
+async function listCandidates(active, database = pool, contactId = null, {
+  excludeMessageId = null, currentAttemptId = null, offset = 0,
+} = {}) {
   const query = await database.query(candidateSql,
     [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots,
-      excludeMessageId, currentAttemptId]);
+      excludeMessageId, currentAttemptId, offset]);
   return query.rows;
 }
 
@@ -371,9 +378,16 @@ async function run({ now = new Date() } = {}) {
     const result = { candidates: 0, accepted: 0, skipped: 0 };
     const catalog = await whatsappTemplates.listApprovedTemplates();
     if (!catalog.success) return { disabled: true, reason: "template_catalog_unavailable" };
-    const candidates = await listCandidates(active);
-    result.candidates = candidates.length;
-    for (const candidate of candidates) {
+    // The queue is paged so 20 contacts missing template variants cannot
+    // continually starve all contacts behind them.
+    const allCandidates = [];
+    for (let offset = 0; offset < 5000; offset += MAX_BATCH_SIZE) {
+      const page = await listCandidates(active, pool, null, { offset });
+      allCandidates.push(...page);
+      if (page.length < MAX_BATCH_SIZE) break;
+    }
+    result.candidates = allCandidates.length;
+    for (const candidate of allCandidates) {
       const slotHours = selectedSlot(candidate, active.slots, now);
       if (!slotHours) { result.skipped++; continue; }
       const spec = selectTemplateSpec(candidate, slotHours, active);
