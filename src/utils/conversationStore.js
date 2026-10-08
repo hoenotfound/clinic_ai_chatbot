@@ -54,8 +54,12 @@ function aiVisibleRows(rows) {
       !isStickerRow(row) &&
       (
         row.role !== "assistant" ||
-        row.delivery_status == null ||
-        !["failed", "unknown"].includes(row.delivery_status)
+        (
+          !["failed", "unknown", "cancelled"].includes(row.delivery_status) &&
+          // An unsent pricing claim exists briefly during the pre-send check.
+          // Do not let any AI snapshot mistake the claim for a real send.
+          !(row.pricing_reminder_anchor_id != null && row.delivery_status == null)
+        )
       )
   );
 }
