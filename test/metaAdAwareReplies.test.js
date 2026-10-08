@@ -129,7 +129,7 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
       prompt.indexOf("META AD ACQUISITION CONTEXT"),
     "large static clinic instructions should precede per-lead ad context for cache reuse"
   );
-  assert.match(prompt, /answer naturally in the context of that service/);
+  assert.match(prompt, /answer naturally about the verified service topic/);
 });
 
 test("ad names never enter the AI reply prompt, even when creative copy is unavailable", () => {
