@@ -4,6 +4,7 @@ const os = require("node:os");
 const express = require("express");
 const multer = require("multer");
 const configRepo = require("../db/configRepo");
+const followUpMediaReferencesRepo = require("../db/followUpMediaReferencesRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaStorage = require("../services/mediaStorageService");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
@@ -1236,14 +1237,20 @@ router.post(
       const filename = String(req.file.originalname || "follow-up-video.mp4")
         .replace(/[\\/\0]/g, "")
         .slice(0, 255) || "follow-up-video.mp4";
-      mediaStorage.pruneStaleFollowUpConfigVideos({
-        referencedKeys: [
-          ...followUpVideoKeys(configRepo.getConfig().automatedFollowUp),
-          key,
-        ],
-      }).catch((err) => {
-        console.error("Failed to prune stale follow-up videos after upload:", err);
-      });
+      // Keep prior settings videos that are still referenced in historical
+      // messages (Inbox playback and Retry). Never prune when the DB check
+      // fails; a periodic worker can safely retry later.
+      followUpMediaReferencesRepo.listReferencedFollowUpConfigVideoKeys()
+        .then((referencedKeys) => mediaStorage.pruneStaleFollowUpConfigVideos({
+          referencedKeys: [
+            ...followUpVideoKeys(configRepo.getConfig().automatedFollowUp),
+            ...referencedKeys,
+            key,
+          ],
+        }))
+        .catch((err) => {
+          console.error("Failed to prune stale follow-up videos after upload:", err);
+        });
       return res.status(201).json({
         key,
         filename,

@@ -1,5 +1,6 @@
 const { bootstrapAdminUser } = require("../db/bootstrapAdmin");
 const configRepo = require("../db/configRepo");
+const followUpMediaReferencesRepo = require("../db/followUpMediaReferencesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
@@ -59,9 +60,12 @@ function configuredFollowUpVideoKeys() {
 async function pruneStaleTemporaryMediaSafely() {
   const [temporaryResult, followUpVideoResult] = await Promise.allSettled([
     mediaStorage.pruneStaleTemporaryMedia(),
-    mediaStorage.pruneStaleFollowUpConfigVideos({
-      referencedKeys: configuredFollowUpVideoKeys(),
-    }),
+    (async () => {
+      const referencedKeys = await followUpMediaReferencesRepo.listReferencedFollowUpConfigVideoKeys();
+      return mediaStorage.pruneStaleFollowUpConfigVideos({
+        referencedKeys: [...new Set([...configuredFollowUpVideoKeys(), ...referencedKeys])],
+      });
+    })(),
   ]);
 
   if (temporaryResult.status === "fulfilled") {
