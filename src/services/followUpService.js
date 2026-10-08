@@ -206,6 +206,7 @@ function getActiveSettings() {
     steps,
     pricingReminder: {
       enabled: settings.pricingReminder?.enabled === true,
+      activatedAt: settings.pricingReminder?.activatedAt || null,
     },
   };
 }
@@ -1747,7 +1748,7 @@ realtimeEvents.subscribe("pipeline_changed", () => {
 });
 
 realtimeEvents.subscribe("config_changed", (payload) => {
-  if (payload?.keys?.includes("automatedFollowUp")) wakeAutomatedFollowUps(0);
+  if (payload?.keys?.some((key) => ["automatedFollowUp", "promotions"].includes(key))) wakeAutomatedFollowUps(0);
 });
 
 module.exports = {
