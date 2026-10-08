@@ -71,6 +71,12 @@ test("completed scores persist the structured summary and include it in audit me
   });
 
   assert.equal(result.status, "completed");
+
+  const leadUpdate = queries.find(({ sql }) => /UPDATE leads/.test(sql));
+  assert.ok(leadUpdate);
+  assert.match(leadUpdate.sql, /treatment_interest = COALESCE\(\$4, treatment_interest\)/);
+  assert.equal(leadUpdate.params[3], "HIFU");
+
   const scoreUpdate = queries.find(({ sql }) => /SET status = 'completed'/.test(sql));
   assert.ok(scoreUpdate);
   assert.match(scoreUpdate.sql, /summary_data = \$6::jsonb/);
