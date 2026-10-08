@@ -6,6 +6,7 @@ const whatsappTemplates = require("./whatsappTemplateService");
 const messagesRepo = require("../db/messagesRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
+const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
 const { selectTemplateSpec, buildStaticMarketingTemplate, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
 const {
   freeEntryEnabled,
@@ -186,6 +187,8 @@ function selectedSlot(candidate, slots, now = new Date()) {
   const clock = new Date(now).getTime();
   for (const slotHours of slots) {
     const due = reply + slotHours * 3600000;
+    const effectiveDue = effectiveSlotDueAt(candidate.first_reply_at, slotHours,
+      slots, clinicConfig.automatedFollowUp?.quietHours);
     // Never catch up a missed day by blasting several templates together.
     if (clock > due + 12 * 3600000 || candidate.claimed_slots?.includes(slotHours)) continue;
     if (eligibleFreeEntryTime({
@@ -194,7 +197,7 @@ function selectedSlot(candidate, slots, now = new Date()) {
       lastInboundAt: candidate.last_inbound_at,
       evidenceType: candidate.evidence_type,
       sourceIsCtwa: candidate.source_is_ctwa,
-      slotHours, now,
+      slotHours, now, earlyDueAt: effectiveDue,
     })) return slotHours;
   }
   return null;
@@ -225,6 +228,8 @@ async function claim(candidate, slotHours, active, database = pool) {
           evidenceType: fresh.evidence_type,
           sourceIsCtwa: fresh.source_is_ctwa,
           slotHours,
+          earlyDueAt: effectiveSlotDueAt(fresh.first_reply_at, slotHours,
+            active.slots, clinicConfig.automatedFollowUp?.quietHours),
         })) {
       await client.query("ROLLBACK");
       return null;
@@ -311,6 +316,8 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         evidenceType: fresh.evidence_type,
         sourceIsCtwa: fresh.source_is_ctwa,
         slotHours,
+        earlyDueAt: effectiveSlotDueAt(fresh.first_reply_at, slotHours,
+          liveActive.slots, clinicConfig.automatedFollowUp?.quietHours),
       }) ||
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
       JSON.stringify(selectTemplateSpec(fresh, slotHours, liveActive)) !== JSON.stringify(spec)) {
