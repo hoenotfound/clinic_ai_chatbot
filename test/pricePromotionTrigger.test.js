@@ -674,3 +674,49 @@ test("AI price-query flag cannot trigger pricing graphics for Malay session or d
     assert.equal(attempted, false);
   }
 });
+
+
+test("misclassified English how-much duration questions do not send price media", async () => {
+  for (const customerText of [
+    "How much time does the 3D treatment take?",
+    "How much recovery time after 3D?",
+    "How much longer before the treatment ends?",
+    "How much pain does pelvic treatment cause?",
+  ]) {
+    let checked = false;
+    const result = await resolvePricePromotionForReply(base({
+      customerText,
+      priceQuery: true, // Simulate a mistaken AI classification.
+      wasPromoRecentlySent: async () => { checked = true; return false; },
+    }));
+    assert.equal(result, null, customerText);
+    assert.equal(checked, false, customerText);
+  }
+
+  const actualPrice = await resolvePricePromotionForReply(base({
+    customerText: "How much time does 3D take, and how much is it?",
+  }));
+  assert.ok(actualPrice?.packages?.length);
+});
+
+
+test("English recovery time and waiting questions are never price-media triggers", async () => {
+  for (const customerText of [
+    "How much is the recovery time?",
+    "How much should I wait after pelvic treatment?",
+    "How much will it take to recover?",
+  ]) {
+    let mediaLookup = false;
+    const result = await resolvePricePromotionForReply(base({
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      wasPromoRecentlySent: async () => { mediaLookup = true; return false; },
+    }));
+    assert.equal(result, null, customerText);
+    assert.equal(mediaLookup, false, customerText);
+  }
+  assert.ok(await resolvePricePromotionForReply(base({
+    customerText: "How much is the recovery time and what is the price?",
+  })));
+});
