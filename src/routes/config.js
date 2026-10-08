@@ -379,7 +379,9 @@ function isAutomatedFollowUpConfig(value) {
     !value.additionalSteps.every(isFollowUpStep) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
-        typeof value.pricingReminder.enabled !== "boolean")) ||
+        typeof value.pricingReminder.enabled !== "boolean" ||
+        (value.pricingReminder.mode !== undefined &&
+          !["before_final", "after_final"].includes(value.pricingReminder.mode)))) ||
     !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
   ) {
     return false;
@@ -592,13 +594,18 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
-        typeof requestedPricing.enabled !== "boolean")) return null;
+        typeof requestedPricing.enabled !== "boolean" ||
+        (requestedPricing.mode !== undefined &&
+          !["before_final", "after_final"].includes(requestedPricing.mode)))) return null;
+  const pricingMode = requestedPricing?.mode ||
+    current?.pricingReminder?.mode || "before_final";
   const pricingEnabled = requestedPricing === undefined
     ? current?.pricingReminder?.enabled === true
     : requestedPricing.enabled === true;
   const pricingActivation =
     pricingEnabled
       ? current?.pricingReminder?.enabled === true &&
+        (current?.pricingReminder?.mode || "before_final") === pricingMode &&
         typeof current.pricingReminder.activatedAt === "string" &&
         !Number.isNaN(Date.parse(current.pricingReminder.activatedAt))
           ? current.pricingReminder.activatedAt
@@ -653,7 +660,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     quietHours,
     ...firstStep,
     additionalSteps,
-    pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation },
+    pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation, mode: pricingMode },
     activatedAt: enabled
       ? continuingCurrentActivation
         ? current.activatedAt
