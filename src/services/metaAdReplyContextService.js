@@ -30,16 +30,12 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) 
   const nameService = creativeMatches.length === 0
     ? inferConfiguredServiceFromText(row.ad_name, { services, serviceAliases: expandedAliases })
     : null;
-  // Current lead data is already included in this same local Postgres read.
-  // It may be available before the Meta API fills the ad name. Accept only
-  // an EXACT configured name, never model-inferred or unrelated lead details.
-  // Ambiguous creative must never be "resolved" using a CRM value.
-  const leadService = creativeMatches.length === 0 && !nameService
-    ? canonicalConfiguredServiceName(row.treatment_interest, services)
-    : null;
-  const serviceHint = creativeService || nameService || leadService;
-  const serviceHintSource = creativeService
-    ? "creative" : nameService ? "ad_name" : leadService ? "lead_interest" : null;
+  // A CRM lead's treatment_interest may have been entered by staff or
+  // inferred from a different conversation. Its exact spelling does NOT
+  // verify the current ad. Prefer an honest generic reply until this lead's
+  // attribution includes matching creative or an actual ad name.
+  const serviceHint = creativeService || nameService;
+  const serviceHintSource = creativeService ? "creative" : nameService ? "ad_name" : null;
   if (!headline && !body && !serviceHint) return null;
   return {
     headline,
