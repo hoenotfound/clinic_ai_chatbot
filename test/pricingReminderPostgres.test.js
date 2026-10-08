@@ -247,7 +247,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       [2,'facebook','fb-customer',201,200,202],
       [3,'instagram','ig-customer',301,300,302],
     ]) {
-      const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode:"all" });
+      const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode:"all", channels:["whatsapp","facebook","instagram"] });
       const social = candidates.find(c => c.contact_id === contactId);
       assert.ok(social, `Expected ${channel} reminder candidate`);
       assert.equal(social.channel, channel);
@@ -278,7 +278,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       await client.query("UPDATE contacts SET mode='ai' WHERE id=$1",[contactId]);
     }
     await client.query("UPDATE messages SET social_accepted_at=NULL WHERE id=302");
-    const socialCandidates=await pricingRepo.listEligible({activatedAt,triggerMode:"all"});
+    const socialCandidates=await pricingRepo.listEligible({activatedAt,triggerMode:"all",channels:["whatsapp","facebook","instagram"]});
     assert.ok(!socialCandidates.some(c=>c.contact_id===3));
     assert.ok(socialCandidates.some(c=>c.contact_id===2));
 
