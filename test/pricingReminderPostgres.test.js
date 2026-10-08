@@ -126,6 +126,35 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
     }), false);
 
+    // Verify the unique decision record and avoid repeated human-review alerts.
+    await client.query("DELETE FROM messages WHERE id=$1", [saved.id]);
+    await client.query("UPDATE leads SET treatment_interest='3D 小颜术' WHERE contact_id=1");
+    const reviewDecision = await pricingRepo.recordDecision({
+      candidate, reason:"delivery_review",
+    });
+    assert.ok(reviewDecision);
+    assert.equal(await pricingRepo.recordDecision({
+      candidate, reason:"delivery_review",
+    }), null);
+    assert.equal(await pricingRepo.claim({
+      candidate,offer,activatedAt,triggerMode:"all",settings,
+    }), null);
+    await client.query("DELETE FROM pricing_reminder_decisions WHERE anchor_id=101");
+
+    // A delayed step 2 must not trigger a pricing graphic near the testimonial.
+    await client.query(`
+      UPDATE messages SET created_at=now()-interval '23 hours' WHERE id=100;
+      UPDATE messages SET created_at=now()-interval '22 hours' WHERE id=101;
+      UPDATE messages SET created_at=now()-interval '3 hours' WHERE id=103;
+    `);
+    const crowdedCandidates = await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",settings,
+    });
+    assert.equal(crowdedCandidates.length,1);
+    assert.equal(await pricingRepo.claim({
+      candidate:crowdedCandidates[0],offer,activatedAt,triggerMode:"all",settings,
+    }), null);
+
     // The pricing reminder must not keep the original message undeletable.
     await client.query("DELETE FROM messages WHERE id=101");
     const rowsAfterDelete = await client.query(
