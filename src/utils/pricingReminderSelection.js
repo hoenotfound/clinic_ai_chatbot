@@ -37,6 +37,19 @@ function selectedService(candidate, services, aliases = []) {
   const saved = norm(candidate.treatment_interest);
   return services.find((service) => norm(service.name) === saved)?.name || null;
 }
+// A pricing graphic is a response to expressed commercial interest, not a
+// default treatment-education follow-up. Only the customer's own messages
+// qualify; CRM ad attribution alone must never trigger promotional pricing.
+const PRICING_INTEREST_RE = /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|收費|费用|費用|报价|報價|折扣|优惠|優惠|配套|套餐|特价|特價|how\\s+much|price|pricing|cost|fee|fees|quote|quotation|promotion|promo|discount|package|packages|voucher|budget|harga|berapa|kos|pakej|promosi|diskaun|rm\\s*\\d)/iu;
+
+function hasPricingInterest(messages, packages = []) {
+  return (Array.isArray(messages) ? messages : []).some((message) => {
+    const text = String(message || "");
+    return PRICING_INTEREST_RE.test(text)
+      || findMentionedPromotionPackages(packages, text).length > 0;
+  });
+}
+
 function evaluatePricingReminder({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
   const service = selectedService(candidate, services, aliases);
   if (!service) return { offer: null, reason: "ambiguous_service" };
@@ -47,6 +60,9 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
 
   const packages = promotionPackages(matching[0]);
   if (!packages.length) return { offer: null, reason: "missing_promotion" };
+  if (!hasPricingInterest(candidate.recent_customer_messages, packages)) {
+    return { offer: null, reason: "no_pricing_interest" };
+  }
   let selected;
   if (packages.length === 1) {
     selected = packages[0];
@@ -103,4 +119,4 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
 function selectPricingOffer(options) {
   return evaluatePricingReminder(options).offer;
 }
-module.exports = { evaluatePricingReminder, selectPricingOffer, imageIdentity, selectedService };
+module.exports = { evaluatePricingReminder, selectPricingOffer, imageIdentity, selectedService, hasPricingInterest };
