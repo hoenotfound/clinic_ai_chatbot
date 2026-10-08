@@ -33,7 +33,7 @@ function sourcePromisesFreeMeridian(source) {
 }
 
 function replyClauses(response) {
-  return String(response || "").split(/[\n。！？!?;；]+/u).map((part) => part.trim()).filter(Boolean);
+  return String(response || "").split(/[\n。！？!?;；.]+/u).map((part) => part.trim()).filter(Boolean);
 }
 
 function hasContradictoryFreeMeridianClaim(source, response) {
