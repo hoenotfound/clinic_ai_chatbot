@@ -1,6 +1,7 @@
 const { pool } = require("./db");
 const { lockConversation } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { cleanScoredTreatmentInterest } = require("../utils/serviceInterest");
 
 const PROCESSING_STALE_MINUTES = 10;
 const FAILED_RETRY_MINUTES = 2;
@@ -291,6 +292,10 @@ async function completeScore({
   score,
   allowTemperatureUpdate = true,
 }) {
+  const scoredTreatmentInterest = cleanScoredTreatmentInterest(
+    score?.summary?.treatmentInterest
+  );
+
   const outcome = await withTransaction(async (client) => {
     const claimedResult = await client.query(
       `SELECT s.id, s.status, l.contact_id
@@ -339,6 +344,7 @@ async function completeScore({
       const updated = await client.query(
         `UPDATE leads
          SET temperature = $2, temperature_source = 'ai',
+             treatment_interest = COALESCE($4, treatment_interest),
              last_temperature_scored_at = now(),
              last_temperature_scored_message_id = $3,
              updated_at = now()
@@ -349,13 +355,14 @@ async function completeScore({
              ORDER BY m.id DESC LIMIT 1
            ) = $3
          RETURNING *`,
-        [leadId, score.temperature, throughMessageId]
+        [leadId, score.temperature, throughMessageId, scoredTreatmentInterest]
       );
       updatedLead = updated.rows[0] || null;
     } else {
       const updated = await client.query(
         `UPDATE leads
-         SET last_temperature_scored_at = now(),
+         SET treatment_interest = COALESCE($3, treatment_interest),
+             last_temperature_scored_at = now(),
              last_temperature_scored_message_id = $2,
              updated_at = now()
          WHERE id = $1 AND is_closed = false
@@ -365,7 +372,7 @@ async function completeScore({
              ORDER BY m.id DESC LIMIT 1
            ) = $2
          RETURNING *`,
-        [leadId, throughMessageId]
+        [leadId, throughMessageId, scoredTreatmentInterest]
       );
       updatedLead = updated.rows[0] || null;
     }
