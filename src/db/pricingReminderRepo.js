@@ -349,6 +349,16 @@ async function isSecondStillEligible({ messageId,firstId,candidate,identities })
       AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
       AND (SELECT id FROM messages WHERE contact_id=$3 AND role='user'
          ORDER BY created_at DESC,id DESC LIMIT 1)=$5
+      AND (SELECT id FROM messages latest
+        WHERE latest.contact_id=$3 AND latest.role='assistant'
+          AND latest.is_automated_follow_up=false
+          AND latest.delivery_status IS DISTINCT FROM 'failed'
+          AND latest.delivery_status IS DISTINCT FROM 'cancelled'
+          AND (latest.created_at,latest.id)>
+            (SELECT created_at,id FROM messages WHERE id=$5)
+          AND NOT EXISTS (SELECT 1 FROM outbound_message_evidence e
+            WHERE e.message_id=latest.id AND e.origin='system_fallback')
+        ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1)=$4
       AND now()<(SELECT created_at FROM messages WHERE id=$5)+interval '23 hours 50 minutes'
       AND COALESCE((SELECT treatment_interest FROM leads WHERE contact_id=$3
          ORDER BY created_at DESC,id DESC LIMIT 1),'')=COALESCE($8::text,'')
