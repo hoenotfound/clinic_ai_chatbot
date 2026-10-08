@@ -1,4 +1,5 @@
 const { detectConversationLanguage } = require("./chatLanguage");
+const { isIP } = require("node:net");
 const { normalizeServiceText, inferConfiguredServiceFromText } = require("./serviceInterest");
 const mediaStorage = require("../services/mediaStorageService");
 
@@ -32,7 +33,7 @@ function templateRuleValid(rule, slots, services) {
     !(rule.mediaKey && rule.mediaUrl) &&
     (!rule.mediaKey ||
       (mediaStorage.isSharedFollowUpConfigKey(rule.mediaKey) &&
-        rule.mediaKey.toLowerCase().endsWith(".mp4")));
+        /\.(?:mp4|jpe?g|png)$/i.test(rule.mediaKey)));
 }
 
 function validateTemplateRules(rules, slots, services = []) {
@@ -85,10 +86,59 @@ function materializeTemplateMediaSpec(spec) {
   if (!spec) return null;
   if (!spec.mediaKey) return spec;
   if (!mediaStorage.isSharedFollowUpConfigKey(spec.mediaKey) ||
-      !spec.mediaKey.toLowerCase().endsWith(".mp4")) return null;
+      !/\.(?:mp4|jpe?g|png)$/i.test(spec.mediaKey)) return null;
   try {
     return { ...spec, mediaUrl: mediaStorage.createPresignedGetUrl(spec.mediaKey, { expiresSeconds: 30 * 60 }) };
   } catch { return null; }
+}
+
+/**
+ * Fail closed for missing/bad media. Validate owned R2 objects with HEAD
+ * (no video download or transcoding) and explicitly trusted HTTPS hosts with
+ * a bounded no-redirect HEAD request. Meta may still reject unsupported
+ * codecs; H.264/AAC compatibility must be checked during original upload.
+ */
+async function validateApprovedMedia(template, spec, {
+  env = process.env, mediaStore = mediaStorage, fetchImpl = fetch,
+} = {}) {
+  if (!template || !spec) return false;
+  const format = template.header?.format || "TEXT";
+  const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
+    format === "IMAGE" ? ["image/jpeg", 5*1024*1024] : null;
+  if (!expected) return !spec.mediaKey && !spec.mediaUrl;
+  const [expectedMime, maxBytes] = expected;
+  let info;
+  try {
+    if (spec.mediaKey) {
+      if (!mediaStore.isSharedFollowUpConfigKey(spec.mediaKey)) return false;
+      const extension = spec.mediaKey.toLowerCase();
+      if (format === "VIDEO" && !extension.endsWith(".mp4")) return false;
+      if (format === "IMAGE" && !/\.(?:jpe?g|png)$/.test(extension)) return false;
+      info = await mediaStore.getSharedFollowUpMediaInfo(spec.mediaKey);
+    } else if (spec.mediaUrl) {
+      const url = new URL(spec.mediaUrl);
+      const allowed = String(env.WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS || "")
+        .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      if (!allowed.includes(url.hostname.toLowerCase()) ||
+          url.protocol !== "https:" || isIP(url.hostname) ||
+          url.hostname.toLowerCase() === "localhost" ||
+          !validMediaUrl(spec.mediaUrl)) return false;
+      const response = await fetchImpl(spec.mediaUrl, {
+        method: "HEAD", redirect: "error",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) return false;
+      info = {
+        bytes: Number(response.headers.get("content-length")),
+        mimeType: String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase(),
+      };
+    } else return false;
+    if (!Number.isSafeInteger(info?.bytes) || info.bytes <= 0 ||
+        info.bytes > maxBytes) return false;
+    if (format === "IMAGE")
+      return ["image/jpeg","image/png"].includes(info.mimeType);
+    return info.mimeType === expectedMime;
+  } catch { return false; }
 }
 
 function buildStaticMarketingTemplate(template, spec, templatesService) {
@@ -132,4 +182,5 @@ module.exports = {
   selectTemplateSpec,
   materializeTemplateMediaSpec,
   buildStaticMarketingTemplate,
+  validateApprovedMedia,
 };
