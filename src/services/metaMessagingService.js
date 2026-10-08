@@ -275,11 +275,42 @@ async function sendImage(channel, recipientId, imageUrl, caption, options = {}) 
   // Keep the caption MID if the later image fails. Never imply that nothing
   // reached the customer or blindly resend the accepted caption.
   let captionProviderMessageId = null;
+  let captionSent = false;
   if (caption?.trim()) {
     const captionResult = await sendText(channel, recipientId, caption.trim(), options);
     if (!captionResult.success) return captionResult;
+    captionSent = true;
     captionProviderMessageId = captionResult.externalMessageId || null;
     await notifyProviderMessageId(options, captionResult.externalMessageId, channel);
+  }
+
+  // The caption and image are separate Meta requests. The conversation may
+  // change between them (reply-window expiry, quiet hours, human takeover,
+  // opt-out, or a new inbound). Recheck immediately before posting the image.
+  // An accepted caption is irreversible; represent it as a partial delivery,
+  // not as a cancelled/unsent claim that can be automatically retried.
+  if (typeof options.preSendCheck === "function") {
+    let permitted = false;
+    let verificationError = null;
+    try {
+      permitted = await options.preSendCheck() === true;
+    } catch (err) {
+      verificationError = err;
+      console.error("Final social image eligibility check failed:", err);
+    }
+    if (!permitted) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        cancelled: !captionSent,
+        ...(verificationError ? { preSendCheckFailed: true } : {}),
+        ...(captionSent ? { partialCaptionSent: true, captionProviderMessageId } : {}),
+        error: verificationError
+          ? "Social image was not sent because final eligibility could not be verified."
+          : "Social image was not sent because the conversation became ineligible.",
+      };
+    }
   }
 
   const imageResult = await postMessage(
