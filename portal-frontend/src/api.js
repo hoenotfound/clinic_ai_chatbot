@@ -83,7 +83,7 @@ export const api = {
   recordWhatsAppOptIn: (contactId, source, confirmed, marketingConsentConfirmed = false) =>
     request(`/conversations/${contactId}/whatsapp-opt-in`, {
       method: "POST",
-      body: JSON.stringify({ source, confirmed, marketingConsentConfirmed }),
+      body: JSON.stringify({ source, confirmed, ...(marketingConsentConfirmed ? { marketingConsentConfirmed: true } : {}) }),
     }),
   sendWhatsAppTemplate: (contactId, payload) =>
     request(`/conversations/${contactId}/whatsapp-templates/send`, {
