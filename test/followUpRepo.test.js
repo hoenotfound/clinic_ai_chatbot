@@ -165,67 +165,41 @@ test("automated follow-up discovery excludes conversations already waiting for s
 });
 
 
-test("pre-expiry timing is anchored to the latest inbound customer message", async (t) => {
+test("pre-expiry timing uses the shared deadline and current customer inbound", async (t) => {
   const originalQuery = pool.query;
-  t.after(() => {
-    pool.query = originalQuery;
-  });
-
+  t.after(() => { pool.query = originalQuery; });
   pool.query = async (sql, params) => {
-    assert.match(
-      sql,
-      /latest_inbound_created_at\s*\+ \(\(1440 - \(\$6::integer\[\]\)\[next_follow_up_step\]\) \* interval '1 minute'\)/
-    );
-    assert.match(
-      sql,
-      /\(\$5::text\[\]\)\[next_follow_up_step\] = 'before_window_expiry'/
-    );
+    assert.ok(sql.includes("latest_inbound_created_at"));
+    assert.ok(sql.includes("AT TIME ZONE"));
+    assert.ok(sql.includes("interval '120 minutes'"));
+    assert.ok(sql.includes("($5::text[])[next_follow_up_step] = 'before_window_expiry'"));
     assert.deepEqual(params, [
-      [1320],
-      "all",
-      "2026-10-07T00:00:00.000Z",
-      25,
-      ["before_window_expiry"],
-      [120],
+      [1320], "all", "2026-10-07T00:00:00.000Z", 25,
+      ["before_window_expiry"], [120],
     ]);
     return { rows: [] };
   };
-
   await followUpRepo.findCandidates({
-    delayMinutes: [1320],
-    timingModes: ["before_window_expiry"],
-    beforeWindowExpiryMinutes: [120],
-    triggerMode: "all",
-    activatedAt: "2026-10-07T00:00:00.000Z",
-    limit: 25,
+    delayMinutes: [1320], timingModes: ["before_window_expiry"],
+    beforeWindowExpiryMinutes: [120], triggerMode: "all",
+    activatedAt: "2026-10-07T00:00:00.000Z", limit: 25,
   });
 });
 
-test("pre-expiry steps preserve spacing from the previous actual follow-up", async (t) => {
+test("pre-expiry nonfinal steps preserve the configured previous-send gap", async (t) => {
   const originalQuery = pool.query;
-  t.after(() => {
-    pool.query = originalQuery;
-  });
-
+  t.after(() => { pool.query = originalQuery; });
   pool.query = async (sql) => {
-    assert.match(
-      sql,
-      /previous_follow_up_created_at\s*\+ \(\(\(\$1::integer\[\]\)\[next_follow_up_step\] - \(\$1::integer\[\]\)\[next_follow_up_step - 1\]\) \* interval '1 minute'\)/
-    );
-    assert.match(
-      sql,
-      /WHEN \(\$5::text\[\]\)\[next_follow_up_step\] = 'before_window_expiry'\s*THEN GREATEST/
-    );
+    assert.ok(sql.includes("previous_follow_up_created_at"));
+    assert.ok(sql.includes("next_follow_up_step - 1"));
+    assert.ok(sql.includes("interval '120 minutes'"));
+    assert.ok(sql.includes("($5::text[])[next_follow_up_step] = 'before_window_expiry'"));
     return { rows: [] };
   };
-
   await followUpRepo.findCandidates({
-    delayMinutes: [720, 1080],
-    timingModes: ["after_reply", "before_window_expiry"],
-    beforeWindowExpiryMinutes: [120, 360],
-    triggerMode: "all",
-    activatedAt: "2026-10-07T00:00:00.000Z",
-    limit: 25,
+    delayMinutes: [720, 1080], timingModes: ["after_reply", "before_window_expiry"],
+    beforeWindowExpiryMinutes: [120, 360], triggerMode: "all",
+    activatedAt: "2026-10-07T00:00:00.000Z", limit: 25,
   });
 });
 

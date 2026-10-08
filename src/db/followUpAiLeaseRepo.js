@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
+const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const DEFAULT_STALE_AFTER_SECONDS = 120;
@@ -17,6 +18,7 @@ async function claimIfStillEligible({
   previousDelayMinutes = 0,
   timingMode = "after_reply",
   beforeWindowExpiryMinutes = 120,
+  quietHours,
   triggerMode,
   activatedAt,
   staleAfterSeconds = DEFAULT_STALE_AFTER_SECONDS,
@@ -158,16 +160,7 @@ async function claimIfStillEligible({
        AND anchor.created_at >= $8::timestamptz
        AND CASE
              WHEN $10 = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound.created_at
-                   + ((1440 - $11::integer) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up.created_at
-                     + (($5::integer - $6::integer) * interval '1 minute'),
-                   latest_inbound.created_at
-                     + ((1440 - $11::integer) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$11::integer",gap:"($5::integer - $6::integer)",quietHours})}
              ELSE GREATEST(
                anchor.created_at + ($5::integer * interval '1 minute'),
                COALESCE(
@@ -178,16 +171,7 @@ async function claimIfStillEligible({
            END <= now()
        AND CASE
              WHEN $10 = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound.created_at
-                   + ((1440 - $11::integer) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up.created_at
-                     + (($5::integer - $6::integer) * interval '1 minute'),
-                   latest_inbound.created_at
-                     + ((1440 - $11::integer) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$11::integer",gap:"($5::integer - $6::integer)",quietHours})}
              ELSE GREATEST(
                anchor.created_at + ($5::integer * interval '1 minute'),
                COALESCE(
