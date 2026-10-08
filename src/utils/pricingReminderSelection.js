@@ -59,9 +59,7 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
 
   const packages = promotionPackages(matching[0]);
   if (!packages.length) return { offer: null, reason: "missing_promotion" };
-  if (!hasPricingInterest(candidate.recent_customer_messages)) {
-    return { offer: null, reason: "no_pricing_interest" };
-  }
+  // Service-specific reminders may show pricing without an explicit price query.
   let selected;
   if (packages.length === 1) {
     selected = packages[0];
