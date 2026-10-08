@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 
 const DEFAULT_ENRICHMENT_LEASE_MS = 5 * 60 * 1000;
 
@@ -94,6 +95,9 @@ async function getById(attributionId) {
 async function createFirstTouch({ leadId, firstMessageId, attribution }) {
   if (!leadId || !attribution?.source || !attribution?.channel) return null;
 
+  const attributedTreatment = attribution.source === "meta_ads"
+    ? inferConfiguredServiceFromText(attribution.adName)
+    : null;
   const enrichmentStatus = attribution.source === "meta_ads" && attribution.adId
     ? "pending"
     : "not_applicable";
@@ -150,9 +154,9 @@ async function createFirstTouch({ leadId, firstMessageId, attribution }) {
 
     const inserted = result.rows[0] || null;
     if (inserted) {
-      // Preserve a staff-entered source/campaign. Automatic attribution only
-      // fills blank summary fields on the lead for existing Pipeline/Analytics
-      // compatibility; the detailed immutable attribution remains in its table.
+      // Preserve staff/AI-entered CRM facts. First-touch attribution only fills
+      // blanks. When Meta already supplied an ad name, use the configured service
+      // named by that ad as the lead's baseline treatment interest.
       await client.query(
         `UPDATE leads
          SET source = CASE WHEN NULLIF(BTRIM(source), '') IS NULL THEN $2 ELSE source END,
@@ -160,9 +164,18 @@ async function createFirstTouch({ leadId, firstMessageId, attribution }) {
                WHEN NULLIF(BTRIM(campaign_name), '') IS NULL AND $3::text IS NOT NULL THEN $3
                ELSE campaign_name
              END,
+             treatment_interest = CASE
+               WHEN NULLIF(BTRIM(treatment_interest), '') IS NULL AND $4::text IS NOT NULL THEN $4
+               ELSE treatment_interest
+             END,
              updated_at = now()
          WHERE id = $1`,
-        [leadId, attribution.source, attribution.campaignName || null]
+        [
+          leadId,
+          attribution.source,
+          attribution.campaignName || null,
+          attributedTreatment,
+        ]
       );
 
       await client.query(
@@ -383,16 +396,29 @@ async function markMetaEnrichmentSuccess(attributionId, details) {
 
     const updated = result.rows[0] || null;
     if (updated) {
-      // The immutable attribution row receives the API truth. Keep a manual
-      // campaign override on the lead authoritative; only fill a blank field.
-      if (details.campaignName) {
+      // The immutable attribution row receives the API truth. Keep any existing
+      // CRM value authoritative, but seed blank campaign/service fields from
+      // the enriched ad. Conversation scoring can later replace the baseline
+      // treatment interest when the customer explicitly switches services.
+      const attributedTreatment = inferConfiguredServiceFromText(details.adName);
+      if (details.campaignName || attributedTreatment) {
         await client.query(
           `UPDATE leads
-           SET campaign_name = $2,
+           SET campaign_name = CASE
+                 WHEN NULLIF(BTRIM(campaign_name), '') IS NULL AND $2::text IS NOT NULL THEN $2
+                 ELSE campaign_name
+               END,
+               treatment_interest = CASE
+                 WHEN NULLIF(BTRIM(treatment_interest), '') IS NULL AND $3::text IS NOT NULL THEN $3
+                 ELSE treatment_interest
+               END,
                updated_at = now()
-           WHERE id = $1
-             AND NULLIF(BTRIM(campaign_name), '') IS NULL`,
-          [updated.lead_id, details.campaignName]
+           WHERE id = $1`,
+          [
+            updated.lead_id,
+            details.campaignName || null,
+            attributedTreatment,
+          ]
         );
       }
 

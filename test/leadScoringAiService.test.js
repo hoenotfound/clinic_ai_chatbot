@@ -58,6 +58,10 @@ test("lead score prompt protects sales definitions and summary grounding", () =>
   assert.match(prompt, /High confidence requires at least one customer evidence message ID/);
   assert.match(prompt, /Evidence IDs must refer only to customer messages/);
   assert.match(prompt, /Summarize only facts actually present in the conversation/);
+  assert.match(prompt, /first-touch baseline seeded from the Meta ad/);
+  assert.match(prompt, /newest explicit customer interest overrides the ad\/CRM baseline/);
+  assert.match(prompt, /Do not return slash-separated, ampersand-separated or free-form lists/);
+  assert.match(prompt, /treatmentInterest must use one of these exact names or an empty string/);
   assert.match(prompt, /Use an empty string for a structured field when the detail was not captured/);
 });
 

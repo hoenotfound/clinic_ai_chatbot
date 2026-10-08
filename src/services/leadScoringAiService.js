@@ -113,8 +113,15 @@ function configuredBranchNames() {
     .filter(Boolean);
 }
 
+function configuredServiceNames() {
+  return (clinicConfig.services || [])
+    .map((service) => String(service?.name || "").trim())
+    .filter(Boolean);
+}
+
 function buildLeadScorePrompt({ messages, lead }) {
   const validBranches = configuredBranchNames();
+  const validServices = configuredServiceNames();
   const context = businessLeadContext();
   const terms = context.terms;
 
@@ -152,7 +159,10 @@ Temperature rules:
 Conversation summary rules:
 - Summarize only facts actually present in the conversation. Never guess missing service, product, pricing, scheduling, location, quotation, project, medical, or personal details.
 - Use an empty string for a structured field when the detail was not captured.
-- treatmentInterest is a legacy database field: use it for the configured ${terms.serviceSingular} or product the customer is currently interested in.
+- treatmentInterest is a legacy database field: return one exact configured ${terms.serviceSingular} name from the list below, or an empty string.
+- Current lead treatmentInterest may be a first-touch baseline seeded from the Meta ad that started the conversation. Keep that baseline when the customer has not clearly switched to another configured ${terms.serviceSingular}.
+- If a newer customer message clearly switches to another configured ${terms.serviceSingular}, the newest explicit customer interest overrides the ad/CRM baseline.
+- Do not return slash-separated, ampersand-separated or free-form lists of several services. Use a configured combined service only when the customer is actually asking for that configured combination. If several services are merely discussed and there is no clear current primary interest, keep the current baseline; if no baseline exists, return an empty string.
 - preferredBranch is a legacy database field: use it only for the customer's explicitly selected configured ${terms.locationSingular}.
 - If the stated location clearly maps to one configured ${terms.locationSingular} below, return that exact configured name, even when the customer used a common abbreviation or shortened form.
 - Do not infer preferredBranch merely from where the customer lives, works, owns a property, or casually mentions a place. If no configured business location was actually chosen, or the mapping is ambiguous, return an empty string.
@@ -162,6 +172,9 @@ Conversation summary rules:
 - nextAction should be one practical sales follow-up action based only on unresolved items in the conversation.
 - Keep the summary concise enough for a Telegram sales alert.
 - Return only the required structured result.
+
+Configured business ${terms.servicePlural} (treatmentInterest must use one of these exact names or an empty string):
+${JSON.stringify(validServices)}
 
 Configured business ${terms.locationPlural} (preferredBranch must use one of these exact names or an empty string):
 ${JSON.stringify(validBranches)}
