@@ -638,7 +638,7 @@ test("promotion duplicate guard treats translated versions as the same package",
 
 
 test("greetings and language-only turns never send a price image even if AI reports a price query", async () => {
-  for (const customerText of ["English", "Hi, English", "BM", "Hello", "中文"]) {
+  for (const customerText of ["English", "Hi, English", "BM", "Hello", "中文", "OK", "Thanks", "Noted", "收到"]) {
     let queried = false;
     const result = await resolvePricePromotionForReply(base({
       customerText,
