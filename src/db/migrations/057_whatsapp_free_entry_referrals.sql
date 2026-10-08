@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_free_entry_referrals (
   contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
   ctwa_clid TEXT,
   meta_ad_id TEXT,
+  ad_name TEXT,
+  treatment_interest TEXT,
   source_type TEXT NOT NULL CHECK (source_type = 'ad'),
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (ctwa_clid IS NOT NULL OR meta_ad_id IS NOT NULL)
