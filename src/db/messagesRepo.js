@@ -272,7 +272,8 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
        -- A pricing message is only a saved claim until Meta accepts it.
        -- Never show a cancelled or unsent claim as part of the AI chat.
        AND NOT (
-         pricing_reminder_anchor_id IS NOT NULL
+         (pricing_reminder_anchor_id IS NOT NULL
+           OR (is_automated_follow_up=true AND automated_follow_up_step=4))
          AND (delivery_status IS NULL OR delivery_status = 'cancelled')
        )
      ORDER BY created_at DESC, id DESC
@@ -522,7 +523,8 @@ async function getMessagePageForContact(
   if (afterId != null) {
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
-              delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template,
+              delivery_status, delivery_error, is_automated_follow_up, automated_follow_up_step,
+              pricing_reminder_anchor_id, whatsapp_template,
               reply_to_provider_message_id, is_forwarded,
               ${PORTAL_REACTIONS_COLUMN},
               ${PORTAL_REPLY_PREVIEW_COLUMN}
@@ -544,7 +546,8 @@ async function getMessagePageForContact(
 
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
-            delivery_status, delivery_error, is_automated_follow_up, pricing_reminder_anchor_id, whatsapp_template,
+            delivery_status, delivery_error, is_automated_follow_up, automated_follow_up_step,
+              pricing_reminder_anchor_id, whatsapp_template,
             reply_to_provider_message_id, is_forwarded,
             ${PORTAL_REACTIONS_COLUMN},
             ${PORTAL_REPLY_PREVIEW_COLUMN}
