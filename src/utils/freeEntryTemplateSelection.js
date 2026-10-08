@@ -57,8 +57,9 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     .find(Boolean);
   const adInterest = candidate.referral_treatment_interest ||
     inferConfiguredServiceFromText(candidate.referral_ad_name);
-  const sameLeadJourney = candidate.lead_started_message_id != null &&
-    String(candidate.lead_started_message_id) === String(candidate.latest_ad_message_id);
+  const sameLeadJourney = candidate.latest_ad_message_id == null ||
+    (candidate.lead_started_message_id != null &&
+      String(candidate.lead_started_message_id) === String(candidate.latest_ad_message_id));
   const interest = normalizeServiceText(customerInterest || adInterest ||
     (sameLeadJourney ? candidate.treatment_interest : null) || "");
   const matching = (settings.templateRules || []).find((rule) =>
