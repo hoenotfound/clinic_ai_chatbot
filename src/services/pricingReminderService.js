@@ -124,6 +124,7 @@ async function sendPricingReminder(candidate, offer, settings) {
       finalDueAt: candidate.final_due_at,
       whatsappNumber: candidate.whatsapp_number,
       afterFinal: afterFinalMode(settings),
+      finalMessageId: candidate.final_message_id,
     });
   };
 
