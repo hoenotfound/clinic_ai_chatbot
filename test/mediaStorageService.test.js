@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { S3Client, CopyObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
+const { S3Client, CopyObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
 const mediaStorage = require("../src/services/mediaStorageService");
 
 test("new permanent media keys are isolated by client slug", () => {
@@ -552,4 +552,142 @@ test("R2 download deadline destroys a body stalled after headers", async (t) => 
   S3Client.prototype.send = async () => ({ Body: body });
   await assert.rejects(mediaStorage.downloadMedia("test.jpg", { timeoutMs: 15 }), { code: "R2_REQUEST_TIMEOUT" });
   assert.equal(body.destroyed, true);
+});
+
+test("customer deletion preserves configured follow-up videos shared by other chats", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const originalEnv = {
+    R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID,
+    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
+    R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
+  };
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  Object.assign(process.env, {
+    R2_ACCOUNT_ID: "purge-test",
+    R2_ACCESS_KEY_ID: "key",
+    R2_SECRET_ACCESS_KEY: "secret",
+    R2_BUCKET_NAME: "private-media",
+  });
+
+  const env = { CLIENT_SLUG: "neutro" };
+  assert.equal(
+    mediaStorage.isSharedFollowUpConfigKey("clients/neutro/messages/follow-up-config/video.mp4", env),
+    true
+  );
+  assert.equal(
+    mediaStorage.isSharedFollowUpConfigKey("clients/other/messages/follow-up-config/video.mp4", env),
+    false
+  );
+  assert.equal(
+    mediaStorage.isSharedFollowUpConfigKey("clients/neutro/messages/99/private.mp4", env),
+    false
+  );
+  const deletes = [];
+  S3Client.prototype.send = async (command) => {
+    assert.ok(command instanceof DeleteObjectCommand);
+    deletes.push(command.input.Key);
+    return {};
+  };
+
+  const deleted = await mediaStorage.deleteCustomerMediaObjects({
+    mediaKeys: [
+      "clients/neutro/messages/follow-up-config/video.mp4",
+      "clients/neutro/messages/99/private.mp4",
+    ],
+    env,
+  });
+  assert.equal(deleted, 1);
+  assert.deepEqual(deletes, ["clients/neutro/messages/99/private.mp4"]);
+});
+
+test("stale settings video cleanup retains persisted Inbox references", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const env = {
+    CLIENT_SLUG: "neutro",
+    R2_ACCOUNT_ID: "cleanup-references",
+    R2_ACCESS_KEY_ID: "key",
+    R2_SECRET_ACCESS_KEY: "secret",
+    R2_BUCKET_NAME: "private-media",
+  };
+  const originalEnv = Object.fromEntries(
+    ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"]
+      .map((key) => [key, process.env[key]])
+  );
+  Object.assign(process.env, env);
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const root = "clients/neutro/messages/follow-up-config/";
+  const deletedKeys = [];
+  S3Client.prototype.send = async (command) => {
+    if (command instanceof ListObjectsV2Command) {
+      assert.equal(command.input.Prefix, root);
+      return {
+        Contents: ["old-still-referenced.mp4", "old-orphan.mp4"].map((key) => ({
+          Key: root + key,
+          LastModified: new Date("2026-09-01T00:00:00Z"),
+        })),
+        IsTruncated: false,
+      };
+    }
+    if (command instanceof DeleteObjectsCommand) {
+      deletedKeys.push(...command.input.Delete.Objects.map((entry) => entry.Key));
+      return { Errors: [] };
+    }
+    throw new Error("Unexpected storage command");
+  };
+  const count = await mediaStorage.pruneStaleFollowUpConfigVideos({
+    env,
+    now: new Date("2026-10-08T00:00:00Z").getTime(),
+    referencedKeys: [root + "old-still-referenced.mp4"],
+  });
+  assert.equal(count, 1);
+  assert.deepEqual(deletedKeys, [root + "old-orphan.mp4"]);
+});
+
+test("failed temporary upload schedules removal of its abandoned object", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const originalEnv = Object.fromEntries(
+    ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"]
+      .map((key) => [key, process.env[key]])
+  );
+  Object.assign(process.env, {
+    R2_ACCOUNT_ID: "temp-write-test",
+    R2_ACCESS_KEY_ID: "key",
+    R2_SECRET_ACCESS_KEY: "secret",
+    R2_BUCKET_NAME: "private-media",
+  });
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const cleaned = [];
+  S3Client.prototype.send = async (command) => {
+    if (command instanceof PutObjectCommand) throw new Error("uncertain upload");
+    if (command instanceof DeleteObjectCommand) {
+      cleaned.push(command.input.Key);
+      return {};
+    }
+    throw new Error("Unexpected storage command");
+  };
+  await assert.rejects(
+    mediaStorage.uploadTemporaryMedia(Buffer.from("video"), "video/mp4", {
+      contactId: 77, env: { CLIENT_SLUG: "neutro" },
+    }),
+    /uncertain upload/
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(cleaned.length, 1);
+  assert.match(cleaned[0], /^clients\/neutro\/meta-outbound\/77\//);
 });
