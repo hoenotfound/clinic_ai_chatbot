@@ -345,7 +345,7 @@ export default function WhatsAppTemplateModal({
               <p className="text-sm font-bold text-amber-900">
                 {marketingReconsentNeeded
                   ? "WhatsApp marketing opt-in required"
-                  : selected?.category === "MARKETING" ? "Record verified WhatsApp marketing consent"
+                  : selected?.category === "MARKETING" && catalog.eligibility?.allowed ? "Record verified WhatsApp marketing consent"
                   : "WhatsApp opt-in required"}
               </p>
               <p className="mt-1 text-xs leading-5 text-amber-800">
