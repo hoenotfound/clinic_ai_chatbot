@@ -98,6 +98,42 @@ test("accepted provider send with media persistence issue is a warning", () => {
   assert.equal(lines[0].body.persistenceIssue, true);
 });
 
+test("a recovered stage exception remains visible as a warning", () => {
+  const lines = captureLogs(() => logInboxMediaSummary({
+    requestId: "recovered", startedAtMs: Date.now(), outcome: "accepted", failedStage: "r2Ms",
+  }, { type: "image", httpStatus: 201 }));
+  assert.equal(lines[0].level, "warn");
+  assert.equal(lines[0].body.failedStage, "r2Ms");
+});
+
+test("successful WhatsApp media API timing is quiet; HTTP failures still warn", async (t) => {
+  const { fetchWithTimeout } = require("../src/services/whatsappService");
+  const oldFetch = global.fetch;
+  const oldInfo = console.info;
+  const oldWarn = console.warn;
+  const oldVerbose = process.env.INBOX_MEDIA_VERBOSE_LOGS;
+  const logs = [];
+  t.after(() => {
+    global.fetch = oldFetch;
+    console.info = oldInfo;
+    console.warn = oldWarn;
+    if (oldVerbose === undefined) delete process.env.INBOX_MEDIA_VERBOSE_LOGS;
+    else process.env.INBOX_MEDIA_VERBOSE_LOGS = oldVerbose;
+  });
+  delete process.env.INBOX_MEDIA_VERBOSE_LOGS;
+  console.info = (...args) => logs.push({ level: "info", args });
+  console.warn = (...args) => logs.push({ level: "warn", args });
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => "{}" });
+  await fetchWithTimeout("https://example.invalid/media", {}, 2000, { requestId: "a", operation: "upload" });
+  assert.equal(logs.length, 0);
+  global.fetch = async () => ({ ok: false, status: 429, text: async () => "{}" });
+  await fetchWithTimeout("https://example.invalid/media", {}, 2000, { requestId: "b", operation: "upload" });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "warn");
+  assert.equal(logs[0].args[0], "[WhatsApp media timing]");
+  assert.equal(JSON.parse(logs[0].args[1]).httpStatus, 429);
+});
+
 test("verbose timing logs require explicit opt-in", () => {
   const old = process.env.INBOX_MEDIA_VERBOSE_LOGS;
   try {
