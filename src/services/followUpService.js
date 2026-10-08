@@ -831,30 +831,14 @@ async function sendSocialVideoCompanion(
 ) {
   if (quietHoursStatus(new Date(), quietHours).active) return;
 
-  let durableVideoKey = null;
-  try {
-    durableVideoKey = await mediaStorage.copyStoredMediaToMessage(
-      sourceVideoKey,
-      "video/mp4",
-      { contactId }
-    );
-  } catch (err) {
-    console.error(
-      `Failed to prepare optional social follow-up video for contact ${contactId}:`,
-      err
-    );
-    await contactsRepo.setDeliveryAttention(
-      contactId,
-      "Follow-up text was sent, but the service video could not be prepared."
-    );
-    return;
-  }
-
+  // Save the configured private R2 object key directly. The companion message
+  // references the same video, so retries and repeated recipients never create
+  // additional permanent copies.
   let videoMessage;
   try {
     videoMessage = await followUpRepo.saveSocialVideoCompanion({
       contactId,
-      mediaKey: durableVideoKey,
+      mediaKey: sourceVideoKey,
       mediaMimeType: "video/mp4",
     });
   } catch (err) {
@@ -862,12 +846,6 @@ async function sendSocialVideoCompanion(
       `Failed to save optional social follow-up video for contact ${contactId}:`,
       err
     );
-    await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-      console.error(
-        `Failed to clean up unsaved social follow-up video ${durableVideoKey}:`,
-        cleanupErr
-      );
-    });
     await contactsRepo.setDeliveryAttention(
       contactId,
       "Follow-up text was sent, but the service video could not be queued."
@@ -875,15 +853,7 @@ async function sendSocialVideoCompanion(
     return;
   }
 
-  if (!videoMessage) {
-    await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-      console.error(
-        `Failed to clean up unclaimed social follow-up video ${durableVideoKey}:`,
-        cleanupErr
-      );
-    });
-    return;
-  }
+  if (!videoMessage) return;
 
   publishConversationChange(videoMessage, "message");
 
@@ -895,7 +865,7 @@ async function sendSocialVideoCompanion(
     );
     videoResult = await channelMessaging.sendVideoByStoredKey(
       contact,
-      durableVideoKey,
+      sourceVideoKey,
       undefined,
       filename || "service-video.mp4",
       {
@@ -917,15 +887,7 @@ async function sendSocialVideoCompanion(
       messageId: videoMessage.id,
       contactId,
     });
-    if (discarded) {
-      await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-        console.error(
-          `Failed to clean up cancelled social follow-up video ${durableVideoKey}:`,
-          cleanupErr
-        );
-      });
-      publishConversationChange(discarded, "message_cancelled");
-    }
+    if (discarded) publishConversationChange(discarded, "message_cancelled");
     return;
   }
 
@@ -1318,29 +1280,10 @@ async function sendCandidate(candidate) {
   const effectiveVideoFilename =
     selectedVideoFilename || "follow-up-video.mp4";
 
-  // WhatsApp keeps the video on the same durable follow-up row so Inbox
-  // history and Retry can resend the exact attachment. Copy the shared config
-  // object into the contact's media namespace before claiming the row.
-  let durableVideoKey = null;
-  if (!isSocial && effectiveVideoKey) {
-    try {
-      durableVideoKey = await mediaStorage.copyStoredMediaToMessage(
-        effectiveVideoKey,
-        "video/mp4",
-        { contactId: candidate.contact_id }
-      );
-    } catch (err) {
-      console.error(
-        `Failed to prepare follow-up video for contact ${candidate.contact_id}:`,
-        err
-      );
-      await contactsRepo.setDeliveryAttention(
-        candidate.contact_id,
-        "Automated follow-up paused because the service video could not be prepared."
-      );
-      return;
-    }
-  }
+  // Keep the configured video as a single private R2 object. The saved
+  // WhatsApp message references that key, so Inbox history and Retry use the
+  // same bytes without copying them into each customer's folder.
+  const durableVideoKey = !isSocial && effectiveVideoKey ? effectiveVideoKey : null;
 
   // WhatsApp can send its media + caption as one tracked message. Messenger
   // and Instagram keep the sequence claim as text and persist media companions
@@ -1369,16 +1312,6 @@ async function sendCandidate(candidate) {
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
-  } catch (err) {
-    if (durableVideoKey) {
-      await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-        console.error(
-          `Failed to clean up unclaimed follow-up video ${durableVideoKey}:`,
-          cleanupErr
-        );
-      });
-    }
-    throw err;
   } finally {
     if (aiLeaseToken) {
       await releaseAiGenerationLease({
@@ -1393,17 +1326,7 @@ async function sendCandidate(candidate) {
 
   // The customer may have replied since the candidate query, or another
   // server instance may already have claimed this exact trigger.
-  if (!saved) {
-    if (durableVideoKey) {
-      await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-        console.error(
-          `Failed to clean up unused follow-up video ${durableVideoKey}:`,
-          cleanupErr
-        );
-      });
-    }
-    return;
-  }
+  if (!saved) return;
 
   publishConversationChange(saved, "message");
 
@@ -1492,17 +1415,7 @@ async function sendCandidate(candidate) {
       messageId: saved.id,
       contactId: candidate.contact_id,
     });
-    if (discarded) {
-      if (durableVideoKey) {
-        await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-          console.error(
-            `Failed to clean up cancelled follow-up video ${durableVideoKey}:`,
-            cleanupErr
-          );
-        });
-      }
-      publishConversationChange(discarded, "message_cancelled");
-    }
+    if (discarded) publishConversationChange(discarded, "message_cancelled");
     return;
   }
 
