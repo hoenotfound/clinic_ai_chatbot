@@ -40,6 +40,42 @@ function configuredServiceTerms(serviceName, config = clinicConfig) {
   return [normalizeServiceText(serviceName), ...aliases].filter(Boolean);
 }
 
+function explicitComparisonLanguage(normalizedText) {
+  return /\b(?:or|versus|vs)\b|还是|或者|或是|比较/.test(normalizedText);
+}
+
+function configuredCombinationService(matches, normalizedText, config = clinicConfig) {
+  if (matches.length < 2 || explicitComparisonLanguage(normalizedText)) return null;
+
+  const matchedNames = new Set(
+    matches.map((item) => normalizeServiceText(item.serviceName))
+  );
+
+  for (const service of Array.isArray(config?.services) ? config.services : []) {
+    const serviceName =
+      typeof service?.name === "string" ? service.name.trim() : "";
+    if (!serviceName || !serviceName.includes("+")) continue;
+
+    const parts = normalizeServiceText(serviceName)
+      .split("+")
+      .map((part) => part.replace(/组合|combo|package/g, "").trim())
+      .filter(Boolean);
+
+    if (parts.length < 2) continue;
+
+    const covered = parts.every((part) =>
+      [...matchedNames].some(
+        (matchedName) =>
+          matchedName.includes(part) || part.includes(matchedName)
+      )
+    );
+
+    if (covered) return serviceName;
+  }
+
+  return null;
+}
+
 function inferConfiguredServiceFromText(value, config = clinicConfig) {
   const normalizedText = normalizeServiceText(value);
   if (!normalizedText) return null;
@@ -77,7 +113,9 @@ function inferConfiguredServiceFromText(value, config = clinicConfig) {
     )
   );
 
-  return covering.length === 1 ? covering[0].serviceName : null;
+  if (covering.length === 1) return covering[0].serviceName;
+
+  return configuredCombinationService(matches, normalizedText, config);
 }
 
 function cleanScoredTreatmentInterest(value, config = clinicConfig) {
