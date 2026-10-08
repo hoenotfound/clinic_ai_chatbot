@@ -308,7 +308,7 @@ async function findCandidates({
              )
            END <= latest_inbound_created_at + interval '23 hours 50 minutes'
        AND ${reserveFinalPricingWindow()
-         ? "(next_follow_up_step <> 3 OR ${skipNonPricingChannel("channel")} OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')"
+         ? `(next_follow_up_step <> 3 OR ${skipNonPricingChannel("channel")} OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')`
          : "TRUE"}
      ORDER BY
        CASE
@@ -485,7 +485,7 @@ async function getNextCandidateDueAt({
              )
            END <= latest_inbound_created_at + interval '23 hours 50 minutes'
        AND ${reserveFinalPricingWindow()
-         ? "(next_follow_up_step <> 3 OR ${skipNonPricingChannel("channel")} OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')"
+         ? `(next_follow_up_step <> 3 OR ${skipNonPricingChannel("channel")} OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')`
          : "TRUE"}`,
     [delays, triggerMode, activatedAt, modes, expiryOffsets]
   );
@@ -705,7 +705,7 @@ async function saveIfStillEligible({
              )
            END <= latest_inbound.created_at + interval '23 hours 50 minutes'
        AND ${reserveFinalPricingWindow()
-         ? "($5::integer <> 3 OR c.${skipNonPricingChannel("c.channel")} OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')"
+         ? `($5::integer <> 3 OR ${skipNonPricingChannel("c.channel")} OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')`
          : "TRUE"}
        AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
@@ -974,7 +974,7 @@ async function recordAiDecisionIfStillEligible({
                )
              END <= latest_inbound.created_at + interval '23 hours 50 minutes'
        AND ${reserveFinalPricingWindow()
-         ? "($3::integer <> 3 OR c.${skipNonPricingChannel("c.channel")} OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')"
+         ? `($3::integer <> 3 OR ${skipNonPricingChannel("c.channel")} OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')`
          : "TRUE"}
          AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
          AND COALESCE(progress.max_step, 0) + 1 = $3
