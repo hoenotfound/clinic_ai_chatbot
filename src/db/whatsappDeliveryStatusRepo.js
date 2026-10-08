@@ -255,11 +255,55 @@ async function setDeliveryAttentionState(
   return result.rows[0] || null;
 }
 
+// A completed failed callback can become orphaned if its linked message is
+// later removed, or if an external WAMID was never durably associated.
+// Wait for late provider/message persistence and dedupe flags in the database.
+// This is an operational anomaly, not proof a customer is still undelivered.
+async function flagUnmatchedCompletedFailures(
+  { graceSeconds = 300, limit = 25 } = {},
+  query = pool.query.bind(pool)
+) {
+  const safeGrace = Math.max(60, Math.min(86400, Math.trunc(Number(graceSeconds) || 300)));
+  const safeLimit = Math.max(1, Math.min(100, Math.trunc(Number(limit) || 25)));
+  const result = await query(
+    `WITH candidates AS (
+       SELECT j.id
+       FROM whatsapp_delivery_status_jobs j
+       WHERE j.delivery_status = 'failed'
+         AND j.processing_status = 'completed'
+         AND j.completed_at < NOW() - ($1::integer * interval '1 second')
+         AND j.unmatched_detected_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM messages m WHERE m.whatsapp_message_id = j.wamid
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM outbound_message_evidence e
+           WHERE e.provider_message_id = j.wamid
+         )
+       ORDER BY j.completed_at, j.id
+       LIMIT $2
+       FOR UPDATE OF j SKIP LOCKED
+     )
+     UPDATE whatsapp_delivery_status_jobs j
+     SET unmatched_detected_at = NOW(),
+         updated_at = NOW()
+     FROM candidates
+     WHERE j.id = candidates.id
+     RETURNING j.id, j.error_code, j.error_title, j.unmatched_detected_at`,
+    [safeGrace, safeLimit]
+  );
+  return result.rows;
+}
+
 async function pruneCompleted({ olderThanHours = 24 } = {}, query = pool.query.bind(pool)) {
   const result = await query(
     `DELETE FROM whatsapp_delivery_status_jobs
      WHERE processing_status = 'completed'
-       AND completed_at < NOW() - ($1::integer * interval '1 hour')`,
+       AND completed_at < NOW() - ($1::integer * interval '1 hour')
+       AND (
+         unmatched_detected_at IS NULL
+         OR completed_at < NOW() - interval '30 days'
+       )`,
     [olderThanHours]
   );
   return result.rowCount || 0;
@@ -278,4 +322,5 @@ module.exports = {
   findMessageByWamid,
   setDeliveryAttentionState,
   pruneCompleted,
+  flagUnmatchedCompletedFailures,
 };
