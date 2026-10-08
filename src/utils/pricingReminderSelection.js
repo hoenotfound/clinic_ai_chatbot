@@ -42,12 +42,11 @@ function selectedService(candidate, services, aliases = []) {
 // qualify; CRM ad attribution alone must never trigger promotional pricing.
 const PRICING_INTEREST_RE = /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|收費|费用|費用|报价|報價|折扣|优惠|優惠|配套|套餐|特价|特價|how\s+much|price|pricing|cost|fee|fees|quote|quotation|promotion|promo|discount|package|packages|voucher|budget|harga|berapa|kos|pakej|promosi|diskaun|rm\s*\d)/iu;
 
-function hasPricingInterest(messages, packages = []) {
-  return (Array.isArray(messages) ? messages : []).some((message) => {
-    const text = String(message || "");
-    return PRICING_INTEREST_RE.test(text)
-      || findMentionedPromotionPackages(packages, text).length > 0;
-  });
+function hasPricingInterest(messages) {
+  // Package-name inference may also recognize the service name itself, which
+  // must NOT count as a request for pricing. Require explicit commercial words.
+  return (Array.isArray(messages) ? messages : [])
+    .some((message) => PRICING_INTEREST_RE.test(String(message || "")));
 }
 
 function evaluatePricingReminder({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
@@ -60,7 +59,7 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
 
   const packages = promotionPackages(matching[0]);
   if (!packages.length) return { offer: null, reason: "missing_promotion" };
-  if (!hasPricingInterest(candidate.recent_customer_messages, packages)) {
+  if (!hasPricingInterest(candidate.recent_customer_messages)) {
     return { offer: null, reason: "no_pricing_interest" };
   }
   let selected;
