@@ -236,7 +236,11 @@ test("summary-only runner still calls AI, queues Telegram, and explicitly disabl
 
   await run();
 
-  assert.equal(completionInput.allowTemperatureUpdate, false);\n  assert.equal(completionInput.expectedTreatmentInterest, "HIFU Non-Surgical Facelift");
+  assert.equal(completionInput.allowTemperatureUpdate, false);
+  assert.equal(
+    completionInput.expectedTreatmentInterest,
+    "HIFU Non-Surgical Facelift"
+  );
   assert.equal(queued.leadId, 7);
   assert.equal(queued.throughMessageId, 44);
   assert.deepEqual(queued.score.summary, score.summary);
