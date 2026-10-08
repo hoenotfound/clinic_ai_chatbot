@@ -2381,6 +2381,15 @@ test("plain 3D alias targets 3D 小颜术 without stealing 3D+9D", async (t) => 
       recent_inbound_messages: ["3D+9D price?"],
       trigger_message_content: "Here are the combo details.",
     },
+    {
+      contact_id: 209,
+      whatsapp_number: "60120000209",
+      trigger_message_id: 208,
+      next_follow_up_step: 2,
+      treatment_interest: "3D + 9D 组合",
+      recent_inbound_messages: ["3D 小颜术 / 9D 逆龄抗衰 price?"],
+      trigger_message_content: "Here are the combo details.",
+    },
   ];
   followUpRepo.findCandidates = async () => candidates;
 
@@ -2404,11 +2413,13 @@ test("plain 3D alias targets 3D 小颜术 without stealing 3D+9D", async (t) => 
 
   await runAutomatedFollowUps();
 
-  assert.equal(claims.length, 2);
+  assert.equal(claims.length, 3);
   assert.equal(claims[0].targetedService, "3D 小颜术");
   assert.equal(claims[0].content, "3D targeted follow-up");
   assert.equal(claims[1].targetedService, "3D + 9D 组合");
   assert.equal(claims[1].content, "3D+9D combo follow-up");
+  assert.equal(claims[2].targetedService, "3D + 9D 组合");
+  assert.equal(claims[2].content, "3D+9D combo follow-up");
 });
 
 test("explicit 3D and 9D comparison stays ambiguous instead of choosing the combo", async (t) => {
