@@ -24,8 +24,8 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) 
   const creativeService = resolveMetaAdCreativeService({ headline, body }, services, aliases);
   // Only try an internal ad-name fallback when the creative has no service matches.
   // Ambiguous creative cannot be overruled by internal ad metadata.
-  const expandedAliases = aliases.flatMap((entry) =>
-    splitConfiguredAlias(entry.alias).map((alias) => ({ ...entry, alias }))
+  const expandedAliases = (Array.isArray(aliases) ? aliases : []).flatMap((entry) =>
+    splitConfiguredAlias(entry?.alias).map((alias) => ({ ...entry, alias }))
   );
   const nameService = creativeMatches.length === 0
     ? inferConfiguredServiceFromText(row.ad_name, { services, serviceAliases: expandedAliases })
