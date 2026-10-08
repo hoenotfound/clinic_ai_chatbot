@@ -299,7 +299,7 @@ function getOrderedGeminiCandidates(
   return { available, cooling };
 }
 
-function withTimeout(promise, timeoutMs, label) {
+function withTimeout(promise, timeoutMs, label, { onTimeout = null } = {}) {
   if (!timeoutMs) return Promise.resolve(promise);
   let timer;
   return Promise.race([
@@ -308,6 +308,9 @@ function withTimeout(promise, timeoutMs, label) {
       timer = setTimeout(() => {
         const err = new Error(`${label} timed out after ${timeoutMs}ms.`);
         err.code = "AI_TIMEOUT";
+        // Abort the actual SDK HTTP request, not only the Promise.race timer.
+        // Google may still bill a request that already reached its servers.
+        try { onTimeout?.(); } catch { /* preserve the timeout error */ }
         reject(err);
       }, timeoutMs);
     }),
@@ -444,10 +447,12 @@ async function runWithGeminiKeys(
         : timeoutMs;
 
       try {
+        const controller = new AbortController();
         const result = await withTimeout(
-          operation(candidate.apiKey, candidate),
+          operation(candidate.apiKey, candidate, { signal: controller.signal }),
           attemptTimeoutMs,
-          candidate.label
+          candidate.label,
+          { onTimeout: () => controller.abort() }
         );
         recordCandidateHealth(
           candidate,
