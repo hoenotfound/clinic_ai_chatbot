@@ -23,6 +23,7 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         whatsapp_marketing_opt_out_at TIMESTAMPTZ
       );
       CREATE TABLE pipeline_stages(id INTEGER PRIMARY KEY, stage_type TEXT, system_key TEXT);
+      CREATE TABLE users(id INTEGER PRIMARY KEY,username TEXT UNIQUE);
       CREATE TABLE leads(
         id INTEGER PRIMARY KEY, contact_id INTEGER, marketing_consent TEXT,
         is_closed BOOLEAN, appointment_status TEXT, stage_id INTEGER,
@@ -47,6 +48,7 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         whatsapp_opt_in_at, whatsapp_opt_in_source)
       VALUES (1, 'whatsapp', '60121234567', 'ai', false, now()-interval '4 days', 'customer checked consent form');
       INSERT INTO pipeline_stages(id,stage_type,system_key) VALUES (1,'open','new');
+      INSERT INTO users(id,username) VALUES(1,'admin'),(2,'staff');
       INSERT INTO leads(id,contact_id,marketing_consent,is_closed,appointment_status,
         stage_id,created_at,treatment_interest)
       VALUES(1,1,'opted_in',false,'none',1,now()-interval '3 days','骨盆调理');
@@ -67,6 +69,19 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     const list = () => worker.listCandidates(settings, client);
     const eligible = await list();
     assert.equal(eligible.length,1,"eligible CTWA lead appears in candidate queue");
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,whatsapp_message_id)
+      VALUES (15,1,'assistant','automated follow-up',now()-interval '8 hours',
+        'Follow-up automation','wamid.automation')`);
+    assert.equal((await list()).length,1,
+      "normal follow-up automation must not be mistaken for a human staff reply");
+    await client.query("DELETE FROM messages WHERE id=15");
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,whatsapp_message_id)
+      VALUES (16,1,'assistant','human reply',now()-interval '8 hours','admin','wamid.human')`);
+    assert.equal((await list()).length,0,
+      "actual user account staff message stops automated marketing");
+    await client.query("DELETE FROM messages WHERE id=16");
     assert.equal(worker.selectedSlot(eligible[0], settings.slots),50);
 
     const fakePool = {connect: async () => ({
