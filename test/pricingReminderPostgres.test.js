@@ -134,6 +134,28 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     }), true);
     assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}), null);
 
+    // Under the same anchor, a distinct Package B image can be independently
+    // claimed and deduplicated without sending A twice.
+    const offerB = {
+      ...offer, packageName:"Package B",
+      caption:"Second package", imageUrl:"https://example.com/promo-images/31",
+      identities:["/promo-images/31"],
+    };
+    const savedB = await pricingRepo.claim({ candidate, offer:offerB, activatedAt, triggerMode:"all", settings });
+    assert.ok(savedB);
+    const rows=await client.query(
+      "SELECT pricing_reminder_package_key,media_url FROM messages WHERE pricing_reminder_anchor_id=101 ORDER BY pricing_reminder_package_key"
+    );
+    assert.deepEqual(rows.rows.map(r=>r.pricing_reminder_package_key),["3D trial","Package B"]);
+    assert.equal(await pricingRepo.claim({candidate,offer:offerB,activatedAt,triggerMode:"all",settings}),null);
+    assert.equal(await pricingRepo.isClaimStillEligible({
+      messageId:savedB.id,contactId:1,anchorId:101,inboundId:100,
+      imageIdentities:offerB.identities,treatmentInterest:candidate.treatment_interest,
+      thirdId:candidate.third_id,whatsappNumber:candidate.whatsapp_number,
+      packageKey:offerB.packageName,
+    }),true);
+    await client.query("DELETE FROM messages WHERE id=$1",[savedB.id]);
+
     const progress = await client.query(
       "SELECT MAX(automated_follow_up_step) AS step FROM messages WHERE automated_follow_up_for_message_id=101"
     );
