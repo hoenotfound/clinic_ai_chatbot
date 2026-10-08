@@ -32,10 +32,11 @@ function publish(message, reason) {
 }
 
 async function sendPricingReminder(candidate, offer, settings) {
+  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active) return;
   const saved = await pricingRepo.claim({
     candidate,
     offer,
-    activatedAt: settings.activatedAt,
+    activatedAt: settings.pricingReminder.activatedAt,
     triggerMode: settings.triggerMode,
   });
   if (!saved) return;
@@ -50,6 +51,7 @@ async function sendPricingReminder(candidate, offer, settings) {
     const live = clinicConfig.automatedFollowUp;
     if (!live?.enabled || live?.pricingReminder?.enabled !== true ||
         live.activatedAt !== settings.activatedAt ||
+        live.pricingReminder?.activatedAt !== settings.pricingReminder.activatedAt ||
         live.triggerMode !== settings.triggerMode ||
         quietHoursStatus(new Date(), live.quietHours).active) return false;
 
@@ -107,8 +109,9 @@ async function runPricingReminders(settings, now = new Date()) {
   if (settings?.pricingReminder?.enabled !== true ||
       settings.steps.length < 3) return null;
 
+  if (!settings.pricingReminder.activatedAt) return null;
   const candidates = await pricingRepo.listEligible({
-    activatedAt: settings.activatedAt,
+    activatedAt: settings.pricingReminder.activatedAt,
     triggerMode: settings.triggerMode,
   });
   let nextDueAt = null;
