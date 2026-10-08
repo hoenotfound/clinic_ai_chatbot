@@ -55,10 +55,10 @@ function beforeExpiryDueSql({
     const afterPrevious = `(${previous} + interval '${FINAL_MIN_SPACING_MINUTES} minutes')`;
     // A testimonial at 23:58 is legal by itself, but its price graphic at
     // 00:03 is not. Treat the final 5 minutes before quiet hours as a
-    // pre-quiet scheduling conflict only for WhatsApp pricing sequences.
+    // pre-quiet scheduling conflict for all three standard messaging channels.
     const extra = Number(reservePricingMinutes) === 5 ? 5 : 0;
     const imminent = extra
-      ? `(${channel} = 'whatsapp' AND
+      ? `(${channel} IN ('whatsapp','facebook','instagram') AND
          (CASE WHEN '${quiet.start}'::time <
            ('${quiet.start}'::time - interval '${extra} minutes')
           THEN (${wallTime} >= ('${quiet.start}'::time - interval '${extra} minutes')
