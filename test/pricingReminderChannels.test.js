@@ -163,3 +163,73 @@ test("a postponed pricing preflight wakes the worker at its durable retry time",
     clinic.serviceAliases=original.aliases;
   }
 });
+
+test("WhatsApp pricing pre-send survives changes to social-only reminder settings", async () => {
+  const prior = {
+    claim:pricingRepo.claim, check:pricingRepo.isClaimStillEligible,
+    send:messaging.sendImageByUrl, waId:messagesRepo.setWhatsappMessageId,
+    alias:messagesRepo.socialProviderAliasRecorder,
+    cfg:clinic.automatedFollowUp, services:clinic.services,
+    promotions:clinic.promotions, aliases:clinic.serviceAliases,
+  };
+  const candidate={
+    channel:"whatsapp",contact_id:91,whatsapp_number:"60123456789",
+    anchor_id:105,inbound_id:104,third_id:109,
+    third_accepted_at:new Date(Date.now()-9*60000).toISOString(),
+    inbound_at:new Date(Date.now()-12*3600000).toISOString(),
+    treatment_interest:"3D 小颜术",
+    recent_customer_messages:["I want 3D"],sent_media:[],
+  };
+  const offer={
+    serviceName:"3D 小颜术",packageName:"Trial",
+    imageUrl:"https://example.test/price.jpg",caption:"RM488",
+    identities:["/price.jpg"],
+  };
+  const originallyOff={
+    activatedAt,triggerMode:"all",quietHours,
+    steps:[{},{},final],
+    pricingReminder:{...pricingReminder,enableSocialChannels:false,
+      socialActivatedAt:null},
+  };
+  try{
+    clinic.services=[{name:"3D 小颜术"}];
+    clinic.serviceAliases=[];
+    clinic.promotions=[{name:"3D",linkedService:"3D 小颜术",packages:[
+      {name:offer.packageName,imageUrl:offer.imageUrl,caption:offer.caption},
+    ]}];
+    pricingRepo.claim=async()=>({id:110,contact_id:91});
+    pricingRepo.isClaimStillEligible=async()=>true;
+    messagesRepo.socialProviderAliasRecorder=()=>null;
+    messagesRepo.setWhatsappMessageId=async()=>({id:110,contact_id:91,delivery_status:"pending"});
+    for (const enabledBefore of [false,true]){
+      let permitted=null;
+      const snapshot={
+        ...originallyOff,
+        pricingReminder:{...originallyOff.pricingReminder,
+          enableSocialChannels:enabledBefore,
+          socialActivatedAt:enabledBefore?activatedAt:null},
+      };
+      clinic.automatedFollowUp={
+        enabled:true,activatedAt,triggerMode:"all",quietHours,
+        additionalSteps:[{},final],
+        pricingReminder:{...snapshot.pricingReminder,
+          enableSocialChannels:!enabledBefore,
+          socialActivatedAt:enabledBefore?null:new Date().toISOString()},
+      };
+      messaging.sendImageByUrl=async(_contact,_url,_caption,options)=>{
+        permitted=await options.preSendCheck();
+        return permitted ? {success:true,wamid:"wamid.pricing"} : {success:false,cancelled:true};
+      };
+      const sent=await pricing.sendPricingReminder(candidate,offer,snapshot);
+      assert.equal(permitted,true,
+        "A social-only setting toggle must not cancel an existing WhatsApp price send");
+      assert.equal(sent,true);
+    }
+  }finally{
+    pricingRepo.claim=prior.claim;pricingRepo.isClaimStillEligible=prior.check;
+    messaging.sendImageByUrl=prior.send;messagesRepo.setWhatsappMessageId=prior.waId;
+    messagesRepo.socialProviderAliasRecorder=prior.alias;
+    clinic.automatedFollowUp=prior.cfg;clinic.services=prior.services;
+    clinic.promotions=prior.promotions;clinic.serviceAliases=prior.aliases;
+  }
+});
