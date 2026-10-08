@@ -64,6 +64,7 @@ async function sendPricingReminder(candidate, offer, settings) {
       contactId: candidate.contact_id,
       anchorId: candidate.anchor_id,
       inboundId: candidate.inbound_id,
+      imageIdentities: offer.identities,
     });
   };
 
