@@ -53,7 +53,7 @@ test("disabled quiet hours leave the nominal 22-hour deadline",{
   } finally {await pool.end();}
 });
 
-test("20-hour final setting is never pulled before 20 hours during quiet hours", {
+test("20-hour final is pulled before midnight quiet hours to leave time for pricing", {
   skip: !process.env.TEST_DATABASE_URL,
 }, async () => {
   const { Pool } = require("pg");
@@ -63,7 +63,16 @@ test("20-hour final setting is never pulled before 20 hours during quiet hours",
       "2026-10-07T20:30:00Z", // 04:30 MYT: nominal 20h later falls in quiet hours
       "2026-10-08T02:30:00Z", 3, 240, 840,
     ]);
-    assert.equal(result.rows[0].due_at.toISOString(), "2026-10-08T16:30:00.000Z");
+    // 00:30 MYT nominal becomes 23:30 MYT the previous evening.
+    assert.equal(result.rows[0].due_at.toISOString(), "2026-10-08T15:30:00.000Z");
+
+    // If Follow-up 2 is too late for the two-hour gap, never squeeze
+    // Follow-up 3 into quiet hours or violate sequence spacing.
+    const crowded = await pool.query(`SELECT ${expression} AS due_at`, [
+      "2026-10-07T20:30:00Z",
+      "2026-10-08T14:30:00Z", 3, 240, 840,
+    ]);
+    assert.equal(crowded.rows[0].due_at.toISOString(), "2026-10-08T23:00:00.000Z");
 
     // With quiet hours disabled, a Step 2 at hour 22 makes final due
     // at hour 24, not at the nominal hour 20: preserve the 2h spacing.
