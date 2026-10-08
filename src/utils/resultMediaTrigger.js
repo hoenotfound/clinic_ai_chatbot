@@ -1,3 +1,4 @@
+const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 const {
   normalizeMediaTranslations,
   resolveLocalizedMedia,
@@ -108,6 +109,7 @@ async function resolveResultMediaForReply({
   serviceQuery,
   serviceQuerySource,
   metaAdCreativeService = null,
+  customerText = null,
   priceQuery,
   packageQuery,
   treatment,
@@ -125,6 +127,7 @@ async function resolveResultMediaForReply({
 }) {
   if (
     !treatment ||
+    (customerText != null && isGreetingOrLanguageOnly(customerText)) ||
     flagged ||
     bookingReady ||
     keywordReason ||
