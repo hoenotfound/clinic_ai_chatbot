@@ -101,3 +101,28 @@ test("Administrative information/questions do not qualify as service-media enqui
     "想了解骨盆调理，还有地址在哪里？",
   ]) assert.equal(hasCustomerServiceEnquiry(text), true, text);
 });
+
+
+test("English how-much questions distinguish duration and quantities from money", () => {
+  for (const customerText of [
+    "How much time does this treatment take?",
+    "How much longer does this take?",
+    "How much recovery time will I need after 3D?",
+    "How much downtime is there?",
+    "How much pain should I expect?",
+    "How much water should I drink?",
+    "How much weight can this remove?",
+    "How much improvement will there be?",
+    "How much time before my appointment?",
+    "How much rest do I need?",
+  ]) assert.equal(hasCustomerPriceEnquiry(customerText), false, customerText);
+
+  for (const customerText of [
+    "How much is the 3D treatment?",
+    "How much for pelvic treatment?",
+    "How much does 9D cost?",
+    "How much time does it take, and how much does it cost?",
+    "How much recovery time and price?",
+    "What is the first trial price?",
+  ]) assert.equal(hasCustomerPriceEnquiry(customerText), true, customerText);
+});
