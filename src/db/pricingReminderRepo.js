@@ -24,7 +24,7 @@ WITH eligible AS (
    c.id AS contact_id, c.channel, c.whatsapp_number, c.channel_user_id, anchor.id AS anchor_id,
    anchor.created_at AS anchor_at, inbound.id AS inbound_id,
    inbound.created_at AS inbound_at, third.id AS third_id,
-   third.third_accepted_at, lead.treatment_interest,
+   third.third_accepted_at, lead.treatment_interest, attribution.ad_name,
    third.third_accepted_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes' AS due_at,
    (SELECT COALESCE(jsonb_agg(user_messages.content ORDER BY user_messages.created_at DESC, user_messages.id DESC), '[]'::jsonb)
       FROM (SELECT id, content, created_at FROM messages
@@ -72,11 +72,15 @@ WITH eligible AS (
    SELECT id FROM pricing_reminder_decisions WHERE anchor_id = anchor.id LIMIT 1
  ) decision ON true
  LEFT JOIN LATERAL (
-   SELECT l.treatment_interest, l.is_closed, l.appointment_status,
+   SELECT l.id, l.treatment_interest, l.is_closed, l.appointment_status,
           s.stage_type, s.system_key
    FROM leads l LEFT JOIN pipeline_stages s ON s.id = l.stage_id
    WHERE l.contact_id = c.id ORDER BY l.created_at DESC, l.id DESC LIMIT 1
  ) lead ON true
+ LEFT JOIN LATERAL (
+   SELECT la.ad_name FROM lead_attributions la
+   WHERE la.lead_id = lead.id LIMIT 1
+ ) attribution ON true
  WHERE c.channel = ANY($5::text[])
    AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
      OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL))
@@ -88,7 +92,8 @@ WITH eligible AS (
            AND c.social_marketing_opt_out_at IS NULL))
    AND anchor.delivery_status IS DISTINCT FROM 'failed'
    AND anchor.delivery_status IS DISTINCT FROM 'cancelled'
-   AND anchor.created_at >= $1::timestamptz
+   AND anchor.created_at >= CASE WHEN c.channel='whatsapp' THEN $1::timestamptz
+                                  ELSE $6::timestamptz END
    AND ($2::text = 'all' OR anchor.sent_by_username IS NOT NULL)
    -- Allow recent expiry cases to be recorded as insufficient_window.
    AND inbound.created_at > now() - interval '72 hours'
@@ -114,10 +119,10 @@ WHERE ($3::timestamptz IS NULL
 ORDER BY due_at ASC, anchor_id ASC LIMIT 200
 `;
 
-async function listEligible({ activatedAt, triggerMode, after = null, channels = ["whatsapp"] }) {
+async function listEligible({ activatedAt, socialActivatedAt = null, triggerMode, after = null, channels = ["whatsapp"] }) {
   const allowed = channels.filter((channel) => ["whatsapp","facebook","instagram"].includes(channel));
   const result = await pool.query(eligibleSql(),
-    [activatedAt, triggerMode, after?.dueAt || null, after?.anchorId || null, allowed]);
+    [activatedAt, triggerMode, after?.dueAt || null, after?.anchorId || null, allowed, socialActivatedAt]);
   return result.rows;
 }
 
