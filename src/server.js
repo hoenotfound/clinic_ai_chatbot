@@ -30,7 +30,11 @@ const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger
 const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
-const { detectConversationLanguage } = require("./utils/chatLanguage");
+const {
+  detectConversationLanguage,
+  shouldGenerateLocalizedIntro,
+} = require("./utils/chatLanguage");
+const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -872,6 +876,12 @@ async function processIncomingMessage(
         .map((message) => message.content)
     );
     const isFirstMessage = forceFirstMessage || history.length === 1;
+    const customerMessages = history.filter((message) => message?.role === "user");
+    const newestCustomerText = customerMessages.at(-1)?.content || text;
+    const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
+      newestCustomerText,
+      clinicConfig.introMessage
+    );
 
     // High-confidence urgent safety phrases must not depend on an AI provider.
     // Bypass model generation completely so outages/capacity failures cannot
@@ -898,9 +908,12 @@ async function processIncomingMessage(
       try {
         // This is a local Postgres lookup only. Meta enrichment stays
         // fire-and-forget, so a Graph API delay/failure can never block the
-        // customer reply. Only stored creative headline/body may influence
-        // reply intent; internal ad/campaign/ad-set names are ignored.
-        metaAdContext = await loadMetaAdReplyContext(contact.id);
+        // customer reply. Creative copy takes priority. Internal ad names may
+        // contribute only a canonical configured service, not raw metadata.
+        metaAdContext = await loadMetaAdReplyContext(contact.id, {
+          services: clinicConfig.services,
+          aliases: clinicConfig.serviceAliases,
+        });
         metaAdCreativeService = resolveMetaAdCreativeService(
           metaAdContext,
           clinicConfig.services,
@@ -915,6 +928,7 @@ async function processIncomingMessage(
 
       const rawAiReply = await ai.getReply(history, {
         isFirstMessage,
+        generateFirstIntro,
         channel,
         metaAdContext,
       });
@@ -942,9 +956,19 @@ async function processIncomingMessage(
       }
     }
 
-    const reply = isFirstMessage && !urgentSafety
+    let reply = isFirstMessage && !urgentSafety && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
+    if (isFirstMessage && !urgentSafety && generateFirstIntro) {
+      const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply);
+      reply = guardedIntro.reply;
+      if (guardedIntro.usedOriginalFallback) {
+        console.warn(
+          `Localized first intro omitted ${guardedIntro.missingCount} protected details; ` +
+          "appended configured source intro to avoid silently losing clinic information."
+        );
+      }
+    }
 
     // Coexistence staff can reply from the phone while generation is in flight.
     // Give the echo webhook a brief chance to arrive, then abort this AI turn
@@ -1185,6 +1209,7 @@ async function processIncomingMessage(
           serviceQuery,
           serviceQuerySource,
           metaAdCreativeService,
+          customerText: text,
           priceQuery,
           packageQuery,
           treatment: details?.treatment,

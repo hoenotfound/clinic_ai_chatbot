@@ -19,6 +19,7 @@ function base(overrides = {}) {
   return {
     priceQuery: true,
     packageQuery: false,
+    customerText: "How much for 3D 小颜术?",
     treatment: "3D 小颜术",
     flagged: false,
     bookingReady: false,
@@ -633,4 +634,43 @@ test("promotion duplicate guard treats translated versions as the same package",
       imageUrl === "https://example.test/3d.jpg" && caption === "3D promo",
   }));
   assert.equal(result, null);
+});
+
+
+test("greetings and language-only turns never send a price image even if AI reports a price query", async () => {
+  for (const customerText of ["English", "Hi, English", "BM", "Hello", "中文", "OK", "Thanks", "Noted", "收到"]) {
+    let queried = false;
+    const result = await resolvePricePromotionForReply(base({
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      wasPromoRecentlySent: async () => { queried = true; return false; },
+    }));
+    assert.equal(result, null, customerText);
+    assert.equal(queried, false);
+  }
+  const permitted = await resolvePricePromotionForReply(base({
+    customerText: "Hi, what is the price for 3D 小颜术?",
+  }));
+  assert.ok(permitted?.packages?.length);
+});
+
+
+test("AI price-query flag cannot trigger pricing graphics for Malay session or duration questions", async () => {
+  for (const customerText of [
+    "Berapa lama rawatan ini?",
+    "Berapa kali kena datang?",
+    "Berapa sesi diperlukan untuk rawatan?",
+    "Berapa minit 3D?",
+    "What is your contact information?",
+  ]) {
+    let attempted = false;
+    assert.equal(await resolvePricePromotionForReply(base({
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      wasPromoRecentlySent: async () => { attempted = true; return false; },
+    })), null, customerText);
+    assert.equal(attempted, false);
+  }
 });

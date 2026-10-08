@@ -1,4 +1,5 @@
 const leadAttributionRepo = require("../db/leadAttributionRepo");
+const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 
 const FIELD_LIMITS = Object.freeze({
   headline: 500,
@@ -15,18 +16,32 @@ function cleanContextText(value, maxLength) {
   return text.slice(0, maxLength);
 }
 
-function normalizeMetaAdReplyContext(row) {
+function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) {
   if (!row || row.source !== "meta_ads") return null;
-
   const headline = cleanContextText(row.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(row.body, FIELD_LIMITS.body);
-
-  // Only customer-visible creative copy may influence AI reply context.
-  // Internal ad/campaign/ad-set names are intentionally excluded. If Meta did
-  // not supply usable headline/body copy, return no reply context at all.
-  return headline || body
-    ? { headline, body }
+  const creativeMatches = matchingMetaAdCreativeServices({ headline, body }, services, aliases);
+  const creativeService = resolveMetaAdCreativeService({ headline, body }, services, aliases);
+  // Only try an internal ad-name fallback when the creative has no service matches.
+  // Ambiguous creative cannot be overruled by internal ad metadata.
+  const expandedAliases = (Array.isArray(aliases) ? aliases : []).flatMap((entry) =>
+    splitConfiguredAlias(entry?.alias).map((alias) => ({ ...entry, alias }))
+  );
+  const nameService = creativeMatches.length === 0
+    ? inferConfiguredServiceFromText(row.ad_name, { services, serviceAliases: expandedAliases })
     : null;
+  // A CRM lead's treatment_interest may have been entered by staff or
+  // inferred from a different conversation. Its exact spelling does NOT
+  // verify the current ad. Prefer an honest generic reply until this lead's
+  // attribution includes matching creative or an actual ad name.
+  const serviceHint = creativeService || nameService;
+  const serviceHintSource = creativeService ? "creative" : nameService ? "ad_name" : null;
+  if (!headline && !body && !serviceHint) return null;
+  return {
+    headline,
+    body,
+    ...(serviceHint ? { serviceHint, serviceHintSource } : {}),
+  };
 }
 
 function normalizeServiceTerm(value) {
@@ -105,22 +120,22 @@ function configuredServiceTerms(service, services, aliases) {
 }
 
 /**
- * Deterministically maps Meta headline/body creative to exactly one configured
- * service. This is a trust boundary for outbound Before/After automation:
+ * Finds all configured services explicitly named by Meta creative. This is a
+ * trust boundary for outbound Before/After automation:
  * semantic model guesses are never sufficient. Ambiguous or unrecognized
  * creative fails closed and returns null.
  */
-function resolveMetaAdCreativeService(
+function matchingMetaAdCreativeServices(
   context,
   services = [],
   aliases = []
 ) {
-  if (!context || typeof context !== "object") return null;
+  if (!context || typeof context !== "object") return [];
 
   const headline = cleanContextText(context.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(context.body, FIELD_LIMITS.body);
   const creativeText = [headline, body].filter(Boolean).join(" ");
-  if (!creativeText) return null;
+  if (!creativeText) return [];
 
   const matched = (Array.isArray(services) ? services : [])
     .map((service) => {
@@ -134,18 +149,42 @@ function resolveMetaAdCreativeService(
     .filter(Boolean);
 
   const unique = [...new Set(matched)];
-  return unique.length === 1 ? unique[0] : null;
+  return unique;
 }
 
+function resolveMetaAdCreativeService(context, services = [], aliases = []) {
+  const matches = matchingMetaAdCreativeServices(context, services, aliases);
+  if (matches.length === 1) return matches[0];
+  if (matches.length < 2) return null;
+
+  // A configured combined service (e.g. "3D + 9D") naturally also matches
+  // aliases for its individual parts. Recognise it only when the full
+  // combination appears in the creative and ALL other matches are components.
+  const creativeText = [context?.headline, context?.body].filter(Boolean).join(" ");
+  const combinations = matches.filter((name) => name.includes("+")).filter((name) => {
+    if (!serviceTermAppearsInCreative(name, creativeText)) return false;
+    const components = name.split("+").map(compactServiceTerm).filter(Boolean);
+    if (components.length < 2) return false;
+    return matches.every((matchedName) => {
+      if (matchedName === name) return true;
+      const other = (Array.isArray(services) ? services : []).find(
+        (service) => String(service?.name || "").trim() === matchedName
+      );
+      return other && configuredServiceTerms(other, services, aliases)
+        .some((term) => components.includes(compactServiceTerm(term)));
+    });
+  });
+  return combinations.length === 1 ? combinations[0] : null;
+}
 async function loadMetaAdReplyContext(
   contactId,
-  { repo = leadAttributionRepo } = {}
+  { repo = leadAttributionRepo, services = [], aliases = [] } = {}
 ) {
   const id = Number(contactId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
 
   const row = await repo.getForContactCurrentLead(id);
-  return normalizeMetaAdReplyContext(row);
+  return normalizeMetaAdReplyContext(row, { services, aliases });
 }
 
 module.exports = {

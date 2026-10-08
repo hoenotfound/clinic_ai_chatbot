@@ -1,3 +1,4 @@
+const { hasCustomerPriceEnquiry } = require("./customerEnquiryEvidence");
 const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
@@ -59,6 +60,7 @@ async function resolvePricePromotionForReply({
 }) {
   if (
     (priceQuery !== true && packageQuery !== true) ||
+    !hasCustomerPriceEnquiry(customerText) ||
     !treatment ||
     flagged ||
     bookingReady ||

@@ -67,6 +67,7 @@ async function runSuccessfulPriceTurn() {
     const resultBundle = await resolveResultMediaForReply({
       priceQuery: true,
       packageQuery: false,
+      customerText: "3D多少钱？",
       treatment,
       flagged: false,
       bookingReady: false,
@@ -154,6 +155,7 @@ test("clear service enquiry can send result media immediately after the AI reply
     metaAdCreativeService: treatment,
     priceQuery: false,
     packageQuery: false,
+    customerText: "3D多少钱？",
     treatment,
     flagged: false,
     bookingReady: false,
@@ -182,6 +184,7 @@ test("a non-service admin turn does not send result media even when treatment co
     serviceQuerySource: null,
     priceQuery: false,
     packageQuery: false,
+    customerText: "3D多少钱？",
     treatment,
     flagged: false,
     bookingReady: false,
@@ -209,6 +212,7 @@ test("ad-name-only attribution cannot trigger automatic result media", async () 
     metaAdCreativeService: null,
     priceQuery: false,
     packageQuery: false,
+    customerText: "3D多少钱？",
     treatment,
     flagged: false,
     bookingReady: false,
@@ -238,8 +242,10 @@ test("normalized Meta attribution only unlocks result media when headline/body c
   const common = {
     serviceQuery: true,
     serviceQuerySource: "meta_ad",
+    customerText: "Tell me more about 3D 小颜术",
     priceQuery: false,
     packageQuery: false,
+    customerText: "3D多少钱？",
     treatment,
     flagged: false,
     bookingReady: false,
@@ -297,4 +303,65 @@ test("normalized Meta attribution only unlocks result media when headline/body c
     }),
     null
   );
+});
+
+
+test("language-only and greeting-only messages never trigger result images even if the model misclassifies intent", async () => {
+  const scenarios = ["English", "Hi, English", "BM", "你好", "Hello", "OK", "Thanks", "Noted", "收到"];
+  for (const customerText of scenarios) {
+    let checked = false;
+    const result = await resolveResultMediaForReply({
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      metaAdCreativeService: treatment,
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      treatment,
+      flagged: false,
+      bookingReady: false,
+      keywordReason: null,
+      needsAttention: false,
+      textSendSucceeded: true,
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      contactId: 42,
+      wasMediaRecentlySent: async () => { checked = true; return false; },
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(result, null, customerText);
+    assert.equal(checked, false, "must reject before any storage queries");
+  }
+});
+
+
+test("model service-query flag cannot trigger results for admin-only messages", async () => {
+  for (const customerText of [
+    "What is your contact information?",
+    "Can I get your phone number?",
+    "More details about opening hours please",
+    "Boleh tahu nombor telefon?",
+    "请问营业时间？",
+  ]) {
+    let attempted = false;
+    const result = await resolveResultMediaForReply({
+      customerText,
+      serviceQuery: true,
+      serviceQuerySource: "customer_message",
+      metaAdCreativeService: treatment,
+      priceQuery: false,
+      packageQuery: false,
+      treatment,
+      flagged: false,
+      bookingReady: false,
+      keywordReason: null,
+      needsAttention: false,
+      textSendSucceeded: true,
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      contactId: 42,
+      wasMediaRecentlySent: async () => { attempted = true; return false; },
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(result, null, customerText);
+    assert.equal(attempted, false);
+  }
 });

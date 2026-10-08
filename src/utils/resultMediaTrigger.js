@@ -1,4 +1,8 @@
 const {
+  hasCustomerPriceEnquiry,
+  hasCustomerServiceEnquiry,
+} = require("./customerEnquiryEvidence");
+const {
   normalizeMediaTranslations,
   resolveLocalizedMedia,
 } = require("./mediaLocalization");
@@ -108,6 +112,7 @@ async function resolveResultMediaForReply({
   serviceQuery,
   serviceQuerySource,
   metaAdCreativeService = null,
+  customerText = null,
   priceQuery,
   packageQuery,
   treatment,
@@ -136,6 +141,14 @@ async function resolveResultMediaForReply({
 
   const resultSet = matchingResultMediaSet(resultMedia, treatment);
   if (!resultSet) return null;
+
+  // Never trust a model's structured intent or Meta attribution as the sole
+  // reason to send proof images. The current customer turn must independently
+  // show a real price request or service enquiry.
+  const customerRequestedMediaContext = resultSet.triggerMode === "price_only"
+    ? hasCustomerPriceEnquiry(customerText)
+    : hasCustomerServiceEnquiry(customerText);
+  if (!customerRequestedMediaContext) return null;
 
   const sourceIsTrusted = SERVICE_QUERY_SOURCES.has(serviceQuerySource);
   const metaAdSourceVerified =
