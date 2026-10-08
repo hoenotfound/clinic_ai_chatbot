@@ -180,9 +180,9 @@ async function saveMessage(
        contact_id, role, content, whatsapp_message_id, sent_by_username,
        media_url, media_key, media_mime_type, whatsapp_template,
        delivery_status, delivery_error, reply_to_provider_message_id, is_forwarded,
-       media_filename
+       media_filename, is_automated_follow_up
      )
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15
      FROM conversation_lock
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}, whatsapp_template`,
     [
@@ -200,6 +200,7 @@ async function saveMessage(
       replyToProviderMessageId,
       isForwarded,
       mediaFilename,
+      options?.isAutomatedFollowUp === true,
     ]
   );
   return result.rows[0];
