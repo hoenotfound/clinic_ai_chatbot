@@ -4,6 +4,7 @@ const { Client } = require("pg");
 const fs = require("node:fs");
 const path = require("node:path");
 const worker = require("../src/services/whatsappFreeEntryFollowUpService");
+const deliveryRepo = require("../src/db/whatsappDeliveryStatusRepo");
 const connectionString = process.env.TEST_DATABASE_URL;
 
 test("Postgres free-entry candidate, claim/recheck, post-reply silence and billing guards",
@@ -37,6 +38,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         channel TEXT, meta_source_type TEXT, ctwa_clid TEXT, meta_ad_id TEXT
       );
     `);
+    await client.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/014_whatsapp_delivery_status_jobs.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/054_whatsapp_free_entry_followups.sql"), "utf8"));
     await client.query(`
@@ -103,8 +106,16 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     assert.equal((await worker.listCandidates(settings,client,1)).length,0,
       "new customer message closes the marketing automation window");
     await client.query(`DELETE FROM messages WHERE id=14`);
-    await client.query(`UPDATE whatsapp_free_entry_pricing_evidence
-      SET billable=true WHERE wamid='wamid.slot'`);
+    const query = client.query.bind(client);
+    await deliveryRepo.storeBatch([
+      {wamid:"wamid.slot",status:"delivered",pricingType:"regular",pricingBillable:true},
+    ],query);
+    await deliveryRepo.storeBatch([
+      {wamid:"wamid.slot",status:"read",pricingType:"free_entry_point",pricingBillable:false},
+    ],query);
+    const billing = await client.query(
+      "SELECT billable, pricing_type FROM whatsapp_free_entry_pricing_evidence WHERE wamid='wamid.slot'");
+    assert.equal(billing.rows[0].billable,true,"billable evidence is monotonic across out-of-order callbacks");
     assert.equal((await worker.listCandidates(settings,client,1)).length,0,
       "a confirmed charged template permanently blocks future slots");
   } finally {
