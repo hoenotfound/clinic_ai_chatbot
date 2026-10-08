@@ -113,6 +113,8 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
           (settings.pricingReminder?.requirePricingInterest !== false) ||
         (live.pricingReminder?.sendBothPelvicPackages === true) !==
           (settings.pricingReminder?.sendBothPelvicPackages === true) ||
+        (live.pricingReminder?.enableSocialChannels === true) !==
+          (settings.pricingReminder?.enableSocialChannels === true) ||
         quietHoursStatus(new Date(), live.quietHours).active ||
         !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
 
@@ -217,6 +219,8 @@ async function runPricingReminders(settings, now = new Date()) {
     const candidates = await pricingRepo.listEligible({
       activatedAt: activationCutoff(settings),
       triggerMode: settings.triggerMode,
+      channels: settings.pricingReminder.enableSocialChannels === true
+        ? ["whatsapp","facebook","instagram"] : ["whatsapp"],
       after: cursor,
     });
     if (!candidates.length) break;
