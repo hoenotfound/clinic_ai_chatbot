@@ -93,6 +93,20 @@ const candidateSql = `
     -- interacting, so stop this silent-lead sequence for the whole window.
     AND last_inbound.created_at <= first_reply.created_at
     AND ($2::integer IS NULL OR c.id = $2::integer)
+    -- Only take due, unclaimed slots. Completed/old contacts cannot fill the
+    -- page and starve more recent leads when ad volume rises.
+    AND EXISTS (
+      SELECT 1
+      FROM unnest($4::integer[]) AS slot(hours)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
+        WHERE prior.first_reply_message_id = first_reply.id
+          AND prior.slot_hours = slot.hours
+      )
+      AND now() >= first_reply.created_at + slot.hours * interval '1 hour'
+      AND now() < first_reply.created_at + (slot.hours + 12) * interval '1 hour'
+      AND now() >= last_inbound.created_at + interval '24 hours'
+    )
   ORDER BY first_reply.created_at ASC, c.id ASC
   LIMIT $3::integer
 `;
@@ -137,7 +151,7 @@ function selectedSlot(candidate, slots, now = new Date()) {
 
 async function listCandidates(active, database = pool, contactId = null) {
   const query = await database.query(candidateSql,
-    [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE]);
+    [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots]);
   return query.rows;
 }
 
