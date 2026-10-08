@@ -65,9 +65,15 @@ test("20-hour final setting is never pulled before 20 hours during quiet hours",
     ]);
     assert.equal(result.rows[0].due_at.toISOString(), "2026-10-08T16:30:00.000Z");
 
-    // Step 2 delayed to hour 22: the final stays at least 2h later.
-    const late = await pool.query(`SELECT ${expression} AS due_at`, [
-      "2026-10-07T20:30:00Z", "2026-10-08T18:30:00Z", 3, 240, 840,
+    // With quiet hours disabled, a Step 2 at hour 22 makes final due
+    // at hour 24, not at the nominal hour 20: preserve the 2h spacing.
+    const noQuiet = beforeExpiryDueSql({
+      inbound: "$1::timestamptz", previous: "$2::timestamptz",
+      step: "3", offset: "240", gap: "840",
+      quietHours: { enabled: false, start: "00:00", end: "07:00" },
+    });
+    const late = await pool.query(`SELECT ${noQuiet} AS due_at`, [
+      "2026-10-07T20:30:00Z", "2026-10-08T18:30:00Z",
     ]);
     assert.equal(late.rows[0].due_at.toISOString(), "2026-10-08T20:30:00.000Z");
   } finally {
