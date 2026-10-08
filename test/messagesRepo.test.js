@@ -444,7 +444,7 @@ test("promo duplicate lookup counts only provider-accepted non-failed media send
     assert.match(sql, /media_url = \$2/);
     assert.match(sql, /content = \$3/);
     assert.match(sql, /whatsapp_message_id IS NOT NULL/);
-    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown', 'cancelled'\)/);
     assert.match(sql, /\$4::integer \* INTERVAL '1 hour'/);
     assert.deepEqual(params, [42, "https://example.test/promo.jpg", "Promo caption", 24]);
     return { rowCount: call === 1 ? 1 : 0, rows: [] };
@@ -507,7 +507,7 @@ test("result media duplicate lookup matches accepted media by URL for seven-day 
     assert.match(sql, /media_url = \$2/);
     assert.doesNotMatch(sql, /content = \$3/);
     assert.match(sql, /whatsapp_message_id IS NOT NULL/);
-    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown', 'cancelled'\)/);
     assert.match(sql, /\$3::integer \* INTERVAL '1 hour'/);
     assert.deepEqual(params, [42, "https://example.test/result.jpg", 168]);
     return { rowCount: 1, rows: [] };
@@ -557,7 +557,7 @@ test("result media rotation history returns the most recently accepted configure
   pool.query = async (sql, params) => {
     assert.match(sql, /media_url = ANY\(\$2::text\[\]\)/);
     assert.match(sql, /whatsapp_message_id IS NOT NULL/);
-    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown', 'cancelled'\)/);
     assert.match(sql, /ORDER BY created_at DESC, id DESC/);
     assert.deepEqual(params, [
       42,
