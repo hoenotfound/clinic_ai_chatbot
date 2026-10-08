@@ -104,6 +104,7 @@ test("successful Gemini GenerateContent calls record provider usage", async () =
     purpose: "customer_reply",
     status: "success",
     failureKind: null,
+    responseDisposition: "provider_completed",
     latencyMs: 125,
     promptTokens: 240,
     outputTokens: 20,
@@ -200,6 +201,7 @@ test("failed Gemini requests are counted for quota monitoring without inventing 
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].status, "failed");
   assert.equal(recorded[0].failureKind, "model_unavailable");
+  assert.equal(recorded[0].responseDisposition, "provider_error");
   assert.equal(recorded[0].totalTokens, 0);
   assert.equal(failureKind(error), "model_unavailable");
 });
@@ -290,4 +292,86 @@ test("Gemini usage event persists only an opaque prompt prefix fingerprint", asy
   assert.equal(recorded[0].cachedTokens,0);
   assert.equal(recorded[0].promptPrefixHash,promptPrefixFingerprint({config:{systemInstruction:source}}));
   assert.equal(JSON.stringify(recorded[0]).includes("private patient"),false);
+});
+
+test("accepted Gemini structured response tracks acceptance and passes AbortSignal to the SDK", async () => {
+  const recorded=[];
+  const ctl=new AbortController();
+  const response={text:'{"reply":"Hello","outcome":"normal"}',
+    usageMetadata:{promptTokenCount:4000,cachedContentTokenCount:250,totalTokenCount:4050}};
+  const provider={models:{async generateContent(request){
+    assert.equal(request.config.abortSignal,ctl.signal);
+    return response;
+  }}};
+  const result=await generateGeminiContent(provider,{model:"gemini-3.8-flash",contents:"hello",config:{systemInstruction:"FIXED"}},
+    {database:{},repository:{async recordAiUsage(e){recorded.push(e)}},signal:ctl.signal,
+    validateResponse:(r)=>assert.match(r.text,/"outcome":"normal"/)});
+  await flushPromises();
+  assert.equal(result,response);
+  assert.equal(recorded.length,1);
+  assert.equal(recorded[0].responseDisposition,"accepted");
+  assert.equal(recorded[0].cachedTokens,250);
+  assert.equal(recorded[0].status,"success");
+});
+
+test("malformed Gemini response keeps provider token usage but is marked rejected, not accepted", async()=>{
+  const recorded=[];
+  const response={text:"not JSON",usageMetadata:{promptTokenCount:1000,totalTokenCount:1100}};
+  const bad=new Error("AI returned malformed structured JSON");
+  bad.code="INVALID_AI_RESPONSE";
+  await assert.rejects(generateGeminiContent(
+    {models:{async generateContent(){return response}}},
+    {model:"gemini-3.8-flash",config:{}},
+    {database:{},repository:{async recordAiUsage(e){recorded.push(e)}},
+      validateResponse:()=>{throw bad}}
+  ),(err)=>err===bad);
+  await flushPromises();
+  assert.equal(recorded.length,1,"provider success must not be double-counted as a failed API call");
+  assert.equal(recorded[0].status,"success");
+  assert.equal(recorded[0].responseDisposition,"rejected_invalid_output");
+  assert.equal(recorded[0].promptTokens,1000);
+});
+
+test("a late successful response after cancellation is recorded as discarded_timeout", async()=>{
+  const recorded=[];
+  const controller=new AbortController();
+  let finish;
+  const promise=new Promise(resolve=>{finish=resolve});
+  const call=generateGeminiContent(
+    {models:{async generateContent(request){
+      assert.equal(request.config.abortSignal,controller.signal);
+      return promise;
+    }}},
+    {model:"gemini-3.8-flash",config:{}},
+    {signal:controller.signal,database:{},repository:{async recordAiUsage(e){recorded.push(e)}},
+      validateResponse:()=>{throw Error("Late reply must not be delivered")}}
+  );
+  controller.abort();
+  finish({text:"late reply",usageMetadata:{promptTokenCount:3000,totalTokenCount:3020}});
+  await assert.rejects(call,err=>err.code==="AI_TIMEOUT");
+  await flushPromises();
+  assert.equal(recorded.length,1);
+  assert.equal(recorded[0].responseDisposition,"discarded_timeout");
+  assert.equal(recorded[0].status,"success");
+  assert.equal(recorded[0].promptTokens,3000);
+});
+
+test("an SDK abort with no provider usage metadata is never logged as accepted",async()=>{
+  const controller=new AbortController();
+  const recorded=[];
+  const provider={models:{async generateContent(request){
+    assert.equal(request.config.abortSignal,controller.signal);
+    controller.abort();
+    const e=new Error("aborted");e.name="AbortError";throw e;
+  }}};
+  await assert.rejects(generateGeminiContent(provider,
+    {model:"gemini-3.8-flash",config:{}},
+    {signal:controller.signal,database:{},repository:{async recordAiUsage(e){recorded.push(e)}}}),
+    err=>err.code==="AI_TIMEOUT");
+  await flushPromises();
+  assert.equal(recorded.length,1);
+  assert.equal(recorded[0].responseDisposition,"aborted_without_usage");
+  assert.equal(recorded[0].status,"failed");
+  assert.equal(recorded[0].failureKind,"timeout");
+  assert.equal(recorded[0].promptTokens,0);
 });
