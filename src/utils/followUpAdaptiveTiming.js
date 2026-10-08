@@ -61,14 +61,12 @@ function beforeExpiryDueSql({
       ELSE ${nominal}
     END)`;
   }
-  // A four-hour pre-expiry offset means "not before 20 hours after
-  // the customer's reply", not an instruction to pull a midnight due
-  // time earlier into the previous evening. Quiet hours can postpone
-  // this target; if the WhatsApp window then closes, the worker skips it.
-  // Other pre-expiry offsets keep their existing adaptive behavior.
-  const boundedTarget = `(CASE WHEN (${step}) = ${FINAL_STEP}
-    AND (${offset}) = 240 THEN GREATEST(${target}, ${nominal})
-    ELSE ${target} END)`;
-  return `GREATEST(${boundedTarget}, COALESCE(${previousDue}, ${boundedTarget}))`;
+  // If the 20-hour nominal slot falls in quiet hours, move the final
+  // follow-up to the last safe slot before quiet hours when there is still
+  // at least a two-hour gap after Step 2. This can intentionally be earlier
+  // than hour 20 so its five-minute pricing reminder also fits before quiet
+  // hours. If Step 2 is too late, defer until quiet hours finish; the normal
+  // WhatsApp window checks will reject delivery after the window expires.
+  return `GREATEST(${target}, COALESCE(${previousDue}, ${target}))`;
 }
 module.exports = { beforeExpiryDueSql, FINAL_MIN_SPACING_MINUTES, QUIET_START_SAFETY_MINUTES };
