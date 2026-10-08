@@ -40,7 +40,7 @@ function selectedService(candidate, services, aliases = []) {
 // A pricing graphic is a response to expressed commercial interest, not a
 // default treatment-education follow-up. Only the customer's own messages
 // qualify; CRM ad attribution alone must never trigger promotional pricing.
-const PRICING_INTEREST_RE = /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|收費|费用|費用|报价|報價|折扣|优惠|優惠|配套|套餐|特价|特價|how\\s+much|price|pricing|cost|fee|fees|quote|quotation|promotion|promo|discount|package|packages|voucher|budget|harga|berapa|kos|pakej|promosi|diskaun|rm\\s*\\d)/iu;
+const PRICING_INTEREST_RE = /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|收費|费用|費用|报价|報價|折扣|优惠|優惠|配套|套餐|特价|特價|how\s+much|price|pricing|cost|fee|fees|quote|quotation|promotion|promo|discount|package|packages|voucher|budget|harga|berapa|kos|pakej|promosi|diskaun|rm\s*\d)/iu;
 
 function hasPricingInterest(messages, packages = []) {
   return (Array.isArray(messages) ? messages : []).some((message) => {
