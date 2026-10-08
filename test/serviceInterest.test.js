@@ -53,10 +53,15 @@ test("maps both component services to the configured combination service", () =>
 });
 
 test("fails closed when the customer is explicitly comparing the two services", () => {
-  assert.equal(
-    inferConfiguredServiceFromText("Compare 3D or 9D", config),
-    null
-  );
+  for (const text of [
+    "Compare 3D or 9D",
+    "What is the difference between 3D and 9D?",
+    "3D和9D有什么分别？",
+    "3D和9D有什么区别？",
+    "3D还是9D比较好？",
+  ]) {
+    assert.equal(inferConfiguredServiceFromText(text, config), null, text);
+  }
 });
 
 test("returns null for an ad that does not identify a configured service", () => {
@@ -74,7 +79,7 @@ test("canonicalizes scored treatment interest without inventing a value", () => 
   );
   assert.equal(
     cleanScoredTreatmentInterest("3D 小颜术 / 9D 逆龄抗衰", config),
-    null
+    "3D + 9D 组合"
   );
   assert.equal(cleanScoredTreatmentInterest("   ", config), null);
   assert.equal(cleanScoredTreatmentInterest(null, config), null);
