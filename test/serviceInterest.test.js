@@ -56,9 +56,13 @@ test("fails closed when the customer is explicitly comparing the two services", 
   for (const text of [
     "Compare 3D or 9D",
     "What is the difference between 3D and 9D?",
+    "3D atau 9D mana lebih baik?",
+    "Apa beza 3D dan 9D?",
+    "I want 3D, not 9D",
     "3D和9D有什么分别？",
     "3D和9D有什么区别？",
     "3D还是9D比较好？",
+    "只要3D，不要9D",
   ]) {
     assert.equal(inferConfiguredServiceFromText(text, config), null, text);
   }
