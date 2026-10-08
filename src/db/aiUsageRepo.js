@@ -17,6 +17,12 @@ async function recordAiUsage(event, database = pool) {
     ? event.cacheMetadataPresent : null;
   const prefixCandidate = String(event?.promptPrefixHash || "");
   const promptPrefixHash = /^[a-f0-9]{16}$/.test(prefixCandidate) ? prefixCandidate : null;
+  const acceptedDispositions = new Set([
+    "accepted", "provider_completed", "rejected_invalid_output",
+    "discarded_timeout", "aborted_without_usage", "provider_error",
+  ]);
+  const responseDisposition = acceptedDispositions.has(event?.responseDisposition)
+    ? event.responseDisposition : null;
   const latencyMs = event?.latencyMs == null
     ? null
     : Math.max(0, Math.min(3_600_000, Math.round(Number(event.latencyMs) || 0)));
@@ -35,8 +41,9 @@ async function recordAiUsage(event, database = pool) {
        total_tokens,
        latency_ms,
        cache_metadata_present,
-       prompt_prefix_hash
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+       prompt_prefix_hash,
+       response_disposition
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
     [
       provider,
       model,
@@ -51,6 +58,7 @@ async function recordAiUsage(event, database = pool) {
       latencyMs,
       cacheMetadataPresent,
       promptPrefixHash,
+      responseDisposition,
     ]
   );
 }
@@ -75,6 +83,10 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
          COUNT(*) FILTER (WHERE status = 'success' AND cache_metadata_present IS NULL)::int AS cache_metadata_unknown_requests,
          COUNT(*) FILTER (WHERE status = 'success' AND cached_tokens > 0)::int AS cache_hit_requests,
          COUNT(DISTINCT prompt_prefix_hash) FILTER (WHERE status = 'success')::int AS distinct_prompt_prefixes,
+         COUNT(*) FILTER (WHERE response_disposition = 'accepted')::int AS accepted_responses,
+         COUNT(*) FILTER (WHERE response_disposition = 'rejected_invalid_output')::int AS rejected_responses,
+         COUNT(*) FILTER (WHERE response_disposition = 'discarded_timeout')::int AS discarded_responses,
+         COUNT(*) FILTER (WHERE response_disposition = 'aborted_without_usage')::int AS aborted_requests,
          COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
          COALESCE(ROUND(AVG(latency_ms) FILTER (WHERE latency_ms IS NOT NULL)), 0)::bigint AS average_latency_ms
        FROM ai_usage_events
@@ -137,6 +149,10 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
     cacheMetadataUnknownRequests: numeric(totals.cache_metadata_unknown_requests),
     cacheHitRequests: numeric(totals.cache_hit_requests),
     distinctPromptPrefixes: numeric(totals.distinct_prompt_prefixes),
+    acceptedResponses: numeric(totals.accepted_responses),
+    rejectedResponses: numeric(totals.rejected_responses),
+    discardedResponses: numeric(totals.discarded_responses),
+    abortedRequests: numeric(totals.aborted_requests),
     totalTokens: numeric(totals.total_tokens),
     averageLatencyMs: numeric(totals.average_latency_ms),
     byModel: modelResult.rows.map((row) => ({
