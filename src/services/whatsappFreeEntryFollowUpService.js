@@ -1,4 +1,5 @@
 const { pool } = require("../db/db");
+const { sessionLateralSql } = require("../db/whatsappFreeEntrySessionSql");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const clinicConfig = require("../config/clinicConfig");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
@@ -48,14 +49,7 @@ const candidateSql = `
     ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
     LIMIT 1
   ) lead ON true
-  JOIN LATERAL (
-    SELECT entry.origin_message_id, entry.ctwa_clid, entry.meta_ad_id
-    FROM whatsapp_free_entry_referrals entry
-    JOIN messages ad_origin ON ad_origin.id=entry.origin_message_id
-    WHERE entry.contact_id = c.id
-    ORDER BY ad_origin.created_at DESC, ad_origin.id DESC
-    LIMIT 1
-  ) referral ON true
+  ${sessionLateralSql({ contactAlias: 'c', ceilingParam: '$8' })}
   JOIN messages origin ON origin.id = referral.origin_message_id
        AND origin.contact_id = c.id AND origin.role = 'user'
   JOIN LATERAL (
@@ -219,7 +213,7 @@ async function listCandidates(active, database = pool, contactId = null, {
 } = {}) {
   const query = await database.query(candidateSql,
     [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots,
-      excludeMessageId, currentAttemptId, offset]);
+      excludeMessageId, currentAttemptId, offset, active.sevenDayVerified ? 168 : 72]);
   return query.rows;
 }
 
