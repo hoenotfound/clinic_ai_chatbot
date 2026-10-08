@@ -87,7 +87,7 @@ function publish(message, reason) {
   });
 }
 
-async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
+async function sendPricingReminder(candidate, offer, settings, imageCount = 1, onRetryAt = null) {
   const channel = candidate.channel || "whatsapp";
   if (!["whatsapp","facebook","instagram"].includes(channel) ||
       (channel !== "whatsapp" && settings.pricingReminder?.enableSocialChannels !== true)) return false;
@@ -168,20 +168,40 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
       error: "Pricing graphic delivery could not be confirmed after an interrupted provider request."
     };
   }
-  if (result?.cancelled) {
-    // preSendCheck runs before any Meta send. A proved unsent claim can be
-    // discarded safely even after a transient database verification failure.
-    // Re-evaluate on the next sweep rather than permanently suppressing this package.
+  // Both failures happen before any provider call. Discard the unsent claim
+  // under the database guard, then retry with durable bounded backoff. Do NOT
+  // mark the contact needs_attention on the first transient database failure:
+  // that would make it ineligible for all future reminder searches.
+  const transientPreflight =
+    result?.preSendCheckFailed === true ||
+    (result?.policyBlocked === true && result?.policyCode === "policy_state_unavailable");
+  if (result?.cancelled || transientPreflight) {
     const discarded = await pricingRepo.discard({
       messageId: saved.id, contactId: candidate.contact_id,
     });
     if (discarded) {
       publish({ ...saved, delivery_status: "cancelled" }, "message_cancelled");
-    }
-    if (result.preSendCheckFailed || !discarded) {
+      if (transientPreflight) {
+        const retry = await pricingRepo.notePreflightFailure({
+          contactId: candidate.contact_id,
+          anchorId: candidate.anchor_id,
+          packageKey: offer.packageName,
+          reason: result.policyCode || "pre_send_verification",
+        });
+        if (!retry || retry.attempts >= 3) {
+          await contactsRepo.setDeliveryAttention(
+            candidate.contact_id,
+            "Pricing reminder could not verify sending eligibility after repeated attempts. No pricing graphic was sent; staff should review."
+          );
+        } else if (typeof onRetryAt === "function") {
+          onRetryAt(retry.retry_after);
+        }
+      }
+    } else {
+      // A provider message/alias may already exist. No automatic duplicate.
       await contactsRepo.setDeliveryAttention(
         candidate.contact_id,
-        "Pricing reminder not sent because eligibility could not be verified. Check the automation before retrying."
+        "Pricing reminder delivery could not be verified safely. Check the customer chat before retrying."
       );
     }
     return false;
@@ -264,16 +284,38 @@ async function runPricingReminders(settings, now = new Date()) {
           await skipCandidate(candidate, reason);
           continue;
         }
+        if (Number(candidate.preflight_retry_attempts) >= 3) {
+          await contactsRepo.setDeliveryAttention(candidate.contact_id,
+            "Pricing reminder pre-send verification failed repeatedly. Staff review required.");
+          continue;
+        }
+        const retryAt = Date.parse(candidate.preflight_retry_after);
+        if (Number.isFinite(retryAt) && retryAt > now.getTime()) {
+          if (!nextDueAt || retryAt < Date.parse(nextDueAt)) {
+            nextDueAt = new Date(retryAt).toISOString();
+          }
+          continue;
+        }
         if (canSendAfterFinal(candidate, now, offers.length)) {
           for (const [index, offer] of offers.entries()) {
             // Distinct provider receipts and one durable claim per package.
             // Stop on partial, unknown, or failed sends for staff review.
             if (!(await sendPricingReminder(candidate, offer, settings,
-              index === 0 ? offers.length : 1))) break;
+              index === 0 ? offers.length : 1, (retryAfter) => {
+                const retryTime = Date.parse(retryAfter);
+                if (Number.isFinite(retryTime) &&
+                    (!nextDueAt || retryTime < Date.parse(nextDueAt))) {
+                  nextDueAt = new Date(retryTime).toISOString();
+                }
+              }))) break;
           }
         }
       } catch (err) {
         console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
+        // Unexpected storage errors should not put a due candidate to sleep
+        // forever when regular follow-ups have already completed.
+        const retryTime = new Date(Date.now() + 60_000).toISOString();
+        if (!nextDueAt || Date.parse(retryTime) < Date.parse(nextDueAt)) nextDueAt = retryTime;
       }
     }
     if (foundFuture || candidates.length < 200) break;
