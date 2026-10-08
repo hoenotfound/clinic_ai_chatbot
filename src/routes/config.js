@@ -619,10 +619,20 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       ? current?.pricingReminder?.enabled === true &&
         (current.pricingReminder.requirePricingInterest !== false) === requirePricingInterest &&
         (current.pricingReminder.sendBothPelvicPackages === true) === sendBothPelvicPackages &&
-        (current.pricingReminder.enableSocialChannels === true) === enableSocialChannels &&
         typeof current.pricingReminder.activatedAt === "string" &&
         !Number.isNaN(Date.parse(current.pricingReminder.activatedAt))
           ? current.pricingReminder.activatedAt
+          : new Date().toISOString()
+      : null;
+  // Social opt-in starts a distinct cohort, without resetting queued WhatsApp pricing.
+  const socialActivation =
+    pricingEnabled && enableSocialChannels
+      ? current?.pricingReminder?.enabled === true &&
+        current.pricingReminder.enableSocialChannels === true &&
+        current.pricingReminder.activatedAt === pricingActivation &&
+        typeof current.pricingReminder.socialActivatedAt === "string" &&
+        !Number.isNaN(Date.parse(current.pricingReminder.socialActivatedAt))
+          ? current.pricingReminder.socialActivatedAt
           : new Date().toISOString()
       : null;
 
@@ -675,6 +685,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     ...firstStep,
     additionalSteps,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
+      socialActivatedAt: socialActivation,
       requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
     activatedAt: enabled
       ? continuingCurrentActivation
