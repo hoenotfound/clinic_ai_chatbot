@@ -41,18 +41,24 @@ function selectedService(candidate, services, aliases = []) {
 // on whether the customer proactively asked about a price.
 function hasPricingInterest(messages) {
   return (Array.isArray(messages) ? messages : []).some((message) =>
-    /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|費用|优惠|優惠|套餐|配套|how\\s+much|pricing|price|cost|package|promo|harga|berapa|pakej|promosi|rm\\s*\\d)/iu
+    /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|費用|优惠|優惠|套餐|配套|how\s+much|pricing|price|cost|package|promo|harga|berapa|pakej|promosi|rm\s*\d)/iu
       .test(String(message || ""))
   );
 }
 
-function evaluatePricingReminder({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
+function evaluatePricingReminder({
+  promotions, candidate, services = [], aliases = [], language = "zh",
+  requirePricingInterest = false, sendBothPelvicPackages = true,
+}) {
   const service = selectedService(candidate, services, aliases);
   if (!service) return { offer: null, offers: [], reason: "ambiguous_service" };
   const matching = (Array.isArray(promotions) ? promotions : []).filter(
     (promotion) => norm(promotion.linkedService) === norm(service)
   );
   if (matching.length !== 1) return { offer: null, offers: [], reason: "missing_promotion" };
+  if (requirePricingInterest && !hasPricingInterest(candidate.recent_customer_messages)) {
+    return { offer:null, offers:[], reason:"no_pricing_interest" };
+  }
 
   const packages = promotionPackages(matching[0]);
   if (!packages.length) return { offer: null, offers: [], reason: "missing_promotion" };
@@ -60,7 +66,7 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
   // Only the exact two-package 骨盆调理 promotion sends A and B when the
   // customer hasn't selected one. Never broadcast all packages of other
   // services or turn a 3D-versus-9D comparison into a combination purchase.
-  const pelvisAB = norm(service) === norm("骨盆调理") &&
+  const pelvisAB = sendBothPelvicPackages && norm(service) === norm("骨盆调理") &&
     packages.length === 2 &&
     packages.some((item) => norm(item.name) === "package a") &&
     packages.some((item) => norm(item.name) === "package b");
