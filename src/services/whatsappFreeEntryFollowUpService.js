@@ -91,6 +91,7 @@ const candidateSql = `
       LEFT JOIN whatsapp_free_entry_pricing_evidence prior_billing
         ON prior_billing.wamid = prior.wamid
       WHERE prior.first_reply_message_id = first_reply.id
+        AND prior.id IS DISTINCT FROM $6::bigint
         AND (
           prior.status IN ('sending', 'failed', 'unknown')
           OR (
@@ -121,6 +122,7 @@ const candidateSql = `
       WHERE recent_send.contact_id = c.id
         AND recent_send.role = 'assistant'
         AND recent_send.created_at > now() - interval '5 hours'
+        AND recent_send.id IS DISTINCT FROM $5::integer
         AND recent_send.delivery_status IS DISTINCT FROM 'cancelled'
     )
     -- Staff interventions take precedence over automated marketing.
@@ -190,9 +192,10 @@ function selectedSlot(candidate, slots, now = new Date()) {
   return null;
 }
 
-async function listCandidates(active, database = pool, contactId = null) {
+async function listCandidates(active, database = pool, contactId = null, { excludeMessageId = null, currentAttemptId = null } = {}) {
   const query = await database.query(candidateSql,
-    [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots]);
+    [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots,
+      excludeMessageId, currentAttemptId]);
   return query.rows;
 }
 
@@ -286,7 +289,9 @@ async function processCandidate(candidate, active, template, now = new Date()) {
     // approval or the lead's state changed, keep the claim terminal.
     const liveActive = settings();
     const fresh = liveActive &&
-      (await listCandidates(liveActive, pool, candidate.contact_id))[0];
+      (await listCandidates(liveActive, pool, candidate.contact_id, {
+        excludeMessageId: message.id, currentAttemptId: attemptId,
+      }))[0];
     if (!fresh || fresh.first_reply_message_id !== candidate.first_reply_message_id ||
       !eligibleFreeEntryTime({
         firstInboundAt: fresh.first_inbound_at,
