@@ -1097,6 +1097,7 @@ async function sendCandidate(candidate) {
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
       timingMode: step.timingMode,
       beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+      quietHours: settings.quietHours,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
@@ -1226,6 +1227,7 @@ async function sendCandidate(candidate) {
                     stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
                   timingMode: step.timingMode,
                   beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+                  quietHours: settings.quietHours,
                   triggerMode: settings.triggerMode,
                   activatedAt: settings.activatedAt,
                 });
@@ -1356,6 +1358,7 @@ async function sendCandidate(candidate) {
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
       timingMode: step.timingMode,
       beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+      quietHours: settings.quietHours,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
@@ -1629,6 +1632,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       beforeWindowExpiryMinutes: settings.steps.map(
         (step) => step.beforeWindowExpiryMinutes
       ),
+      quietHours: settings.quietHours,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
       limit: FOLLOW_UP_BATCH_SIZE,
@@ -1653,6 +1657,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
           beforeWindowExpiryMinutes: liveSettings.steps.map(
             (step) => step.beforeWindowExpiryMinutes
           ),
+          quietHours: liveSettings.quietHours,
           triggerMode: liveSettings.triggerMode,
           activatedAt: liveSettings.activatedAt,
         })
