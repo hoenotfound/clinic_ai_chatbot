@@ -77,7 +77,7 @@ WITH eligible AS (
    FROM leads l LEFT JOIN pipeline_stages s ON s.id = l.stage_id
    WHERE l.contact_id = c.id ORDER BY l.created_at DESC, l.id DESC LIMIT 1
  ) lead ON true
- WHERE c.channel IN ('whatsapp','facebook','instagram')
+ WHERE c.channel = ANY($5::text[])
    AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
      OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL))
    AND c.needs_attention = false
@@ -112,9 +112,10 @@ WHERE ($3::timestamptz IS NULL
 ORDER BY due_at ASC, anchor_id ASC LIMIT 200
 `;
 
-async function listEligible({ activatedAt, triggerMode, after = null }) {
+async function listEligible({ activatedAt, triggerMode, after = null, channels = ["whatsapp"] }) {
+  const allowed = channels.filter((channel) => ["whatsapp","facebook","instagram"].includes(channel));
   const result = await pool.query(eligibleSql(),
-    [activatedAt, triggerMode, after?.dueAt || null, after?.anchorId || null]);
+    [activatedAt, triggerMode, after?.dueAt || null, after?.anchorId || null, allowed]);
   return result.rows;
 }
 
