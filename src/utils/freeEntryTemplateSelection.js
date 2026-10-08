@@ -71,6 +71,7 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     language: locale,
     mediaUrl: matching?.mediaUrl || "",
     mediaKey: matching?.mediaKey || "",
+    videoCodecVerified: matching?.videoCodecVerified === true,
     serviceName: matching?.serviceName || null,
     identifiedTreatment: customerInterest || adInterest ||
       (sameLeadJourney ? candidate.treatment_interest : null) || null,
@@ -107,6 +108,10 @@ async function validateApprovedMedia(template, spec, {
   const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
     format === "IMAGE" ? ["image/jpeg", 5*1024*1024] : null;
   if (!expected) return !spec.mediaKey && !spec.mediaUrl;
+  // H.264/AAC codecs cannot be proven by a HEAD response. Require the
+  // clinic to explicitly verify its pre-encoded MP4 rather than silently
+  // send an unknown HEVC file as a promotional template.
+  if (format === "VIDEO" && spec.videoCodecVerified !== true) return false;
   const [expectedMime, maxBytes] = expected;
   let info;
   try {
