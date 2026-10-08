@@ -62,6 +62,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       path.join(__dirname, "../src/db/migrations/047_conditional_pricing_reminder.sql"),
       "utf8"
     ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/050_follow_up_provider_accepted_at.sql"),
+      "utf8"
+    ));
 
     await client.query(`
       INSERT INTO contacts (id,channel,whatsapp_number)
@@ -101,8 +105,17 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       VALUES (104,1,'assistant','Final testimonial',now()-interval '10 minutes','failed',true,101,3)`);
     assert.equal((await pricingRepo.listEligible({ activatedAt, triggerMode: "all", settings })).length,0);
 
-    // Pending+WAMID means the real third message was accepted by Meta.
-    await client.query("UPDATE messages SET delivery_status='pending',whatsapp_message_id='wamid.final' WHERE id=104");
+    // Acceptance time, not claim creation, starts the five-minute countdown.
+    await client.query("UPDATE messages SET delivery_status='pending',whatsapp_message_id='wamid.final',provider_accepted_at=now()-interval '10 minutes' WHERE id=104");
+    assert.equal((await pricingRepo.listEligible({activatedAt,triggerMode:"all",settings})).length,1);
+    await client.query("UPDATE messages SET provider_accepted_at=now()-interval '2 minutes' WHERE id=104");
+    assert.equal(await pricingRepo.claim({
+      candidate:(await pricingRepo.listEligible({activatedAt,triggerMode:"all",settings}))[0],
+      offer:{caption:"RM488",imageUrl:"https://example.com/promo-images/30",
+        serviceName:"3D 小颜术",identities:["/promo-images/30"]},
+      activatedAt,triggerMode:"all",settings,
+    }),null);
+    await client.query("UPDATE messages SET provider_accepted_at=now()-interval '10 minutes' WHERE id=104");
     const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode: "all", settings });
     assert.equal(candidates.length, 1);
     const candidate = candidates[0];
