@@ -24,6 +24,8 @@ function normalizeUpdate(update) {
     errorCode: cleanNullable(update?.errorCode),
     errorTitle: cleanNullable(update?.errorTitle),
     errorMessage: cleanNullable(update?.errorMessage),
+    pricingType: cleanNullable(update?.pricingType),
+    pricingBillable: typeof update?.pricingBillable === "boolean" ? update.pricingBillable : null,
   };
   normalized.eventKey = crypto
     .createHash("sha256")
