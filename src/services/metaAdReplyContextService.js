@@ -1,4 +1,5 @@
 const leadAttributionRepo = require("../db/leadAttributionRepo");
+const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 
 const FIELD_LIMITS = Object.freeze({
   headline: 500,
@@ -15,18 +16,27 @@ function cleanContextText(value, maxLength) {
   return text.slice(0, maxLength);
 }
 
-function normalizeMetaAdReplyContext(row) {
+function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) {
   if (!row || row.source !== "meta_ads") return null;
-
   const headline = cleanContextText(row.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(row.body, FIELD_LIMITS.body);
-
-  // Only customer-visible creative copy may influence AI reply context.
-  // Internal ad/campaign/ad-set names are intentionally excluded. If Meta did
-  // not supply usable headline/body copy, return no reply context at all.
-  return headline || body
-    ? { headline, body }
+  const creativeMatches = matchingMetaAdCreativeServices({ headline, body }, services, aliases);
+  const creativeService = creativeMatches.length === 1 ? creativeMatches[0] : null;
+  // Only try an internal ad-name fallback when the creative has no service matches.
+  // Ambiguous creative cannot be overruled by internal ad metadata.
+  const expandedAliases = aliases.flatMap((entry) =>
+    splitConfiguredAlias(entry.alias).map((alias) => ({ ...entry, alias }))
+  );
+  const nameService = creativeMatches.length === 0
+    ? inferConfiguredServiceFromText(row.ad_name, { services, serviceAliases: expandedAliases })
     : null;
+  const serviceHint = creativeService || nameService;
+  if (!headline && !body && !serviceHint) return null;
+  return {
+    headline,
+    body,
+    ...(serviceHint ? { serviceHint, serviceHintSource: creativeService ? "creative" : "ad_name" } : {}),
+  };
 }
 
 function normalizeServiceTerm(value) {
@@ -110,17 +120,17 @@ function configuredServiceTerms(service, services, aliases) {
  * semantic model guesses are never sufficient. Ambiguous or unrecognized
  * creative fails closed and returns null.
  */
-function resolveMetaAdCreativeService(
+function matchingMetaAdCreativeServices(
   context,
   services = [],
   aliases = []
 ) {
-  if (!context || typeof context !== "object") return null;
+  if (!context || typeof context !== "object") return [];
 
   const headline = cleanContextText(context.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(context.body, FIELD_LIMITS.body);
   const creativeText = [headline, body].filter(Boolean).join(" ");
-  if (!creativeText) return null;
+  if (!creativeText) return [];
 
   const matched = (Array.isArray(services) ? services : [])
     .map((service) => {
@@ -134,18 +144,22 @@ function resolveMetaAdCreativeService(
     .filter(Boolean);
 
   const unique = [...new Set(matched)];
-  return unique.length === 1 ? unique[0] : null;
+  return unique;
 }
 
+function resolveMetaAdCreativeService(context, services = [], aliases = []) {
+  const matches = matchingMetaAdCreativeServices(context, services, aliases);
+  return matches.length === 1 ? matches[0] : null;
+}
 async function loadMetaAdReplyContext(
   contactId,
-  { repo = leadAttributionRepo } = {}
+  { repo = leadAttributionRepo, services = [], aliases = [] } = {}
 ) {
   const id = Number(contactId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
 
   const row = await repo.getForContactCurrentLead(id);
-  return normalizeMetaAdReplyContext(row);
+  return normalizeMetaAdReplyContext(row, { services, aliases });
 }
 
 module.exports = {
