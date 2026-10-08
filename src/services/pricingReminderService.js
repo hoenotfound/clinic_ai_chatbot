@@ -80,6 +80,9 @@ function publish(message, reason) {
 }
 
 async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
+  const channel = candidate.channel || "whatsapp";
+  if (!["whatsapp","facebook","instagram"].includes(channel) ||
+      (channel !== "whatsapp" && settings.pricingReminder?.enableSocialChannels !== true)) return false;
   if (quietHoursStatus(new Date(), settings.quietHours).active ||
       !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
   const saved = await pricingRepo.claim({
@@ -93,9 +96,9 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
   publish(saved, "message");
   const contact = {
     id: candidate.contact_id,
-    channel: candidate.channel,
+    channel,
     whatsapp_number: candidate.whatsapp_number,
-    channel_user_id: candidate.channel_user_id,
+    channel_user_id: channel_user_id,
   };
   const preSendCheck = async () => {
     const live = clinicConfig.automatedFollowUp;
@@ -132,16 +135,16 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
       imageIdentities: offer.identities,
       treatmentInterest: candidate.treatment_interest,
       thirdId: candidate.third_id,
-      recipientId: candidate.channel === "whatsapp"
-        ? candidate.whatsapp_number : candidate.channel_user_id,
+      recipientId: channel === "whatsapp"
+        ? candidate.whatsapp_number : channel_user_id,
       packageKey: offer.packageName,
-      channel: candidate.channel,
+      channel: channel,
     });
   };
 
   let result;
   try {
-    const providerRecorder = messagesRepo.socialProviderAliasRecorder(saved.id, candidate.channel);
+    const providerRecorder = messagesRepo.socialProviderAliasRecorder(saved.id, channel);
     result = await channelMessaging.sendImageByUrl(
       contact, offer.imageUrl, offer.caption,
       { purpose: "marketing", preSendCheck,
@@ -176,12 +179,12 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
   }
 
   let updated;
-  if (result?.wamid && candidate.channel === "whatsapp") {
+  if (result?.wamid && channel === "whatsapp") {
     updated = await messagesRepo.setWhatsappMessageId(saved.id, result.wamid);
   } else if (result?.success && result?.externalMessageId &&
-             ["facebook", "instagram"].includes(candidate.channel)) {
+             ["facebook", "instagram"].includes(channel)) {
     updated = await messagesRepo.setSocialProviderMessageId(
-      saved.id, `${candidate.channel}:${result.externalMessageId}`, "sent"
+      saved.id, `${channel}:${result.externalMessageId}`, "sent"
     );
   } else {
     updated = await messagesRepo.setDeliveryStatusById(
@@ -201,7 +204,7 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
     );
   }
   return Boolean(result?.success &&
-    (candidate.channel === "whatsapp" ? result.wamid : result.externalMessageId));
+    (channel === "whatsapp" ? result.wamid : result.externalMessageId));
 }
 
 // Called by the existing follow-up worker so this feature does not add another
