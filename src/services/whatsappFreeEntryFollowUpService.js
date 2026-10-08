@@ -173,6 +173,8 @@ function settings(env = process.env) {
   const fallbackLanguage = String(cfg.freeEntry.fallbackLanguage || "zh_CN").trim();
   const slots = cfg.freeEntry.slotsHours;
   const templateRules = cfg.freeEntry.templateRules || [];
+  // Conservative by default: seven-day rollout must be verified for this account.
+  const sevenDayVerified = String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true";
   if (!activatedAt || !Number.isFinite(activatedTime) ||
       !templateName || !/^[a-z0-9_]+$/.test(templateName) ||
       !SUPPORTED_LANGUAGES.has(language) ||
@@ -182,7 +184,7 @@ function settings(env = process.env) {
       !validateTemplateRules(templateRules, slots, clinicConfig.services || []))
     return null;
   return { activatedAt: new Date(activatedTime).toISOString(),
-    templateName, language, fallbackLanguage, slots, templateRules };
+    templateName, language, fallbackLanguage, slots, templateRules, sevenDayVerified };
 }
 
 function selectedSlot(candidate, slots, now = new Date()) {
@@ -201,6 +203,7 @@ function selectedSlot(candidate, slots, now = new Date()) {
       evidenceType: candidate.evidence_type,
       sourceIsCtwa: candidate.source_is_ctwa,
       slotHours, now, earlyDueAt: effectiveDue,
+      maxCeilingHours: candidate.sevenDayVerified ? 168 : 72,
     })) return slotHours;
   }
   return null;
@@ -231,6 +234,7 @@ async function claim(candidate, slotHours, active, database = pool) {
           evidenceType: fresh.evidence_type,
           sourceIsCtwa: fresh.source_is_ctwa,
           slotHours,
+          maxCeilingHours: active.sevenDayVerified ? 168 : 72,
           earlyDueAt: effectiveSlotDueAt(fresh.first_reply_at, slotHours,
             active.slots, clinicConfig.automatedFollowUp?.quietHours),
         })) {
@@ -266,7 +270,7 @@ async function finish(attemptId, status, values = {}) {
 }
 
 async function processCandidate(candidate, active, template, now = new Date(), explicitSpec = null) {
-  const slotHours = selectedSlot(candidate, active.slots, now);
+  const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
   const spec = explicitSpec || selectTemplateSpec(candidate, slotHours, active);
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
@@ -292,14 +296,16 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       templateSignature: whatsappTemplates.templateSignature(template),
       automatedFreeEntry: true, slotHours,
       marketingConsentConfirmed: true,
+      consentOptInAt: candidate.whatsapp_opt_in_at,
     };
     message = await messagesRepo.saveMessage(
       candidate.contact_id, "assistant", built.preview,
-      null, "Automation",
+      null, null,
       spec.mediaKey ? null : (spec.mediaUrl || null),
-      null, spec.mediaKey ? "video/mp4" :
-        template.header?.format === "VIDEO" ? "video/mp4" : null,
+      null, template.header?.format === "VIDEO" ? "video/mp4" :
+        template.header?.format === "IMAGE" ? "image/jpeg" : null,
       { mediaKey: spec.mediaKey || null, whatsappTemplate: metadata,
+        isAutomatedFollowUp: true,
         initialDeliveryStatus: "unknown",
         initialDeliveryError: "Awaiting WhatsApp template delivery confirmation." }
     );
@@ -323,6 +329,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         evidenceType: fresh.evidence_type,
         sourceIsCtwa: fresh.source_is_ctwa,
         slotHours,
+        maxCeilingHours: liveActive.sevenDayVerified ? 168 : 72,
         earlyDueAt: effectiveSlotDueAt(fresh.first_reply_at, slotHours,
           liveActive.slots, clinicConfig.automatedFollowUp?.quietHours),
       }) ||
@@ -417,7 +424,7 @@ async function run({ now = new Date() } = {}) {
     }
     result.candidates = allCandidates.length;
     for (const candidate of allCandidates) {
-      const slotHours = selectedSlot(candidate, active.slots, now);
+      const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
       if (!slotHours) { result.skipped++; continue; }
       const preferred = selectTemplateSpec(candidate, slotHours, active);
       const matches = (locale) => catalog.templates.find((item) =>
