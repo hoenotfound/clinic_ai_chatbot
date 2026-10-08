@@ -125,8 +125,9 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1, o
           (settings.pricingReminder?.requirePricingInterest !== false) ||
         (live.pricingReminder?.sendBothPelvicPackages === true) !==
           (settings.pricingReminder?.sendBothPelvicPackages === true) ||
-        (live.pricingReminder?.enableSocialChannels === true) !==
-          (settings.pricingReminder?.enableSocialChannels === true) ||
+        (channel !== "whatsapp" &&
+          (live.pricingReminder?.enableSocialChannels === true) !==
+            (settings.pricingReminder?.enableSocialChannels === true)) ||
         quietHoursStatus(new Date(), live.quietHours).active ||
         !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
 
@@ -172,9 +173,10 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1, o
   // under the database guard, then retry with durable bounded backoff. Do NOT
   // mark the contact needs_attention on the first transient database failure:
   // that would make it ineligible for all future reminder searches.
-  const transientPreflight =
+  const transientPreflight = !result?.partialCaptionSent && (
     result?.preSendCheckFailed === true ||
-    (result?.policyBlocked === true && result?.policyCode === "policy_state_unavailable");
+    (result?.policyBlocked === true && result?.policyCode === "policy_state_unavailable")
+  );
   if (result?.cancelled || transientPreflight) {
     const discarded = await pricingRepo.discard({
       messageId: saved.id, contactId: candidate.contact_id,
