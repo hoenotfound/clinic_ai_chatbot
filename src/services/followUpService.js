@@ -207,6 +207,7 @@ function getActiveSettings() {
     pricingReminder: {
       enabled: settings.pricingReminder?.enabled === true,
       activatedAt: settings.pricingReminder?.activatedAt || null,
+      mode: settings.pricingReminder?.mode === "after_final" ? "after_final" : "before_final",
     },
   };
 }
