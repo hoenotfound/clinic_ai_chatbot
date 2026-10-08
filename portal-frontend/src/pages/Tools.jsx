@@ -2358,14 +2358,14 @@ function FollowUpTool({
               <div className="min-w-0">
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                  WhatsApp only. Send 5 minutes after Follow-up 3 is accepted,
-                  if the customer asked about pricing and the correct graphic
-                  has not already been sent. Use existing Promotions in the customer's language.
+                  WhatsApp only. Send at least 5 minutes after Meta accepts Follow-up 3,
+                  even if the customer has not asked for pricing. Only send graphics
+                  that have not already been sent, in the customer's language.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  Requires Follow-up 3 to have been sent successfully. Multiple packages
-                  need an explicit customer choice. Never sends before the testimonial,
-                  outside the reply window, or during quiet hours.
+                  Requires an accepted Follow-up 3. If 骨盆调理 Package A/B is unclear,
+                  send both pricing graphics; a clear choice sends only that package.
+                  Never send outside the WhatsApp reply window or during quiet hours.
                 </p>
               </div>
               <Switch
@@ -2523,7 +2523,7 @@ function FollowUpTool({
                   <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
                   <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
                   <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-                  <Rule text="The optional pricing reminder waits 5 minutes after Follow-up 3, only for customers who asked about prices. It skips if the WhatsApp window closes or quiet hours prevent delivery." />
+                  <Rule text="The optional pricing reminder waits at least 5 minutes after WhatsApp accepts Follow-up 3, even without a pricing enquiry. For unclear 骨盆调理 packages, it sends A and B separately. It skips if the reply window closes or quiet hours prevent delivery." />
                   <Rule text="WhatsApp opt-outs remain a hard stop." />
                   <Rule text="Saving does not add follow-ups to older conversations." />
                 </ul>
