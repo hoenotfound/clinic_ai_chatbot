@@ -85,7 +85,8 @@ const ENGLISH_WORDS = new Set([
 function detectExplicitLanguagePreference(input) {
   const text = String(input || "").trim().replace(/[.!！。?？]+$/u, "").trim();
   if (!text) return null;
-  const single = text.toLowerCase();
+  const withoutGreeting = text.replace(/^(?:hi|hello|hey|hai|你好|您好|嗨|salam)[!！,.，。\s]+/iu, "").trim();
+  const single = (withoutGreeting || text).toLowerCase();
   if (/^(?:english|english pls|english please|in english|speak english|reply in english|please (?:reply|speak) in english|can (?:you|u) (?:reply|speak) in english)$/iu.test(single)) return "en";
   if (/^(?:bm|bahasa|bahasa malaysia|bahasa melayu|malay|in malay|in bahasa|speak malay|reply in malay|please (?:reply|speak) in (?:malay|bahasa malaysia))$/iu.test(single)) return "ms";
   if (/^(?:中文|华语|華語|国语|國語|普通话|普通話|讲中文|講中文|用中文|请用中文|請用中文|中文回复|中文回覆|mandarin|chinese|in chinese|speak chinese|reply in chinese)$/iu.test(single)) return "zh";
