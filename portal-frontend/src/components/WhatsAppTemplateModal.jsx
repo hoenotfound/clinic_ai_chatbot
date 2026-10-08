@@ -340,17 +340,20 @@ export default function WhatsAppTemplateModal({
 
           {!loading &&
             catalog &&
-            (!catalog.eligibility?.allowed || marketingReconsentNeeded) && (
+            (!catalog.eligibility?.allowed || marketingReconsentNeeded || selected?.category === "MARKETING") && (
             <form onSubmit={recordOptIn} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <p className="text-sm font-bold text-amber-900">
                 {marketingReconsentNeeded
                   ? "WhatsApp marketing opt-in required"
+                  : selected?.category === "MARKETING" ? "Record verified WhatsApp marketing consent"
                   : "WhatsApp opt-in required"}
               </p>
               <p className="mt-1 text-xs leading-5 text-amber-800">
                 {marketingReconsentNeeded
                   ? "This customer opted out of WhatsApp marketing. Record a real, newer explicit consent source that specifically covers promotional WhatsApp messages before sending a MARKETING template again."
-                  : eligibilityCopy(catalog.eligibility)}
+                  : selected?.category === "MARKETING" && catalog.eligibility?.allowed
+                    ? "For 7-day promotional follow-ups, confirm the customer's actual marketing consent and record its source. Leave the marketing box unchecked for service-only messaging."
+                    : eligibilityCopy(catalog.eligibility)}
               </p>
               <label className="mt-3 block text-[11px] font-semibold text-amber-900">
                 Where did the customer opt in?
