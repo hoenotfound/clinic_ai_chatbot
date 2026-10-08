@@ -34,9 +34,9 @@ test("pricing eligibility is tied to the ACTUAL accepted Follow-up 3, never the 
   assert.match(expr,/automated_follow_up_step = 3/);
   assert.match(expr,/delivery_status IN \('sent', 'delivered', 'read'\)/);
   assert.match(expr,/pending.*whatsapp_message_id IS NOT NULL/);
-  assert.match(expr,/third\.created_at \+ interval '5 minutes' AS due_at/);
+  assert.match(expr,/COALESCE\(third\.provider_accepted_at,third\.created_at\) \+ interval '5 minutes' AS due_at/);
   assert.doesNotMatch(expr,/final_due_at|second\.created_at|third\.id IS NULL/);
-  assert.match(expr,/inbound_at \+ interval '23 hours 50 minutes'/);
+  assert.match(expr,/inbound_at \+ interval '23 hours 45 minutes'/);
 });
 
 test("ambiguous provider timeouts remain unconfirmed, not failed", () => {
