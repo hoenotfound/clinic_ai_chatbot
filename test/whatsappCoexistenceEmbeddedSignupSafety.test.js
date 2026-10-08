@@ -28,7 +28,9 @@ test("portal waits for FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING before backend co
   const source = read(
     "portal-frontend/src/components/WhatsAppCoexistenceOnboardingPanel.jsx"
   );
-  assert.match(source, /FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING/);
+  const classifier = read("portal-frontend/src/utils/whatsappEmbeddedSignup.js");
+  assert.match(classifier, /case "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING":/);
+  assert.match(source, /if \(outcome === "coexistence"\)/);
   assert.match(source, /response\?\.authResponse\?\.code/);
   assert.match(source, /sessionInfoRef\.current = payload/);
   assert.match(source, /completeWhatsAppCoexistenceOnboarding/);
@@ -47,7 +49,6 @@ test("onboarding audit migration stores no authorization code or access token", 
   assert.doesNotMatch(sql, /access_token/i);
   assert.doesNotMatch(sql, /authorization_code/i);
 });
-
 
 test("standard Cloud API FINISH and coexistence completion are distinct", async () => {
   const { classifyWhatsAppEmbeddedSignupEvent, parseWhatsAppEmbeddedSignupMessage } =
