@@ -182,7 +182,7 @@ const candidateSql = `
           AND prior.slot_hours = slot.hours
       )
       AND now() >= first_reply.created_at +
-        (slot.hours - CASE WHEN slot.hours = (SELECT max(n) FROM unnest($4::integer[]) AS n)
+        (slot.hours - CASE WHEN slot.hours = (SELECT max(n) FROM unnest($4::integer[]) AS n WHERE n < $8::integer)
          THEN 12 ELSE 0 END) * interval '1 hour'
       AND now() < first_reply.created_at + (slot.hours + 12) * interval '1 hour'
       AND now() >= last_inbound.created_at + interval '24 hours'
@@ -222,7 +222,8 @@ function selectedSlot(candidate, slots, now = new Date()) {
   for (const slotHours of slots) {
     const due = reply + slotHours * 3600000;
     const effectiveDue = effectiveSlotDueAt(candidate.first_reply_at, slotHours,
-      slots, clinicConfig.automatedFollowUp?.quietHours);
+      slots, clinicConfig.automatedFollowUp?.quietHours,
+      { maxCeilingHours: candidate.sevenDayVerified ? 168 : 72 });
     // Never catch up a missed day by blasting several templates together.
     if (clock > due + 12 * 3600000 || candidate.claimed_slots?.includes(slotHours)) continue;
     if (eligibleFreeEntryTime({
@@ -265,7 +266,8 @@ async function claim(candidate, slotHours, active, database = pool) {
           slotHours,
           maxCeilingHours: active.sevenDayVerified ? 168 : 72,
           earlyDueAt: effectiveSlotDueAt(fresh.first_reply_at, slotHours,
-            active.slots, clinicConfig.automatedFollowUp?.quietHours),
+            active.slots, clinicConfig.automatedFollowUp?.quietHours,
+            { maxCeilingHours: active.sevenDayVerified ? 168 : 72 }),
         })) {
       await client.query("ROLLBACK");
       return null;
@@ -365,7 +367,8 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         slotHours,
         maxCeilingHours: liveActive.sevenDayVerified ? 168 : 72,
         earlyDueAt: effectiveSlotDueAt(fresh.first_reply_at, slotHours,
-          liveActive.slots, clinicConfig.automatedFollowUp?.quietHours),
+          liveActive.slots, clinicConfig.automatedFollowUp?.quietHours,
+          { maxCeilingHours: liveActive.sevenDayVerified ? 168 : 72 }),
       }) ||
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
       !(() => {
