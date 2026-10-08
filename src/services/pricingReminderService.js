@@ -127,10 +127,26 @@ async function sendPricingReminder(candidate, offer, settings) {
       error: "Pricing graphic delivery could not be confirmed after an interrupted provider request."
     };
   }
-  if (result?.cancelled && !result?.preSendCheckFailed) {
-    if (await pricingRepo.discard({
+  if (result?.cancelled) {
+    if (result.preSendCheckFailed) {
+      // The eligibility query failed BEFORE the WhatsApp provider call. This
+      // is a cancelled internal verification, never a delivery failure or a
+      // "provider may have received it" state.
+      const updated = await messagesRepo.setDeliveryStatusById(
+        saved.id,
+        "cancelled",
+        "Internal pricing reminder eligibility check failed; nothing was sent to WhatsApp."
+      );
+      publish(updated || { ...saved, delivery_status: "cancelled" }, "message_cancelled");
+      await contactsRepo.setDeliveryAttention(
+        candidate.contact_id,
+        "Internal pricing reminder verification failed before sending. Check the automation logs; no WhatsApp pricing graphic was sent."
+      );
+    } else if (await pricingRepo.discard({
       messageId: saved.id, contactId: candidate.contact_id,
-    })) publish({ ...saved, delivery_status: "cancelled" }, "message_cancelled");
+    })) {
+      publish({ ...saved, delivery_status: "cancelled" }, "message_cancelled");
+    }
     return;
   }
 
@@ -195,4 +211,4 @@ async function runPricingReminders(settings, now = new Date()) {
   }
   return nextDueAt;
 }
-module.exports = { runPricingReminders, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };
+module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };

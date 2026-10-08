@@ -774,6 +774,8 @@ async function getFollowUps(filters, analyticsProfile) {
              WHERE delivery_status IS NULL OR delivery_status = 'pending'),
            'failed', (SELECT COUNT(*)::int FROM pricing_attempts
              WHERE delivery_status = 'failed'),
+           'cancelled', (SELECT COUNT(*)::int FROM pricing_attempts
+             WHERE delivery_status = 'cancelled'),
            'unknown', (SELECT COUNT(*)::int FROM pricing_attempts
              WHERE delivery_status = 'unknown'),
            'skipped', (SELECT COUNT(*)::int FROM pricing_skips),
@@ -784,7 +786,9 @@ async function getFollowUps(filters, analyticsProfile) {
            'ambiguous', (SELECT COUNT(*)::int FROM pricing_skips
              WHERE reason IN ('ambiguous_service','ambiguous_package')),
            'insufficientWindow', (SELECT COUNT(*)::int FROM pricing_skips
-             WHERE reason = 'insufficient_window')
+             WHERE reason = 'insufficient_window'),
+           'noPricingInterest', (SELECT COUNT(*)::int FROM pricing_skips
+             WHERE reason = 'no_pricing_interest')
          )
        ) AS pricing_reminder
      FROM outcomes`,
@@ -822,7 +826,8 @@ async function getFollowUps(filters, analyticsProfile) {
     byTargeting: metricRows(row.by_targeting, "targeting"),
     pricingReminder: Object.fromEntries(
       ["attempted", "accepted", "delivered", "pending", "failed", "unknown",
-        "skipped", "alreadySent", "reviewNeeded", "ambiguous", "insufficientWindow"]
+        "cancelled", "skipped", "alreadySent", "reviewNeeded", "ambiguous", "insufficientWindow",
+        "noPricingInterest"]
         .map((key) => [key, number(row.pricing_reminder?.[key])])
     ),
     outcomeWindowDays: FOLLOW_UP_OUTCOME_WINDOW_DAYS,
