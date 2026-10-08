@@ -2366,14 +2366,14 @@ function FollowUpTool({
               <div className="min-w-0">
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                  WhatsApp only. Send at least 5 minutes after Meta accepts Follow-up 3,
-                  when the customer's treatment is identifiable. Whether a price
-                  enquiry is required is configurable for each clinic.
+                  WhatsApp, Messenger and Instagram. Send at least 5 minutes after Meta
+                  accepts Follow-up 3, when the customer's treatment is identifiable.
+                  Whether a price enquiry is required is configurable for each clinic.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
                   Requires an accepted Follow-up 3. Pelvic Package A/B can be sent
                   separately when the choice is unclear. Never send outside the
-                  WhatsApp reply window or during quiet hours.
+                  channel's 24-hour reply window or during quiet hours.
                 </p>
               </div>
               <Switch
