@@ -30,7 +30,9 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  pricingReminder: { enabled: false },
+  pricingReminder: {
+    enabled:false, requirePricingInterest:true, sendBothPelvicPackages:false,
+  },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -172,7 +174,11 @@ function normalizeFollowUpSettings(value = {}) {
     additionalSteps: Array.isArray(value.additionalSteps)
       ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
       : [],
-    pricingReminder: { enabled: value?.pricingReminder?.enabled === true },
+    pricingReminder: {
+      enabled:value?.pricingReminder?.enabled === true,
+      requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
+      sendBothPelvicPackages:value?.pricingReminder?.sendBothPelvicPackages === true,
+    },
   };
 }
 
@@ -817,7 +823,11 @@ export default function Tools() {
           videoFilename: form.videoFilename,
           serviceOverrides,
           additionalSteps,
-          pricingReminder: { enabled: form.pricingReminder?.enabled === true },
+          pricingReminder: {
+            enabled:form.pricingReminder?.enabled === true,
+            requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
+            sendBothPelvicPackages:form.pricingReminder?.sendBothPelvicPackages === true,
+          },
         },
       });
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
@@ -2359,13 +2369,12 @@ function FollowUpTool({
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
                   WhatsApp only. Send 5 minutes after Follow-up 3 is accepted,
-                  if the customer asked about pricing and the correct graphic
-                  has not already been sent. Use existing Promotions in the customer's language.
+                  when the treatment is identifiable and a matching graphic has
+                  not already been sent. The price-enquiry rule is optional per clinic.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  Requires Follow-up 3 to have been sent successfully. Multiple packages
-                  need an explicit customer choice. Never sends before the testimonial,
-                  outside the reply window, or during quiet hours.
+                  Follow-up 3 must be accepted by WhatsApp. Never sends before
+                  the testimonial, after the reply window, or during quiet hours.
                 </p>
               </div>
               <Switch
@@ -2374,10 +2383,52 @@ function FollowUpTool({
                 onChange={() => setForm((current) => ({
                   ...current,
                   pricingReminder: {
+                    ...current.pricingReminder,
                     enabled: current.pricingReminder?.enabled !== true,
                   },
                 }))}
               />
+            </div>
+            <div className="mt-3 space-y-3 rounded-xl border border-[var(--color-border)] p-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold">Require a customer price enquiry</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Switch off to send the relevant treatment price even if the customer only asked about results.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.pricingReminder?.requirePricingInterest !== false}
+                  ariaLabel="Require a customer price enquiry"
+                  onChange={() => setForm((current) => ({
+                    ...current,
+                    pricingReminder: {
+                      ...current.pricingReminder,
+                      requirePricingInterest:current.pricingReminder?.requirePricingInterest === false,
+                    },
+                  }))}
+                />
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold">Send both pelvic package graphics if no package selected</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Package A and B are sent as separate images with their own delivery records.
+                    If a customer chose one package, send only its image.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.pricingReminder?.sendBothPelvicPackages === true}
+                  ariaLabel="Send both pelvic package graphics"
+                  onChange={() => setForm((current) => ({
+                    ...current,
+                    pricingReminder: {
+                      ...current.pricingReminder,
+                      sendBothPelvicPackages:current.pricingReminder?.sendBothPelvicPackages !== true,
+                    },
+                  }))}
+                />
+              </div>
             </div>
           </Card>
         </div>
