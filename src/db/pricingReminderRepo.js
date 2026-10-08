@@ -249,7 +249,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode, settings }) {
     [candidate.contact_id, candidate.anchor_id, offer.caption, offer.imageUrl,
       offer.serviceName, candidate.inbound_id, activatedAt, triggerMode, offer.identities,
       candidate.final_due_at, candidate.treatment_interest,
-      candidate.final_message_id || null]
+      ...(afterFinal ? [candidate.final_message_id || null] : [])]
   );
   return result.rows[0] || null;
 }
@@ -318,7 +318,7 @@ async function isClaimStillEligible({
                =ANY($5::text[]))
      ) AS eligible`, [messageId, contactId, anchorId, inboundId,
        imageIdentities, treatmentInterest, finalDueAt, whatsappNumber,
-       finalMessageId]);
+       ...(afterFinal ? [finalMessageId] : [])]);
   return result.rows[0]?.eligible === true;
 }
 
