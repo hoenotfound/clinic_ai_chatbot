@@ -209,6 +209,7 @@ function getActiveSettings() {
       activatedAt: settings.pricingReminder?.activatedAt || null,
       requirePricingInterest: settings.pricingReminder?.requirePricingInterest !== false,
       sendBothPelvicPackages: settings.pricingReminder?.sendBothPelvicPackages === true,
+      enableSocialChannels: settings.pricingReminder?.enableSocialChannels === true,
     },
   };
 }
