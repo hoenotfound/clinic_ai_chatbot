@@ -23,6 +23,7 @@ function beforeExpiryDueSql({
   quietHours = DEFAULT_QUIET_HOURS,
   timeZone = process.env.CLINIC_TIMEZONE || DEFAULT_CLINIC_TIMEZONE,
   reservePricingMinutes = 0,
+  reservePricingOnSocial = false,
   channel = "'whatsapp'",
 }) {
   const quiet = normalizeQuietHours(quietHours) || DEFAULT_QUIET_HOURS;
@@ -58,7 +59,7 @@ function beforeExpiryDueSql({
     // pre-quiet scheduling conflict for all three standard messaging channels.
     const extra = Number(reservePricingMinutes) === 5 ? 5 : 0;
     const imminent = extra
-      ? `(${channel} IN ('whatsapp','facebook','instagram') AND
+      ? `(${channel} IN ${reservePricingOnSocial ? "('whatsapp','facebook','instagram')" : "('whatsapp')"} AND
          (CASE WHEN '${quiet.start}'::time <
            ('${quiet.start}'::time - interval '${extra} minutes')
           THEN (${wallTime} >= ('${quiet.start}'::time - interval '${extra} minutes')
