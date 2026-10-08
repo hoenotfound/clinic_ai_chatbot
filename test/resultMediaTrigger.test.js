@@ -31,6 +31,7 @@ function base(overrides = {}) {
   return {
     priceQuery: true,
     packageQuery: false,
+    customerText: "How much for 3D 小颜术?",
     treatment: "3D 小颜术",
     flagged: false,
     bookingReady: false,
