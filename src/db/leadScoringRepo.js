@@ -5,7 +5,8 @@ const { cleanScoredTreatmentInterest } = require("../utils/serviceInterest");
 
 const PROCESSING_STALE_MINUTES = 10;
 const FAILED_RETRY_MINUTES = 2;
-const MAX_ATTEMPTS = 3;\nconst TREATMENT_INTEREST_UNSET = Symbol("treatment-interest-unset");
+const MAX_ATTEMPTS = 3;
+const TREATMENT_INTEREST_UNSET = Symbol("treatment-interest-unset");
 
 async function withTransaction(work) {
   const client = await pool.connect();
@@ -368,7 +369,13 @@ async function completeScore({
              ORDER BY m.id DESC LIMIT 1
            ) = $3
          RETURNING *`,
-        [\n          leadId,\n          score.temperature,\n          throughMessageId,\n          scoredTreatmentInterest,\n          treatmentInterestAtScoreStart,\n        ]
+        [
+          leadId,
+          score.temperature,
+          throughMessageId,
+          scoredTreatmentInterest,
+          treatmentInterestAtScoreStart,
+        ]
       );
       updatedLead = updated.rows[0] || null;
     } else {
@@ -389,7 +396,12 @@ async function completeScore({
              ORDER BY m.id DESC LIMIT 1
            ) = $2
          RETURNING *`,
-        [\n          leadId,\n          throughMessageId,\n          scoredTreatmentInterest,\n          treatmentInterestAtScoreStart,\n        ]
+        [
+          leadId,
+          throughMessageId,
+          scoredTreatmentInterest,
+          treatmentInterestAtScoreStart,
+        ]
       );
       updatedLead = updated.rows[0] || null;
     }
