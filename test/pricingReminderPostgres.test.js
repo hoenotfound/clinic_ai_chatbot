@@ -35,6 +35,9 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         is_closed BOOLEAN NOT NULL DEFAULT false, appointment_status TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      CREATE TABLE lead_attributions (
+        id SERIAL PRIMARY KEY, lead_id INTEGER REFERENCES leads(id), ad_name TEXT
+      );
       CREATE TABLE messages (
         id SERIAL PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),
         role TEXT NOT NULL, content TEXT NOT NULL, whatsapp_message_id TEXT,
@@ -72,6 +75,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     ));
     await client.query(fs.readFileSync(
       path.join(__dirname, "../src/db/migrations/052_social_messaging_opt_out.sql"),
+      "utf8"
+    ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/053_pricing_preflight_retry.sql"),
       "utf8"
     ));
 
@@ -223,6 +230,31 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.ok(new Date(crowdedCandidates[0].due_at).getTime() >
       new Date(crowdedCandidates[0].inbound_at).getTime() + 23*3600000 + 50*60000);
 
+    // A transient pre-provider failure permits a bounded, durable retry and
+    // must never create a duplicate pricing message for the same package.
+    const retryOnce=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"policy_state_unavailable",
+    });
+    assert.equal(retryOnce.attempts,1);
+    const retryRow=await client.query(
+      "SELECT attempts,retry_after FROM pricing_reminder_preflight_retries WHERE anchor_id=101");
+    assert.equal(retryRow.rows[0].attempts,1);
+    const retryTwice=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"pre_send_verification",
+    });
+    assert.equal(retryTwice.attempts,2);
+    const retryLast=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"pre_send_verification",
+    });
+    assert.equal(retryLast.attempts,3);
+    const retryCapped=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"pre_send_verification",
+    });
+    assert.equal(retryCapped.attempts,3);
+    assert.equal(await pricingRepo.claim({
+      candidate,offer,activatedAt,triggerMode:"all",
+    }),null,"Three unverified attempts must not bypass the retry cap");
+
     // The pricing reminder must not keep the original message undeletable.
     await client.query("DELETE FROM messages WHERE id=101");
     const rowsAfterDelete = await client.query(
@@ -257,7 +289,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       [2,'facebook','fb-customer',201,200,202],
       [3,'instagram','ig-customer',301,300,302],
     ]) {
-      const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode:"all", channels:["whatsapp","facebook","instagram"] });
+      const candidates = await pricingRepo.listEligible({ activatedAt, socialActivatedAt:activatedAt, triggerMode:"all", channels:["whatsapp","facebook","instagram"] });
       const social = candidates.find(c => c.contact_id === contactId);
       assert.ok(social, `Expected ${channel} reminder candidate`);
       assert.equal(social.channel, channel);
@@ -287,8 +319,18 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       }),false);
       await client.query("UPDATE contacts SET mode='ai' WHERE id=$1",[contactId]);
     }
+    // Enabling social pricing later must not reset WhatsApp's cohort cutoff.
+    const socialFreshAt=new Date(Date.now()-6*3600000).toISOString();
+    const socialCutoffCandidates=await pricingRepo.listEligible({
+      activatedAt,socialActivatedAt:socialFreshAt,triggerMode:"all",
+      channels:["whatsapp","facebook","instagram"],
+    });
+    assert.ok(!socialCutoffCandidates.some(c=>c.contact_id===2),
+      "Social anchor older than opt-in must be excluded");
+    assert.ok(socialCutoffCandidates.some(c=>c.contact_id===1) === false,
+      "WhatsApp anchor is deleted earlier in this fixture");
     await client.query("UPDATE messages SET social_accepted_at=NULL WHERE id=302");
-    const socialCandidates=await pricingRepo.listEligible({activatedAt,triggerMode:"all",channels:["whatsapp","facebook","instagram"]});
+    const socialCandidates=await pricingRepo.listEligible({activatedAt,socialActivatedAt:activatedAt,triggerMode:"all",channels:["whatsapp","facebook","instagram"]});
     assert.ok(!socialCandidates.some(c=>c.contact_id===3));
     assert.ok(socialCandidates.some(c=>c.contact_id===2));
 
