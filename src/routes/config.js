@@ -1151,7 +1151,8 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
       ...report,
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
-      periodMaxHours: 168,
+      periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
+      sevenDayVerified: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true",
       note: "Ad referral does not establish marketing opt-in or guarantee that later Meta sends are free.",
     });
   } catch (error) {
