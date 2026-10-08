@@ -70,6 +70,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       path.join(__dirname, "../src/db/migrations/051_social_pricing_acceptance.sql"),
       "utf8"
     ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/052_social_messaging_opt_out.sql"),
+      "utf8"
+    ));
 
     await client.query(`
       INSERT INTO contacts (id,channel,whatsapp_number)
