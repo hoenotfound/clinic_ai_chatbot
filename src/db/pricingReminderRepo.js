@@ -10,13 +10,14 @@ const ACCEPTED_FOLLOW_UP_STATUS = `(
 )`;
 
 // Pricing is an auxiliary message, not a sequential fourth step.
-const eligibleSql = () => `
+const eligibleSql = (needsSecond = false) => `
 WITH eligible AS (
  SELECT
    c.id AS contact_id, c.whatsapp_number, anchor.id AS anchor_id,
    anchor.created_at AS anchor_at, inbound.id AS inbound_id,
    inbound.created_at AS inbound_at, third.id AS third_id,
    COALESCE(third.provider_accepted_at, third.created_at) AS third_at,
+   pricing.id AS first_id, pricing.media_url AS first_media_url,
    lead.treatment_interest,
    COALESCE(third.provider_accepted_at,third.created_at) + interval '${MINUTES_AFTER_TESTIMONIAL} minutes' AS due_at,
    (SELECT COALESCE(jsonb_agg(user_messages.content ORDER BY user_messages.created_at DESC, user_messages.id DESC), '[]'::jsonb)
@@ -60,7 +61,8 @@ WITH eligible AS (
    ORDER BY created_at DESC, id DESC LIMIT 1
  ) third ON true
  LEFT JOIN LATERAL (
-   SELECT id FROM messages WHERE pricing_reminder_anchor_id = anchor.id LIMIT 1
+   SELECT id, media_url, delivery_status, whatsapp_message_id
+   FROM messages WHERE pricing_reminder_anchor_id = anchor.id LIMIT 1
  ) pricing ON true
  LEFT JOIN LATERAL (
    SELECT id FROM pricing_reminder_decisions WHERE anchor_id = anchor.id LIMIT 1
@@ -81,7 +83,14 @@ WITH eligible AS (
    AND anchor.created_at >= $1::timestamptz
    AND ($2::text = 'all' OR anchor.sent_by_username IS NOT NULL)
    AND inbound.created_at > now() - interval '23 hours 50 minutes'
-   AND pricing.id IS NULL AND decision.id IS NULL
+   AND ${needsSecond
+     ? `pricing.id IS NOT NULL
+        AND (pricing.delivery_status IN ('sent','delivered','read')
+          OR (pricing.delivery_status='pending' AND pricing.whatsapp_message_id IS NOT NULL))
+        AND NOT EXISTS (SELECT 1 FROM messages supplemental
+          WHERE supplemental.automated_follow_up_for_message_id=pricing.id
+            AND supplemental.automated_follow_up_step=4)`
+     : "pricing.id IS NULL"} AND decision.id IS NULL
    AND (lead.treatment_interest IS NOT NULL OR EXISTS(
      SELECT 1 FROM messages u WHERE u.contact_id = c.id AND u.role='user'
    ))
@@ -98,12 +107,17 @@ WITH eligible AS (
    )
 )
 SELECT * FROM eligible
-WHERE due_at <= inbound_at + interval '23 hours 45 minutes'
+WHERE due_at <= inbound_at + interval '${needsSecond ? "23 hours 50 minutes" : "23 hours 45 minutes"}'
 ORDER BY due_at ASC LIMIT 200
 `;
 
 async function listEligible({ activatedAt, triggerMode }) {
   const result = await pool.query(eligibleSql(), [activatedAt, triggerMode]);
+  return result.rows;
+}
+
+async function listNeedsSecond({activatedAt,triggerMode}) {
+  const result=await pool.query(eligibleSql(true),[activatedAt,triggerMode]);
   return result.rows;
 }
 
@@ -405,4 +419,4 @@ async function discard({ messageId, contactId }) {
   );
   return result.rowCount > 0;
 }
-module.exports = { listEligible, claim, claimSecond, isClaimStillEligible, isSecondStillEligible, recordDecision, discard, discardSecond, eligibleSql, MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES, FIRST_GRAPHIC_SAFETY_MINUTES, FINAL_RESERVED_MINUTES };
+module.exports = { listEligible, listNeedsSecond, claim, claimSecond, isClaimStillEligible, isSecondStillEligible, recordDecision, discard, discardSecond, eligibleSql, MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES, FIRST_GRAPHIC_SAFETY_MINUTES, FINAL_RESERVED_MINUTES };
