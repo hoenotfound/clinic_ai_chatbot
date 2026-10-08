@@ -52,3 +52,25 @@ test("disabled quiet hours leave the nominal 22-hour deadline",{
     assert.equal(result.rows[0].due_at.toISOString(),"2026-10-08T21:03:00.000Z");
   } finally {await pool.end();}
 });
+
+test("20-hour final and its 5-minute pricing reminder fit before midnight quiet hours",{
+  skip:!process.env.TEST_DATABASE_URL,
+},async()=>{
+  const {Pool}=require("pg");
+  const pool=new Pool({connectionString:process.env.TEST_DATABASE_URL,ssl:false});
+  try{
+    const due=async(inbound,previous)=>{
+      const result=await pool.query(`SELECT ${expression} AS due_at`,
+        [inbound,previous,3,240,840]);
+      return result.rows[0].due_at.toISOString();
+    };
+    const earlier=await due("2026-10-07T20:30:00Z","2026-10-08T02:30:00Z");
+    assert.equal(earlier,"2026-10-08T15:30:00.000Z");
+    assert.equal(new Date(new Date(earlier).getTime()+5*60000).toISOString(),
+      "2026-10-08T15:35:00.000Z");
+
+    // A very late second reminder cannot squeeze the final into quiet hours.
+    assert.equal(await due("2026-10-07T20:30:00Z",
+      "2026-10-08T14:30:00Z"),"2026-10-08T23:00:00.000Z");
+  }finally{await pool.end();}
+});
