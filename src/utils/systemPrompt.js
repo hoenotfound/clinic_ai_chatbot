@@ -47,7 +47,9 @@ function metaAdContextSection(metaAdContext) {
 
   const headline = promptContextText(metaAdContext.headline, 500);
   const body = promptContextText(metaAdContext.body, 1200);
+  const serviceHint = promptContextText(metaAdContext.serviceHint, 160);
   const fields = [
+    ["Verified service topic (not customer-confirmed)", serviceHint],
     ["Ad headline", headline],
     ["Ad body/caption", body],
   ].filter(([, value]) => Boolean(value));
@@ -61,11 +63,11 @@ ${fields.map(([label, value]) => `- ${label}: ${value}`).join("\n")}
 
 HOW TO USE THIS CONTEXT:
 - Treat it only as a soft clue about why the customer may have started this conversation. The customer's current message and conversation history always take priority.
-- Use only the creative headline/body as the Meta service-intent signal. Internal ad names, campaign names, and ad-set names are intentionally excluded from this reply context.
-- When the customer's message is vague (for example "hi", "想了解", "interested", "price?", or "berapa?") and this creative headline/body clearly maps to exactly one configured service, answer naturally in the context of that service instead of unnecessarily asking which service they mean.
-- If a vague CURRENT price/package question clearly refers to one service through this creative headline/body, you may use that service for the structured "treatment" field. "priceQuery" and "packageQuery" still depend only on what the customer's CURRENT message actually asks.
-- If the customer's CURRENT message is a genuine request for information, an expression of interest, or a service-relevant concern, and the Meta creative HEADLINE and/or BODY clearly maps to exactly one configured service, you may set "serviceQuery" to true, set "treatment" to that canonical service, and set "serviceQuerySource" to "meta_ad".
-- A greeting alone such as "hi", "hello", "你好", or an emoji is NOT a serviceQuery even when the ad maps to one service. You may answer contextually, but wait for actual interest before result-media automation becomes eligible.
+- A verified service topic is a configured service identified from the ad creative or, when creative does not identify a service, from a single unambiguous internal ad name. Internal ad names, campaign names, and ad-set names are intentionally excluded from this reply context; only the canonical service name is provided.
+- When the customer's message is vague (for example "hi", "想了解", "interested", "price?", "berapa?", or just "English"/"中文"/"Bahasa"), answer naturally about the verified service topic instead of asking which treatment they mean again. For a language-only request, use that requested language for your whole reply.
+- If a vague CURRENT price/package question clearly refers to that topic, you may use the canonical service for the structured "treatment" field. "priceQuery" and "packageQuery" still depend only on what the customer's CURRENT message actually asks.
+- If the customer's CURRENT message genuinely requests service information or expresses service interest, and the topic maps to exactly one configured service, you may set "serviceQuery" to true, set "treatment" to that canonical service, and set "serviceQuerySource" to "meta_ad". An ad-name-derived topic alone must NEVER cause automatic result-media sends.
+- A greeting, language preference or emoji alone is NOT a serviceQuery even when the ad maps to one service. Wait for actual customer interest before result-media automation becomes eligible.
 - Location, hours, payment/admin questions, booking/scheduling messages, complaints, safety questions, and human requests are NOT serviceQuery merely because an ad identifies a service.
 - Do NOT infer that the customer personally has any symptom, condition, goal, budget, preference, or treatment history merely because the ad mentions it. Ask naturally when that detail matters.
 - Ad context may help identify the service/topic, but it does NOT satisfy customer-provided booking details, appointment timing, project location, symptoms, goals, consent, or other facts that the conversation must establish. Never copy ad-only claims into "staffSummary" as if the customer said them.
