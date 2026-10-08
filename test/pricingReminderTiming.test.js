@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { canFitBeforeFinal } = require("../src/services/pricingReminderService");
+const { canFitBeforeFinal, statusForPricingSend } = require("../src/services/pricingReminderService");
 const { finalDueSql } = require("../src/db/pricingReminderRepo");
 
 const steps = [
@@ -40,4 +40,17 @@ test("after-reply final timing includes spacing from step two", () => {
     quietHours: { enabled:false, start:"00:00", end:"07:00" },
   });
   assert.match(expr, /second\.created_at \+ interval '540 minutes'/);
+});
+
+test("ambiguous provider timeouts remain unconfirmed, not failed", () => {
+  assert.equal(statusForPricingSend({
+    success: false, unknown: true, ambiguous: true,
+  }), "unknown");
+  assert.equal(statusForPricingSend({
+    success: false, ambiguous: true,
+  }), "unknown");
+  assert.equal(statusForPricingSend({
+    success: false, error: "WhatsApp rejected the image",
+  }), "failed");
+  assert.equal(statusForPricingSend({success: true}), "sent");
 });
