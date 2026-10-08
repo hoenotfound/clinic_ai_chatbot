@@ -48,33 +48,43 @@ async function withContactAlertLock(
     throw new TypeError("withContactAlertLock requires a callback.");
   }
 
+  // Neon uses PgBouncer transaction pooling. Session advisory locks can be
+  // acquired and released on different backends, leaving permanent blockers.
+  // Hold a transaction-scoped lock for the short critical section instead.
   const client = await database.connect();
-  let locked = false;
+  let inTransaction = false;
   let releaseError = null;
   try {
+    await client.query("BEGIN");
+    inTransaction = true;
     const lockStartedAt = performance.now();
     try {
       await client.query(
-        "SELECT pg_advisory_lock($1::integer, $2::integer)",
+        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
         [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
       );
     } finally {
       if (timings) timings.alertLockWaitMs = Math.round(performance.now() - lockStartedAt);
     }
-    locked = true;
-    return await work(client.query.bind(client));
-  } finally {
-    if (locked) {
+
+    const result = await work(client.query.bind(client));
+    await client.query("COMMIT");
+    inTransaction = false;
+    return result;
+  } catch (err) {
+    if (inTransaction) {
       try {
-        await client.query(
-          "SELECT pg_advisory_unlock($1::integer, $2::integer)",
-          [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
-        );
-      } catch (err) {
-        releaseError = err;
+        await client.query("ROLLBACK");
+        inTransaction = false;
+      } catch (rollbackError) {
+        // A connection whose transaction state is uncertain cannot be pooled.
+        releaseError = rollbackError;
       }
     }
-    client.release(releaseError || undefined);
+    throw err;
+  } finally {
+    // Scoped Inbox clients can restore their session settings asynchronously.
+    await client.release(releaseError || undefined);
   }
 }
 
