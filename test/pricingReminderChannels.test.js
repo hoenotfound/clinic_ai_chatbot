@@ -129,3 +129,37 @@ test("existing clinics stay WhatsApp-only until the social option is enabled",as
     assert.deepEqual(queried,[["whatsapp"],["whatsapp","facebook","instagram"]]);
   } finally {pricingRepo.listEligible=original;}
 });
+
+test("a postponed pricing preflight wakes the worker at its durable retry time",async()=>{
+  const original={
+    listEligible:pricingRepo.listEligible,
+    sendImage:messaging.sendImageByUrl,
+    promotions:clinic.promotions,services:clinic.services,aliases:clinic.serviceAliases,
+  };
+  const wakeAt=new Date(Date.now()+75_000);
+  let sends=0;
+  try{
+    clinic.services=[{name:"3D 小颜术"}];
+    clinic.serviceAliases=[];
+    clinic.promotions=[{name:"3D",linkedService:"3D 小颜术",
+      packages:[{name:"Main offer",imageUrl:"https://example.test/price.png",caption:"RM488"}]}];
+    pricingRepo.listEligible=async()=>[{
+      contact_id:102,channel:"whatsapp",whatsapp_number:"60120000000",
+      anchor_id:202,inbound_id:201,third_id:203,
+      inbound_at:new Date(Date.now()-10*3600000).toISOString(),
+      third_accepted_at:new Date(Date.now()-10*60000).toISOString(),
+      due_at:new Date(Date.now()-5*60000).toISOString(),
+      preflight_retry_after:wakeAt,preflight_retry_attempts:1,
+      treatment_interest:"3D 小颜术",recent_customer_messages:["What is 3D?"],sent_media:[],
+    }];
+    messaging.sendImageByUrl=async()=>{sends++;throw Error("Must honor backoff before sending");};
+    const due=await pricing.runPricingReminders(settings);
+    assert.equal(Date.parse(due),Date.parse(wakeAt.toISOString()));
+    assert.equal(sends,0);
+  }finally{
+    pricingRepo.listEligible=original.listEligible;
+    messaging.sendImageByUrl=original.sendImage;
+    clinic.promotions=original.promotions;clinic.services=original.services;
+    clinic.serviceAliases=original.aliases;
+  }
+});
