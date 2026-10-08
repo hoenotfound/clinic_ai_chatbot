@@ -170,7 +170,7 @@ function evaluateFreeformState(
     if (purpose !== "service" || !customerReinitiatedAfterOptOut) {
       return policyError(
         "opted_out",
-        "WhatsApp send blocked because this customer opted out of WhatsApp messages. Record a new explicit opt-in before sending proactive or marketing messages again."
+        `${channelLabel(channel)} send blocked because this customer opted out of messages. Record a new explicit opt-in before sending proactive or marketing messages again.`
       );
     }
   }
@@ -178,7 +178,7 @@ function evaluateFreeformState(
   if (purpose === "marketing" && marketingOptOutAt) {
     return policyError(
       "marketing_opted_out",
-      "WhatsApp marketing send blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
+      `${channelLabel(channel)} marketing send blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.`,
       { marketingOptOutAt }
     );
   }
