@@ -37,7 +37,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         role TEXT NOT NULL, content TEXT NOT NULL, whatsapp_message_id TEXT,
         sent_by_username TEXT, media_url TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         delivery_status TEXT, is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
-        automated_follow_up_for_message_id INTEGER REFERENCES messages(id),
+        automated_follow_up_for_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
         automated_follow_up_step INTEGER NOT NULL DEFAULT 1,
         automated_follow_up_target_service TEXT,
         automated_follow_up_targeting_recorded BOOLEAN NOT NULL DEFAULT false,
