@@ -46,6 +46,7 @@ async function skipCandidate(candidate, reason) {
   } else if (reason === "ambiguous_package") {
     await contactsRepo.setAttention(
       candidate.contact_id,
+      true,
       "Pricing reminder skipped: customer package choice is unclear."
     );
   }
@@ -140,7 +141,7 @@ async function sendPricingReminder(candidate, offer, settings) {
   if (!result?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      "Pricing reminder delivery failed. Please check or retry it from Inbox."
+      "Delivery failed: pricing graphic did not reach WhatsApp. Review in Inbox."
     );
   }
 }
