@@ -118,6 +118,7 @@ test("social pricing also reserves the 23:30 pre-quiet slot", {
         inbound:"$1::timestamptz",previous:"$2::timestamptz",
         step:"3",offset:"240",gap:"840",channel,
         reservePricingMinutes:5,
+        reservePricingOnSocial:true,
         quietHours:{enabled:true,start:"00:00",end:"07:00"},
         timeZone:"Asia/Kuala_Lumpur",
       });
