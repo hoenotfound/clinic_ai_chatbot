@@ -74,3 +74,35 @@ test("20-hour final and its 5-minute pricing reminder fit before midnight quiet 
       "2026-10-08T14:30:00Z"),"2026-10-08T23:00:00.000Z");
   }finally{await pool.end();}
 });
+
+test("pricing due after midnight pulls a nominal 23:58 testimonial to 23:30",{
+  skip:!process.env.TEST_DATABASE_URL,
+},async()=>{
+  const {Pool}=require("pg");
+  const pool=new Pool({connectionString:process.env.TEST_DATABASE_URL,ssl:false});
+  try{
+    const withPricing=beforeExpiryDueSql({
+      inbound:"$1::timestamptz",previous:"$2::timestamptz",
+      step:"3",offset:"240",gap:"840",channel:"'whatsapp'",
+      reservePricingMinutes:5,
+      quietHours:{enabled:true,start:"00:00",end:"07:00"},
+      timeZone:"Asia/Kuala_Lumpur",
+    });
+    const withoutPricing=beforeExpiryDueSql({
+      inbound:"$1::timestamptz",previous:"$2::timestamptz",
+      step:"3",offset:"240",gap:"840",
+      quietHours:{enabled:true,start:"00:00",end:"07:00"},
+      timeZone:"Asia/Kuala_Lumpur",
+    });
+    const params=["2026-10-07T19:58:00Z","2026-10-08T07:58:00Z"];
+    const q=await pool.query(`SELECT ${withPricing} AS due_at`,params);
+    assert.equal(q.rows[0].due_at.toISOString(),"2026-10-08T15:30:00.000Z");
+    const baseline=await pool.query(`SELECT ${withoutPricing} AS due_at`,params);
+    assert.equal(baseline.rows[0].due_at.toISOString(),"2026-10-08T15:58:00.000Z");
+
+    const blocked=await pool.query(`SELECT ${withPricing} AS due_at`,[
+      params[0],"2026-10-08T14:45:00Z",
+    ]);
+    assert.equal(blocked.rows[0].due_at.toISOString(),"2026-10-08T23:00:00.000Z");
+  }finally{await pool.end();}
+});
