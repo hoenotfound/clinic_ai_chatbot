@@ -49,6 +49,7 @@ WITH eligible AS (
    anchor.created_at AS anchor_at, inbound.id AS inbound_id,
    inbound.created_at AS inbound_at, second.created_at AS second_at,
    ${thirdDueSql} AS final_due_at,
+   third.id AS final_message_id,
    lead.treatment_interest,
    ${afterFinal ? `third.created_at + interval '${MINUTES_AFTER_FINAL} minutes'` : `GREATEST(
      anchor.created_at + interval '${MINUTES_AFTER_REPLY} minutes',
@@ -228,7 +229,8 @@ async function claim({ candidate, offer, activatedAt, triggerMode, settings }) {
              AND m.is_automated_follow_up=true
              AND m.automated_follow_up_for_message_id=$2
              AND m.automated_follow_up_step=3
-             AND m.created_at=$10::timestamptz
+             AND m.id=$12::integer
+             AND now() >= m.created_at + interval '${MINUTES_AFTER_FINAL} minutes'
              AND (m.delivery_status IN ('sent','delivered','read')
                OR (m.delivery_status='pending' AND m.whatsapp_message_id IS NOT NULL)))`
          : `NOT EXISTS (SELECT 1 FROM messages m
@@ -246,7 +248,8 @@ async function claim({ candidate, offer, activatedAt, triggerMode, settings }) {
      RETURNING id,contact_id,content,media_url,delivery_status`,
     [candidate.contact_id, candidate.anchor_id, offer.caption, offer.imageUrl,
       offer.serviceName, candidate.inbound_id, activatedAt, triggerMode, offer.identities,
-      candidate.final_due_at, candidate.treatment_interest]
+      candidate.final_due_at, candidate.treatment_interest,
+      candidate.final_message_id || null]
   );
   return result.rows[0] || null;
 }
@@ -254,7 +257,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode, settings }) {
 async function isClaimStillEligible({
   messageId, contactId, anchorId, inboundId,
   imageIdentities = [], treatmentInterest = null, finalDueAt, whatsappNumber,
-  afterFinal = false,
+  afterFinal = false, finalMessageId = null,
 }) {
   const result = await pool.query(
     `SELECT EXISTS (
@@ -286,7 +289,8 @@ async function isClaimStillEligible({
          AND ${afterFinal
            ? `EXISTS (SELECT 1 FROM messages f WHERE f.contact_id=$2
              AND f.automated_follow_up_for_message_id=$3
-             AND f.automated_follow_up_step=3 AND f.created_at=$7::timestamptz
+             AND f.automated_follow_up_step=3 AND f.id=$9::integer
+             AND now() >= f.created_at + interval '${MINUTES_AFTER_FINAL} minutes'
              AND (f.delivery_status IN ('sent','delivered','read')
                OR (f.delivery_status='pending' AND f.whatsapp_message_id IS NOT NULL)))`
            : `NOT EXISTS(SELECT 1 FROM messages f
@@ -313,7 +317,8 @@ async function isClaimStillEligible({
              AND split_part(regexp_replace(prior.media_url, '^https?://[^/]+', ''), '?',1)
                =ANY($5::text[]))
      ) AS eligible`, [messageId, contactId, anchorId, inboundId,
-       imageIdentities, treatmentInterest, finalDueAt, whatsappNumber]);
+       imageIdentities, treatmentInterest, finalDueAt, whatsappNumber,
+       finalMessageId]);
   return result.rows[0]?.eligible === true;
 }
 
