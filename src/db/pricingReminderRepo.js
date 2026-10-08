@@ -14,8 +14,8 @@ WITH eligible AS (
    c.id AS contact_id, c.whatsapp_number, anchor.id AS anchor_id,
    anchor.created_at AS anchor_at, inbound.id AS inbound_id,
    inbound.created_at AS inbound_at, third.id AS third_id,
-   third.created_at AS third_at, lead.treatment_interest,
-   third.created_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes' AS due_at,
+   third.whatsapp_accepted_at AS third_accepted_at, lead.treatment_interest,
+   third.whatsapp_accepted_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes' AS due_at,
    (SELECT COALESCE(jsonb_agg(user_messages.content ORDER BY user_messages.created_at DESC, user_messages.id DESC), '[]'::jsonb)
       FROM (SELECT id, content, created_at FROM messages
             WHERE contact_id = c.id AND role = 'user'
@@ -49,16 +49,14 @@ WITH eligible AS (
    ORDER BY created_at DESC, id DESC LIMIT 1
  ) anchor ON true
  JOIN LATERAL (
-   SELECT id, created_at FROM messages
+   SELECT id, whatsapp_accepted_at FROM messages
    WHERE contact_id = c.id AND is_automated_follow_up = true
      AND automated_follow_up_for_message_id = anchor.id
      AND automated_follow_up_step = 3
+     AND whatsapp_accepted_at IS NOT NULL
      AND ${ACCEPTED_FOLLOW_UP_STATUS}
    ORDER BY created_at DESC, id DESC LIMIT 1
  ) third ON true
- LEFT JOIN LATERAL (
-   SELECT id FROM messages WHERE pricing_reminder_anchor_id = anchor.id LIMIT 1
- ) pricing ON true
  LEFT JOIN LATERAL (
    SELECT id FROM pricing_reminder_decisions WHERE anchor_id = anchor.id LIMIT 1
  ) decision ON true
@@ -78,7 +76,7 @@ WITH eligible AS (
    AND anchor.created_at >= $1::timestamptz
    AND ($2::text = 'all' OR anchor.sent_by_username IS NOT NULL)
    AND inbound.created_at > now() - interval '23 hours 50 minutes'
-   AND pricing.id IS NULL AND decision.id IS NULL
+   AND decision.id IS NULL
    AND (lead.treatment_interest IS NOT NULL OR EXISTS(
      SELECT 1 FROM messages u WHERE u.contact_id = c.id AND u.role='user'
    ))
@@ -105,7 +103,7 @@ async function listEligible({ activatedAt, triggerMode }) {
 }
 
 async function claim({ candidate, offer, activatedAt, triggerMode }) {
-  if (!Number.isInteger(Number(candidate.third_id))) return null;
+  if (!Number.isInteger(Number(candidate.third_id)) || !String(offer?.packageName || '').trim()) return null;
   // Advisory locking, a unique index, and a final outbound/media check guard
   // simultaneous workers and races with AI/staff price sends.
   const result = await pool.query(
@@ -125,21 +123,22 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
            WHERE e.message_id=messages.id AND e.origin='system_fallback')
        ORDER BY created_at DESC,id DESC LIMIT 1
      ), third AS (
-       SELECT id, created_at FROM messages
+       SELECT id, whatsapp_accepted_at FROM messages
        WHERE contact_id=$1 AND is_automated_follow_up=true
          AND automated_follow_up_for_message_id=$2
          AND automated_follow_up_step=3 AND id=$10
+         AND whatsapp_accepted_at IS NOT NULL
          AND ${ACCEPTED_FOLLOW_UP_STATUS}
        LIMIT 1
      )
      INSERT INTO messages (
        contact_id, role, content, sent_by_username, media_url,
        is_automated_follow_up, automated_follow_up_step, pricing_reminder_anchor_id,
-       automated_follow_up_target_service, automated_follow_up_targeting_recorded,
+       pricing_reminder_package_key, automated_follow_up_target_service, automated_follow_up_targeting_recorded,
        automated_follow_up_message_mode
      )
      SELECT $1, 'assistant', $3, 'Follow-up automation', $4,
-       true, 4, $2, $5, true, 'fixed'
+       true, 4, $2, $12, $5, true, 'fixed'
      FROM inbound, anchor, third
      JOIN contacts c ON c.id=$1
      LEFT JOIN LATERAL (
@@ -156,14 +155,14 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
        AND anchor.created_at >= $7::timestamptz
        AND ($8='all' OR anchor.sent_by_username IS NOT NULL)
        AND now() < inbound.created_at + interval '23 hours 50 minutes'
-       AND now() >= third.created_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
+       AND now() >= third.whatsapp_accepted_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
        AND (lead.is_closed IS NULL OR (
           lead.is_closed=false AND COALESCE(lead.stage_type,'open')='open'
           AND (COALESCE(lead.appointment_status,'none') IN ('reschedule','cancelled')
             OR (COALESCE(lead.system_key,'') NOT IN ('appointment_set','visited')
               AND COALESCE(lead.appointment_status,'none') NOT IN ('set','visited')))
        ))
-       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.pricing_reminder_anchor_id=$2)
+       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.pricing_reminder_anchor_id=$2 AND m.pricing_reminder_package_key=$12)
        AND NOT EXISTS (SELECT 1 FROM pricing_reminder_decisions d WHERE d.anchor_id=$2)
        AND COALESCE((SELECT l.treatment_interest FROM leads l
          WHERE l.contact_id=$1 ORDER BY l.created_at DESC,l.id DESC LIMIT 1),'')
@@ -181,20 +180,21 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
      RETURNING id,contact_id,content,media_url,delivery_status`,
     [candidate.contact_id, candidate.anchor_id, offer.caption, offer.imageUrl,
       offer.serviceName, candidate.inbound_id, activatedAt, triggerMode, offer.identities,
-      candidate.third_id, candidate.treatment_interest]
+      candidate.third_id, candidate.treatment_interest, offer.packageName]
   );
   return result.rows[0] || null;
 }
 
 async function isClaimStillEligible({
   messageId, contactId, anchorId, inboundId,
-  imageIdentities = [], treatmentInterest = null, thirdId, whatsappNumber,
+  imageIdentities = [], treatmentInterest = null, thirdId, whatsappNumber, packageKey,
 }) {
   const result = await pool.query(
     `SELECT EXISTS (
        SELECT 1 FROM messages m
        JOIN contacts c ON c.id=m.contact_id
        WHERE m.id=$1 AND m.contact_id=$2 AND m.pricing_reminder_anchor_id=$3
+         AND m.pricing_reminder_package_key=$9
          AND m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL
          AND c.needs_attention=false
          AND COALESCE(c.mode,'ai') <> 'human'
@@ -207,9 +207,10 @@ async function isClaimStillEligible({
              AND final.is_automated_follow_up=true
              AND final.automated_follow_up_for_message_id=$3
              AND final.automated_follow_up_step=3
+             AND final.whatsapp_accepted_at IS NOT NULL
              AND (final.delivery_status IN ('sent','delivered','read')
                OR (final.delivery_status='pending' AND final.whatsapp_message_id IS NOT NULL))
-             AND now() >= final.created_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
+             AND now() >= final.whatsapp_accepted_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
          )
          AND COALESCE((SELECT l.treatment_interest FROM leads l
             WHERE l.contact_id=$2 ORDER BY l.created_at DESC,l.id DESC LIMIT 1),'')
@@ -248,7 +249,7 @@ async function isClaimStillEligible({
              AND split_part(regexp_replace(prior.media_url, '^https?://[^/]+', ''), '?',1)
                =ANY($5::text[]))
      ) AS eligible`, [messageId, contactId, anchorId, inboundId,
-       imageIdentities, treatmentInterest, thirdId, whatsappNumber]);
+       imageIdentities, treatmentInterest, thirdId, whatsappNumber, packageKey]);
   return result.rows[0]?.eligible === true;
 }
 
