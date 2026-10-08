@@ -10,7 +10,7 @@ const clinic = require("../src/config/clinicConfig");
 const activatedAt = "2026-10-08T00:00:00Z";
 const quietHours = {enabled:false,start:"00:00",end:"07:00"};
 const final = {delayMinutes:1200,beforeWindowExpiryMinutes:240,timingMode:"before_window_expiry"};
-const pricingReminder = {enabled:true,activatedAt,requirePricingInterest:false,sendBothPelvicPackages:false};
+const pricingReminder = {enabled:true,activatedAt,requirePricingInterest:false,sendBothPelvicPackages:false,enableSocialChannels:true};
 const settings = {
   activatedAt,triggerMode:"all",quietHours,
   steps:[{},{},final],pricingReminder,
