@@ -2352,20 +2352,20 @@ function FollowUpTool({
             <SectionHeading
               number="4"
               title="Conditional pricing reminder"
-              description="An optional fourth follow-up, checked before the final testimonial."
+              description="An optional pricing reminder sent after the final testimonial."
             />
             <div className="mt-4 flex items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
               <div className="min-w-0">
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                  WhatsApp only. Check about 10 hours after the last reply and at least
-                  2 hours after Follow-up 2. Skip when the correct graphic was
-                  already sent. Use existing Promotions in the customer's language.
+                  WhatsApp only. Send 5 minutes after Follow-up 3 is accepted,
+                  if the customer asked about pricing and the correct graphic
+                  has not already been sent. Use existing Promotions in the customer's language.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  Requires three configured follow-ups. Multiple packages need
-                  an explicit customer choice. Never sends outside the reply
-                  window or during quiet hours. May run before Follow-up 3.
+                  Requires Follow-up 3 to have been sent successfully. Multiple packages
+                  need an explicit customer choice. Never sends before the testimonial,
+                  outside the reply window, or during quiet hours.
                 </p>
               </div>
               <Switch
@@ -2523,7 +2523,7 @@ function FollowUpTool({
                   <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
                   <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
                   <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-                  <Rule text="The optional pricing reminder checks for a missing graphic after Follow-up 2 and runs before Follow-up 3 when the reply window allows." />
+                  <Rule text="The optional pricing reminder waits 5 minutes after Follow-up 3, only for customers who asked about prices. It skips if the WhatsApp window closes or quiet hours prevent delivery." />
                   <Rule text="WhatsApp opt-outs remain a hard stop." />
                   <Rule text="Saving does not add follow-ups to older conversations." />
                 </ul>
