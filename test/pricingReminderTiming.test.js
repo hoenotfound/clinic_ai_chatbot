@@ -35,16 +35,23 @@ test("pricing eligibility is tied to the ACTUAL accepted Follow-up 3, never the 
   assert.match(expr,/delivery_status IN \('sent', 'delivered', 'read'\)/);
   assert.match(expr,/pending.*whatsapp_message_id IS NOT NULL/);
   assert.match(expr,/whatsapp_accepted_at IS NOT NULL/);
-  assert.match(expr,/third\.whatsapp_accepted_at \+ interval '5 minutes' AS due_at/);
+  assert.match(expr,/third\.third_accepted_at \+ interval '5 minutes' AS due_at/);
+  assert.match(expr,/social_accepted_at IS NOT NULL/);
+  assert.match(expr,/facebook.*instagram/);
+  assert.match(expr,/social_accepted_at/);
   assert.doesNotMatch(expr,/final_due_at|second\.created_at|third\.id IS NULL/);
-  assert.match(expr,/inbound_at \+ interval '23 hours 50 minutes'/);
+  assert.match(expr,/inbound.created_at > now\(\) - interval '72 hours'/);
+  assert.match(expr,/after_anchor|anchor_id ASC/);
 });
 
 test("ambiguous provider timeouts remain unconfirmed, not failed", () => {
   assert.equal(statusForPricingSend({success:false,unknown:true,ambiguous:true}),"unknown");
   assert.equal(statusForPricingSend({success:false,ambiguous:true}),"unknown");
   assert.equal(statusForPricingSend({success:false,error:"WhatsApp rejected"}),"failed");
-  assert.equal(statusForPricingSend({success:true}),"sent");
+  assert.equal(statusForPricingSend({success:true,wamid:"wamid.1"}),"sent");
+  assert.equal(statusForPricingSend({success:true,externalMessageId:"mid.1"}),"sent");
+  assert.equal(statusForPricingSend({success:true}),"unknown");
+  assert.equal(statusForPricingSend({success:false,partialCaptionSent:true}),"unknown");
 });
 
 test("two-image reminder leaves an extra five minutes for the second provider send", () => {
