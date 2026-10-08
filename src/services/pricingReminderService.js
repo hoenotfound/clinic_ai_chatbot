@@ -289,7 +289,7 @@ async function runPricingReminders(settings, now = new Date()) {
             "Pricing reminder pre-send verification failed repeatedly. Staff review required.");
           continue;
         }
-        const retryAt = Date.parse(candidate.preflight_retry_after);
+        const retryAt = new Date(candidate.preflight_retry_after).getTime();
         if (Number.isFinite(retryAt) && retryAt > now.getTime()) {
           if (!nextDueAt || retryAt < Date.parse(nextDueAt)) {
             nextDueAt = new Date(retryAt).toISOString();
@@ -302,7 +302,7 @@ async function runPricingReminders(settings, now = new Date()) {
             // Stop on partial, unknown, or failed sends for staff review.
             if (!(await sendPricingReminder(candidate, offer, settings,
               index === 0 ? offers.length : 1, (retryAfter) => {
-                const retryTime = Date.parse(retryAfter);
+                const retryTime = new Date(retryAfter).getTime();
                 if (Number.isFinite(retryTime) &&
                     (!nextDueAt || retryTime < Date.parse(nextDueAt))) {
                   nextDueAt = new Date(retryTime).toISOString();
