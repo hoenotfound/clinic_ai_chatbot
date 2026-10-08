@@ -1,0 +1,1 @@
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS provider_accepted_at TIMESTAMPTZ;
