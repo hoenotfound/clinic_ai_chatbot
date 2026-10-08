@@ -22,6 +22,8 @@ function beforeExpiryDueSql({
   inbound, previous, step, offset, gap,
   quietHours = DEFAULT_QUIET_HOURS,
   timeZone = process.env.CLINIC_TIMEZONE || DEFAULT_CLINIC_TIMEZONE,
+  reservePricingMinutes = 0,
+  channel = "'whatsapp'",
 }) {
   const quiet = normalizeQuietHours(quietHours) || DEFAULT_QUIET_HOURS;
   const nominal = `(${inbound} + ((1440 - ${offset}) * interval '1 minute'))`;
@@ -51,12 +53,33 @@ function beforeExpiryDueSql({
     const lastSafe = `((${startLocal} AT TIME ZONE '${zone}') - interval '${QUIET_START_SAFETY_MINUTES} minutes')`;
     const quietEnds = `(${endLocal} AT TIME ZONE '${zone}')`;
     const afterPrevious = `(${previous} + interval '${FINAL_MIN_SPACING_MINUTES} minutes')`;
-    // If the 2h gap would cross the last safe pre-quiet slot, wait until
-    // quiet hours end instead. The caller's 23h50 deadline may then reject it.
-    target = `(CASE WHEN ${step} = ${FINAL_STEP} AND ${inQuiet}
-      THEN CASE WHEN ${previous} IS NOT NULL AND ${afterPrevious} > ${lastSafe}
-        THEN GREATEST(${afterPrevious}, ${quietEnds})
-        ELSE ${lastSafe}
+    // A testimonial at 23:58 is legal by itself, but its price graphic at
+    // 00:03 is not. Treat the final 5 minutes before quiet hours as a
+    // pre-quiet scheduling conflict only for WhatsApp pricing sequences.
+    const extra = Number(reservePricingMinutes) === 5 ? 5 : 0;
+    const imminent = extra
+      ? `(${channel} = 'whatsapp' AND ${wallTime} >=
+         ('${quiet.start}'::time - interval '${extra} minutes')
+         AND ${wallTime} < '${quiet.start}'::time)`
+      : 'FALSE';
+    const imminentShift = `(CASE WHEN ${wallTime} >= '${quiet.start}'::time
+      THEN interval '1 day' ELSE interval '0 days' END)`;
+    const imminentStart = `(date_trunc('day', ${local}) + ${imminentShift}
+      + interval '${start} minutes')`;
+    const imminentLastSafe = `((${imminentStart} AT TIME ZONE '${zone}')
+      - interval '${QUIET_START_SAFETY_MINUTES} minutes')`;
+    const imminentEnd = `((date_trunc('day', ${local}) + ${imminentShift}
+      + interval '${overnight ? 1440 : 0} minutes' + interval '${end} minutes')
+      AT TIME ZONE '${zone}')`;
+    const useLastSafe = `(CASE WHEN ${imminent} THEN ${imminentLastSafe}
+      ELSE ${lastSafe} END)`;
+    const useQuietEnd = `(CASE WHEN ${imminent} THEN ${imminentEnd}
+      ELSE ${quietEnds} END)`;
+    // Never break the 2-hour gap to Step 2 to fit an earlier quiet slot.
+    target = `(CASE WHEN ${step} = ${FINAL_STEP} AND (${inQuiet} OR ${imminent})
+      THEN CASE WHEN ${previous} IS NOT NULL AND ${afterPrevious} > ${useLastSafe}
+        THEN GREATEST(${afterPrevious}, ${useQuietEnd})
+        ELSE ${useLastSafe}
       END
       ELSE ${nominal}
     END)`;
