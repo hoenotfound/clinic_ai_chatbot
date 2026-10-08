@@ -50,3 +50,54 @@ test("offering a treatment is not asking for a promotional offer", () => {
   assert.equal(hasCustomerServiceEnquiry("Not interested in treatment"), false);
   assert.equal(hasCustomerServiceEnquiry("不要这个骨盆调理"), false);
 });
+
+
+test("Malay berapa distinguishes money from duration, session count and frequency", () => {
+  const notPrice = [
+    "Berapa lama rawatan ini?",
+    "Berapa sesi diperlukan?",
+    "Berapa kali perlu datang?",
+    "Berapa minit untuk 3D?",
+    "Berapa hari nak pulih?",
+    "Berapa minggu sekali?",
+    "Berapa umur boleh buat rawatan?",
+    "Berapa?",
+  ];
+  for (const text of notPrice) assert.equal(hasCustomerPriceEnquiry(text), false, text);
+  const priceQuestions = [
+    "Berapa harga rawatan?",
+    "Berapa kos untuk pelvis?",
+    "Berapa ringgit 3D treatment?",
+    "Berapa untuk rawatan ni?",
+    "Berapa perlu bayar?",
+    "Harga rawatan berapa?",
+    "Rawatan ini RM berapa?",
+  ];
+  for (const text of priceQuestions) assert.equal(hasCustomerPriceEnquiry(text), true, text);
+});
+
+test("Administrative information/questions do not qualify as service-media enquiries", () => {
+  for (const text of [
+    "What is your contact information?",
+    "Can I have your phone number?",
+    "Could you give me your email address?",
+    "More details about your opening hours please",
+    "How do I find your clinic location?",
+    "What is the payment method?",
+    "Can you send your WhatsApp number?",
+    "Need parking details",
+    "Boleh tahu nombor telefon?",
+    "Alamat klinik apa?",
+    "请问联系方式是什么？",
+    "请问营业时间？",
+    "Parking information please",
+  ]) {
+    assert.equal(hasCustomerServiceEnquiry(text), false, text);
+    assert.equal(hasCustomerPriceEnquiry(text), false, text);
+  }
+  for (const text of [
+    "What are the details for 3D 小颜术, and your contact?",
+    "I am interested in pelvic treatment, where is your branch?",
+    "想了解骨盆调理，还有地址在哪里？",
+  ]) assert.equal(hasCustomerServiceEnquiry(text), true, text);
+});
