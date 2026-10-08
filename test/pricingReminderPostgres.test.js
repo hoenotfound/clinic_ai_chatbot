@@ -187,7 +187,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     await client.query(`
       UPDATE messages SET created_at=now()-interval '23 hours 47 minutes' WHERE id=100;
       UPDATE messages SET created_at=now()-interval '23 hours 45 minutes' WHERE id=101;
-      UPDATE messages SET created_at=now()-interval '1 minute' WHERE id=104;
+      UPDATE messages SET created_at=now()-interval '1 minute',provider_accepted_at=now()-interval '1 minute' WHERE id=104;
     `);
     const crowdedCandidates = await pricingRepo.listEligible({
       activatedAt,triggerMode:"all",settings,
