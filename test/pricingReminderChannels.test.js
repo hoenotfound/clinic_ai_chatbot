@@ -49,7 +49,8 @@ async function withSocialFixtures(channel, deliveredResult) {
     };
     clinic.services=[{name:"3D 小颜术"}];
     clinic.serviceAliases=[];
-    clinic.promotions=[{name:"3D",linkedService:"3D 小颜术",imageUrl:offer.imageUrl,caption:offer.caption}];
+    clinic.promotions=[{name:"3D",linkedService:"3D 小颜术",
+      packages:[{name:"3D trial",imageUrl:offer.imageUrl,caption:offer.caption}]}];
     pricingRepo.claim=async()=>({id:77,contact_id:41});
     pricingRepo.isClaimStillEligible=async()=>true;
     messagesRepo.socialProviderAliasRecorder=(id,aliasChannel)=>{
