@@ -90,6 +90,14 @@ test("R2 media and public HTTPS header validation fail closed on MIME and size",
     {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:{
       ...store,getSharedFollowUpMediaInfo:async()=>({bytes:19*1024*1024,mimeType:"video/mp4"}),
     }}),false);
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:{
+      ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
+    }}),false, "unverified video codec must fail closed");
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    {mediaKey:"messages/follow-up-config/p.mp4",videoCodecVerified:true}, {mediaStore:{
+      ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
+    }}),true);
   const remote="https://cdn.example.com/image.jpg";
   const fetchStub=async (_url,opts)=>{
     assert.equal(opts.method,"HEAD");
