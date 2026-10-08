@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { selectPricingOffer, imageIdentity } = require("../src/utils/pricingReminderSelection");
+const {
+  selectPricingOffer, evaluatePricingReminder, imageIdentity,
+} = require("../src/utils/pricingReminderSelection");
 const services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }];
 const promotions = [{
   name: "Pelvis", linkedService: "骨盆调理",
@@ -26,4 +28,38 @@ test("does not resend a delivered or pending pricing image", () => {
 });
 test("single package uses promotion graphic and caption", () => {
   assert.equal(select({treatment_interest:"3D 小颜术", recent_customer_messages:["Hello"]})?.caption, "RM488");
+});
+
+test("uncertain and failed media require staff review, never silent success", () => {
+  for (const status of ["unknown", "failed", "pending"]) {
+    const candidate = {
+      treatment_interest:"3D 小颜术",
+      recent_customer_messages:["3D please"],
+      sent_media:[{media_url:"https://host.example/promo-images/32",
+        content:"RM488", delivery_status:status, whatsapp_message_id:null}],
+    };
+    const result = evaluatePricingReminder({
+      promotions, candidate, services, language:"zh"
+    });
+    assert.equal(result.offer, null);
+    assert.equal(result.reason, "delivery_review");
+  }
+  const accepted = evaluatePricingReminder({
+    promotions, services,
+    candidate:{
+      treatment_interest:"3D 小颜术",
+      recent_customer_messages:["3D please"],
+      sent_media:[{media_url:"https://host.example/promo-images/32",
+        content:"RM488", delivery_status:"pending", whatsapp_message_id:"wamid.accepted"}],
+    },
+  });
+  assert.equal(accepted.reason, "already_sent");
+});
+
+test("the latest clear treatment mention overrides an older CRM interest", () => {
+  const result = select({
+    treatment_interest:"骨盆调理",
+    recent_customer_messages:["3D 小颜术 interested","骨盆调理 之前有兴趣"],
+  });
+  assert.equal(result?.serviceName, "3D 小颜术");
 });
