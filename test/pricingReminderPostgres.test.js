@@ -79,21 +79,32 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     `);
     pool.query = client.query.bind(client);
     const activatedAt = new Date(Date.now() - 86400000).toISOString();
-    const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode: "all" });
+    const settings = {
+      steps: [
+        { delayMinutes: 120, timingMode: "after_reply", beforeWindowExpiryMinutes: 120 },
+        { delayMinutes: 360, timingMode: "after_reply", beforeWindowExpiryMinutes: 120 },
+        { delayMinutes: 1320, timingMode: "before_window_expiry", beforeWindowExpiryMinutes: 120 }
+      ],
+      quietHours: { enabled: false, start: "00:00", end: "07:00" },
+    };
+    // A Meta-accepted message is legitimately pending until its callback arrives.
+    await client.query("UPDATE messages SET delivery_status='pending', whatsapp_message_id='wamid.step2' WHERE id=103");
+    const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode: "all", settings });
     assert.equal(candidates.length, 1);
     const candidate = candidates[0];
     const offer = {
       caption:"Our 3D price is RM488", imageUrl:"https://example.com/promo-images/30",
       serviceName:"3D 小颜术", identities:["/promo-images/30"],
     };
-    const saved = await pricingRepo.claim({ candidate, offer, activatedAt, triggerMode:"all" });
+    const saved = await pricingRepo.claim({ candidate, offer, activatedAt, triggerMode:"all", settings });
     assert.ok(saved);
     assert.equal(saved.content, offer.caption);
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
-      imageIdentities:offer.identities,
+      imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
+      finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
     }), true);
-    assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all"}), null);
+    assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}), null);
 
     const progress = await client.query(
       "SELECT MAX(automated_follow_up_step) AS step FROM messages WHERE automated_follow_up_for_message_id=101"
@@ -103,8 +114,24 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     await client.query("UPDATE leads SET appointment_status='set' WHERE contact_id=1");
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
-      imageIdentities:offer.identities,
+      imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
+      finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
     }), false);
+
+    // Editing the CRM interest while the message is queued must stop sending.
+    await client.query("UPDATE leads SET appointment_status='none', treatment_interest='9D 逆龄抗衰' WHERE contact_id=1");
+    assert.equal(await pricingRepo.isClaimStillEligible({
+      messageId:saved.id, contactId:1, anchorId:101, inboundId:100,
+      imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
+      finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
+    }), false);
+
+    // The pricing reminder must not keep the original message undeletable.
+    await client.query("DELETE FROM messages WHERE id=101");
+    const rowsAfterDelete = await client.query(
+      "SELECT id FROM messages WHERE id=$1 OR pricing_reminder_anchor_id=$1", [101]
+    );
+    assert.equal(rowsAfterDelete.rowCount, 0);
   } finally {
     pool.query = originalQuery;
     await client.query("SET search_path TO public").catch(() => {});
