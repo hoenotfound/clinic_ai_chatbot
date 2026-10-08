@@ -24,14 +24,14 @@ test("do not confuse Meta pricing evidence with an ordinary ad referral", () => 
   assert.equal(eligibleFreeEntryTime(sample), true);
   assert.equal(eligibleFreeEntryTime({ ...sample, evidenceType: "regular" }), false);
   assert.equal(eligibleFreeEntryTime({ ...sample, sourceIsCtwa: false }), false);
-  assert.equal(eligibleFreeEntryTime({ ...sample, lastInboundAt: "2026-10-02T12:00:00Z" }), false);
+  assert.equal(eligibleFreeEntryTime({ ...sample, lastInboundAt: "2026-10-03T00:00:00Z" }), false);
   assert.equal(eligibleFreeEntryTime({ ...sample, firstReplyAt: "2026-10-02T01:00:00Z" }), false);
   assert.equal(eligibleFreeEntryTime({ ...sample, now: "2026-10-08T00:00:00Z" }), false);
 });
 test("extended follow-ups are disabled by default and slots validate", () => {
   assert.equal(freeEntryEnabled({}), false);
   assert.equal(freeEntryEnabled({ WHATSAPP_FEP_FOLLOWUPS_ENABLED: "true" }), true);
-  assert.deepEqual(configuredSlots({}), [26,50,74,98,122,146]);
+  assert.deepEqual(configuredSlots({}), [26,50,74,98,122,162]);
   assert.deepEqual(configuredSlots({ WHATSAPP_FEP_SLOT_HOURS: "168" }), []);
   assert.deepEqual(configuredSlots({ WHATSAPP_FEP_SLOT_HOURS: "36,36" }), []);
 });
