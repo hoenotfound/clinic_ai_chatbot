@@ -488,3 +488,27 @@ test("malformed structured output gets one bounded retry before the candidate fa
   );
   assert.equal(attempts, 2);
 });
+
+test("Gemini fallback attempt forwards cancellation and structured acceptance validation", async()=>{
+  const controller=new AbortController();
+  const original=geminiService.getReply;
+  let passedControl;
+  const valid=JSON.stringify({reply:"hello",outcome:"normal",treatment:null,branch:null,appointmentPreference:null});
+  try {
+    geminiService.getReply=async(_messages,_options,_key,_model,control)=>{
+      passedControl=control;
+      control.validateResponse({text:valid});
+      return valid;
+    };
+    const actual=await runGeminiModelAttempt(
+      [{role:"user",content:"Hello"}],
+      {surface:"conversation",channel:"whatsapp"},
+      "fake-key", "gemini-3.8-flash", {signal:controller.signal,overloadRetryCount:0}
+    );
+    assert.equal(actual,valid);
+    assert.equal(passedControl.signal,controller.signal);
+    assert.throws(()=>passedControl.validateResponse({text:"not JSON"}));
+  } finally {
+    geminiService.getReply=original;
+  }
+});
