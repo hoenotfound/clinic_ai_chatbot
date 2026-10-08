@@ -23,7 +23,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     await client.query(`
       CREATE TABLE contacts (
         id INTEGER PRIMARY KEY, channel TEXT NOT NULL, whatsapp_number TEXT,
-        needs_attention BOOLEAN NOT NULL DEFAULT false
+        needs_attention BOOLEAN NOT NULL DEFAULT false,
+        mode TEXT NOT NULL DEFAULT 'ai',
+        whatsapp_opt_out_at TIMESTAMPTZ,
+        whatsapp_marketing_opt_out_at TIMESTAMPTZ
       );
       CREATE TABLE pipeline_stages (id INTEGER PRIMARY KEY, stage_type TEXT, system_key TEXT);
       CREATE TABLE leads (
