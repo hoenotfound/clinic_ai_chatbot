@@ -30,6 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
+  freeEntry: { enabled: false, templateName: "", language: "zh_CN", slotsHours: [36, 60, 84, 108, 132, 156] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
@@ -172,6 +173,14 @@ function normalizeFollowUpSettings(value = {}) {
     additionalSteps: Array.isArray(value.additionalSteps)
       ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
       : [],
+    freeEntry: {
+      enabled: value?.freeEntry?.enabled === true,
+      templateName: String(value?.freeEntry?.templateName || ""),
+      language: String(value?.freeEntry?.language || "zh_CN"),
+      slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
+        ? value.freeEntry.slotsHours.map(Number)
+        : [36, 60, 84, 108, 132, 156],
+    },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
@@ -199,6 +208,7 @@ function followUpFormFromSettings(value = {}) {
     videoFilename: settings.videoFilename,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
+    freeEntry: settings.freeEntry,
     pricingReminder: settings.pricingReminder,
   };
 }
@@ -534,6 +544,14 @@ export default function Tools() {
   }
 
   function followUpValidationError() {
+    if (form.freeEntry?.enabled) {
+      if (!/^[a-z0-9_]+$/.test(String(form.freeEntry.templateName || ""))) {
+        return "Enter an approved WhatsApp MARKETING template name before enabling free-entry follow-ups.";
+      }
+      if (!Array.isArray(form.freeEntry.slotsHours) || !form.freeEntry.slotsHours.length) {
+        return "Select an extended WhatsApp follow-up schedule.";
+      }
+    }
     const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
     const quietStart = String(form.quietHours?.start || "").trim();
     const quietEnd = String(form.quietHours?.end || "").trim();
@@ -822,6 +840,12 @@ export default function Tools() {
           videoFilename: form.videoFilename,
           serviceOverrides,
           additionalSteps,
+          freeEntry: {
+            enabled: form.freeEntry?.enabled === true,
+            templateName: String(form.freeEntry?.templateName || "").trim(),
+            language: String(form.freeEntry?.language || "zh_CN"),
+            slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [36,60,84,108,132,156],
+          },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -2465,6 +2489,78 @@ function FollowUpTool({
                 />
               </div>
             </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold">WhatsApp ad leads: extended free-entry follow-ups</h3>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  Up to 7 days for qualifying Click-to-WhatsApp conversations. Only use an approved, static MARKETING template.
+                  Sends are blocked without Meta free-entry billing evidence and recorded marketing consent.
+                </p>
+              </div>
+              <Switch
+                checked={form.freeEntry?.enabled === true}
+                ariaLabel="Enable extended WhatsApp free-entry follow-ups"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  freeEntry: { ...current.freeEntry, enabled: current.freeEntry?.enabled !== true },
+                }))}
+              />
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-semibold">
+                Approved template name
+                <input
+                  type="text"
+                  value={form.freeEntry?.templateName || ""}
+                  onChange={(event) => setForm((current) => ({
+                    ...current, freeEntry: { ...current.freeEntry, templateName: event.target.value }
+                  }))}
+                  placeholder="lead_follow_up"
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
+                  aria-label="Free-entry template name"
+                />
+              </label>
+              <label className="block text-xs font-semibold">
+                Template language
+                <select
+                  value={form.freeEntry?.language || "zh_CN"}
+                  onChange={(event) => setForm((current) => ({
+                    ...current, freeEntry: { ...current.freeEntry, language: event.target.value }
+                  }))}
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
+                  aria-label="Free-entry template language"
+                >
+                  <option value="zh_CN">Chinese (zh_CN)</option>
+                  <option value="en_US">English (en_US)</option>
+                  <option value="ms">Malay (ms)</option>
+                </select>
+              </label>
+            </div>
+            <label className="mt-3 block text-xs font-semibold">
+              Extended template schedule
+              <select
+                value={(form.freeEntry?.slotsHours || []).join(",")}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  freeEntry: { ...current.freeEntry, slotsHours: event.target.value.split(",").map(Number) }
+                }))}
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
+                aria-label="Free-entry follow-up schedule"
+              >
+                <option value="36,60,84,108,132,156">Day 2 through Day 7 (six reminders)</option>
+                <option value="36,60,108,156">Days 2, 3, 5 and 7 (four reminders)</option>
+                <option value="36,60,108">Days 2, 3 and 5 (three reminders)</option>
+              </select>
+            </label>
+            <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+              Times are measured from the first qualifying business reply. The server kill switch
+              WHATSAPP_FEP_FOLLOWUPS_ENABLED must also be true. No paid fallback is used.
+              Unknown eligibility, closed windows, quiet hours, replies, bookings and opt-outs stop or skip sends.
+              Meta does not guarantee every template will be free, so confirm billing with actual callbacks.
+            </p>
           </Card>
         </div>
 
