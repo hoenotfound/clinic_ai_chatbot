@@ -317,6 +317,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   if (!result.success && captionSent) {
     return {
       ...result,
+      cancelled: false,
       partialCaptionSent: true,
       captionProviderMessageId,
     };
@@ -493,6 +494,8 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     if (!tracked.success && captionSent) {
       return {
         ...tracked,
+        // The caption reached Meta; later image cancellation is partial.
+        cancelled: false,
         partialCaptionSent: true,
         captionProviderMessageId,
       };
@@ -516,6 +519,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   if (!result.success && captionSent) {
     return {
       ...result,
+      cancelled: false,
       partialCaptionSent: true,
       captionProviderMessageId,
     };
