@@ -19,6 +19,7 @@ function eligibleFreeEntryTime({
   lastInboundAt,
   evidenceType,
   sourceIsCtwa,
+  earlyDueAt = null,
 } = {}) {
   const inbound = new Date(firstInboundAt).getTime();
   const reply = new Date(firstReplyAt).getTime();
@@ -36,8 +37,11 @@ function eligibleFreeEntryTime({
     slotHours < 25 ||
     slotHours >= ceilingHours
   ) return false;
-  const dueAt = reply + slotHours * 3600000;
-  return current >= dueAt &&
+  const regularDueAt = reply + slotHours * 3600000;
+  const permittedEarlier = earlyDueAt === null ? regularDueAt :
+    Math.max(reply + 24 * 3600000, Math.min(regularDueAt, new Date(earlyDueAt).getTime()));
+  if (!Number.isFinite(permittedEarlier)) return false;
+  return current >= permittedEarlier &&
     current >= last + CUSTOMER_SERVICE_MS &&
     current < reply + ceilingHours * 3600000 - EXPIRY_BUFFER_MS;
 }
