@@ -506,6 +506,28 @@ export default function Analytics() {
                 </div>
               )}
 
+              <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                <p className="text-xs font-bold">Conditional pricing reminders</p>
+                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  Tracked separately from Follow-ups 1–3. Pending and uncertain
+                  deliveries are not counted as delivered.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <SmallStat label="Accepted" value={data.followUps.pricingReminder?.accepted ?? 0} />
+                  <SmallStat label="Delivered" value={data.followUps.pricingReminder?.delivered ?? 0} />
+                  <SmallStat label="Failed" value={data.followUps.pricingReminder?.failed ?? 0} />
+                  <SmallStat label="Skipped" value={data.followUps.pricingReminder?.skipped ?? 0} />
+                </div>
+                <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  Pending: {data.followUps.pricingReminder?.pending ?? 0}
+                  {" · "}Unknown: {data.followUps.pricingReminder?.unknown ?? 0}
+                  {" · "}Already sent: {data.followUps.pricingReminder?.alreadySent ?? 0}
+                  {" · "}Needs review: {data.followUps.pricingReminder?.reviewNeeded ?? 0}
+                  {" · "}Unclear treatment or package: {data.followUps.pricingReminder?.ambiguous ?? 0}
+                  {" · "}Too close to final follow-up: {data.followUps.pricingReminder?.insufficientWindow ?? 0}
+                </p>
+              </div>
+
               <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">
                 Replies and downstream outcomes are attributed to the latest follow-up step sent before they happened, so later steps do not inflate earlier-step performance. {analyticsUi.followUpOutcomeNoun} and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.
               </p>

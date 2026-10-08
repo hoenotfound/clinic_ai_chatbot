@@ -377,6 +377,9 @@ function isAutomatedFollowUpConfig(value) {
     !Array.isArray(value.additionalSteps) ||
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
+    (value.pricingReminder !== undefined &&
+      (!isPlainObject(value.pricingReminder) ||
+        typeof value.pricingReminder.enabled !== "boolean")) ||
     !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
   ) {
     return false;
@@ -586,6 +589,22 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     return null;
   }
 
+  const requestedPricing = requested.pricingReminder;
+  if (requestedPricing !== undefined &&
+      (!isPlainObject(requestedPricing) ||
+        typeof requestedPricing.enabled !== "boolean")) return null;
+  const pricingEnabled = requestedPricing === undefined
+    ? current?.pricingReminder?.enabled === true
+    : requestedPricing.enabled === true;
+  const pricingActivation =
+    pricingEnabled
+      ? current?.pricingReminder?.enabled === true &&
+        typeof current.pricingReminder.activatedAt === "string" &&
+        !Number.isNaN(Date.parse(current.pricingReminder.activatedAt))
+          ? current.pricingReminder.activatedAt
+          : new Date().toISOString()
+      : null;
+
   const additionalSteps = additionalInput.map(prepareFollowUpStep);
   if (additionalSteps.some((step) => !step)) return null;
 
@@ -634,6 +653,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     quietHours,
     ...firstStep,
     additionalSteps,
+    pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation },
     activatedAt: enabled
       ? continuingCurrentActivation
         ? current.activatedAt

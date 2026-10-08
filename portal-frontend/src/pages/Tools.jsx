@@ -30,6 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
+  pricingReminder: { enabled: false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -171,6 +172,7 @@ function normalizeFollowUpSettings(value = {}) {
     additionalSteps: Array.isArray(value.additionalSteps)
       ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
       : [],
+    pricingReminder: { enabled: value?.pricingReminder?.enabled === true },
   };
 }
 
@@ -192,6 +194,7 @@ function followUpFormFromSettings(value = {}) {
     videoFilename: settings.videoFilename,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
+    pricingReminder: settings.pricingReminder,
   };
 }
 
@@ -814,6 +817,7 @@ export default function Tools() {
           videoFilename: form.videoFilename,
           serviceOverrides,
           additionalSteps,
+          pricingReminder: { enabled: form.pricingReminder?.enabled === true },
         },
       });
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
@@ -2343,6 +2347,39 @@ function FollowUpTool({
               + Add follow-up
             </button>
           </Card>
+
+          <Card>
+            <SectionHeading
+              number="4"
+              title="Conditional pricing reminder"
+              description="An optional fourth follow-up, checked before the final testimonial."
+            />
+            <div className="mt-4 flex items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
+                <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
+                  WhatsApp only. Check about 10 hours after the last reply and at least
+                  2 hours after Follow-up 2. Skip when the correct graphic was
+                  already sent. Use existing Promotions in the customer's language.
+                </p>
+                <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  Requires three configured follow-ups. Multiple packages need
+                  an explicit customer choice. Never sends outside the reply
+                  window or during quiet hours. May run before Follow-up 3.
+                </p>
+              </div>
+              <Switch
+                checked={form.pricingReminder?.enabled === true}
+                ariaLabel="Conditional pricing reminder"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  pricingReminder: {
+                    enabled: current.pricingReminder?.enabled !== true,
+                  },
+                }))}
+              />
+            </div>
+          </Card>
         </div>
 
         <aside className="order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start">
@@ -2486,6 +2523,7 @@ function FollowUpTool({
                   <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
                   <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
                   <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
+                  <Rule text="The optional pricing reminder checks for a missing graphic after Follow-up 2 and runs before Follow-up 3 when the reply window allows." />
                   <Rule text="WhatsApp opt-outs remain a hard stop." />
                   <Rule text="Saving does not add follow-ups to older conversations." />
                 </ul>

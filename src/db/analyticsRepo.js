@@ -659,6 +659,41 @@ async function getFollowUps(filters, analyticsProfile) {
          ) AS won_after
        FROM followups f
      ),
+     pricing_attempts AS (
+       SELECT DISTINCT m.id, m.delivery_status, m.whatsapp_message_id
+       FROM matching_journeys j
+       JOIN messages m ON m.contact_id = j.contact_id
+       WHERE m.pricing_reminder_anchor_id IS NOT NULL
+         AND ${periodSql("m.created_at", "$1", "$2")}
+         AND (
+           (j.started_message_id IS NOT NULL AND m.id >= j.started_message_id)
+           OR (j.started_message_id IS NULL AND m.created_at >= j.created_at)
+         )
+         AND (
+           (j.next_started_message_id IS NOT NULL AND m.id < j.next_started_message_id)
+           OR (
+             j.next_started_message_id IS NULL
+             AND (j.next_journey_created_at IS NULL OR m.created_at < j.next_journey_created_at)
+           )
+         )
+     ),
+     pricing_skips AS (
+       SELECT DISTINCT d.id, d.reason
+       FROM matching_journeys j
+       JOIN pricing_reminder_decisions d ON d.contact_id = j.contact_id
+       WHERE ${periodSql("d.created_at", "$1", "$2")}
+         AND (
+           (j.started_message_id IS NOT NULL AND d.anchor_id >= j.started_message_id)
+           OR (j.started_message_id IS NULL AND d.created_at >= j.created_at)
+         )
+         AND (
+           (j.next_started_message_id IS NOT NULL AND d.anchor_id < j.next_started_message_id)
+           OR (
+             j.next_started_message_id IS NULL
+             AND (j.next_journey_created_at IS NULL OR d.created_at < j.next_journey_created_at)
+           )
+         )
+     ),
      step_stats AS (
        SELECT
          follow_up_step,
@@ -726,7 +761,32 @@ async function getFollowUps(filters, analyticsProfile) {
            FROM targeting_stats
          ),
          '[]'::json
-       ) AS by_targeting
+       ) AS by_targeting,
+       (
+         SELECT json_build_object(
+           'attempted', (SELECT COUNT(*)::int FROM pricing_attempts),
+           'accepted', (SELECT COUNT(*)::int FROM pricing_attempts
+             WHERE delivery_status IN ('pending','sent','delivered','read')
+               AND (whatsapp_message_id IS NOT NULL OR delivery_status <> 'pending')),
+           'delivered', (SELECT COUNT(*)::int FROM pricing_attempts
+             WHERE delivery_status IN ('delivered','read')),
+           'pending', (SELECT COUNT(*)::int FROM pricing_attempts
+             WHERE delivery_status IS NULL OR delivery_status = 'pending'),
+           'failed', (SELECT COUNT(*)::int FROM pricing_attempts
+             WHERE delivery_status = 'failed'),
+           'unknown', (SELECT COUNT(*)::int FROM pricing_attempts
+             WHERE delivery_status = 'unknown'),
+           'skipped', (SELECT COUNT(*)::int FROM pricing_skips),
+           'alreadySent', (SELECT COUNT(*)::int FROM pricing_skips
+             WHERE reason = 'already_sent'),
+           'reviewNeeded', (SELECT COUNT(*)::int FROM pricing_skips
+             WHERE reason = 'delivery_review'),
+           'ambiguous', (SELECT COUNT(*)::int FROM pricing_skips
+             WHERE reason IN ('ambiguous_service','ambiguous_package')),
+           'insufficientWindow', (SELECT COUNT(*)::int FROM pricing_skips
+             WHERE reason = 'insufficient_window')
+         )
+       ) AS pricing_reminder
      FROM outcomes`,
     queryParams(filters)
   );
@@ -760,6 +820,11 @@ async function getFollowUps(filters, analyticsProfile) {
     leadsWonAfter: number(row.leads_won_after),
     byStep: metricRows(row.by_step, "step"),
     byTargeting: metricRows(row.by_targeting, "targeting"),
+    pricingReminder: Object.fromEntries(
+      ["attempted", "accepted", "delivered", "pending", "failed", "unknown",
+        "skipped", "alreadySent", "reviewNeeded", "ambiguous", "insufficientWindow"]
+        .map((key) => [key, number(row.pricing_reminder?.[key])])
+    ),
     outcomeWindowDays: FOLLOW_UP_OUTCOME_WINDOW_DAYS,
   };
 }
