@@ -98,7 +98,7 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
     id: candidate.contact_id,
     channel,
     whatsapp_number: candidate.whatsapp_number,
-    channel_user_id: channel_user_id,
+    channel_user_id: candidate.channel_user_id,
   };
   const preSendCheck = async () => {
     const live = clinicConfig.automatedFollowUp;
@@ -136,7 +136,7 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
       treatmentInterest: candidate.treatment_interest,
       thirdId: candidate.third_id,
       recipientId: channel === "whatsapp"
-        ? candidate.whatsapp_number : channel_user_id,
+        ? candidate.whatsapp_number : candidate.channel_user_id,
       packageKey: offer.packageName,
       channel: channel,
     });
