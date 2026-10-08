@@ -33,7 +33,7 @@ test("Days 4–7 require explicit account billing verification; older 72h mode s
     firstInboundAt:"2026-10-01T00:00:00Z",
     firstReplyAt:"2026-10-01T00:01:00Z",
     lastInboundAt:"2026-10-01T00:00:00Z",
-    now:"2026-10-05T02:00:00Z",
+    now:"2026-10-05T02:05:00Z",
     slotHours:98,sourceIsCtwa:true,evidenceType:"free_entry_point",
   };
   assert.equal(eligibleFreeEntryTime(base),false);
