@@ -27,8 +27,11 @@ function evaluateOffer(candidate) {
     language,
   });
 }
+function chooseOffers(candidate) {
+  return evaluateOffer(candidate).offers || [];
+}
 function chooseOffer(candidate) {
-  return evaluateOffer(candidate).offer;
+  return chooseOffers(candidate)[0] || null;
 }
 function statusForPricingSend(result) {
   if (result?.success) return "sent";
@@ -38,7 +41,9 @@ function statusForPricingSend(result) {
 // Never move an unsent pricing message ahead of the testimonial. Respect the
 // same conservative 10-minute WhatsApp window buffer used by follow-ups.
 function canSendAfterFinal(candidate, at = new Date()) {
-  const thirdAt = Date.parse(candidate?.third_at);
+  // Recorded immediately after Meta accepted Follow-up 3, not when its
+  // placeholder was first saved (video uploads can be slow).
+  const thirdAt = Date.parse(candidate?.third_accepted_at);
   const inboundAt = Date.parse(candidate?.inbound_at);
   const current = new Date(at).getTime();
   const dueAt = thirdAt + MINUTES_AFTER_TESTIMONIAL * 60_000;
@@ -71,14 +76,14 @@ function publish(message, reason) {
 }
 
 async function sendPricingReminder(candidate, offer, settings) {
-  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active) return;
+  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active) return false;
   const saved = await pricingRepo.claim({
     candidate,
     offer,
     activatedAt: activationCutoff(settings),
     triggerMode: settings.triggerMode,
   });
-  if (!saved) return;
+  if (!saved) return false;
 
   publish(saved, "message");
   const contact = {
@@ -102,9 +107,11 @@ async function sendPricingReminder(candidate, offer, settings) {
         !canSendAfterFinal(candidate)) return false;
 
     // Changes to a promotion or current interest must not send stale prices.
-    const current = chooseOffer(candidate);
-    if (!current || current.imageUrl !== offer.imageUrl ||
-        current.caption !== offer.caption) return false;
+    const stillConfigured = chooseOffers(candidate).some((current) =>
+      current.packageName === offer.packageName &&
+      current.imageUrl === offer.imageUrl && current.caption === offer.caption
+    );
+    if (!stillConfigured) return false;
     return pricingRepo.isClaimStillEligible({
       messageId: saved.id,
       contactId: candidate.contact_id,
@@ -114,6 +121,7 @@ async function sendPricingReminder(candidate, offer, settings) {
       treatmentInterest: candidate.treatment_interest,
       thirdId: candidate.third_id,
       whatsappNumber: candidate.whatsapp_number,
+      packageKey: offer.packageName,
     });
   };
 
@@ -152,7 +160,7 @@ async function sendPricingReminder(candidate, offer, settings) {
     })) {
       publish({ ...saved, delivery_status: "cancelled" }, "message_cancelled");
     }
-    return;
+    return false;
   }
 
   let updated;
@@ -175,6 +183,7 @@ async function sendPricingReminder(candidate, offer, settings) {
         : "Delivery failed: pricing graphic did not reach WhatsApp. Review in Inbox."
     );
   }
+  return Boolean(result?.success && result?.wamid);
 }
 
 // Called by the existing follow-up worker so this feature does not add another
@@ -201,8 +210,8 @@ async function runPricingReminders(settings, now = new Date()) {
         await skipCandidate(candidate, "insufficient_window");
         continue;
       }
-      const { offer, reason } = evaluateOffer(candidate);
-      if (!offer) {
+      const { offers = [], reason } = evaluateOffer(candidate);
+      if (!offers.length) {
         if (due <= now.getTime()) await skipCandidate(candidate, reason);
         continue;
       }
@@ -213,7 +222,12 @@ async function runPricingReminders(settings, now = new Date()) {
         continue;
       }
       if (canSendAfterFinal(candidate, now)) {
-        await sendPricingReminder(candidate, offer, settings);
+        for (const offer of offers) {
+          // Each package gets an independent durable row and WAMID. Stop at
+          // the first failed/unknown send: never blindly retry or push another
+          // promotion when delivery may be unconfirmed.
+          if (!(await sendPricingReminder(candidate, offer, settings))) break;
+        }
       }
     } catch (err) {
       console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
@@ -221,4 +235,4 @@ async function runPricingReminders(settings, now = new Date()) {
   }
   return nextDueAt;
 }
-module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canSendAfterFinal, evaluateOffer, statusForPricingSend };
+module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, chooseOffers, canSendAfterFinal, evaluateOffer, statusForPricingSend };
