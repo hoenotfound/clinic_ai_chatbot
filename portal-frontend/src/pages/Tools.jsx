@@ -30,7 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  freeEntry: { enabled: false, templateName: "", language: "auto", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
+  freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
@@ -177,11 +177,13 @@ function normalizeFollowUpSettings(value = {}) {
       enabled: value?.freeEntry?.enabled === true,
       templateName: String(value?.freeEntry?.templateName || ""),
       language: String(value?.freeEntry?.language || "auto"),
+      fallbackLanguage: String(value?.freeEntry?.fallbackLanguage || "zh_CN"),
       templateRules: Array.isArray(value?.freeEntry?.templateRules) ? value.freeEntry.templateRules.map((rule) => ({
         slotHours: Number(rule.slotHours),
         serviceName: String(rule.serviceName || ""),
         templateName: String(rule.templateName || ""),
         mediaUrl: String(rule.mediaUrl || ""),
+        mediaKey: String(rule.mediaKey || ""),
       })) : [],
       slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
         ? value.freeEntry.slotsHours.map(Number)
@@ -850,11 +852,13 @@ export default function Tools() {
             enabled: form.freeEntry?.enabled === true,
             templateName: String(form.freeEntry?.templateName || "").trim(),
             language: String(form.freeEntry?.language || "auto"),
+            fallbackLanguage: String(form.freeEntry?.fallbackLanguage || "zh_CN"),
             templateRules: (form.freeEntry?.templateRules || []).map((rule) => ({
               slotHours: Number(rule.slotHours),
               serviceName: rule.serviceName.trim(),
               templateName: rule.templateName.trim(),
               mediaUrl: (rule.mediaUrl || "").trim(),
+              mediaKey: (rule.mediaKey || "").trim(),
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
@@ -2616,6 +2620,23 @@ function FollowUpTool({
               </label>
             </div>
             <label className="mt-3 block text-xs font-semibold">
+              Fallback language when no approved customer-language version exists
+              <select aria-label="Approved template fallback language"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                value={form.freeEntry?.fallbackLanguage || "zh_CN"}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  freeEntry: { ...current.freeEntry, fallbackLanguage: event.target.value },
+                }))}>
+                <option value="zh_CN">Chinese (zh_CN)</option>
+                <option value="en_US">English (en_US)</option>
+                <option value="ms">Malay (ms)</option>
+              </select>
+              <span className="mt-1 block text-[11px] font-normal text-[var(--color-text-muted)]">
+                Only the identical template name in this approved language may be used. Otherwise skip.
+              </span>
+            </label>
+            <label className="mt-3 block text-xs font-semibold">
               Extended template schedule
               <select
                 value={(form.freeEntry?.slotsHours || []).join(",")}
@@ -2651,7 +2672,7 @@ function FollowUpTool({
                         ...(current.freeEntry?.templateRules || []),
                         { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
                           serviceName: services?.[0]?.name || "",
-                          templateName: "", mediaUrl: "" }
+                          templateName: "", mediaUrl: "", mediaKey: "" }
                       ],
                     },
                   }))}>Add rule</button>
@@ -2692,6 +2713,18 @@ function FollowUpTool({
                         ...current, freeEntry: { ...current.freeEntry,
                           templateRules: current.freeEntry.templateRules.map((r, i) =>
                             i === index ? { ...r, templateName: event.target.value } : r)
+                        }
+                      }))}/>
+                  </label>
+                  <label className="text-xs font-semibold">Stored follow-up video key (optional)
+                    <input aria-label={`Extended template R2 video key ${index + 1}`}
+                      placeholder="Paste the existing video key from Follow-up Tools"
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      value={rule.mediaKey || ""}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, mediaKey: event.target.value } : r)
                         }
                       }))}/>
                   </label>
