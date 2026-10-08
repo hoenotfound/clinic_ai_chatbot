@@ -1,51 +1,50 @@
 const { pool } = require("./db");
+const { sessionLateralSql } = require("./whatsappFreeEntrySessionSql");
 
 // Read-only rollout diagnostics. Ads do not automatically imply marketing opt-in.
 async function summarize(database = pool) {
-  const leads = await database.query(
-    `WITH current_leads AS (
-       SELECT DISTINCT ON (l.contact_id) l.id, l.contact_id, l.marketing_consent,
-         l.is_closed, l.appointment_status, la.ctwa_clid,
-         la.first_message_id, c.whatsapp_opt_in_at,
-         c.whatsapp_opt_in_source, c.whatsapp_opt_out_at,
-         c.whatsapp_marketing_opt_out_at
-       FROM leads l
-       JOIN contacts c ON c.id = l.contact_id
-       JOIN lead_attributions la ON la.lead_id = l.id
-       WHERE c.channel = 'whatsapp'
-         AND la.channel = 'whatsapp'
-         AND la.meta_source_type = 'ad'
-       ORDER BY l.contact_id, l.is_closed ASC, l.created_at DESC, l.id DESC
-     ), sampled AS (
-       SELECT l.*,
-         first_reply.id AS response_id, billing.pricing_type,
-         billing.billable
-       FROM current_leads l
-       LEFT JOIN LATERAL (
-         SELECT m.id, m.whatsapp_message_id
-         FROM messages m
-         JOIN messages origin ON origin.id = l.first_message_id
-         WHERE m.contact_id = l.contact_id AND m.role = 'assistant'
-           AND m.whatsapp_message_id IS NOT NULL
-           AND m.created_at >= origin.created_at
-           AND m.created_at < origin.created_at + interval '24 hours'
-         ORDER BY m.created_at, m.id LIMIT 1
-       ) first_reply ON true
-       LEFT JOIN whatsapp_free_entry_pricing_evidence billing
-         ON billing.wamid = first_reply.whatsapp_message_id
-     )
-     SELECT COUNT(*)::int AS ad_leads,
-       COUNT(*) FILTER (WHERE ctwa_clid IS NOT NULL)::int AS ctwa_click_ids,
-       COUNT(*) FILTER (WHERE marketing_consent = 'opted_in'
-         AND whatsapp_opt_in_at IS NOT NULL AND whatsapp_opt_in_source IS NOT NULL
-         AND whatsapp_opt_out_at IS NULL
-         AND whatsapp_marketing_opt_out_at IS NULL)::int AS explicit_marketing_optins,
-       COUNT(*) FILTER (WHERE response_id IS NOT NULL)::int AS first_replies,
-       COUNT(*) FILTER (WHERE pricing_type = 'free_entry_point'
-         AND billable = false)::int AS verified_free_entry,
-       COUNT(*) FILTER (WHERE billable = true)::int AS confirmed_billable
-     FROM sampled`
-  );
+  const safeCeilingHours = process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72;
+  const leads = await database.query(`
+    WITH ad_contacts AS (
+      SELECT DISTINCT c.id, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
+        c.whatsapp_opt_out_at,c.whatsapp_marketing_opt_out_at
+      FROM contacts c JOIN whatsapp_free_entry_referrals r ON r.contact_id=c.id
+      WHERE c.channel='whatsapp'
+    ), sampled AS (
+      SELECT c.*, referral.ctwa_clid, referral.origin_message_id,
+        lead.marketing_consent, billing.pricing_type, billing.billable,
+        first_reply.id AS response_id
+      FROM ad_contacts c
+      LEFT JOIN LATERAL (
+        SELECT l.marketing_consent FROM leads l WHERE l.contact_id=c.id
+        ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1
+      ) lead ON true
+      ${sessionLateralSql({contactAlias:'c',ceilingParam:'$1'}).replace(/^JOIN/,'LEFT JOIN')}
+      LEFT JOIN messages origin ON origin.id=referral.origin_message_id
+      LEFT JOIN LATERAL (
+        SELECT m.id,m.whatsapp_message_id
+        FROM messages m WHERE m.contact_id=c.id AND m.role='assistant'
+          AND m.whatsapp_message_id IS NOT NULL
+          AND m.created_at>=origin.created_at
+          AND m.created_at<origin.created_at+interval '24 hours'
+        ORDER BY m.created_at,m.id LIMIT1
+      ) first_reply ON true
+      LEFT JOIN whatsapp_free_entry_pricing_evidence billing
+        ON billing.wamid=first_reply.whatsapp_message_id
+    )
+    SELECT COUNT(*)::int AS ad_leads,
+      COUNT(*) FILTER (WHERE ctwa_clid IS NOT NULL)::int AS ctwa_click_ids,
+      COUNT(*) FILTER (WHERE marketing_consent='opted_in'
+        AND whatsapp_opt_in_at IS NOT NULL
+        AND NULLIF(whatsapp_opt_in_source,'') IS NOT NULL
+        AND whatsapp_opt_out_at IS NULL
+        AND whatsapp_marketing_opt_out_at IS NULL)::int AS explicit_marketing_optins,
+      COUNT(*) FILTER (WHERE response_id IS NOT NULL)::int AS first_replies,
+      COUNT(*) FILTER (WHERE pricing_type='free_entry_point'
+        AND billable=false)::int AS verified_free_entry,
+      COUNT(*) FILTER (WHERE billable=true)::int AS confirmed_billable
+    FROM sampled
+  `, [safeCeilingHours]);
   const attempts = await database.query(
     `SELECT status, COUNT(*)::int AS count
      FROM whatsapp_free_entry_followup_attempts
@@ -61,7 +60,6 @@ async function summarize(database = pool) {
      FROM whatsapp_free_entry_followup_attempts attempts
      ORDER BY created_at DESC, id DESC LIMIT 25`
   );
-  const safeCeilingHours = process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72;
   const contactDetails = await database.query(`
     WITH selected AS (
       SELECT DISTINCT ON (l.contact_id)
@@ -70,7 +68,7 @@ async function summarize(database = pool) {
         l.created_at, c.mode, c.needs_attention,
         c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
         c.whatsapp_opt_out_at, c.whatsapp_marketing_opt_out_at,
-        entry.origin_message_id AS first_message_id
+        COALESCE(referral.origin_message_id, latest_ad.origin_message_id) AS first_message_id
       FROM leads l
       JOIN contacts c ON c.id=l.contact_id
       JOIN LATERAL (
@@ -79,7 +77,8 @@ async function summarize(database = pool) {
         WHERE r.contact_id=c.id
         ORDER BY referral_message.created_at DESC,referral_message.id DESC
         LIMIT 1
-      ) entry ON true
+      ) latest_ad ON true
+      ${sessionLateralSql({contactAlias:'c',ceilingParam:'$1'}).replace(/^JOIN/,'LEFT JOIN')}
       WHERE c.channel='whatsapp'
       ORDER BY l.contact_id,l.is_closed ASC,l.created_at DESC,l.id DESC
     )
@@ -151,11 +150,13 @@ async function summarize(database = pool) {
     LEFT JOIN LATERAL(
       SELECT reason FROM whatsapp_free_entry_followup_skips s
       WHERE s.contact_id=selected.contact_id
+        AND s.first_reply_message_id=first_reply.id
       ORDER BY observed_at DESC LIMIT 1
     ) last_skip ON true
     LEFT JOIN LATERAL(
       SELECT status FROM whatsapp_free_entry_followup_attempts a
       WHERE a.contact_id=selected.contact_id
+        AND a.first_reply_message_id=first_reply.id
       ORDER BY created_at DESC,id DESC LIMIT 1
     ) last_attempt ON true
     ORDER BY selected.created_at DESC LIMIT 40
