@@ -6,6 +6,7 @@ const whatsappTemplates = require("./whatsappTemplateService");
 const messagesRepo = require("../db/messagesRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
+const { selectTemplateSpec, buildStaticMarketingTemplate, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
 const {
   freeEntryEnabled,
   eligibleFreeEntryTime,
@@ -20,7 +21,7 @@ let timer = null;
 // Ad attribution alone is not sufficient billing proof. Do not backfill leads:
 // clinicConfig.automatedFollowUp.freeEntry.activatedAt is the cutover boundary.
 const candidateSql = `
-  SELECT c.id AS contact_id, c.whatsapp_number, c.mode,
+  SELECT c.id AS contact_id, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,
          origin.created_at AS first_inbound_at,
          first_reply.id AS first_reply_message_id,
          first_reply.created_at AS first_reply_at,
@@ -163,14 +164,16 @@ function settings(env = process.env) {
   const templateName = String(cfg.freeEntry.templateName || "").trim();
   const language = String(cfg.freeEntry.language || "").trim();
   const slots = cfg.freeEntry.slotsHours;
+  const templateRules = cfg.freeEntry.templateRules || [];
   if (!activatedAt || !Number.isFinite(activatedTime) ||
       !templateName || !/^[a-z0-9_]+$/.test(templateName) ||
-      !/^(?:[a-z]{2,3}_[A-Z]{2}|ms)$/.test(language) ||
+      !SUPPORTED_LANGUAGES.has(language) ||
       !Array.isArray(slots) || !slots.length || slots.length > 6 ||
-      slots.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166))
+      slots.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
+      !validateTemplateRules(templateRules, slots, clinicConfig.services || []))
     return null;
   return { activatedAt: new Date(activatedTime).toISOString(),
-    templateName, language, slots };
+    templateName, language, slots, templateRules };
 }
 
 function selectedSlot(candidate, slots, now = new Date()) {
@@ -247,9 +250,10 @@ async function finish(attemptId, status, values = {}) {
   );
 }
 
-async function processCandidate(candidate, active, template, now = new Date()) {
+async function processCandidate(candidate, active, template, now = new Date(), explicitSpec = null) {
   const slotHours = selectedSlot(candidate, active.slots, now);
   if (!slotHours) return "not_due";
+  const spec = explicitSpec || selectTemplateSpec(candidate, slotHours, active);
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
   if (quiet.active) return "quiet_hours";
 
@@ -260,22 +264,21 @@ async function processCandidate(candidate, active, template, now = new Date()) {
   try {
     // This is a fixed, already approved MARKETING template. No AI-authored
     // content or arbitrary variable substitution is permitted in automation.
-    const values = whatsappTemplates.buildTemplateComponents(template, {});
-    const preview = values.valid &&
-      whatsappTemplates.renderTemplatePreview(template, values.values);
-    if (!values.valid || !preview) {
-      await finish(attemptId, "cancelled", { error: "Invalid template preview" });
+    const built = buildStaticMarketingTemplate(template, spec, whatsappTemplates);
+    if (!built) {
+      await finish(attemptId, "cancelled", { error: "Unapproved or invalid media/template pairing" });
       return "invalid_template";
     }
     const metadata = {
       name: template.name, language: template.language, category: "MARKETING",
-      components: values.components, values: values.values,
+      components: built.components, values: { header: [], body: [] },
+      sourceService: spec.serviceName, mediaUrl: spec.mediaUrl || null,
       templateSignature: whatsappTemplates.templateSignature(template),
       automatedFreeEntry: true, slotHours,
       marketingConsentConfirmed: true,
     };
     message = await messagesRepo.saveMessage(
-      candidate.contact_id, "assistant", preview,
+      candidate.contact_id, "assistant", built.preview,
       null, "Automation", null, null, null,
       { whatsappTemplate: metadata, initialDeliveryStatus: "unknown",
         initialDeliveryError: "Awaiting WhatsApp template delivery confirmation." }
@@ -302,8 +305,7 @@ async function processCandidate(candidate, active, template, now = new Date()) {
         slotHours,
       }) ||
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
-      liveActive.templateName !== active.templateName ||
-      liveActive.language !== active.language) {
+      JSON.stringify(selectTemplateSpec(fresh, slotHours, liveActive)) !== JSON.stringify(spec)) {
       await messagesRepo.setDeliveryStatusById(message.id, "cancelled", "No longer eligible");
       await finish(attemptId, "cancelled", { messageId: message.id, error: "No longer eligible" });
       return "cancelled";
@@ -312,7 +314,8 @@ async function processCandidate(candidate, active, template, now = new Date()) {
       { id: candidate.contact_id, channel: "whatsapp",
         whatsapp_number: candidate.whatsapp_number },
       { templateName: template.name, languageCode: template.language,
-        templateCategory: "MARKETING" }
+        templateCategory: "MARKETING", components: built.components,
+        expectedOptInAt: fresh.whatsapp_opt_in_at }
     );
     if (response?.wamid) {
       await messagesRepo.setWhatsappMessageId(message.id, response.wamid);
@@ -357,18 +360,24 @@ async function run({ now = new Date() } = {}) {
   running = true;
   try {
     const result = { candidates: 0, accepted: 0, skipped: 0 };
-    const catalog = await whatsappTemplates.resolveApprovedTemplate(
-      active.templateName, active.language);
-    if (!catalog.success || !catalog.template?.sendable ||
-      catalog.template.category !== "MARKETING" ||
-      catalog.template.variableFields.length !== 0) {
-      console.warn("[WhatsApp FEP] Approved static MARKETING template unavailable. No sends.");
-      return { disabled: true, reason: "template_not_approved" };
-    }
+    const catalog = await whatsappTemplates.listApprovedTemplates();
+    if (!catalog.success) return { disabled: true, reason: "template_catalog_unavailable" };
     const candidates = await listCandidates(active);
     result.candidates = candidates.length;
     for (const candidate of candidates) {
-      const outcome = await processCandidate(candidate, active, catalog.template, now);
+      const slotHours = selectedSlot(candidate, active.slots, now);
+      if (!slotHours) { result.skipped++; continue; }
+      const spec = selectTemplateSpec(candidate, slotHours, active);
+      const template = catalog.templates.find((item) =>
+        item.name === spec?.templateName && item.language === spec?.language &&
+        item.status === "APPROVED" && item.category === "MARKETING"
+      );
+      if (!template || !buildStaticMarketingTemplate(template, spec, whatsappTemplates)) {
+        result.skipped++;
+        console.warn("[WhatsApp FEP] Approved static template/media missing for slot", slotHours);
+        continue;
+      }
+      const outcome = await processCandidate(candidate, active, template, now, spec);
       if (outcome === "accepted") result.accepted++;
       else result.skipped++;
     }
