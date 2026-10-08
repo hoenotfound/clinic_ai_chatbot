@@ -18,7 +18,7 @@ let timer = null;
 
 // A fresh Meta pricing callback on the first real business response is required.
 // Ad attribution alone is not sufficient billing proof. Do not backfill leads:
-// WHATSAPP_FEP_ACTIVATED_AT is an explicit cutover boundary.
+// clinicConfig.automatedFollowUp.freeEntry.activatedAt is the cutover boundary.
 const candidateSql = `
   SELECT c.id AS contact_id, c.whatsapp_number, c.mode,
          origin.created_at AS first_inbound_at,
@@ -92,6 +92,16 @@ const candidateSql = `
     -- A reply after the initial business response means the customer is now
     -- interacting, so stop this silent-lead sequence for the whole window.
     AND last_inbound.created_at <= first_reply.created_at
+    -- Staff interventions take precedence over automated marketing.
+    AND NOT EXISTS (
+      SELECT 1 FROM messages staff_reply
+      WHERE staff_reply.contact_id = c.id
+        AND staff_reply.role = 'assistant'
+        AND staff_reply.sent_by_username IS NOT NULL
+        AND staff_reply.sent_by_username <> 'Automation'
+        AND (staff_reply.created_at, staff_reply.id) >
+          (first_reply.created_at, first_reply.id)
+    )
     AND ($2::integer IS NULL OR c.id = $2::integer)
     -- Only take due, unclaimed slots. Completed/old contacts cannot fill the
     -- page and starve more recent leads when ad volume rises.
