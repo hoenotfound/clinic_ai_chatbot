@@ -201,7 +201,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       messageId:postFinalSaved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities,treatmentInterest:postFinalCandidate.treatment_interest,
       finalDueAt:postFinalCandidate.final_due_at,whatsappNumber:postFinalCandidate.whatsapp_number,
-      afterFinal:true,
+      afterFinal:true,finalMessageId:postFinalCandidate.final_message_id,
     }),true);
 
     // A revoked/unknown final provider acceptance must stop pre-send checks.
@@ -210,7 +210,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       messageId:postFinalSaved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities,treatmentInterest:postFinalCandidate.treatment_interest,
       finalDueAt:postFinalCandidate.final_due_at,whatsappNumber:postFinalCandidate.whatsapp_number,
-      afterFinal:true,
+      afterFinal:true,finalMessageId:postFinalCandidate.final_message_id,
     }),false);
 
     // The pricing reminder must not keep the original message undeletable.
