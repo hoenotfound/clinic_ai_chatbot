@@ -41,7 +41,7 @@ function configuredServiceTerms(serviceName, config = clinicConfig) {
 }
 
 function explicitComparisonLanguage(normalizedText) {
-  return /\b(?:or|versus|vs|compare|comparison|difference|different|which|better)\b|还是|或者|或是|比较|分别|区别|差别|不同|哪个好|哪一个/.test(normalizedText);
+  return /\b(?:or|versus|vs|compare|comparison|difference|different|which|better|not|instead|atau|beza|berbeza|mana|bukan)\b|还是|或者|或是|比较|分别|区别|差别|不同|哪个好|哪一个|不要|不做|不是|改做|换成|換成|tak mahu|tidak mahu/.test(normalizedText);
 }
 
 function configuredCombinationService(matches, normalizedText, config = clinicConfig) {

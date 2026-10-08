@@ -6,6 +6,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const {
   getActivePromotions,
   promotionPackages,
@@ -304,6 +305,26 @@ function configuredServicesMentionedInText(value) {
     );
     if (!hasSeparateComponent) {
       return [candidate.serviceName];
+    }
+  }
+
+  // Keep follow-up targeting aligned with the durable CRM/scoring resolver.
+  // When the customer names both component services without an explicit combo
+  // alias (for example "3D 小颜术 / 9D 逆龄抗衰"), the CRM correctly stores the
+  // configured combination. The older follow-up matcher used to see two
+  // services and fall back to a generic follow-up. Reuse the shared resolver
+  // only when no combined service phrase was already matched above, preserving
+  // the stricter residual check for text such as "3D+9D, but I want 3D".
+  const hasDirectCombinedMatch = matches.some((item) =>
+    normalizedServiceName(item.serviceName).includes("+")
+  );
+  if (!hasDirectCombinedMatch) {
+    const inferredService = inferConfiguredServiceFromText(text);
+    if (
+      inferredService &&
+      normalizedServiceName(inferredService).includes("+")
+    ) {
+      return [inferredService];
     }
   }
 
