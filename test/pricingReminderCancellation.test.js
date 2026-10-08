@@ -19,7 +19,10 @@ test("pre-send database verification error is recorded as cancelled, never provi
   const statuses = [];
   const attention = [];
   const discards = [];
-  const candidate = { contact_id: 42, whatsapp_number: "60120000000", anchor_id: 5 };
+  const candidate = { contact_id:42, whatsapp_number:"60120000000", anchor_id:5,
+    third_accepted_at:new Date(Date.now()-10*60000).toISOString(),
+    inbound_at:new Date(Date.now()-12*3600000).toISOString(),
+  };
   const offer = { imageUrl: "https://example.test/promo.png", caption: "RM388" };
   const settings = { activatedAt: "2026-10-08T00:00:00Z", pricingReminder: { activatedAt: "2026-10-08T00:00:00Z" }, triggerMode: "all" };
   try {
@@ -67,7 +70,9 @@ test("a normal pre-send cancellation discards the unsent claim without a provide
     contactsRepo.setDeliveryAttention=async()=>{throw Error("Must not mark attention");};
     messaging.sendImageByUrl=async()=>({cancelled:true,success:false});
     await pricing.sendPricingReminder(
-      {contact_id:42,whatsapp_number:"60120000000"},
+      {contact_id:42,whatsapp_number:"60120000000",
+        third_accepted_at:new Date(Date.now()-10*60000).toISOString(),
+        inbound_at:new Date(Date.now()-12*3600000).toISOString()},
       {imageUrl:"https://example.test/promo.png",caption:"RM388"},
       {activatedAt:"2026-10-08T00:00:00Z",pricingReminder:{activatedAt:"2026-10-08T00:00:00Z"}}
     );
