@@ -593,7 +593,9 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
         typeof requestedPricing.enabled !== "boolean")) return null;
-  const pricingEnabled = requestedPricing?.enabled === true;
+  const pricingEnabled = requestedPricing === undefined
+    ? current?.pricingReminder?.enabled === true
+    : requestedPricing.enabled === true;
   const pricingActivation =
     pricingEnabled
       ? current?.pricingReminder?.enabled === true &&
