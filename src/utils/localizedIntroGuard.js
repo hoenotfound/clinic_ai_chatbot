@@ -26,7 +26,7 @@ const FIRST_TRIAL_TRANSLATION = /(?:first[-\s]+(?:time|trial|visit|session|treat
 
 // Reject the *meaning* of a negated inclusion, even if the literal words
 // "free meridian massage" appear. Never send the contradictory AI text.
-const NEGATED_INCLUSION = /(?:\b(?:not|never|isn['’]?t|aren['’]?t|won['’]?t|without|unavailable|excluded|excluding|extra\s+(?:payment|charge|fee)|additional\s+(?:payment|charge|fee)|(?:need|needs|required|must|have)\s+to\s+pay|pay\s+(?:extra|additional)|not\s+free|not\s+included|not\s+available|not\s+offered|no\s+free)\b|不(?:包含|包括|赠送|贈送|提供|免费|免費)|沒有|没有|需(?:额外|額外)?付费|需要(?:额外|額外)?付款|不可免费|不可免費|\b(?:tidak|tak|bukan)\s+(?:termasuk|percuma|disediakan|diberi)\b|\b(?:kena|perlu)\s+bayar\b)/iu;
+const NEGATED_INCLUSION = /(?:\b(?:not|never|don['’]?t|doesn['’]?t|didn['’]?t|can['’]?t|couldn['’]?t|isn['’]?t|aren['’]?t|won['’]?t|without|unavailable|excluded|excluding|extra\s+(?:payment|charge|fee)|additional\s+(?:payment|charge|fee)|(?:need|needs|required|must|have)\s+to\s+pay|pay\s+(?:extra|additional)|not\s+free|not\s+included|not\s+available|not\s+offered|no\s+free)\b|不(?:包含|包括|赠送|贈送|提供|免费|免費)|沒有|没有|需(?:额外|額外)?付费|需要(?:额外|額外)?付款|不可免费|不可免費|\b(?:tidak|tak|bukan)\s+(?:termasuk|percuma|disediakan|diberi)\b|\b(?:kena|perlu)\s+bayar\b)/iu;
 
 function sourcePromisesFreeMeridian(source) {
   return FREE_MARKER.test(source) && MERIDIAN_ITEM.test(source);
