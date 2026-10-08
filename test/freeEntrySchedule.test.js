@@ -6,7 +6,8 @@ const quiet = { enabled:true, start:"00:00", end:"07:00" };
 const zone = { timeZone: "Asia/Kuala_Lumpur" };
 test("final free-entry template moves before midnight if morning is after expiry", () => {
   const firstReplyAt="2026-10-01T07:00:00+08:00";
-  const due=effectiveSlotDueAt(firstReplyAt,162,[26,50,74,98,122,162],quiet,zone);
+  const due=effectiveSlotDueAt(firstReplyAt,162,[26,50,74,98,122,162],quiet,
+    {...zone,maxCeilingHours:168});
   assert.equal(due.toISOString(),"2026-10-07T15:55:00.000Z");
   assert.equal(eligibleFreeEntryTime({
     firstInboundAt:"2026-10-01T06:50:00+08:00",
