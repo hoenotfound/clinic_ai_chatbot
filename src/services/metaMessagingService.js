@@ -271,12 +271,14 @@ async function notifyProviderMessageId(options, externalMessageId, channel) {
 }
 
 async function sendImage(channel, recipientId, imageUrl, caption, options = {}) {
-  // Messenger and Instagram send the image attachment and caption as separate
-  // messages. Record the caption MID before starting the slower media send so
-  // an echo cannot race ahead and be mistaken for a manual staff reply.
+  // Messenger and Instagram send caption and image as separate API calls.
+  // Keep the caption MID if the later image fails. Never imply that nothing
+  // reached the customer or blindly resend the accepted caption.
+  let captionProviderMessageId = null;
   if (caption?.trim()) {
     const captionResult = await sendText(channel, recipientId, caption.trim(), options);
     if (!captionResult.success) return captionResult;
+    captionProviderMessageId = captionResult.externalMessageId || null;
     await notifyProviderMessageId(options, captionResult.externalMessageId, channel);
   }
 
@@ -293,6 +295,8 @@ async function sendImage(channel, recipientId, imageUrl, caption, options = {}) 
   );
   if (imageResult.success) {
     await notifyProviderMessageId(options, imageResult.externalMessageId, channel);
+  } else if (caption?.trim()) {
+    return { ...imageResult, partialCaptionSent:true, captionProviderMessageId };
   }
   return imageResult;
 }
