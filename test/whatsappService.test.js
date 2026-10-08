@@ -227,6 +227,25 @@ test("parses delivery statuses from every webhook entry and change", () => {
   assert.equal(parsed[2].errorMessage, "Rejected");
 });
 
+test("preserves authoritative free-entry billing fields on delivery callbacks", () => {
+  const statuses = parseStatusUpdates({
+    entry: [{
+      changes: [{
+        value: {
+          statuses: [{
+            id: "wamid-free-entry-1",
+            status: "sent",
+            pricing: { type: "free_entry_point", billable: false },
+          }],
+        },
+      }],
+    }],
+  });
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].pricingType, "free_entry_point");
+  assert.equal(statuses[0].pricingBillable, false);
+});
+
 test("parses template quick-reply button taps as ordinary inbound customer text", () => {
   const parsed = parseIncomingMessages({
     entry: [
