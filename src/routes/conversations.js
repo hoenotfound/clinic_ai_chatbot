@@ -1449,6 +1449,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
+    if (message.whatsapp_template?.automatedFreeEntry === true) {
+      // A timed-out Meta request may already have reached the customer or
+      // incurred a charge. Never reuse an expired signed R2 URL or bypass the
+      // one-shot seven-day claim via the general Inbox retry endpoint.
+      return res.status(409).json({
+        code: "extended_followup_retry_blocked",
+        error: "Automatic free-entry templates cannot be retried from Inbox. Review delivery and billing evidence; if a new message is appropriate, choose an approved template and reconfirm the customer's marketing consent.",
+      });
+    }
+
     const isManualStaffRetry =
       Boolean(message.sent_by_username) &&
       message.is_automated_follow_up !== true &&
