@@ -31,7 +31,7 @@ test("do not confuse Meta pricing evidence with an ordinary ad referral", () => 
 test("extended follow-ups are disabled by default and slots validate", () => {
   assert.equal(freeEntryEnabled({}), false);
   assert.equal(freeEntryEnabled({ WHATSAPP_FEP_FOLLOWUPS_ENABLED: "true" }), true);
-  assert.deepEqual(configuredSlots({}), [36,60,84,108,132,156]);
+  assert.deepEqual(configuredSlots({}), [26,50,74,98,122,146]);
   assert.deepEqual(configuredSlots({ WHATSAPP_FEP_SLOT_HOURS: "168" }), []);
   assert.deepEqual(configuredSlots({ WHATSAPP_FEP_SLOT_HOURS: "36,36" }), []);
 });
