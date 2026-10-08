@@ -63,3 +63,20 @@ test("the latest clear treatment mention overrides an older CRM interest", () =>
   });
   assert.equal(result?.serviceName, "3D 小颜术");
 });
+
+test("recognizes the combined 3D + 9D offer rather than sending a single-treatment price", () => {
+  const comboServices = [...services, { name:"9D 逆龄抗衰" }, { name:"3D + 9D 组合" }];
+  const comboPromos = [...promotions, {
+    name:"Combined", linkedService:"3D + 9D 组合",
+    imageUrl:"https://example.com/promo-images/33",caption:"Combo offer"
+  }];
+  const offer = selectPricingOffer({
+    services: comboServices, promotions: comboPromos,
+    candidate:{
+      treatment_interest:"9D 逆龄抗衰",
+      recent_customer_messages:["我要 3D + 9D 组合套餐"],
+    },
+  });
+  assert.equal(offer?.serviceName,"3D + 9D 组合");
+  assert.equal(offer?.caption,"Combo offer");
+});
