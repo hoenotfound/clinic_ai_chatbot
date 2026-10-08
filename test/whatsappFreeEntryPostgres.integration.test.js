@@ -156,6 +156,15 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     const oldFirstTouch = await client.query(
       "SELECT first_message_id FROM lead_attributions WHERE lead_id=1");
     assert.equal(oldFirstTouch.rows[0].first_message_id,10,"original attribution remains unchanged");
+    await client.query(`UPDATE messages
+      SET created_at=now()-interval '27 hours' WHERE id=20`);
+    await client.query(`UPDATE messages
+      SET created_at=now()-interval '26 hours' WHERE id=21`);
+    const repeatCandidate = (await worker.listCandidates(settings,client,1))[0];
+    assert.equal(Number(repeatCandidate.first_reply_message_id),21,
+      "a second ad-entry uses the newer Meta-confirmed business reply");
+    assert.equal(worker.selectedSlot(repeatCandidate,settings.slots),26,
+      "the new ad-entry can start its own 26h follow-up sequence");
   } finally {
     await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => {});
     await client.end();
