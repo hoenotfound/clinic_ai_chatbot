@@ -190,7 +190,7 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
   }
   publish(updated || saved, "delivery_status");
 
-  if (!result?.success) {
+  if (!result?.success || statusForPricingSend(result) !== "sent" || !updated) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
       statusForPricingSend(result) === "unknown"
