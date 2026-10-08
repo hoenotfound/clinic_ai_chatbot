@@ -22,7 +22,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     await client.query(`SET search_path TO ${schema}`);
     await client.query(`
       CREATE TABLE contacts (
-        id INTEGER PRIMARY KEY, channel TEXT NOT NULL, whatsapp_number TEXT,
+        id INTEGER PRIMARY KEY, channel TEXT NOT NULL, whatsapp_number TEXT, channel_user_id TEXT,
         needs_attention BOOLEAN NOT NULL DEFAULT false,
         mode TEXT NOT NULL DEFAULT 'ai',
         whatsapp_opt_out_at TIMESTAMPTZ,
@@ -64,6 +64,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     ));
     await client.query(fs.readFileSync(
       path.join(__dirname, "../src/db/migrations/050_pricing_packages_and_provider_acceptance.sql"),
+      "utf8"
+    ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/051_social_pricing_acceptance.sql"),
       "utf8"
     ));
 
@@ -129,7 +133,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offer.packageName,
     }), true);
     assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}), null);
@@ -151,7 +155,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:savedB.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offerB.identities,treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id,whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id,recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offerB.packageName,
     }),true);
     await client.query("DELETE FROM messages WHERE id=$1",[savedB.id]);
@@ -165,7 +169,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offer.packageName,
     }), false);
 
@@ -174,7 +178,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id, contactId:1, anchorId:101, inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offer.packageName,
     }), false);
 
@@ -217,6 +221,67 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       "SELECT id FROM messages WHERE id=$1 OR pricing_reminder_anchor_id=$1", [101]
     );
     assert.equal(rowsAfterDelete.rowCount, 0);
+
+    // Social final follow-ups become eligible only after a confirmed Meta
+    // receipt. A placeholder or a WhatsApp receipt alone must not qualify.
+    await client.query(`
+      INSERT INTO contacts(id,channel,channel_user_id) VALUES
+        (2,'facebook','fb-customer'),(3,'instagram','ig-customer');
+      INSERT INTO leads(contact_id,treatment_interest) VALUES
+        (2,'3D 小颜术'),(3,'3D 小颜术');
+      INSERT INTO messages(id,contact_id,role,content,created_at)
+        VALUES (200,2,'user','3D?',now()-interval '12 hours'),
+               (300,3,'user','3D?',now()-interval '12 hours');
+      INSERT INTO messages(id,contact_id,role,content,created_at)
+        VALUES (201,2,'assistant','Details',now()-interval '11 hours'),
+               (301,3,'assistant','Details',now()-interval '11 hours');
+      INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status,
+        whatsapp_message_id,social_accepted_at,is_automated_follow_up,
+        automated_follow_up_for_message_id,automated_follow_up_step)
+        VALUES (202,2,'assistant','Final',now()-interval '12 minutes','sent',
+                  'facebook:mid.202',now()-interval '8 minutes',true,201,3),
+               (302,3,'assistant','Final',now()-interval '12 minutes','sent',
+                  'instagram:mid.302',now()-interval '8 minutes',true,301,3);
+    `);
+    for (const [contactId, channel, recipientId, anchorId, inboundId, finalId] of [
+      [2,'facebook','fb-customer',201,200,202],
+      [3,'instagram','ig-customer',301,300,302],
+    ]) {
+      const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode:"all" });
+      const social = candidates.find(c => c.contact_id === contactId);
+      assert.ok(social, `Expected ${channel} reminder candidate`);
+      assert.equal(social.channel, channel);
+      assert.equal(social.channel_user_id, recipientId);
+      const socialOffer = {
+        caption:"Our 3D price",imageUrl:`https://example.com/social/${channel}`,
+        packageName:"3D trial",serviceName:"3D 小颜术",
+        identities:[`/social/${channel}`],
+      };
+      await client.query("UPDATE messages SET social_accepted_at=now()-interval '4 minutes' WHERE id=$1",[finalId]);
+      assert.equal(await pricingRepo.claim({ candidate:social, offer:socialOffer,
+        activatedAt,triggerMode:"all" }),null);
+      await client.query("UPDATE messages SET social_accepted_at=now()-interval '8 minutes' WHERE id=$1",[finalId]);
+      const savedSocial = await pricingRepo.claim({ candidate:social, offer:socialOffer,
+        activatedAt,triggerMode:"all" });
+      assert.ok(savedSocial);
+      assert.equal(await pricingRepo.isClaimStillEligible({
+        messageId:savedSocial.id,contactId,anchorId,inboundId,
+        imageIdentities:socialOffer.identities,treatmentInterest:"3D 小颜术",
+        thirdId:finalId,recipientId,channel,packageKey:"3D trial",
+      }),true);
+      await client.query("UPDATE contacts SET mode='human' WHERE id=$1",[contactId]);
+      assert.equal(await pricingRepo.isClaimStillEligible({
+        messageId:savedSocial.id,contactId,anchorId,inboundId,
+        imageIdentities:socialOffer.identities,treatmentInterest:"3D 小颜术",
+        thirdId:finalId,recipientId,channel,packageKey:"3D trial",
+      }),false);
+      await client.query("UPDATE contacts SET mode='ai' WHERE id=$1",[contactId]);
+    }
+    await client.query("UPDATE messages SET social_accepted_at=NULL WHERE id=302");
+    const socialCandidates=await pricingRepo.listEligible({activatedAt,triggerMode:"all"});
+    assert.ok(!socialCandidates.some(c=>c.contact_id===3));
+    assert.ok(socialCandidates.some(c=>c.contact_id===2));
+
   } finally {
     pool.query = originalQuery;
     await client.query("SET search_path TO public").catch(() => {});
