@@ -1,6 +1,7 @@
 const messagesRepo = require("../db/messagesRepo");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
 const webPushNotifications = require("./webPushNotificationService");
 const whatsappOutboundRetry = require("./whatsappOutboundRetryService");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -8,7 +9,8 @@ const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
 // Fast retry while a real delivery-status job needs work.
 const RECOVERY_INTERVAL_MS = 10 * 1000;
-const IDLE_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const IDLE_RECOVERY_INTERVAL_MS = 15 * 60 * 1000;
+const UNMATCHED_CALLBACK_GRACE_SECONDS = 5 * 60;
 const STALE_AFTER_SECONDS = 60;
 const STALE_RECHECK_GRACE_MS = 5 * 1000;
 const BATCH_SIZE = 50;
@@ -48,6 +50,28 @@ function retryableMissingWamidError(wamid) {
   return err;
 }
 
+function defaultUnmatchedFailureAlert({ jobs }) {
+  if (!jobs?.length || !isTelegramEnabled()) return Promise.resolve({ status: "disabled" });
+  // These callbacks lack a saved contact, so do not invent a customer identity
+  // or send through the per-contact delivery-failure alert path.
+  const details = jobs.slice(0, 10).map((job) =>
+    `Job #${job.id} | provider code ${job.error_code || "unknown"}`
+  ).join("\n");
+  const remainder = jobs.length > 10 ? `\nAnd ${jobs.length - 10} more.` : "";
+  return postTelegramMessage({
+    token: process.env.TELEGRAM_BOT_TOKEN,
+    chatId: process.env.TELEGRAM_CHAT_ID,
+    text:
+      "⚠️ WhatsApp provider delivery mismatch\n" +
+      String(jobs.length) +
+      " completed failed delivery callback(s) have no matching saved message " +
+      "or outbound evidence after five minutes.\n" +
+      details + remainder +
+      "\nReview the corresponding status jobs in Neon. " +
+      "A missing record does not by itself prove that the customer was not reached.",
+  });
+}
+
 function createWhatsAppDeliveryStatusService({
   repo = repository,
   messages = messagesRepo,
@@ -55,6 +79,7 @@ function createWhatsAppDeliveryStatusService({
   publishContact = defaultPublishContact,
   sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
   queueTransientFailureRetry = whatsappOutboundRetry.queueDeliveryFailureRetry,
+  sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
 } = {}) {
   let recoveryRunning = false;
@@ -248,6 +273,30 @@ function createWhatsAppDeliveryStatusService({
     return exhausted.length;
   }
 
+  async function surfaceUnmatchedCompletedFailures() {
+    const flagged = await repo.flagUnmatchedCompletedFailures({
+      graceSeconds: UNMATCHED_CALLBACK_GRACE_SECONDS,
+      limit: BATCH_SIZE,
+    });
+    if (!flagged.length) return 0;
+
+    for (const job of flagged) {
+      logger.error(
+        `[WhatsApp delivery integrity] Unmatched completed provider failure: ` +
+        `job #${job.id}, code ${job.error_code || "unknown"}. ` +
+        "No matching saved message or outbound evidence after five minutes."
+      );
+    }
+    // The DB flag is durable and unique. Telegram is a best-effort operational
+    // notification; an API failure must not block other delivery-status jobs.
+    try {
+      await sendUnmatchedFailureAlert({ jobs: flagged });
+    } catch (err) {
+      logger.error("Could not send unmatched WhatsApp failure alert:", err);
+    }
+    return flagged.length;
+  }
+
   async function maybePruneCompleted(now = Date.now()) {
     if (now - lastPrunedAt < PRUNE_INTERVAL_MS) return;
     lastPrunedAt = now;
@@ -271,8 +320,9 @@ function createWhatsAppDeliveryStatusService({
         await processOne(job);
       }
       const exhaustedCount = await surfaceExhaustedJobs();
+      const unmatchedCount = await surfaceUnmatchedCompletedFailures();
       await maybePruneCompleted();
-      return { workCount: claimed.length + exhaustedCount };
+      return { workCount: claimed.length + exhaustedCount + unmatchedCount };
     } catch (err) {
       logger.error("WhatsApp delivery-status recovery sweep failed:", err);
       throw err;
@@ -321,6 +371,7 @@ module.exports = {
   BATCH_SIZE,
   COMPLETED_RETENTION_HOURS,
   IDLE_RECOVERY_INTERVAL_MS,
+  UNMATCHED_CALLBACK_GRACE_SECONDS,
   MAX_ATTEMPTS,
   RECOVERY_INTERVAL_MS,
   STALE_AFTER_SECONDS,

@@ -58,6 +58,7 @@ function harness({
       return { id: contactId };
     },
     pruneCompleted: async () => 0,
+    flagUnmatchedCompletedFailures: async () => [],
   };
   const messages = {
     updateDeliveryStatusByWamid: async (...args) => {
@@ -79,6 +80,10 @@ function harness({
     publishContact,
     sendDeliveryFailureAlert,
     queueTransientFailureRetry,
+    sendUnmatchedFailureAlert: async ({ jobs }) => {
+      calls.push(["sendUnmatchedFailureAlert", jobs.map((item) => item.id)]);
+      return { status: "sent" };
+    },
     logger,
   });
   return { calls, repo, service };
@@ -296,4 +301,24 @@ test("known transient asynchronous WhatsApp failure queues retry and defers staf
   assert.equal(calls.some((call) => call[0] === "setDeliveryAttentionState"), false);
   assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
   assert.equal(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id), true);
+});
+
+test("unmatched completed provider failures are durably flagged and alerted once", async () => {
+  const { calls, repo, service } = harness();
+  let first = true;
+  repo.flagUnmatchedCompletedFailures = async (options) => {
+    calls.push(["flagUnmatchedCompletedFailures", options]);
+    if (!first) return [];
+    first = false;
+    return [{ id: 1333, error_code: "131053", error_title: "Media upload error" }];
+  };
+
+  await service.runRecovery();
+  await service.runRecovery();
+
+  assert.equal(calls.filter((call) => call[0] === "sendUnmatchedFailureAlert").length, 1);
+  assert.deepEqual(calls.find((call) => call[0] === "sendUnmatchedFailureAlert"), [
+    "sendUnmatchedFailureAlert", [1333]
+  ]);
+  assert.equal(calls.filter((call) => call[0] === "flagUnmatchedCompletedFailures").length, 2);
 });

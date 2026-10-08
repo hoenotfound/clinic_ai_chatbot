@@ -18,6 +18,10 @@ test(
       path.join(__dirname, "../src/db/migrations/014_whatsapp_delivery_status_jobs.sql"),
       "utf8"
     );
+    const integrityMigrationSql = fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/045_whatsapp_unmatched_delivery_monitoring.sql"),
+      "utf8"
+    );
     const query = client.query.bind(client);
 
     await client.connect();
@@ -38,8 +42,13 @@ test(
           delivery_status TEXT,
           delivery_error TEXT
         );
+        CREATE TABLE outbound_message_evidence (
+          message_id INTEGER,
+          provider_message_id TEXT
+        );
       `);
       await client.query(migrationSql);
+      await client.query(integrityMigrationSql);
 
       const update = {
         wamid: "wamid-durable-status-1",
@@ -254,6 +263,49 @@ test(
         needs_attention: true,
         attention_reason: "AI handoff: urgent review",
       });
+
+      // A completed provider failure can lose its matching message later.
+      // Flag it once after a grace period, but exclude known message/evidence
+      // records and preserve the flagged row through ordinary pruning.
+      const failureCases = await repo.storeBatch([
+        { wamid: "wamid-orphaned", status: "failed", errorCode: "131053" },
+        { wamid: "wamid-linked", status: "failed", errorCode: "131053" },
+        { wamid: "wamid-evidence", status: "failed", errorCode: "131053" },
+        { wamid: "wamid-recent", status: "failed", errorCode: "131053" }
+      ], query);
+      for (const item of failureCases) {
+        const rows = await repo.claimByIds([item.id], query);
+        await repo.markCompleted(item.id, rows[0].lease_token, query);
+      }
+      await client.query(
+        `UPDATE whatsapp_delivery_status_jobs
+         SET completed_at = NOW() - interval '10 minutes'
+         WHERE wamid IN ('wamid-orphaned','wamid-linked','wamid-evidence')`
+      );
+      await client.query(
+        "INSERT INTO messages (contact_id, whatsapp_message_id) VALUES (42, 'wamid-linked')"
+      );
+      await client.query(
+        "INSERT INTO outbound_message_evidence (provider_message_id) VALUES ('wamid-evidence')"
+      );
+      const flagged = await repo.flagUnmatchedCompletedFailures(
+        { graceSeconds: 300, limit: 25 }, query
+      );
+      assert.deepEqual(flagged.map((row) => row.id), [failureCases[0].id]);
+      assert.deepEqual(await repo.flagUnmatchedCompletedFailures(
+        { graceSeconds: 300, limit: 25 }, query
+      ), []);
+      const persisted = await client.query(
+        "SELECT unmatched_detected_at FROM whatsapp_delivery_status_jobs WHERE id = $1",
+        [failureCases[0].id]
+      );
+      assert.ok(persisted.rows[0].unmatched_detected_at);
+      await repo.pruneCompleted({ olderThanHours: 0 }, query);
+      const retained = await client.query(
+        "SELECT id FROM whatsapp_delivery_status_jobs WHERE id = $1",
+        [failureCases[0].id]
+      );
+      assert.equal(retained.rowCount, 1);
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
