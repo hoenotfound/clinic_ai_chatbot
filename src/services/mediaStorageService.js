@@ -350,7 +350,17 @@ async function uploadTemporaryMedia(
     mimeType,
     env,
   });
-  await putObject(key, buffer, mimeType);
+  try {
+    await putObject(key, buffer, mimeType);
+  } catch (err) {
+    // Writes can complete just before a timeout or lost response. This key
+    // was never handed to a caller, so a best-effort delete is always safe;
+    // the periodic stale-temp sweep catches anything left after a restart.
+    deleteMedia(key).catch((cleanupErr) => {
+      console.error("Failed to clean up abandoned temporary R2 upload:", cleanupErr);
+    });
+    throw err;
+  }
   return {
     key,
     url: createPresignedGetUrl(key, { expiresSeconds }),
@@ -426,15 +436,23 @@ async function copyStoredMediaToTemporary(
     env,
   });
 
-  await sendR2(
-    new CopyObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      CopySource: `${bucket}/${sourceKey}`,
-      MetadataDirective: "REPLACE",
-      ContentType: mimeType || "application/octet-stream",
-    })
-  );
+  try {
+    await sendR2(
+      new CopyObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        CopySource: `${bucket}/${sourceKey}`,
+        MetadataDirective: "REPLACE",
+        ContentType: mimeType || "application/octet-stream",
+      })
+    );
+  } catch (err) {
+    // In a failed or ambiguous copy, this unique temp key is safe to remove.
+    deleteMedia(key).catch((cleanupErr) => {
+      console.error("Failed to clean up abandoned temporary R2 copy:", cleanupErr);
+    });
+    throw err;
+  }
 
   return {
     key,
@@ -556,6 +574,16 @@ function isOwnedStoredMediaKey(key, env = process.env) {
   return normalized.startsWith("messages/");
 }
 
+/** A configured follow-up video may be referenced by many contact messages. */
+function isSharedFollowUpConfigKey(key, env = process.env) {
+  const normalized = String(key || "").trim();
+  if (!isOwnedStoredMediaKey(normalized, env)) return false;
+  const prefix = getMediaIsolationStatus(env).prefix;
+  return normalized.startsWith(
+    prefix ? `${prefix}/messages/follow-up-config/` : "messages/follow-up-config/"
+  ) || normalized.startsWith("messages/follow-up-config/");
+}
+
 /**
  * Deletes all customer media known at purge time. Exact keys are deleted first.
  * Namespaced prefix cleanup then catches temporary/unreferenced objects. Legacy
@@ -587,6 +615,10 @@ async function deleteCustomerMediaObjects({
       err.code = "CUSTOMER_MEDIA_KEY_NOT_OWNED";
       throw err;
     }
+    // Contact deletion must never remove a shared video still used by other
+    // customers or retained Inbox history. The config orphan sweeper alone
+    // owns these files and checks active config + database references.
+    if (isSharedFollowUpConfigKey(key, env)) continue;
     await deleteMedia(key);
     deleted += 1;
   }
@@ -847,6 +879,7 @@ module.exports = {
   deleteMediaPrefix,
   isOwnedCustomerMediaPrefix,
   isOwnedStoredMediaKey,
+  isSharedFollowUpConfigKey,
   isStaleTemporaryObject,
   pruneStaleTemporaryMedia,
   pruneStaleFollowUpConfigVideos,
