@@ -8,7 +8,7 @@ const { getActivePromotions } = require("../utils/activePromotion");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { quietHoursStatus, normalizeQuietHours } = require("../utils/quietHours");
 const { evaluatePricingReminder } = require("../utils/pricingReminderSelection");
-const { MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES } = pricingRepo;
+const { MINUTES_AFTER_TESTIMONIAL, FIRST_GRAPHIC_SAFETY_MINUTES, WINDOW_SAFETY_MINUTES } = pricingRepo;
 
 function activationCutoff(settings) {
   const main = Date.parse(settings.activatedAt);
@@ -17,7 +17,7 @@ function activationCutoff(settings) {
   return new Date(Math.max(main, pricing)).toISOString();
 }
 
-function evaluateOffer(candidate) {
+function evaluateOffer(candidate, settings = null) {
   const language = detectConversationLanguage(candidate.recent_customer_messages || []);
   return evaluatePricingReminder({
     promotions: getActivePromotions(clinicConfig.promotions || []),
@@ -25,10 +25,12 @@ function evaluateOffer(candidate) {
     services: clinicConfig.services || [],
     aliases: clinicConfig.serviceAliases || [],
     language,
+    requirePricingInterest: settings?.pricingReminder?.requirePricingInterest !== false,
+    sendBothPelvicPackages: settings?.pricingReminder?.sendBothPelvicPackages === true,
   });
 }
-function chooseOffer(candidate) {
-  return evaluateOffer(candidate).offer;
+function chooseOffer(candidate, settings) {
+  return evaluateOffer(candidate, settings).offer;
 }
 function statusForPricingSend(result) {
   if (result?.success) return "sent";
@@ -37,12 +39,12 @@ function statusForPricingSend(result) {
 }
 // Never move an unsent pricing message ahead of the testimonial. Respect the
 // same conservative 10-minute WhatsApp window buffer used by follow-ups.
-function canSendAfterFinal(candidate, at = new Date()) {
+function canSendAfterFinal(candidate, at = new Date(), imageCount = 1) {
   const thirdAt = Date.parse(candidate?.third_at);
   const inboundAt = Date.parse(candidate?.inbound_at);
   const current = new Date(at).getTime();
   const dueAt = thirdAt + MINUTES_AFTER_TESTIMONIAL * 60_000;
-  const safeEnd = inboundAt + (24 * 60 - WINDOW_SAFETY_MINUTES) * 60_000;
+  const safeEnd = inboundAt + (24 * 60 - (imageCount > 1 ? FIRST_GRAPHIC_SAFETY_MINUTES : WINDOW_SAFETY_MINUTES)) * 60_000;
   return [thirdAt, inboundAt, current].every(Number.isFinite)
     && current >= dueAt && current < safeEnd && dueAt < safeEnd;
 }
@@ -102,7 +104,7 @@ async function sendPricingReminder(candidate, offer, settings) {
         !canSendAfterFinal(candidate)) return false;
 
     // Changes to a promotion or current interest must not send stale prices.
-    const current = chooseOffer(candidate);
+    const current = chooseOffer(candidate, settings);
     if (!current || current.imageUrl !== offer.imageUrl ||
         current.caption !== offer.caption) return false;
     return pricingRepo.isClaimStillEligible({
@@ -175,6 +177,62 @@ async function sendPricingReminder(candidate, offer, settings) {
         : "Delivery failed: pricing graphic did not reach WhatsApp. Review in Inbox."
     );
   }
+  return result?.success ? (updated || saved) : null;
+}
+
+async function sendSecondPricing(candidate, first, offer, settings) {
+  if (!first || quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
+      !canSendAfterFinal(candidate)) return;
+  const saved = await pricingRepo.claimSecond({candidate, firstId:first.id, offer});
+  if (!saved) return;
+  publish(saved,"message");
+  const preSendCheck=async()=>{
+    const live=clinicConfig.automatedFollowUp;
+    if (!live?.enabled || live.pricingReminder?.enabled!==true ||
+        live.activatedAt!==settings.activatedAt ||
+        live.pricingReminder?.activatedAt!==settings.pricingReminder?.activatedAt ||
+        live.pricingReminder?.requirePricingInterest!==settings.pricingReminder?.requirePricingInterest ||
+        live.pricingReminder?.sendBothPelvicPackages!==settings.pricingReminder?.sendBothPelvicPackages ||
+        quietHoursStatus(new Date(),live.quietHours).active ||
+        !canSendAfterFinal(candidate)) return false;
+    const selected=evaluateOffer(candidate,settings).offers||[];
+    if (!selected.some(x=>x.imageUrl===offer.imageUrl && x.caption===offer.caption)) return false;
+    return pricingRepo.isSecondStillEligible({messageId:saved.id,firstId:first.id,
+      candidate,identities:offer.identities});
+  };
+  let result;
+  try {
+    result=await channelMessaging.sendImageByUrl({
+      id:candidate.contact_id,channel:"whatsapp",whatsapp_number:candidate.whatsapp_number,
+    },offer.imageUrl,offer.caption,{purpose:"marketing",preSendCheck});
+  } catch(err) {
+    console.error("Second pelvic pricing image interrupted:",err);
+    result={success:false,unknown:true,ambiguous:true,
+      error:"Second pricing image delivery unconfirmed."};
+  }
+  if (result?.cancelled) {
+    if (result.preSendCheckFailed) {
+      const updated=await messagesRepo.setDeliveryStatusById(saved.id,"cancelled",
+        "Second pricing image verification failed before provider send.");
+      publish(updated||{...saved,delivery_status:"cancelled"},"message_cancelled");
+      await contactsRepo.setDeliveryAttention(candidate.contact_id,
+        "Second pricing graphic was not sent because its eligibility check failed.");
+    } else if (await pricingRepo.discardSecond({
+      messageId:saved.id,contactId:candidate.contact_id,firstId:first.id,
+    })) {
+      publish({...saved,delivery_status:"cancelled"},"message_cancelled");
+    }
+    return;
+  }
+  const updated=result?.wamid
+    ? await messagesRepo.setWhatsappMessageId(saved.id,result.wamid)
+    : await messagesRepo.setDeliveryStatusById(saved.id,statusForPricingSend(result),
+      result?.success?null:(result?.error||"Second pricing image failed."));
+  publish(updated||saved,"delivery_status");
+  if (!result?.success) {
+    await contactsRepo.setDeliveryAttention(candidate.contact_id,
+      "Second pricing graphic failed or delivery is unconfirmed. Check the chat before retrying.");
+  }
 }
 
 // Called by the existing follow-up worker so this feature does not add another
@@ -196,12 +254,12 @@ async function runPricingReminders(settings, now = new Date()) {
       // A late final testimonial cannot reopen the WhatsApp window. Skip
       // rather than trying to send the price first or using a template.
       const safeEnd = Date.parse(candidate.inbound_at)
-        + (24 * 60 - WINDOW_SAFETY_MINUTES) * 60_000;
+        + (24 * 60 - (offers.length > 1 ? FIRST_GRAPHIC_SAFETY_MINUTES : WINDOW_SAFETY_MINUTES)) * 60_000;
       if (!Number.isFinite(safeEnd) || due >= safeEnd || now.getTime() >= safeEnd) {
         await skipCandidate(candidate, "insufficient_window");
         continue;
       }
-      const { offer, reason } = evaluateOffer(candidate);
+      const { offer, offers = [], reason } = evaluateOffer(candidate,settings);
       if (!offer) {
         if (due <= now.getTime()) await skipCandidate(candidate, reason);
         continue;
@@ -213,7 +271,8 @@ async function runPricingReminders(settings, now = new Date()) {
         continue;
       }
       if (canSendAfterFinal(candidate, now)) {
-        await sendPricingReminder(candidate, offer, settings);
+        const first=await sendPricingReminder(candidate,offer,settings);
+        if (first && offers.length > 1) await sendSecondPricing(candidate,first,offers[1],settings);
       }
     } catch (err) {
       console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
