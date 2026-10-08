@@ -115,7 +115,12 @@ async function sendPricingReminder(candidate, offer, settings) {
     );
   } catch (err) {
     console.error("Conditional pricing follow-up failed:", err);
-    result = { success: false };
+    // A thrown provider call can have reached Meta. Do not label it as a
+    // definite delivery failure or encourage a blind duplicate retry.
+    result = {
+      success: false, unknown: true, ambiguous: true,
+      error: "Pricing graphic delivery could not be confirmed after an interrupted provider request."
+    };
   }
   if (result?.cancelled && !result?.preSendCheckFailed) {
     if (await pricingRepo.discard({
@@ -129,7 +134,8 @@ async function sendPricingReminder(candidate, offer, settings) {
     updated = await messagesRepo.setWhatsappMessageId(saved.id, result.wamid);
   } else {
     updated = await messagesRepo.setDeliveryStatusById(
-      saved.id, result?.success ? "sent" : "failed",
+      saved.id,
+      result?.success ? "sent" : (result?.unknown || result?.ambiguous ? "unknown" : "failed"),
       result?.success ? null : (result?.error || "WhatsApp did not accept the pricing reminder. Review in Inbox.")
     );
   }
@@ -138,7 +144,9 @@ async function sendPricingReminder(candidate, offer, settings) {
   if (!result?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      "Delivery failed: pricing graphic did not reach WhatsApp. Review in Inbox."
+      result?.unknown || result?.ambiguous
+        ? "Delivery unconfirmed: pricing graphic may have reached WhatsApp. Check the customer chat before retrying."
+        : "Delivery failed: pricing graphic did not reach WhatsApp. Review in Inbox."
     );
   }
 }
