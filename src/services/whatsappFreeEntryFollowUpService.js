@@ -98,7 +98,7 @@ function settings(env = process.env) {
   const slots = cfg.freeEntry.slotsHours;
   if (!activatedAt || !Number.isFinite(activatedTime) ||
       !templateName || !/^[a-z0-9_]+$/.test(templateName) ||
-      !/^[a-z]{2,3}_[A-Z]{2}$/.test(language) ||
+      !/^(?:[a-z]{2,3}_[A-Z]{2}|ms)$/.test(language) ||
       !Array.isArray(slots) || !slots.length || slots.length > 6 ||
       slots.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166))
     return null;
