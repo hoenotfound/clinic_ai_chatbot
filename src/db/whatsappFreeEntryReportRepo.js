@@ -75,8 +75,9 @@ async function summarize(database = pool) {
       JOIN contacts c ON c.id=l.contact_id
       JOIN LATERAL (
         SELECT r.origin_message_id FROM whatsapp_free_entry_referrals r
+        JOIN messages referral_message ON referral_message.id=r.origin_message_id
         WHERE r.contact_id=c.id
-        ORDER BY r.recorded_at DESC,r.origin_message_id DESC
+        ORDER BY referral_message.created_at DESC,referral_message.id DESC
         LIMIT 1
       ) entry ON true
       WHERE c.channel='whatsapp'
