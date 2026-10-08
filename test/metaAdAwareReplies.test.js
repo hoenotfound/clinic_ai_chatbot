@@ -406,3 +406,69 @@ test("ad-name-derived treatment hint alone does not authorize result media", asy
   assert.equal(resolveMetaAdCreativeService(context, services, []), null);
   assert.equal(metaAdContextSection(context).includes("骨盆 1"), false);
 });
+
+
+test("AI-generated first greeting is localised instead of prepending the clinic's fixed-language intro", () => {
+  const metaAdContext = { headline: null, body: null, serviceHint: "骨盆调理", serviceHintSource: "ad_name" };
+  const options = normalizeReplyOptions({
+    isFirstMessage: true, generateFirstIntro: true, channel: "whatsapp", metaAdContext,
+  });
+  assert.equal(options.generateFirstIntro, true);
+  const prompt = buildSystemPrompt(options);
+  assert.match(prompt, /configured business intro.*is not appended/);
+  assert.match(prompt, /Greet the customer naturally in their requested language/);
+  assert.match(prompt, /Verified service topic.*骨盆调理/);
+  const withNormalIntro = buildSystemPrompt({ isFirstMessage: true, generateFirstIntro: false });
+  assert.match(withNormalIntro, /intro.*is added automatically/);
+
+  const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  assert.match(serverSource, /generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro/);
+  assert.match(serverSource, /ai\.getReply\(history, \{[\s\S]*?generateFirstIntro/);
+  assert.match(serverSource, /isFirstMessage && !urgentSafety && !generateFirstIntro/);
+});
+
+test("a delayed Meta ad name becomes available on the next local read without blocking on Graph", async () => {
+  const services = [{ name: "骨盆调理" }];
+  const aliases = [{ alias: "骨盆", officialService: "骨盆调理" }];
+  let stored = {
+    source: "meta_ads",
+    meta_ad_id: "test-ad-id",
+    ad_name: null,
+    headline: null,
+    body: null,
+  };
+  let reads = 0;
+  const repo = {
+    async getForContactCurrentLead(contactId) {
+      assert.equal(contactId, 28);
+      reads++;
+      return stored;
+    },
+  };
+  const first = await loadMetaAdReplyContext(28, { repo, services, aliases });
+  assert.equal(first, null, "unknown attribution must not be guessed from the ad ID");
+  stored = { ...stored, ad_name: "骨盆 1" };
+  const next = await loadMetaAdReplyContext(28, { repo, services, aliases });
+  assert.equal(next?.serviceHint, "骨盆调理");
+  assert.equal(next?.serviceHintSource, "ad_name");
+  assert.equal(reads, 2);
+});
+
+test("a configured 3D + 9D combined package is recognized without choosing only one component", () => {
+  const services = [{ name: "3D 小颜术" }, { name: "9D 逆龄抗衰" }, { name: "3D + 9D" }];
+  const aliases = [
+    { alias: "3D", officialService: "3D 小颜术" },
+    { alias: "9D", officialService: "9D 逆龄抗衰" },
+    { alias: "3D + 9D", officialService: "3D + 9D" },
+  ];
+  const matched = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "3D + 9D package 2026", headline: null, body: null,
+  }, { services, aliases });
+  assert.equal(matched?.serviceHint, "3D + 9D");
+  assert.equal(matched?.serviceHintSource, "ad_name");
+
+  const comparison = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "3D vs 9D comparison", headline: null, body: null,
+  }, { services, aliases });
+  assert.equal(comparison, null, "a comparison is not a combined service");
+});
