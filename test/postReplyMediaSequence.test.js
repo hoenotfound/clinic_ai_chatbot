@@ -298,3 +298,31 @@ test("normalized Meta attribution only unlocks result media when headline/body c
     null
   );
 });
+
+
+test("language-only and greeting-only messages never trigger result images even if the model misclassifies intent", async () => {
+  const scenarios = ["English", "Hi, English", "BM", "你好", "Hello"];
+  for (const customerText of scenarios) {
+    let checked = false;
+    const result = await resolveResultMediaForReply({
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      metaAdCreativeService: treatment,
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      treatment,
+      flagged: false,
+      bookingReady: false,
+      keywordReason: null,
+      needsAttention: false,
+      textSendSucceeded: true,
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      contactId: 42,
+      wasMediaRecentlySent: async () => { checked = true; return false; },
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(result, null, customerText);
+    assert.equal(checked, false, "must reject before any storage queries");
+  }
+});
