@@ -322,105 +322,6 @@ async function isClaimStillEligible({
   return result.rows[0]?.eligible === true;
 }
 
-// Package B is a supplemental step-4 message tied to the *first* anchored
-// pricing message. The first row's unique anchor prevents concurrent workers
-// from starting the same pair; this locked insert protects Package B.
-async function claimSupplemental({ candidate, offer, firstMessageId }) {
-  const result = await pool.query(
-    `WITH guard AS MATERIALIZED (
-       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
-     ), first_graphic AS (
-       SELECT m.id, m.created_at FROM messages m, guard
-       WHERE m.id=$2 AND m.contact_id=$1
-         AND m.pricing_reminder_anchor_id=$3
-         AND (m.delivery_status IN ('sent','delivered','read')
-           OR (m.delivery_status='pending' AND m.whatsapp_message_id IS NOT NULL))
-     ), inbound AS (
-       SELECT id, created_at FROM messages WHERE contact_id=$1 AND role='user'
-       ORDER BY created_at DESC,id DESC LIMIT 1
-     ), anchor AS (
-       SELECT id FROM messages
-       WHERE contact_id=$1 AND role='assistant' AND is_automated_follow_up=false
-         AND delivery_status IS DISTINCT FROM 'failed'
-         AND (created_at,id)>(SELECT created_at,id FROM inbound)
-       ORDER BY created_at DESC,id DESC LIMIT 1
-     )
-     INSERT INTO messages (contact_id,role,content,sent_by_username,media_url,
-       is_automated_follow_up,automated_follow_up_step,
-       automated_follow_up_target_service,automated_follow_up_targeting_recorded,
-       automated_follow_up_message_mode)
-     SELECT $1,'assistant',$4,'Follow-up automation',$5,true,4,$6,true,'fixed'
-     FROM first_graphic, inbound, anchor
-     JOIN contacts c ON c.id=$1
-     WHERE inbound.id=$7 AND anchor.id=$3
-       AND c.channel='whatsapp' AND c.whatsapp_number=$8
-       AND c.needs_attention=false AND COALESCE(c.mode,'ai')<>'human'
-       AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
-       AND now()<inbound.created_at+interval '23 hours 35 minutes'
-       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.contact_id=$1
-         AND m.role='assistant' AND m.media_url IS NOT NULL
-         AND split_part(regexp_replace(m.media_url,'^https?://[^/]+',''), '?',1)
-           =ANY($9::text[]))
-       AND NOT EXISTS (SELECT 1 FROM pricing_reminder_decisions d WHERE d.anchor_id=$3)
-       AND NOT EXISTS (SELECT 1 FROM follow_up_ai_decisions d WHERE d.contact_id=$1
-         AND d.trigger_message_id=$3 AND d.action IN ('skip','human_review'))
-       AND NOT EXISTS (SELECT 1 FROM leads l LEFT JOIN pipeline_stages st ON st.id=l.stage_id
-         WHERE l.id=(SELECT id FROM leads WHERE contact_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1)
-           AND (l.is_closed=true OR COALESCE(st.stage_type,'open')<>'open'
-             OR (COALESCE(l.appointment_status,'none') NOT IN ('reschedule','cancelled')
-               AND (COALESCE(st.system_key,'') IN ('appointment_set','visited')
-                 OR COALESCE(l.appointment_status,'none') IN ('set','visited')))))
-       AND COALESCE((SELECT treatment_interest FROM leads WHERE contact_id=$1
-         ORDER BY created_at DESC,id DESC LIMIT 1),'')=COALESCE($10::text,'')
-     RETURNING id,contact_id,content,media_url,delivery_status`,
-    [candidate.contact_id, firstMessageId, candidate.anchor_id,
-      offer.caption, offer.imageUrl, offer.serviceName, candidate.inbound_id,
-      candidate.whatsapp_number, offer.identities, candidate.treatment_interest]
-  );
-  return result.rows[0] || null;
-}
-
-async function isSupplementalClaimEligible({
-  messageId, candidate, firstMessageId, imageIdentities,
-}) {
-  const result = await pool.query(
-    `SELECT EXISTS (
-      SELECT 1 FROM messages m
-      JOIN contacts c ON c.id=m.contact_id
-      JOIN messages first ON first.id=$2
-      WHERE m.id=$1 AND m.contact_id=$3
-        AND m.is_automated_follow_up=true AND m.automated_follow_up_step=4
-        AND m.automated_follow_up_for_message_id IS NULL
-        AND m.pricing_reminder_anchor_id IS NULL
-        AND m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL
-        AND first.contact_id=$3 AND first.pricing_reminder_anchor_id=$4
-        AND (first.delivery_status IN ('sent','delivered','read')
-          OR (first.delivery_status='pending' AND first.whatsapp_message_id IS NOT NULL))
-        AND c.channel='whatsapp' AND c.whatsapp_number=$6
-        AND c.needs_attention=false AND COALESCE(c.mode,'ai')<>'human'
-        AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
-        AND now()<(SELECT created_at FROM messages WHERE id=$5)+interval '23 hours 35 minutes'
-        AND (SELECT id FROM messages WHERE contact_id=$3 AND role='user'
-          ORDER BY created_at DESC,id DESC LIMIT 1)=$5
-        AND COALESCE((SELECT treatment_interest FROM leads WHERE contact_id=$3
-          ORDER BY created_at DESC,id DESC LIMIT 1),'')=COALESCE($8::text,'')
-        AND NOT EXISTS (SELECT 1 FROM messages prior WHERE prior.contact_id=$3
-          AND prior.id<>$1 AND prior.role='assistant' AND prior.media_url IS NOT NULL
-          AND split_part(regexp_replace(prior.media_url,'^https?://[^/]+',''), '?',1)
-            =ANY($7::text[]))
-        AND NOT EXISTS (SELECT 1 FROM leads l LEFT JOIN pipeline_stages st ON st.id=l.stage_id
-          WHERE l.id=(SELECT id FROM leads WHERE contact_id=$3 ORDER BY created_at DESC,id DESC LIMIT 1)
-            AND (l.is_closed=true OR COALESCE(st.stage_type,'open')<>'open'
-              OR (COALESCE(l.appointment_status,'none') NOT IN ('reschedule','cancelled')
-                AND (COALESCE(st.system_key,'') IN ('appointment_set','visited')
-                  OR COALESCE(l.appointment_status,'none') IN ('set','visited')))))
-    ) AS eligible`,
-    [messageId,firstMessageId,candidate.contact_id,candidate.anchor_id,
-      candidate.inbound_id,candidate.whatsapp_number,imageIdentities,candidate.treatment_interest]
-  );
-  return result.rows[0]?.eligible === true;
-}
-
 async function recordDecision({ candidate, reason }) {
   const allowed = new Set([
     "already_sent", "delivery_review", "ambiguous_service",
@@ -456,4 +357,4 @@ async function discard({ messageId, contactId }) {
   );
   return result.rowCount > 0;
 }
-module.exports = { listEligible, claim, claimSupplemental, isClaimStillEligible, isSupplementalClaimEligible, recordDecision, discard, finalDueSql, afterFinalMode };
+module.exports = { listEligible, claim, isClaimStillEligible, recordDecision, discard, finalDueSql, afterFinalMode };
