@@ -26,6 +26,9 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       );
       CREATE TABLE pipeline_stages(id INTEGER PRIMARY KEY, stage_type TEXT, system_key TEXT);
       CREATE TABLE users(id INTEGER PRIMARY KEY,username TEXT UNIQUE);
+      CREATE TABLE meta_ad_insights_daily (
+        ad_id TEXT, ad_name TEXT, insight_date DATE, updated_at TIMESTAMPTZ
+      );
       CREATE TABLE leads(
         id INTEGER PRIMARY KEY, contact_id INTEGER, marketing_consent TEXT,
         is_closed BOOLEAN, appointment_status TEXT, stage_id INTEGER,
@@ -176,7 +179,12 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       SET created_at=now()-interval '27 hours' WHERE id=20`);
     await client.query(`UPDATE messages
       SET created_at=now()-interval '26 hours' WHERE id=21`);
+    await client.query(`INSERT INTO meta_ad_insights_daily
+      (ad_id,ad_name,insight_date,updated_at)
+      VALUES('ad-2','3D 小颜术 Face','2026-10-08',now())`);
     const repeatCandidate = (await worker.listCandidates(settings,client,1))[0];
+    assert.equal(repeatCandidate.referral_ad_name,"3D 小颜术 Face",
+      "ad name resolves from actual current ad ID, not stale CRM treatment");
     assert.equal(Number(repeatCandidate.first_reply_message_id),21,
       "a second ad-entry uses the newer Meta-confirmed business reply");
     assert.equal(worker.selectedSlot(repeatCandidate,settings.slots),26,
