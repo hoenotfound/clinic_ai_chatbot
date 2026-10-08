@@ -2,6 +2,7 @@ const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
+const freeEntryReferralsRepo = require("../db/whatsappFreeEntryReferralsRepo");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
@@ -42,6 +43,7 @@ function createInboundMessageClaimService({
   pipeline = pipelineRepo,
   attribution = leadAttributionService,
   processing = inboundProcessingRepo,
+  freeEntryReferrals = freeEntryReferralsRepo,
   events = realtimeEvents,
   policy = whatsappPolicy,
   reengagement = leadReengagementAlertService,
@@ -190,6 +192,21 @@ function createInboundMessageClaimService({
           `Failed to clear unused pending attribution for ${channel}:${incoming.from}:`,
           err
         );
+      }
+    }
+
+    // Keep every new CTWA ad-entry independently of the immutable CRM first
+    // touch. A second ad click for an existing lead can begin a separate,
+    // verified FEP window without overwriting attribution or marketing consent.
+    if (channel === "whatsapp" && incoming?.attribution) {
+      try {
+        await freeEntryReferrals.recordIfQualifying(
+          contact.id, savedInbound.id, incoming.attribution
+        );
+      } catch (err) {
+        // If the referral record fails, the customer reply must not wait.
+        // The extended marketing worker fails closed without that evidence.
+        console.error("Failed to record WhatsApp free-entry referral:", err);
       }
     }
 
