@@ -415,7 +415,7 @@ test("AI-generated first greeting is localised instead of prepending the clinic'
   });
   assert.equal(options.generateFirstIntro, true);
   const prompt = buildSystemPrompt(options);
-  assert.match(prompt, /configured business intro.*is not appended/);
+  assert.match(prompt, /application is NOT appending the configured business intro/);
   assert.match(prompt, /faithful translation of this entire configured intro/);
   assert.match(prompt, /Preserve ALL factual details and calls to action/);
   assert.match(prompt, /Verified service topic.*骨盆调理/);
