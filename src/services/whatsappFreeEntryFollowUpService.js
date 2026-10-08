@@ -169,17 +169,19 @@ function settings(env = process.env) {
   const activatedTime = new Date(activatedAt).getTime();
   const templateName = String(cfg.freeEntry.templateName || "").trim();
   const language = String(cfg.freeEntry.language || "").trim();
+  const fallbackLanguage = String(cfg.freeEntry.fallbackLanguage || "zh_CN").trim();
   const slots = cfg.freeEntry.slotsHours;
   const templateRules = cfg.freeEntry.templateRules || [];
   if (!activatedAt || !Number.isFinite(activatedTime) ||
       !templateName || !/^[a-z0-9_]+$/.test(templateName) ||
       !SUPPORTED_LANGUAGES.has(language) ||
+      !["zh_CN","en_US","ms"].includes(fallbackLanguage) ||
       !Array.isArray(slots) || !slots.length || slots.length > 6 ||
       slots.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
       !validateTemplateRules(templateRules, slots, clinicConfig.services || []))
     return null;
   return { activatedAt: new Date(activatedTime).toISOString(),
-    templateName, language, slots, templateRules };
+    templateName, language, fallbackLanguage, slots, templateRules };
 }
 
 function selectedSlot(candidate, slots, now = new Date()) {
@@ -320,7 +322,15 @@ async function processCandidate(candidate, active, template, now = new Date(), e
           liveActive.slots, clinicConfig.automatedFollowUp?.quietHours),
       }) ||
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
-      JSON.stringify(selectTemplateSpec(fresh, slotHours, liveActive)) !== JSON.stringify(spec)) {
+      !(() => {
+        const current = selectTemplateSpec(fresh, slotHours, liveActive);
+        return current && current.templateName === spec.templateName &&
+          current.mediaKey === spec.mediaKey &&
+          current.mediaUrl === spec.mediaUrl &&
+          current.serviceName === spec.serviceName &&
+          (current.language === spec.language ||
+            spec.language === liveActive.fallbackLanguage);
+      })()) {
       await messagesRepo.setDeliveryStatusById(message.id, "cancelled", "No longer eligible");
       await finish(attemptId, "cancelled", { messageId: message.id, error: "No longer eligible" });
       return "cancelled";
@@ -404,11 +414,14 @@ async function run({ now = new Date() } = {}) {
     for (const candidate of allCandidates) {
       const slotHours = selectedSlot(candidate, active.slots, now);
       if (!slotHours) { result.skipped++; continue; }
-      const spec = selectTemplateSpec(candidate, slotHours, active);
-      const template = catalog.templates.find((item) =>
-        item.name === spec?.templateName && item.language === spec?.language &&
+      const preferred = selectTemplateSpec(candidate, slotHours, active);
+      const matches = (locale) => catalog.templates.find((item) =>
+        item.name === preferred?.templateName && item.language === locale &&
         item.status === "APPROVED" && item.category === "MARKETING"
       );
+      const template = matches(preferred?.language) ||
+        matches(active.fallbackLanguage);
+      const spec = template ? { ...preferred, language: template.language } : preferred;
       if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates)) {
         result.skipped++;
         console.warn("[WhatsApp FEP] Approved static template/media missing for slot", slotHours);
