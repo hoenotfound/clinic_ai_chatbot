@@ -519,12 +519,14 @@ export default function Analytics() {
                   <SmallStat label="Skipped" value={data.followUps.pricingReminder?.skipped ?? 0} />
                 </div>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  Pending: {data.followUps.pricingReminder?.pending ?? 0}
+                  Internal cancellations: {data.followUps.pricingReminder?.cancelled ?? 0}
+                  {" · "}Pending: {data.followUps.pricingReminder?.pending ?? 0}
                   {" · "}Unknown: {data.followUps.pricingReminder?.unknown ?? 0}
                   {" · "}Already sent: {data.followUps.pricingReminder?.alreadySent ?? 0}
                   {" · "}Needs review: {data.followUps.pricingReminder?.reviewNeeded ?? 0}
                   {" · "}Unclear treatment or package: {data.followUps.pricingReminder?.ambiguous ?? 0}
                   {" · "}Too close to final follow-up: {data.followUps.pricingReminder?.insufficientWindow ?? 0}
+                  {" · "}No price enquiry: {data.followUps.pricingReminder?.noPricingInterest ?? 0}
                 </p>
               </div>
 
