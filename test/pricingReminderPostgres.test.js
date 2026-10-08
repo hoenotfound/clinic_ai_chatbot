@@ -36,7 +36,12 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
       CREATE TABLE lead_attributions (
-        id SERIAL PRIMARY KEY, lead_id INTEGER REFERENCES leads(id), ad_name TEXT
+        id SERIAL PRIMARY KEY, lead_id INTEGER REFERENCES leads(id),
+        ad_name TEXT, meta_ad_id TEXT
+      );
+      CREATE TABLE meta_ad_insights_daily (
+        ad_id TEXT NOT NULL, ad_name TEXT,
+        insight_date DATE NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
       );
       CREATE TABLE messages (
         id SERIAL PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),
@@ -333,6 +338,41 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         VALUES (402,4,'assistant','Follow-up 3',now()-interval '9 minutes','pending',
           'wamid.final.4',now()-interval '8 minutes',true,401,3);
     `);
+    // Attribution may be missing its ad_name while a synced Meta Ads Insights
+    // row has the actual ad name. Prefer the newest available insight.
+    const leadFour=await client.query(
+      "SELECT id FROM leads WHERE contact_id=4 ORDER BY id DESC LIMIT 1"
+    );
+    const leadFourId=leadFour.rows[0].id;
+    await client.query(
+      "INSERT INTO lead_attributions(lead_id, meta_ad_id, ad_name) VALUES ($1,$2,$3)",
+      [leadFourId,"meta-ad-4",""]
+    );
+    await client.query(`
+      INSERT INTO meta_ad_insights_daily(ad_id, ad_name, insight_date)
+      VALUES ('meta-ad-4', 'Old 9D Campaign', CURRENT_DATE - 2),
+             ('meta-ad-4', '3D 小颜术 Pricing Promo', CURRENT_DATE - 1)
+    `);
+    const foundViaInsights=await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",
+    });
+    assert.equal(foundViaInsights.find(c=>c.contact_id===4)?.ad_name,
+      "3D 小颜术 Pricing Promo",
+      "Pricing treatment attribution must fall back to newest matching Meta ad insight");
+    await client.query(
+      "UPDATE lead_attributions SET ad_name='3D 小颜术 Direct Ad' WHERE lead_id=$1",
+      [leadFourId]
+    );
+    const foundDirectAd=await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",
+    });
+    assert.equal(foundDirectAd.find(c=>c.contact_id===4)?.ad_name,
+      "3D 小颜术 Direct Ad",
+      "The attribution ad name takes precedence over a synced fallback");
+    await client.query(
+      "UPDATE lead_attributions SET ad_name=NULL WHERE lead_id=$1", [leadFourId]
+    );
+
     const socialFreshAt=new Date(Date.now()-6*3600000).toISOString();
     const socialCutoffCandidates=await pricingRepo.listEligible({
       activatedAt,socialActivatedAt:socialFreshAt,triggerMode:"all",
