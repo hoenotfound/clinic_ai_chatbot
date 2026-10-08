@@ -28,6 +28,7 @@ WITH eligible AS (
    )), '[]'::jsonb)
     FROM (SELECT media_url, content, delivery_status, whatsapp_message_id FROM messages
           WHERE contact_id = c.id AND role = 'assistant'
+            AND delivery_status IS DISTINCT FROM 'cancelled'
             AND media_url IS NOT NULL AND media_url <> ''
           ORDER BY created_at DESC, id DESC LIMIT 150) media
    ) AS sent_media
@@ -171,7 +172,9 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
          WHERE d.contact_id=$1 AND d.trigger_message_id=$2
            AND d.action IN ('skip','human_review'))
        AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.contact_id=$1
-         AND m.role='assistant' AND m.media_url IS NOT NULL
+         AND m.role='assistant'
+         AND m.delivery_status IS DISTINCT FROM 'cancelled'
+         AND m.media_url IS NOT NULL
          AND m.content IS NOT NULL AND m.content <> ''
          AND split_part(regexp_replace(m.media_url, '^https?://[^/]+', ''), '?',1)=ANY($9::text[]))
      ON CONFLICT DO NOTHING
@@ -239,6 +242,7 @@ async function isClaimStillEligible({
          )
          AND NOT EXISTS (SELECT 1 FROM messages prior
            WHERE prior.contact_id=$2 AND prior.id<>$1 AND prior.role='assistant'
+             AND prior.delivery_status IS DISTINCT FROM 'cancelled'
              AND prior.media_url IS NOT NULL AND prior.content IS NOT NULL
              AND prior.content <> ''
              AND split_part(regexp_replace(prior.media_url, '^https?://[^/]+', ''), '?',1)
