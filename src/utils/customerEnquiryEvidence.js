@@ -8,7 +8,7 @@ const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|p
 // "How much" can be a price enquiry or a question about time, discomfort,
 // frequency, quantity and recovery. Only unambiguous usages count as price
 // evidence, unless the message separately contains an explicit money term.
-const ENGLISH_MONEY_QUESTION = /\bhow\s+much\b(?!\s+(?:time|long(?:er)?|duration|recovery|rest|downtime|pain|discomfort|swelling|water|weight|pressure|effort|sleep|exercise|work|energy|space|area|difference|improvement|notice|healing|waiting|treatment\s+time)\b|\s+(?:does|do|did|will|would|should|can|could)\b[^?.!]{0,65}\b(?:take|last|hurt|heal|recover|rest|sleep)\b)/iu;
+const ENGLISH_MONEY_QUESTION = /\bhow\s+much\b(?!\s+(?:time|long(?:er)?|duration|recovery|rest|downtime|pain|discomfort|swelling|water|weight|pressure|effort|sleep|exercise|work|energy|space|area|difference|improvement|notice|healing|waiting|treatment\s+time)\b|\s+(?:is|are|was|were)\s+(?:(?:the|my|your|a|an|this)\s+)?(?:recovery|healing|waiting|rest|downtime|treatment|appointment|procedure)\s+(?:time|duration|period)\b|\s+(?:does|do|did|will|would|should|can|could|must|need)\b[^?.!,;]{0,85}\b(?:take|last|hurt|heal|recover|rest|sleep|wait|waiting)\b)/iu;
 
 const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b)|\b(?:rm|ringgit)\s+berapa\b)/iu;
 const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
