@@ -103,7 +103,37 @@ async function summarize(database = pool) {
              billing.billable IS DISTINCT FROM false THEN 'free_entry_billing_unconfirmed'
         WHEN first_reply.created_at + ($1::integer * interval '1 hour') <= now() THEN 'expired'
         WHEN last_attempt.status IN ('unknown','failed','sending') THEN 'previous_send_unconfirmed'
-        ELSE 'potentially_eligible'
+        WHEN EXISTS (
+          SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
+          LEFT JOIN whatsapp_free_entry_pricing_evidence p ON p.wamid=prior.wamid
+          WHERE prior.first_reply_message_id=first_reply.id AND prior.status='accepted'
+            AND (p.wamid IS NULL OR p.pricing_type<>'free_entry_point'
+              OR p.billable IS DISTINCT FROM false OR p.delivery_status='failed')
+        ) THEN 'previous_template_pricing_unconfirmed'
+        WHEN EXISTS (
+          SELECT 1 FROM messages m JOIN users u ON u.username=m.sent_by_username
+          WHERE m.contact_id=selected.contact_id AND m.role='assistant'
+            AND (m.created_at,m.id)>(first_reply.created_at,first_reply.id)
+        ) THEN 'staff_intervened'
+        WHEN NOT EXISTS (
+          SELECT 1 FROM messages business_reply
+          WHERE business_reply.contact_id=selected.contact_id
+            AND business_reply.role='assistant' AND business_reply.whatsapp_message_id IS NOT NULL
+            AND business_reply.created_at > (
+              SELECT MAX(inbound.created_at) FROM messages inbound
+              WHERE inbound.contact_id=selected.contact_id AND inbound.role='user'
+            )
+        ) THEN 'waiting_for_business_reply'
+        WHEN EXISTS (
+          SELECT 1 FROM messages inbound WHERE inbound.contact_id=selected.contact_id
+            AND inbound.role='user' AND inbound.created_at>now()-interval '24 hours'
+        ) THEN 'recent_customer_reply'
+        WHEN EXISTS (
+          SELECT 1 FROM messages outgoing WHERE outgoing.contact_id=selected.contact_id
+            AND outgoing.role='assistant' AND outgoing.created_at>now()-interval '5 hours'
+            AND outgoing.delivery_status IS DISTINCT FROM 'cancelled'
+        ) THEN 'minimum_message_spacing'
+        ELSE 'passes_initial_checks_verify_schedule'
       END AS eligibility_reason
     FROM selected
     LEFT JOIN LATERAL(
@@ -142,7 +172,8 @@ async function recordSkip(contactId, firstReplyId, slotHours, reason) {
     `INSERT INTO whatsapp_free_entry_followup_skips
       (contact_id,first_reply_message_id,slot_hours,reason)
      VALUES($1,$2,$3,$4) ON CONFLICT (first_reply_message_id,slot_hours,reason)
-     DO UPDATE SET observed_at=now()`,
+     DO UPDATE SET observed_at=now()
+     WHERE whatsapp_free_entry_followup_skips.observed_at < now()-interval '1 hour'`,
     [contactId,firstReplyId,slotHours,String(reason).slice(0,100)]
   );
 }
