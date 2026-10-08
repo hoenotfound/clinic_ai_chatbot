@@ -925,7 +925,10 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
 
     const result = await client.query(
       `UPDATE messages
-       SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL
+       SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL,
+           whatsapp_accepted_at = CASE
+             WHEN whatsapp_message_id IS DISTINCT FROM $2 OR whatsapp_accepted_at IS NULL
+             THEN clock_timestamp() ELSE whatsapp_accepted_at END
        WHERE id = $1
        RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
       [messageId, targetWhatsappMessageId]
