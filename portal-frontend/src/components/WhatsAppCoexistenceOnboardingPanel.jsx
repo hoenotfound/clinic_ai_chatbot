@@ -63,9 +63,9 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
     }
   }, []);
 
-  const loadConfig = useCallback(async () => {
+  const loadConfig = useCallback(async ({ preserveError = false } = {}) => {
     setLoading(true);
-    setError("");
+    if (!preserveError) setError("");
     try {
       const next = await api.getWhatsAppCoexistenceOnboardingConfig();
       setConfig(next);
@@ -130,7 +130,7 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
         } catch (err) {
           setError(err.message || "WhatsApp coexistence onboarding could not be validated.");
           setStage("");
-          void loadConfig();
+          void loadConfig({ preserveError: true });
         } finally {
           submittingRef.current = false;
           setConnecting(false);
@@ -185,6 +185,10 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
 
   function launchSignup() {
     if (!config?.configured || !sdkReady || !window.FB?.login || connecting || submittingRef.current) return;
+    if (!nonceRef.current) {
+      setError("This signup session has expired. Reload Setup Status before trying again.");
+      return;
+    }
 
     clearCompletionTimer();
     const attempt = createWhatsAppEmbeddedSignupAttempt(
