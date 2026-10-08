@@ -74,6 +74,9 @@ test("language-only requests take priority over configured greeting language", (
 test("a language request with a real treatment enquiry still permits enquiry logic", () => {
   assert.equal(detectMessageLanguage("Please reply in English. 骨盆调理 price?"), "en");
   assert.equal(isGreetingOrLanguageOnly("English price?"), false);
+  assert.equal(detectMessageLanguage("English please, 骨盆调理 price?"), "en");
+  assert.equal(isGreetingOrLanguageOnly("English please, 骨盆调理 price?"), false);
+  assert.equal(isGreetingOrLanguageOnly("Please reply in English. 骨盆调理 price?"), false);
   assert.equal(isGreetingOrLanguageOnly("Hi, how much for 骨盆调理?"), false);
   assert.equal(isGreetingOrLanguageOnly("BM, what are your prices?"), false);
   assert.equal(isGreetingOrLanguageOnly("Hello"), true);
