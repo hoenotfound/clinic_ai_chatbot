@@ -426,6 +426,7 @@ test("AI-generated first greeting is localised instead of prepending the clinic'
   assert.match(serverSource, /generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro/);
   assert.match(serverSource, /ai\.getReply\(history, \{[\s\S]*?generateFirstIntro/);
   assert.match(serverSource, /isFirstMessage && !urgentSafety && !generateFirstIntro/);
+  assert.match(serverSource, /preserveOriginalIntroFacts\(clinicConfig\.introMessage, aiReply\)/);
 });
 
 test("a delayed Meta ad name becomes available on the next local read without blocking on Graph", async () => {
