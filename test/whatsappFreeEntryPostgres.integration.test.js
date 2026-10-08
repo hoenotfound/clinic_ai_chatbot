@@ -43,6 +43,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       "../src/db/migrations/014_whatsapp_delivery_status_jobs.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/054_whatsapp_free_entry_followups.sql"), "utf8"));
+    await client.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/057_whatsapp_free_entry_referrals.sql"), "utf8"));
     await client.query(`
       INSERT INTO contacts(id, channel, whatsapp_number, mode, needs_attention,
         whatsapp_opt_in_at, whatsapp_opt_in_source)
@@ -58,6 +60,9 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       VALUES (11,1,'assistant','您好',now()-interval '54 hours','wamid.first','delivered');
       INSERT INTO lead_attributions(lead_id,first_message_id,channel,meta_source_type,ctwa_clid)
       VALUES(1,10,'whatsapp','ad','ctwa-1');
+      INSERT INTO whatsapp_free_entry_referrals
+        (origin_message_id,contact_id,ctwa_clid,source_type)
+      VALUES (10,1,'ctwa-1','ad');
       INSERT INTO whatsapp_free_entry_pricing_evidence(wamid,pricing_type,billable,delivery_status)
       VALUES('wamid.first','free_entry_point',false,'delivered');
     `);
@@ -133,6 +138,24 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     assert.equal(billing.rows[0].billable,true,"billable evidence is monotonic across out-of-order callbacks");
     assert.equal((await worker.listCandidates(settings,client,1)).length,0,
       "a confirmed charged template permanently blocks future slots");
+
+    // A second verified ad click on an existing lead starts a NEW independently
+    // priced entry, while CRM first-touch remains immutable.
+    await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at)
+      VALUES (20,1,'user','new ad click',now()-interval '4 hours')`);
+    await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at,whatsapp_message_id)
+      VALUES(21,1,'assistant','new ad reply',now()-interval '3 hours','wamid.second-entry')`);
+    await client.query(`INSERT INTO whatsapp_free_entry_referrals
+      (origin_message_id,contact_id,meta_ad_id,source_type)
+      VALUES(20,1,'ad-2','ad')`);
+    await client.query(`INSERT INTO whatsapp_free_entry_pricing_evidence
+      (wamid,pricing_type,billable,delivery_status)
+      VALUES('wamid.second-entry','free_entry_point',false,'delivered')`);
+    const newEntry = await worker.listCandidates(settings,client,1);
+    assert.equal(newEntry.length,0,"new entry must remain silent during its fresh 24h period");
+    const oldFirstTouch = await client.query(
+      "SELECT first_message_id FROM lead_attributions WHERE lead_id=1");
+    assert.equal(oldFirstTouch.rows[0].first_message_id,10,"original attribution remains unchanged");
   } finally {
     await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => {});
     await client.end();
