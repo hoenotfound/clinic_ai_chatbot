@@ -41,13 +41,13 @@ function canFitBeforeFinal(candidate, at = new Date()) {
   return Number.isFinite(finalDue) && Number.isFinite(current) &&
     current + 120 * 60 * 1000 <= finalDue;
 }
-function canSendAfterFinal(candidate, at = new Date()) {
+function canSendAfterFinal(candidate, at = new Date(), imageCount = 1) {
   const sentFinalAt = Date.parse(candidate.final_due_at);
   const lastInbound = Date.parse(candidate.inbound_at);
   const now = new Date(at).getTime();
   return [sentFinalAt, lastInbound, now].every(Number.isFinite) &&
     now >= sentFinalAt + 5 * 60 * 1000 &&
-    now < lastInbound + (24 * 60 - 10) * 60 * 1000;
+    now < lastInbound + (24 * 60 - (imageCount > 1 ? 25 : 15)) * 60 * 1000;
 }
 async function skipCandidate(candidate, reason) {
   const recorded = await pricingRepo.recordDecision({ candidate, reason });
