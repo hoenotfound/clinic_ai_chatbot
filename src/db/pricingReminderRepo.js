@@ -80,7 +80,17 @@ WITH eligible AS (
    WHERE l.contact_id = c.id ORDER BY l.created_at DESC, l.id DESC LIMIT 1
  ) lead ON true
  LEFT JOIN LATERAL (
-   SELECT la.ad_name FROM lead_attributions la
+   SELECT COALESCE(NULLIF(BTRIM(la.ad_name), ''),
+                   NULLIF(BTRIM(ah.ad_name), '')) AS ad_name
+   FROM lead_attributions la
+   LEFT JOIN LATERAL (
+     SELECT mi.ad_name
+     FROM meta_ad_insights_daily mi
+     WHERE mi.ad_id = la.meta_ad_id
+       AND NULLIF(BTRIM(la.ad_name), '') IS NULL
+     ORDER BY mi.insight_date DESC, mi.updated_at DESC
+     LIMIT 1
+   ) ah ON true
    WHERE la.lead_id = lead.id LIMIT 1
  ) attribution ON true
  LEFT JOIN LATERAL (
