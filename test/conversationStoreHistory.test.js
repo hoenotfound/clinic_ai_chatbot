@@ -81,7 +81,7 @@ test("AI history SQL excludes unsent pricing claims before loading the 20-messag
   pool.query=async (query)=>{sql=query;return {rows:[]}};
   const messages=await messagesRepo.getMessagesForContact(42,20,false);
   assert.deepEqual(messages,[]);
-  assert.match(sql,/NOT IN \\('failed', 'unknown', 'cancelled'\\)/);
+  assert.match(sql,/NOT IN \('failed', 'unknown', 'cancelled'\)/);
   assert.match(sql,/pricing_reminder_anchor_id IS NOT NULL/);
   assert.match(sql,/delivery_status IS NULL OR delivery_status = 'cancelled'/);
 });
