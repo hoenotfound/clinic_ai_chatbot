@@ -61,6 +61,7 @@ async function summarize(database = pool) {
      FROM whatsapp_free_entry_followup_attempts attempts
      ORDER BY created_at DESC, id DESC LIMIT 25`
   );
+  const safeCeilingHours = process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72;
   const contactDetails = await database.query(`
     WITH selected AS (
       SELECT DISTINCT ON (l.contact_id)
@@ -69,17 +70,21 @@ async function summarize(database = pool) {
         l.created_at, c.mode, c.needs_attention,
         c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
         c.whatsapp_opt_out_at, c.whatsapp_marketing_opt_out_at,
-        la.first_message_id
+        entry.origin_message_id AS first_message_id
       FROM leads l
       JOIN contacts c ON c.id=l.contact_id
-      JOIN lead_attributions la ON la.lead_id=l.id
-      WHERE c.channel='whatsapp' AND la.channel='whatsapp'
-        AND LOWER(COALESCE(la.meta_source_type,''))='ad'
+      JOIN LATERAL (
+        SELECT r.origin_message_id FROM whatsapp_free_entry_referrals r
+        WHERE r.contact_id=c.id
+        ORDER BY r.recorded_at DESC,r.origin_message_id DESC
+        LIMIT 1
+      ) entry ON true
+      WHERE c.channel='whatsapp'
       ORDER BY l.contact_id,l.is_closed ASC,l.created_at DESC,l.id DESC
     )
     SELECT selected.contact_id,selected.lead_id,selected.treatment_interest,
       first_reply.created_at AS first_reply_at,
-      first_reply.created_at + interval '7 days' AS free_entry_max_expires_at,
+      first_reply.created_at + ($1::integer * interval '1 hour') AS free_entry_max_expires_at,
       billing.pricing_type,billing.billable,
       last_skip.reason AS last_skip_reason,
       last_attempt.status AS last_attempt_status,
@@ -96,7 +101,7 @@ async function summarize(database = pool) {
         WHEN billing.billable = true THEN 'charged_by_meta'
         WHEN billing.pricing_type IS DISTINCT FROM 'free_entry_point' OR
              billing.billable IS DISTINCT FROM false THEN 'free_entry_billing_unconfirmed'
-        WHEN first_reply.created_at + interval '7 days' <= now() THEN 'expired'
+        WHEN first_reply.created_at + ($1::integer * interval '1 hour') <= now() THEN 'expired'
         WHEN last_attempt.status IN ('unknown','failed','sending') THEN 'previous_send_unconfirmed'
         ELSE 'potentially_eligible'
       END AS eligibility_reason
@@ -123,7 +128,7 @@ async function summarize(database = pool) {
       ORDER BY created_at DESC,id DESC LIMIT 1
     ) last_attempt ON true
     ORDER BY selected.created_at DESC LIMIT 40
-  `);
+  `, [safeCeilingHours]);
   return {
     leads: leads.rows[0] || {},
     attempts: attempts.rows,
