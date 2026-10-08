@@ -383,7 +383,9 @@ function isAutomatedFollowUpConfig(value) {
         (value.pricingReminder.requirePricingInterest !== undefined &&
           typeof value.pricingReminder.requirePricingInterest !== "boolean") ||
         (value.pricingReminder.sendBothPelvicPackages !== undefined &&
-          typeof value.pricingReminder.sendBothPelvicPackages !== "boolean"))) ||
+          typeof value.pricingReminder.sendBothPelvicPackages !== "boolean") ||
+        (value.pricingReminder.enableSocialChannels !== undefined &&
+          typeof value.pricingReminder.enableSocialChannels !== "boolean"))) ||
     !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
   ) {
     return false;
@@ -600,11 +602,15 @@ function prepareAutomatedFollowUpConfig(requested, current) {
         (requestedPricing.requirePricingInterest !== undefined &&
           typeof requestedPricing.requirePricingInterest !== "boolean") ||
         (requestedPricing.sendBothPelvicPackages !== undefined &&
-          typeof requestedPricing.sendBothPelvicPackages !== "boolean"))) return null;
+          typeof requestedPricing.sendBothPelvicPackages !== "boolean") ||
+        (requestedPricing.enableSocialChannels !== undefined &&
+          typeof requestedPricing.enableSocialChannels !== "boolean"))) return null;
   const requirePricingInterest = requestedPricing?.requirePricingInterest ??
     (current?.pricingReminder?.requirePricingInterest !== false);
   const sendBothPelvicPackages = requestedPricing?.sendBothPelvicPackages ??
     (current?.pricingReminder?.sendBothPelvicPackages === true);
+  const enableSocialChannels = requestedPricing?.enableSocialChannels ??
+    (current?.pricingReminder?.enableSocialChannels === true);
   const pricingEnabled = requestedPricing === undefined
     ? current?.pricingReminder?.enabled === true
     : requestedPricing.enabled === true;
@@ -613,6 +619,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       ? current?.pricingReminder?.enabled === true &&
         (current.pricingReminder.requirePricingInterest !== false) === requirePricingInterest &&
         (current.pricingReminder.sendBothPelvicPackages === true) === sendBothPelvicPackages &&
+        (current.pricingReminder.enableSocialChannels === true) === enableSocialChannels &&
         typeof current.pricingReminder.activatedAt === "string" &&
         !Number.isNaN(Date.parse(current.pricingReminder.activatedAt))
           ? current.pricingReminder.activatedAt
@@ -668,7 +675,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     ...firstStep,
     additionalSteps,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
-      requirePricingInterest, sendBothPelvicPackages },
+      requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
     activatedAt: enabled
       ? continuingCurrentActivation
         ? current.activatedAt
