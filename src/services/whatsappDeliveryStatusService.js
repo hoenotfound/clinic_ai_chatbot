@@ -63,7 +63,7 @@ function defaultUnmatchedFailureAlert({ jobs }) {
     chatId: process.env.TELEGRAM_CHAT_ID,
     text:
       "⚠️ WhatsApp provider delivery mismatch\n" +
-      "${jobs.length}".replace("${jobs.length}", String(jobs.length)) +
+      String(jobs.length) +
       " completed failed delivery callback(s) have no matching saved message " +
       "or outbound evidence after five minutes.\n" +
       details + remainder +
