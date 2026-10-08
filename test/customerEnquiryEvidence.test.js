@@ -106,6 +106,10 @@ test("Administrative information/questions do not qualify as service-media enqui
 test("English how-much questions distinguish duration and quantities from money", () => {
   for (const customerText of [
     "How much time does this treatment take?",
+    "How much does this treatment take?",
+    "How much does the facial treatment hurt?",
+    "How much do I need to rest?",
+    "How much would it take to recover?",
     "How much longer does this take?",
     "How much recovery time will I need after 3D?",
     "How much downtime is there?",
@@ -121,6 +125,7 @@ test("English how-much questions distinguish duration and quantities from money"
     "How much is the 3D treatment?",
     "How much for pelvic treatment?",
     "How much does 9D cost?",
+    "How much does this treatment take, and how much does it cost?",
     "How much time does it take, and how much does it cost?",
     "How much recovery time and price?",
     "What is the first trial price?",
