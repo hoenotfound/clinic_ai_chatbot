@@ -184,6 +184,7 @@ function normalizeFollowUpSettings(value = {}) {
         templateName: String(rule.templateName || ""),
         mediaUrl: String(rule.mediaUrl || ""),
         mediaKey: String(rule.mediaKey || ""),
+        videoCodecVerified: rule.videoCodecVerified === true,
       })) : [],
       slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
         ? value.freeEntry.slotsHours.map(Number)
@@ -859,6 +860,7 @@ export default function Tools() {
               templateName: rule.templateName.trim(),
               mediaUrl: (rule.mediaUrl || "").trim(),
               mediaKey: (rule.mediaKey || "").trim(),
+              videoCodecVerified: rule.videoCodecVerified === true,
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
@@ -2698,7 +2700,7 @@ function FollowUpTool({
                         ...(current.freeEntry?.templateRules || []),
                         { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
                           serviceName: services?.[0]?.name || "",
-                          templateName: "", mediaUrl: "", mediaKey: "" }
+                          templateName: "", mediaUrl: "", mediaKey: "", videoCodecVerified: false }
                       ],
                     },
                   }))}>Add rule</button>
@@ -2765,6 +2767,16 @@ function FollowUpTool({
                             i === index ? { ...r, mediaUrl: event.target.value } : r)
                         }
                       }))}/>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-medium sm:col-span-2">
+                    <input type="checkbox" checked={rule.videoCodecVerified === true}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, videoCodecVerified: event.target.checked } : r)
+                        }
+                      }))}/>
+                    I have verified the approved MP4 is encoded with H.264 video and AAC audio (not HEVC). Required for VIDEO headers.
                   </label>
                   <button type="button" className="text-left text-xs text-red-600"
                     aria-label={`Remove treatment template rule ${index + 1}`}
