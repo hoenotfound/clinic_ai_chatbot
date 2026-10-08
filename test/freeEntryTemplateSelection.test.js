@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   selectTemplateSpec, validateTemplateRules, buildStaticMarketingTemplate, validMediaUrl,
+  validateApprovedMedia,
 } = require("../src/utils/freeEntryTemplateSelection");
 const whatsapp = require("../src/services/whatsappTemplateService");
 
@@ -38,4 +39,57 @@ test("media templates need approved marketing header and explicit https media", 
 test("duplicate service and day rule is not accepted", () => {
   const rule={slotHours:50,serviceName:"骨盆调理",templateName:"pelvis_video",mediaUrl:""};
   assert.equal(validateTemplateRules([rule,{...rule}], [50],services),false);
+});
+
+test("a new 3D ad cannot accidentally inherit a previous pelvic treatment", () => {
+  const cfg={templateName:"general",language:"auto",templateRules:[
+    {slotHours:50,serviceName:"3D + 9D",templateName:"combo",mediaUrl:""},
+    {slotHours:50,serviceName:"骨盆调理",templateName:"pelvis",mediaUrl:""},
+    {slotHours:50,serviceName:"3D 小颜术",templateName:"face",mediaUrl:""},
+  ]};
+  const newAd=selectTemplateSpec({
+    treatment_interest:"骨盆调理",lead_started_message_id:10,
+    latest_ad_message_id:20,referral_ad_name:"3D 小颜术 treatment",
+    recent_inbound_messages:["您好, interested in face"],
+  },50,cfg);
+  assert.equal(newAd.templateName,"face");
+  const customerOverridesAd=selectTemplateSpec({
+    treatment_interest:"骨盆调理",lead_started_message_id:10,
+    latest_ad_message_id:20,referral_treatment_interest:"3D 小颜术",
+    recent_inbound_messages:["我想了解 3D + 9D"],
+  },50,cfg);
+  assert.equal(customerOverridesAd.templateName,"combo");
+  assert.equal(selectTemplateSpec({
+    treatment_interest:"骨盆调理",lead_started_message_id:10,
+    latest_ad_message_id:20,referral_ad_name:"",
+    recent_inbound_messages:["您好"],
+  },50,cfg).templateName,"general");
+});
+
+test("R2 media and public HTTPS header validation fail closed on MIME and size",async()=>{
+  const format=(kind)=>({header:{format:kind}});
+  const store={
+    isSharedFollowUpConfigKey:(key)=>key.startsWith("messages/follow-up-config/"),
+    getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"image/jpeg"}),
+  };
+  assert.equal(await validateApprovedMedia(format("IMAGE"),
+    {mediaKey:"messages/follow-up-config/p.jpg"}, {mediaStore:store}),true);
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    {mediaKey:"messages/follow-up-config/p.jpg"}, {mediaStore:store}),false);
+  assert.equal(await validateApprovedMedia(format("IMAGE"),
+    {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:store}),false);
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:{
+      ...store,getSharedFollowUpMediaInfo:async()=>({bytes:19*1024*1024,mimeType:"video/mp4"}),
+    }}),false);
+  const remote="https://cdn.example.com/image.jpg";
+  const fetchStub=async (_url,opts)=>{
+    assert.equal(opts.method,"HEAD");
+    assert.equal(opts.redirect,"error");
+    return {ok:true,headers:new Map([["content-type","image/jpeg"],["content-length","4000"]])};
+  };
+  assert.equal(await validateApprovedMedia(format("IMAGE"),{mediaUrl:remote},
+    {fetchImpl:fetchStub,env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:""}}),false);
+  assert.equal(await validateApprovedMedia(format("IMAGE"),{mediaUrl:remote},
+    {fetchImpl:fetchStub,env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:"cdn.example.com"}}),true);
 });
