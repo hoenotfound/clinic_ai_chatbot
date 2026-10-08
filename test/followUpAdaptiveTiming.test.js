@@ -52,3 +52,25 @@ test("disabled quiet hours leave the nominal 22-hour deadline",{
     assert.equal(result.rows[0].due_at.toISOString(),"2026-10-08T21:03:00.000Z");
   } finally {await pool.end();}
 });
+
+test("20-hour final setting is never pulled before 20 hours during quiet hours", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const { Pool } = require("pg");
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL, ssl: false });
+  try {
+    const result = await pool.query(`SELECT ${expression} AS due_at`, [
+      "2026-10-07T20:30:00Z", // 04:30 MYT: nominal 20h later falls in quiet hours
+      "2026-10-08T02:30:00Z", 3, 240, 840,
+    ]);
+    assert.equal(result.rows[0].due_at.toISOString(), "2026-10-08T16:30:00.000Z");
+
+    // Step 2 delayed to hour 22: the final stays at least 2h later.
+    const late = await pool.query(`SELECT ${expression} AS due_at`, [
+      "2026-10-07T20:30:00Z", "2026-10-08T18:30:00Z", 3, 240, 840,
+    ]);
+    assert.equal(late.rows[0].due_at.toISOString(), "2026-10-08T20:30:00.000Z");
+  } finally {
+    await pool.end();
+  }
+});
