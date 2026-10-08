@@ -51,8 +51,9 @@ const candidateSql = `
   JOIN LATERAL (
     SELECT entry.origin_message_id, entry.ctwa_clid, entry.meta_ad_id
     FROM whatsapp_free_entry_referrals entry
+    JOIN messages ad_origin ON ad_origin.id=entry.origin_message_id
     WHERE entry.contact_id = c.id
-    ORDER BY entry.recorded_at DESC, entry.origin_message_id DESC
+    ORDER BY ad_origin.created_at DESC, ad_origin.id DESC
     LIMIT 1
   ) referral ON true
   JOIN messages origin ON origin.id = referral.origin_message_id
