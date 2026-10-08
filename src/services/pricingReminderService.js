@@ -29,6 +29,11 @@ function evaluateOffer(candidate) {
 function chooseOffer(candidate) {
   return evaluateOffer(candidate).offer;
 }
+function statusForPricingSend(result) {
+  if (result?.success) return "sent";
+  if (result?.unknown || result?.ambiguous) return "unknown";
+  return "failed";
+}
 function canFitBeforeFinal(candidate, at = new Date()) {
   const finalDue = Date.parse(candidate.final_due_at);
   const current = new Date(at).getTime();
@@ -135,7 +140,7 @@ async function sendPricingReminder(candidate, offer, settings) {
   } else {
     updated = await messagesRepo.setDeliveryStatusById(
       saved.id,
-      result?.success ? "sent" : (result?.unknown || result?.ambiguous ? "unknown" : "failed"),
+      statusForPricingSend(result),
       result?.success ? null : (result?.error || "WhatsApp did not accept the pricing reminder. Review in Inbox.")
     );
   }
@@ -190,4 +195,4 @@ async function runPricingReminders(settings, now = new Date()) {
   }
   return nextDueAt;
 }
-module.exports = { runPricingReminders, chooseOffer, canFitBeforeFinal, evaluateOffer };
+module.exports = { runPricingReminders, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };
