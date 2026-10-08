@@ -1830,6 +1830,22 @@ function FollowUpTool({
   const [previewStepIndex, setPreviewStepIndex] = useState(0);
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
+  const [freeEntryStatus, setFreeEntryStatus] = useState(null);
+  const [freeEntryStatusError, setFreeEntryStatusError] = useState("");
+  const [freeEntryStatusLoading, setFreeEntryStatusLoading] = useState(false);
+  const refreshFreeEntryStatus = useCallback(async () => {
+    setFreeEntryStatusLoading(true);
+    try {
+      const status = await api.getFreeEntryStatus();
+      setFreeEntryStatus(status);
+      setFreeEntryStatusError("");
+    } catch (error) {
+      setFreeEntryStatusError(error.message || "Could not verify Meta billing status.");
+    } finally {
+      setFreeEntryStatusLoading(false);
+    }
+  }, []);
+  useEffect(() => { refreshFreeEntryStatus(); }, [refreshFreeEntryStatus]);
 
   const allSteps = [
     {
@@ -2520,6 +2536,53 @@ function FollowUpTool({
                   freeEntry: { ...current.freeEntry, enabled: current.freeEntry?.enabled !== true },
                 }))}
               />
+            </div>
+            <div className="mt-3 rounded-xl border border-[var(--color-border)] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold">Free-entry eligibility and billing</p>
+                <button type="button" className="text-xs font-semibold text-[var(--color-primary)]"
+                  disabled={freeEntryStatusLoading} onClick={refreshFreeEntryStatus}>
+                  {freeEntryStatusLoading ? "Checking..." : "Refresh"}
+                </button>
+              </div>
+              {freeEntryStatusError ? <p className="mt-2 text-xs text-red-600">{freeEntryStatusError}</p> : null}
+              {freeEntryStatus ? (
+                <>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    Server sending: {freeEntryStatus.enabledOnServer ? "Enabled" : "Disabled"}
+                    {" · "}Tools: {freeEntryStatus.enabledInTools ? "Enabled" : "Disabled"}
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {[
+                      ["Ad leads", freeEntryStatus.leads?.ad_leads || 0],
+                      ["Marketing opted-in", freeEntryStatus.leads?.explicit_marketing_optins || 0],
+                      ["Confirmed free-entry", freeEntryStatus.leads?.verified_free_entry || 0],
+                      ["Billed callbacks", freeEntryStatus.leads?.confirmed_billable || 0],
+                    ].map(([label, value]) => (
+                      <div className="rounded-lg bg-[var(--color-bg)] p-2" key={label}>
+                        <p className="text-base font-bold">{value}</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)]">{label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    Attempt outcomes: {(freeEntryStatus.attempts || []).map((item) =>
+                      `${item.status}: ${item.count}`).join(" · ") || "No extended sends yet"}
+                  </p>
+                  {(freeEntryStatus.recentAttempts || []).length > 0 ? (
+                    <div className="mt-2 max-h-32 overflow-y-auto text-[11px] text-[var(--color-text-muted)]">
+                      {(freeEntryStatus.recentAttempts || []).map((item, index) => (
+                        <p key={index}>Contact #{item.contact_id} · {item.slot_hours}h · {item.status}
+                          {item.billable ? " · Billable" : ""} {item.error ? `· ${item.error}` : ""}</p>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                    Confirmation reflects past Meta callbacks, not a guarantee of future free sends.
+                    Never automatically treat ad clicks as marketing opt-in.
+                  </p>
+                </>
+              ) : null}
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="block text-xs font-semibold">
