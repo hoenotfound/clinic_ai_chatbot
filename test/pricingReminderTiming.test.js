@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { canFitBeforeFinal, statusForPricingSend } = require("../src/services/pricingReminderService");
+const { canFitBeforeFinal, canSendAfterFinal, statusForPricingSend } = require("../src/services/pricingReminderService");
 const { finalDueSql } = require("../src/db/pricingReminderRepo");
 
 const steps = [
@@ -53,4 +53,24 @@ test("ambiguous provider timeouts remain unconfirmed, not failed", () => {
     success: false, error: "WhatsApp rejected the image",
   }), "failed");
   assert.equal(statusForPricingSend({success: true}), "sent");
+});
+
+test("post-final graphic waits five minutes and requires an open WhatsApp window", () => {
+  const now = new Date("2026-10-08T12:05:00Z");
+  const candidate = {
+    final_due_at: "2026-10-08T12:00:00Z",
+    inbound_at: "2026-10-08T00:00:00Z",
+  };
+  assert.equal(canSendAfterFinal(candidate, now), true);
+  assert.equal(canSendAfterFinal(candidate, new Date("2026-10-08T12:04:59Z")), false);
+  assert.equal(canSendAfterFinal({
+    ...candidate, final_due_at: "2026-10-08T12:03:00Z",
+  }, now), false);
+  assert.equal(canSendAfterFinal({
+    final_due_at: "2026-10-08T23:48:00Z",
+    inbound_at: "2026-10-08T00:00:00Z",
+  }, new Date("2026-10-08T23:53:00Z")), false);
+  assert.equal(canSendAfterFinal({
+    final_due_at: null, inbound_at: "2026-10-08T00:00:00Z",
+  }, now), false);
 });
