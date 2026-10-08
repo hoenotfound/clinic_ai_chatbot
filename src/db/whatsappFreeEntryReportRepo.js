@@ -27,7 +27,7 @@ async function summarize(database = pool) {
           AND m.whatsapp_message_id IS NOT NULL
           AND m.created_at>=origin.created_at
           AND m.created_at<origin.created_at+interval '24 hours'
-        ORDER BY m.created_at,m.id LIMIT1
+        ORDER BY m.created_at,m.id LIMIT 1
       ) first_reply ON true
       LEFT JOIN whatsapp_free_entry_pricing_evidence billing
         ON billing.wamid=first_reply.whatsapp_message_id
