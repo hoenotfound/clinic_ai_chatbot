@@ -30,7 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  pricingReminder: { enabled: false },
+  pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -172,7 +172,11 @@ function normalizeFollowUpSettings(value = {}) {
     additionalSteps: Array.isArray(value.additionalSteps)
       ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
       : [],
-    pricingReminder: { enabled: value?.pricingReminder?.enabled === true },
+    pricingReminder: {
+      enabled:value?.pricingReminder?.enabled === true,
+      requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
+      sendBothPelvicPackages:value?.pricingReminder?.sendBothPelvicPackages === true,
+    },
   };
 }
 
@@ -817,7 +821,11 @@ export default function Tools() {
           videoFilename: form.videoFilename,
           serviceOverrides,
           additionalSteps,
-          pricingReminder: { enabled: form.pricingReminder?.enabled === true },
+          pricingReminder: {
+            enabled:form.pricingReminder?.enabled === true,
+            requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
+            sendBothPelvicPackages:form.pricingReminder?.sendBothPelvicPackages === true,
+          },
         },
       });
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
@@ -2359,13 +2367,13 @@ function FollowUpTool({
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
                   WhatsApp only. Send at least 5 minutes after Meta accepts Follow-up 3,
-                  even if the customer has not asked for pricing. Only send graphics
-                  that have not already been sent, in the customer's language.
+                  when the customer's treatment is identifiable. Whether a price
+                  enquiry is required is configurable for each clinic.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  Requires an accepted Follow-up 3. If 骨盆调理 Package A/B is unclear,
-                  send both pricing graphics; a clear choice sends only that package.
-                  Never send outside the WhatsApp reply window or during quiet hours.
+                  Requires an accepted Follow-up 3. Pelvic Package A/B can be sent
+                  separately when the choice is unclear. Never send outside the
+                  WhatsApp reply window or during quiet hours.
                 </p>
               </div>
               <Switch
@@ -2374,10 +2382,51 @@ function FollowUpTool({
                 onChange={() => setForm((current) => ({
                   ...current,
                   pricingReminder: {
+                    ...current.pricingReminder,
                     enabled: current.pricingReminder?.enabled !== true,
                   },
                 }))}
               />
+            </div>
+            <div className="mt-3 space-y-3 rounded-xl border border-[var(--color-border)] p-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold">Require a customer price enquiry</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Disable to send the relevant treatment price even if the customer only asked about results.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.pricingReminder?.requirePricingInterest !== false}
+                  ariaLabel="Require a customer price enquiry"
+                  onChange={() => setForm((current) => ({
+                    ...current,
+                    pricingReminder: {
+                      ...current.pricingReminder,
+                      requirePricingInterest:current.pricingReminder?.requirePricingInterest === false,
+                    },
+                  }))}
+                />
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold">Send both pelvic package graphics if choice is unclear</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Sends A and B as separate images. If one is chosen, only its graphic is sent.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.pricingReminder?.sendBothPelvicPackages === true}
+                  ariaLabel="Send both pelvic package graphics"
+                  onChange={() => setForm((current) => ({
+                    ...current,
+                    pricingReminder: {
+                      ...current.pricingReminder,
+                      sendBothPelvicPackages:current.pricingReminder?.sendBothPelvicPackages !== true,
+                    },
+                  }))}
+                />
+              </div>
             </div>
           </Card>
         </div>
@@ -2523,7 +2572,7 @@ function FollowUpTool({
                   <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
                   <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
                   <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-                  <Rule text="The optional pricing reminder waits at least 5 minutes after WhatsApp accepts Follow-up 3, even without a pricing enquiry. For unclear 骨盆调理 packages, it sends A and B separately. It skips if the reply window closes or quiet hours prevent delivery." />
+                  <Rule text="The pricing reminder waits 5 minutes after Meta accepts Follow-up 3. Price enquiries and dual pelvic A/B graphics are clinic-specific options. The WhatsApp window and quiet hours remain hard stops." />
                   <Rule text="WhatsApp opt-outs remain a hard stop." />
                   <Rule text="Saving does not add follow-ups to older conversations." />
                 </ul>

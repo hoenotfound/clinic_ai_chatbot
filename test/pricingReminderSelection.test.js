@@ -161,3 +161,30 @@ test("unknown delivery for one pelvis package requires review before sending ano
   assert.equal(result.reason,"delivery_review");
   assert.deepEqual(result.offers,[]);
 });
+
+test("clinic-specific rule preserves opt-in price interest for other tenants",()=>{
+  const options={promotions,services,language:"zh",
+    candidate:{treatment_interest:"3D 小颜术",recent_customer_messages:["3D 适合我吗？"]}};
+  const required=evaluatePricingReminder({...options,requirePricingInterest:true});
+  assert.equal(required.offer,null);
+  assert.equal(required.reason,"no_pricing_interest");
+  assert.equal(evaluatePricingReminder({...options,requirePricingInterest:false}).offer?.caption,"RM488");
+  const explicit=evaluatePricingReminder({...options,requirePricingInterest:true,
+    candidate:{...options.candidate,recent_customer_messages:["3D price please"]}});
+  assert.equal(explicit.offer?.caption,"RM488");
+});
+
+test("clinic-specific pelvic graphic option avoids changing another client's multi-package behavior",()=>{
+  const candidate={treatment_interest:"骨盆调理",recent_customer_messages:["骨盆调理效果如何"]};
+  const disabled=evaluatePricingReminder({
+    promotions,services,candidate,sendBothPelvicPackages:false});
+  assert.equal(disabled.offer,null);
+  assert.equal(disabled.reason,"ambiguous_package");
+  const enabled=evaluatePricingReminder({
+    promotions,services,candidate,sendBothPelvicPackages:true});
+  assert.deepEqual(enabled.offers.map(x=>x.packageName),["Package A","Package B"]);
+  const chosen=evaluatePricingReminder({
+    promotions,services,sendBothPelvicPackages:false,
+    candidate:{...candidate,recent_customer_messages:["Package B please"]}});
+  assert.deepEqual(chosen.offers.map(x=>x.packageName),["Package B"]);
+});

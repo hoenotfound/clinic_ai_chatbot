@@ -46,3 +46,12 @@ test("ambiguous provider timeouts remain unconfirmed, not failed", () => {
   assert.equal(statusForPricingSend({success:false,error:"WhatsApp rejected"}),"failed");
   assert.equal(statusForPricingSend({success:true}),"sent");
 });
+
+test("two-image reminder leaves an extra five minutes for the second provider send", () => {
+  const inbound_at = "2026-10-08T00:00:00Z";
+  const candidate = { inbound_at, third_accepted_at:"2026-10-08T23:35:00Z" };
+  assert.equal(canSendAfterFinal(candidate,new Date("2026-10-08T23:44:59Z"),2),true);
+  assert.equal(canSendAfterFinal(candidate,new Date("2026-10-08T23:45:00Z"),2),false);
+  assert.equal(canSendAfterFinal(candidate,new Date("2026-10-08T23:45:00Z"),1),true);
+  assert.equal(canSendAfterFinal(candidate,new Date("2026-10-08T23:50:00Z"),1),false);
+});

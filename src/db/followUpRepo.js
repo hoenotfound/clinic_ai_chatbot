@@ -1,6 +1,12 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
+const clinicConfig = require("../config/clinicConfig");
+function reserveFinalPricingWindow() {
+  const config=clinicConfig.automatedFollowUp;
+  return config?.enabled === true && config?.pricingReminder?.enabled === true;
+}
+
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
@@ -270,7 +276,7 @@ async function findCandidates({
        AND has_blocking_claim = false
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"channel"})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -282,7 +288,7 @@ async function findCandidates({
            END <= now()
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"channel"})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -292,10 +298,13 @@ async function findCandidates({
                )
              )
            END <= latest_inbound_created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "(next_follow_up_step <> 3 OR channel <> 'whatsapp' OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}
      ORDER BY
        CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"channel"})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -334,6 +343,7 @@ async function getNextCandidateDueAt({
     `WITH conversation_state AS (
        SELECT
          c.id AS contact_id,
+         c.channel,
          anchor.id AS trigger_message_id,
          anchor.created_at AS trigger_created_at,
          latest_inbound.created_at AS latest_inbound_created_at,
@@ -439,7 +449,7 @@ async function getNextCandidateDueAt({
      SELECT MIN(
        CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"channel"})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -455,7 +465,7 @@ async function getNextCandidateDueAt({
        AND has_blocking_claim = false
        AND CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"channel"})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -464,7 +474,10 @@ async function getNextCandidateDueAt({
                  trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
                )
              )
-           END <= latest_inbound_created_at + interval '23 hours 50 minutes'`,
+           END <= latest_inbound_created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "(next_follow_up_step <> 3 OR channel <> 'whatsapp' OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}`,
     [delays, triggerMode, activatedAt, modes, expiryOffsets]
   );
   return result.rows[0]?.due_at || null;
@@ -662,7 +675,7 @@ async function saveIfStillEligible({
        AND anchor.created_at >= $9::timestamptz
        AND CASE
              WHEN $12 = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$5",offset:"$13::integer",gap:"($7::integer - $10::integer)",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$5",offset:"$13::integer",gap:"($7::integer - $10::integer)",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"c.channel"})}
              ELSE GREATEST(
                anchor.created_at + ($7::integer * interval '1 minute'),
                COALESCE(
@@ -673,7 +686,7 @@ async function saveIfStillEligible({
            END <= now()
        AND CASE
              WHEN $12 = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$5",offset:"$13::integer",gap:"($7::integer - $10::integer)",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$5",offset:"$13::integer",gap:"($7::integer - $10::integer)",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"c.channel"})}
              ELSE GREATEST(
                anchor.created_at + ($7::integer * interval '1 minute'),
                COALESCE(
@@ -682,6 +695,9 @@ async function saveIfStillEligible({
                )
              )
            END <= latest_inbound.created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "($5::integer <> 3 OR c.channel <> 'whatsapp' OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}
        AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
        AND COALESCE(progress.has_blocking_claim, false) = false
@@ -928,7 +944,7 @@ async function recordAiDecisionIfStillEligible({
          AND anchor.created_at >= $9::timestamptz
          AND CASE
                WHEN $11 = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$12::integer",gap:"($7::integer - $10::integer)",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$12::integer",gap:"($7::integer - $10::integer)",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"c.channel"})}
              ELSE GREATEST(
                  anchor.created_at + ($7::integer * interval '1 minute'),
                  COALESCE(
@@ -939,7 +955,7 @@ async function recordAiDecisionIfStillEligible({
              END <= now()
          AND CASE
                WHEN $11 = 'before_window_expiry'
-               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$12::integer",gap:"($7::integer - $10::integer)",quietHours})}
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$12::integer",gap:"($7::integer - $10::integer)",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,channel:"c.channel"})}
              ELSE GREATEST(
                  anchor.created_at + ($7::integer * interval '1 minute'),
                  COALESCE(
@@ -948,6 +964,9 @@ async function recordAiDecisionIfStillEligible({
                  )
                )
              END <= latest_inbound.created_at + interval '23 hours 50 minutes'
+       AND ${reserveFinalPricingWindow()
+         ? "($3::integer <> 3 OR c.channel <> 'whatsapp' OR now() < latest_inbound.created_at + interval '23 hours 35 minutes')"
+         : "TRUE"}
          AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
          AND COALESCE(progress.max_step, 0) + 1 = $3
          AND COALESCE(progress.has_blocking_claim, false) = false
