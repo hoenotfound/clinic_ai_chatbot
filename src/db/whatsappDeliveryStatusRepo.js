@@ -67,6 +67,19 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
      RETURNING *`,
     values
   );
+  // Billing callbacks are separate from the short-lived status job queue.
+  // Only observed Meta billing evidence is stored. Missing pricing means unknown.
+  const withPricing = normalized.filter((item) => item.pricingType);
+  for (const item of withPricing) {
+    await query(`INSERT INTO whatsapp_free_entry_pricing_evidence
+       (wamid, pricing_type, billable, delivery_status)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (wamid) DO UPDATE
+       SET pricing_type = EXCLUDED.pricing_type,
+           billable = EXCLUDED.billable,
+           delivery_status = EXCLUDED.delivery_status,
+           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus]);
+  }
   return result.rows;
 }
 
