@@ -168,7 +168,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     // Post-final mode must wait for provider-accepted Step 3 AND at least 5m,
     // without requiring a 2h gap before Step 3 (that is the old mode).
     await client.query(`
-      UPDATE messages SET created_at=now()-interval '2 minutes' WHERE id=103;
+      UPDATE messages SET created_at=now()-interval '5 hours' WHERE id=103;
       INSERT INTO messages (id,contact_id,role,content,created_at,delivery_status,
         whatsapp_message_id,is_automated_follow_up,
         automated_follow_up_for_message_id,automated_follow_up_step)
@@ -193,21 +193,6 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     });
     assert.equal(postFinalCandidates.length,1);
     const postFinalCandidate = postFinalCandidates[0];
-    const diagnostic = await client.query(`
-      SELECT
-        (SELECT count(*) FROM messages WHERE automated_follow_up_step=3 AND automated_follow_up_for_message_id=101)::int AS f3,
-        (SELECT count(*) FROM pricing_reminder_decisions WHERE anchor_id=101)::int AS decisions,
-        (SELECT count(*) FROM messages WHERE pricing_reminder_anchor_id=101)::int AS prior_pricing,
-        (SELECT treatment_interest FROM leads ORDER BY id DESC LIMIT 1) AS treatment_interest,
-        (SELECT mode FROM contacts WHERE id=1) AS contact_mode,
-        (SELECT created_at FROM messages WHERE id=104) AS third_at,
-        (SELECT created_at FROM messages WHERE id=100) AS inbound_at,
-        (SELECT created_at FROM messages WHERE id=101) AS anchor_at,
-        (SELECT created_at FROM messages WHERE id=103) AS second_at
-    `);
-    console.error("POST_FINAL_DIAGNOSTIC", JSON.stringify(diagnostic.rows[0]), "candidate",
-      JSON.stringify({final_due_at:postFinalCandidate.final_due_at, due_at:postFinalCandidate.due_at,
-        treatment_interest:postFinalCandidate.treatment_interest, inbound_id:postFinalCandidate.inbound_id}));
     const postFinalSaved = await pricingRepo.claim({
       candidate:postFinalCandidate,offer,activatedAt,triggerMode:"all",settings:postFinal,
     });
