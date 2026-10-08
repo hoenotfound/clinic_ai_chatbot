@@ -154,38 +154,75 @@ async function generateGeminiContent(
     database = pool,
     repository = aiUsageRepo,
     clock = () => Date.now(),
+    signal = null,
+    validateResponse = null,
   } = {}
 ) {
   const model = String(request?.model || "unknown");
   const startedAt = clock();
+  const prefixHash = promptPrefixFingerprint(request);
+  // The abort signal belongs to the SDK client, not the wire-format prompt.
+  // The provider can still charge for requests already received by its servers.
+  const effectiveRequest = signal
+    ? { ...request, config: { ...(request?.config || {}), abortSignal: signal } }
+    : request;
+  let response;
   try {
-    const response = await ai.models.generateContent(request);
+    response = await ai.models.generateContent(effectiveRequest);
+  } catch (error) {
+    const timedOut = signal?.aborted === true;
+    const failure = timedOut
+      ? Object.assign(new Error("Gemini attempt was aborted after a client timeout; provider billing is unknown."), {
+          code: "AI_TIMEOUT", cause: error,
+        })
+      : error;
     queueUsage(
       {
-        provider: "gemini",
-        model,
-        purpose,
-        status: "success",
-        failureKind: null,
-        latencyMs: Math.max(0, clock() - startedAt),
-        ...usageFromResponse(response),
-        ...(promptPrefixFingerprint(request) ? { promptPrefixHash: promptPrefixFingerprint(request) } : {}),
+        ...failedUsageEvent({
+          model, purpose, latencyMs: Math.max(0, clock() - startedAt),
+          error: failure,
+        }),
+        responseDisposition: timedOut ? "aborted_without_usage" : "provider_error",
       },
       { database, repository }
     );
-    return response;
-  } catch (error) {
-    queueUsage(
-      failedUsageEvent({
-        model,
-        purpose,
-        latencyMs: Math.max(0, clock() - startedAt),
-        error,
-      }),
-      { database, repository }
-    );
-    throw error;
+    throw failure;
   }
+
+  let rejected = null;
+  let disposition = signal?.aborted ? "discarded_timeout" : "provider_completed";
+  if (!signal?.aborted && typeof validateResponse === "function") {
+    try {
+      await validateResponse(response);
+      disposition = "accepted";
+    } catch (error) {
+      rejected = error;
+      disposition = "rejected_invalid_output";
+    }
+  }
+  // A completed provider call is still potentially billable even if its reply
+  // was rejected or became unusable after the caller's deadline.
+  queueUsage(
+    {
+      provider: "gemini",
+      model,
+      purpose,
+      status: "success",
+      failureKind: null,
+      responseDisposition: disposition,
+      latencyMs: Math.max(0, clock() - startedAt),
+      ...usageFromResponse(response),
+      ...(prefixHash ? { promptPrefixHash: prefixHash } : {}),
+    },
+    { database, repository }
+  );
+  if (signal?.aborted) {
+    const err = new Error("Gemini response arrived after the attempt was cancelled; it was discarded.");
+    err.code = "AI_TIMEOUT";
+    throw err;
+  }
+  if (rejected) throw rejected;
+  return response;
 }
 
 async function createGeminiInteraction(
