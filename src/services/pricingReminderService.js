@@ -17,6 +17,14 @@ function activationCutoff(settings) {
   return new Date(Math.max(main, pricing)).toISOString();
 }
 
+function socialActivationCutoff(settings) {
+  if (settings?.pricingReminder?.enableSocialChannels !== true) return null;
+  const shared = Date.parse(activationCutoff(settings));
+  const social = Date.parse(settings?.pricingReminder?.socialActivatedAt);
+  if (!Number.isFinite(shared) || !Number.isFinite(social)) return null;
+  return new Date(Math.max(shared, social)).toISOString();
+}
+
 function evaluateOffer(candidate, settings = null) {
   const language = detectConversationLanguage(candidate.recent_customer_messages || []);
   return evaluatePricingReminder({
@@ -36,8 +44,10 @@ function chooseOffer(candidate, settings = null) {
   return chooseOffers(candidate, settings)[0] || null;
 }
 function statusForPricingSend(result) {
-  if (result?.success) return "sent";
-  if (result?.unknown || result?.ambiguous) return "unknown";
+  if (result?.success && (result.wamid || result.externalMessageId)) return "sent";
+  // Caption+image are separate Meta calls. A sent caption with a failed image
+  // needs human review, not another automatic copy of the caption.
+  if (result?.success || result?.partialCaptionSent || result?.unknown || result?.ambiguous) return "unknown";
   return "failed";
 }
 // Never move an unsent pricing message ahead of the testimonial. Respect the
@@ -77,13 +87,16 @@ function publish(message, reason) {
   });
 }
 
-async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
-  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
+async function sendPricingReminder(candidate, offer, settings, imageCount = 1, onRetryAt = null) {
+  const channel = candidate.channel || "whatsapp";
+  if (!["whatsapp","facebook","instagram"].includes(channel) ||
+      (channel !== "whatsapp" && settings.pricingReminder?.enableSocialChannels !== true)) return false;
+  if (quietHoursStatus(new Date(), settings.quietHours).active ||
       !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
   const saved = await pricingRepo.claim({
     candidate,
     offer,
-    activatedAt: activationCutoff(settings),
+    activatedAt: channel === "whatsapp" ? activationCutoff(settings) : socialActivationCutoff(settings),
     triggerMode: settings.triggerMode,
   });
   if (!saved) return false;
@@ -91,14 +104,16 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
   publish(saved, "message");
   const contact = {
     id: candidate.contact_id,
-    channel: "whatsapp",
+    channel,
     whatsapp_number: candidate.whatsapp_number,
+    channel_user_id: candidate.channel_user_id,
   };
   const preSendCheck = async () => {
     const live = clinicConfig.automatedFollowUp;
     if (!live?.enabled || live?.pricingReminder?.enabled !== true ||
         live.activatedAt !== settings.activatedAt ||
         live.pricingReminder?.activatedAt !== settings.pricingReminder.activatedAt ||
+        (channel !== "whatsapp" && live.pricingReminder?.socialActivatedAt !== settings.pricingReminder.socialActivatedAt) ||
         live.triggerMode !== settings.triggerMode ||
         JSON.stringify(normalizeQuietHours(live.quietHours)) !== JSON.stringify(settings.quietHours) ||
         Number(live.additionalSteps?.[1]?.delayMinutes) !== Number(settings.steps[2].delayMinutes) ||
@@ -110,6 +125,9 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
           (settings.pricingReminder?.requirePricingInterest !== false) ||
         (live.pricingReminder?.sendBothPelvicPackages === true) !==
           (settings.pricingReminder?.sendBothPelvicPackages === true) ||
+        (channel !== "whatsapp" &&
+          (live.pricingReminder?.enableSocialChannels === true) !==
+            (settings.pricingReminder?.enableSocialChannels === true)) ||
         quietHoursStatus(new Date(), live.quietHours).active ||
         !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
 
@@ -127,16 +145,20 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
       imageIdentities: offer.identities,
       treatmentInterest: candidate.treatment_interest,
       thirdId: candidate.third_id,
-      whatsappNumber: candidate.whatsapp_number,
+      recipientId: channel === "whatsapp"
+        ? candidate.whatsapp_number : candidate.channel_user_id,
       packageKey: offer.packageName,
+      channel: channel,
     });
   };
 
   let result;
   try {
+    const providerRecorder = messagesRepo.socialProviderAliasRecorder(saved.id, channel);
     result = await channelMessaging.sendImageByUrl(
       contact, offer.imageUrl, offer.caption,
-      { purpose: "marketing", preSendCheck }
+      { purpose: "marketing", preSendCheck,
+        ...(providerRecorder ? { onProviderMessageId: providerRecorder } : {}) }
     );
   } catch (err) {
     console.error("Conditional pricing follow-up failed:", err);
@@ -147,50 +169,77 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
       error: "Pricing graphic delivery could not be confirmed after an interrupted provider request."
     };
   }
-  if (result?.cancelled) {
-    if (result.preSendCheckFailed) {
-      // The eligibility query failed BEFORE the WhatsApp provider call. This
-      // is a cancelled internal verification, never a delivery failure or a
-      // "provider may have received it" state.
-      const updated = await messagesRepo.setDeliveryStatusById(
-        saved.id,
-        "cancelled",
-        "Internal pricing reminder eligibility check failed; nothing was sent to WhatsApp."
-      );
-      publish(updated || { ...saved, delivery_status: "cancelled" }, "message_cancelled");
+  // Both failures happen before any provider call. Discard the unsent claim
+  // under the database guard, then retry with durable bounded backoff. Do NOT
+  // mark the contact needs_attention on the first transient database failure:
+  // that would make it ineligible for all future reminder searches.
+  const transientPreflight = !result?.partialCaptionSent && (
+    result?.preSendCheckFailed === true ||
+    (result?.policyBlocked === true && result?.policyCode === "policy_state_unavailable")
+  );
+  // An accepted caption is irreversible, even if the image was cancelled.
+  // Never discard a partial-caption claim or automatically replay it.
+  if ((result?.cancelled && !result?.partialCaptionSent) || transientPreflight) {
+    const discarded = await pricingRepo.discard({
+      messageId: saved.id, contactId: candidate.contact_id,
+    });
+    if (discarded) {
+      publish({ ...saved, delivery_status: "cancelled" }, "message_cancelled");
+      if (transientPreflight) {
+        const retry = await pricingRepo.notePreflightFailure({
+          contactId: candidate.contact_id,
+          anchorId: candidate.anchor_id,
+          packageKey: offer.packageName,
+          reason: result.policyCode || "pre_send_verification",
+        });
+        if (!retry || retry.attempts >= 3) {
+          await contactsRepo.setDeliveryAttention(
+            candidate.contact_id,
+            "Pricing reminder could not verify sending eligibility after repeated attempts. No pricing graphic was sent; staff should review."
+          );
+        } else if (typeof onRetryAt === "function") {
+          onRetryAt(retry.retry_after);
+        }
+      }
+    } else {
+      // A provider message/alias may already exist. No automatic duplicate.
       await contactsRepo.setDeliveryAttention(
         candidate.contact_id,
-        "Internal pricing reminder verification failed before sending. Check the automation logs; no WhatsApp pricing graphic was sent."
+        "Pricing reminder delivery could not be verified safely. Check the customer chat before retrying."
       );
-    } else if (await pricingRepo.discard({
-      messageId: saved.id, contactId: candidate.contact_id,
-    })) {
-      publish({ ...saved, delivery_status: "cancelled" }, "message_cancelled");
     }
     return false;
   }
 
   let updated;
-  if (result?.wamid) {
+  if (result?.wamid && channel === "whatsapp") {
     updated = await messagesRepo.setWhatsappMessageId(saved.id, result.wamid);
+  } else if (result?.success && result?.externalMessageId &&
+             ["facebook", "instagram"].includes(channel)) {
+    updated = await messagesRepo.setSocialProviderMessageId(
+      saved.id, `${channel}:${result.externalMessageId}`, "sent"
+    );
   } else {
     updated = await messagesRepo.setDeliveryStatusById(
       saved.id,
       statusForPricingSend(result),
-      result?.success ? null : (result?.error || "WhatsApp did not accept the pricing reminder. Review in Inbox.")
+      result?.error || "The channel did not confirm the entire pricing image and caption. Review in Inbox."
     );
   }
   publish(updated || saved, "delivery_status");
 
-  if (!result?.success) {
+  if (!result?.success || statusForPricingSend(result) !== "sent" || !updated) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      result?.unknown || result?.ambiguous
-        ? "Delivery unconfirmed: pricing graphic may have reached WhatsApp. Check the customer chat before retrying."
-        : "Delivery failed: pricing graphic did not reach WhatsApp. Review in Inbox."
+      statusForPricingSend(result) === "unknown"
+        ? "Delivery unconfirmed: pricing graphic or caption may have reached Meta. Check the customer chat before retrying."
+        : "Delivery failed: the pricing graphic was rejected. Review in Inbox."
     );
   }
-  return Boolean(result?.success && result?.wamid);
+  // Do not advance to Package B without a durable receipt for Package A.
+  // Meta may have accepted the send, so failed persistence needs staff review.
+  return Boolean(updated && result?.success && statusForPricingSend(result) === "sent" &&
+    (channel === "whatsapp" ? result.wamid : result.externalMessageId));
 }
 
 // Called by the existing follow-up worker so this feature does not add another
@@ -200,44 +249,86 @@ async function runPricingReminders(settings, now = new Date()) {
       settings.steps.length < 3) return null;
 
   if (!activationCutoff(settings)) return null;
-  const candidates = await pricingRepo.listEligible({
-    activatedAt: activationCutoff(settings),
-    triggerMode: settings.triggerMode,
-  });
   let nextDueAt = null;
-  for (const candidate of candidates) {
-    try {
-      const due = new Date(candidate.due_at).getTime();
-      if (!Number.isFinite(due)) continue;
-      const { offers = [], reason } = evaluateOffer(candidate,settings);
-      // Reserve extra time for the first of two separate image API calls.
-      const safeEnd = Date.parse(candidate.inbound_at)
-        + (24 * 60 - (offers.length > 1 ? 15 : WINDOW_SAFETY_MINUTES)) * 60_000;
-      if (!Number.isFinite(safeEnd) || due >= safeEnd || now.getTime() >= safeEnd) {
-        await skipCandidate(candidate, "insufficient_window");
-        continue;
-      }
-      if (!offers.length) {
-        if (due <= now.getTime()) await skipCandidate(candidate, reason);
-        continue;
-      }
-      if (due > now.getTime()) {
-        if (!nextDueAt || due < new Date(nextDueAt).getTime()) {
-          nextDueAt = new Date(due).toISOString();
+  let cursor = null;
+  // Keyset pagination prevents hundreds of older completed conversations
+  // from hiding newer due reminders behind the database batch limit.
+  for (let page = 0; page < 10; page += 1) {
+    const candidates = await pricingRepo.listEligible({
+      activatedAt: activationCutoff(settings),
+      socialActivatedAt: socialActivationCutoff(settings),
+      triggerMode: settings.triggerMode,
+      channels: settings.pricingReminder.enableSocialChannels === true
+        ? ["whatsapp","facebook","instagram"] : ["whatsapp"],
+      after: cursor,
+    });
+    if (!candidates.length) break;
+    let foundFuture = false;
+    for (const candidate of candidates) {
+      try {
+        const due = new Date(candidate.due_at).getTime();
+        if (!Number.isFinite(due)) continue;
+        if (due > now.getTime()) {
+          if (!nextDueAt || due < new Date(nextDueAt).getTime()) {
+            nextDueAt = new Date(due).toISOString();
+          }
+          // Results are sorted by due_at, so no later row can be due now.
+          foundFuture = true;
+          break;
         }
-        continue;
-      }
-      if (canSendAfterFinal(candidate, now)) {
-        for (const [index,offer] of offers.entries()) {
-          // Each package gets an independent durable row and WAMID. Stop at
-          // the first failed/unknown send: never blindly retry or push another
-          // promotion when delivery may be unconfirmed.
-          if (!(await sendPricingReminder(candidate, offer, settings,
-            index === 0 ? offers.length : 1))) break;
+        const { offers = [], reason } = evaluateOffer(candidate, settings);
+        // Two packages require two separate social or WhatsApp provider sends.
+        const safeEnd = Date.parse(candidate.inbound_at)
+          + (24 * 60 - (offers.length > 1 ? 15 : WINDOW_SAFETY_MINUTES)) * 60_000;
+        if (!Number.isFinite(safeEnd) || due >= safeEnd || now.getTime() >= safeEnd) {
+          await skipCandidate(candidate, "insufficient_window");
+          continue;
         }
+        if (!offers.length) {
+          await skipCandidate(candidate, reason);
+          continue;
+        }
+        if (Number(candidate.preflight_retry_attempts) >= 3) {
+          await contactsRepo.setDeliveryAttention(candidate.contact_id,
+            "Pricing reminder pre-send verification failed repeatedly. Staff review required.");
+          continue;
+        }
+        const retryAt = new Date(candidate.preflight_retry_after).getTime();
+        if (Number.isFinite(retryAt) && retryAt > now.getTime()) {
+          if (!nextDueAt || retryAt < Date.parse(nextDueAt)) {
+            nextDueAt = new Date(retryAt).toISOString();
+          }
+          continue;
+        }
+        if (canSendAfterFinal(candidate, now, offers.length)) {
+          for (const [index, offer] of offers.entries()) {
+            // Distinct provider receipts and one durable claim per package.
+            // Stop on partial, unknown, or failed sends for staff review.
+            if (!(await sendPricingReminder(candidate, offer, settings,
+              index === 0 ? offers.length : 1, (retryAfter) => {
+                const retryTime = new Date(retryAfter).getTime();
+                if (Number.isFinite(retryTime) &&
+                    (!nextDueAt || retryTime < Date.parse(nextDueAt))) {
+                  nextDueAt = new Date(retryTime).toISOString();
+                }
+              }))) break;
+          }
+        }
+      } catch (err) {
+        console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
+        // Unexpected storage errors should not put a due candidate to sleep
+        // forever when regular follow-ups have already completed.
+        const retryTime = new Date(Date.now() + 60_000).toISOString();
+        if (!nextDueAt || Date.parse(retryTime) < Date.parse(nextDueAt)) nextDueAt = retryTime;
       }
-    } catch (err) {
-      console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
+    }
+    if (foundFuture || candidates.length < 200) break;
+    const last = candidates[candidates.length - 1];
+    cursor = { dueAt: last.due_at, anchorId: last.anchor_id };
+    if (page === 9) {
+      // A large backlog must not silently stop the adaptive scheduler.
+      const soon = new Date(now.getTime() + 30_000).toISOString();
+      if (!nextDueAt || new Date(soon) < new Date(nextDueAt)) nextDueAt = soon;
     }
   }
   return nextDueAt;

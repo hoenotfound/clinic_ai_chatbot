@@ -22,7 +22,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     await client.query(`SET search_path TO ${schema}`);
     await client.query(`
       CREATE TABLE contacts (
-        id INTEGER PRIMARY KEY, channel TEXT NOT NULL, whatsapp_number TEXT,
+        id INTEGER PRIMARY KEY, channel TEXT NOT NULL, whatsapp_number TEXT, channel_user_id TEXT,
         needs_attention BOOLEAN NOT NULL DEFAULT false,
         mode TEXT NOT NULL DEFAULT 'ai',
         whatsapp_opt_out_at TIMESTAMPTZ,
@@ -34,6 +34,14 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         stage_id INTEGER REFERENCES pipeline_stages(id), treatment_interest TEXT,
         is_closed BOOLEAN NOT NULL DEFAULT false, appointment_status TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE lead_attributions (
+        id SERIAL PRIMARY KEY, lead_id INTEGER REFERENCES leads(id),
+        ad_name TEXT, meta_ad_id TEXT
+      );
+      CREATE TABLE meta_ad_insights_daily (
+        ad_id TEXT NOT NULL, ad_name TEXT,
+        insight_date DATE NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
       );
       CREATE TABLE messages (
         id SERIAL PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),
@@ -64,6 +72,18 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     ));
     await client.query(fs.readFileSync(
       path.join(__dirname, "../src/db/migrations/050_pricing_packages_and_provider_acceptance.sql"),
+      "utf8"
+    ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/051_social_pricing_acceptance.sql"),
+      "utf8"
+    ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/052_social_messaging_opt_out.sql"),
+      "utf8"
+    ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/053_pricing_preflight_retry.sql"),
       "utf8"
     ));
 
@@ -129,7 +149,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offer.packageName,
     }), true);
     assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}), null);
@@ -151,7 +171,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:savedB.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offerB.identities,treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id,whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id,recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offerB.packageName,
     }),true);
     await client.query("DELETE FROM messages WHERE id=$1",[savedB.id]);
@@ -165,7 +185,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offer.packageName,
     }), false);
 
@@ -174,7 +194,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id, contactId:1, anchorId:101, inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offer.packageName,
     }), false);
 
@@ -209,7 +229,36 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     const crowdedCandidates = await pricingRepo.listEligible({
       activatedAt,triggerMode:"all",settings,
     });
-    assert.equal(crowdedCandidates.length,0);
+    // Recently expired pricing remains discoverable for a one-time
+    // insufficient_window analytics decision; it must never reach Meta.
+    assert.equal(crowdedCandidates.length,1);
+    assert.ok(new Date(crowdedCandidates[0].due_at).getTime() >
+      new Date(crowdedCandidates[0].inbound_at).getTime() + 23*3600000 + 50*60000);
+
+    // A transient pre-provider failure permits a bounded, durable retry and
+    // must never create a duplicate pricing message for the same package.
+    const retryOnce=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"policy_state_unavailable",
+    });
+    assert.equal(retryOnce.attempts,1);
+    const retryRow=await client.query(
+      "SELECT attempts,retry_after FROM pricing_reminder_preflight_retries WHERE anchor_id=101");
+    assert.equal(retryRow.rows[0].attempts,1);
+    const retryTwice=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"pre_send_verification",
+    });
+    assert.equal(retryTwice.attempts,2);
+    const retryLast=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"pre_send_verification",
+    });
+    assert.equal(retryLast.attempts,3);
+    const retryCapped=await pricingRepo.notePreflightFailure({
+      contactId:1,anchorId:101,packageKey:"3D trial",reason:"pre_send_verification",
+    });
+    assert.equal(retryCapped.attempts,3);
+    assert.equal(await pricingRepo.claim({
+      candidate,offer,activatedAt,triggerMode:"all",
+    }),null,"Three unverified attempts must not bypass the retry cap");
 
     // The pricing reminder must not keep the original message undeletable.
     await client.query("DELETE FROM messages WHERE id=101");
@@ -217,6 +266,127 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       "SELECT id FROM messages WHERE id=$1 OR pricing_reminder_anchor_id=$1", [101]
     );
     assert.equal(rowsAfterDelete.rowCount, 0);
+
+    // Social final follow-ups become eligible only after a confirmed Meta
+    // receipt. A placeholder or a WhatsApp receipt alone must not qualify.
+    await client.query(`
+      INSERT INTO contacts(id,channel,channel_user_id) VALUES
+        (2,'facebook','fb-customer'),(3,'instagram','ig-customer');
+      INSERT INTO leads(contact_id,treatment_interest) VALUES
+        (2,'3D 小颜术'),(3,'3D 小颜术');
+      INSERT INTO messages(id,contact_id,role,content,created_at)
+        VALUES (200,2,'user','3D?',now()-interval '12 hours'),
+               (300,3,'user','3D?',now()-interval '12 hours');
+      INSERT INTO messages(id,contact_id,role,content,created_at)
+        VALUES (201,2,'assistant','Details',now()-interval '11 hours'),
+               (301,3,'assistant','Details',now()-interval '11 hours');
+      INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status,
+        whatsapp_message_id,social_accepted_at,is_automated_follow_up,
+        automated_follow_up_for_message_id,automated_follow_up_step)
+        VALUES (202,2,'assistant','Final',now()-interval '12 minutes','sent',
+                  'facebook:mid.202',now()-interval '8 minutes',true,201,3),
+               (302,3,'assistant','Final',now()-interval '12 minutes','sent',
+                  'instagram:mid.302',now()-interval '8 minutes',true,301,3);
+    `);
+    assert.equal((await pricingRepo.listEligible({activatedAt,triggerMode:"all"})).length,0,
+      "Existing clinics must not gain social pricing candidates without opt-in");
+    for (const [contactId, channel, recipientId, anchorId, inboundId, finalId] of [
+      [2,'facebook','fb-customer',201,200,202],
+      [3,'instagram','ig-customer',301,300,302],
+    ]) {
+      const candidates = await pricingRepo.listEligible({ activatedAt, socialActivatedAt:activatedAt, triggerMode:"all", channels:["whatsapp","facebook","instagram"] });
+      const social = candidates.find(c => c.contact_id === contactId);
+      assert.ok(social, `Expected ${channel} reminder candidate`);
+      assert.equal(social.channel, channel);
+      assert.equal(social.channel_user_id, recipientId);
+      const socialOffer = {
+        caption:"Our 3D price",imageUrl:`https://example.com/social/${channel}`,
+        packageName:"3D trial",serviceName:"3D 小颜术",
+        identities:[`/social/${channel}`],
+      };
+      await client.query("UPDATE messages SET social_accepted_at=now()-interval '4 minutes' WHERE id=$1",[finalId]);
+      assert.equal(await pricingRepo.claim({ candidate:social, offer:socialOffer,
+        activatedAt,triggerMode:"all" }),null);
+      await client.query("UPDATE messages SET social_accepted_at=now()-interval '8 minutes' WHERE id=$1",[finalId]);
+      const savedSocial = await pricingRepo.claim({ candidate:social, offer:socialOffer,
+        activatedAt,triggerMode:"all" });
+      assert.ok(savedSocial);
+      assert.equal(await pricingRepo.isClaimStillEligible({
+        messageId:savedSocial.id,contactId,anchorId,inboundId,
+        imageIdentities:socialOffer.identities,treatmentInterest:"3D 小颜术",
+        thirdId:finalId,recipientId,channel,packageKey:"3D trial",
+      }),true);
+      await client.query("UPDATE contacts SET mode='human' WHERE id=$1",[contactId]);
+      assert.equal(await pricingRepo.isClaimStillEligible({
+        messageId:savedSocial.id,contactId,anchorId,inboundId,
+        imageIdentities:socialOffer.identities,treatmentInterest:"3D 小颜术",
+        thirdId:finalId,recipientId,channel,packageKey:"3D trial",
+      }),false);
+      await client.query("UPDATE contacts SET mode='ai' WHERE id=$1",[contactId]);
+    }
+    // Enabling social pricing later must not reset WhatsApp's cohort cutoff.
+    await client.query(`
+      INSERT INTO contacts(id,channel,whatsapp_number) VALUES
+        (4,'whatsapp','60120000004');
+      INSERT INTO leads(contact_id,treatment_interest) VALUES (4,'3D 小颜术');
+      INSERT INTO messages(id,contact_id,role,content,created_at)
+        VALUES (400,4,'user','Tell me about 3D',now()-interval '12 hours'),
+               (401,4,'assistant','Details',now()-interval '11 hours');
+      INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status,
+          whatsapp_message_id,whatsapp_accepted_at,is_automated_follow_up,
+          automated_follow_up_for_message_id,automated_follow_up_step)
+        VALUES (402,4,'assistant','Follow-up 3',now()-interval '9 minutes','pending',
+          'wamid.final.4',now()-interval '8 minutes',true,401,3);
+    `);
+    // Attribution may be missing its ad_name while a synced Meta Ads Insights
+    // row has the actual ad name. Prefer the newest available insight.
+    const leadFour=await client.query(
+      "SELECT id FROM leads WHERE contact_id=4 ORDER BY id DESC LIMIT 1"
+    );
+    const leadFourId=leadFour.rows[0].id;
+    await client.query(
+      "INSERT INTO lead_attributions(lead_id, meta_ad_id, ad_name) VALUES ($1,$2,$3)",
+      [leadFourId,"meta-ad-4",""]
+    );
+    await client.query(`
+      INSERT INTO meta_ad_insights_daily(ad_id, ad_name, insight_date)
+      VALUES ('meta-ad-4', 'Old 9D Campaign', CURRENT_DATE - 2),
+             ('meta-ad-4', '3D 小颜术 Pricing Promo', CURRENT_DATE - 1)
+    `);
+    const foundViaInsights=await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",
+    });
+    assert.equal(foundViaInsights.find(c=>c.contact_id===4)?.ad_name,
+      "3D 小颜术 Pricing Promo",
+      "Pricing treatment attribution must fall back to newest matching Meta ad insight");
+    await client.query(
+      "UPDATE lead_attributions SET ad_name='3D 小颜术 Direct Ad' WHERE lead_id=$1",
+      [leadFourId]
+    );
+    const foundDirectAd=await pricingRepo.listEligible({
+      activatedAt,triggerMode:"all",
+    });
+    assert.equal(foundDirectAd.find(c=>c.contact_id===4)?.ad_name,
+      "3D 小颜术 Direct Ad",
+      "The attribution ad name takes precedence over a synced fallback");
+    await client.query(
+      "UPDATE lead_attributions SET ad_name=NULL WHERE lead_id=$1", [leadFourId]
+    );
+
+    const socialFreshAt=new Date(Date.now()-6*3600000).toISOString();
+    const socialCutoffCandidates=await pricingRepo.listEligible({
+      activatedAt,socialActivatedAt:socialFreshAt,triggerMode:"all",
+      channels:["whatsapp","facebook","instagram"],
+    });
+    assert.ok(!socialCutoffCandidates.some(c=>c.contact_id===2),
+      "Social anchor older than opt-in must be excluded");
+    assert.ok(socialCutoffCandidates.some(c=>c.contact_id===4),
+      "A WhatsApp reminder must retain the original pricing cohort cutoff");
+    await client.query("UPDATE messages SET social_accepted_at=NULL WHERE id=302");
+    const socialCandidates=await pricingRepo.listEligible({activatedAt,socialActivatedAt:activatedAt,triggerMode:"all",channels:["whatsapp","facebook","instagram"]});
+    assert.ok(!socialCandidates.some(c=>c.contact_id===3));
+    assert.ok(socialCandidates.some(c=>c.contact_id===2));
+
   } finally {
     pool.query = originalQuery;
     await client.query("SET search_path TO public").catch(() => {});

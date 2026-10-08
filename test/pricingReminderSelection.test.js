@@ -188,3 +188,43 @@ test("clinic-specific pelvic graphic option avoids changing another client's mul
     candidate:{...candidate,recent_customer_messages:["Package B please"]}});
   assert.deepEqual(chosen.offers.map(x=>x.packageName),["Package B"]);
 });
+
+test("Meta ad service supplies a missing CRM treatment without a pricing question",()=>{
+  const result=evaluatePricingReminder({
+    promotions,services,requirePricingInterest:false,
+    candidate:{treatment_interest:null,ad_name:"3D 小颜术 Skin Reshape",
+      recent_customer_messages:["Can I know more?"]},
+  });
+  assert.equal(result.reason,null);
+  assert.equal(result.offer?.serviceName,"3D 小颜术");
+  assert.equal(result.offer?.caption,"RM488");
+});
+
+test("explicit customer choice overrides the first-touch Meta ad",()=>{
+  const result=evaluatePricingReminder({
+    promotions,services,requirePricingInterest:false,
+    candidate:{treatment_interest:null,ad_name:"骨盆调理 Before and After",
+      recent_customer_messages:["I would like 3D 小颜术 instead"]},
+  });
+  assert.equal(result.offer?.serviceName,"3D 小颜术");
+});
+
+test("ambiguous 3D-versus-9D comparison must not be resolved from the ad",()=>{
+  const result=evaluatePricingReminder({
+    promotions,services:[...services,{name:"9D 逆龄抗衰"}],requirePricingInterest:false,
+    candidate:{treatment_interest:null,ad_name:"3D 小颜术",
+      recent_customer_messages:["3D or 9D, which one is better?"]},
+  });
+  assert.equal(result.offer,null);
+  assert.equal(result.reason,"ambiguous_service");
+});
+
+test("unrelated Meta ad names must not invent a service interest",()=>{
+  const result=evaluatePricingReminder({
+    promotions,services,requirePricingInterest:false,
+    candidate:{treatment_interest:null,ad_name:"Grand Opening October",
+      recent_customer_messages:["Tell me more"]},
+  });
+  assert.equal(result.offer,null);
+  assert.equal(result.reason,"ambiguous_service");
+});

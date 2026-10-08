@@ -6,6 +6,10 @@ function reservePricingQuietSlot() {
   return clinicConfig.automatedFollowUp?.enabled === true &&
     clinicConfig.automatedFollowUp?.pricingReminder?.enabled === true;
 }
+function reserveSocialPricingQuietSlot() {
+  return reservePricingQuietSlot() &&
+    clinicConfig.automatedFollowUp?.pricingReminder?.enableSocialChannels === true;
+}
 
 
 const MAX_FOLLOW_UP_STEPS = 3;
@@ -167,7 +171,7 @@ async function claimIfStillEligible({
        AND CASE
              WHEN $10 = 'before_window_expiry'
                THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$11::integer",gap:"($5::integer - $6::integer)",quietHours,
-                reservePricingMinutes:reservePricingQuietSlot()?5:0,channel:"c.channel"})}
+                reservePricingMinutes:reservePricingQuietSlot()?5:0,reservePricingOnSocial:reserveSocialPricingQuietSlot(),channel:"c.channel"})}
              ELSE GREATEST(
                anchor.created_at + ($5::integer * interval '1 minute'),
                COALESCE(
@@ -179,7 +183,7 @@ async function claimIfStillEligible({
        AND CASE
              WHEN $10 = 'before_window_expiry'
                THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$11::integer",gap:"($5::integer - $6::integer)",quietHours,
-                reservePricingMinutes:reservePricingQuietSlot()?5:0,channel:"c.channel"})}
+                reservePricingMinutes:reservePricingQuietSlot()?5:0,reservePricingOnSocial:reserveSocialPricingQuietSlot(),channel:"c.channel"})}
              ELSE GREATEST(
                anchor.created_at + ($5::integer * interval '1 minute'),
                COALESCE(

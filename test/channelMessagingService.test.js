@@ -1227,3 +1227,80 @@ test("WhatsApp stored image delivery rechecks automation ownership after upload"
   assert.equal(result.success, false);
   assert.equal(result.cancelled, true);
 });
+
+test("Instagram image cancellation after accepted pricing caption is partial, not unsent",async(t)=>{
+  const oldText=meta.sendText;
+  const oldUpload=mediaStorage.uploadTemporaryMedia;
+  const oldDelete=mediaStorage.scheduleTemporaryMediaDelete;
+  const oldUrl=metaAttachments.sendUrlAttachment;
+  t.after(()=>{
+    meta.sendText=oldText;
+    mediaStorage.uploadTemporaryMedia=oldUpload;
+    mediaStorage.scheduleTemporaryMediaDelete=oldDelete;
+    metaAttachments.sendUrlAttachment=oldUrl;
+  });
+  let sendTextCalls=0,imageCalls=0,checks=0;
+  const recorded=[];
+  meta.sendText=async()=>{
+    sendTextCalls++;
+    return {success:true,externalMessageId:"ig-caption-accepted"};
+  };
+  mediaStorage.uploadTemporaryMedia=async()=>({
+    key:"temporary-ig-photo",url:"https://signed.example/temporary-photo.jpg"
+  });
+  mediaStorage.scheduleTemporaryMediaDelete=()=>{};
+  metaAttachments.sendUrlAttachment=async()=>{
+    imageCalls++;
+    return {success:true,externalMessageId:"should-not-send"};
+  };
+  const result=await messaging.sendImageBuffer(
+    {id:77,channel:"instagram",channel_user_id:"ig-person-77"},
+    Buffer.from("jpg"),"image/jpeg","Pricing RM488","price.jpg",{
+      preSendCheck:async()=>{
+        checks++;
+        // The initial check and the check immediately after the caption pass.
+        // After temporary media upload, staff takes over / window closes.
+        return checks < 3;
+      },
+      onProviderMessageId:async id=>recorded.push(id),
+    }
+  );
+  assert.equal(sendTextCalls,1);
+  assert.equal(checks,3);
+  assert.equal(imageCalls,0);
+  assert.equal(result.success,false);
+  assert.equal(result.cancelled,false);
+  assert.equal(result.partialCaptionSent,true);
+  assert.equal(result.captionProviderMessageId,"ig-caption-accepted");
+  assert.deepEqual(recorded,["ig-caption-accepted"]);
+});
+
+test("Facebook image with accepted caption normalizes post-upload cancellation as partial",async(t)=>{
+  const oldText=meta.sendText;
+  const oldBuffer=metaAttachments.sendBuffer;
+  t.after(()=>{
+    meta.sendText=oldText;
+    metaAttachments.sendBuffer=oldBuffer;
+  });
+  let sendTextCalls=0;
+  meta.sendText=async()=>{
+    sendTextCalls++;
+    return {success:true,externalMessageId:"fb-caption-accepted"};
+  };
+  metaAttachments.sendBuffer=async()=>({
+    success:false,cancelled:true,preSendCheckFailed:true,
+    error:"Final verification failed after upload"
+  });
+  const result=await messaging.sendImageBuffer(
+    {id:78,channel:"facebook",channel_user_id:"fb-person-78"},
+    Buffer.from("jpg"),"image/jpeg","Pricing RM488","price.jpg",{
+      preSendCheck:async()=>true,
+    }
+  );
+  assert.equal(sendTextCalls,1);
+  assert.equal(result.success,false);
+  assert.equal(result.cancelled,false);
+  assert.equal(result.preSendCheckFailed,true);
+  assert.equal(result.partialCaptionSent,true);
+  assert.equal(result.captionProviderMessageId,"fb-caption-accepted");
+});

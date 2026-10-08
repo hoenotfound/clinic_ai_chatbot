@@ -210,3 +210,95 @@ test("Human Agent attachment transport fails closed when the runtime flag is dis
   assert.equal(fetchCalls, 0);
 });
 
+
+test("Facebook attachment upload rechecks eligibility before the Send API POST", async (t) => {
+  const previousFetch = global.fetch;
+  const priorId = process.env.FACEBOOK_PAGE_ID;
+  const priorToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = previousFetch;
+    if (priorId === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = priorId;
+    if (priorToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = priorToken;
+  });
+  process.env.FACEBOOK_PAGE_ID = "page-guard";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "token-guard";
+  const posted = [];
+  global.fetch = async (url) => {
+    posted.push(url);
+    if (!url.endsWith("/message_attachments")) throw Error("No customer-facing Send API request is allowed");
+    return new Response(JSON.stringify({attachment_id:"att-guard"}), {status:200});
+  };
+  const result = await metaAttachments.sendBuffer("facebook", "recipient",
+    "image", Buffer.from("image"), "image/jpeg", "promo.jpg",
+    {preSendCheck: async () => false});
+  assert.equal(result.success,false);
+  assert.equal(result.cancelled,true);
+  assert.equal(result.externalMessageId,null);
+  assert.equal(posted.length,1,"Upload must complete but image message must not be sent");
+  assert.match(posted[0],/\/message_attachments$/);
+});
+
+test("Facebook attachment send fails closed if eligibility SQL check throws after upload", async (t) => {
+  const previousFetch = global.fetch;
+  const priorId = process.env.FACEBOOK_PAGE_ID;
+  const priorToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = previousFetch;
+    if (priorId === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = priorId;
+    if (priorToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = priorToken;
+  });
+  process.env.FACEBOOK_PAGE_ID = "page-guard";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "token-guard";
+  let uploads=0,sends=0;
+  global.fetch = async url => {
+    if (!url.endsWith("/message_attachments")) {
+      sends++;
+      throw Error("Must not deliver media");
+    }
+    uploads++;
+    return new Response(JSON.stringify({attachment_id:"att-guard"}),{status:200});
+  };
+  t.mock.method(console, "error", () => {});
+  const result=await metaAttachments.sendBuffer("facebook", "recipient",
+    "image",Buffer.from("image"),"image/jpeg","promo.jpg",
+    {preSendCheck:async()=>{throw Error("Database unavailable");}});
+  assert.equal(result.success,false);
+  assert.equal(result.cancelled,true);
+  assert.equal(result.preSendCheckFailed,true);
+  assert.equal(uploads,1);
+  assert.equal(sends,0);
+});
+
+test("Facebook attachment with still-valid ownership sends successfully after upload",async(t)=>{
+  const previousFetch = global.fetch;
+  const priorId = process.env.FACEBOOK_PAGE_ID;
+  const priorToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(()=>{
+    global.fetch=previousFetch;
+    if(priorId===undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID=priorId;
+    if(priorToken===undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN=priorToken;
+  });
+  process.env.FACEBOOK_PAGE_ID="page-guard";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN="token-guard";
+  const posts=[];
+  global.fetch=async(url)=>{
+    posts.push(url);
+    return new Response(JSON.stringify(url.endsWith("/message_attachments")
+      ? {attachment_id:"att-valid"}:{message_id:"mid-valid"}),{status:200});
+  };
+  let checks=0;
+  const result=await metaAttachments.sendBuffer("facebook","person",
+    "image",Buffer.from("image"),"image/jpeg","promo.jpg",
+    {preSendCheck:async()=>{checks++;return true;}});
+  assert.equal(result.success,true);
+  assert.equal(result.externalMessageId,"mid-valid");
+  assert.equal(checks,1);
+  assert.equal(posts.length,2);
+  assert.match(posts[1],/\/messages$/);
+});
