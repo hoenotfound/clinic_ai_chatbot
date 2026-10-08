@@ -698,3 +698,25 @@ test("misclassified English how-much duration questions do not send price media"
   }));
   assert.ok(actualPrice?.packages?.length);
 });
+
+
+test("English recovery time and waiting questions are never price-media triggers", async () => {
+  for (const customerText of [
+    "How much is the recovery time?",
+    "How much should I wait after pelvic treatment?",
+    "How much will it take to recover?",
+  ]) {
+    let mediaLookup = false;
+    const result = await resolvePricePromotionForReply(base({
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      wasPromoRecentlySent: async () => { mediaLookup = true; return false; },
+    }));
+    assert.equal(result, null, customerText);
+    assert.equal(mediaLookup, false, customerText);
+  }
+  assert.ok(await resolvePricePromotionForReply(base({
+    customerText: "How much is the recovery time and what is the price?",
+  })));
+});
