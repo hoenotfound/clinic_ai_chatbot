@@ -242,7 +242,6 @@ function createLeadScoringRunner({
             throughMessageId: candidate.through_message_id,
             triggerType: candidate.trigger_type,
             score,
-            expectedTreatmentInterest: candidate.treatment_interest,
             allowTemperatureUpdate: shouldApplyAutomaticTemperature(
               settings,
               settingsAfterScore,
