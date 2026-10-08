@@ -65,6 +65,10 @@ async function getPolicyState(contactId) {
        c.whatsapp_opt_out_source,
        c.whatsapp_marketing_opt_out_at,
        c.whatsapp_marketing_opt_out_source,
+       c.social_opt_out_at,
+       c.social_opt_out_source,
+       c.social_marketing_opt_out_at,
+       c.social_marketing_opt_out_source,
        (
          SELECT COALESCE(m.source_created_at, m.created_at)
          FROM messages m
@@ -153,12 +157,12 @@ function evaluateFreeformState(
   const lastInboundAt = state.latest_inbound_at
     ? new Date(state.latest_inbound_at)
     : null;
-  const optOutAt = state.whatsapp_opt_out_at
-    ? new Date(state.whatsapp_opt_out_at)
-    : null;
-  const marketingOptOutAt = state.whatsapp_marketing_opt_out_at
-    ? new Date(state.whatsapp_marketing_opt_out_at)
-    : null;
+  const optOutValue = channel === "whatsapp"
+    ? state.whatsapp_opt_out_at : state.social_opt_out_at;
+  const marketingOptOutValue = channel === "whatsapp"
+    ? state.whatsapp_marketing_opt_out_at : state.social_marketing_opt_out_at;
+  const optOutAt = optOutValue ? new Date(optOutValue) : null;
+  const marketingOptOutAt = marketingOptOutValue ? new Date(marketingOptOutValue) : null;
 
   if (optOutAt) {
     // Opt-out is a hard stop for proactive/marketing sends. A customer is still
@@ -290,15 +294,18 @@ async function checkFreeformAllowed(
 async function recordOptOut(contactId, source = "customer_message") {
   const result = await pool.query(
     `UPDATE contacts
-     SET whatsapp_opt_out_at = now(),
-         whatsapp_opt_out_source = $2,
-         whatsapp_marketing_opt_out_at = now(),
-         whatsapp_marketing_opt_out_source = $2,
-         whatsapp_opt_in_at = NULL,
-         whatsapp_opt_in_source = NULL,
+     SET whatsapp_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_opt_out_at END,
+         whatsapp_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_opt_out_source END,
+         whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
+         whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
+         whatsapp_opt_in_at = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_opt_in_at END,
+         whatsapp_opt_in_source = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_opt_in_source END,
+         social_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN now() ELSE social_opt_out_at END,
+         social_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_opt_out_source END,
+         social_marketing_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN now() ELSE social_marketing_opt_out_at END,
+         social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
-     WHERE id = $1
-       AND channel IN ('whatsapp','facebook','instagram')
+     WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId, source]
   );
@@ -308,11 +315,12 @@ async function recordOptOut(contactId, source = "customer_message") {
 async function recordMarketingOptOut(contactId, source = "customer_message") {
   const result = await pool.query(
     `UPDATE contacts
-     SET whatsapp_marketing_opt_out_at = now(),
-         whatsapp_marketing_opt_out_source = $2,
+     SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
+         whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
+         social_marketing_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN now() ELSE social_marketing_opt_out_at END,
+         social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
-     WHERE id = $1
-       AND channel IN ('whatsapp','facebook','instagram')
+     WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId, source]
   );
@@ -322,11 +330,12 @@ async function recordMarketingOptOut(contactId, source = "customer_message") {
 async function recordMarketingOptIn(contactId) {
   const result = await pool.query(
     `UPDATE contacts
-     SET whatsapp_marketing_opt_out_at = NULL,
-         whatsapp_marketing_opt_out_source = NULL,
+     SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_marketing_opt_out_at END,
+         whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_marketing_opt_out_source END,
+         social_marketing_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN NULL ELSE social_marketing_opt_out_at END,
+         social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN NULL ELSE social_marketing_opt_out_source END,
          updated_at = now()
-     WHERE id = $1
-       AND channel IN ('whatsapp','facebook','instagram')
+     WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId]
   );
@@ -347,7 +356,7 @@ async function recordOptIn(contactId, source) {
          whatsapp_opt_out_source = NULL,
          updated_at = now()
      WHERE id = $1
-       AND channel IN ('whatsapp','facebook','instagram')
+       AND channel = 'whatsapp'
      RETURNING *`,
     [contactId, cleanSource]
   );
