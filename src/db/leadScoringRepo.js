@@ -5,7 +5,7 @@ const { cleanScoredTreatmentInterest } = require("../utils/serviceInterest");
 
 const PROCESSING_STALE_MINUTES = 10;
 const FAILED_RETRY_MINUTES = 2;
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 3;\nconst TREATMENT_INTEREST_UNSET = Symbol("treatment-interest-unset");
 
 async function withTransaction(work) {
   const client = await pool.connect();
@@ -291,6 +291,7 @@ async function completeScore({
   triggerType,
   score,
   allowTemperatureUpdate = true,
+  expectedTreatmentInterest = TREATMENT_INTEREST_UNSET,
 }) {
   const scoredTreatmentInterest = cleanScoredTreatmentInterest(
     score?.summary?.treatmentInterest
@@ -335,6 +336,14 @@ async function completeScore({
       return { status: "superseded" };
     }
 
+    // Do not let an AI request that started earlier overwrite a staff edit made
+    // while the model call was in flight. Older internal callers that do not
+    // provide an expected value retain the historical behavior.
+    const treatmentInterestAtScoreStart =
+      expectedTreatmentInterest === TREATMENT_INTEREST_UNSET
+        ? lead.treatment_interest
+        : expectedTreatmentInterest;
+
     const shouldApply =
       allowTemperatureUpdate === true &&
       score.confidence === "high" &&
@@ -344,7 +353,11 @@ async function completeScore({
       const updated = await client.query(
         `UPDATE leads
          SET temperature = $2, temperature_source = 'ai',
-             treatment_interest = COALESCE($4, treatment_interest),
+             treatment_interest = CASE
+               WHEN treatment_interest IS NOT DISTINCT FROM $5
+                 THEN COALESCE($4, treatment_interest)
+               ELSE treatment_interest
+             END,
              last_temperature_scored_at = now(),
              last_temperature_scored_message_id = $3,
              updated_at = now()
@@ -355,13 +368,17 @@ async function completeScore({
              ORDER BY m.id DESC LIMIT 1
            ) = $3
          RETURNING *`,
-        [leadId, score.temperature, throughMessageId, scoredTreatmentInterest]
+        [\n          leadId,\n          score.temperature,\n          throughMessageId,\n          scoredTreatmentInterest,\n          treatmentInterestAtScoreStart,\n        ]
       );
       updatedLead = updated.rows[0] || null;
     } else {
       const updated = await client.query(
         `UPDATE leads
-         SET treatment_interest = COALESCE($3, treatment_interest),
+         SET treatment_interest = CASE
+               WHEN treatment_interest IS NOT DISTINCT FROM $4
+                 THEN COALESCE($3, treatment_interest)
+               ELSE treatment_interest
+             END,
              last_temperature_scored_at = now(),
              last_temperature_scored_message_id = $2,
              updated_at = now()
@@ -372,7 +389,7 @@ async function completeScore({
              ORDER BY m.id DESC LIMIT 1
            ) = $2
          RETURNING *`,
-        [leadId, throughMessageId, scoredTreatmentInterest]
+        [\n          leadId,\n          throughMessageId,\n          scoredTreatmentInterest,\n          treatmentInterestAtScoreStart,\n        ]
       );
       updatedLead = updated.rows[0] || null;
     }
