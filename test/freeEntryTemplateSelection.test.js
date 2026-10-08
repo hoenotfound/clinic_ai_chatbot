@@ -42,6 +42,13 @@ test("duplicate service and day rule is not accepted", () => {
 });
 
 test("a new 3D ad cannot accidentally inherit a previous pelvic treatment", () => {
+  const clinicConfig = require("../src/config/clinicConfig");
+  const previousServices = clinicConfig.services;
+  clinicConfig.services = [
+    {name:"骨盆调理"}, {name:"3D 小颜术"}, {name:"9D 逆龄抗衰"},
+    {name:"3D + 9D"},
+  ];
+  try {
   const cfg={templateName:"general",language:"auto",templateRules:[
     {slotHours:50,serviceName:"3D + 9D",templateName:"combo",mediaUrl:""},
     {slotHours:50,serviceName:"骨盆调理",templateName:"pelvis",mediaUrl:""},
@@ -64,6 +71,7 @@ test("a new 3D ad cannot accidentally inherit a previous pelvic treatment", () =
     latest_ad_message_id:20,referral_ad_name:"",
     recent_inbound_messages:["您好"],
   },50,cfg).templateName,"general");
+  } finally { clinicConfig.services = previousServices; }
 });
 
 test("R2 media and public HTTPS header validation fail closed on MIME and size",async()=>{
