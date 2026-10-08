@@ -2555,6 +2555,8 @@ function FollowUpTool({
                   <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                     Server sending: {freeEntryStatus.enabledOnServer ? "Enabled" : "Disabled"}
                     {" · "}Tools: {freeEntryStatus.enabledInTools ? "Enabled" : "Disabled"}
+                    {" · "}Safe billing ceiling: {freeEntryStatus.periodMaxHours || 72}h
+                    {freeEntryStatus.sevenDayVerified ? " (7-day rollout verified)" : " (extended rollout unverified)"}
                   </p>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
