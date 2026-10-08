@@ -7,7 +7,7 @@ const contactsRepo = require("../src/db/contactsRepo");
 const messaging = require("../src/services/channelMessagingService");
 const clinic = require("../src/config/clinicConfig");
 
-test("pre-send database verification error is recorded as cancelled, never provider failed or unknown", async () => {
+test("pre-send database verification error safely discards an unsent claim for later retry", async () => {
   const original = {
     claim: pricingRepo.claim,
     discard: pricingRepo.discard,
@@ -36,12 +36,10 @@ test("pre-send database verification error is recorded as cancelled, never provi
     contactsRepo.setDeliveryAttention = async (id,message) => attention.push({id,message});
     messaging.sendImageByUrl = async () => ({ success:false,cancelled:true,preSendCheckFailed:true });
     await pricing.sendPricingReminder(candidate,offer,settings);
-    assert.equal(statuses.length,1);
-    assert.equal(statuses[0].status,"cancelled");
-    assert.match(statuses[0].error,/not.*sent|nothing was sent/i);
+    assert.equal(statuses.length,0);
     assert.equal(attention.length,1);
-    assert.match(attention[0].message,/not sent|no WhatsApp.*sent/i);
-    assert.equal(discards.length,0);
+    assert.match(attention[0].message,/not sent/i);
+    assert.equal(discards.length,1);
   } finally {
     pricingRepo.claim = original.claim;
     pricingRepo.discard = original.discard;
