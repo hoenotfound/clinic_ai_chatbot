@@ -330,7 +330,7 @@ test("internal ad name supplies a canonical pelvis topic when creative is vague"
   assert.deepEqual(compact.relevantServiceNames, ["骨盆调理"]);
   assert.equal(compact.serviceSource, "meta_ad");
 
-  for (const channel of ["whatsapp", "messenger", "instagram"]) {
+  for (const channel of ["whatsapp", "facebook", "instagram"]) {
     const prompt = buildSystemPrompt({ channel, metaAdContext: context, conversationContext: compact });
     assert.match(prompt, /Verified service topic.*骨盆调理/);
     assert.match(prompt, /English/);
@@ -471,4 +471,31 @@ test("a configured 3D + 9D combined package is recognized without choosing only 
     source: "meta_ads", ad_name: "3D vs 9D comparison", headline: null, body: null,
   }, { services, aliases });
   assert.equal(comparison, null, "a comparison is not a combined service");
+});
+
+
+test("explicit 3D + 9D creative resolves the configured combination, not its components", () => {
+  const services = [{ name: "3D 小颜术" }, { name: "9D 逆龄抗衰" }, { name: "3D + 9D" }, { name: "骨盆调理" }];
+  const aliases = [
+    { alias: "3D", officialService: "3D 小颜术" },
+    { alias: "9D", officialService: "9D 逆龄抗衰" },
+    { alias: "3D + 9D", officialService: "3D + 9D" },
+    { alias: "骨盆", officialService: "骨盆调理" },
+  ];
+  const combined = { headline: "3D + 9D", body: "Facial combo trial" };
+  assert.equal(resolveMetaAdCreativeService(combined, services, aliases), "3D + 9D");
+  const context = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "骨盆 1", ...combined,
+  }, { services, aliases });
+  assert.equal(context.serviceHint, "3D + 9D");
+  assert.equal(context.serviceHintSource, "creative");
+
+  assert.equal(resolveMetaAdCreativeService(
+    { headline: "3D + 9D", body: "Bone / 骨盆 treatment also offered" },
+    services, aliases,
+  ), null);
+  assert.equal(resolveMetaAdCreativeService(
+    { headline: "3D versus 9D", body: "Choose a facial treatment" },
+    services, aliases,
+  ), null);
 });
