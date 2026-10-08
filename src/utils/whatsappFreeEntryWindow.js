@@ -3,7 +3,7 @@
 const CHANGEOVER_AT = Date.parse("2026-09-28T00:00:00Z");
 const CUSTOMER_SERVICE_MS = 24 * 60 * 60 * 1000;
 const EXPIRY_BUFFER_MS = 60 * 60 * 1000;
-const DEFAULT_SLOTS_HOURS = Object.freeze([36, 60, 84, 108, 132, 156]);
+const DEFAULT_SLOTS_HOURS = Object.freeze([26, 50, 74, 98, 122, 146]);
 
 function freeEntryCeilingHours(firstReplyAt) {
   const timestamp = new Date(firstReplyAt).getTime();
@@ -43,7 +43,7 @@ function eligibleFreeEntryTime({
 }
 
 function configuredSlots(env = process.env) {
-  const input = String(env.WHATSAPP_FEP_SLOT_HOURS || "36,60,84,108,132,156");
+  const input = String(env.WHATSAPP_FEP_SLOT_HOURS || "26,50,74,98,122,146");
   const slots = input.split(",").map((value) => Number(value.trim()));
   if (!slots.length || slots.length > 6 ||
     slots.some((slot) => !Number.isInteger(slot) || slot < 25 || slot > 166) ||
