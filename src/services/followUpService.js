@@ -1487,7 +1487,9 @@ async function sendCandidate(candidate) {
     sendResult = { success: false, wamid: null, externalMessageId: null };
   }
 
-  if (sendResult?.cancelled && !sendResult?.preSendCheckFailed) {
+  // A failed final database verification happens before any provider call.
+  // It is safe to discard the unsent claim and retry eligibility on a later sweep.
+  if (sendResult?.cancelled) {
     const discarded = await followUpRepo.discardUnsentClaim({
       messageId: saved.id,
       contactId: candidate.contact_id,
