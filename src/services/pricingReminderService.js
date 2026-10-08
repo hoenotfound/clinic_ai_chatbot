@@ -8,6 +8,7 @@ const { getActivePromotions } = require("../utils/activePromotion");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { quietHoursStatus, normalizeQuietHours } = require("../utils/quietHours");
 const { evaluatePricingReminder } = require("../utils/pricingReminderSelection");
+const { afterFinalMode } = require("../db/pricingReminderRepo");
 
 function activationCutoff(settings) {
   const main = Date.parse(settings.activatedAt);
@@ -40,6 +41,14 @@ function canFitBeforeFinal(candidate, at = new Date()) {
   return Number.isFinite(finalDue) && Number.isFinite(current) &&
     current + 120 * 60 * 1000 <= finalDue;
 }
+function canSendAfterFinal(candidate, at = new Date()) {
+  const sentFinalAt = Date.parse(candidate.final_due_at);
+  const lastInbound = Date.parse(candidate.inbound_at);
+  const now = new Date(at).getTime();
+  return [sentFinalAt, lastInbound, now].every(Number.isFinite) &&
+    now >= sentFinalAt + 5 * 60 * 1000 &&
+    now < lastInbound + (24 * 60 - 10) * 60 * 1000;
+}
 async function skipCandidate(candidate, reason) {
   const recorded = await pricingRepo.recordDecision({ candidate, reason });
   if (!recorded) return;
@@ -66,6 +75,7 @@ function publish(message, reason) {
 
 async function sendPricingReminder(candidate, offer, settings) {
   if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active) return;
+  if (afterFinalMode(settings) && !canSendAfterFinal(candidate)) return;
   const saved = await pricingRepo.claim({
     candidate,
     offer,
@@ -93,8 +103,12 @@ async function sendPricingReminder(candidate, offer, settings) {
           Number(settings.steps[2].beforeWindowExpiryMinutes) ||
         (live.additionalSteps?.[1]?.timingMode || "after_reply") !==
           settings.steps[2].timingMode ||
+        (live.pricingReminder?.mode || "before_final") !==
+          (settings.pricingReminder?.mode || "before_final") ||
         quietHoursStatus(new Date(), live.quietHours).active ||
-        !canFitBeforeFinal(candidate)) return false;
+        !(afterFinalMode(settings)
+          ? canSendAfterFinal(candidate)
+          : canFitBeforeFinal(candidate))) return false;
 
     // Changes to a promotion or current interest must not send stale prices.
     const current = chooseOffer(candidate);
@@ -109,6 +123,7 @@ async function sendPricingReminder(candidate, offer, settings) {
       treatmentInterest: candidate.treatment_interest,
       finalDueAt: candidate.final_due_at,
       whatsappNumber: candidate.whatsapp_number,
+      afterFinal: afterFinalMode(settings),
     });
   };
 
@@ -189,7 +204,10 @@ async function runPricingReminders(settings, now = new Date()) {
     try {
       const due = new Date(candidate.due_at).getTime();
       if (!Number.isFinite(due)) continue;
-      if (!canFitBeforeFinal(candidate, new Date(Math.max(due, now.getTime())))) {
+      const timeAtSend = new Date(Math.max(due, now.getTime()));
+      if (!(afterFinalMode(settings)
+        ? canSendAfterFinal(candidate, timeAtSend)
+        : canFitBeforeFinal(candidate, timeAtSend))) {
         await skipCandidate(candidate, "insufficient_window");
         continue;
       }
@@ -211,4 +229,4 @@ async function runPricingReminders(settings, now = new Date()) {
   }
   return nextDueAt;
 }
-module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };
+module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canFitBeforeFinal, canSendAfterFinal, evaluateOffer, statusForPricingSend };
