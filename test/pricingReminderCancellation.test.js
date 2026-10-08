@@ -165,7 +165,7 @@ test("third consecutive confirmed-unsent preflight failure escalates to staff",a
   }
 });
 
-test("accepted social caption plus failed final eligibility must not discard or retry automatically",async()=>{
+test("cancelled Instagram image after accepted caption never discards or auto-retries pricing",async()=>{
   const old={
     claim:pricingRepo.claim,discard:pricingRepo.discard,note:pricingRepo.notePreflightFailure,
     status:messagesRepo.setDeliveryStatusById,
@@ -182,7 +182,7 @@ test("accepted social caption plus failed final eligibility must not discard or 
       return {id,contact_id:76,delivery_status:status,delivery_error:error};
     };
     messaging.sendImageByUrl=async()=>({
-      success:false,cancelled:false,preSendCheckFailed:true,
+      success:false,cancelled:true,preSendCheckFailed:true,
       partialCaptionSent:true,captionProviderMessageId:"mid.caption",
       error:"Image cancelled after caption accepted",
     });
