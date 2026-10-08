@@ -2,7 +2,9 @@ const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
-const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|offers?|discounts?|vouchers?|packages?|how\s+much|rm\s*\d{2,})\b|\b(?:harga|berapa|pakej|promosi|diskaun|baucar|tawaran)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc])\b)/iu;
+const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|packages?|how\s+much|rm\s*\d{2,})\b|\b(?:harga|berapa|pakej|promosi|diskaun|baucar|tawaran)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc])\b)/iu;
+
+const DECLINED_TREATMENT = /(?:\\b(?:not\\s+interested|no\\s+interest|don['’]?t\\s+want|do\\s+not\\s+want|not\\s+looking\\s+for)\\b|不感兴趣|不感興趣|不想了解|不想做|不要这个|不要這個|没兴趣|沒興趣|tak\\s+(?:berminat|mahu|nak))/iu;
 
 const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(?:ing)?\s+for)\s+(?:the\s+)?(?:price|pricing|package|promo)\b|(?:不[想要需]|不用|无需|不必)(?:知道|了解|问|問)?(?:价格|價錢|价钱|配套|套餐))/iu;
 
@@ -16,14 +18,14 @@ const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|c
 function hasCustomerPriceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
-  if (DECLINED_PRICE.test(value)) return false;
+  if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value)) return false;
   return PRICE_OR_PACKAGE.test(value);
 }
 
 function hasCustomerServiceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
-  if (ADMIN_ONLY.test(value)) return false;
+  if (ADMIN_ONLY.test(value) || DECLINED_TREATMENT.test(value)) return false;
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
