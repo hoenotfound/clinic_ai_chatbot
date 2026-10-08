@@ -34,7 +34,7 @@ const candidateSql = `
          lead.started_message_id AS lead_started_message_id,
          origin.id AS epoch_origin_message_id,
          latest_ad.treatment_interest AS referral_treatment_interest,
-         latest_ad.ad_name AS referral_ad_name,
+         COALESCE(NULLIF(latest_ad.ad_name,''),ad_insights.ad_name) AS referral_ad_name,
          latest_ad.origin_message_id AS latest_ad_message_id,
          (SELECT array_agg(text_content ORDER BY msg_time DESC) FROM (
            SELECT m.content AS text_content, m.created_at AS msg_time
@@ -82,7 +82,7 @@ const candidateSql = `
   JOIN whatsapp_free_entry_pricing_evidence evidence
        ON evidence.wamid = first_reply.whatsapp_message_id
   JOIN LATERAL (
-    SELECT e.origin_message_id, e.treatment_interest, e.ad_name,
+    SELECT e.origin_message_id, e.treatment_interest, e.ad_name, e.meta_ad_id,
       message.created_at AS origin_at
     FROM whatsapp_free_entry_referrals e
     JOIN messages message ON message.id=e.origin_message_id
@@ -92,6 +92,12 @@ const candidateSql = `
         ($8::integer * interval '1 hour')
     ORDER BY message.created_at DESC,message.id DESC LIMIT 1
   ) latest_ad ON true
+  LEFT JOIN LATERAL (
+    SELECT insight.ad_name FROM meta_ad_insights_daily insight
+    WHERE insight.ad_id=latest_ad.meta_ad_id
+      AND NULLIF(BTRIM(insight.ad_name),'') IS NOT NULL
+    ORDER BY insight.insight_date DESC, insight.updated_at DESC LIMIT 1
+  ) ad_insights ON true
   JOIN LATERAL (
     SELECT inbound.created_at
     FROM messages inbound
