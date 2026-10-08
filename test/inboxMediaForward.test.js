@@ -8,6 +8,7 @@ function harness(overrides = {}) {
   const events = [], attention = [], published = [];
   let saved = { id: 90, contact_id: 2, content: "Caption", media_mime_type: "image/jpeg", media_key: null, is_forwarded: true };
   const sandbox = { console: { info() {}, warn() {}, error() {} }, performance, randomUUID: () => "test-request",
+    verboseInboxMediaLogs: () => false, logInboxMediaSummary: () => {},
     withInboxDatabaseTimeouts: work => work(), AI_HANDOFF_OWNER: "AI_HANDOFF", claimAiHandoffOwnership: async () => null,
     aiReplyCancellation: { cancelForContact: c => events.push(`cancel:${c.id}`) },
     prepareStoredInboxImage: async () => null,

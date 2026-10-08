@@ -2,17 +2,22 @@
 
 Photo selection, upload, provider acceptance and preview loading are separate operations. `.jpeg` and `.jpg` both represent JPEG; encoding and byte size determine the preparation path.
 
-The browser creates an `X-Inbox-Request-Id`. Image and forward routes echo it. Match the ID across these logs without copying tokens, signed URLs, captions or image contents:
+The browser creates an `X-Inbox-Request-Id`. Image and forward routes echo it. By default, each Inbox image/video/document request generates a single `[Inbox media summary]` entry with request ID, internal contact ID, channel, byte size, provider acceptance outcome, HTTP status, total time and per-stage elapsed times. Forwarded images get one summary per target. No tokens, media keys, signed URLs, captions or image contents are logged.
+
+Set `INBOX_MEDIA_VERBOSE_LOGS=true` temporarily on a Render service to restore individual stage and successful WhatsApp API timing logs for investigation; unset it afterward. Failures, HTTP errors, timeouts and persistence warnings remain visible in the default mode. Log level `info` means the provider accepted a send, not that a customer's device received it.
+
+Additional debugging log families:
 
 | Log | What it measures |
 | --- | --- |
 | `[Inbox image preparation]` | Input/output bytes and encoding; inspection, decode, encode and total browser preparation time |
 | `[Inbox outbound queue]` | Earlier-send queue wait and actual request duration |
 | `[Inbox image request]` | Browser-to-response-headers time and complete response time |
-| `[Inbox media stage]` | Stage start and finish, including `providerPolicyMs` for the fresh policy lookup immediately before delivery |
-| `[Inbox image timing]` | Multipart receipt, database preparation, R2 persistence, provider work, attachment linking, outcome persistence and pipeline update |
-| `[WhatsApp media timing]` | Separate `upload`, `message_id` and `message_link` operations with header/body durations, status and timeout |
-| `[Inbox forward timing]` | Source lookup, target queue wait, JPEG preparation, permanent/temporary R2 copies, fallback transfers, provider send and bookkeeping |
+| `[Inbox media summary]` | **Default:** one concise outcome and stage-duration record per request (or forwarded image target), warning on failure or incomplete persistence |
+| `[Inbox media stage]` | **Verbose only:** stage start and finish, including `providerPolicyMs` for the fresh policy lookup immediately before delivery |
+| `[Inbox image timing]` | **Verbose only:** extra timings on slow image requests |
+| `[WhatsApp media timing]` | Separate `upload`, `message_id` and `message_link` timings: default only for non-2xx responses / timeouts; all operations in verbose mode |
+| `[Inbox forward timing]` | **Verbose only:** extra image-forward diagnostics; the default forward summary includes key stage durations |
 | `[Inbox image display]` | API-response-to-stored-image-load time, or image-load failure |
 
 `routeMs` starts after multipart receipt. R2 and provider work overlap, so do not add their durations. Message API acceptance is not proof of device delivery; sent/delivered/read still comes from webhooks.

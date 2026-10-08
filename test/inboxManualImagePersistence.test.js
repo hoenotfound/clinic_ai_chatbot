@@ -19,6 +19,7 @@ function harness({ attachment = "saved", providerAccepted = true } = {}) {
     router: { post: (_, __, route) => { handler = route; } },
     handleImageUpload() {}, inboxMediaTimings: () => ({ requestId: "test" }),
     timedMediaStage: async (_, __, work) => work(),
+    verboseInboxMediaLogs: () => false,
     contactsRepo: { getContactById: async () => contact },
     WHATSAPP_IMAGE_MIME_TYPES: new Set(["image/jpeg", "image/png"]),
     WHATSAPP_IMAGE_MAX_BYTES: 5 * 1024 * 1024,
