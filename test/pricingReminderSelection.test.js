@@ -16,7 +16,7 @@ const promotions = [{
 }];
 const select = (candidate) => selectPricingOffer({promotions, candidate, services, language: "zh"});
 test("requires explicit package for a multi-package service", () => {
-  assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["骨盆调理"]}), null);
+  assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["骨盆调理"]}), null); // multi-graphic: use evaluatePricingReminder
   assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["Package A please"]})?.caption, "RM388");
   assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["Package A or Package B?"]}), null);
 });
@@ -81,15 +81,15 @@ test("recognizes the combined 3D + 9D offer rather than sending a single-treatme
   assert.equal(offer?.caption,"Combo offer");
 });
 
-test("does not send a promotional graphic if the customer only asked about suitability", () => {
+test("pricing reminder is eligible on treatment interest even without a price question", () => {
   for (const phrase of ["我想了解 3D 小颜术效果", "骨盆调理适合产后吗", "3D 小颜术能不能改善下颚线", "Can I visit the clinic for an assessment?"]) {
     const service = phrase.includes("骨盆") ? "骨盆调理" : "3D 小颜术";
     const decision = evaluatePricingReminder({
       services, promotions, language: "zh",
       candidate: {treatment_interest:service,recent_customer_messages:[phrase]},
     });
-    assert.equal(decision.reason, "no_pricing_interest");
-    assert.equal(decision.offer, null);
+    assert.equal(decision.reason, null);
+    assert.ok(decision.offer, "Service interest is enough even without a price question");
   }
 });
 
@@ -100,13 +100,14 @@ test("pricing intent supports Chinese, English, Malay, package selection and RM 
   assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package B price please"]})?.caption,"RM288");
 });
 
-test("CRM treatment alone, empty history and ad attribution never establish pricing intent", () => {
+test("CRM treatment alone and ad attribution can still lead to a configured service pricing reminder", () => {
   for (const recent_customer_messages of [[],[],["3D 适合吗?"]]) {
     const decision=evaluatePricingReminder({
       services, promotions, language:"zh",
       candidate:{treatment_interest:"3D 小颜术",recent_customer_messages,ad_name:"3D RM488 promo"},
     });
-    assert.equal(decision.reason,"no_pricing_interest");
+    assert.equal(decision.reason,null);
+    assert.equal(decision.offers.length,1);
   }
 });
 
@@ -122,4 +123,41 @@ test("cancelled internal pricing claim does not count as a delivered or attempte
   });
   assert.equal(decision.reason,null);
   assert.equal(decision.offer?.caption,"RM488");
+});
+
+test("unclear pelvis package sends both A and B, while an explicit choice sends only that graphic",()=>{
+  for(const recent_customer_messages of [[],["骨盆调理适合我吗"],["Package A or Package B?"]]){
+    const result=evaluatePricingReminder({
+      promotions,services,language:"zh",
+      candidate:{treatment_interest:"骨盆调理",recent_customer_messages}
+    });
+    assert.equal(result.reason,null);
+    assert.deepEqual(result.offers.map(x=>x.packageName),["Package A","Package B"]);
+    assert.deepEqual(result.offers.map(x=>x.caption),["RM388","RM288"]);
+    assert.notEqual(result.offers[0].imageUrl,result.offers[1].imageUrl);
+  }
+  const chosen=evaluatePricingReminder({
+    promotions,services,language:"zh",
+    candidate:{treatment_interest:"骨盆调理",recent_customer_messages:["Package B please"]}
+  });
+  assert.deepEqual(chosen.offers.map(x=>x.packageName),["Package B"]);
+});
+
+test("partially completed A/B reminder only returns the remaining unsent package",()=>{
+  const result=evaluatePricingReminder({
+    promotions,services,language:"zh",
+    candidate:{treatment_interest:"骨盆调理",recent_customer_messages:["骨盆调理"],
+      sent_media:[{media_url:"https://new.example/promo-images/30",content:"RM388",delivery_status:"sent"}]}
+  });
+  assert.deepEqual(result.offers.map(x=>x.packageName),["Package B"]);
+});
+
+test("unknown delivery for one pelvis package requires review before sending another",()=>{
+  const result=evaluatePricingReminder({
+    promotions,services,language:"zh",
+    candidate:{treatment_interest:"骨盆调理",recent_customer_messages:[],
+      sent_media:[{media_url:"https://new.example/promo-images/30",content:"RM388",delivery_status:"unknown"}]}
+  });
+  assert.equal(result.reason,"delivery_review");
+  assert.deepEqual(result.offers,[]);
 });
