@@ -35,7 +35,7 @@ test("pricing eligibility is tied to the ACTUAL accepted Follow-up 3, never the 
   assert.match(expr,/delivery_status IN \('sent', 'delivered', 'read'\)/);
   assert.match(expr,/pending.*whatsapp_message_id IS NOT NULL/);
   assert.match(expr,/whatsapp_accepted_at IS NOT NULL/);
-  assert.match(expr,/third\.created_at \+ interval '5 minutes' AS due_at/);
+  assert.match(expr,/third\.whatsapp_accepted_at \+ interval '5 minutes' AS due_at/);
   assert.doesNotMatch(expr,/final_due_at|second\.created_at|third\.id IS NULL/);
   assert.match(expr,/inbound_at \+ interval '23 hours 50 minutes'/);
 });
