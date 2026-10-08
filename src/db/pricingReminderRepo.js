@@ -154,6 +154,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode, settings }) {
      ), anchor AS (
        SELECT id, created_at, sent_by_username FROM messages
        WHERE contact_id=$1 AND role='assistant' AND is_automated_follow_up=false
+         AND delivery_status IS DISTINCT FROM 'failed'
          AND (created_at,id) > ((SELECT created_at FROM inbound),(SELECT id FROM inbound))
          AND NOT EXISTS (SELECT 1 FROM outbound_message_evidence e
            WHERE e.message_id=messages.id AND e.origin='system_fallback')
@@ -252,6 +253,7 @@ async function isClaimStillEligible({
          AND now() < (SELECT created_at FROM messages WHERE id=$4)+interval '23 hours 50 minutes'
          AND (SELECT id FROM messages
               WHERE contact_id=$2 AND role='assistant' AND is_automated_follow_up=false
+                AND delivery_status IS DISTINCT FROM 'failed'
                 AND NOT EXISTS(SELECT 1 FROM outbound_message_evidence e
                   WHERE e.message_id=messages.id AND e.origin='system_fallback')
                 AND (created_at,id) > (SELECT created_at,id FROM messages WHERE id=$4)
