@@ -35,7 +35,13 @@ function selectedService(candidate, services, aliases = []) {
     if (matched.length === 1) return matched[0].name;
   }
   const saved = norm(candidate.treatment_interest);
-  return services.find((service) => norm(service.name) === saved)?.name || null;
+  const crmService = services.find((service) => norm(service.name) === saved)?.name;
+  if (crmService) return crmService;
+  // Ad-derived treatment is a last-resort baseline, never above the current
+  // customer's explicit choice or a valid CRM treatment.
+  return inferConfiguredServiceFromText(candidate.ad_name, {
+    services, serviceAliases: aliases,
+  }) || null;
 }
 // Pricing reminders are scheduled treatment follow-ups. They must NOT depend
 // on whether the customer proactively asked about a price.
