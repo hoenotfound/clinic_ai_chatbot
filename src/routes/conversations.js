@@ -2497,8 +2497,6 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
       true
     ))) return;
 
-    aiReplyCancellation.cancelForContact(contact);
-
     const videoFilename = normalizedInboxVideoFilename(req.file.originalname);
     const preparedVideo = await timedMediaStage(
       timings,
