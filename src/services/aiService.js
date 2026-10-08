@@ -260,13 +260,28 @@ async function runGeminiModelAttempt(
     overloadRetryCount = 1,
     sleepFn = sleep,
     randomFn = Math.random,
+    signal = null,
   } = {}
 ) {
   const boundedRetryCount = Math.max(0, Math.min(Number(overloadRetryCount) || 0, 1));
 
   for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
     try {
-      const raw = await gemini.getReply(messages, options, apiKey, model);
+      const raw = await gemini.getReply(messages, options, apiKey, model, {
+        signal,
+        // The usage event must be tagged rejected_invalid_output when the
+        // provider completes but the structured reply is unusable. Keep the
+        // existing outer validation for injected/test providers.
+        validateResponse: (response) => {
+          const text = response?.text?.trim();
+          if (!text) {
+            const err = new Error("Gemini returned an empty response.");
+            err.code = "EMPTY_AI_RESPONSE";
+            throw err;
+          }
+          validateAiSurfaceResult(text, options);
+        },
+      });
       validateAiSurfaceResult(raw, options);
       return raw;
     } catch (err) {
@@ -520,13 +535,14 @@ async function runGeminiReply(
 
     try {
       const reply = await runWithGeminiKeys(
-        (apiKey) => runGeminiModelAttempt(messages, options, apiKey, model, {
+        (apiKey, _candidate, requestControl = {}) => runGeminiModelAttempt(messages, options, apiKey, model, {
           // A provider-level 503 says the model is unavailable, not the key.
           // When another model is ready, switch immediately rather than spend
           // a second quota-counting request on the same overloaded model.
           overloadRetryCount: hasLaterModel ? 0 : policy.retryCount,
           sleepFn,
           randomFn,
+          signal: requestControl.signal || null,
         }),
         {
           env,

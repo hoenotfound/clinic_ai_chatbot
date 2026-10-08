@@ -435,3 +435,21 @@ test("all cooling keys are skipped until the cooldown expires", async () => {
   assert.equal(recovered, "recovered");
   assert.deepEqual(recoveredCalls, ["key-a"]);
 });
+
+test("Gemini per-key timeout aborts the underlying SDK signal before switching models",async()=>{
+  resetGeminiKeyPoolState();
+  let signal;
+  await assert.rejects(
+    runWithGeminiKeys(
+      async (_apiKey, _candidate, control) => {
+        signal=control.signal;
+        return new Promise(()=>{});
+      },
+      {env:{GEMINI_API_KEYS:"key-one"},timeoutMs:12, retryCount:0,
+        persistHealth:false,smartRetry:true,stopKeyRotationOnTimeout:true}
+    ),
+    err=>err.code==="AI_TIMEOUT"
+  );
+  assert.ok(signal);
+  assert.equal(signal.aborted,true);
+});

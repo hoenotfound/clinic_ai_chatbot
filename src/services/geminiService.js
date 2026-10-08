@@ -84,7 +84,8 @@ async function getReply(
   messages,
   optionsOrFirstMessage = false,
   apiKey = null,
-  model = MODEL
+  model = MODEL,
+  requestControl = {}
 ) {
   const options = normalizeOptions(optionsOrFirstMessage);
   const resolvedKey = apiKey || process.env.GEMINI_API_KEY;
@@ -97,7 +98,11 @@ async function getReply(
 
   const { purpose, request } = buildGeminiRequest(messages, options, resolvedModel);
   const ai = new GoogleGenAI({ apiKey: resolvedKey });
-  const response = await generateGeminiContent(ai, request, { purpose });
+  const response = await generateGeminiContent(ai, request, {
+    purpose,
+    signal: requestControl.signal || null,
+    validateResponse: requestControl.validateResponse || null,
+  });
 
   const text = response.text?.trim();
   if (!text) {
