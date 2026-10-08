@@ -379,7 +379,11 @@ function isAutomatedFollowUpConfig(value) {
     !value.additionalSteps.every(isFollowUpStep) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
-        typeof value.pricingReminder.enabled !== "boolean")) ||
+        typeof value.pricingReminder.enabled !== "boolean" ||
+        (value.pricingReminder.requirePricingInterest !== undefined &&
+          typeof value.pricingReminder.requirePricingInterest !== "boolean") ||
+        (value.pricingReminder.sendBothPelvicPackages !== undefined &&
+          typeof value.pricingReminder.sendBothPelvicPackages !== "boolean"))) ||
     !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
   ) {
     return false;
@@ -592,13 +596,23 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
-        typeof requestedPricing.enabled !== "boolean")) return null;
+        typeof requestedPricing.enabled !== "boolean" ||
+        (requestedPricing.requirePricingInterest !== undefined &&
+          typeof requestedPricing.requirePricingInterest !== "boolean") ||
+        (requestedPricing.sendBothPelvicPackages !== undefined &&
+          typeof requestedPricing.sendBothPelvicPackages !== "boolean"))) return null;
+  const requirePricingInterest = requestedPricing?.requirePricingInterest ??
+    (current?.pricingReminder?.requirePricingInterest !== false);
+  const sendBothPelvicPackages = requestedPricing?.sendBothPelvicPackages ??
+    (current?.pricingReminder?.sendBothPelvicPackages === true);
   const pricingEnabled = requestedPricing === undefined
     ? current?.pricingReminder?.enabled === true
     : requestedPricing.enabled === true;
   const pricingActivation =
     pricingEnabled
       ? current?.pricingReminder?.enabled === true &&
+        (current.pricingReminder.requirePricingInterest !== false) === requirePricingInterest &&
+        (current.pricingReminder.sendBothPelvicPackages === true) === sendBothPelvicPackages &&
         typeof current.pricingReminder.activatedAt === "string" &&
         !Number.isNaN(Date.parse(current.pricingReminder.activatedAt))
           ? current.pricingReminder.activatedAt
@@ -653,7 +667,8 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     quietHours,
     ...firstStep,
     additionalSteps,
-    pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation },
+    pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
+      requirePricingInterest, sendBothPelvicPackages },
     activatedAt: enabled
       ? continuingCurrentActivation
         ? current.activatedAt
