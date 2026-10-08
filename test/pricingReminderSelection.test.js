@@ -109,3 +109,17 @@ test("CRM treatment alone, empty history and ad attribution never establish pric
     assert.equal(decision.reason,"no_pricing_interest");
   }
 });
+
+test("cancelled internal pricing claim does not count as a delivered or attempted graphic",()=>{
+  const decision=evaluatePricingReminder({
+    promotions, services,language:"zh",
+    candidate:{
+      treatment_interest:"3D 小颜术",
+      recent_customer_messages:["3D 价钱多少"],
+      sent_media:[{media_url:"https://host.example/promo-images/32",
+        content:"RM488", delivery_status:"cancelled",whatsapp_message_id:null}],
+    },
+  });
+  assert.equal(decision.reason,null);
+  assert.equal(decision.offer?.caption,"RM488");
+});
