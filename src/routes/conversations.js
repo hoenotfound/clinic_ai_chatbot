@@ -1,5 +1,6 @@
 const express = require("express");
 const { randomUUID } = require("node:crypto");
+const { verboseInboxMediaLogs, logInboxMediaSummary, trackInboxMediaResponse } = require("../utils/inboxMediaLogging");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
@@ -199,22 +200,28 @@ const inboxDocumentUpload = multer({
 
 function inboxMediaTimings(req = null) {
   const suppliedId = String(req?.headers?.["x-inbox-request-id"] || "");
-  return { requestId: /^[A-Za-z0-9_-]{1,80}$/.test(suppliedId) ? suppliedId : randomUUID() };
+  return { requestId: /^[A-Za-z0-9_-]{1,80}$/.test(suppliedId) ? suppliedId : randomUUID(), startedAtMs: Date.now() };
 }
 
 async function timedMediaStage(timings, stage, work, database = false) {
   const startedAt = performance.now();
-  console.info("[Inbox media stage]", JSON.stringify({ requestId: timings.requestId, stage, status: "started" }));
+  if (verboseInboxMediaLogs()) console.info("[Inbox media stage]", JSON.stringify({ requestId: timings.requestId, stage, status: "started" }));
   try {
     return await (database ? withInboxDatabaseTimeouts(work, timings) : work());
+  } catch (err) {
+    timings.failedStage = stage;
+    throw err;
   } finally {
     timings[stage] = Math.round(performance.now() - startedAt);
-    console.info("[Inbox media stage]", JSON.stringify({ requestId: timings.requestId, stage, status: "finished", elapsedMs: timings[stage] }));
+    if (verboseInboxMediaLogs()) console.info("[Inbox media stage]", JSON.stringify({ requestId: timings.requestId, stage, status: "finished", elapsedMs: timings[stage] }));
   }
 }
 
 async function finishInboxMediaSend(saved, sendResult, contact, username, timings) {
   const errorText = deliveryErrorForSend(sendResult, sendResult.error || rejectedErrorFor(contact));
+  timings.contactId = contact.id;
+  timings.channel = contact.channel || "whatsapp";
+  timings.outcome = sendResult.success ? "accepted" : sendResult.unknown === true || sendResult.ambiguous === true ? "unknown" : "failed";
   let finalMessage = null;
   await timedMediaStage(timings, "outcomeSaveMs", async () => {
     for (let attempt = 1; attempt <= 2 && !finalMessage; attempt += 1) {
@@ -228,6 +235,7 @@ async function finishInboxMediaSend(saved, sendResult, contact, username, timing
     }
   });
   if (!finalMessage) {
+    timings.persistenceIssue = true;
     const unknown = sendResult.unknown === true || sendResult.ambiguous === true;
     finalMessage = { ...saved, whatsapp_message_id: sendResult.wamid || saved.whatsapp_message_id || null,
       delivery_status: unknown ? "unknown" : sendResult.success ? "pending" : "failed", delivery_error: errorText };
@@ -1672,11 +1680,15 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
   if (!sourceMessage.media_key || !mimeType.startsWith("image/") || isSticker) {
     return forwardOtherStoredMessage(sourceMessage, targetContact, username);
   }
-  const timings = { ...(requestTimings || inboxMediaTimings()), target: targetContact.id };
+  const timings = { ...(requestTimings || inboxMediaTimings()), target: targetContact.id, startedAtMs: Date.now(),
+    channel: targetContact.channel || "whatsapp" };
   const startedAt = performance.now();
   const policy = await timedMediaStage(timings, "preflightMs", () =>
     whatsappPolicy.checkFreeformAllowed(targetContact, new Date(), { purpose: whatsappPolicy.manualStaffPurpose(targetContact) }), true);
-  if (!policy.allowed) return { contactId: targetContact.id, delivered: false, policyBlocked: true, code: policy.code || null, error: policy.message };
+  if (!policy.allowed) {
+    logInboxMediaSummary(timings, { type: "forward_image", contactId: targetContact.id, outcome: "blocked" });
+    return { contactId: targetContact.id, delivered: false, policyBlocked: true, code: policy.code || null, error: policy.message };
+  }
   const normalizedImage = (targetContact.channel || "whatsapp") === "whatsapp"
     ? await timedMediaStage(timings, "imagePreparationMs", () => prepareStoredInboxImage(sourceMessage))
     : null;
@@ -1753,14 +1765,17 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
   if (persistOutcome.status === "fulfilled") saved = persistOutcome.value;
   else {
     console.error(`[Inbox forward] attachment persistence failed for message ${saved.id}:`, persistOutcome.reason);
+    timings.persistenceIssue = true;
     await flagInboxMediaAttention(preparedContact.id, "Forward send attempted, but attachment history/retry may be unavailable.", timings);
   }
   const sendResult = providerOutcome.status === "fulfilled" ? providerOutcome.value : { success: false, unknown: true,
     error: "Forward delivery could not be confirmed. Check the customer chat before retrying." };
   const finalMessage = await finishInboxMediaSend(saved, sendResult, preparedContact, username, timings);
   timings.totalMs = Math.round(performance.now() - startedAt);
-  console.info("[Inbox forward timing]", JSON.stringify({ ...timings, source: sourceMessage.id, target: preparedContact.id,
-    persistence: persistOutcome.status, outcome: sendResult.success ? "accepted" : sendResult.unknown ? "unknown" : "failed" }));
+  logInboxMediaSummary(timings, { type: "forward_image", contactId: preparedContact.id,
+    outcome: timings.outcome, sourceMessageId: sourceMessage.id });
+  if (verboseInboxMediaLogs()) console.info("[Inbox forward timing]", JSON.stringify({ ...timings, source: sourceMessage.id, target: preparedContact.id,
+    persistence: persistOutcome.status, outcome: timings.outcome }));
   return { contactId: preparedContact.id, delivered: sendResult.success, deliveryUnknown: sendResult.unknown === true || sendResult.ambiguous === true,
     error: sendResult.success ? null : publicDeliveryError(sendResult.error), message: { ...finalMessage, delivery_error: publicDeliveryError(finalMessage.delivery_error), is_forwarded: true } };
 }
@@ -1908,7 +1923,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
   }
 
   const totalMs = Date.now() - forwardStartedAt;
-  if (sourceMimeType.startsWith("image/") && totalMs >= 1000) {
+  if (verboseInboxMediaLogs() && sourceMimeType.startsWith("image/") && totalMs >= 1000) {
     console.info(
       `[Inbox forward timing] source=${sourceMessage.id} target=${preparedContact.id} copy=${mediaCopyMs ?? "n/a"}ms provider=${providerMs}ms total=${totalMs}ms`
     );
@@ -2122,11 +2137,13 @@ router.post("/:contactId/messages", async (req, res) => {
 function handleImageUpload(req, res, next) {
   req.inboxMediaTimings = inboxMediaTimings(req);
   res.set("X-Inbox-Request-Id", req.inboxMediaTimings.requestId);
-  console.info("[Inbox media stage]", JSON.stringify({ requestId: req.inboxMediaTimings.requestId, stage: "receiveMs", status: "started" }));
+  trackInboxMediaResponse(req, res, "image", req.inboxMediaTimings);
+  if (verboseInboxMediaLogs()) console.info("[Inbox media stage]", JSON.stringify({ requestId: req.inboxMediaTimings.requestId, stage: "receiveMs", status: "started" }));
   const receiveStartedAt = Date.now();
   upload.single("image")(req, res, (err) => {
     req.inboxImageReceiveMs = Date.now() - receiveStartedAt;
     req.inboxMediaTimings.receiveMs = req.inboxImageReceiveMs;
+    req.inboxMediaTimings.bytes = req.file?.size ?? null;
     if (!err) return next();
 
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
@@ -2150,7 +2167,9 @@ function handleVoiceUpload(req, res, next) {
 function handleVideoUpload(req, res, next) {
   req.inboxMediaTimings = inboxMediaTimings(req);
   res.set("X-Inbox-Request-Id", req.inboxMediaTimings.requestId);
+  trackInboxMediaResponse(req, res, "video", req.inboxMediaTimings);
   inboxVideoUpload.single("video")(req, res, (err) => {
+    req.inboxMediaTimings.bytes = req.file?.size ?? null;
     if (!err) return next();
     if (req.file?.path) fs.unlink(req.file.path).catch(() => {});
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
@@ -2165,7 +2184,9 @@ function handleVideoUpload(req, res, next) {
 function handleDocumentUpload(req, res, next) {
   req.inboxMediaTimings = inboxMediaTimings(req);
   res.set("X-Inbox-Request-Id", req.inboxMediaTimings.requestId);
+  trackInboxMediaResponse(req, res, "document", req.inboxMediaTimings);
   inboxDocumentUpload.single("document")(req, res, (err) => {
+    req.inboxMediaTimings.bytes = req.file?.size ?? null;
     if (!err) return next();
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({ error: "Document is too large. Please keep it under 16MB." });
@@ -2377,6 +2398,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
             };
 
       if (!mediaKey || !mediaAttached) {
+        timings.persistenceIssue = true;
         try {
           await flagInboxMediaAttention(
             preparedContact.id,
@@ -2444,12 +2466,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     const finalMessage = await finishInboxMediaSend(saved, sendResult, preparedContact, req.session.username, timings);
 
     const totalRouteMs = Date.now() - routeStartedAt;
-    if (
+    if (verboseInboxMediaLogs() && (
       totalRouteMs >= 2000 ||
       Number(req.inboxImageReceiveMs || 0) >= 1500 ||
       Number(r2PersistMs || 0) >= 1500 ||
       Number(providerSendMs || 0) >= 1500
-    ) {
+    )) {
       console.info(
         "[Inbox image timing]", JSON.stringify({ ...timings, contact: preparedContact.id, bytes: req.file.size,
           r2Ms: r2PersistMs, providerMs: providerSendMs, routeMs: totalRouteMs })
