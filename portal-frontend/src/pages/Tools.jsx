@@ -30,7 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false },
+  pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -176,6 +176,7 @@ function normalizeFollowUpSettings(value = {}) {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
       sendBothPelvicPackages:value?.pricingReminder?.sendBothPelvicPackages === true,
+      enableSocialChannels:value?.pricingReminder?.enableSocialChannels === true,
     },
   };
 }
@@ -825,6 +826,7 @@ export default function Tools() {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
             sendBothPelvicPackages:form.pricingReminder?.sendBothPelvicPackages === true,
+            enableSocialChannels:form.pricingReminder?.enableSocialChannels === true,
           },
         },
       });
@@ -2366,9 +2368,9 @@ function FollowUpTool({
               <div className="min-w-0">
                 <p className="text-sm font-semibold">Send missing pricing graphic + caption</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                  WhatsApp, Messenger and Instagram. Send at least 5 minutes after Meta
-                  accepts Follow-up 3, when the customer's treatment is identifiable.
-                  Whether a price enquiry is required is configurable for each clinic.
+                  WhatsApp by default; optionally Messenger and Instagram. Send at least
+                  5 minutes after Meta accepts Follow-up 3, when the treatment
+                  is identifiable. A price enquiry is optional per clinic.
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
                   Requires an accepted Follow-up 3. Pelvic Package A/B can be sent
@@ -2389,6 +2391,26 @@ function FollowUpTool({
               />
             </div>
             <div className="mt-3 space-y-3 rounded-xl border border-[var(--color-border)] p-3">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold">Include Messenger and Instagram</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Off by default for existing clinics. Sends only inside each channel's
+                    normal 24-hour window. Saving this change starts a fresh pricing cycle.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.pricingReminder?.enableSocialChannels === true}
+                  ariaLabel="Include Messenger and Instagram pricing reminders"
+                  onChange={() => setForm((current) => ({
+                    ...current,
+                    pricingReminder: {
+                      ...current.pricingReminder,
+                      enableSocialChannels:current.pricingReminder?.enableSocialChannels !== true,
+                    },
+                  }))}
+                />
+              </div>
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold">Require a customer price enquiry</p>
