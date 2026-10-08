@@ -123,3 +123,49 @@ test("cancelled internal pricing claim does not count as a delivered or attempte
   assert.equal(decision.reason,null);
   assert.equal(decision.offer?.caption,"RM488");
 });
+
+test("tenant opt-out of pricing-interest requirement supports treatment-only enquiries", () => {
+  const request=evaluatePricingReminder({
+    services,promotions,requirePricingInterest:false,
+    candidate:{treatment_interest:"3D 小颜术",recent_customer_messages:["3D 小颜术适合吗？"]},
+  });
+  assert.equal(request.offer?.caption,"RM488");
+  const legacy=evaluatePricingReminder({
+    services,promotions,
+    candidate:{treatment_interest:"3D 小颜术",recent_customer_messages:["3D 小颜术适合吗？"]},
+  });
+  assert.equal(legacy.offer,null);
+  assert.equal(legacy.reason,"no_pricing_interest");
+});
+
+test("unclear pelvic choice yields two distinct package media with independent identities", () => {
+  const base={services,promotions,sendBothPelvicPackages:true,requirePricingInterest:false};
+  const candidate={treatment_interest:"骨盆调理",recent_customer_messages:["我想了解骨盆调理"]};
+  const both=evaluatePricingReminder({...base,candidate});
+  assert.deepEqual(both.offers.map(o=>o.packageName),["Package A","Package B"]);
+  assert.notEqual(both.offers[0].imageUrl,both.offers[1].imageUrl);
+  assert.deepEqual(both.offers.map(o=>o.caption),["RM388","RM288"]);
+  assert.deepEqual(evaluatePricingReminder({
+    ...base,candidate:{...candidate,recent_customer_messages:["Package B please"]},
+  }).offers.map(o=>o.packageName),["Package B"]);
+
+  const oneSent=evaluatePricingReminder({
+    ...base,candidate:{...candidate,
+      sent_media:[{media_url:"https://host.test/promo-images/30",
+        content:"RM388",delivery_status:"delivered"}]},
+  });
+  assert.deepEqual(oneSent.offers.map(o=>o.packageName),["Package B"]);
+  const bothSent=evaluatePricingReminder({
+    ...base,candidate:{...candidate,sent_media:[
+      {media_url:"https://host.test/promo-images/30",content:"RM388",delivery_status:"delivered"},
+      {media_url:"https://host.test/promo-images/31",content:"RM288",delivery_status:"read"},
+    ]},
+  });
+  assert.equal(bothSent.reason,"already_sent");
+  const unknown=evaluatePricingReminder({
+    ...base,candidate:{...candidate,
+      sent_media:[{media_url:"https://host.test/promo-images/30",
+        content:"RM388",delivery_status:"unknown"}]},
+  });
+  assert.equal(unknown.reason,"delivery_review");
+});
