@@ -835,6 +835,10 @@ function parseStatusUpdates(body) {
             errorCode: firstError?.code ?? null,
             errorTitle: firstError?.title || null,
             errorMessage: firstError?.error_data?.details || firstError?.message || null,
+            ...(status.pricing?.type ? {
+              pricingType: String(status.pricing.type),
+              pricingBillable: typeof status.pricing.billable === "boolean" ? status.pricing.billable : null,
+            } : {}),
           });
         }
       }
