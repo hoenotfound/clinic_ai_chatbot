@@ -31,6 +31,8 @@ const candidateSql = `
          last_inbound.created_at AS last_inbound_at,
          evidence.pricing_type AS evidence_type,
          lead.treatment_interest,
+         lead.started_message_id AS lead_started_message_id,
+         origin.id AS epoch_origin_message_id,
          latest_ad.treatment_interest AS referral_treatment_interest,
          latest_ad.ad_name AS referral_ad_name,
          latest_ad.origin_message_id AS latest_ad_message_id,
@@ -42,10 +44,21 @@ const candidateSql = `
          ) recent) AS recent_inbound_messages,
          (SELECT COALESCE(array_agg(slot_hours), '{}') FROM whatsapp_free_entry_followup_attempts existing
           WHERE existing.first_reply_message_id = first_reply.id) AS claimed_slots,
+         (SELECT COALESCE(array_agg(DISTINCT m.whatsapp_template->>'name'), '{}')
+            FROM whatsapp_free_entry_followup_attempts previous
+            JOIN messages m ON m.id=previous.message_id
+            WHERE previous.first_reply_message_id=first_reply.id
+              AND previous.status='accepted'
+              AND m.whatsapp_template->>'name' IS NOT NULL) AS used_template_names,
+         (SELECT COUNT(*)::integer
+            FROM whatsapp_free_entry_followup_attempts previous
+            WHERE previous.first_reply_message_id=first_reply.id
+              AND previous.status='accepted') AS accepted_extended_sends,
          true AS source_is_ctwa
   FROM contacts c
   JOIN LATERAL (
     SELECT l.id, l.is_closed, l.appointment_status, l.marketing_consent, l.treatment_interest,
+           l.started_message_id,
            s.stage_type, s.system_key
     FROM leads l
     LEFT JOIN pipeline_stages s ON s.id = l.stage_id
@@ -94,6 +107,8 @@ const candidateSql = `
     AND c.whatsapp_opt_out_at IS NULL
     AND c.whatsapp_marketing_opt_out_at IS NULL
     AND lead.marketing_consent = 'opted_in'
+    AND (SELECT count(*) FROM whatsapp_free_entry_followup_attempts sent
+         WHERE sent.first_reply_message_id=first_reply.id AND sent.status='accepted') < 3
     AND lead.is_closed = false
     AND COALESCE(lead.stage_type, 'open') = 'open'
     AND COALESCE(lead.system_key, '') NOT IN ('appointment_set','visited')
@@ -287,6 +302,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
   const spec = explicitSpec || selectTemplateSpec(candidate, slotHours, active);
+  if (candidate.used_template_names?.includes(spec.templateName)) return "template_already_used";
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
   if (quiet.active) return "quiet_hours";
 
@@ -336,6 +352,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         excludeMessageId: message.id, currentAttemptId: attemptId,
       }))[0];
     if (!fresh || fresh.first_reply_message_id !== candidate.first_reply_message_id ||
+      fresh.used_template_names?.includes(spec.templateName) ||
       !eligibleFreeEntryTime({
         firstInboundAt: fresh.first_inbound_at,
         firstReplyAt: fresh.first_reply_at,
@@ -448,6 +465,13 @@ async function run({ now = new Date() } = {}) {
       const template = matches(preferred?.language) ||
         matches(active.fallbackLanguage);
       const spec = template ? { ...preferred, language: template.language } : preferred;
+      if (template && candidate.used_template_names?.includes(template.name)) {
+        result.skipped++;
+        await freeEntryReport.recordSkip(candidate.contact_id,
+          candidate.first_reply_message_id, slotHours, "template_already_used_in_entry")
+          .catch(() => {});
+        continue;
+      }
       if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates)) {
         result.skipped++;
         const reason = template ? "unsupported_or_unavailable_media" : "approved_language_variant_missing";
