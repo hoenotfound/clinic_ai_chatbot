@@ -48,8 +48,14 @@ const candidateSql = `
     ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
     LIMIT 1
   ) lead ON true
-  JOIN lead_attributions attribution ON attribution.lead_id = lead.id
-  JOIN messages origin ON origin.id = attribution.first_message_id
+  JOIN LATERAL (
+    SELECT entry.origin_message_id, entry.ctwa_clid, entry.meta_ad_id
+    FROM whatsapp_free_entry_referrals entry
+    WHERE entry.contact_id = c.id
+    ORDER BY entry.recorded_at DESC, entry.origin_message_id DESC
+    LIMIT 1
+  ) referral ON true
+  JOIN messages origin ON origin.id = referral.origin_message_id
        AND origin.contact_id = c.id AND origin.role = 'user'
   JOIN LATERAL (
     SELECT reply.id, reply.created_at, reply.whatsapp_message_id
@@ -82,9 +88,7 @@ const candidateSql = `
     AND COALESCE(lead.stage_type, 'open') = 'open'
     AND COALESCE(lead.system_key, '') NOT IN ('appointment_set','visited')
     AND COALESCE(lead.appointment_status, 'none') NOT IN ('set','visited')
-    AND attribution.channel = 'whatsapp'
-    AND LOWER(COALESCE(attribution.meta_source_type, '')) = 'ad'
-    AND (attribution.ctwa_clid IS NOT NULL OR attribution.meta_ad_id IS NOT NULL)
+    AND (referral.ctwa_clid IS NOT NULL OR referral.meta_ad_id IS NOT NULL)
     AND evidence.pricing_type = 'free_entry_point'
     AND evidence.billable = false
     AND evidence.delivery_status IN ('sent','delivered','read')
