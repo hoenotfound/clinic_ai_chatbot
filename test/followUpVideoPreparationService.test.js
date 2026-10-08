@@ -180,6 +180,7 @@ test("videos larger than 16MB are rejected instead of compressed", async () => {
 
 test("video probe timeout kills only the inspection child", async () => {
   let killed = false;
+  const keepAlive = setTimeout(() => {}, 100);
   const fakeSpawn = () => {
     const child = new EventEmitter();
     child.stderr = new EventEmitter();
@@ -191,13 +192,17 @@ test("video probe timeout kills only the inspection child", async () => {
     return child;
   };
 
-  await assert.rejects(
-    probeVideoInfo("/tmp/input.mp4", {
-      spawnFn: fakeSpawn,
-      timeoutMs: 1,
-    }),
-    (error) => error?.code === "INVALID_FOLLOW_UP_VIDEO"
-  );
+  try {
+    await assert.rejects(
+      probeVideoInfo("/tmp/input.mp4", {
+        spawnFn: fakeSpawn,
+        timeoutMs: 1,
+      }),
+      (error) => error?.code === "INVALID_FOLLOW_UP_VIDEO"
+    );
+  } finally {
+    clearTimeout(keepAlive);
+  }
   assert.equal(killed, true);
 });
 
