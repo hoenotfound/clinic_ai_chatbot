@@ -177,7 +177,9 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1, o
     result?.preSendCheckFailed === true ||
     (result?.policyBlocked === true && result?.policyCode === "policy_state_unavailable")
   );
-  if (result?.cancelled || transientPreflight) {
+  // An accepted caption is irreversible, even if the image was cancelled.
+  // Never discard a partial-caption claim or automatically replay it.
+  if ((result?.cancelled && !result?.partialCaptionSent) || transientPreflight) {
     const discarded = await pricingRepo.discard({
       messageId: saved.id, contactId: candidate.contact_id,
     });
