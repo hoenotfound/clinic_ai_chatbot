@@ -9,6 +9,13 @@ const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { selectPricingOffer } = require("../utils/pricingReminderSelection");
 
+function activationCutoff(settings) {
+  const main = Date.parse(settings.activatedAt);
+  const pricing = Date.parse(settings.pricingReminder?.activatedAt);
+  if (!Number.isFinite(main) || !Number.isFinite(pricing)) return null;
+  return new Date(Math.max(main, pricing)).toISOString();
+}
+
 function chooseOffer(candidate) {
   const language = detectConversationLanguage(candidate.recent_customer_messages || []);
   return selectPricingOffer({
@@ -36,7 +43,7 @@ async function sendPricingReminder(candidate, offer, settings) {
   const saved = await pricingRepo.claim({
     candidate,
     offer,
-    activatedAt: settings.pricingReminder.activatedAt,
+    activatedAt: activationCutoff(settings),
     triggerMode: settings.triggerMode,
   });
   if (!saved) return;
@@ -110,9 +117,9 @@ async function runPricingReminders(settings, now = new Date()) {
   if (settings?.pricingReminder?.enabled !== true ||
       settings.steps.length < 3) return null;
 
-  if (!settings.pricingReminder.activatedAt) return null;
+  if (!activationCutoff(settings)) return null;
   const candidates = await pricingRepo.listEligible({
-    activatedAt: settings.pricingReminder.activatedAt,
+    activatedAt: activationCutoff(settings),
     triggerMode: settings.triggerMode,
   });
   let nextDueAt = null;
