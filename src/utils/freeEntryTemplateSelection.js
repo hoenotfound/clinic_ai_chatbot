@@ -1,5 +1,5 @@
 const { detectConversationLanguage } = require("./chatLanguage");
-const { normalizeServiceText } = require("./serviceInterest");
+const { normalizeServiceText, inferConfiguredServiceFromText } = require("./serviceInterest");
 const mediaStorage = require("../services/mediaStorageService");
 
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
@@ -49,7 +49,17 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     ? LANGUAGE_MAP[detectConversationLanguage(candidate.recent_inbound_messages || [], "zh")] || "zh_CN"
     : settings.language;
   if (!SUPPORTED_LANGUAGES.has(locale) || locale === "auto") return null;
-  const interest = normalizeServiceText(candidate.treatment_interest || "");
+  // User's explicit treatment messages in THIS ad enquiry override the ad name.
+  // A previous lead's CRM treatment never silently targets a later, unrelated ad.
+  const customerInterest = (candidate.recent_inbound_messages || [])
+    .map((message) => inferConfiguredServiceFromText(message))
+    .find(Boolean);
+  const adInterest = candidate.referral_treatment_interest ||
+    inferConfiguredServiceFromText(candidate.referral_ad_name);
+  const sameLeadJourney = candidate.lead_started_message_id != null &&
+    String(candidate.lead_started_message_id) === String(candidate.latest_ad_message_id);
+  const interest = normalizeServiceText(customerInterest || adInterest ||
+    (sameLeadJourney ? candidate.treatment_interest : null) || "");
   const matching = (settings.templateRules || []).find((rule) =>
     rule.slotHours === slotHours &&
     normalizeServiceText(rule.serviceName) === interest
@@ -60,6 +70,8 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     mediaUrl: matching?.mediaUrl || "",
     mediaKey: matching?.mediaKey || "",
     serviceName: matching?.serviceName || null,
+    identifiedTreatment: customerInterest || adInterest ||
+      (sameLeadJourney ? candidate.treatment_interest : null) || null,
     slotHours,
   };
 }
