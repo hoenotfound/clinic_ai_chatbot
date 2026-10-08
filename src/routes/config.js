@@ -377,6 +377,9 @@ function isAutomatedFollowUpConfig(value) {
     !Array.isArray(value.additionalSteps) ||
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
+    (value.pricingReminder !== undefined &&
+      (!isPlainObject(value.pricingReminder) ||
+        typeof value.pricingReminder.enabled !== "boolean")) ||
     !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
   ) {
     return false;
