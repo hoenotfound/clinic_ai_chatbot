@@ -61,6 +61,14 @@ function beforeExpiryDueSql({
       ELSE ${nominal}
     END)`;
   }
-  return `GREATEST(${target}, COALESCE(${previousDue}, ${target}))`;
+  // A four-hour pre-expiry offset means "not before 20 hours after
+  // the customer's reply", not an instruction to pull a midnight due
+  // time earlier into the previous evening. Quiet hours can postpone
+  // this target; if the WhatsApp window then closes, the worker skips it.
+  // Other pre-expiry offsets keep their existing adaptive behavior.
+  const boundedTarget = `(CASE WHEN (${step}) = ${FINAL_STEP}
+    AND (${offset}) = 240 THEN GREATEST(${target}, ${nominal})
+    ELSE ${target} END)`;
+  return `GREATEST(${boundedTarget}, COALESCE(${previousDue}, ${boundedTarget}))`;
 }
 module.exports = { beforeExpiryDueSql, FINAL_MIN_SPACING_MINUTES, QUIET_START_SAFETY_MINUTES };
