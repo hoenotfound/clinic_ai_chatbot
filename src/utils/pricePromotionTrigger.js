@@ -1,3 +1,4 @@
+const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
@@ -59,6 +60,7 @@ async function resolvePricePromotionForReply({
 }) {
   if (
     (priceQuery !== true && packageQuery !== true) ||
+    isGreetingOrLanguageOnly(customerText) ||
     !treatment ||
     flagged ||
     bookingReady ||
