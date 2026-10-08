@@ -28,6 +28,19 @@ test("do not confuse Meta pricing evidence with an ordinary ad referral", () => 
   assert.equal(eligibleFreeEntryTime({ ...sample, firstReplyAt: "2026-10-02T01:00:00Z" }), false);
   assert.equal(eligibleFreeEntryTime({ ...sample, now: "2026-10-08T00:00:00Z" }), false);
 });
+test("Days 4–7 require explicit account billing verification; older 72h mode stays safe", () => {
+  const base={
+    firstInboundAt:"2026-10-01T00:00:00Z",
+    firstReplyAt:"2026-10-01T00:01:00Z",
+    lastInboundAt:"2026-10-01T00:00:00Z",
+    now:"2026-10-05T02:00:00Z",
+    slotHours:98,sourceIsCtwa:true,evidenceType:"free_entry_point",
+  };
+  assert.equal(eligibleFreeEntryTime(base),false);
+  assert.equal(eligibleFreeEntryTime({...base,maxCeilingHours:168}),true);
+  assert.equal(eligibleFreeEntryTime({...base,maxCeilingHours:999}),false);
+});
+
 test("extended follow-ups are disabled by default and slots validate", () => {
   assert.equal(freeEntryEnabled({}), false);
   assert.equal(freeEntryEnabled({ WHATSAPP_FEP_FOLLOWUPS_ENABLED: "true" }), true);
