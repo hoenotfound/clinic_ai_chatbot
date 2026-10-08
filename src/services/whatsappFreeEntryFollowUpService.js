@@ -26,10 +26,18 @@ const candidateSql = `
          first_reply.created_at AS first_reply_at,
          last_inbound.created_at AS last_inbound_at,
          evidence.pricing_type AS evidence_type,
+         lead.treatment_interest,
+         (SELECT array_agg(text_content ORDER BY msg_time DESC) FROM (
+           SELECT m.content AS text_content, m.created_at AS msg_time
+           FROM messages m WHERE m.contact_id = c.id AND m.role = 'user'
+           ORDER BY m.created_at DESC, m.id DESC LIMIT 8
+         ) recent) AS recent_inbound_messages,
+         (SELECT COALESCE(array_agg(slot_hours), '{}') FROM whatsapp_free_entry_followup_attempts existing
+          WHERE existing.first_reply_message_id = first_reply.id) AS claimed_slots,
          true AS source_is_ctwa
   FROM contacts c
   JOIN LATERAL (
-    SELECT l.id, l.is_closed, l.appointment_status, l.marketing_consent,
+    SELECT l.id, l.is_closed, l.appointment_status, l.marketing_consent, l.treatment_interest,
            s.stage_type, s.system_key
     FROM leads l
     LEFT JOIN pipeline_stages s ON s.id = l.stage_id
@@ -75,23 +83,46 @@ const candidateSql = `
     AND LOWER(COALESCE(attribution.meta_source_type, '')) = 'ad'
     AND (attribution.ctwa_clid IS NOT NULL OR attribution.meta_ad_id IS NOT NULL)
     AND evidence.pricing_type = 'free_entry_point'
-    AND evidence.billable IS DISTINCT FROM true
+    AND evidence.billable = false
     AND evidence.delivery_status IN ('sent','delivered','read')
-    -- Stop further templates if Meta has ever billed an earlier extended step.
+    -- Do not advance after a rejected, unconfirmed or unreconciled send.
     AND NOT EXISTS (
-      SELECT 1
-      FROM whatsapp_free_entry_followup_attempts prior
-      JOIN whatsapp_free_entry_pricing_evidence prior_billing
+      SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
+      LEFT JOIN whatsapp_free_entry_pricing_evidence prior_billing
         ON prior_billing.wamid = prior.wamid
       WHERE prior.first_reply_message_id = first_reply.id
-        AND (prior_billing.pricing_type <> 'free_entry_point'
-          OR prior_billing.billable = true)
+        AND (
+          prior.status IN ('sending', 'failed', 'unknown')
+          OR (
+            prior.status = 'accepted'
+            AND (
+              prior_billing.wamid IS NULL
+              OR prior_billing.pricing_type <> 'free_entry_point'
+              OR prior_billing.billable IS DISTINCT FROM false
+              OR prior_billing.delivery_status = 'failed'
+            )
+          )
+        )
     )
     AND first_reply.created_at >= $1::timestamptz
     AND first_reply.created_at > now() - interval '7 days'
-    -- A reply after the initial business response means the customer is now
-    -- interacting, so stop this silent-lead sequence for the whole window.
-    AND last_inbound.created_at <= first_reply.created_at
+    -- Later customer replies are allowed; restart silence only after
+    -- a genuine business response to the latest inbound WhatsApp message.
+    AND EXISTS (
+      SELECT 1 FROM messages responded
+      WHERE responded.contact_id = c.id AND responded.role = 'assistant'
+        AND responded.whatsapp_message_id IS NOT NULL
+        AND responded.created_at > last_inbound.created_at
+        AND responded.delivery_status IS DISTINCT FROM 'failed'
+    )
+    -- Coordinate with Follow-up 3, pricing graphics and manual staff sends.
+    AND NOT EXISTS (
+      SELECT 1 FROM messages recent_send
+      WHERE recent_send.contact_id = c.id
+        AND recent_send.role = 'assistant'
+        AND recent_send.created_at > now() - interval '5 hours'
+        AND recent_send.delivery_status IS DISTINCT FROM 'cancelled'
+    )
     -- Staff interventions take precedence over automated marketing.
     AND NOT EXISTS (
       SELECT 1 FROM messages staff_reply
@@ -105,7 +136,7 @@ const candidateSql = `
     AND ($2::integer IS NULL OR c.id = $2::integer)
     -- Only take due, unclaimed slots. Completed/old contacts cannot fill the
     -- page and starve more recent leads when ad volume rises.
-    AND EXISTS (
+    AND ($2::integer IS NOT NULL OR EXISTS (
       SELECT 1
       FROM unnest($4::integer[]) AS slot(hours)
       WHERE NOT EXISTS (
@@ -116,7 +147,7 @@ const candidateSql = `
       AND now() >= first_reply.created_at + slot.hours * interval '1 hour'
       AND now() < first_reply.created_at + (slot.hours + 12) * interval '1 hour'
       AND now() >= last_inbound.created_at + interval '24 hours'
-    )
+    ))
   ORDER BY first_reply.created_at ASC, c.id ASC
   LIMIT $3::integer
 `;
@@ -146,7 +177,7 @@ function selectedSlot(candidate, slots, now = new Date()) {
   for (const slotHours of slots) {
     const due = reply + slotHours * 3600000;
     // Never catch up a missed day by blasting several templates together.
-    if (clock > due + 12 * 3600000) continue;
+    if (clock > due + 12 * 3600000 || candidate.claimed_slots?.includes(slotHours)) continue;
     if (eligibleFreeEntryTime({
       firstInboundAt: candidate.first_inbound_at,
       firstReplyAt: candidate.first_reply_at,
@@ -173,7 +204,7 @@ async function claim(candidate, slotHours, active) {
       [CONVERSATION_LOCK_NAMESPACE, candidate.contact_id]);
     const fresh = (await listCandidates(active, client, candidate.contact_id))[0];
     if (!fresh || fresh.first_reply_message_id !== candidate.first_reply_message_id ||
-        !selectedSlot(fresh, active.slots) ||
+        !active.slots.includes(slotHours) ||
         !eligibleFreeEntryTime({
           firstInboundAt: fresh.first_inbound_at,
           firstReplyAt: fresh.first_reply_at,
