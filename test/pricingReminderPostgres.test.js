@@ -90,35 +90,54 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       ],
       quietHours: { enabled: false, start: "00:00", end: "07:00" },
     };
-    // A Meta-accepted message is legitimately pending until its callback arrives.
+    // Follow-up 2 cannot trigger a price image, even when Meta accepts it.
     await client.query("UPDATE messages SET delivery_status='pending', whatsapp_message_id='wamid.step2' WHERE id=103");
+    assert.equal((await pricingRepo.listEligible({ activatedAt, triggerMode: "all", settings })).length,0);
+
+    // A failed final testimonial must not trigger the price graphic.
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,delivery_status,
+       is_automated_follow_up,automated_follow_up_for_message_id,automated_follow_up_step)
+      VALUES (104,1,'assistant','Final testimonial',now()-interval '10 minutes','failed',true,101,3)`);
+    assert.equal((await pricingRepo.listEligible({ activatedAt, triggerMode: "all", settings })).length,0);
+
+    // Pending+WAMID means the real third message was accepted by Meta.
+    await client.query("UPDATE messages SET delivery_status='pending',whatsapp_message_id='wamid.final' WHERE id=104");
     const candidates = await pricingRepo.listEligible({ activatedAt, triggerMode: "all", settings });
     assert.equal(candidates.length, 1);
     const candidate = candidates[0];
+    assert.equal(candidate.third_id,104);
     const offer = {
       caption:"Our 3D price is RM488", imageUrl:"https://example.com/promo-images/30",
       serviceName:"3D 小颜术", identities:["/promo-images/30"],
     };
+    // Recheck real timing and Meta acceptance at the atomic claim boundary,
+    // not merely at discovery time (callback/worker races are possible).
+    await client.query("UPDATE messages SET created_at=now()-interval '4 minutes' WHERE id=104");
+    assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}),null);
+    await client.query("UPDATE messages SET created_at=now()-interval '10 minutes',delivery_status='failed',whatsapp_message_id=NULL WHERE id=104");
+    assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}),null);
+    await client.query("UPDATE messages SET delivery_status='pending',whatsapp_message_id='wamid.final' WHERE id=104");
     const saved = await pricingRepo.claim({ candidate, offer, activatedAt, triggerMode:"all", settings });
     assert.ok(saved);
     assert.equal(saved.content, offer.caption);
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
     }), true);
     assert.equal(await pricingRepo.claim({candidate,offer,activatedAt,triggerMode:"all",settings}), null);
 
     const progress = await client.query(
       "SELECT MAX(automated_follow_up_step) AS step FROM messages WHERE automated_follow_up_for_message_id=101"
     );
-    assert.equal(progress.rows[0].step, 2);
+    assert.equal(progress.rows[0].step, 3);
 
     await client.query("UPDATE leads SET appointment_status='set' WHERE contact_id=1");
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
     }), false);
 
     // Editing the CRM interest while the message is queued must stop sending.
@@ -126,7 +145,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id, contactId:1, anchorId:101, inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
-      finalDueAt:candidate.final_due_at, whatsappNumber:candidate.whatsapp_number,
+      thirdId:candidate.third_id, whatsappNumber:candidate.whatsapp_number,
     }), false);
 
     // Verify the unique decision record and avoid repeated human-review alerts.
@@ -151,19 +170,16 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     }), null);
     await client.query("DELETE FROM pricing_reminder_decisions WHERE anchor_id=101");
 
-    // A delayed step 2 must not trigger a pricing graphic near the testimonial.
+    // A testimonial sent too late cannot fit five minutes before expiry.
     await client.query(`
-      UPDATE messages SET created_at=now()-interval '23 hours' WHERE id=100;
-      UPDATE messages SET created_at=now()-interval '22 hours' WHERE id=101;
-      UPDATE messages SET created_at=now()-interval '3 hours' WHERE id=103;
+      UPDATE messages SET created_at=now()-interval '23 hours 47 minutes' WHERE id=100;
+      UPDATE messages SET created_at=now()-interval '23 hours 45 minutes' WHERE id=101;
+      UPDATE messages SET created_at=now()-interval '1 minute' WHERE id=104;
     `);
     const crowdedCandidates = await pricingRepo.listEligible({
       activatedAt,triggerMode:"all",settings,
     });
-    assert.equal(crowdedCandidates.length,1);
-    assert.equal(await pricingRepo.claim({
-      candidate:crowdedCandidates[0],offer,activatedAt,triggerMode:"all",settings,
-    }), null);
+    assert.equal(crowdedCandidates.length,0);
 
     // The pricing reminder must not keep the original message undeletable.
     await client.query("DELETE FROM messages WHERE id=101");

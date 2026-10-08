@@ -1,56 +1,47 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { canFitBeforeFinal, statusForPricingSend } = require("../src/services/pricingReminderService");
-const { finalDueSql } = require("../src/db/pricingReminderRepo");
+const { canSendAfterFinal, statusForPricingSend } = require("../src/services/pricingReminderService");
+const { eligibleSql, MINUTES_AFTER_TESTIMONIAL } = require("../src/db/pricingReminderRepo");
 
-const steps = [
-  { delayMinutes: 120, timingMode: "after_reply", beforeWindowExpiryMinutes: 120 },
-  { delayMinutes: 360, timingMode: "after_reply", beforeWindowExpiryMinutes: 120 },
-  { delayMinutes: 1320, timingMode: "before_window_expiry", beforeWindowExpiryMinutes: 120 },
-];
-
-test("pricing must leave at least two hours before final testimonial", () => {
-  const now = new Date("2026-10-08T11:00:00Z");
-  assert.equal(canFitBeforeFinal({
-    final_due_at: "2026-10-08T13:00:00Z",
-  }, now), true);
-  assert.equal(canFitBeforeFinal({
-    final_due_at: "2026-10-08T12:59:59Z",
-  }, now), false);
-  assert.equal(canFitBeforeFinal({
-    final_due_at: "2026-10-08T10:00:00Z",
-  }, now), false);
-  assert.equal(canFitBeforeFinal({
-    final_due_at: null,
-  }, now), false);
+test("pricing cannot run until five minutes AFTER a sent testimonial", () => {
+  const candidate = {
+    third_at: "2026-10-08T10:00:00Z",
+    inbound_at: "2026-10-08T00:00:00Z",
+  };
+  assert.equal(MINUTES_AFTER_TESTIMONIAL, 5);
+  assert.equal(canSendAfterFinal(candidate, new Date("2026-10-08T10:04:59Z")), false);
+  assert.equal(canSendAfterFinal(candidate, new Date("2026-10-08T10:05:00Z")), true);
+  assert.equal(canSendAfterFinal(candidate, new Date("2026-10-08T10:35:00Z")), true);
+  assert.equal(canSendAfterFinal({ ...candidate, third_at:null }), false);
+  assert.equal(canSendAfterFinal({ ...candidate, inbound_at:null }), false);
 });
 
-test("quiet-hour-aware SQL plans the final testimonial before pricing", () => {
-  const expr = finalDueSql({
-    steps,
-    quietHours: { enabled:true, start:"00:00", end:"07:00" },
-  });
-  assert.match(expr, /quiet|CASE WHEN 3 = 3/i);
-  assert.match(expr, /second\.created_at/);
+test("pricing never starts at or after the 23h50 window-safety deadline", () => {
+  const inbound_at="2026-10-08T00:00:00Z";
+  assert.equal(canSendAfterFinal({
+    inbound_at, third_at:"2026-10-08T23:35:00Z",
+  },new Date("2026-10-08T23:40:00Z")),true);
+  assert.equal(canSendAfterFinal({
+    inbound_at, third_at:"2026-10-08T23:45:00Z",
+  },new Date("2026-10-08T23:50:00Z")),false);
+  assert.equal(canSendAfterFinal({
+    inbound_at, third_at:"2026-10-08T23:49:00Z",
+  },new Date("2026-10-08T23:54:00Z")),false);
 });
 
-test("after-reply final timing includes spacing from step two", () => {
-  const expr = finalDueSql({
-    steps:[steps[0],steps[1],{ delayMinutes:900,timingMode:"after_reply",beforeWindowExpiryMinutes:120 }],
-    quietHours: { enabled:false, start:"00:00", end:"07:00" },
-  });
-  assert.match(expr, /second\.created_at \+ interval '540 minutes'/);
+test("pricing eligibility is tied to the ACTUAL accepted Follow-up 3, never the scheduled estimate", () => {
+  const expr=eligibleSql();
+  assert.match(expr,/automated_follow_up_step = 3/);
+  assert.match(expr,/delivery_status IN \('sent', 'delivered', 'read'\)/);
+  assert.match(expr,/pending.*whatsapp_message_id IS NOT NULL/);
+  assert.match(expr,/third\.created_at \+ interval '5 minutes' AS due_at/);
+  assert.doesNotMatch(expr,/final_due_at|second\.created_at|third\.id IS NULL/);
+  assert.match(expr,/inbound_at \+ interval '23 hours 50 minutes'/);
 });
 
 test("ambiguous provider timeouts remain unconfirmed, not failed", () => {
-  assert.equal(statusForPricingSend({
-    success: false, unknown: true, ambiguous: true,
-  }), "unknown");
-  assert.equal(statusForPricingSend({
-    success: false, ambiguous: true,
-  }), "unknown");
-  assert.equal(statusForPricingSend({
-    success: false, error: "WhatsApp rejected the image",
-  }), "failed");
-  assert.equal(statusForPricingSend({success: true}), "sent");
+  assert.equal(statusForPricingSend({success:false,unknown:true,ambiguous:true}),"unknown");
+  assert.equal(statusForPricingSend({success:false,ambiguous:true}),"unknown");
+  assert.equal(statusForPricingSend({success:false,error:"WhatsApp rejected"}),"failed");
+  assert.equal(statusForPricingSend({success:true}),"sent");
 });

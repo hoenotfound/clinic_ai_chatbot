@@ -46,3 +46,42 @@ test("AI history can be bounded to the final message in the current debounce bur
     { role: "user", content: "how much hifu" },
   ]);
 });
+test("AI excludes cancelled and pending-unsent pricing messages from both history modes", async (t) => {
+  const originalPage = messagesRepo.getMessagePageForContact;
+  const originalRecent = messagesRepo.getMessagesForContact;
+  t.after(() => {
+    messagesRepo.getMessagePageForContact = originalPage;
+    messagesRepo.getMessagesForContact = originalRecent;
+  });
+  const rows = [
+    { id: 1, role: "user", content: "How much?", has_media_attachment: false },
+    { id: 2, role: "assistant", content: "Unsеnt RM388 graphic", pricing_reminder_anchor_id: 44, delivery_status: null },
+    { id: 3, role: "assistant", content: "Cancelled RM388 graphic", pricing_reminder_anchor_id: 44, delivery_status: "cancelled" },
+    { id: 4, role: "assistant", content: "Failed", delivery_status: "failed" },
+    { id: 5, role: "assistant", content: "Unknown", delivery_status: "unknown" },
+    { id: 6, role: "assistant", content: "Follow-up 3 testimonial", delivery_status: "delivered" },
+    { id: 7, role: "assistant", content: "Actual price sent", pricing_reminder_anchor_id: 44, delivery_status: "sent" },
+  ];
+  messagesRepo.getMessagePageForContact = async () => ({ rows, hasMore: false });
+  messagesRepo.getMessagesForContact = async () => rows;
+  const expected = [
+    { role:"user", content:"How much?" },
+    { role:"assistant", content:"Follow-up 3 testimonial" },
+    { role:"assistant", content:"Actual price sent" },
+  ];
+  assert.deepEqual(await conversationStore.getHistoryForContact(42,{throughMessageId:7}),expected);
+  assert.deepEqual(await conversationStore.getHistoryForContact(42),expected);
+});
+
+test("AI history SQL excludes unsent pricing claims before loading the 20-message window", async(t)=>{
+  const {pool}=require("../src/db/db");
+  const original=pool.query;
+  t.after(()=>{pool.query=original});
+  let sql="";
+  pool.query=async (query)=>{sql=query;return {rows:[]}};
+  const messages=await messagesRepo.getMessagesForContact(42,20,false);
+  assert.deepEqual(messages,[]);
+  assert.match(sql,/NOT IN \('failed', 'unknown', 'cancelled'\)/);
+  assert.match(sql,/pricing_reminder_anchor_id IS NOT NULL/);
+  assert.match(sql,/delivery_status IS NULL OR delivery_status = 'cancelled'/);
+});

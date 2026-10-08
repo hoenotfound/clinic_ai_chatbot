@@ -8,6 +8,7 @@ const { getActivePromotions } = require("../utils/activePromotion");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { quietHoursStatus, normalizeQuietHours } = require("../utils/quietHours");
 const { evaluatePricingReminder } = require("../utils/pricingReminderSelection");
+const { MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES } = pricingRepo;
 
 function activationCutoff(settings) {
   const main = Date.parse(settings.activatedAt);
@@ -34,11 +35,16 @@ function statusForPricingSend(result) {
   if (result?.unknown || result?.ambiguous) return "unknown";
   return "failed";
 }
-function canFitBeforeFinal(candidate, at = new Date()) {
-  const finalDue = Date.parse(candidate.final_due_at);
+// Never move an unsent pricing message ahead of the testimonial. Respect the
+// same conservative 10-minute WhatsApp window buffer used by follow-ups.
+function canSendAfterFinal(candidate, at = new Date()) {
+  const thirdAt = Date.parse(candidate?.third_at);
+  const inboundAt = Date.parse(candidate?.inbound_at);
   const current = new Date(at).getTime();
-  return Number.isFinite(finalDue) && Number.isFinite(current) &&
-    current + 120 * 60 * 1000 <= finalDue;
+  const dueAt = thirdAt + MINUTES_AFTER_TESTIMONIAL * 60_000;
+  const safeEnd = inboundAt + (24 * 60 - WINDOW_SAFETY_MINUTES) * 60_000;
+  return [thirdAt, inboundAt, current].every(Number.isFinite)
+    && current >= dueAt && current < safeEnd && dueAt < safeEnd;
 }
 async function skipCandidate(candidate, reason) {
   const recorded = await pricingRepo.recordDecision({ candidate, reason });
@@ -71,7 +77,6 @@ async function sendPricingReminder(candidate, offer, settings) {
     offer,
     activatedAt: activationCutoff(settings),
     triggerMode: settings.triggerMode,
-    settings,
   });
   if (!saved) return;
 
@@ -94,7 +99,7 @@ async function sendPricingReminder(candidate, offer, settings) {
         (live.additionalSteps?.[1]?.timingMode || "after_reply") !==
           settings.steps[2].timingMode ||
         quietHoursStatus(new Date(), live.quietHours).active ||
-        !canFitBeforeFinal(candidate)) return false;
+        !canSendAfterFinal(candidate)) return false;
 
     // Changes to a promotion or current interest must not send stale prices.
     const current = chooseOffer(candidate);
@@ -107,7 +112,7 @@ async function sendPricingReminder(candidate, offer, settings) {
       inboundId: candidate.inbound_id,
       imageIdentities: offer.identities,
       treatmentInterest: candidate.treatment_interest,
-      finalDueAt: candidate.final_due_at,
+      thirdId: candidate.third_id,
       whatsappNumber: candidate.whatsapp_number,
     });
   };
@@ -182,14 +187,17 @@ async function runPricingReminders(settings, now = new Date()) {
   const candidates = await pricingRepo.listEligible({
     activatedAt: activationCutoff(settings),
     triggerMode: settings.triggerMode,
-    settings,
   });
   let nextDueAt = null;
   for (const candidate of candidates) {
     try {
       const due = new Date(candidate.due_at).getTime();
       if (!Number.isFinite(due)) continue;
-      if (!canFitBeforeFinal(candidate, new Date(Math.max(due, now.getTime())))) {
+      // A late final testimonial cannot reopen the WhatsApp window. Skip
+      // rather than trying to send the price first or using a template.
+      const safeEnd = Date.parse(candidate.inbound_at)
+        + (24 * 60 - WINDOW_SAFETY_MINUTES) * 60_000;
+      if (!Number.isFinite(safeEnd) || due >= safeEnd || now.getTime() >= safeEnd) {
         await skipCandidate(candidate, "insufficient_window");
         continue;
       }
@@ -204,11 +212,13 @@ async function runPricingReminders(settings, now = new Date()) {
         }
         continue;
       }
-      await sendPricingReminder(candidate, offer, settings);
+      if (canSendAfterFinal(candidate, now)) {
+        await sendPricingReminder(candidate, offer, settings);
+      }
     } catch (err) {
       console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
     }
   }
   return nextDueAt;
 }
-module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };
+module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canSendAfterFinal, evaluateOffer, statusForPricingSend };

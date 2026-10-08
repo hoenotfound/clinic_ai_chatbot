@@ -87,6 +87,9 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
   )];
   const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
     .filter((message) =>
+      // Cancelled is an internal pre-send abort, not an attempted delivery.
+      // It must never suppress a real future pricing graphic.
+      norm(message.delivery_status) !== "cancelled" &&
       identities.includes(imageIdentity(message.media_url)) &&
       String(message.content || "").trim()
     );
