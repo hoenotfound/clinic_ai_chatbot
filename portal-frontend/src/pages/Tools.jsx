@@ -30,7 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  freeEntry: { enabled: false, templateName: "", language: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 146] },
+  freeEntry: { enabled: false, templateName: "", language: "auto", slotsHours: [26, 50, 74, 98, 122, 146], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
@@ -176,7 +176,13 @@ function normalizeFollowUpSettings(value = {}) {
     freeEntry: {
       enabled: value?.freeEntry?.enabled === true,
       templateName: String(value?.freeEntry?.templateName || ""),
-      language: String(value?.freeEntry?.language || "zh_CN"),
+      language: String(value?.freeEntry?.language || "auto"),
+      templateRules: Array.isArray(value?.freeEntry?.templateRules) ? value.freeEntry.templateRules.map((rule) => ({
+        slotHours: Number(rule.slotHours),
+        serviceName: String(rule.serviceName || ""),
+        templateName: String(rule.templateName || ""),
+        mediaUrl: String(rule.mediaUrl || ""),
+      })) : [],
       slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
         ? value.freeEntry.slotsHours.map(Number)
         : [26, 50, 74, 98, 122, 146],
@@ -843,7 +849,13 @@ export default function Tools() {
           freeEntry: {
             enabled: form.freeEntry?.enabled === true,
             templateName: String(form.freeEntry?.templateName || "").trim(),
-            language: String(form.freeEntry?.language || "zh_CN"),
+            language: String(form.freeEntry?.language || "auto"),
+            templateRules: (form.freeEntry?.templateRules || []).map((rule) => ({
+              slotHours: Number(rule.slotHours),
+              serviceName: rule.serviceName.trim(),
+              templateName: rule.templateName.trim(),
+              mediaUrl: (rule.mediaUrl || "").trim(),
+            })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,146],
           },
           pricingReminder: {
@@ -2526,13 +2538,14 @@ function FollowUpTool({
               <label className="block text-xs font-semibold">
                 Template language
                 <select
-                  value={form.freeEntry?.language || "zh_CN"}
+                  value={form.freeEntry?.language || "auto"}
                   onChange={(event) => setForm((current) => ({
                     ...current, freeEntry: { ...current.freeEntry, language: event.target.value }
                   }))}
                   className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
                   aria-label="Free-entry template language"
                 >
+                  <option value="auto">Auto-detect conversation language</option>
                   <option value="zh_CN">Chinese (zh_CN)</option>
                   <option value="en_US">English (en_US)</option>
                   <option value="ms">Malay (ms)</option>
@@ -2555,6 +2568,92 @@ function FollowUpTool({
                 <option value="26,50,98">Days 1, 2 and 4 (three reminders)</option>
               </select>
             </label>
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold">Treatment-specific approved templates</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Optional overrides for individual days and treatments (including 3D + 9D).
+                    Use an HTTPS media URL for an approved IMAGE/VIDEO header template.
+                    Private R2 keys are not directly supported.
+                  </p>
+                </div>
+                <button type="button" aria-label="Add treatment follow-up template"
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-semibold"
+                  onClick={() => setForm((current) => ({
+                    ...current,
+                    freeEntry: {
+                      ...current.freeEntry,
+                      templateRules: [
+                        ...(current.freeEntry?.templateRules || []),
+                        { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
+                          serviceName: config?.services?.[0]?.name || "",
+                          templateName: "", mediaUrl: "" }
+                      ],
+                    },
+                  }))}>Add rule</button>
+              </div>
+              {(form.freeEntry?.templateRules || []).map((rule, index) => (
+                <div key={index} className="grid gap-2 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold">Follow-up slot
+                    <select aria-label={`Extended template slot ${index + 1}`} value={rule.slotHours}
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, slotHours: Number(event.target.value) } : r)
+                        }
+                      }))}>
+                      {(form.freeEntry?.slotsHours || []).map((hour) => <option key={hour} value={hour}>{hour} hours</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold">Treatment
+                    <select aria-label={`Extended template treatment ${index + 1}`} value={rule.serviceName}
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, serviceName: event.target.value } : r)
+                        }
+                      }))}>
+                      <option value="">Select treatment</option>
+                      {(config?.services || []).map((service) =>
+                        <option key={service.name} value={service.name}>{service.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold">Approved marketing template name
+                    <input aria-label={`Extended treatment template name ${index + 1}`}
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      value={rule.templateName}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, templateName: event.target.value } : r)
+                        }
+                      }))}/>
+                  </label>
+                  <label className="text-xs font-semibold">Approved media URL (optional)
+                    <input type="url" aria-label={`Extended template media URL ${index + 1}`}
+                      placeholder="https://..."
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      value={rule.mediaUrl || ""}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, mediaUrl: event.target.value } : r)
+                        }
+                      }))}/>
+                  </label>
+                  <button type="button" className="text-left text-xs text-red-600"
+                    aria-label={`Remove treatment template rule ${index + 1}`}
+                    onClick={() => setForm((current) => ({
+                      ...current, freeEntry: { ...current.freeEntry,
+                        templateRules: current.freeEntry.templateRules.filter((_, i) => i !== index)
+                      }
+                    }))}>Remove rule</button>
+                </div>
+              ))}
+            </div>
             <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
               Times are measured from the first qualifying business reply. The server kill switch
               WHATSAPP_FEP_FOLLOWUPS_ENABLED must also be true. No paid fallback is used.
