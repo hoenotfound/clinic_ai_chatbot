@@ -17,7 +17,7 @@ function activationCutoff(settings) {
   return new Date(Math.max(main, pricing)).toISOString();
 }
 
-function evaluateOffer(candidate) {
+function evaluateOffer(candidate, settings = null) {
   const language = detectConversationLanguage(candidate.recent_customer_messages || []);
   return evaluatePricingReminder({
     promotions: getActivePromotions(clinicConfig.promotions || []),
@@ -25,13 +25,15 @@ function evaluateOffer(candidate) {
     services: clinicConfig.services || [],
     aliases: clinicConfig.serviceAliases || [],
     language,
+    requirePricingInterest: settings?.pricingReminder?.requirePricingInterest !== false,
+    sendBothPelvicPackages: settings?.pricingReminder?.sendBothPelvicPackages === true,
   });
 }
-function chooseOffers(candidate) {
-  return evaluateOffer(candidate).offers || [];
+function chooseOffers(candidate, settings = null) {
+  return evaluateOffer(candidate, settings).offers || [];
 }
-function chooseOffer(candidate) {
-  return chooseOffers(candidate)[0] || null;
+function chooseOffer(candidate, settings = null) {
+  return chooseOffers(candidate, settings)[0] || null;
 }
 function statusForPricingSend(result) {
   if (result?.success) return "sent";
@@ -40,14 +42,14 @@ function statusForPricingSend(result) {
 }
 // Never move an unsent pricing message ahead of the testimonial. Respect the
 // same conservative 10-minute WhatsApp window buffer used by follow-ups.
-function canSendAfterFinal(candidate, at = new Date()) {
+function canSendAfterFinal(candidate, at = new Date(), imageCount = 1) {
   // Recorded immediately after Meta accepted Follow-up 3, not when its
   // placeholder was first saved (video uploads can be slow).
   const thirdAt = Date.parse(candidate?.third_accepted_at);
   const inboundAt = Date.parse(candidate?.inbound_at);
   const current = new Date(at).getTime();
   const dueAt = thirdAt + MINUTES_AFTER_TESTIMONIAL * 60_000;
-  const safeEnd = inboundAt + (24 * 60 - WINDOW_SAFETY_MINUTES) * 60_000;
+  const safeEnd = inboundAt + (24 * 60 - (imageCount > 1 ? 15 : WINDOW_SAFETY_MINUTES)) * 60_000;
   return [thirdAt, inboundAt, current].every(Number.isFinite)
     && current >= dueAt && current < safeEnd && dueAt < safeEnd;
 }
@@ -75,8 +77,9 @@ function publish(message, reason) {
   });
 }
 
-async function sendPricingReminder(candidate, offer, settings) {
-  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active) return false;
+async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
+  if (quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
+      !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
   const saved = await pricingRepo.claim({
     candidate,
     offer,
@@ -103,11 +106,15 @@ async function sendPricingReminder(candidate, offer, settings) {
           Number(settings.steps[2].beforeWindowExpiryMinutes) ||
         (live.additionalSteps?.[1]?.timingMode || "after_reply") !==
           settings.steps[2].timingMode ||
+        (live.pricingReminder?.requirePricingInterest !== false) !==
+          (settings.pricingReminder?.requirePricingInterest !== false) ||
+        (live.pricingReminder?.sendBothPelvicPackages === true) !==
+          (settings.pricingReminder?.sendBothPelvicPackages === true) ||
         quietHoursStatus(new Date(), live.quietHours).active ||
-        !canSendAfterFinal(candidate)) return false;
+        !canSendAfterFinal(candidate,new Date(),imageCount)) return false;
 
     // Changes to a promotion or current interest must not send stale prices.
-    const stillConfigured = chooseOffers(candidate).some((current) =>
+    const stillConfigured = chooseOffers(candidate,settings).some((current) =>
       current.packageName === offer.packageName &&
       current.imageUrl === offer.imageUrl && current.caption === offer.caption
     );
@@ -202,15 +209,14 @@ async function runPricingReminders(settings, now = new Date()) {
     try {
       const due = new Date(candidate.due_at).getTime();
       if (!Number.isFinite(due)) continue;
-      // A late final testimonial cannot reopen the WhatsApp window. Skip
-      // rather than trying to send the price first or using a template.
+      const { offers = [], reason } = evaluateOffer(candidate,settings);
+      // Reserve extra time for the first of two separate image API calls.
       const safeEnd = Date.parse(candidate.inbound_at)
-        + (24 * 60 - WINDOW_SAFETY_MINUTES) * 60_000;
+        + (24 * 60 - (offers.length > 1 ? 15 : WINDOW_SAFETY_MINUTES)) * 60_000;
       if (!Number.isFinite(safeEnd) || due >= safeEnd || now.getTime() >= safeEnd) {
         await skipCandidate(candidate, "insufficient_window");
         continue;
       }
-      const { offers = [], reason } = evaluateOffer(candidate);
       if (!offers.length) {
         if (due <= now.getTime()) await skipCandidate(candidate, reason);
         continue;
@@ -222,11 +228,12 @@ async function runPricingReminders(settings, now = new Date()) {
         continue;
       }
       if (canSendAfterFinal(candidate, now)) {
-        for (const offer of offers) {
+        for (const [index,offer] of offers.entries()) {
           // Each package gets an independent durable row and WAMID. Stop at
           // the first failed/unknown send: never blindly retry or push another
           // promotion when delivery may be unconfirmed.
-          if (!(await sendPricingReminder(candidate, offer, settings))) break;
+          if (!(await sendPricingReminder(candidate, offer, settings,
+            index === 0 ? offers.length : 1))) break;
         }
       }
     } catch (err) {
