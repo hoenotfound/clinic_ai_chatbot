@@ -14,7 +14,7 @@ test("final free-entry template moves before midnight if morning is after expiry
     lastInboundAt:"2026-10-01T06:50:00+08:00",
     now:"2026-10-07T15:56:00.000Z",
     slotHours:162,sourceIsCtwa:true,evidenceType:"free_entry_point",
-    earlyDueAt:due,
+    earlyDueAt:due,maxCeilingHours:168,
   }),true);
 });
 test("ordinary slots are not pulled earlier and final slot respects a normal window",()=>{
