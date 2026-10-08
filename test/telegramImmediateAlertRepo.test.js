@@ -178,13 +178,14 @@ test("send-boundary contact lock is held across the final callback and always re
   );
 
   assert.equal(result, "done");
-  assert.match(calls[0].sql, /pg_advisory_lock/);
-  assert.deepEqual(calls[0].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
-  assert.equal(calls[1].sql, "SELECT 'inside-lock'");
-  assert.match(calls[2].sql, /pg_advisory_unlock/);
-  assert.deepEqual(calls[2].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
-  assert.equal(calls[3].sql, "RELEASE");
-  assert.equal(calls[3].error, null);
+  assert.equal(calls[0].sql, "BEGIN");
+  assert.match(calls[1].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
+  assert.equal(calls[2].sql, "SELECT 'inside-lock'");
+  assert.equal(calls[3].sql, "COMMIT");
+  assert.equal(calls[4].sql, "RELEASE");
+  assert.equal(calls[4].error, null);
+  assert.equal(calls.some((item) => /pg_advisory_unlock/.test(item.sql)), false);
 });
 
 test("Booking Ready serializes per contact and cancels older pending versions for the same lead", async () => {
@@ -322,4 +323,41 @@ test("ambiguous final stale attempts get one bounded recovery chance", async () 
   assert.equal(first[0].status, "pending");
   assert.equal(first[0].attempts, 4);
   assert.equal(first[0].stale_recoveries, 1);
+});
+
+
+test("per-contact lock rolls back after a lock timeout instead of leaving an open transaction", async () => {
+  const fake = fakeDatabase(async (sql) => {
+    if (/pg_advisory_xact_lock/.test(sql)) {
+      const error = new Error("canceling statement due to lock timeout");
+      error.code = "55P03";
+      throw error;
+    }
+    return { rows: [] };
+  });
+
+  await assert.rejects(
+    withContactAlertLock(85, async () => "never reached", fake.database),
+    (error) => error.code === "55P03"
+  );
+  assert.deepEqual(fake.calls.map((item) => item.sql), [
+    "BEGIN",
+    "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+    "ROLLBACK",
+    "RELEASE"
+  ]);
+});
+
+test("per-contact lock rolls back if the protected operation fails", async () => {
+  const fake = fakeDatabase(async () => ({ rows: [] }));
+  await assert.rejects(
+    withContactAlertLock(85, async () => { throw new Error("work failed"); }, fake.database),
+    /work failed/
+  );
+  assert.deepEqual(fake.calls.map((item) => item.sql), [
+    "BEGIN",
+    "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+    "ROLLBACK",
+    "RELEASE"
+  ]);
 });
