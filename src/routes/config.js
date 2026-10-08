@@ -377,7 +377,7 @@ function isFreeEntryFollowUpConfig(value) {
       value.slotsHours.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
       new Set(value.slotsHours).size !== value.slotsHours.length ||
       (value.enabled && (!/^[a-z0-9_]+$/.test(value.templateName) ||
-        !/^[a-z]{2,3}_[A-Z]{2}$/.test(value.language)))) return false;
+        !/^(?:[a-z]{2,3}_[A-Z]{2}|ms)$/.test(value.language)))) return false;
   return true;
 }
 
