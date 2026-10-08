@@ -13,6 +13,10 @@ async function recordAiUsage(event, database = pool) {
   const failureKind = event?.failureKind
     ? String(event.failureKind).slice(0, 120)
     : null;
+  const cacheMetadataPresent = typeof event?.cacheMetadataPresent === "boolean"
+    ? event.cacheMetadataPresent : null;
+  const prefixCandidate = String(event?.promptPrefixHash || "");
+  const promptPrefixHash = /^[a-f0-9]{16}$/.test(prefixCandidate) ? prefixCandidate : null;
   const latencyMs = event?.latencyMs == null
     ? null
     : Math.max(0, Math.min(3_600_000, Math.round(Number(event.latencyMs) || 0)));
@@ -29,8 +33,10 @@ async function recordAiUsage(event, database = pool) {
        thinking_tokens,
        cached_tokens,
        total_tokens,
-       latency_ms
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       latency_ms,
+       cache_metadata_present,
+       prompt_prefix_hash
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [
       provider,
       model,
@@ -43,6 +49,8 @@ async function recordAiUsage(event, database = pool) {
       safeCount(event?.cachedTokens),
       safeCount(event?.totalTokens),
       latencyMs,
+      cacheMetadataPresent,
+      promptPrefixHash,
     ]
   );
 }
@@ -62,6 +70,11 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
          COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
          COALESCE(SUM(thinking_tokens), 0)::bigint AS thinking_tokens,
          COALESCE(SUM(cached_tokens), 0)::bigint AS cached_tokens,
+         COUNT(*) FILTER (WHERE status = 'success' AND cache_metadata_present IS TRUE)::int AS cache_metadata_present_requests,
+         COUNT(*) FILTER (WHERE status = 'success' AND cache_metadata_present IS FALSE)::int AS cache_metadata_missing_requests,
+         COUNT(*) FILTER (WHERE status = 'success' AND cache_metadata_present IS NULL)::int AS cache_metadata_unknown_requests,
+         COUNT(*) FILTER (WHERE status = 'success' AND cached_tokens > 0)::int AS cache_hit_requests,
+         COUNT(DISTINCT prompt_prefix_hash) FILTER (WHERE status = 'success')::int AS distinct_prompt_prefixes,
          COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
          COALESCE(ROUND(AVG(latency_ms) FILTER (WHERE latency_ms IS NOT NULL)), 0)::bigint AS average_latency_ms
        FROM ai_usage_events
@@ -119,6 +132,11 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
     outputTokens: numeric(totals.output_tokens),
     thinkingTokens: numeric(totals.thinking_tokens),
     cachedTokens: numeric(totals.cached_tokens),
+    cacheMetadataPresentRequests: numeric(totals.cache_metadata_present_requests),
+    cacheMetadataMissingRequests: numeric(totals.cache_metadata_missing_requests),
+    cacheMetadataUnknownRequests: numeric(totals.cache_metadata_unknown_requests),
+    cacheHitRequests: numeric(totals.cache_hit_requests),
+    distinctPromptPrefixes: numeric(totals.distinct_prompt_prefixes),
     totalTokens: numeric(totals.total_tokens),
     averageLatencyMs: numeric(totals.average_latency_ms),
     byModel: modelResult.rows.map((row) => ({

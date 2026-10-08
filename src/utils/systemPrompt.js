@@ -1134,6 +1134,12 @@ TONE: ${config.tone || "Warm, helpful, concise, and natural."}
 TEXTING STYLE — follow these literally, this is how you should actually write every ${terms.customerSingular}-facing reply:
 ${config.messagingStyle || ""}
 
+FREQUENTLY ASKED QUESTIONS:
+${faqList}
+
+RULES (never break these):
+${guardrailsList}
+
 BUSINESS INFO:
 - Business name: ${context.businessName}
 - Business type: ${config.businessType || "generic"}
@@ -1151,9 +1157,6 @@ ${promotionAuthorityRules()}
 
 COMMON TERMS ${terms.customerPlural.toUpperCase()} USE (match these to the configured ${terms.servicePlural}; don't hand off just because the wording doesn't match the official name):
 ${aliasList}
-
-FREQUENTLY ASKED QUESTIONS:
-${faqList}
 
 STANDARD OPERATING PROCEDURES (internal policy — follow this as instructions, not just background info):
 ${sopText}
@@ -1215,9 +1218,6 @@ ${appointmentLocationOutputRule}
 - "staffSummary" is internal metadata and MUST NOT be copied into "reply". For normal or needs_human, set it to null.
 - For normal or needs_human, other structured fields may be null unless clearly known. Do not invent a configured service merely to fill "treatment".
 - Legacy tokens such as [[NEEDS_HUMAN]] and [[BOOKING_READY]] are backend compatibility controls only. Do NOT output them when following this JSON contract.
-
-RULES (never break these):
-${guardrailsList}
 
 CURRENT TURN CONTEXT:
 - You are currently replying on ${channelLabel(channel)}.
