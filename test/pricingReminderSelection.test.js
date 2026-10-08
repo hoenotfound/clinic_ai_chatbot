@@ -15,10 +15,12 @@ const promotions = [{
   imageUrl: "https://example.com/promo-images/32", caption: "RM488"
 }];
 const select = (candidate) => selectPricingOffer({promotions, candidate, services, language: "zh"});
-test("requires explicit package for a multi-package service", () => {
-  assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["骨盆调理"]}), null);
-  assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["Package A please"]})?.caption, "RM388");
-  assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["Package A or Package B?"]}), null);
+test("unclear pelvic choice includes both A and B prices; a clear choice sends only that package", () => {
+  const unclear = select({treatment_interest:"骨盆调理",recent_customer_messages:["骨盆调理"]});
+  assert.match(unclear?.caption || "",/Package A:.*RM388[\\s\\S]*Package B:.*RM288/);
+  assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package A please"]})?.caption,"RM388");
+  assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package B please"]})?.caption,"RM288");
+  assert.match(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package A or Package B?"]})?.caption || "",/RM388[\\s\\S]*RM288/);
 });
 test("does not resend a delivered or pending pricing image", () => {
   assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["Package A"], sent_media:[{
@@ -81,15 +83,15 @@ test("recognizes the combined 3D + 9D offer rather than sending a single-treatme
   assert.equal(offer?.caption,"Combo offer");
 });
 
-test("does not send a promotional graphic if the customer only asked about suitability", () => {
-  for (const phrase of ["我想了解 3D 小颜术效果", "骨盆调理适合产后吗", "3D 小颜术能不能改善下颚线", "Can I visit the clinic for an assessment?"]) {
+test("treatment-specific pricing can follow up without explicit customer price intent", () => {
+  for (const phrase of ["我想了解 3D 小颜术效果", "骨盆调理适合产后吗",
+    "3D 小颜术能不能改善下颚线", "Can I visit the clinic for an assessment?"]) {
     const service = phrase.includes("骨盆") ? "骨盆调理" : "3D 小颜术";
     const decision = evaluatePricingReminder({
-      services, promotions, language: "zh",
-      candidate: {treatment_interest:service,recent_customer_messages:[phrase]},
+      services,promotions,language:"zh",
+      candidate:{treatment_interest:service,recent_customer_messages:[phrase]},
     });
-    assert.equal(decision.reason, "no_pricing_interest");
-    assert.equal(decision.offer, null);
+    assert.ok(decision.offer, phrase);
   }
 });
 
@@ -100,12 +102,16 @@ test("pricing intent supports Chinese, English, Malay, package selection and RM 
   assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package B price please"]})?.caption,"RM288");
 });
 
-test("CRM treatment alone, empty history and ad attribution never establish pricing intent", () => {
-  for (const recent_customer_messages of [[],[],["3D 适合吗?"]]) {
-    const decision=evaluatePricingReminder({
-      services, promotions, language:"zh",
-      candidate:{treatment_interest:"3D 小颜术",recent_customer_messages,ad_name:"3D RM488 promo"},
-    });
-    assert.equal(decision.reason,"no_pricing_interest");
-  }
+test("CRM treatment can choose a promotion; an unsupported service still fails closed", () => {
+  const withoutPriceQuestion = evaluatePricingReminder({
+    services,promotions,language:"zh",
+    candidate:{treatment_interest:"3D 小颜术",recent_customer_messages:["3D 适合吗?"]},
+  });
+  assert.equal(withoutPriceQuestion.offer?.caption,"RM488");
+  const noService = evaluatePricingReminder({
+    services,promotions,language:"zh",
+    candidate:{treatment_interest:"unsupported",recent_customer_messages:[]},
+  });
+  assert.equal(noService.offer,null);
+  assert.equal(noService.reason,"ambiguous_service");
 });
