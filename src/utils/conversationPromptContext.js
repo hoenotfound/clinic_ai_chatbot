@@ -396,13 +396,19 @@ function buildConversationPromptContext(
   }
 
   if (!relevantServiceNames.length && !serviceSource && metaAdContext) {
+    // A canonical hint from verified attribution is a starting topic only.
+    // Current customer statements and previous topic changes take priority.
+    const hint = normalizeComparable(metaAdContext.serviceHint);
+    const matchedHint = hint
+      ? candidates.filter((candidate) => normalizeComparable(candidate.name) === hint)
+      : [];
     const adText = [
-      cleanText(metaAdContext?.headline),
-      cleanText(metaAdContext?.body),
-    ]
-      .filter(Boolean)
-      .join(" ");
-    const adMatches = unique(findServicesInText(adText, candidates));
+      cleanText(metaAdContext.headline),
+      cleanText(metaAdContext.body),
+    ].filter(Boolean).join(" ");
+    const adMatches = matchedHint.length === 1
+      ? [matchedHint[0].name]
+      : unique(findServicesInText(adText, candidates));
     if (adMatches.length === 1) {
       relevantServiceNames = adMatches;
       serviceSource = "meta_ad";
