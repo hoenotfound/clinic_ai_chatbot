@@ -80,10 +80,10 @@ export const api = {
     request(
       `/conversations/${contactId}/whatsapp-templates${force ? "?refresh=true" : ""}`
     ),
-  recordWhatsAppOptIn: (contactId, source, confirmed) =>
+  recordWhatsAppOptIn: (contactId, source, confirmed, marketingConsentConfirmed = false) =>
     request(`/conversations/${contactId}/whatsapp-opt-in`, {
       method: "POST",
-      body: JSON.stringify({ source, confirmed }),
+      body: JSON.stringify({ source, confirmed, marketingConsentConfirmed }),
     }),
   sendWhatsAppTemplate: (contactId, payload) =>
     request(`/conversations/${contactId}/whatsapp-templates/send`, {
