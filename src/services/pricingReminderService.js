@@ -4,7 +4,9 @@ const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
 const channelMessaging = require("./channelMessagingService");
 const realtimeEvents = require("../utils/realtimeEvents");
-const { getActivePromotions } = require("../utils/activePromotion");
+const { getActivePromotions, promotionPackages } = require("../utils/activePromotion");
+const { imageIdentity } = require("../utils/pricingReminderSelection");
+const { mediaVariants } = require("../utils/mediaLocalization");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { quietHoursStatus, normalizeQuietHours } = require("../utils/quietHours");
 const { evaluatePricingReminder } = require("../utils/pricingReminderSelection");
@@ -242,6 +244,38 @@ async function sendSecondPricing(candidate, first, offer, settings) {
   }
 }
 
+// A restart between accepted Package A and the Package B send must not
+// silently strand Package B. Re-read the persisted primary delivery and
+// recover only the currently missing configured pelvic image.
+async function recoverSecondPricingReminders(settings, now = new Date()) {
+  if (settings?.pricingReminder?.sendBothPelvicPackages !== true) return;
+  const candidates=await pricingRepo.listNeedsSecond({
+    activatedAt:activationCutoff(settings),triggerMode:settings.triggerMode,
+  });
+  for (const candidate of candidates) {
+    if (!canSendAfterFinal(candidate,now) ||
+        quietHoursStatus(now,settings.quietHours).active) continue;
+    try {
+      const selected=evaluateOffer(candidate,settings);
+      if ((selected.offers || []).length !== 1) continue;
+      const remaining=selected.offers[0];
+      if (remaining.serviceName !== "骨盆调理") continue;
+      const promotions=getActivePromotions(clinicConfig.promotions||[]);
+      const matching=promotions.find(p=>p.linkedService==="骨盆调理");
+      const packages=matching ? promotionPackages(matching) : [];
+      if (packages.length!==2) continue;
+      const previous=packages.find(pkg=>pkg.name!==remaining.packageName);
+      if (!previous) continue;
+      const previousIdentities=mediaVariants(previous)
+        .map(v=>imageIdentity(v.imageUrl));
+      if (!previousIdentities.includes(imageIdentity(candidate.first_media_url))) continue;
+      await sendSecondPricing(candidate,{id:candidate.first_id},remaining,settings);
+    } catch(err) {
+      console.error("Second pricing reminder recovery failed:",candidate.contact_id,err);
+    }
+  }
+}
+
 // Called by the existing follow-up worker so this feature does not add another
 // scheduler, timer, or process to each clinic's Render instance.
 async function runPricingReminders(settings, now = new Date()) {
@@ -284,6 +318,7 @@ async function runPricingReminders(settings, now = new Date()) {
       console.error("Pricing reminder candidate failed:", candidate.contact_id, err);
     }
   }
+  await recoverSecondPricingReminders(settings,now);
   return nextDueAt;
 }
-module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canSendAfterFinal, evaluateOffer, statusForPricingSend };
+module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canSendAfterFinal, evaluateOffer, statusForPricingSend, recoverSecondPricingReminders };
