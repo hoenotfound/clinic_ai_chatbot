@@ -47,3 +47,47 @@ test("onboarding audit migration stores no authorization code or access token", 
   assert.doesNotMatch(sql, /access_token/i);
   assert.doesNotMatch(sql, /authorization_code/i);
 });
+
+
+test("standard Cloud API FINISH and coexistence completion are distinct", async () => {
+  const { classifyWhatsAppEmbeddedSignupEvent, parseWhatsAppEmbeddedSignupMessage } =
+    await import("../portal-frontend/src/utils/whatsappEmbeddedSignup.js");
+  const standard = { type: "WA_EMBEDDED_SIGNUP", event: "FINISH", data: { waba_id: "123" } };
+  const coexistence = {
+    type: "WA_EMBEDDED_SIGNUP",
+    event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+    data: { waba_id: "456" },
+  };
+
+  assert.equal(classifyWhatsAppEmbeddedSignupEvent(standard), "standard");
+  assert.equal(classifyWhatsAppEmbeddedSignupEvent(coexistence), "coexistence");
+  assert.equal(classifyWhatsAppEmbeddedSignupEvent({ ...standard, event: "ERROR" }), "error");
+  assert.equal(classifyWhatsAppEmbeddedSignupEvent({ ...standard, event: "CANCEL" }), "cancel");
+  assert.equal(classifyWhatsAppEmbeddedSignupEvent({ ...standard, event: "OTHER" }), null);
+  assert.equal(classifyWhatsAppEmbeddedSignupEvent({ event: "FINISH" }), null);
+  assert.deepEqual(
+    parseWhatsAppEmbeddedSignupMessage({
+      origin: "https://www.facebook.com",
+      data: JSON.stringify(standard),
+    }),
+    standard
+  );
+  assert.equal(
+    parseWhatsAppEmbeddedSignupMessage({
+      origin: "https://untrusted.example.com",
+      data: JSON.stringify(standard),
+    }),
+    null
+  );
+});
+
+test("standard signup is shown without submitting a coexistence completion", () => {
+  const source = read("portal-frontend/src/components/WhatsAppCoexistenceOnboardingPanel.jsx");
+  assert.match(source, /if \(outcome === "standard"\)/);
+  assert.match(source, /standardSignupRef\.current = true/);
+  assert.match(source, /if \(standardSignupRef\.current\) return;/);
+  assert.match(source, /setNotice\("standard"\)/);
+  assert.match(source, /setNotice\("unconfirmed"\)/);
+  assert.match(source, /if \(!sessionInfoRef\.current && !submittingRef\.current && !standardSignupRef\.current\)/);
+  assert.match(source, /Do not enable coexistence or switch the live WhatsApp credentials/);
+});
