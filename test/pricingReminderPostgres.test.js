@@ -320,6 +320,19 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       await client.query("UPDATE contacts SET mode='ai' WHERE id=$1",[contactId]);
     }
     // Enabling social pricing later must not reset WhatsApp's cohort cutoff.
+    await client.query(`
+      INSERT INTO contacts(id,channel,whatsapp_number) VALUES
+        (4,'whatsapp','60120000004');
+      INSERT INTO leads(contact_id,treatment_interest) VALUES (4,'3D 小颜术');
+      INSERT INTO messages(id,contact_id,role,content,created_at)
+        VALUES (400,4,'user','Tell me about 3D',now()-interval '12 hours'),
+               (401,4,'assistant','Details',now()-interval '11 hours');
+      INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status,
+          whatsapp_message_id,whatsapp_accepted_at,is_automated_follow_up,
+          automated_follow_up_for_message_id,automated_follow_up_step)
+        VALUES (402,4,'assistant','Follow-up 3',now()-interval '9 minutes','pending',
+          'wamid.final.4',now()-interval '8 minutes',true,401,3);
+    `);
     const socialFreshAt=new Date(Date.now()-6*3600000).toISOString();
     const socialCutoffCandidates=await pricingRepo.listEligible({
       activatedAt,socialActivatedAt:socialFreshAt,triggerMode:"all",
@@ -327,8 +340,8 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     });
     assert.ok(!socialCutoffCandidates.some(c=>c.contact_id===2),
       "Social anchor older than opt-in must be excluded");
-    assert.ok(socialCutoffCandidates.some(c=>c.contact_id===1) === false,
-      "WhatsApp anchor is deleted earlier in this fixture");
+    assert.ok(socialCutoffCandidates.some(c=>c.contact_id===4),
+      "A WhatsApp reminder must retain the original pricing cohort cutoff");
     await client.query("UPDATE messages SET social_accepted_at=NULL WHERE id=302");
     const socialCandidates=await pricingRepo.listEligible({activatedAt,socialActivatedAt:activatedAt,triggerMode:"all",channels:["whatsapp","facebook","instagram"]});
     assert.ok(!socialCandidates.some(c=>c.contact_id===3));
