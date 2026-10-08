@@ -95,7 +95,9 @@ async function getById(attributionId) {
 async function createFirstTouch({ leadId, firstMessageId, attribution }) {
   if (!leadId || !attribution?.source || !attribution?.channel) return null;
 
-  const attributedTreatment = attribution.source === "meta_ads"\n    ? inferConfiguredServiceFromText(attribution.adName)\n    : null;
+  const attributedTreatment = attribution.source === "meta_ads"
+    ? inferConfiguredServiceFromText(attribution.adName)
+    : null;
   const enrichmentStatus = attribution.source === "meta_ads" && attribution.adId
     ? "pending"
     : "not_applicable";
