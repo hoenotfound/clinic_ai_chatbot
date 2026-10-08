@@ -211,4 +211,4 @@ async function runPricingReminders(settings, now = new Date()) {
   }
   return nextDueAt;
 }
-module.exports = { runPricingReminders, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };
+module.exports = { runPricingReminders, sendPricingReminder, chooseOffer, canFitBeforeFinal, evaluateOffer, statusForPricingSend };
