@@ -2419,7 +2419,7 @@ test("plain 3D alias targets 3D 小颜术 without stealing 3D+9D", async (t) => 
   assert.equal(claims[1].targetedService, "3D + 9D 组合");
   assert.equal(claims[1].content, "3D+9D combo follow-up");
   assert.equal(claims[2].targetedService, "3D + 9D 组合");
-  assert.equal(claims[2].content, "3D+9D combo follow-up");
+  assert.equal(claims[2].content, "3D+9D组合跟进");
 });
 
 test("explicit 3D and 9D comparison stays ambiguous instead of choosing the combo", async (t) => {
