@@ -169,8 +169,9 @@ test("pre-expiry timing uses the shared deadline and current customer inbound", 
   const originalQuery = pool.query;
   t.after(() => { pool.query = originalQuery; });
   pool.query = async (sql, params) => {
-    assert.ok(sql.includes('beforeExpiryDueSql({inbound:"latest_inbound_created_at"'));
-    assert.ok(sql.includes('offset:"($6::integer[])[next_follow_up_step]"'));
+    assert.ok(sql.includes("latest_inbound_created_at"));
+    assert.ok(sql.includes("AT TIME ZONE"));
+    assert.ok(sql.includes("interval '120 minutes'"));
     assert.ok(sql.includes("($5::text[])[next_follow_up_step] = 'before_window_expiry'"));
     assert.deepEqual(params, [
       [1320], "all", "2026-10-07T00:00:00.000Z", 25,
@@ -189,8 +190,9 @@ test("pre-expiry nonfinal steps preserve the configured previous-send gap", asyn
   const originalQuery = pool.query;
   t.after(() => { pool.query = originalQuery; });
   pool.query = async (sql) => {
-    assert.ok(sql.includes('beforeExpiryDueSql({inbound:"latest_inbound_created_at"'));
-    assert.ok(sql.includes('gap:"(($1::integer[])[next_follow_up_step]'));
+    assert.ok(sql.includes("previous_follow_up_created_at"));
+    assert.ok(sql.includes("next_follow_up_step - 1"));
+    assert.ok(sql.includes("interval '120 minutes'"));
     assert.ok(sql.includes("($5::text[])[next_follow_up_step] = 'before_window_expiry'"));
     return { rows: [] };
   };
