@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const worker = require("../src/services/whatsappFreeEntryFollowUpService");
 const deliveryRepo = require("../src/db/whatsappDeliveryStatusRepo");
+const freeEntryReport = require("../src/db/whatsappFreeEntryReportRepo");
 const { sessionLateralSql } = require("../src/db/whatsappFreeEntrySessionSql");
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -48,6 +49,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       "../src/db/migrations/054_whatsapp_free_entry_followups.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/057_whatsapp_free_entry_referrals.sql"), "utf8"));
+    await client.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/056_whatsapp_free_entry_skips.sql"), "utf8"));
     await client.query(`
       INSERT INTO contacts(id, channel, whatsapp_number, mode, needs_attention,
         whatsapp_opt_in_at, whatsapp_opt_in_source)
@@ -178,6 +181,14 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       "a second ad-entry uses the newer Meta-confirmed business reply");
     assert.equal(worker.selectedSlot(repeatCandidate,settings.slots),26,
       "the new ad-entry can start its own 26h follow-up sequence");
+    const report = await freeEntryReport.summarize(client);
+    assert.equal(report.leads.ad_leads,1,
+      "summary counts independently verified CTWA contacts, not only first-touch ads");
+    assert.equal(report.leads.verified_free_entry,1,
+      "summary uses latest independently validated billing epoch");
+    assert.equal(report.contactDetails[0].first_reply_at != null,true,
+      "contact-level dashboard uses the same non-overlapping entry clock");
+
   } finally {
     await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => {});
     await client.end();
