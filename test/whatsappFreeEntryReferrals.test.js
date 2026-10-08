@@ -8,7 +8,7 @@ test("Only actual inbound CTWA referral with ad evidence creates a distinct sess
  assert.equal(await repo.recordIfQualifying(7,88,{source:"meta_ads",sourceType:"ad",adId:"ad-12"},db),true);
  assert.equal(calls.length,1);
  assert.match(calls[0].sql,/ON CONFLICT \(origin_message_id\) DO NOTHING/);
- assert.deepEqual(calls[0].values,[88,7,null,"ad-12"]);
+ assert.deepEqual(calls[0].values,[88,7,null,"ad-12",null,null]);
  assert.equal(await repo.recordIfQualifying(7,89,{source:"meta_ads",sourceType:"post",adId:"ad-12"},db),false);
  assert.equal(await repo.recordIfQualifying(7,90,{source:"meta_ads",sourceType:"ad"},db),false);
  assert.equal(await repo.recordIfQualifying(7,91,{source:"organic",sourceType:"ad",adId:"ad-12"},db),false);
