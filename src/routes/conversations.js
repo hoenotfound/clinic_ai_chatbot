@@ -8,6 +8,7 @@ const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact } = require("../utils/accessControl");
 const contactsRepo = require("../db/contactsRepo");
+const { pool } = require("../db/db");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
@@ -1115,15 +1116,60 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
       });
     }
 
-    const updated = await whatsappPolicy.recordOptIn(contact.id, source);
+    const marketingConfirmed = req.body?.marketingConsentConfirmed === true;
+    let updated;
+    if (marketingConfirmed) {
+      // Staff must explicitly verify marketing consent and its source.
+      // Commit WhatsApp and CRM consent atomically; an ad click alone
+      // never qualifies, and we do not infer permission for existing leads.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const leadResult = await client.query(
+          `SELECT id FROM leads WHERE contact_id=$1
+           ORDER BY is_closed ASC, created_at DESC, id DESC LIMIT 1 FOR UPDATE`,
+          [contact.id]
+        );
+        const leadId = leadResult.rows[0]?.id;
+        if (!leadId) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({ error: "Create a CRM lead before confirming marketing consent." });
+        }
+        const changed = await client.query(
+          `UPDATE contacts SET whatsapp_opt_in_at=now(), whatsapp_opt_in_source=$2,
+           whatsapp_opt_out_at=NULL, whatsapp_opt_out_source=NULL,
+           whatsapp_marketing_opt_out_at=NULL, whatsapp_marketing_opt_out_source=NULL,
+           updated_at=now()
+           WHERE id=$1 AND channel='whatsapp' RETURNING *`,
+          [contact.id, source]
+        );
+        updated = changed.rows[0];
+        await client.query(
+          "UPDATE leads SET marketing_consent='opted_in', updated_at=now() WHERE id=$1",
+          [leadId]
+        );
+        await client.query(
+          `INSERT INTO whatsapp_marketing_consent_events
+          (contact_id,lead_id,source,recorded_by) VALUES ($1,$2,$3,$4)`,
+          [contact.id, leadId, source, req.user?.username || null]
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally { client.release(); }
+    } else {
+      updated = await whatsappPolicy.recordOptIn(contact.id, source);
+    }
     realtimeEvents.publish("conversation_changed", {
       contactId: updated.id,
-      reason: "whatsapp_opt_in",
+      reason: marketingConfirmed ? "whatsapp_marketing_opt_in" : "whatsapp_opt_in",
     });
     res.json({
       contactId: updated.id,
       whatsapp_opt_in_at: updated.whatsapp_opt_in_at,
       whatsapp_opt_in_source: updated.whatsapp_opt_in_source,
+      marketingConsentConfirmed: marketingConfirmed,
       whatsapp_opt_out_at: updated.whatsapp_opt_out_at,
       whatsapp_opt_out_source: updated.whatsapp_opt_out_source,
       whatsapp_marketing_opt_out_at: updated.whatsapp_marketing_opt_out_at,
