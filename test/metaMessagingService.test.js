@@ -904,3 +904,100 @@ for (const channel of ["facebook","instagram"]) {
     assert.deepEqual(receipts,["mid.caption"]);
   });
 }
+
+for (const channel of ["facebook", "instagram"]) {
+  test(`${channel}: blocks image after an accepted caption when eligibility changes`, async (t) => {
+    const originalFetch = global.fetch;
+    const envKeys = channel === "facebook"
+      ? ["FACEBOOK_PAGE_ID", "FACEBOOK_PAGE_ACCESS_TOKEN"]
+      : ["INSTAGRAM_PAGE_ID", "INSTAGRAM_PAGE_ACCESS_TOKEN"];
+    const oldEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    t.after(() => {
+      global.fetch = originalFetch;
+      for (const key of envKeys) {
+        if (oldEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = oldEnv[key];
+      }
+    });
+    for (const key of envKeys) process.env[key] = "test-social-provider";
+    let eligible = true;
+    const posted = [];
+    global.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      posted.push(body.message);
+      eligible = false; // Staff takeover / reply-window expiry after Meta accepts caption.
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ message_id: "mid.accepted.caption" }),
+      };
+    };
+    const aliases = [];
+    const result = await meta.sendImage(channel, "person-1",
+      "https://example.test/price.png", "Treatment price",
+      {
+        preSendCheck: async () => eligible,
+        onProviderMessageId: async (providerId) => aliases.push(providerId),
+      }
+    );
+    assert.equal(result.success, false);
+    assert.equal(result.cancelled, false);
+    assert.equal(result.partialCaptionSent, true);
+    assert.equal(result.captionProviderMessageId, "mid.accepted.caption");
+    assert.deepEqual(aliases, ["mid.accepted.caption"]);
+    assert.deepEqual(posted, [{ text: "Treatment price" }],
+      "No social image may be posted after the eligibility change");
+  });
+
+  test(`${channel}: failed eligibility lookup after caption is partial, not a safe retry`, async (t) => {
+    const originalFetch = global.fetch;
+    const envKeys = channel === "facebook"
+      ? ["FACEBOOK_PAGE_ID", "FACEBOOK_PAGE_ACCESS_TOKEN"]
+      : ["INSTAGRAM_PAGE_ID", "INSTAGRAM_PAGE_ACCESS_TOKEN"];
+    const oldEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
+    t.after(() => {
+      global.fetch = originalFetch;
+      for (const key of envKeys) {
+        if (oldEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = oldEnv[key];
+      }
+    });
+    for (const key of envKeys) process.env[key] = "test-social-provider";
+    let posted = 0;
+    global.fetch = async () => {
+      posted++;
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ message_id: "mid.caption.before.failure" }),
+      };
+    };
+    t.mock.method(console, "error", () => {});
+    const result = await meta.sendImage(channel, "person-1",
+      "https://example.test/price.png", "Price RM488",
+      {preSendCheck: async () => { throw Error("Temporary SQL outage"); }});
+    assert.equal(posted,1);
+    assert.equal(result.partialCaptionSent,true);
+    assert.equal(result.preSendCheckFailed,true);
+    assert.equal(result.cancelled,false);
+  });
+}
+
+test("social image without an accepted caption can cancel safely before provider send", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  const oldId = process.env.FACEBOOK_PAGE_ID;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+    if (oldId === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = oldId;
+  });
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "page-token";
+  process.env.FACEBOOK_PAGE_ID = "page-1";
+  global.fetch = async () => { throw Error("Must not call provider"); };
+  const result = await meta.sendImage("facebook", "person-1",
+    "https://example.test/image.png", "", {preSendCheck: async () => false});
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
+  assert.ok(!result.partialCaptionSent);
+});
