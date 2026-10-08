@@ -368,6 +368,19 @@ function isFollowUpStep(value) {
   );
 }
 
+function isFreeEntryFollowUpConfig(value) {
+  if (!isPlainObject(value) || typeof value.enabled !== "boolean" ||
+      typeof value.templateName !== "string" ||
+      typeof value.language !== "string" ||
+      !Array.isArray(value.slotsHours) ||
+      value.slotsHours.length < 1 || value.slotsHours.length > 6 ||
+      value.slotsHours.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
+      new Set(value.slotsHours).size !== value.slotsHours.length ||
+      (value.enabled && (!/^[a-z0-9_]+$/.test(value.templateName) ||
+        !/^[a-z]{2,3}_[A-Z]{2}$/.test(value.language)))) return false;
+  return true;
+}
+
 function isAutomatedFollowUpConfig(value) {
   if (
     !isPlainObject(value) ||
@@ -378,6 +391,7 @@ function isAutomatedFollowUpConfig(value) {
     !Array.isArray(value.additionalSteps) ||
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
+    (value.freeEntry !== undefined && !isFreeEntryFollowUpConfig(value.freeEntry)) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
         typeof value.pricingReminder.enabled !== "boolean" ||
@@ -596,6 +610,30 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     return null;
   }
 
+  const requestedFreeEntry = requested.freeEntry ?? current?.freeEntry ?? {
+    enabled: false, templateName: "", language: "zh_CN",
+    slotsHours: [36, 60, 84, 108, 132, 156],
+  };
+  if (!isFreeEntryFollowUpConfig(requestedFreeEntry)) return null;
+  const freeEntryName = requestedFreeEntry.templateName.trim();
+  const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
+  const freeEntryHours = [...requestedFreeEntry.slotsHours].sort((a, b) => a - b);
+  const unchangedFreeEntry = current?.freeEntry?.enabled === true &&
+    current.freeEntry.templateName === freeEntryName &&
+    current.freeEntry.language === freeEntryLanguage &&
+    JSON.stringify(current.freeEntry.slotsHours) === JSON.stringify(freeEntryHours) &&
+    typeof current.freeEntry.activatedAt === "string" &&
+    !Number.isNaN(Date.parse(current.freeEntry.activatedAt));
+  const freeEntry = {
+    enabled: requestedFreeEntry.enabled === true,
+    templateName: freeEntryName,
+    language: freeEntryLanguage,
+    slotsHours: freeEntryHours,
+    activatedAt: requestedFreeEntry.enabled === true
+      ? unchangedFreeEntry ? current.freeEntry.activatedAt : new Date().toISOString()
+      : null,
+  };
+
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
@@ -685,6 +723,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     quietHours,
     ...firstStep,
     additionalSteps,
+    freeEntry,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
       socialActivatedAt: socialActivation,
       requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
