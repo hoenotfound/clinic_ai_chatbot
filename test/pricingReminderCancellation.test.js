@@ -164,3 +164,51 @@ test("third consecutive confirmed-unsent preflight failure escalates to staff",a
     messaging.sendImageByUrl=old.send;contactsRepo.setDeliveryAttention=old.attention;
   }
 });
+
+test("accepted social caption plus failed final eligibility must not discard or retry automatically",async()=>{
+  const old={
+    claim:pricingRepo.claim,discard:pricingRepo.discard,note:pricingRepo.notePreflightFailure,
+    status:messagesRepo.setDeliveryStatusById,
+    send:messaging.sendImageByUrl,attention:contactsRepo.setDeliveryAttention,
+  };
+  let discards=0,retries=0;
+  const statuses=[],attention=[];
+  try{
+    pricingRepo.claim=async()=>({id:65,contact_id:76});
+    pricingRepo.discard=async()=>{discards++;return true;};
+    pricingRepo.notePreflightFailure=async()=>{retries++;return null;};
+    messagesRepo.setDeliveryStatusById=async(id,status,error)=>{
+      statuses.push(status);
+      return {id,contact_id:76,delivery_status:status,delivery_error:error};
+    };
+    messaging.sendImageByUrl=async()=>({
+      success:false,cancelled:false,preSendCheckFailed:true,
+      partialCaptionSent:true,captionProviderMessageId:"mid.caption",
+      error:"Image cancelled after caption accepted",
+    });
+    contactsRepo.setDeliveryAttention=async(_id,reason)=>attention.push(reason);
+    const settings={
+      activatedAt:"2026-10-08T00:00:00Z",triggerMode:"all",
+      pricingReminder:{
+        activatedAt:"2026-10-08T00:00:00Z",socialActivatedAt:"2026-10-08T00:00:00Z",
+        enableSocialChannels:true,
+      },quietHours:{enabled:false,start:"00:00",end:"07:00"},
+    };
+    const sent=await pricing.sendPricingReminder({
+      contact_id:76,channel:"instagram",channel_user_id:"igsid-76",anchor_id:15,
+      third_accepted_at:new Date(Date.now()-10*60000).toISOString(),
+      inbound_at:new Date(Date.now()-12*3600000).toISOString(),
+    },{imageUrl:"https://example.test/promo.png",caption:"RM488",packageName:"Trial"},settings);
+    assert.equal(sent,false);
+    assert.equal(discards,0);
+    assert.equal(retries,0);
+    assert.deepEqual(statuses,["unknown"]);
+    assert.equal(attention.length,1);
+    assert.match(attention[0],/unconfirmed/i);
+  }finally{
+    pricingRepo.claim=old.claim;pricingRepo.discard=old.discard;
+    pricingRepo.notePreflightFailure=old.note;
+    messagesRepo.setDeliveryStatusById=old.status;
+    messaging.sendImageByUrl=old.send;contactsRepo.setDeliveryAttention=old.attention;
+  }
+});
