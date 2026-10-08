@@ -146,7 +146,37 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     );
     assert.equal(progress.rows[0].step, 3);
 
+    // Both pelvic package images use separate provider rows. A second image
+    // can be reserved only after the first has a confirmed provider identity.
+    const secondOffer={
+      caption:"Package B RM288",imageUrl:"https://example.com/promo-images/31",
+      serviceName:"3D 小颜术",identities:["/promo-images/31"],
+    };
+    assert.equal(await pricingRepo.claimSecond({
+      candidate,firstId:saved.id,offer:secondOffer,
+    }),null);
+    await client.query("UPDATE messages SET delivery_status='pending',whatsapp_message_id='wamid.priceA' WHERE id=$1",[saved.id]);
+    const recovered=await pricingRepo.listNeedsSecond({activatedAt,triggerMode:"all"});
+    assert.equal(recovered.length,1);
+    assert.equal(recovered[0].first_id,saved.id);
+    const second=await pricingRepo.claimSecond({
+      candidate,firstId:saved.id,offer:secondOffer,
+    });
+    assert.ok(second);
+    assert.equal(second.media_url,secondOffer.imageUrl);
+    assert.equal(await pricingRepo.isSecondStillEligible({
+      messageId:second.id,firstId:saved.id,candidate,identities:secondOffer.identities,
+    }),true);
+    assert.equal(await pricingRepo.claimSecond({
+      candidate,firstId:saved.id,offer:secondOffer,
+    }),null,"a second worker cannot duplicate Package B");
+    assert.equal((await pricingRepo.listNeedsSecond({activatedAt,triggerMode:"all"})).length,0);
+    assert.equal((await client.query("SELECT COUNT(*)::int AS n FROM messages WHERE automated_follow_up_for_message_id=101 AND automated_follow_up_step=4")).rows[0].n,0);
+
     await client.query("UPDATE leads SET appointment_status='set' WHERE contact_id=1");
+    assert.equal(await pricingRepo.isSecondStillEligible({
+      messageId:second.id,firstId:saved.id,candidate,identities:secondOffer.identities,
+    }),false);
     assert.equal(await pricingRepo.isClaimStillEligible({
       messageId:saved.id,contactId:1,anchorId:101,inboundId:100,
       imageIdentities:offer.identities, treatmentInterest:candidate.treatment_interest,
