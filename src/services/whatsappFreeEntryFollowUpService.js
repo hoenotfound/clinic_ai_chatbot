@@ -261,6 +261,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   if (!attemptId) return "already_claimed_or_ineligible";
 
   let message = null;
+  let acceptedWamid = null;
   try {
     // This is a fixed, already approved MARKETING template. No AI-authored
     // content or arbitrary variable substitution is permitted in automation.
@@ -318,9 +319,15 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         expectedOptInAt: fresh.whatsapp_opt_in_at }
     );
     if (response?.wamid) {
-      await messagesRepo.setWhatsappMessageId(message.id, response.wamid);
+      acceptedWamid = response.wamid;
+      // Keep provider identity in the durable attempt before the Inbox write.
+      // A DB interruption must not discard the only Meta message ID.
+      await finish(attemptId, "sending", {
+        messageId: message.id, wamid: acceptedWamid
+      });
+      await messagesRepo.setWhatsappMessageId(message.id, acceptedWamid);
       await finish(attemptId, "accepted", {
-        messageId: message.id, wamid: response.wamid
+        messageId: message.id, wamid: acceptedWamid
       });
       realtimeEvents.publish("conversation_changed", {
         contactId: candidate.contact_id, messageId: message.id,
@@ -339,13 +346,15 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   } catch (err) {
     // An exception after the provider request is ambiguous. Never automatically
     // resend this slot because the first attempt might have reached Meta.
-    if (message) {
+    if (message && !acceptedWamid) {
       await messagesRepo.setDeliveryStatusById(
         message.id, "unknown", "Extended follow-up delivery not confirmed"
       ).catch(() => {});
     }
+    // Never clear an accepted WAMID after an unrelated persistence failure.
+    // The terminal 'unknown' claim prevents a blind repeat of that step.
     await finish(attemptId, "unknown", {
-      messageId: message?.id,
+      messageId: message?.id, wamid: acceptedWamid,
       error: String(err?.message || err).slice(0, 300),
     }).catch(() => {});
     console.error("[WhatsApp FEP] send outcome unknown:", err);
