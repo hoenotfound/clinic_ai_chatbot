@@ -31,7 +31,7 @@ Meta's Click-to-WhatsApp free-entry billing period can run for **up to seven day
   "enabled": false,
   "templateName": "lead_follow_up",
   "language": "zh_CN",
-  "slotsHours": [36, 60, 84, 108, 132, 156]
+  "slotsHours": [26, 50, 74, 98, 122, 146]
 }
 ```
 
