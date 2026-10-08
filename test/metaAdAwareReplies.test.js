@@ -501,44 +501,41 @@ test("explicit 3D + 9D creative resolves the configured combination, not its com
   ), null);
 });
 
-test("locally saved lead interest fills a missing ad name without trusting arbitrary text", async () => {
+test("stale CRM treatment never invents an ad topic while enrichment is pending", async () => {
   const services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }];
   const aliases = [{ alias: "骨盆", officialService: "骨盆调理" }];
+  const row = {
+    source: "meta_ads",
+    meta_ad_id: "unresolved-ad",
+    ad_name: null,
+    headline: null,
+    body: null,
+    treatment_interest: "骨盆调理", // Could be staff-entered or from an earlier conversation.
+  };
   const repo = {
     async getForContactCurrentLead(id) {
       assert.equal(id, 71);
-      return {
-        source: "meta_ads",
-        meta_ad_id: "unresolved-ad",
-        ad_name: null,
-        headline: null,
-        body: null,
-        treatment_interest: "骨盆调理",
-      };
+      return row;
     },
   };
-  const context = await loadMetaAdReplyContext(71, { repo, services, aliases });
-  assert.deepEqual(context, {
-    headline: null, body: null, serviceHint: "骨盆调理",
-    serviceHintSource: "lead_interest",
-  });
-  assert.equal(resolveMetaAdCreativeService(context, services, aliases), null);
-  const turn = buildConversationPromptContext(
-    [{ role: "user", content: "English" }],
-    { services, aliases, promotions: [], metaAdContext: context }
-  );
-  assert.deepEqual(turn.relevantServiceNames, ["骨盆调理"]);
+  assert.equal(await loadMetaAdReplyContext(71, { repo, services, aliases }), null);
+  const contextWithoutVerifiedAd = normalizeMetaAdReplyContext(row, { services, aliases });
+  assert.equal(contextWithoutVerifiedAd, null);
 
-  const unknown = normalizeMetaAdReplyContext({
-    source: "meta_ads", treatment_interest: "pelvic maybe",
-    headline: null, body: null, ad_name: null,
+  const verifiedCreative = normalizeMetaAdReplyContext({
+    ...row, headline: "3D 小颜术",
   }, { services, aliases });
-  assert.equal(unknown, null);
+  assert.equal(verifiedCreative.serviceHint, "3D 小颜术");
+  assert.equal(verifiedCreative.serviceHintSource, "creative");
+  const verifiedName = normalizeMetaAdReplyContext({
+    ...row, ad_name: "3D 小颜术 Trial 2",
+  }, { services, aliases });
+  assert.equal(verifiedName.serviceHint, "3D 小颜术");
+  assert.equal(verifiedName.serviceHintSource, "ad_name");
 
-  const organic = normalizeMetaAdReplyContext({
+  assert.equal(normalizeMetaAdReplyContext({
     source: "instagram_organic", treatment_interest: "骨盆调理",
-  }, { services, aliases });
-  assert.equal(organic, null);
+  }, { services, aliases }), null);
 });
 
 test("creative ambiguity never falls back to an unrelated stored lead treatment", () => {
