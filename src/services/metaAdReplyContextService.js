@@ -21,7 +21,7 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) 
   const headline = cleanContextText(row.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(row.body, FIELD_LIMITS.body);
   const creativeMatches = matchingMetaAdCreativeServices({ headline, body }, services, aliases);
-  const creativeService = creativeMatches.length === 1 ? creativeMatches[0] : null;
+  const creativeService = resolveMetaAdCreativeService({ headline, body }, services, aliases);
   // Only try an internal ad-name fallback when the creative has no service matches.
   // Ambiguous creative cannot be overruled by internal ad metadata.
   const expandedAliases = aliases.flatMap((entry) =>
@@ -115,8 +115,8 @@ function configuredServiceTerms(service, services, aliases) {
 }
 
 /**
- * Deterministically maps Meta headline/body creative to exactly one configured
- * service. This is a trust boundary for outbound Before/After automation:
+ * Finds all configured services explicitly named by Meta creative. This is a
+ * trust boundary for outbound Before/After automation:
  * semantic model guesses are never sufficient. Ambiguous or unrecognized
  * creative fails closed and returns null.
  */
@@ -149,7 +149,27 @@ function matchingMetaAdCreativeServices(
 
 function resolveMetaAdCreativeService(context, services = [], aliases = []) {
   const matches = matchingMetaAdCreativeServices(context, services, aliases);
-  return matches.length === 1 ? matches[0] : null;
+  if (matches.length === 1) return matches[0];
+  if (matches.length < 2) return null;
+
+  // A configured combined service (e.g. "3D + 9D") naturally also matches
+  // aliases for its individual parts. Recognise it only when the full
+  // combination appears in the creative and ALL other matches are components.
+  const creativeText = [context?.headline, context?.body].filter(Boolean).join(" ");
+  const combinations = matches.filter((name) => name.includes("+")).filter((name) => {
+    if (!serviceTermAppearsInCreative(name, creativeText)) return false;
+    const components = name.split("+").map(compactServiceTerm).filter(Boolean);
+    if (components.length < 2) return false;
+    return matches.every((matchedName) => {
+      if (matchedName === name) return true;
+      const other = (Array.isArray(services) ? services : []).find(
+        (service) => String(service?.name || "").trim() === matchedName
+      );
+      return other && configuredServiceTerms(other, services, aliases)
+        .some((term) => components.includes(compactServiceTerm(term)));
+    });
+  });
+  return combinations.length === 1 ? combinations[0] : null;
 }
 async function loadMetaAdReplyContext(
   contactId,
