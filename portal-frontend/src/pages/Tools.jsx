@@ -30,7 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
-  freeEntry: { enabled: false, templateName: "", language: "zh_CN", slotsHours: [36, 60, 84, 108, 132, 156] },
+  freeEntry: { enabled: false, templateName: "", language: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 146] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
@@ -179,7 +179,7 @@ function normalizeFollowUpSettings(value = {}) {
       language: String(value?.freeEntry?.language || "zh_CN"),
       slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
         ? value.freeEntry.slotsHours.map(Number)
-        : [36, 60, 84, 108, 132, 156],
+        : [26, 50, 74, 98, 122, 146],
     },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
@@ -844,7 +844,7 @@ export default function Tools() {
             enabled: form.freeEntry?.enabled === true,
             templateName: String(form.freeEntry?.templateName || "").trim(),
             language: String(form.freeEntry?.language || "zh_CN"),
-            slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [36,60,84,108,132,156],
+            slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,146],
           },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
@@ -2550,9 +2550,9 @@ function FollowUpTool({
                 className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
                 aria-label="Free-entry follow-up schedule"
               >
-                <option value="36,60,84,108,132,156">Day 2 through Day 7 (six reminders)</option>
-                <option value="36,60,108,156">Days 2, 3, 5 and 7 (four reminders)</option>
-                <option value="36,60,108">Days 2, 3 and 5 (three reminders)</option>
+                <option value="26,50,74,98,122,146">Days 1 through 6 (six reminders)</option>
+                <option value="26,50,98,146">Days 1, 2, 4 and 6 (four reminders)</option>
+                <option value="26,50,98">Days 1, 2 and 4 (three reminders)</option>
               </select>
             </label>
             <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
