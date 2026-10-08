@@ -131,3 +131,29 @@ test("English how-much questions distinguish duration and quantities from money"
     "What is the first trial price?",
   ]) assert.equal(hasCustomerPriceEnquiry(customerText), true, customerText);
 });
+
+
+test("English waiting and recovery-time questions cannot unlock pricing graphics", () => {
+  for (const text of [
+    "How much is the recovery time?",
+    "How much is my recovery time?",
+    "How much is the treatment duration?",
+    "How much is the appointment time?",
+    "How much should I wait after treatment?",
+    "How much can I wait before 3D?",
+    "How much do I wait after the session?",
+    "How much will it take to recover?",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(text), false, text);
+  }
+  for (const text of [
+    "How much is the 3D treatment?",
+    "How much should I pay for 3D?",
+    "How much does it cost to recover after treatment?",
+    "How much is the recovery time and what is the price?",
+    "How much should I wait and how much is the first trial?",
+    "How much is the price of the 3D session?",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(text), true, text);
+  }
+});
