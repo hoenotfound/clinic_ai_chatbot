@@ -62,6 +62,7 @@ test("3D and 9D price enquiries route to their own linked promotions", async (t)
   assert.equal(threeD.details.treatment, "3D 小颜术");
   const threeDPromo = await resolvePricePromotionForReply({
     priceQuery: threeD.priceQuery,
+    customerText: "3D price?",
     treatment: threeD.details.treatment,
     flagged: threeD.flagged,
     bookingReady: threeD.bookingReady,
@@ -79,6 +80,7 @@ test("3D and 9D price enquiries route to their own linked promotions", async (t)
   assert.equal(nineD.details.treatment, "9D 逆龄抗衰");
   const nineDPromo = await resolvePricePromotionForReply({
     priceQuery: nineD.priceQuery,
+    customerText: "9D price?",
     treatment: nineD.details.treatment,
     flagged: nineD.flagged,
     bookingReady: nineD.bookingReady,
