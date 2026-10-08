@@ -2574,7 +2574,7 @@ function FollowUpTool({
                   <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
                   <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
                   <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-                  <Rule text="The optional pricing reminder waits 5 minutes after Follow-up 3, only for customers who asked about prices. It skips if the WhatsApp window closes or quiet hours prevent delivery." />
+                  <Rule text="The pricing reminder waits 5 minutes after Meta accepts Follow-up 3. Pricing interest is optional per clinic. A/B pelvic graphics can be sent separately. Quiet hours and the WhatsApp window remain hard stops." />
                   <Rule text="WhatsApp opt-outs remain a hard stop." />
                   <Rule text="Saving does not add follow-ups to older conversations." />
                 </ul>
