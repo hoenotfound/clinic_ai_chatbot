@@ -630,6 +630,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     templateName: rule.templateName.trim(),
     mediaUrl: (rule.mediaUrl || "").trim(),
     mediaKey: (rule.mediaKey || "").trim(),
+    videoCodecVerified: rule.videoCodecVerified === true,
   }));
   const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
   const fallbackLanguage = requestedFreeEntry.fallbackLanguage || "zh_CN";
