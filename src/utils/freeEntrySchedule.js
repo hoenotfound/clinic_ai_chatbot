@@ -10,8 +10,11 @@ function effectiveSlotDueAt(firstReplyAt, slotHours, allSlots, quietHours, optio
   const first = new Date(firstReplyAt).getTime();
   if (!Number.isFinite(first) || !Number.isInteger(slotHours)) return null;
   const scheduled = first + slotHours * HOUR_MS;
-  const expiration = first + freeEntryCeilingHours(firstReplyAt) * HOUR_MS - EXPIRY_BUFFER_MS;
-  if (slotHours !== Math.max(...allSlots)) return new Date(scheduled);
+  const ceilingHours = Math.min(freeEntryCeilingHours(firstReplyAt),
+    options.maxCeilingHours === 72 ? 72 : 168);
+  const expiration = first + ceilingHours * HOUR_MS - EXPIRY_BUFFER_MS;
+  const activeSlots = allSlots.filter((hour) => hour < ceilingHours);
+  if (slotHours !== Math.max(...activeSlots)) return new Date(scheduled);
   const quiet = quietHoursStatus(new Date(scheduled), quietHours, options);
   if (!quiet.active || !quiet.endsAt ||
       new Date(quiet.endsAt).getTime() < expiration) return new Date(scheduled);
