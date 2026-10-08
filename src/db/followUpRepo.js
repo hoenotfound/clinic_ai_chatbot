@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
+const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
@@ -98,6 +99,7 @@ async function findCandidates({
   beforeWindowExpiryMinutes,
   triggerMode,
   activatedAt,
+  quietHours,
   limit = 25,
 }) {
   const delays = normalizeDelayMinutes(delayMinutes);
@@ -268,16 +270,7 @@ async function findCandidates({
        AND has_blocking_claim = false
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound_created_at
-                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up_created_at
-                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-                   latest_inbound_created_at
-                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -289,16 +282,7 @@ async function findCandidates({
            END <= now()
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound_created_at
-                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up_created_at
-                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-                   latest_inbound_created_at
-                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -311,16 +295,7 @@ async function findCandidates({
      ORDER BY
        CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound_created_at
-                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up_created_at
-                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-                   latest_inbound_created_at
-                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -347,6 +322,7 @@ async function getNextCandidateDueAt({
   beforeWindowExpiryMinutes,
   triggerMode,
   activatedAt,
+  quietHours,
 }) {
   const delays = normalizeDelayMinutes(delayMinutes);
   const modes = normalizeTimingModes(timingModes, delays.length);
@@ -463,16 +439,7 @@ async function getNextCandidateDueAt({
      SELECT MIN(
        CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound_created_at
-                   + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up_created_at
-                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-                   latest_inbound_created_at
-                     + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -488,16 +455,7 @@ async function getNextCandidateDueAt({
        AND has_blocking_claim = false
        AND CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound_created_at
-                   + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up_created_at
-                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-                   latest_inbound_created_at
-                     + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours})}
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -547,6 +505,7 @@ async function saveIfStillEligible({
   previousDelayMinutes = 0,
   timingMode = "after_reply",
   beforeWindowExpiryMinutes = 120,
+  quietHours,
   triggerMode,
   activatedAt,
 }) {
@@ -703,16 +662,7 @@ async function saveIfStillEligible({
        AND anchor.created_at >= $9::timestamptz
        AND CASE
              WHEN $12 = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound.created_at
-                   + ((1440 - $13::integer) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up.created_at
-                     + (($7::integer - $10::integer) * interval '1 minute'),
-                   latest_inbound.created_at
-                     + ((1440 - $13::integer) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$5",offset:"$13::integer",gap:"($7::integer - $10::integer)",quietHours})}
              ELSE GREATEST(
                anchor.created_at + ($7::integer * interval '1 minute'),
                COALESCE(
@@ -723,16 +673,7 @@ async function saveIfStillEligible({
            END <= now()
        AND CASE
              WHEN $12 = 'before_window_expiry'
-               THEN GREATEST(
-                 latest_inbound.created_at
-                   + ((1440 - $13::integer) * interval '1 minute'),
-                 COALESCE(
-                   previous_follow_up.created_at
-                     + (($7::integer - $10::integer) * interval '1 minute'),
-                   latest_inbound.created_at
-                     + ((1440 - $13::integer) * interval '1 minute')
-                 )
-               )
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$5",offset:"$13::integer",gap:"($7::integer - $10::integer)",quietHours})}
              ELSE GREATEST(
                anchor.created_at + ($7::integer * interval '1 minute'),
                COALESCE(
@@ -828,6 +769,7 @@ async function recordAiDecisionIfStillEligible({
   previousDelayMinutes = 0,
   timingMode = "after_reply",
   beforeWindowExpiryMinutes = 120,
+  quietHours,
   triggerMode,
   activatedAt,
 }) {
@@ -986,17 +928,8 @@ async function recordAiDecisionIfStillEligible({
          AND anchor.created_at >= $9::timestamptz
          AND CASE
                WHEN $11 = 'before_window_expiry'
-                 THEN GREATEST(
-                   latest_inbound.created_at
-                     + ((1440 - $12::integer) * interval '1 minute'),
-                   COALESCE(
-                     previous_follow_up.created_at
-                       + (($7::integer - $10::integer) * interval '1 minute'),
-                     latest_inbound.created_at
-                       + ((1440 - $12::integer) * interval '1 minute')
-                   )
-                 )
-               ELSE GREATEST(
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$12::integer",gap:"($7::integer - $10::integer)",quietHours})}
+             ELSE GREATEST(
                  anchor.created_at + ($7::integer * interval '1 minute'),
                  COALESCE(
                    previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
@@ -1006,17 +939,8 @@ async function recordAiDecisionIfStillEligible({
              END <= now()
          AND CASE
                WHEN $11 = 'before_window_expiry'
-                 THEN GREATEST(
-                   latest_inbound.created_at
-                     + ((1440 - $12::integer) * interval '1 minute'),
-                   COALESCE(
-                     previous_follow_up.created_at
-                       + (($7::integer - $10::integer) * interval '1 minute'),
-                     latest_inbound.created_at
-                       + ((1440 - $12::integer) * interval '1 minute')
-                   )
-                 )
-               ELSE GREATEST(
+               THEN ${beforeExpiryDueSql({inbound:"latest_inbound.created_at",previous:"previous_follow_up.created_at",step:"$3",offset:"$12::integer",gap:"($7::integer - $10::integer)",quietHours})}
+             ELSE GREATEST(
                  anchor.created_at + ($7::integer * interval '1 minute'),
                  COALESCE(
                    previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
