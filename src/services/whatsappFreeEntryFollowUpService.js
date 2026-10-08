@@ -7,7 +7,7 @@ const messagesRepo = require("../db/messagesRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
-const { selectTemplateSpec, buildStaticMarketingTemplate, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
+const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
 const {
   freeEntryEnabled,
   eligibleFreeEntryTime,
@@ -277,7 +277,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   try {
     // This is a fixed, already approved MARKETING template. No AI-authored
     // content or arbitrary variable substitution is permitted in automation.
-    const built = buildStaticMarketingTemplate(template, spec, whatsappTemplates);
+    const built = buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates);
     if (!built) {
       await finish(attemptId, "cancelled", { error: "Unapproved or invalid media/template pairing" });
       return "invalid_template";
@@ -285,7 +285,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
     const metadata = {
       name: template.name, language: template.language, category: "MARKETING",
       components: built.components, values: { header: [], body: [] },
-      sourceService: spec.serviceName, mediaUrl: spec.mediaUrl || null,
+      sourceService: spec.serviceName, mediaKey: spec.mediaKey || null, mediaUrl: spec.mediaKey ? null : spec.mediaUrl || null,
       templateSignature: whatsappTemplates.templateSignature(template),
       automatedFreeEntry: true, slotHours,
       marketingConsentConfirmed: true,
@@ -325,11 +325,18 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       await finish(attemptId, "cancelled", { messageId: message.id, error: "No longer eligible" });
       return "cancelled";
     }
+    const readyToSend = buildStaticMarketingTemplate(
+      template, materializeTemplateMediaSpec(spec), whatsappTemplates
+    );
+    if (!readyToSend) {
+      await finish(attemptId, "cancelled", { messageId: message.id, error: "Media unavailable before Meta send" });
+      return "media_unavailable";
+    }
     const response = await whatsappTemplates.sendApprovedTemplate(
       { id: candidate.contact_id, channel: "whatsapp",
         whatsapp_number: candidate.whatsapp_number },
       { templateName: template.name, languageCode: template.language,
-        templateCategory: "MARKETING", components: built.components,
+        templateCategory: "MARKETING", components: readyToSend.components,
         expectedOptInAt: fresh.whatsapp_opt_in_at }
     );
     if (response?.wamid) {
@@ -402,7 +409,7 @@ async function run({ now = new Date() } = {}) {
         item.name === spec?.templateName && item.language === spec?.language &&
         item.status === "APPROVED" && item.category === "MARKETING"
       );
-      if (!template || !buildStaticMarketingTemplate(template, spec, whatsappTemplates)) {
+      if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates)) {
         result.skipped++;
         console.warn("[WhatsApp FEP] Approved static template/media missing for slot", slotHours);
         continue;
