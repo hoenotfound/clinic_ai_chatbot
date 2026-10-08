@@ -640,6 +640,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
     return {
       isFirstMessage: optionsOrFirstMessage,
+      generateFirstIntro: false,
       channel: "whatsapp",
       privateSetupCheck: false,
       surface: "conversation",
@@ -652,6 +653,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
 
   return {
     isFirstMessage: Boolean(optionsOrFirstMessage?.isFirstMessage),
+    generateFirstIntro: optionsOrFirstMessage?.generateFirstIntro === true,
     channel: optionsOrFirstMessage?.channel || "whatsapp",
     privateSetupCheck: Boolean(optionsOrFirstMessage?.privateSetupCheck),
     surface: optionsOrFirstMessage?.surface || "conversation",
