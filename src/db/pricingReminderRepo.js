@@ -2,6 +2,8 @@ const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const MINUTES_AFTER_TESTIMONIAL = 5;
 const WINDOW_SAFETY_MINUTES = 10;
+const FIRST_GRAPHIC_SAFETY_MINUTES = 15;
+const FINAL_RESERVED_MINUTES = 25;
 const ACCEPTED_FOLLOW_UP_STATUS = `(
   delivery_status IN ('sent', 'delivered', 'read')
   OR (delivery_status = 'pending' AND whatsapp_message_id IS NOT NULL)
@@ -14,8 +16,9 @@ WITH eligible AS (
    c.id AS contact_id, c.whatsapp_number, anchor.id AS anchor_id,
    anchor.created_at AS anchor_at, inbound.id AS inbound_id,
    inbound.created_at AS inbound_at, third.id AS third_id,
-   third.created_at AS third_at, lead.treatment_interest,
-   third.created_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes' AS due_at,
+   COALESCE(third.provider_accepted_at, third.created_at) AS third_at,
+   lead.treatment_interest,
+   COALESCE(third.provider_accepted_at,third.created_at) + interval '${MINUTES_AFTER_TESTIMONIAL} minutes' AS due_at,
    (SELECT COALESCE(jsonb_agg(user_messages.content ORDER BY user_messages.created_at DESC, user_messages.id DESC), '[]'::jsonb)
       FROM (SELECT id, content, created_at FROM messages
             WHERE contact_id = c.id AND role = 'user'
@@ -49,7 +52,7 @@ WITH eligible AS (
    ORDER BY created_at DESC, id DESC LIMIT 1
  ) anchor ON true
  JOIN LATERAL (
-   SELECT id, created_at FROM messages
+   SELECT id, created_at, provider_accepted_at FROM messages
    WHERE contact_id = c.id AND is_automated_follow_up = true
      AND automated_follow_up_for_message_id = anchor.id
      AND automated_follow_up_step = 3
@@ -95,7 +98,7 @@ WITH eligible AS (
    )
 )
 SELECT * FROM eligible
-WHERE due_at <= inbound_at + interval '23 hours 50 minutes'
+WHERE due_at <= inbound_at + interval '23 hours 45 minutes'
 ORDER BY due_at ASC LIMIT 200
 `;
 
@@ -125,7 +128,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
            WHERE e.message_id=messages.id AND e.origin='system_fallback')
        ORDER BY created_at DESC,id DESC LIMIT 1
      ), third AS (
-       SELECT id, created_at FROM messages
+       SELECT id, created_at, provider_accepted_at FROM messages
        WHERE contact_id=$1 AND is_automated_follow_up=true
          AND automated_follow_up_for_message_id=$2
          AND automated_follow_up_step=3 AND id=$10
@@ -155,8 +158,8 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
          AND c.whatsapp_marketing_opt_out_at IS NULL
        AND anchor.created_at >= $7::timestamptz
        AND ($8='all' OR anchor.sent_by_username IS NOT NULL)
-       AND now() < inbound.created_at + interval '23 hours 50 minutes'
-       AND now() >= third.created_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
+       AND now() < inbound.created_at + interval '23 hours 45 minutes'
+       AND now() >= COALESCE(third.provider_accepted_at,third.created_at) + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
        AND (lead.is_closed IS NULL OR (
           lead.is_closed=false AND COALESCE(lead.stage_type,'open')='open'
           AND (COALESCE(lead.appointment_status,'none') IN ('reschedule','cancelled')
@@ -209,14 +212,14 @@ async function isClaimStillEligible({
              AND final.automated_follow_up_step=3
              AND (final.delivery_status IN ('sent','delivered','read')
                OR (final.delivery_status='pending' AND final.whatsapp_message_id IS NOT NULL))
-             AND now() >= final.created_at + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
+             AND now() >= COALESCE(final.provider_accepted_at,final.created_at) + interval '${MINUTES_AFTER_TESTIMONIAL} minutes'
          )
          AND COALESCE((SELECT l.treatment_interest FROM leads l
             WHERE l.contact_id=$2 ORDER BY l.created_at DESC,l.id DESC LIMIT 1),'')
              = COALESCE($6::text,'')
          AND (SELECT id FROM messages WHERE contact_id=$2 AND role='user'
               ORDER BY created_at DESC,id DESC LIMIT 1)=$4
-         AND now() < (SELECT created_at FROM messages WHERE id=$4)+interval '23 hours 50 minutes'
+         AND now() < (SELECT created_at FROM messages WHERE id=$4)+interval '23 hours 45 minutes'
          AND (SELECT id FROM messages
               WHERE contact_id=$2 AND role='assistant' AND is_automated_follow_up=false
                 AND delivery_status IS DISTINCT FROM 'failed'
@@ -287,4 +290,4 @@ async function discard({ messageId, contactId }) {
   );
   return result.rowCount > 0;
 }
-module.exports = { listEligible, claim, isClaimStillEligible, recordDecision, discard, eligibleSql, MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES };
+module.exports = { listEligible, claim, isClaimStillEligible, recordDecision, discard, eligibleSql, MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES, FIRST_GRAPHIC_SAFETY_MINUTES, FINAL_RESERVED_MINUTES };
