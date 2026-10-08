@@ -17,10 +17,10 @@ const promotions = [{
 const select = (candidate) => selectPricingOffer({promotions, candidate, services, language: "zh"});
 test("unclear pelvic choice includes both A and B prices; a clear choice sends only that package", () => {
   const unclear = select({treatment_interest:"骨盆调理",recent_customer_messages:["骨盆调理"]});
-  assert.match(unclear?.caption || "",/Package A:.*RM388[\\s\\S]*Package B:.*RM288/);
+  assert.match(unclear?.caption || "", /Package A:[^]*RM388[^]*Package B:[^]*RM288/);
   assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package A please"]})?.caption,"RM388");
   assert.equal(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package B please"]})?.caption,"RM288");
-  assert.match(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package A or Package B?"]})?.caption || "",/RM388[\\s\\S]*RM288/);
+  assert.match(select({treatment_interest:"骨盆调理",recent_customer_messages:["Package A or Package B?"]})?.caption || "", /RM388[^]*RM288/);
 });
 test("does not resend a delivered or pending pricing image", () => {
   assert.equal(select({treatment_interest:"骨盆调理", recent_customer_messages:["Package A"], sent_media:[{
