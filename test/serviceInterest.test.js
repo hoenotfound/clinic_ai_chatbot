@@ -41,7 +41,18 @@ test("prefers an explicitly configured combined service in an ad name", () => {
   );
 });
 
-test("fails closed when text independently names multiple services", () => {
+test("maps both component services to the configured combination service", () => {
+  assert.equal(
+    inferConfiguredServiceFromText("3D 小颜术 / 9D 逆龄抗衰", config),
+    "3D + 9D 组合"
+  );
+  assert.equal(
+    cleanScoredTreatmentInterest("3D 小颜术 / 9D 逆龄抗衰", config),
+    "3D + 9D 组合"
+  );
+});
+
+test("fails closed when the customer is explicitly comparing the two services", () => {
   assert.equal(
     inferConfiguredServiceFromText("Compare 3D or 9D", config),
     null
