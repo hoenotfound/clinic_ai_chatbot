@@ -58,9 +58,14 @@ function beforeExpiryDueSql({
     // pre-quiet scheduling conflict only for WhatsApp pricing sequences.
     const extra = Number(reservePricingMinutes) === 5 ? 5 : 0;
     const imminent = extra
-      ? `(${channel} = 'whatsapp' AND ${wallTime} >=
-         ('${quiet.start}'::time - interval '${extra} minutes')
-         AND ${wallTime} < '${quiet.start}'::time)`
+      ? `(${channel} = 'whatsapp' AND
+         (CASE WHEN '${quiet.start}'::time <
+           ('${quiet.start}'::time - interval '${extra} minutes')
+          THEN (${wallTime} >= ('${quiet.start}'::time - interval '${extra} minutes')
+            OR ${wallTime} < '${quiet.start}'::time)
+          ELSE (${wallTime} >= ('${quiet.start}'::time - interval '${extra} minutes')
+            AND ${wallTime} < '${quiet.start}'::time)
+         END))`
       : 'FALSE';
     const imminentShift = `(CASE WHEN ${wallTime} >= '${quiet.start}'::time
       THEN interval '1 day' ELSE interval '0 days' END)`;
