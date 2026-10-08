@@ -20,12 +20,14 @@ function eligibleFreeEntryTime({
   evidenceType,
   sourceIsCtwa,
   earlyDueAt = null,
+  maxCeilingHours = 72,
 } = {}) {
   const inbound = new Date(firstInboundAt).getTime();
   const reply = new Date(firstReplyAt).getTime();
   const current = new Date(now).getTime();
   const last = new Date(lastInboundAt).getTime();
-  const ceilingHours = freeEntryCeilingHours(firstReplyAt);
+  const ceilingHours = Math.min(freeEntryCeilingHours(firstReplyAt),
+    maxCeilingHours === 168 ? 168 : 72);
   if (
     !sourceIsCtwa ||
     evidenceType !== "free_entry_point" ||
