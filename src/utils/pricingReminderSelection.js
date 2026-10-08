@@ -37,51 +37,70 @@ function selectedService(candidate, services, aliases = []) {
   const saved = norm(candidate.treatment_interest);
   return services.find((service) => norm(service.name) === saved)?.name || null;
 }
-function selectPricingOffer({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
+function evaluatePricingReminder({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
   const service = selectedService(candidate, services, aliases);
-  if (!service) return null;
+  if (!service) return { offer: null, reason: "ambiguous_service" };
   const matching = (Array.isArray(promotions) ? promotions : []).filter(
     (promotion) => norm(promotion.linkedService) === norm(service)
   );
-  if (matching.length !== 1) return null;
+  if (matching.length !== 1) return { offer: null, reason: "missing_promotion" };
 
   const packages = promotionPackages(matching[0]);
-  if (!packages.length) return null;
+  if (!packages.length) return { offer: null, reason: "missing_promotion" };
   let selected;
   if (packages.length === 1) {
     selected = packages[0];
   } else {
-    // A multi-package treatment must have an explicit, unambiguous customer
-    // selection. Never send both prices or let AI infer a package.
+    // Fail closed on a comparison, even if the customer mentions both options.
     for (const message of candidate.recent_customer_messages || []) {
       const mentioned = findMentionedPromotionPackages(packages, String(message || ""));
-      if (mentioned.length > 1) return null;
+      if (mentioned.length > 1) return { offer: null, reason: "ambiguous_package" };
       if (mentioned.length === 1) {
         selected = mentioned[0];
         break;
       }
     }
   }
-  if (!selected) return null;
+  if (!selected) return { offer: null, reason: "ambiguous_package" };
   const media = resolveLocalizedMedia(selected, language);
-  if (!media?.imageUrl || !media?.caption) return null;
+  if (!media?.imageUrl || !media?.caption) {
+    return { offer: null, reason: "missing_promotion" };
+  }
   const variants = mediaVariants(selected);
-  const identities = [...new Set(variants.map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean))];
-  const previous = Array.isArray(candidate.sent_media) ? candidate.sent_media : [];
-  // Including pending/failed/unknown media prevents ambiguous double delivery;
-  // staff can retry failures from Inbox.
-  if (previous.some((message) =>
-    identities.includes(imageIdentity(message.media_url)) &&
-    String(message.content || "").trim()
-  )) return null;
+  const identities = [...new Set(
+    variants.map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean)
+  )];
+  const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
+    .filter((message) =>
+      identities.includes(imageIdentity(message.media_url)) &&
+      String(message.content || "").trim()
+    );
+
+  const knownAccepted = previous.some((message) => {
+    const status = norm(message.delivery_status);
+    return ["sent", "delivered", "read"].includes(status) ||
+      (status === "pending" && Boolean(message.whatsapp_message_id));
+  });
+  if (knownAccepted) return { offer: null, reason: "already_sent" };
+  if (previous.length > 0) {
+    // A failed/unknown/pending-without-provider-id record is not proof of
+    // delivery. Never silently count it as sent or blindly retry it.
+    return { offer: null, reason: "delivery_review" };
+  }
   return {
-    serviceName: service,
-    promotionName: matching[0].name,
-    packageName: selected.name,
-    caption: media.caption,
-    imageUrl: media.imageUrl,
-    identities,
-    imageUrls: variants.map((variant) => variant.imageUrl).filter(Boolean),
+    reason: null,
+    offer: {
+      serviceName: service,
+      promotionName: matching[0].name,
+      packageName: selected.name,
+      caption: media.caption,
+      imageUrl: media.imageUrl,
+      identities,
+    },
   };
 }
-module.exports = { selectPricingOffer, imageIdentity, selectedService };
+
+function selectPricingOffer(options) {
+  return evaluatePricingReminder(options).offer;
+}
+module.exports = { evaluatePricingReminder, selectPricingOffer, imageIdentity, selectedService };
