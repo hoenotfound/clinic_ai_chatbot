@@ -8,6 +8,7 @@ const {
 function makeService({
   duplicate = false,
   deletedProviderMessage = undefined,
+  channel = "whatsapp",
   policy = undefined,
   reengagement = undefined,
 } = {}) {
@@ -18,8 +19,10 @@ function makeService({
       calls.push(["contact", from, profileName]);
       return { id: 42, mode: "ai", channel: "whatsapp" };
     },
-    async getOrCreateChannelContact() {
-      throw new Error("unexpected social contact path");
+    async getOrCreateChannelContact(socialChannel, from, profileName) {
+      calls.push(["contact", from, profileName]);
+      if (socialChannel !== channel) throw new Error("Unexpected social contact channel");
+      return { id: 42, mode:"ai", channel:socialChannel };
     },
     async getContactById(id) {
       calls.push(["contact-by-id", id]);
@@ -364,3 +367,27 @@ test("WhatsApp marketing opt-out completes the durable job without creating a gl
   assert.deepEqual(calls, [["marketing-opt-out", 42, "customer_quick_reply"]]);
 });
 
+
+for (const channel of ["facebook","instagram"]) {
+  test(`${channel} marketing STOP is durable and suppresses automated replies`,async()=>{
+    const records=[];
+    const policy={
+      classifyOptOutText(text){
+        return /^stop promotions$/i.test(String(text||"")) ? "marketing" : null;
+      },
+      async recordMarketingOptOut(contactId,source) {
+        records.push({contactId,source});return {id:contactId};
+      },
+      async recordOptOut(){assert.fail("Marketing STOP must not opt out all service replies");},
+    };
+    const {claim,wasCompleted,calls}=makeService({channel,policy});
+    const durable=await claim.storeIncomingMessage({
+      channel,id:"mid.stop",from:"user-123",text:"Stop promotions",
+    });
+    const result=await claim.prepareIncomingClaim(durable);
+    assert.equal(result,null);
+    assert.equal(wasCompleted(),true);
+    assert.deepEqual(records,[{contactId:42,source:"customer_message"}]);
+    assert.equal(calls.some(c=>c[0]==="processing-claim"),false);
+  });
+}
