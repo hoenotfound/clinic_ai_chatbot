@@ -82,8 +82,10 @@ WITH eligible AS (
      OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL))
    AND c.needs_attention = false
    AND COALESCE(c.mode,'ai') <> 'human'
-   AND c.whatsapp_opt_out_at IS NULL
-   AND c.whatsapp_marketing_opt_out_at IS NULL
+   AND ((c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
+           AND c.whatsapp_marketing_opt_out_at IS NULL)
+         OR (c.channel IN ('facebook','instagram') AND c.social_opt_out_at IS NULL
+           AND c.social_marketing_opt_out_at IS NULL))
    AND anchor.delivery_status IS DISTINCT FROM 'failed'
    AND anchor.delivery_status IS DISTINCT FROM 'cancelled'
    AND anchor.created_at >= $1::timestamptz
@@ -170,8 +172,10 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
           OR (c.channel IN ('facebook','instagram') AND c.channel_user_id=$14::text))
        AND c.needs_attention=false
          AND COALESCE(c.mode,'ai') <> 'human'
-         AND c.whatsapp_opt_out_at IS NULL
-         AND c.whatsapp_marketing_opt_out_at IS NULL
+         AND ((c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
+           AND c.whatsapp_marketing_opt_out_at IS NULL)
+         OR (c.channel IN ('facebook','instagram') AND c.social_opt_out_at IS NULL
+           AND c.social_marketing_opt_out_at IS NULL))
        AND anchor.created_at >= $7::timestamptz
        AND ($8='all' OR anchor.sent_by_username IS NOT NULL)
        AND now() < inbound.created_at + interval '23 hours 50 minutes'
@@ -220,8 +224,10 @@ async function isClaimStillEligible({
          AND m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL
          AND c.needs_attention=false
          AND COALESCE(c.mode,'ai') <> 'human'
-         AND c.whatsapp_opt_out_at IS NULL
-         AND c.whatsapp_marketing_opt_out_at IS NULL AND c.channel=$10::text
+         AND ((c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
+           AND c.whatsapp_marketing_opt_out_at IS NULL)
+         OR (c.channel IN ('facebook','instagram') AND c.social_opt_out_at IS NULL
+           AND c.social_marketing_opt_out_at IS NULL)) AND c.channel=$10::text
           AND ((c.channel='whatsapp' AND c.whatsapp_number=$8::text)
             OR (c.channel IN ('facebook','instagram') AND c.channel_user_id=$8::text))
          AND EXISTS (
