@@ -43,13 +43,9 @@ async function skipCandidate(candidate, reason) {
       candidate.contact_id,
       "Delivery unconfirmed: pricing graphic was previously attempted. Check its status before resending."
     );
-  } else if (reason === "ambiguous_package") {
-    await contactsRepo.setAttention(
-      candidate.contact_id,
-      true,
-      "Pricing reminder skipped: customer package choice is unclear."
-    );
   }
+  // A missing package selection is a normal pricing skip, not a human
+  // takeover. Keep Follow-up 3 eligible and report the skip in Analytics.
 }
 
 function publish(message, reason) {
