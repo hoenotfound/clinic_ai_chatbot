@@ -6,7 +6,7 @@ const channelMessaging = require("./channelMessagingService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { getActivePromotions } = require("../utils/activePromotion");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
-const { quietHoursStatus } = require("../utils/quietHours");
+const { quietHoursStatus, normalizeQuietHours } = require("../utils/quietHours");
 const { evaluatePricingReminder } = require("../utils/pricingReminderSelection");
 
 function activationCutoff(settings) {
@@ -86,6 +86,7 @@ async function sendPricingReminder(candidate, offer, settings) {
         live.activatedAt !== settings.activatedAt ||
         live.pricingReminder?.activatedAt !== settings.pricingReminder.activatedAt ||
         live.triggerMode !== settings.triggerMode ||
+        JSON.stringify(normalizeQuietHours(live.quietHours)) !== JSON.stringify(settings.quietHours) ||
         Number(live.additionalSteps?.[1]?.delayMinutes) !== Number(settings.steps[2].delayMinutes) ||
         Number(live.additionalSteps?.[1]?.beforeWindowExpiryMinutes ?? 120) !==
           Number(settings.steps[2].beforeWindowExpiryMinutes) ||
