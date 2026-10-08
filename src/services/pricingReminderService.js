@@ -17,6 +17,14 @@ function activationCutoff(settings) {
   return new Date(Math.max(main, pricing)).toISOString();
 }
 
+function socialActivationCutoff(settings) {
+  if (settings?.pricingReminder?.enableSocialChannels !== true) return null;
+  const shared = Date.parse(activationCutoff(settings));
+  const social = Date.parse(settings?.pricingReminder?.socialActivatedAt);
+  if (!Number.isFinite(shared) || !Number.isFinite(social)) return null;
+  return new Date(Math.max(shared, social)).toISOString();
+}
+
 function evaluateOffer(candidate, settings = null) {
   const language = detectConversationLanguage(candidate.recent_customer_messages || []);
   return evaluatePricingReminder({
@@ -88,7 +96,7 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
   const saved = await pricingRepo.claim({
     candidate,
     offer,
-    activatedAt: activationCutoff(settings),
+    activatedAt: channel === "whatsapp" ? activationCutoff(settings) : socialActivationCutoff(settings),
     triggerMode: settings.triggerMode,
   });
   if (!saved) return false;
@@ -105,6 +113,7 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1) {
     if (!live?.enabled || live?.pricingReminder?.enabled !== true ||
         live.activatedAt !== settings.activatedAt ||
         live.pricingReminder?.activatedAt !== settings.pricingReminder.activatedAt ||
+        (channel !== "whatsapp" && live.pricingReminder?.socialActivatedAt !== settings.pricingReminder.socialActivatedAt) ||
         live.triggerMode !== settings.triggerMode ||
         JSON.stringify(normalizeQuietHours(live.quietHours)) !== JSON.stringify(settings.quietHours) ||
         Number(live.additionalSteps?.[1]?.delayMinutes) !== Number(settings.steps[2].delayMinutes) ||
@@ -223,6 +232,7 @@ async function runPricingReminders(settings, now = new Date()) {
   for (let page = 0; page < 10; page += 1) {
     const candidates = await pricingRepo.listEligible({
       activatedAt: activationCutoff(settings),
+      socialActivatedAt: socialActivationCutoff(settings),
       triggerMode: settings.triggerMode,
       channels: settings.pricingReminder.enableSocialChannels === true
         ? ["whatsapp","facebook","instagram"] : ["whatsapp"],
