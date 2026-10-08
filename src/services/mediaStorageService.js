@@ -17,6 +17,7 @@ const {
   PutObjectCommand,
   CopyObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
@@ -280,6 +281,19 @@ function createPresignedGetUrl(
   const signature = crypto.createHmac("sha256", signingKey).update(stringToSign).digest("hex");
 
   return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+async function getSharedFollowUpMediaInfo(key) {
+  if (!isSharedFollowUpConfigKey(key)) {
+    throw new Error("Media key is not a shared follow-up object owned by this clinic.");
+  }
+  const head = await sendR2(new HeadObjectCommand({
+    Bucket: getBucketName(), Key: key,
+  }), { timeoutMs: 5000 });
+  return {
+    bytes: Number(head.ContentLength),
+    mimeType: String(head.ContentType || "").split(";")[0].trim().toLowerCase(),
+  };
 }
 
 async function putObject(key, buffer, mimeType) {
@@ -871,6 +885,7 @@ module.exports = {
   copyStoredMediaToMessage,
   copyStoredMediaToTemporary,
   createPresignedGetUrl,
+  getSharedFollowUpMediaInfo,
   scheduleTemporaryMediaDelete,
   temporaryMediaPrefix,
   followUpConfigVideoPrefix,
