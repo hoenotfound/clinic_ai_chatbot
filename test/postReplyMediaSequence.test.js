@@ -306,7 +306,7 @@ test("normalized Meta attribution only unlocks result media when headline/body c
 
 
 test("language-only and greeting-only messages never trigger result images even if the model misclassifies intent", async () => {
-  const scenarios = ["English", "Hi, English", "BM", "你好", "Hello"];
+  const scenarios = ["English", "Hi, English", "BM", "你好", "Hello", "OK", "Thanks", "Noted", "收到"];
   for (const customerText of scenarios) {
     let checked = false;
     const result = await resolveResultMediaForReply({
