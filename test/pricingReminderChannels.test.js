@@ -117,3 +117,15 @@ for (const channel of ["facebook","instagram"]) {
     assert.match(result.attention[0].reason,/unconfirmed/i);
   });
 }
+
+test("existing clinics stay WhatsApp-only until the social option is enabled",async()=>{
+  const original=pricingRepo.listEligible;
+  const queried=[];
+  try {
+    pricingRepo.listEligible=async(options)=>{queried.push(options.channels);return [];};
+    await pricing.runPricingReminders({...settings,
+      pricingReminder:{...pricingReminder,enableSocialChannels:false}});
+    await pricing.runPricingReminders(settings);
+    assert.deepEqual(queried,[["whatsapp"],["whatsapp","facebook","instagram"]]);
+  } finally {pricingRepo.listEligible=original;}
+});
