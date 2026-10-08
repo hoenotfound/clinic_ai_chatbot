@@ -67,7 +67,7 @@ const candidateSql = `
     AND NULLIF(BTRIM(c.whatsapp_opt_in_source), '') IS NOT NULL
     AND c.whatsapp_opt_out_at IS NULL
     AND c.whatsapp_marketing_opt_out_at IS NULL
-    AND lead.marketing_consent = true
+    AND lead.marketing_consent = 'opted_in'
     AND lead.is_closed = false
     AND COALESCE(lead.stage_type, 'open') = 'open'
     AND COALESCE(lead.system_key, '') NOT IN ('appointment_set','visited')
@@ -79,6 +79,7 @@ const candidateSql = `
     AND evidence.billable IS DISTINCT FROM true
     AND evidence.delivery_status IN ('sent','delivered','read')
     AND first_reply.created_at >= $1::timestamptz
+    AND first_reply.created_at > now() - interval '7 days'
     -- A reply after the initial business response means the customer is now
     -- interacting, so stop this silent-lead sequence for the whole window.
     AND last_inbound.created_at <= first_reply.created_at
