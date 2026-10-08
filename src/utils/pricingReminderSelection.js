@@ -49,73 +49,69 @@ function hasPricingInterest(messages) {
     .some((message) => PRICING_INTEREST_RE.test(String(message || "")));
 }
 
-function evaluatePricingReminder({ promotions, candidate, services = [], aliases = [], language = "zh" }) {
+function evaluatePricingReminder({
+  promotions, candidate, services = [], aliases = [], language = "zh",
+  requirePricingInterest = true, sendBothPelvicPackages = false,
+}) {
   const service = selectedService(candidate, services, aliases);
-  if (!service) return { offer: null, reason: "ambiguous_service" };
+  if (!service) return { offer:null, offers:[], reason:"ambiguous_service" };
   const matching = (Array.isArray(promotions) ? promotions : []).filter(
     (promotion) => norm(promotion.linkedService) === norm(service)
   );
-  if (matching.length !== 1) return { offer: null, reason: "missing_promotion" };
+  if (matching.length !== 1) return { offer:null, offers:[], reason:"missing_promotion" };
+  if (requirePricingInterest && !hasPricingInterest(candidate.recent_customer_messages)) {
+    return { offer:null, offers:[], reason:"no_pricing_interest" };
+  }
 
   const packages = promotionPackages(matching[0]);
-  if (!packages.length) return { offer: null, reason: "missing_promotion" };
-  if (!hasPricingInterest(candidate.recent_customer_messages)) {
-    return { offer: null, reason: "no_pricing_interest" };
-  }
-  let selected;
-  if (packages.length === 1) {
-    selected = packages[0];
-  } else {
-    // Fail closed on a comparison, even if the customer mentions both options.
-    for (const message of candidate.recent_customer_messages || []) {
-      const mentioned = findMentionedPromotionPackages(packages, String(message || ""));
-      if (mentioned.length > 1) return { offer: null, reason: "ambiguous_package" };
+  if (!packages.length) return { offer:null, offers:[], reason:"missing_promotion" };
+  const pelvicPair = sendBothPelvicPackages &&
+    norm(service) === norm("骨盆调理") && packages.length === 2 &&
+    packages.every((pkg) => /^package [ab]$/iu.test(String(pkg.name || "").trim()));
+  let chosen = packages.length === 1 ? packages : [];
+  if (packages.length > 1) {
+    for (const text of candidate.recent_customer_messages || []) {
+      const mentioned = findMentionedPromotionPackages(packages, String(text || ""));
+      if (mentioned.length > 1) {
+        chosen = pelvicPair ? packages : [];
+        break;
+      }
       if (mentioned.length === 1) {
-        selected = mentioned[0];
+        chosen = mentioned;
         break;
       }
     }
+    if (!chosen.length && pelvicPair) chosen = packages;
   }
-  if (!selected) return { offer: null, reason: "ambiguous_package" };
-  const media = resolveLocalizedMedia(selected, language);
-  if (!media?.imageUrl || !media?.caption) {
-    return { offer: null, reason: "missing_promotion" };
-  }
-  const variants = mediaVariants(selected);
-  const identities = [...new Set(
-    variants.map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean)
-  )];
-  const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
-    .filter((message) =>
-      // Cancelled is an internal pre-send abort, not an attempted delivery.
-      // It must never suppress a real future pricing graphic.
-      norm(message.delivery_status) !== "cancelled" &&
-      identities.includes(imageIdentity(message.media_url)) &&
-      String(message.content || "").trim()
-    );
+  if (!chosen.length) return { offer:null, offers:[], reason:"ambiguous_package" };
 
-  const knownAccepted = previous.some((message) => {
-    const status = norm(message.delivery_status);
-    return ["sent", "delivered", "read"].includes(status) ||
-      (status === "pending" && Boolean(message.whatsapp_message_id));
-  });
-  if (knownAccepted) return { offer: null, reason: "already_sent" };
-  if (previous.length > 0) {
-    // A failed/unknown/pending-without-provider-id record is not proof of
-    // delivery. Never silently count it as sent or blindly retry it.
-    return { offer: null, reason: "delivery_review" };
+  const prior = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
+    .filter((m) => norm(m.delivery_status) !== "cancelled");
+  const offers = [];
+  let acceptedCount = 0;
+  for (const pkg of chosen) {
+    const media = resolveLocalizedMedia(pkg, language);
+    if (!media?.imageUrl || !media?.caption) {
+      return { offer:null, offers:[], reason:"missing_promotion" };
+    }
+    const identities = [...new Set(mediaVariants(pkg)
+      .map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean))];
+    const past = prior.filter((m) =>
+      identities.includes(imageIdentity(m.media_url)) && String(m.content || "").trim());
+    if (past.some((m) =>
+      ["sent","delivered","read"].includes(norm(m.delivery_status)) ||
+      (norm(m.delivery_status) === "pending" && Boolean(m.whatsapp_message_id)))) {
+      acceptedCount++;
+      continue;
+    }
+    if (past.length) return { offer:null, offers:[], reason:"delivery_review" };
+    offers.push({
+      serviceName:service, promotionName:matching[0].name,
+      packageName:pkg.name, caption:media.caption, imageUrl:media.imageUrl, identities,
+    });
   }
-  return {
-    reason: null,
-    offer: {
-      serviceName: service,
-      promotionName: matching[0].name,
-      packageName: selected.name,
-      caption: media.caption,
-      imageUrl: media.imageUrl,
-      identities,
-    },
-  };
+  return { offer:offers[0] || null, offers,
+    reason:offers.length ? null : acceptedCount ? "already_sent" : "missing_promotion" };
 }
 
 function selectPricingOffer(options) {
