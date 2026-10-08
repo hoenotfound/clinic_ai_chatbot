@@ -26,6 +26,7 @@ test("pre-send database verification error safely discards an unsent claim for l
     inbound_at:new Date(Date.now()-12*3600000).toISOString(),
   };
   const offer = { imageUrl: "https://example.test/promo.png", caption: "RM388", packageName:"Package A" };
+  // Explicitly disable quiet hours: these cancellation tests must work when CI runs overnight.
   const settings = { activatedAt: "2026-10-08T00:00:00Z", pricingReminder: { activatedAt: "2026-10-08T00:00:00Z" }, triggerMode: "all", quietHours: { enabled: false, start: "00:00", end: "07:00" } };
   try {
     clinic.automatedFollowUp = {quietHours:{enabled:false,start:"00:00",end:"07:00"}};
