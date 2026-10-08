@@ -7,7 +7,6 @@ const messagesRepo = require("../db/messagesRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
 const {
-  configuredSlots,
   freeEntryEnabled,
   eligibleFreeEntryTime,
 } = require("../utils/whatsappFreeEntryWindow");
@@ -90,15 +89,19 @@ const candidateSql = `
 
 function settings(env = process.env) {
   if (!freeEntryEnabled(env) || !automatedRepliesEnabled(env)) return null;
-  if (clinicConfig.automatedFollowUp?.enabled !== true) return null;
-  const activatedAt = env.WHATSAPP_FEP_ACTIVATED_AT;
+  const cfg = clinicConfig.automatedFollowUp;
+  if (cfg?.enabled !== true || cfg?.freeEntry?.enabled !== true) return null;
+  const activatedAt = cfg.freeEntry.activatedAt;
   const activatedTime = new Date(activatedAt).getTime();
-  const templateName = String(env.WHATSAPP_FEP_TEMPLATE_NAME || "").trim();
-  const language = String(env.WHATSAPP_FEP_TEMPLATE_LANGUAGE || "zh_CN").trim();
-  const slots = configuredSlots(env);
+  const templateName = String(cfg.freeEntry.templateName || "").trim();
+  const language = String(cfg.freeEntry.language || "").trim();
+  const slots = cfg.freeEntry.slotsHours;
   if (!activatedAt || !Number.isFinite(activatedTime) ||
       !templateName || !/^[a-z0-9_]+$/.test(templateName) ||
-      !/^[a-z]{2,3}_[A-Z]{2}$/.test(language) || !slots.length) return null;
+      !/^[a-z]{2,3}_[A-Z]{2}$/.test(language) ||
+      !Array.isArray(slots) || !slots.length || slots.length > 6 ||
+      slots.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166))
+    return null;
   return { activatedAt: new Date(activatedTime).toISOString(),
     templateName, language, slots };
 }
