@@ -49,6 +49,24 @@ test("Inbox backend validates compatible MP4 without a transcode path", () => {
   );
 });
 
+test("video validation happens before any staff-send AI cancellation", () => {
+  const routeStart = conversationsSource.indexOf('router.post("/:contactId/video"');
+  const routeEnd = conversationsSource.indexOf('router.post("/:contactId/document"', routeStart);
+  assert.ok(routeStart >= 0 && routeEnd > routeStart);
+
+  const videoRoute = conversationsSource.slice(routeStart, routeEnd);
+  const validationIndex = videoRoute.indexOf("prepareFollowUpVideoFile");
+  const staffSendIndex = videoRoute.indexOf("prepareStaffSend");
+
+  assert.ok(validationIndex >= 0, "video compatibility validation should exist");
+  assert.ok(staffSendIndex > validationIndex, "staff-send ownership changes must happen only after video validation");
+  assert.equal(
+    videoRoute.indexOf("aiReplyCancellation.cancelForContact"),
+    -1,
+    "the video route must not cancel a pending AI reply before validation succeeds"
+  );
+});
+
 test("historical codec-rejected videos require a compatible re-upload on Retry", () => {
   assert.match(
     conversationsSource,
