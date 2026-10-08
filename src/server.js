@@ -34,6 +34,7 @@ const {
   detectConversationLanguage,
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
+const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -955,9 +956,19 @@ async function processIncomingMessage(
       }
     }
 
-    const reply = isFirstMessage && !urgentSafety && !generateFirstIntro
+    let reply = isFirstMessage && !urgentSafety && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
+    if (isFirstMessage && !urgentSafety && generateFirstIntro) {
+      const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply);
+      reply = guardedIntro.reply;
+      if (guardedIntro.usedOriginalFallback) {
+        console.warn(
+          `Localized first intro omitted ${guardedIntro.missingCount} protected details; ` +
+          "appended configured source intro to avoid silently losing clinic information."
+        );
+      }
+    }
 
     // Coexistence staff can reply from the phone while generation is in flight.
     // Give the echo webhook a brief chance to arrive, then abort this AI turn
