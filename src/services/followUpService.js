@@ -207,6 +207,8 @@ function getActiveSettings() {
     pricingReminder: {
       enabled: settings.pricingReminder?.enabled === true,
       activatedAt: settings.pricingReminder?.activatedAt || null,
+      requirePricingInterest: settings.pricingReminder?.requirePricingInterest !== false,
+      sendBothPelvicPackages: settings.pricingReminder?.sendBothPelvicPackages === true,
     },
   };
 }
