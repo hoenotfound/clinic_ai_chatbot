@@ -40,3 +40,13 @@ test("real service enquiries and relevant symptoms still qualify for result medi
     "Nak tahu rawatan", "3D", "9D", "English please, 骨盆调理 price?",
   ]) assert.equal(hasCustomerServiceEnquiry(text), true, text);
 });
+
+test("offering a treatment is not asking for a promotional offer", () => {
+  assert.equal(hasCustomerPriceEnquiry("Do you offer pelvic treatment?"), false);
+  assert.equal(hasCustomerServiceEnquiry("Do you offer pelvic treatment?"), true);
+  assert.equal(hasCustomerPriceEnquiry("Any offers?"), true);
+  assert.equal(hasCustomerPriceEnquiry("Current special offer?"), true);
+  assert.equal(hasCustomerPriceEnquiry("Not interested in any promotion"), false);
+  assert.equal(hasCustomerServiceEnquiry("Not interested in treatment"), false);
+  assert.equal(hasCustomerServiceEnquiry("不要这个骨盆调理"), false);
+});
