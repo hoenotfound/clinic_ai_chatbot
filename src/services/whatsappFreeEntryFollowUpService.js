@@ -31,9 +31,13 @@ const candidateSql = `
          last_inbound.created_at AS last_inbound_at,
          evidence.pricing_type AS evidence_type,
          lead.treatment_interest,
+         latest_ad.treatment_interest AS referral_treatment_interest,
+         latest_ad.ad_name AS referral_ad_name,
+         latest_ad.origin_message_id AS latest_ad_message_id,
          (SELECT array_agg(text_content ORDER BY msg_time DESC) FROM (
            SELECT m.content AS text_content, m.created_at AS msg_time
            FROM messages m WHERE m.contact_id = c.id AND m.role = 'user'
+             AND (m.created_at,m.id) >= (latest_ad.origin_at,latest_ad.origin_message_id)
            ORDER BY m.created_at DESC, m.id DESC LIMIT 8
          ) recent) AS recent_inbound_messages,
          (SELECT COALESCE(array_agg(slot_hours), '{}') FROM whatsapp_free_entry_followup_attempts existing
@@ -64,6 +68,17 @@ const candidateSql = `
   ) first_reply ON true
   JOIN whatsapp_free_entry_pricing_evidence evidence
        ON evidence.wamid = first_reply.whatsapp_message_id
+  JOIN LATERAL (
+    SELECT e.origin_message_id, e.treatment_interest, e.ad_name,
+      message.created_at AS origin_at
+    FROM whatsapp_free_entry_referrals e
+    JOIN messages message ON message.id=e.origin_message_id
+    WHERE e.contact_id=c.id
+      AND (message.created_at,message.id) >= (origin.created_at,origin.id)
+      AND message.created_at < first_reply.created_at +
+        ($8::integer * interval '1 hour')
+    ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+  ) latest_ad ON true
   JOIN LATERAL (
     SELECT inbound.created_at
     FROM messages inbound
