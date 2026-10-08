@@ -61,28 +61,51 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
   if (!packages.length) return { offer: null, reason: "missing_promotion" };
   // Service-specific reminders may show pricing without an explicit price query.
   let selected;
+  let presentBothPelvicPrices = false;
+  const pelvicPair = norm(service) === norm("骨盆调理") &&
+    packages.length === 2 &&
+    packages.every((pkg) => /^package [ab]$/iu.test(String(pkg.name || "").trim()));
   if (packages.length === 1) {
     selected = packages[0];
   } else {
-    // Fail closed on a comparison, even if the customer mentions both options.
     for (const message of candidate.recent_customer_messages || []) {
       const mentioned = findMentionedPromotionPackages(packages, String(message || ""));
-      if (mentioned.length > 1) return { offer: null, reason: "ambiguous_package" };
+      if (mentioned.length > 1) {
+        if (!pelvicPair) return { offer: null, reason: "ambiguous_package" };
+        presentBothPelvicPrices = true;
+        break;
+      }
       if (mentioned.length === 1) {
         selected = mentioned[0];
         break;
       }
     }
+    if (!selected && pelvicPair) presentBothPelvicPrices = true;
   }
+  if (presentBothPelvicPrices) selected = packages[0];
   if (!selected) return { offer: null, reason: "ambiguous_package" };
   const media = resolveLocalizedMedia(selected, language);
   if (!media?.imageUrl || !media?.caption) {
     return { offer: null, reason: "missing_promotion" };
   }
-  const variants = mediaVariants(selected);
-  const identities = [...new Set(
-    variants.map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean)
+  let caption = media.caption;
+  let identities = [...new Set(
+    mediaVariants(selected).map((variant) => imageIdentity(variant.imageUrl)).filter(Boolean)
   )];
+  if (presentBothPelvicPrices) {
+    // Send both prices in one WhatsApp caption instead of an untracked second
+    // provider message. These are the currently configured package captions.
+    const second = resolveLocalizedMedia(packages[1], language);
+    if (!second?.imageUrl || !second?.caption) {
+      return { offer: null, reason: "missing_promotion" };
+    }
+    caption = `Package A:\n${media.caption}\n\nPackage B:\n${second.caption}`;
+    if (caption.length > 1024) return { offer: null, reason: "missing_promotion" };
+    identities = [...new Set([
+      ...identities,
+      ...mediaVariants(packages[1]).map((variant) => imageIdentity(variant.imageUrl))
+    ].filter(Boolean))];
+  }
   const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
     .filter((message) =>
       identities.includes(imageIdentity(message.media_url)) &&
@@ -106,7 +129,7 @@ function evaluatePricingReminder({ promotions, candidate, services = [], aliases
       serviceName: service,
       promotionName: matching[0].name,
       packageName: selected.name,
-      caption: media.caption,
+      caption,
       imageUrl: media.imageUrl,
       identities,
     },
