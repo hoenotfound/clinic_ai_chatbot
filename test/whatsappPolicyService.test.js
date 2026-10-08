@@ -333,7 +333,7 @@ test("Messenger and Instagram marketing opt-outs block pricing even after a late
     const state={
       channel,
       latest_inbound_at:new Date("2026-10-08T12:00:00Z"),
-      whatsapp_marketing_opt_out_at:new Date("2026-10-08T08:00:00Z"),
+      social_marketing_opt_out_at:new Date("2026-10-08T08:00:00Z"),
     };
     const now=new Date("2026-10-08T12:05:00Z");
     const marketing=policy.evaluateFreeformState(state,now,{purpose:"marketing"});
@@ -341,7 +341,7 @@ test("Messenger and Instagram marketing opt-outs block pricing even after a late
     assert.equal(marketing.code,"marketing_opted_out");
     assert.equal(policy.evaluateFreeformState(state,now,{purpose:"service"}).allowed,true);
     assert.equal(policy.evaluateFreeformState({...state,
-      whatsapp_opt_out_at:new Date("2026-10-08T07:00:00Z")},
+      social_opt_out_at:new Date("2026-10-08T07:00:00Z")},
       now,{purpose:"marketing"}).allowed,false);
   }
 });
