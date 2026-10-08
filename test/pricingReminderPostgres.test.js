@@ -59,7 +59,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
 
     // Verify the exact production migration is applicable to the current schema.
     await client.query(fs.readFileSync(
-      path.join(__dirname, "../src/db/migrations/046_conditional_pricing_reminder.sql"),
+      path.join(__dirname, "../src/db/migrations/047_conditional_pricing_reminder.sql"),
       "utf8"
     ));
 
