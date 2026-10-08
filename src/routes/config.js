@@ -128,6 +128,8 @@ function followUpVideoKeys(value) {
               String(item?.videoKey || "").trim()
             )
           : []),
+        ...(Array.isArray(value.freeEntry?.templateRules) ?
+          value.freeEntry.templateRules.map((rule) => String(rule.mediaKey || "").trim()) : []),
       ]).filter(Boolean)
     ),
   ];
@@ -626,6 +628,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     serviceName: rule.serviceName.trim(),
     templateName: rule.templateName.trim(),
     mediaUrl: (rule.mediaUrl || "").trim(),
+    mediaKey: (rule.mediaKey || "").trim(),
   }));
   const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
   const freeEntryHours = [...requestedFreeEntry.slotsHours].sort((a, b) => a - b);
