@@ -6,6 +6,23 @@ const META_MESSAGE_ORIGINS = new Set([
 
 let sdkPromise = null;
 
+// Meta uses FINISH for standard Cloud API signup, which cannot authorize coexistence.
+export function classifyWhatsAppEmbeddedSignupEvent(payload) {
+  if (payload?.type !== "WA_EMBEDDED_SIGNUP") return null;
+  switch (payload.event) {
+    case "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING":
+      return "coexistence";
+    case "FINISH":
+      return "standard";
+    case "ERROR":
+      return "error";
+    case "CANCEL":
+      return "cancel";
+    default:
+      return null;
+  }
+}
+
 export function buildWhatsAppBusinessAppLoginOptions(config = {}) {
   return {
     config_id: config.configId,
