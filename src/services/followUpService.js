@@ -20,6 +20,7 @@ const channelMessaging = require("./channelMessagingService");
 const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
+const pricingReminderService = require("./pricingReminderService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
   normalizeQuietHours,
@@ -203,6 +204,9 @@ function getActiveSettings() {
     activatedAt: settings.activatedAt,
     quietHours,
     steps,
+    pricingReminder: {
+      enabled: settings.pricingReminder?.enabled === true,
+    },
   };
 }
 
@@ -1649,6 +1653,8 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       }
     }
 
+    const pricingNextDueAt = await pricingReminderService.runPricingReminders(settings, now);
+
     const liveSettings = getActiveSettings();
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
       ? await followUpRepo.getNextCandidateDueAt({
@@ -1668,7 +1674,13 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       enabled: Boolean(liveSettings),
       candidateCount: candidates.length,
       recoveredCount,
-      nextDueAt,
+      nextDueAt: (() => {
+        const times = [nextDueAt, pricingNextDueAt]
+          .filter(Boolean)
+          .map((value) => new Date(value).getTime())
+          .filter(Number.isFinite);
+        return times.length ? new Date(Math.min(...times)).toISOString() : null;
+      })(),
       nextRecoveryAt,
     };
   } catch (err) {
