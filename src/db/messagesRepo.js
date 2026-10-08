@@ -925,7 +925,10 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
 
     const result = await client.query(
       `UPDATE messages
-       SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL
+       SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL,
+           provider_accepted_at = CASE WHEN is_automated_follow_up=true
+             AND automated_follow_up_step=3 THEN COALESCE(provider_accepted_at, now())
+             ELSE provider_accepted_at END
        WHERE id = $1
        RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
       [messageId, targetWhatsappMessageId]
