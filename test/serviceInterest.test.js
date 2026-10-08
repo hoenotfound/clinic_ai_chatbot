@@ -52,8 +52,19 @@ test("returns null for an ad that does not identify a configured service", () =>
   assert.equal(inferConfiguredServiceFromText("October Promo V3", config), null);
 });
 
-test("cleans scored treatment interest without inventing a value", () => {
-  assert.equal(cleanScoredTreatmentInterest("  骨盆调理  "), "骨盆调理");
-  assert.equal(cleanScoredTreatmentInterest("   "), null);
-  assert.equal(cleanScoredTreatmentInterest(null), null);
+test("canonicalizes scored treatment interest without inventing a value", () => {
+  assert.equal(
+    cleanScoredTreatmentInterest("  骨盆调理  ", config),
+    "骨盆调理"
+  );
+  assert.equal(
+    cleanScoredTreatmentInterest("customer wants 小颜术", config),
+    "3D 小颜术"
+  );
+  assert.equal(
+    cleanScoredTreatmentInterest("3D 小颜术 / 9D 逆龄抗衰", config),
+    null
+  );
+  assert.equal(cleanScoredTreatmentInterest("   ", config), null);
+  assert.equal(cleanScoredTreatmentInterest(null, config), null);
 });
