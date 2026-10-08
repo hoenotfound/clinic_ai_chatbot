@@ -160,7 +160,7 @@ function evaluateFreeformState(
     ? new Date(state.whatsapp_marketing_opt_out_at)
     : null;
 
-  if (channel === "whatsapp" && optOutAt) {
+  if (optOutAt) {
     // Opt-out is a hard stop for proactive/marketing sends. A customer is still
     // allowed to start a later support conversation themselves; in that case a
     // normal service reply may resume inside the new 24-hour window without
@@ -175,7 +175,7 @@ function evaluateFreeformState(
     }
   }
 
-  if (channel === "whatsapp" && purpose === "marketing" && marketingOptOutAt) {
+  if (purpose === "marketing" && marketingOptOutAt) {
     return policyError(
       "marketing_opted_out",
       "WhatsApp marketing send blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
@@ -298,7 +298,7 @@ async function recordOptOut(contactId, source = "customer_message") {
          whatsapp_opt_in_source = NULL,
          updated_at = now()
      WHERE id = $1
-       AND channel = 'whatsapp'
+       AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId, source]
   );
@@ -312,7 +312,7 @@ async function recordMarketingOptOut(contactId, source = "customer_message") {
          whatsapp_marketing_opt_out_source = $2,
          updated_at = now()
      WHERE id = $1
-       AND channel = 'whatsapp'
+       AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId, source]
   );
@@ -326,7 +326,7 @@ async function recordMarketingOptIn(contactId) {
          whatsapp_marketing_opt_out_source = NULL,
          updated_at = now()
      WHERE id = $1
-       AND channel = 'whatsapp'
+       AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId]
   );
@@ -347,7 +347,7 @@ async function recordOptIn(contactId, source) {
          whatsapp_opt_out_source = NULL,
          updated_at = now()
      WHERE id = $1
-       AND channel = 'whatsapp'
+       AND channel IN ('whatsapp','facebook','instagram')
      RETURNING *`,
     [contactId, cleanSource]
   );
