@@ -654,3 +654,23 @@ test("greetings and language-only turns never send a price image even if AI repo
   }));
   assert.ok(permitted?.packages?.length);
 });
+
+
+test("AI price-query flag cannot trigger pricing graphics for Malay session or duration questions", async () => {
+  for (const customerText of [
+    "Berapa lama rawatan ini?",
+    "Berapa kali kena datang?",
+    "Berapa sesi diperlukan untuk rawatan?",
+    "Berapa minit 3D?",
+    "What is your contact information?",
+  ]) {
+    let attempted = false;
+    assert.equal(await resolvePricePromotionForReply(base({
+      customerText,
+      priceQuery: true,
+      packageQuery: true,
+      wasPromoRecentlySent: async () => { attempted = true; return false; },
+    })), null, customerText);
+    assert.equal(attempted, false);
+  }
+});
