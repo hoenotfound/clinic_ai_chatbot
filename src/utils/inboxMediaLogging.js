@@ -26,7 +26,8 @@ function logInboxMediaSummary(timings, details = {}) {
     stageMs,
     ...(timings.failedStage ? { failedStage: timings.failedStage } : {}),
   };
-  const isProblem = !["accepted", "submitted"].includes(outcome) || timings.persistenceIssue === true ||
+  const isProblem = !["accepted", "submitted"].includes(outcome) ||
+    timings.persistenceIssue === true || !!timings.failedStage ||
     (summary.httpStatus !== null && summary.httpStatus >= 400);
   (isProblem ? console.warn : console.info)("[Inbox media summary]", JSON.stringify(summary));
 }
