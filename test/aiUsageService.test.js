@@ -5,6 +5,7 @@ const {
   createGeminiInteraction,
   failureKind,
   generateGeminiContent,
+  promptPrefixFingerprint,
   usageFromInteraction,
   usageFromResponse,
 } = require("../src/services/aiUsageService");
@@ -29,6 +30,7 @@ test("Gemini GenerateContent usage metadata is normalized", () => {
       outputTokens: 180,
       thinkingTokens: 0,
       cachedTokens: 300,
+      cacheMetadataPresent: true,
       totalTokens: 1380,
     }
   );
@@ -50,6 +52,7 @@ test("Gemini Interactions usage metadata is normalized", () => {
       outputTokens: 120,
       thinkingTokens: 0,
       cachedTokens: 50,
+      cacheMetadataPresent: true,
       totalTokens: 1020,
     }
   );
@@ -106,6 +109,7 @@ test("successful Gemini GenerateContent calls record provider usage", async () =
     outputTokens: 20,
     thinkingTokens: 0,
     cachedTokens: 10,
+    cacheMetadataPresent: true,
     totalTokens: 260,
   });
 });
@@ -164,6 +168,7 @@ test("successful Gemini Interactions calls preserve voice-transcription usage te
     outputTokens: 12,
     thinkingTokens: 0,
     cachedTokens: 0,
+    cacheMetadataPresent: true,
     totalTokens: 312,
   });
 });
@@ -242,4 +247,47 @@ test("usage monitoring distinguishes daily quota exhaustion from short rate limi
   const rateError = new Error("Too many requests; please retry shortly.");
   rateError.status = 429;
   assert.equal(failureKind(rateError), "rate_limit");
+});
+
+test("Gemini cache metadata distinguishes an explicit zero from an omitted count", () => {
+  assert.deepEqual(
+    { cached: usageFromResponse({usageMetadata:{cachedContentTokenCount:0}}).cachedTokens,
+      present: usageFromResponse({usageMetadata:{cachedContentTokenCount:0}}).cacheMetadataPresent },
+    { cached:0, present:true }
+  );
+  assert.equal(usageFromResponse({usageMetadata:{promptTokenCount:1200}}).cacheMetadataPresent,false);
+  assert.equal(usageFromResponse({}).cacheMetadataPresent,false);
+  assert.equal(usageFromResponse({usageMetadata:{cachedContentTokenCount:null}}).cacheMetadataPresent,false);
+  assert.equal(usageFromInteraction({usage:{total_cached_tokens:0}}).cacheMetadataPresent,true);
+  assert.equal(usageFromInteraction({usage:{totalCachedTokens:0}}).cacheMetadataPresent,true);
+  assert.equal(usageFromInteraction({usage:{total_input_tokens:100}}).cacheMetadataPresent,false);
+});
+
+test("prompt fingerprint is stable for repeated common prefixes and never includes full prompt", () => {
+  const a = {config:{systemInstruction:"A".repeat(8192) + "骨盆咨询 for a customer"}};
+  const b = {config:{systemInstruction:"A".repeat(8192) + "3D pricing for another customer"}};
+  const c = {config:{systemInstruction:"A".repeat(8191) + "B" + "3D pricing"}};
+  const fingerprint = promptPrefixFingerprint(a);
+  assert.match(fingerprint,/^[a-f0-9]{16}$/);
+  assert.equal(promptPrefixFingerprint(b),fingerprint);
+  assert.notEqual(promptPrefixFingerprint(c),fingerprint);
+  assert.equal(promptPrefixFingerprint({config:{}}),null);
+});
+
+test("Gemini usage event persists only an opaque prompt prefix fingerprint", async () => {
+  const recorded=[];
+  const repository={async recordAiUsage(event){recorded.push(event);}};
+  const source="A".repeat(9000);
+  const result=await generateGeminiContent(
+    {models:{async generateContent(){return {usageMetadata:{cachedContentTokenCount:0,promptTokenCount:100}};}}},
+    {model:"gemini-3.8-flash",contents:[{role:"user",parts:[{text:"private patient request"}]}],config:{systemInstruction:source}},
+    {purpose:"customer_reply",database:{},repository}
+  );
+  assert.ok(result.usageMetadata);
+  await flushPromises();
+  assert.equal(recorded.length,1);
+  assert.equal(recorded[0].cacheMetadataPresent,true);
+  assert.equal(recorded[0].cachedTokens,0);
+  assert.equal(recorded[0].promptPrefixHash,promptPrefixFingerprint({config:{systemInstruction:source}}));
+  assert.equal(JSON.stringify(recorded[0]).includes("private patient"),false);
 });
