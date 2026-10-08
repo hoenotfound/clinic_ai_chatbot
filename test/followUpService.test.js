@@ -299,11 +299,8 @@ test("pre-expiry follow-up sends the video mapped to the customer's current serv
   let candidateQuery = null;
   let claimInput = null;
   let videoSend = null;
-  mediaStorage.copyStoredMediaToMessage = async (key, mimeType, options) => {
-    assert.equal(key, "clients/neutro/messages/follow-up-config/pelvis.mp4");
-    assert.equal(mimeType, "video/mp4");
-    assert.deepEqual(options, { contactId: 77 });
-    return "clients/neutro/messages/77/durable-pelvis.mp4";
+  mediaStorage.copyStoredMediaToMessage = async () => {
+    throw new Error("follow-up videos must not be copied per contact");
   };
   followUpRepo.findCandidates = async (input) => {
     candidateQuery = input;
@@ -349,7 +346,7 @@ test("pre-expiry follow-up sends the video mapped to the customer's current serv
   assert.equal(claimInput.timingMode, "before_window_expiry");
   assert.equal(claimInput.beforeWindowExpiryMinutes, 120);
   assert.equal(claimInput.targetedService, "Pelvic Care");
-  assert.equal(claimInput.mediaKey, "clients/neutro/messages/77/durable-pelvis.mp4");
+  assert.equal(claimInput.mediaKey, "clients/neutro/messages/follow-up-config/pelvis.mp4");
   assert.equal(claimInput.mediaMimeType, "video/mp4");
   assert.deepEqual(videoSend, {
     contact: {
@@ -358,7 +355,7 @@ test("pre-expiry follow-up sends the video mapped to the customer's current serv
       whatsapp_number: "60122223333",
       channel_user_id: undefined,
     },
-    key: "clients/neutro/messages/77/durable-pelvis.mp4",
+    key: "clients/neutro/messages/follow-up-config/pelvis.mp4",
     caption: "Here is a short Pelvic Care video.",
     filename: "pelvis-care.mp4",
   });
