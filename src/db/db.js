@@ -36,6 +36,19 @@ pool.on("error", (err) => {
   console.error("Unexpected Postgres pool error:", err);
 });
 
+// node-postgres emits connection errors on checked-out clients directly, not
+// through Pool's idle-client error event. A server-side transaction timeout
+// could otherwise become an unhandled EventEmitter 'error' and crash Render.
+// The query still rejects; callers must roll back/discard their connection.
+pool.on("connect", (client) => {
+  client.on("error", (err) => {
+    console.error("Unexpected Postgres client error:", {
+      code: err?.code || null,
+      message: err?.message || String(err),
+    });
+  });
+});
+
 /**
  * Applies only missing, versioned database migrations before startup.
  *
