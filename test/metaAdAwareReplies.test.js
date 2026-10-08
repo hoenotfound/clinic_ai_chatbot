@@ -9,6 +9,7 @@ const {
   normalizeMetaAdReplyContext,
   resolveMetaAdCreativeService,
 } = require("../src/services/metaAdReplyContextService");
+const { buildConversationPromptContext } = require("../src/utils/conversationPromptContext");
 const {
   buildSystemPrompt,
   metaAdContextSection,
@@ -115,7 +116,7 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
   assert.match(section, /priceQuery.*CURRENT message/s);
   assert.match(section, /serviceQuery.*meta_ad/s);
   assert.match(section, /Internal ad names, campaign names, and ad-set names are intentionally excluded/i);
-  assert.match(section, /greeting alone.*NOT a serviceQuery/i);
+  assert.match(section, /greeting, language preference or emoji alone is NOT a serviceQuery/i);
   assert.match(section, /Do NOT infer that the customer personally has any symptom/);
   assert.match(section, /Never copy ad-only claims into "staffSummary"/);
   assert.match(section, /Ad copy is NEVER authoritative for price/);
@@ -236,7 +237,7 @@ test("server verifies creative Meta context before it can drive result media", (
     "utf8"
   );
 
-  const loadAt = serverSource.indexOf("metaAdContext = await loadMetaAdReplyContext(contact.id)");
+  const loadAt = serverSource.indexOf("metaAdContext = await loadMetaAdReplyContext(contact.id, {");
   const verifyAt = serverSource.indexOf(
     "metaAdCreativeService = resolveMetaAdCreativeService(",
     loadAt
@@ -302,4 +303,106 @@ test("Meta creative resolves only when exactly one configured service is mention
   );
 
   assert.equal(resolveMetaAdCreativeService(null, services, aliases), null);
+});
+
+
+test("internal ad name supplies a canonical pelvis topic when creative is vague", () => {
+  const services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }, { name: "9D 逆龄抗衰" }];
+  const aliases = [{ alias: "pelvis / 骨盆", officialService: "骨盆调理" }];
+  const context = normalizeMetaAdReplyContext({
+    source: "meta_ads",
+    ad_name: "骨盆 1",
+    headline: "Welcome to Neutro Sense",
+    body: "Contact our team today",
+    campaign_name: "Private audience notes",
+  }, { services, aliases });
+
+  assert.equal(context.serviceHint, "骨盆调理");
+  assert.equal(context.serviceHintSource, "ad_name");
+  assert.equal(context.adName, undefined);
+  assert.equal(context.campaignName, undefined);
+  assert.equal(resolveMetaAdCreativeService(context, services, aliases), null);
+
+  const compact = buildConversationPromptContext(
+    [{ role: "user", content: "English" }],
+    { services, aliases, promotions: [], metaAdContext: context }
+  );
+  assert.deepEqual(compact.relevantServiceNames, ["骨盆调理"]);
+  assert.equal(compact.serviceSource, "meta_ad");
+
+  for (const channel of ["whatsapp", "messenger", "instagram"]) {
+    const prompt = buildSystemPrompt({ channel, metaAdContext: context, conversationContext: compact });
+    assert.match(prompt, /Verified service topic.*骨盆调理/);
+    assert.match(prompt, /English/);
+    assert.doesNotMatch(prompt, /骨盆 1/);
+    assert.doesNotMatch(prompt, /Private audience notes/);
+  }
+});
+
+test("creative topic beats ad name, but ambiguous creative cannot be overruled", () => {
+  const services = [
+    { name: "骨盆调理" }, { name: "3D 小颜术" }, { name: "9D 逆龄抗衰" },
+  ];
+  const aliases = [{ alias: "骨盆", officialService: "骨盆调理" }];
+  const creative = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "骨盆 1", headline: "3D 小颜术", body: "",
+  }, { services, aliases });
+  assert.equal(creative.serviceHint, "3D 小颜术");
+  assert.equal(creative.serviceHintSource, "creative");
+
+  const ambiguous = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "骨盆 1",
+    headline: "3D 小颜术 + 9D 逆龄抗衰", body: "",
+  }, { services, aliases });
+  assert.equal(ambiguous.serviceHint, undefined);
+  assert.equal(resolveMetaAdCreativeService(ambiguous, services, aliases), null);
+
+  const unknown = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "Grand opening 1", headline: "", body: null,
+  }, { services, aliases });
+  assert.equal(unknown, null);
+
+  const mixed = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "3D 小颜术 + 骨盆", headline: null, body: null,
+  }, { services, aliases });
+  assert.equal(mixed, null);
+});
+
+test("customer topic change overrides previous Meta service hint", () => {
+  const services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }];
+  const context = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "骨盆 1", headline: null, body: null,
+  }, { services, aliases: [{ alias: "骨盆", officialService: "骨盆调理" }] });
+  assert.equal(context.serviceHint, "骨盆调理");
+
+  const switched = buildConversationPromptContext([
+    { role: "user", content: "English" },
+    { role: "assistant", content: "Would you like to discuss pelvic treatment?" },
+    { role: "user", content: "Actually I'm interested in 3D 小颜术" },
+  ], { services, promotions: [], metaAdContext: context });
+  assert.deepEqual(switched.relevantServiceNames, ["3D 小颜术"]);
+  assert.equal(switched.serviceSource, "current_customer");
+
+  const broad = buildConversationPromptContext([
+    { role: "user", content: "What other treatments do you offer?" },
+  ], { services, promotions: [], metaAdContext: context });
+  assert.equal(broad.serviceSource, "broad_discovery");
+  assert.deepEqual(broad.relevantServiceNames, []);
+});
+
+test("ad-name-derived treatment hint alone does not authorize result media", async () => {
+  const services = [{ name: "骨盆调理" }];
+  const context = await loadMetaAdReplyContext(42, {
+    services,
+    aliases: [{ alias: "骨盆", officialService: "骨盆调理" }],
+    repo: {
+      async getForContactCurrentLead() {
+        return { source: "meta_ads", ad_name: "骨盆 1", headline: null, body: null };
+      },
+    },
+  });
+  assert.equal(context.serviceHint, "骨盆调理");
+  assert.equal(context.serviceHintSource, "ad_name");
+  assert.equal(resolveMetaAdCreativeService(context, services, []), null);
+  assert.equal(metaAdContextSection(context).includes("骨盆 1"), false);
 });
