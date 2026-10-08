@@ -1,5 +1,6 @@
 const { detectConversationLanguage } = require("./chatLanguage");
 const { normalizeServiceText } = require("./serviceInterest");
+const mediaStorage = require("../services/mediaStorageService");
 
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
 const SUPPORTED_LANGUAGES = new Set(["auto", "zh_CN", "en_US", "ms"]);
@@ -28,7 +29,10 @@ function templateRuleValid(rule, slots, services) {
     ) &&
     /^[a-z0-9_]+$/.test(templateName) &&
     validMediaUrl(rule.mediaUrl || "") &&
-    (!rule.mediaUrl || /^https:\/\//.test(rule.mediaUrl));
+    !(rule.mediaKey && rule.mediaUrl) &&
+    (!rule.mediaKey ||
+      (mediaStorage.isSharedFollowUpConfigKey(rule.mediaKey) &&
+        rule.mediaKey.toLowerCase().endsWith(".mp4")));
 }
 
 function validateTemplateRules(rules, slots, services = []) {
@@ -54,6 +58,7 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     templateName: matching?.templateName || settings.templateName,
     language: locale,
     mediaUrl: matching?.mediaUrl || "",
+    mediaKey: matching?.mediaKey || "",
     serviceName: matching?.serviceName || null,
     slotHours,
   };
@@ -64,6 +69,16 @@ function selectTemplateSpec(candidate, slotHours, settings) {
  * This builder deliberately does not change Inbox's existing template rules.
  * No arbitrary customer/AI text, body/header variables or unaudited media ID.
  */
+function materializeTemplateMediaSpec(spec) {
+  if (!spec) return null;
+  if (!spec.mediaKey) return spec;
+  if (!mediaStorage.isSharedFollowUpConfigKey(spec.mediaKey) ||
+      !spec.mediaKey.toLowerCase().endsWith(".mp4")) return null;
+  try {
+    return { ...spec, mediaUrl: mediaStorage.createPresignedGetUrl(spec.mediaKey, { expiresSeconds: 30 * 60 }) };
+  } catch { return null; }
+}
+
 function buildStaticMarketingTemplate(template, spec, templatesService) {
   if (!template || template.category !== "MARKETING" ||
       template.status !== "APPROVED" ||
@@ -103,5 +118,6 @@ module.exports = {
   validMediaUrl,
   validateTemplateRules,
   selectTemplateSpec,
+  materializeTemplateMediaSpec,
   buildStaticMarketingTemplate,
 };
