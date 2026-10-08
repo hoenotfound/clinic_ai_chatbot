@@ -898,9 +898,12 @@ async function processIncomingMessage(
       try {
         // This is a local Postgres lookup only. Meta enrichment stays
         // fire-and-forget, so a Graph API delay/failure can never block the
-        // customer reply. Only stored creative headline/body may influence
-        // reply intent; internal ad/campaign/ad-set names are ignored.
-        metaAdContext = await loadMetaAdReplyContext(contact.id);
+        // customer reply. Creative copy takes priority. Internal ad names may
+        // contribute only a canonical configured service, not raw metadata.
+        metaAdContext = await loadMetaAdReplyContext(contact.id, {
+          services: clinicConfig.services,
+          aliases: clinicConfig.serviceAliases,
+        });
         metaAdCreativeService = resolveMetaAdCreativeService(
           metaAdContext,
           clinicConfig.services,
