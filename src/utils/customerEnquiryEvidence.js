@@ -4,7 +4,7 @@ const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 // attribution is not enough to send unsolicited promotions/result images.
 const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|packages?|how\s+much|rm\s*\d{2,})\b|\b(?:harga|pakej|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc]|(?:special|current|any)\s+offers?)\b)/iu;
 
-const MALAY_MONEY_QUESTION = /\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b)/iu;
+const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b)|\b(?:rm|ringgit)\s+berapa\b)/iu;
 const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
 
 // The generic word "berapa" means "how many/how much", not necessarily price.
