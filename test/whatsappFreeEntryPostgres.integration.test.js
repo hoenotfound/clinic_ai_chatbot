@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const worker = require("../src/services/whatsappFreeEntryFollowUpService");
 const deliveryRepo = require("../src/db/whatsappDeliveryStatusRepo");
+const { sessionLateralSql } = require("../src/db/whatsappFreeEntrySessionSql");
 const connectionString = process.env.TEST_DATABASE_URL;
 
 test("Postgres free-entry candidate, claim/recheck, post-reply silence and billing guards",
@@ -27,12 +28,14 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       CREATE TABLE leads(
         id INTEGER PRIMARY KEY, contact_id INTEGER, marketing_consent TEXT,
         is_closed BOOLEAN, appointment_status TEXT, stage_id INTEGER,
+        started_message_id INTEGER,
         created_at TIMESTAMPTZ, treatment_interest TEXT
       );
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),
         role TEXT, content TEXT, created_at TIMESTAMPTZ,
-        whatsapp_message_id TEXT, sent_by_username TEXT, delivery_status TEXT
+        whatsapp_message_id TEXT, sent_by_username TEXT, delivery_status TEXT,
+        whatsapp_template JSONB
       );
       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,
@@ -151,11 +154,21 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     await client.query(`INSERT INTO whatsapp_free_entry_pricing_evidence
       (wamid,pricing_type,billable,delivery_status)
       VALUES('wamid.second-entry','free_entry_point',false,'delivered')`);
+    const anchored = await client.query(
+      `SELECT referral.origin_message_id FROM contacts c
+       ${sessionLateralSql({ contactAlias:'c', ceilingParam:'$1' })}
+       WHERE c.id=1`, [72]);
+    assert.equal(Number(anchored.rows[0].origin_message_id),10,
+      "new ad click inside an active FEP epoch MUST NOT restart the original billing clock");
     const newEntry = await worker.listCandidates(settings,client,1);
-    assert.equal(newEntry.length,0,"new entry must remain silent during its fresh 24h period");
+    assert.equal(newEntry.length,0,"new enquiry pauses automation during fresh 24h silence");
     const oldFirstTouch = await client.query(
       "SELECT first_message_id FROM lead_attributions WHERE lead_id=1");
     assert.equal(oldFirstTouch.rows[0].first_message_id,10,"original attribution remains unchanged");
+    // Once the initial period is truly over, an independently priced ad entry
+    // can begin a new epoch even though the original CRM attribution persists.
+    await client.query(`UPDATE messages SET created_at=now()-interval '205 hours' WHERE id=10`);
+    await client.query(`UPDATE messages SET created_at=now()-interval '204 hours' WHERE id=11`);
     await client.query(`UPDATE messages
       SET created_at=now()-interval '27 hours' WHERE id=20`);
     await client.query(`UPDATE messages
