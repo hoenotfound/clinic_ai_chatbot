@@ -267,7 +267,13 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
        AND (
          role <> 'assistant'
          OR delivery_status IS NULL
-         OR delivery_status NOT IN ('failed', 'unknown')
+         OR delivery_status NOT IN ('failed', 'unknown', 'cancelled')
+       )
+       -- A pricing message is only a saved claim until Meta accepts it.
+       -- Never show a cancelled or unsent claim as part of the AI chat.
+       AND NOT (
+         pricing_reminder_anchor_id IS NOT NULL
+         AND (delivery_status IS NULL OR delivery_status = 'cancelled')
        )
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,
@@ -316,7 +322,7 @@ async function wasPromoRecentlySentWithExecutor(
        AND created_at >= NOW() - ($4::integer * INTERVAL '1 hour')
        AND (
          delivery_status IS NULL
-         OR delivery_status NOT IN ('failed', 'unknown')
+         OR delivery_status NOT IN ('failed', 'unknown', 'cancelled')
        )
      LIMIT 1`,
     [contactId, imageUrl, caption, hours]
@@ -385,7 +391,7 @@ async function wasMediaRecentlySentWithExecutor(
            AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
            AND (
              delivery_status IS NULL
-             OR delivery_status NOT IN ('failed', 'unknown')
+             OR delivery_status NOT IN ('failed', 'unknown', 'cancelled')
            )
          LIMIT 1`,
         [contactId, imageUrl, hours, storedId]
@@ -400,7 +406,7 @@ async function wasMediaRecentlySentWithExecutor(
            AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
            AND (
              delivery_status IS NULL
-             OR delivery_status NOT IN ('failed', 'unknown')
+             OR delivery_status NOT IN ('failed', 'unknown', 'cancelled')
            )
          LIMIT 1`,
         [contactId, imageUrl, hours]
@@ -465,7 +471,7 @@ async function getMostRecentlySentMediaUrlWithExecutor(
            AND whatsapp_message_id IS NOT NULL
            AND (
              delivery_status IS NULL
-             OR delivery_status NOT IN ('failed', 'unknown')
+             OR delivery_status NOT IN ('failed', 'unknown', 'cancelled')
            )
          ORDER BY created_at DESC, id DESC
          LIMIT 1`,
@@ -480,7 +486,7 @@ async function getMostRecentlySentMediaUrlWithExecutor(
            AND whatsapp_message_id IS NOT NULL
            AND (
              delivery_status IS NULL
-             OR delivery_status NOT IN ('failed', 'unknown')
+             OR delivery_status NOT IN ('failed', 'unknown', 'cancelled')
            )
          ORDER BY created_at DESC, id DESC
          LIMIT 1`,
