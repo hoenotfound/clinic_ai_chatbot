@@ -77,6 +77,16 @@ const candidateSql = `
     AND evidence.pricing_type = 'free_entry_point'
     AND evidence.billable IS DISTINCT FROM true
     AND evidence.delivery_status IN ('sent','delivered','read')
+    -- Stop further templates if Meta has ever billed an earlier extended step.
+    AND NOT EXISTS (
+      SELECT 1
+      FROM whatsapp_free_entry_followup_attempts prior
+      JOIN whatsapp_free_entry_pricing_evidence prior_billing
+        ON prior_billing.wamid = prior.wamid
+      WHERE prior.first_reply_message_id = first_reply.id
+        AND (prior_billing.pricing_type <> 'free_entry_point'
+          OR prior_billing.billable = true)
+    )
     AND first_reply.created_at >= $1::timestamptz
     AND first_reply.created_at > now() - interval '7 days'
     -- A reply after the initial business response means the customer is now
