@@ -9,7 +9,7 @@ const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
-const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
+const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateApprovedMedia, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
 const {
   freeEntryEnabled,
   eligibleFreeEntryTime,
@@ -303,6 +303,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   if (!slotHours) return "not_due";
   const spec = explicitSpec || selectTemplateSpec(candidate, slotHours, active);
   if (candidate.used_template_names?.includes(spec.templateName)) return "template_already_used";
+  if (!await validateApprovedMedia(template, spec)) return "media_validation_failed";
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
   if (quiet.active) return "quiet_hours";
 
@@ -333,7 +334,9 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       null, null,
       spec.mediaKey ? null : (spec.mediaUrl || null),
       null, template.header?.format === "VIDEO" ? "video/mp4" :
-        template.header?.format === "IMAGE" ? "image/jpeg" : null,
+        template.header?.format === "IMAGE" ?
+          (String(spec.mediaKey || spec.mediaUrl || "").toLowerCase().includes(".png") ?
+            "image/png" : "image/jpeg") : null,
       { mediaKey: spec.mediaKey || null, whatsappTemplate: metadata,
         isAutomatedFollowUp: true,
         initialDeliveryStatus: "unknown",
@@ -381,8 +384,11 @@ async function processCandidate(candidate, active, template, now = new Date(), e
     const readyToSend = buildStaticMarketingTemplate(
       template, materializeTemplateMediaSpec(spec), whatsappTemplates
     );
-    if (!readyToSend) {
-      await finish(attemptId, "cancelled", { messageId: message.id, error: "Media unavailable before Meta send" });
+    if (!readyToSend || !await validateApprovedMedia(template, spec)) {
+      await messagesRepo.setDeliveryStatusById(message.id, "cancelled",
+        "Media unavailable or outside WhatsApp format/size limits");
+      await finish(attemptId, "cancelled", { messageId: message.id,
+        error: "Media unavailable or outside WhatsApp format/size limits" });
       return "media_unavailable";
     }
     const response = await whatsappTemplates.sendApprovedTemplate(
@@ -472,7 +478,8 @@ async function run({ now = new Date() } = {}) {
           .catch(() => {});
         continue;
       }
-      if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates)) {
+      if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates) ||
+          !await validateApprovedMedia(template, spec)) {
         result.skipped++;
         const reason = template ? "unsupported_or_unavailable_media" : "approved_language_variant_missing";
         await freeEntryReport.recordSkip(candidate.contact_id,
