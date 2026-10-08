@@ -382,6 +382,7 @@ function isFreeEntryFollowUpConfig(value) {
       value.slotsHours.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
       new Set(value.slotsHours).size !== value.slotsHours.length ||
       !SUPPORTED_LANGUAGES.has(value.language) ||
+      (value.fallbackLanguage !== undefined && !["zh_CN","en_US","ms"].includes(value.fallbackLanguage)) ||
       (value.enabled && !/^[a-z0-9_]+$/.test(value.templateName)) ||
       !validateTemplateRules(value.templateRules || [], value.slotsHours,
         configRepo.getConfig()?.services || [])) return false;
@@ -631,10 +632,12 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     mediaKey: (rule.mediaKey || "").trim(),
   }));
   const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
+  const fallbackLanguage = requestedFreeEntry.fallbackLanguage || "zh_CN";
   const freeEntryHours = [...requestedFreeEntry.slotsHours].sort((a, b) => a - b);
   const unchangedFreeEntry = current?.freeEntry?.enabled === true &&
     current.freeEntry.templateName === freeEntryName &&
     current.freeEntry.language === freeEntryLanguage &&
+    (current.freeEntry.fallbackLanguage || "zh_CN") === fallbackLanguage &&
     JSON.stringify(current.freeEntry.slotsHours) === JSON.stringify(freeEntryHours) &&
     JSON.stringify(current.freeEntry.templateRules || []) === JSON.stringify(templateRules) &&
     typeof current.freeEntry.activatedAt === "string" &&
@@ -643,6 +646,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     enabled: requestedFreeEntry.enabled === true,
     templateName: freeEntryName,
     language: freeEntryLanguage,
+    fallbackLanguage,
     slotsHours: freeEntryHours,
     templateRules,
     activatedAt: requestedFreeEntry.enabled === true
