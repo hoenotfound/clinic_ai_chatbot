@@ -2,7 +2,17 @@ const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
-const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|packages?|how\s+much|rm\s*\d{2,})\b|\b(?:harga|berapa|pakej|promosi|diskaun|baucar|tawaran)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc]|(?:special|current|any)\s+offers?)\b)/iu;
+const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|packages?|how\s+much|rm\s*\d{2,})\b|\b(?:harga|pakej|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc]|(?:special|current|any)\s+offers?)\b)/iu;
+
+const MALAY_MONEY_QUESTION = /\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b)/iu;
+const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
+
+// The generic word "berapa" means "how many/how much", not necessarily price.
+const ADMIN_TOPIC = /(?:\b(?:contact(?:\s+(?:details?|information|info|number))?|phone(?:\s+number)?|tel(?:ephone)?|mobile(?:\s+number)?|whatsapp(?:\s+number)?|e-?mail|address|location|branches?|opening\s+(?:hours?|times?)|operating\s+hours?|working\s+hours?|business\s+hours?|parking|directions?|google\s+maps?|postal\s+code|opening\s+day|closing\s+time|appointment\s+(?:slots?|time|availability)|payment\s+method|payment\s+options?)\b|联络方式|聯絡方式|联系方式|聯繫方式|电话号码|電話號碼|电话|電話|地址|在哪里|在哪裡|营业时间|營業時間|几点开门|幾點開門|停车|停車|分行|分店|怎么去|怎麼去|停车位|停車位|\b(?:nombor\s+(?:telefon|whatsapp)|telefon|hubungi|alamat|lokasi|cawangan|waktu\s+operasi|tempat\s+letak\s+kereta|parking)\b)/iu;
+
+// Admin context alone is not a treatment request. An explicit service question
+// can still ask two things (e.g. "3D treatment and your opening hours").
+const SPECIFIC_TREATMENT_TOPIC = /(?:\b(?:treatments?|rawatan|facial|pelvic|pelvis|postpartum|hifu|jawline|acne)\b|\b[39]\s*d\b|疗程|療程|治疗|治療|骨盆|小颜|小顏|逆龄|逆齡|调理|調理|脸型|臉型|双下巴|雙下巴|下颚|下顎|法令纹|法令紋)/iu;
 
 const DECLINED_TREATMENT = /(?:\b(?:not\s+interested|no\s+interest|don['’]?t\s+want|do\s+not\s+want|not\s+looking\s+for)\b|不感兴趣|不感興趣|不想了解|不想做|不要这个|不要這個|没兴趣|沒興趣|tak\s+(?:berminat|mahu|nak))/iu;
 
@@ -19,13 +29,17 @@ function hasCustomerPriceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
   if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value)) return false;
-  return PRICE_OR_PACKAGE.test(value);
+  return PRICE_OR_PACKAGE.test(value) ||
+    (MALAY_MONEY_QUESTION.test(value) && !MALAY_NON_PRICE_QUANTITY.test(value));
 }
 
 function hasCustomerServiceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
-  if (ADMIN_ONLY.test(value) || DECLINED_TREATMENT.test(value)) return false;
+  if (DECLINED_TREATMENT.test(value)) return false;
+  if ((ADMIN_ONLY.test(value) || ADMIN_TOPIC.test(value)) &&
+      !SPECIFIC_TREATMENT_TOPIC.test(value) &&
+      !hasCustomerPriceEnquiry(value)) return false;
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
