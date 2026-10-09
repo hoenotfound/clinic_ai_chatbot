@@ -48,6 +48,11 @@ test("recordAiUsage stores only bounded usage metadata fields", async () => {
     true,
     "0123456789abcdef",
     "accepted",
+    null, // contact_id: legacy/unattributed event
+    null, // lead_id
+    null, // no price configured for this older model
+    "unpriced_model",
+    0, // Claude cache write tokens
   ]);
 });
 
