@@ -514,7 +514,7 @@ async function mockPortalApi(
       const defaultActivity = { items: [], total: 0, page: Number(filters.page || 1), pageSize: 25,
         hasMore: false, summary: { sent: 0, pending: 0, failed: 0, skipped: 0, attention: 0 } };
       const payload = typeof followUpActivity === "function"
-        ? followUpActivity(filters)
+        ? await followUpActivity(filters)
         : (followUpActivity || defaultActivity);
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) });
     }
@@ -1474,7 +1474,7 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
   const calls = [];
   const events = [
     { event_id: "message:10", occurred_at: "2026-10-09T09:20:00Z", contact_id: 101,
-      channel: "whatsapp", type: "sequence", step: 3, state: "sent", raw_status: "delivered", detail: "" },
+      channel: "whatsapp", type: "sequence", step: 3, state: "sent", raw_status: "delivered", detail: "", media_type: "video" },
     { event_id: "pricing_decision:12", occurred_at: "2026-10-09T09:10:00Z", contact_id: 102,
       channel: "facebook", type: "pricing", step: 4, state: "skipped", raw_status: "missing_promotion", detail: "missing_promotion" },
     { event_id: "message:13", occurred_at: "2026-10-09T09:00:00Z", contact_id: 103,
@@ -1482,7 +1482,8 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
     { event_id: "pricing_decision:14", occurred_at: "2026-10-09T08:50:00Z", contact_id: 104,
       channel: "whatsapp", type: "pricing", step: 4, state: "attention", raw_status: "delivery_review", detail: "delivery_review" },
     { event_id: "message:15", occurred_at: "2026-10-09T08:20:00Z", contact_id: 105,
-      channel: "whatsapp", type: "sequence", step: 1, state: "pending", raw_status: "pending", detail: "" },
+      channel: "whatsapp", type: "sequence", step: 1, state: "pending", raw_status: "pending", detail: "",
+      media_type: "text", provider_evidence: "accepted" },
   ];
   await mockPortalApi(page, {
     loggedIn: true,
@@ -1494,7 +1495,10 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
         (filters.state === "all" || e.state === filters.state));
       return {
         items: matching, total: matching.length, page: Number(filters.page), pageSize: 25,
-        hasMore: false, summary: {
+        hasMore: false, diagnostics: [{
+          contact_id: 106, channel: "whatsapp",
+          inbound_at: "2026-10-08T01:00:00Z", possible_quiet_overlap: true,
+        }], summary: {
           sent: events.filter((e) => e.state === "sent").length,
           pending: events.filter((e) => e.state === "pending").length,
           failed: events.filter((e) => e.state === "failed").length,
@@ -1510,12 +1514,17 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
   const activity = page.getByRole("region", { name: "Follow-up delivery activity" });
   await expect(activity.getByRole("article")).toHaveCount(5);
   await expect(activity).toContainText("Follow-up 3");
+  await expect(activity).toContainText("Video");
   await expect(activity).toContainText("Pricing reminder");
   await expect(activity).toContainText("Messenger");
   await expect(activity).toContainText("Instagram");
   await expect(activity).toContainText("Matching pricing promotion or media unavailable");
   await expect(activity).toContainText("Earlier pricing delivery is unconfirmed");
-  await expect(activity).toContainText("The stored delivery status is pending. Check provider receipts before retrying.");
+  await expect(activity).toContainText("Provider accepted this send; delivery receipt still pending");
+  await expect(page.getByRole("region", { name: "Potential missed FU3 diagnostics" }))
+    .toContainText("Nominal FU3 time overlaps today's configured quiet hours");
+  await expect(page.getByRole("link", { name: "Inspect conversation" }))
+    .toHaveAttribute("href", "/inbox?contact=106");
   await expect(activity.getByRole("link", { name: "Open conversation" }).first())
     .toHaveAttribute("href", "/inbox?contact=101");
   await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
@@ -1527,6 +1536,46 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
   await expect.poll(() => calls.at(-1)?.channel).toBe("instagram");
   await activity.getByRole("combobox", { name: "Activity period" }).selectOption("30");
   await expect.poll(() => calls.at(-1)?.days).toBe("30");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up Activity distinguishes provider ID and unconfirmed claims and clears stale totals during refetch", async ({ page }) => {
+  const calls = [];
+  await mockPortalApi(page, { loggedIn: true,
+    followUpActivity: async (filters) => {
+      calls.push(filters);
+      if (filters.channel === "instagram") await new Promise((resolve) => setTimeout(resolve, 550));
+      return filters.channel === "instagram" ? {
+        items: [], total: 0, page: 1, hasMore: false, diagnostics: [],
+        summary: { sent: 0, pending: 0, failed: 0, skipped: 0, attention: 0 },
+      } : {
+        items: [
+          { event_id: "message:200", occurred_at: "2026-10-09T09:20:00Z", contact_id: 200,
+            channel: "whatsapp", type: "sequence", step: 1, state: "pending", raw_status: "pending",
+            detail: "", provider_evidence: "provider_id", media_type: "image" },
+          { event_id: "message:201", occurred_at: "2026-10-09T09:18:00Z", contact_id: 201,
+            channel: "whatsapp", type: "sequence", step: 2, state: "pending", raw_status: "pending",
+            detail: "", provider_evidence: "none", media_type: "text" },
+        ],
+        total: 2, page: 1, hasMore: false, diagnostics: [],
+        summary: { sent: 0, pending: 2, failed: 0, skipped: 0, attention: 0 },
+      };
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const activity = page.getByRole("region", { name: "Follow-up delivery activity" });
+  await expect(activity).toContainText("Provider message ID recorded, but acceptance timestamp is unavailable");
+  await expect(activity).toContainText("Send has no stored provider acceptance evidence");
+  await expect(activity).toContainText("Image");
+  const totals = activity.getByLabel("Follow-up activity totals");
+  await expect(totals).toContainText("2");
+  await activity.getByRole("combobox", { name: "Activity channel" }).selectOption("instagram");
+  await expect(totals).not.toContainText("2");
+  await expect(totals).toContainText("—");
+  await expect.poll(() => calls.at(-1)?.channel).toBe("instagram");
+  await expect(activity.getByText("No recorded events match these filters")).toBeVisible();
+  await expect(totals).not.toContainText("2");
   await expectNoHorizontalPageOverflow(page);
 });
 
