@@ -80,10 +80,10 @@ export const api = {
     request(
       `/conversations/${contactId}/whatsapp-templates${force ? "?refresh=true" : ""}`
     ),
-  recordWhatsAppOptIn: (contactId, source, confirmed) =>
+  recordWhatsAppOptIn: (contactId, source, confirmed, marketingConsentConfirmed = false) =>
     request(`/conversations/${contactId}/whatsapp-opt-in`, {
       method: "POST",
-      body: JSON.stringify({ source, confirmed }),
+      body: JSON.stringify({ source, confirmed, ...(marketingConsentConfirmed ? { marketingConsentConfirmed: true } : {}) }),
     }),
   sendWhatsAppTemplate: (contactId, payload) =>
     request(`/conversations/${contactId}/whatsapp-templates/send`, {
@@ -232,6 +232,7 @@ export const api = {
   restoreAdvancedConfig: (snapshotId) =>
     request(`/advanced-config/restore/${snapshotId}`, { method: "POST" }),
   getCommentAutomationStatus: () => request("/config/comment-automation/status"),
+  getFreeEntryStatus: () => request("/config/automated-follow-up/free-entry-status"),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
   recoverUnassignedLeads: () =>
     request("/config/lead-distribution/recover-unassigned", { method: "POST" }),

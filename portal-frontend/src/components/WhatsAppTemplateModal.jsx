@@ -136,6 +136,7 @@ export default function WhatsAppTemplateModal({
   const [values, setValues] = useState({ header: [], body: [] });
   const [optInSource, setOptInSource] = useState("");
   const [optInConfirmed, setOptInConfirmed] = useState(false);
+  const [marketingOptInConfirmed, setMarketingOptInConfirmed] = useState(false);
   const [marketingConsentConfirmed, setMarketingConsentConfirmed] = useState(false);
   const [recordingOptIn, setRecordingOptIn] = useState(false);
   const [sending, setSending] = useState(false);
@@ -185,6 +186,7 @@ export default function WhatsAppTemplateModal({
     setValues({ header: [], body: [] });
     setOptInSource("");
     setOptInConfirmed(false);
+    setMarketingOptInConfirmed(false);
     setMarketingConsentConfirmed(false);
     setActionError("");
     loadCatalog();
@@ -241,10 +243,12 @@ export default function WhatsAppTemplateModal({
       const updated = await api.recordWhatsAppOptIn(
         contactId,
         source,
-        optInConfirmed
+        optInConfirmed,
+        marketingOptInConfirmed
       );
       setOptInSource("");
       setOptInConfirmed(false);
+      setMarketingOptInConfirmed(false);
       onOptInRecorded?.(updated);
       await loadCatalog();
     } catch (err) {
@@ -336,17 +340,20 @@ export default function WhatsAppTemplateModal({
 
           {!loading &&
             catalog &&
-            (!catalog.eligibility?.allowed || marketingReconsentNeeded) && (
+            (!catalog.eligibility?.allowed || marketingReconsentNeeded || selected?.category === "MARKETING") && (
             <form onSubmit={recordOptIn} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <p className="text-sm font-bold text-amber-900">
                 {marketingReconsentNeeded
                   ? "WhatsApp marketing opt-in required"
+                  : selected?.category === "MARKETING" && catalog.eligibility?.allowed ? "Record verified WhatsApp marketing consent"
                   : "WhatsApp opt-in required"}
               </p>
               <p className="mt-1 text-xs leading-5 text-amber-800">
                 {marketingReconsentNeeded
                   ? "This customer opted out of WhatsApp marketing. Record a real, newer explicit consent source that specifically covers promotional WhatsApp messages before sending a MARKETING template again."
-                  : eligibilityCopy(catalog.eligibility)}
+                  : selected?.category === "MARKETING" && catalog.eligibility?.allowed
+                    ? "For 7-day promotional follow-ups, confirm the customer's actual marketing consent and record its source. Leave the marketing box unchecked for service-only messaging."
+                    : eligibilityCopy(catalog.eligibility)}
               </p>
               <label className="mt-3 block text-[11px] font-semibold text-amber-900">
                 Where did the customer opt in?
@@ -373,6 +380,15 @@ export default function WhatsAppTemplateModal({
                     ? "I confirm this customer explicitly agreed again to receive WhatsApp marketing/promotional messages."
                     : "I confirm this customer explicitly agreed to receive WhatsApp messages."}
                 </span>
+              </label>
+              <label className="mt-3 flex items-start gap-2 text-[10px] font-medium leading-4 text-amber-900">
+                <input type="checkbox" checked={marketingOptInConfirmed}
+                  onChange={(event) => setMarketingOptInConfirmed(event.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  aria-label="Customer expressly consented to marketing follow-ups" />
+                <span>I also verified this customer expressly agreed to WhatsApp marketing and
+                  promotional follow-ups. Save the evidence in the source field above.
+                  Leave unchecked for service-only WhatsApp permission.</span>
               </label>
               <button
                 type="submit"

@@ -30,6 +30,7 @@ const DEFAULT_FOLLOW_UP = {
   videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
+  freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
 };
 
@@ -172,6 +173,23 @@ function normalizeFollowUpSettings(value = {}) {
     additionalSteps: Array.isArray(value.additionalSteps)
       ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
       : [],
+    freeEntry: {
+      enabled: value?.freeEntry?.enabled === true,
+      templateName: String(value?.freeEntry?.templateName || ""),
+      language: String(value?.freeEntry?.language || "auto"),
+      fallbackLanguage: String(value?.freeEntry?.fallbackLanguage || "zh_CN"),
+      templateRules: Array.isArray(value?.freeEntry?.templateRules) ? value.freeEntry.templateRules.map((rule) => ({
+        slotHours: Number(rule.slotHours),
+        serviceName: String(rule.serviceName || ""),
+        templateName: String(rule.templateName || ""),
+        mediaUrl: String(rule.mediaUrl || ""),
+        mediaKey: String(rule.mediaKey || ""),
+        videoCodecVerified: rule.videoCodecVerified === true,
+      })) : [],
+      slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
+        ? value.freeEntry.slotsHours.map(Number)
+        : [26, 50, 74, 98, 122, 162],
+    },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
@@ -199,6 +217,7 @@ function followUpFormFromSettings(value = {}) {
     videoFilename: settings.videoFilename,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
+    freeEntry: settings.freeEntry,
     pricingReminder: settings.pricingReminder,
   };
 }
@@ -534,6 +553,14 @@ export default function Tools() {
   }
 
   function followUpValidationError() {
+    if (form.freeEntry?.enabled) {
+      if (!/^[a-z0-9_]+$/.test(String(form.freeEntry.templateName || ""))) {
+        return "Enter an approved WhatsApp MARKETING template name before enabling free-entry follow-ups.";
+      }
+      if (!Array.isArray(form.freeEntry.slotsHours) || !form.freeEntry.slotsHours.length) {
+        return "Select an extended WhatsApp follow-up schedule.";
+      }
+    }
     const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
     const quietStart = String(form.quietHours?.start || "").trim();
     const quietEnd = String(form.quietHours?.end || "").trim();
@@ -822,6 +849,21 @@ export default function Tools() {
           videoFilename: form.videoFilename,
           serviceOverrides,
           additionalSteps,
+          freeEntry: {
+            enabled: form.freeEntry?.enabled === true,
+            templateName: String(form.freeEntry?.templateName || "").trim(),
+            language: String(form.freeEntry?.language || "auto"),
+            fallbackLanguage: String(form.freeEntry?.fallbackLanguage || "zh_CN"),
+            templateRules: (form.freeEntry?.templateRules || []).map((rule) => ({
+              slotHours: Number(rule.slotHours),
+              serviceName: rule.serviceName.trim(),
+              templateName: rule.templateName.trim(),
+              mediaUrl: (rule.mediaUrl || "").trim(),
+              mediaKey: (rule.mediaKey || "").trim(),
+              videoCodecVerified: rule.videoCodecVerified === true,
+            })),
+            slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
+          },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -1794,6 +1836,22 @@ function FollowUpTool({
   const [previewStepIndex, setPreviewStepIndex] = useState(0);
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
+  const [freeEntryStatus, setFreeEntryStatus] = useState(null);
+  const [freeEntryStatusError, setFreeEntryStatusError] = useState("");
+  const [freeEntryStatusLoading, setFreeEntryStatusLoading] = useState(false);
+  const refreshFreeEntryStatus = useCallback(async () => {
+    setFreeEntryStatusLoading(true);
+    try {
+      const status = await api.getFreeEntryStatus();
+      setFreeEntryStatus(status);
+      setFreeEntryStatusError("");
+    } catch (error) {
+      setFreeEntryStatusError(error.message || "Could not verify Meta billing status.");
+    } finally {
+      setFreeEntryStatusLoading(false);
+    }
+  }, []);
+  useEffect(() => { refreshFreeEntryStatus(); }, [refreshFreeEntryStatus]);
 
   const allSteps = [
     {
@@ -2465,6 +2523,277 @@ function FollowUpTool({
                 />
               </div>
             </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold">WhatsApp ad leads: extended free-entry follow-ups</h3>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  Up to 7 days for qualifying Click-to-WhatsApp conversations. Only use an approved, static MARKETING template.
+                  Sends are blocked without Meta free-entry billing evidence and recorded marketing consent.
+                </p>
+              </div>
+              <Switch
+                checked={form.freeEntry?.enabled === true}
+                ariaLabel="Enable extended WhatsApp free-entry follow-ups"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  freeEntry: { ...current.freeEntry, enabled: current.freeEntry?.enabled !== true },
+                }))}
+              />
+            </div>
+            <div className="mt-3 rounded-xl border border-[var(--color-border)] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold">Free-entry eligibility and billing</p>
+                <button type="button" className="text-xs font-semibold text-[var(--color-primary)]"
+                  disabled={freeEntryStatusLoading} onClick={refreshFreeEntryStatus}>
+                  {freeEntryStatusLoading ? "Checking..." : "Refresh"}
+                </button>
+              </div>
+              {freeEntryStatusError ? <p className="mt-2 text-xs text-red-600">{freeEntryStatusError}</p> : null}
+              {freeEntryStatus ? (
+                <>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    Server sending: {freeEntryStatus.enabledOnServer ? "Enabled" : "Disabled"}
+                    {" · "}Tools: {freeEntryStatus.enabledInTools ? "Enabled" : "Disabled"}
+                    {" · "}Safe billing ceiling: {freeEntryStatus.periodMaxHours || 72}h
+                    {freeEntryStatus.sevenDayVerified ? " (7-day rollout verified)" : " (extended rollout unverified)"}
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {[
+                      ["Ad leads", freeEntryStatus.leads?.ad_leads || 0],
+                      ["Marketing opted-in", freeEntryStatus.leads?.explicit_marketing_optins || 0],
+                      ["Confirmed free-entry", freeEntryStatus.leads?.verified_free_entry || 0],
+                      ["Billed callbacks", freeEntryStatus.leads?.confirmed_billable || 0],
+                    ].map(([label, value]) => (
+                      <div className="rounded-lg bg-[var(--color-bg)] p-2" key={label}>
+                        <p className="text-base font-bold">{value}</p>
+                        <p className="text-[10px] text-[var(--color-text-muted)]">{label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    Attempt outcomes: {(freeEntryStatus.attempts || []).map((item) =>
+                      `${item.status}: ${item.count}`).join(" · ") || "No extended sends yet"}
+                  </p>
+                  {(freeEntryStatus.recentAttempts || []).length > 0 ? (
+                    <div className="mt-2 max-h-32 overflow-y-auto text-[11px] text-[var(--color-text-muted)]">
+                      {(freeEntryStatus.recentAttempts || []).map((item, index) => (
+                        <p key={index}>Contact #{item.contact_id} · {item.slot_hours}h · {item.status}
+                          {item.billable ? " · Billable" : ""} {item.error ? `· ${item.error}` : ""}</p>
+                      ))}
+                    </div>
+                  ) : null}
+                  {(freeEntryStatus.contactDetails || []).length > 0 ? (
+                    <div className="mt-3">
+                      <p className="text-[11px] font-semibold">Recent lead eligibility and maximum expiry</p>
+                      <div className="mt-1 max-h-44 overflow-y-auto space-y-1 text-[11px]">
+                        {freeEntryStatus.contactDetails.map((row) => (
+                          <div key={row.contact_id}
+                            className="rounded-lg border border-[var(--color-border)] p-2">
+                            <p>Contact #{row.contact_id}
+                              {row.treatment_interest ? ` · ${row.treatment_interest}` : ""}
+                            </p>
+                            <p className="text-[var(--color-text-muted)]">
+                              {String(row.eligibility_reason || "unknown").replaceAll("_", " ")}
+                              {row.last_skip_reason ? ` · Last skip: ${row.last_skip_reason.replaceAll("_", " ")}` : ""}
+                            </p>
+                            <p className="text-[var(--color-text-muted)]">
+                              {row.free_entry_max_expires_at
+                                ? `Max expiry: ${new Date(row.free_entry_max_expires_at).toLocaleString("en-MY", {timeZone:"Asia/Kuala_Lumpur"})}`
+                                : "No confirmed free-entry start"}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                    Confirmation reflects past Meta callbacks, not a guarantee of future free sends.
+                    Never automatically treat ad clicks as marketing opt-in.
+                  </p>
+                </>
+              ) : null}
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-semibold">
+                Approved template name
+                <input
+                  type="text"
+                  value={form.freeEntry?.templateName || ""}
+                  onChange={(event) => setForm((current) => ({
+                    ...current, freeEntry: { ...current.freeEntry, templateName: event.target.value }
+                  }))}
+                  placeholder="lead_follow_up"
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
+                  aria-label="Free-entry template name"
+                />
+              </label>
+              <label className="block text-xs font-semibold">
+                Template language
+                <select
+                  value={form.freeEntry?.language || "auto"}
+                  onChange={(event) => setForm((current) => ({
+                    ...current, freeEntry: { ...current.freeEntry, language: event.target.value }
+                  }))}
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
+                  aria-label="Free-entry template language"
+                >
+                  <option value="auto">Auto-detect conversation language</option>
+                  <option value="zh_CN">Chinese (zh_CN)</option>
+                  <option value="en_US">English (en_US)</option>
+                  <option value="ms">Malay (ms)</option>
+                </select>
+              </label>
+            </div>
+            <label className="mt-3 block text-xs font-semibold">
+              Fallback language when no approved customer-language version exists
+              <select aria-label="Approved template fallback language"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                value={form.freeEntry?.fallbackLanguage || "zh_CN"}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  freeEntry: { ...current.freeEntry, fallbackLanguage: event.target.value },
+                }))}>
+                <option value="zh_CN">Chinese (zh_CN)</option>
+                <option value="en_US">English (en_US)</option>
+                <option value="ms">Malay (ms)</option>
+              </select>
+              <span className="mt-1 block text-[11px] font-normal text-[var(--color-text-muted)]">
+                Only the identical template name in this approved language may be used. Otherwise skip.
+              </span>
+            </label>
+            <label className="mt-3 block text-xs font-semibold">
+              Extended template schedule
+              <select
+                value={(form.freeEntry?.slotsHours || []).join(",")}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  freeEntry: { ...current.freeEntry, slotsHours: event.target.value.split(",").map(Number) }
+                }))}
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
+                aria-label="Free-entry follow-up schedule"
+              >
+                <option value="26,50,74,98,122,162">Days 1-6 and before Day 7 closes (six reminders)</option>
+                <option value="26,50,98,162">Days 1, 2, 4 and near Day 7 (four reminders)</option>
+                <option value="26,50,98">Days 1, 2 and 4 (three reminders)</option>
+              </select>
+            </label>
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold">Treatment-specific approved templates</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Optional overrides for individual days and treatments (including 3D + 9D).
+                    Use an HTTPS media URL for an approved IMAGE/VIDEO header template.
+                    Private R2 keys are not directly supported.
+                  </p>
+                </div>
+                <button type="button" aria-label="Add treatment follow-up template"
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-semibold"
+                  onClick={() => setForm((current) => ({
+                    ...current,
+                    freeEntry: {
+                      ...current.freeEntry,
+                      templateRules: [
+                        ...(current.freeEntry?.templateRules || []),
+                        { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
+                          serviceName: services?.[0]?.name || "",
+                          templateName: "", mediaUrl: "", mediaKey: "", videoCodecVerified: false }
+                      ],
+                    },
+                  }))}>Add rule</button>
+              </div>
+              {(form.freeEntry?.templateRules || []).map((rule, index) => (
+                <div key={index} className="grid gap-2 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold">Follow-up slot
+                    <select aria-label={`Extended template slot ${index + 1}`} value={rule.slotHours}
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, slotHours: Number(event.target.value) } : r)
+                        }
+                      }))}>
+                      {(form.freeEntry?.slotsHours || []).map((hour) => <option key={hour} value={hour}>{hour} hours</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold">Treatment
+                    <select aria-label={`Extended template treatment ${index + 1}`} value={rule.serviceName}
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, serviceName: event.target.value } : r)
+                        }
+                      }))}>
+                      <option value="">Select treatment</option>
+                      {(services || []).map((service) =>
+                        <option key={service.name} value={service.name}>{service.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold">Approved marketing template name
+                    <input aria-label={`Extended treatment template name ${index + 1}`}
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      value={rule.templateName}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, templateName: event.target.value } : r)
+                        }
+                      }))}/>
+                  </label>
+                  <label className="text-xs font-semibold">Stored follow-up video key (optional)
+                    <input aria-label={`Extended template R2 video key ${index + 1}`}
+                      placeholder="Paste the existing video key from Follow-up Tools"
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      value={rule.mediaKey || ""}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, mediaKey: event.target.value } : r)
+                        }
+                      }))}/>
+                  </label>
+                  <label className="text-xs font-semibold">Approved media URL (optional)
+                    <input type="url" aria-label={`Extended template media URL ${index + 1}`}
+                      placeholder="https://..."
+                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
+                      value={rule.mediaUrl || ""}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, mediaUrl: event.target.value } : r)
+                        }
+                      }))}/>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-medium sm:col-span-2">
+                    <input type="checkbox" checked={rule.videoCodecVerified === true}
+                      onChange={(event) => setForm((current) => ({
+                        ...current, freeEntry: { ...current.freeEntry,
+                          templateRules: current.freeEntry.templateRules.map((r, i) =>
+                            i === index ? { ...r, videoCodecVerified: event.target.checked } : r)
+                        }
+                      }))}/>
+                    I have verified the approved MP4 is encoded with H.264 video and AAC audio (not HEVC). Required for VIDEO headers.
+                  </label>
+                  <button type="button" className="text-left text-xs text-red-600"
+                    aria-label={`Remove treatment template rule ${index + 1}`}
+                    onClick={() => setForm((current) => ({
+                      ...current, freeEntry: { ...current.freeEntry,
+                        templateRules: current.freeEntry.templateRules.filter((_, i) => i !== index)
+                      }
+                    }))}>Remove rule</button>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+              Times are measured from the first qualifying business reply. The server kill switch
+              WHATSAPP_FEP_FOLLOWUPS_ENABLED must also be true. No paid fallback is used.
+              Unknown eligibility, closed windows, quiet hours, replies, bookings and opt-outs stop or skip sends.
+              Meta does not guarantee every template will be free, so confirm billing with actual callbacks.
+            </p>
           </Card>
         </div>
 

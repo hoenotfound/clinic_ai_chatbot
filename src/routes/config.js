@@ -13,10 +13,13 @@ const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
 const commentAutomationReadiness = require("../services/commentAutomationReadinessService");
+const freeEntryReportRepo = require("../db/whatsappFreeEntryReportRepo");
+const { freeEntryEnabled } = require("../utils/whatsappFreeEntryWindow");
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 const { normalizeQuietHours } = require("../utils/quietHours");
+const { SUPPORTED_LANGUAGES, validateTemplateRules } = require("../utils/freeEntryTemplateSelection");
 const {
   findAmbiguousPromotionPackageTerm,
   findOverlappingPromotionFollowUpPair,
@@ -125,6 +128,8 @@ function followUpVideoKeys(value) {
               String(item?.videoKey || "").trim()
             )
           : []),
+        ...(Array.isArray(value.freeEntry?.templateRules) ?
+          value.freeEntry.templateRules.map((rule) => String(rule.mediaKey || "").trim()) : []),
       ]).filter(Boolean)
     ),
   ];
@@ -368,6 +373,22 @@ function isFollowUpStep(value) {
   );
 }
 
+function isFreeEntryFollowUpConfig(value) {
+  if (!isPlainObject(value) || typeof value.enabled !== "boolean" ||
+      typeof value.templateName !== "string" ||
+      typeof value.language !== "string" ||
+      !Array.isArray(value.slotsHours) ||
+      value.slotsHours.length < 1 || value.slotsHours.length > 6 ||
+      value.slotsHours.some((hour) => !Number.isInteger(hour) || hour < 25 || hour > 166) ||
+      new Set(value.slotsHours).size !== value.slotsHours.length ||
+      !SUPPORTED_LANGUAGES.has(value.language) ||
+      (value.fallbackLanguage !== undefined && !["zh_CN","en_US","ms"].includes(value.fallbackLanguage)) ||
+      (value.enabled && !/^[a-z0-9_]+$/.test(value.templateName)) ||
+      !validateTemplateRules(value.templateRules || [], value.slotsHours,
+        configRepo.getConfig()?.services || [])) return false;
+  return true;
+}
+
 function isAutomatedFollowUpConfig(value) {
   if (
     !isPlainObject(value) ||
@@ -378,6 +399,7 @@ function isAutomatedFollowUpConfig(value) {
     !Array.isArray(value.additionalSteps) ||
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
+    (value.freeEntry !== undefined && !isFreeEntryFollowUpConfig(value.freeEntry)) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
         typeof value.pricingReminder.enabled !== "boolean" ||
@@ -596,6 +618,43 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     return null;
   }
 
+  const requestedFreeEntry = requested.freeEntry ?? current?.freeEntry ?? {
+    enabled: false, templateName: "", language: "zh_CN",
+    slotsHours: [26, 50, 74, 98, 122, 162],
+  };
+  if (!isFreeEntryFollowUpConfig(requestedFreeEntry)) return null;
+  const freeEntryName = requestedFreeEntry.templateName.trim();
+  const templateRules = (requestedFreeEntry.templateRules || []).map((rule) => ({
+    slotHours: rule.slotHours,
+    serviceName: rule.serviceName.trim(),
+    templateName: rule.templateName.trim(),
+    mediaUrl: (rule.mediaUrl || "").trim(),
+    mediaKey: (rule.mediaKey || "").trim(),
+    videoCodecVerified: rule.videoCodecVerified === true,
+  }));
+  const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
+  const fallbackLanguage = requestedFreeEntry.fallbackLanguage || "zh_CN";
+  const freeEntryHours = [...requestedFreeEntry.slotsHours].sort((a, b) => a - b);
+  const unchangedFreeEntry = current?.freeEntry?.enabled === true &&
+    current.freeEntry.templateName === freeEntryName &&
+    current.freeEntry.language === freeEntryLanguage &&
+    (current.freeEntry.fallbackLanguage || "zh_CN") === fallbackLanguage &&
+    JSON.stringify(current.freeEntry.slotsHours) === JSON.stringify(freeEntryHours) &&
+    JSON.stringify(current.freeEntry.templateRules || []) === JSON.stringify(templateRules) &&
+    typeof current.freeEntry.activatedAt === "string" &&
+    !Number.isNaN(Date.parse(current.freeEntry.activatedAt));
+  const freeEntry = {
+    enabled: requestedFreeEntry.enabled === true,
+    templateName: freeEntryName,
+    language: freeEntryLanguage,
+    fallbackLanguage,
+    slotsHours: freeEntryHours,
+    templateRules,
+    activatedAt: requestedFreeEntry.enabled === true
+      ? unchangedFreeEntry ? current.freeEntry.activatedAt : new Date().toISOString()
+      : null,
+  };
+
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
@@ -685,6 +744,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     quietHours,
     ...firstStep,
     additionalSteps,
+    freeEntry,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
       socialActivatedAt: socialActivation,
       requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
@@ -1080,6 +1140,27 @@ router.post("/automated-follow-up/translations", async (req, res) => {
     console.error("Failed to translate automated follow-up:", err);
     res.status(502).json({
       error: "The translations could not be generated. Please try again.",
+    });
+  }
+});
+
+router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
+  try {
+    const report = await freeEntryReportRepo.summarize();
+    const clinic = configRepo.getConfig().automatedFollowUp?.freeEntry;
+    return res.json({
+      ...report,
+      enabledInTools: clinic?.enabled === true,
+      enabledOnServer: freeEntryEnabled(),
+      periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
+      sevenDayVerified: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true",
+      note: "Ad referral does not establish marketing opt-in or guarantee that later Meta sends are free.",
+    });
+  } catch (error) {
+    console.error("Failed to fetch WhatsApp free-entry follow-up status:", error);
+    return res.status(503).json({
+      error: "Extended follow-up eligibility and billing status could not be checked.",
+      code: "free_entry_status_unavailable",
     });
   }
 });

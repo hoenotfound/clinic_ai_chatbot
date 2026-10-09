@@ -24,6 +24,8 @@ function normalizeUpdate(update) {
     errorCode: cleanNullable(update?.errorCode),
     errorTitle: cleanNullable(update?.errorTitle),
     errorMessage: cleanNullable(update?.errorMessage),
+    pricingType: cleanNullable(update?.pricingType),
+    pricingBillable: typeof update?.pricingBillable === "boolean" ? update.pricingBillable : null,
   };
   normalized.eventKey = crypto
     .createHash("sha256")
@@ -33,6 +35,8 @@ function normalizeUpdate(update) {
       normalized.errorCode || "",
       normalized.errorTitle || "",
       normalized.errorMessage || "",
+      normalized.pricingType || "",
+      String(normalized.pricingBillable ?? ""),
     ].join("\0"))
     .digest("hex");
   return normalized;
@@ -65,6 +69,35 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
      RETURNING *`,
     values
   );
+  // Billing callbacks are separate from the short-lived status job queue.
+  // Only observed Meta billing evidence is stored. Missing pricing means unknown.
+  const withPricing = normalized.filter((item) => item.pricingType);
+  for (const item of withPricing) {
+    await query(`INSERT INTO whatsapp_free_entry_pricing_evidence
+       (wamid, pricing_type, billable, delivery_status)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (wamid) DO UPDATE
+       SET pricing_type = CASE
+             WHEN whatsapp_free_entry_pricing_evidence.billable = true
+               THEN whatsapp_free_entry_pricing_evidence.pricing_type
+             WHEN EXCLUDED.billable = true THEN EXCLUDED.pricing_type
+             ELSE EXCLUDED.pricing_type
+           END,
+           billable = CASE
+             WHEN whatsapp_free_entry_pricing_evidence.billable = true OR EXCLUDED.billable = true THEN true
+             WHEN whatsapp_free_entry_pricing_evidence.billable = false OR EXCLUDED.billable = false THEN false
+             ELSE NULL
+           END,
+           delivery_status = CASE
+             WHEN whatsapp_free_entry_pricing_evidence.delivery_status = 'failed' THEN 'failed'
+             WHEN EXCLUDED.delivery_status = 'failed' THEN 'failed'
+             WHEN whatsapp_free_entry_pricing_evidence.delivery_status = 'read' THEN 'read'
+             WHEN EXCLUDED.delivery_status = 'read' THEN 'read'
+             WHEN whatsapp_free_entry_pricing_evidence.delivery_status = 'delivered' THEN 'delivered'
+             ELSE EXCLUDED.delivery_status
+           END,
+           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus]);
+  }
   return result.rows;
 }
 

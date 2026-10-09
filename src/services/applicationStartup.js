@@ -4,6 +4,7 @@ const followUpMediaReferencesRepo = require("../db/followUpMediaReferencesRepo")
 const pipelineRepo = require("../db/pipelineRepo");
 const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
+const { start: startWhatsAppFreeEntryFollowUps } = require("./whatsappFreeEntryFollowUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
@@ -157,6 +158,7 @@ async function startApplication({
     startScheduledMessageWorker();
     startCustomerDataLifecycle({ setIntervalFn });
     startAutomatedFollowUps();
+    startWhatsAppFreeEntryFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
