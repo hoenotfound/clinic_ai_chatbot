@@ -20,6 +20,8 @@ const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 const { normalizeQuietHours } = require("../utils/quietHours");
 const { SUPPORTED_LANGUAGES, validateTemplateRules } = require("../utils/freeEntryTemplateSelection");
+const whatsappTemplate = require("../services/whatsappTemplateService");
+const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const {
   findAmbiguousPromotionPackageTerm,
   findOverlappingPromotionFollowUpPair,
@@ -1186,6 +1188,103 @@ router.post("/automated-follow-up/free-only-reconcile", async (req, res) => {
       error: error.message || "Billing reconciliation failed.",
       code: error.code || "billing_reconciliation_unavailable",
     });
+  }
+});
+
+// Template configuration is scoped to the authenticated clinic deployment.
+// Reuse the same Meta catalog and media validation as Inbox. No contact data
+// or template-send permissions are needed for this read-only configuration API.
+router.get("/automated-follow-up/template-catalog", async (req, res) => {
+  const catalog = await whatsappTemplate.listApprovedTemplates({
+    force: String(req.query.refresh || "").toLowerCase() === "true",
+  });
+  if (!catalog.success) {
+    return res.status(catalog.code === "template_catalog_not_configured" ? 503 : 502)
+      .json({ error: catalog.error, code: catalog.code });
+  }
+  const config = configRepo.getConfig();
+  const options = whatsappTemplateMedia.listReusableMedia({ config });
+  const shared = options.map((item) => ({
+    id: item.id, label: item.label, format: item.format,
+    mediaKey: item.format === "VIDEO" ? item.mediaKey : null,
+    imageId: item.format === "IMAGE" ? item.imageId : null,
+    serviceName: item.serviceName || null,
+  }));
+  // Previously saved R2 attachments must remain selectable even when they
+  // no longer appear in current promotional or standard follow-up media.
+  const seenKeys = new Set(shared.map((item) => item.mediaKey).filter(Boolean));
+  for (const rule of config?.automatedFollowUp?.freeEntry?.templateRules || []) {
+    const key = String(rule.mediaKey || "").trim();
+    if (!key || seenKeys.has(key) || !mediaStorage.isSharedFollowUpConfigKey(key) ||
+        !/\.(?:jpe?g|png|mp4)$/i.test(key)) continue;
+    seenKeys.add(key);
+    shared.push({
+      id: "configured:" + crypto.createHash("sha256").update(key).digest("hex").slice(0, 24),
+      label: "Previously attached template media", mediaKey: key,
+      format: /\.mp4$/i.test(key) ? "VIDEO" : "IMAGE",
+    });
+  }
+  res.set("Cache-Control", "private, no-store");
+  return res.json({ templates: catalog.templates, reusableMedia: shared, cached: catalog.cached === true });
+});
+
+// Images use the same clinic-owned shared R2 namespace as validated follow-up
+// videos; no public URL, permanent per-send copies, or Meta send occurs here.
+router.post("/automated-follow-up/template-media-image", handleImageUpload, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Choose a JPEG or PNG image." });
+  if (!mediaStorage.isStorageConfigured()) {
+    return res.status(503).json({ error: "Clinic media storage is not configured." });
+  }
+  try {
+    const buffer = await whatsappTemplateMedia.prepareImage(req.file.buffer, req.file.mimetype);
+    const key = await mediaStorage.uploadMedia(buffer, req.file.mimetype, { contactId: "follow-up-config" });
+    return res.status(201).json({ key, filename: req.file.originalname, format: "IMAGE" });
+  } catch (err) {
+    if (err.code === "invalid_template_media") return res.status(400).json({ error: err.message });
+    console.error("Template image upload failed:", err);
+    return res.status(500).json({ error: "Could not store the image." });
+  }
+});
+
+router.post("/automated-follow-up/template-library-image", async (req, res) => {
+  if (!mediaStorage.isStorageConfigured()) {
+    return res.status(503).json({ error: "Clinic media storage is not configured." });
+  }
+  const selectionId = String(req.body?.selectionId || "");
+  const option = whatsappTemplateMedia.listReusableMedia({ config: configRepo.getConfig() })
+    .find((item) => item.id === selectionId && item.format === "IMAGE");
+  if (!option) return res.status(400).json({ error: "Choose a currently available clinic pricing image." });
+  try {
+    const image = await promoImagesRepo.getPublicImage(option.imageId);
+    if (!image || !["image/jpeg", "image/png"].includes(image.mime_type) ||
+        typeof image.data !== "string" || image.data.length > 7_000_000) {
+      return res.status(400).json({ error: "That pricing image is no longer available." });
+    }
+    const buffer = await whatsappTemplateMedia.prepareImage(
+      Buffer.from(image.data, "base64"), image.mime_type
+    );
+    const key = await mediaStorage.uploadMedia(buffer, image.mime_type, { contactId: "follow-up-config" });
+    return res.status(201).json({ key, filename: option.filename, format: "IMAGE" });
+  } catch (err) {
+    if (err.code === "invalid_template_media") return res.status(400).json({ error: err.message });
+    console.error("Template library image selection failed:", err);
+    return res.status(500).json({ error: "Could not prepare the selected pricing image." });
+  }
+});
+
+router.get("/automated-follow-up/template-media-preview", (req, res) => {
+  const key = String(req.query.key || "").trim();
+  if (!key || key.length > 1024 || !mediaStorage.isSharedFollowUpConfigKey(key) ||
+      !/\.(?:jpe?g|png|mp4)$/i.test(key)) return res.status(404).send("Not found");
+  if (!mediaStorage.isStorageConfigured()) return res.status(503).send("Clinic media storage is not configured.");
+  try {
+    const url = mediaStorage.createPresignedGetUrl(key, { expiresSeconds: 5 * 60 });
+    res.set("Cache-Control", "private, no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    return res.redirect(302, url);
+  } catch (err) {
+    console.error("Follow-up template preview link failed:", err);
+    return res.status(500).send("Could not preview this clinic media.");
   }
 });
 
