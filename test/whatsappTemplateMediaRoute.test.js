@@ -57,9 +57,9 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true } = {}) {
       events.saved.push(row);
       return row;
     });
-  patch(t, mediaStorage, "uploadMedia", async () => {
+  patch(t, mediaStorage, "uploadReusableTemplateMedia", async () => {
     events.r2Uploads += 1;
-    return "messages/7/template-media.png";
+    return { key: "clients/neutro/messages/follow-up-config/templates/test.png", shared: true };
   });
   patch(t, mediaStorage, "deleteMedia", async () => { events.deleted++; });
   patch(t, whatsapp, "uploadMedia", async (buffer, mime, filename) => {
@@ -126,7 +126,7 @@ test("Inbox multipart image flow persists one R2 object then sends a Meta media 
   assert.equal(h.events.metaSends, 1);
   assert.equal(h.events.saved.length, 1);
   assert.equal(h.events.saved[0].whatsapp_template.mediaFormat, "IMAGE");
-  assert.equal(h.events.saved[0].media_key, "messages/7/template-media.png");
+  assert.equal(h.events.saved[0].media_key, "clients/neutro/messages/follow-up-config/templates/test.png");
 });
 
 test("Inbox blocks forged MIME images before any storage or Meta call", async (t) => {
@@ -206,7 +206,7 @@ test("Inbox uses existing R2 video directly and checks codec before sending new 
   assert.equal(h.events.metaSends, 2);
 });
 
-test("Meta media upload failure deletes the orphan R2 upload without recording or sending a message", async (t) => {
+test("Meta upload failure leaves shared content-addressed media for safe reference-aware pruning", async (t) => {
   const h = await harness(t);
   patch(t, whatsapp, "uploadMedia", async () => null);
   const form = new FormData();
@@ -217,7 +217,9 @@ test("Meta media upload failure deletes the orphan R2 upload without recording o
   const response = await h.post(form);
   assert.equal(response.status, 502);
   assert.equal(h.events.r2Uploads, 1);
-  assert.equal(h.events.deleted, 1);
+  // Deleting a content-hash key immediately could remove media referenced
+  // by another simultaneous send. The reference sweeper removes orphans.
+  assert.equal(h.events.deleted, 0);
   assert.equal(h.events.metaSends, 0);
   assert.equal(h.events.saved.length, 0);
 });
