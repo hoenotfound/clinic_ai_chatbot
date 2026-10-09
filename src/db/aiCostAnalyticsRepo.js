@@ -18,7 +18,7 @@ async function getAiCostAnalytics({
       WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
         AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))`;
 
-  const [dailyResult, categoryResult, leadResult, cacheResult] = await Promise.all([
+  const [dailyResult, categoryResult, leadResult, cacheResult, journeyResult] = await Promise.all([
     database.query(
       `WITH calendar AS (
         SELECT generate_series(${dateRange},
@@ -85,6 +85,17 @@ async function getAiCostAnalytics({
       GROUP BY e.model,e.purpose ORDER BY e.purpose,e.model`,
       params
     ),
+    database.query(
+      `SELECT e.lead_id, e.contact_id, COUNT(*)::int AS calls,
+        COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd,
+        COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls
+      FROM ai_usage_events e
+      JOIN leads l ON l.id=e.lead_id AND l.contact_id=e.contact_id
+      WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
+        AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))
+      GROUP BY e.lead_id,e.contact_id ORDER BY usd DESC LIMIT 30`,
+      params
+    ),
   ]);
 
   const rate = Number(fxRate);
@@ -118,6 +129,12 @@ async function getAiCostAnalytics({
     })),
     byContact: leadResult.rows.map((row) => ({
       contactId: Number(row.contact_id), channel: row.channel,
+      calls: Number(row.calls), estimatedUsd: Number(row.usd),
+      estimatedMyr: usdToMyr == null ? null : Number(row.usd) * usdToMyr,
+      unpricedCalls: Number(row.unpriced_calls),
+    })),
+    byLead: journeyResult.rows.map((row) => ({
+      leadId: Number(row.lead_id), contactId: Number(row.contact_id),
       calls: Number(row.calls), estimatedUsd: Number(row.usd),
       estimatedMyr: usdToMyr == null ? null : Number(row.usd) * usdToMyr,
       unpricedCalls: Number(row.unpriced_calls),
