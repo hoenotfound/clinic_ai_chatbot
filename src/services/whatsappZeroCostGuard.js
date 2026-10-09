@@ -200,6 +200,10 @@ async function reserve(to, { database = pool, now = new Date() } = {}) {
     }
     await client.query("COMMIT");
     transaction=false;
+    // Release the scoped connection before a best-effort audit write; a
+    // single-connection pool must not deadlock on its own blocked-send log.
+    await client.release();
+    client=null;
     if (rejected) {
       await logBlock(account,rejected,database);
       return rejected;
@@ -213,7 +217,7 @@ async function reserve(to, { database = pool, now = new Date() } = {}) {
     await logBlock(account,rejectedError,database);
     return rejectedError;
   } finally {
-    if (client) client.release();
+    if (client) await client.release();
   }
 }
 
