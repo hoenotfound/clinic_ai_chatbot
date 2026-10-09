@@ -274,6 +274,10 @@ export const api = {
     request("/config/automated-follow-up/template-library-image", {
       method: "POST", body: JSON.stringify({ selectionId }),
     }),
+  verifyFollowUpTemplateVideo: (selectionId) =>
+    request("/config/automated-follow-up/template-library-video", {
+      method: "POST", body: JSON.stringify({ selectionId }),
+    }),
   reconcileWhatsAppFreeOnly: (payload) => request("/config/automated-follow-up/free-only-reconcile", { method: "POST", body: JSON.stringify(payload) }),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
   recoverUnassignedLeads: () =>
