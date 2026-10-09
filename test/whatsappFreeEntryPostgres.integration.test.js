@@ -151,9 +151,22 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         VALUES('wamid.strict.current','free_entry_point',false,'delivered')
       `);
 
-      const next = await zeroCostGuard.reserve("60121234567", {database:guardDb});
+      // A second current follow-up is allowed to stage its own pending rows.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status)
+        VALUES(20,1,'assistant','Another claimed follow-up',now(),'unknown')
+      `);
+      const secondClaim = await client.query(`
+        INSERT INTO whatsapp_free_entry_followup_attempts
+          (contact_id,first_reply_message_id,slot_hours,message_id,status)
+        VALUES(1,11,26,20,'sending') RETURNING id
+      `);
+      const next = await zeroCostGuard.reserve("60121234567", {
+        database:guardDb,
+        context:{currentMessageId:20,currentFollowUpAttemptId:secondClaim.rows[0].id},
+      });
       assert.equal(next.allowed,true,
-        "Meta confirmed nonbillable pricing permits one further outbound");
+        "Meta confirmed nonbillable pricing permits another claimed follow-up");
       await zeroCostGuard.complete(next.reservationId,
         {success:false,ambiguous:true},guardDb);
       assert.equal((await zeroCostGuard.reserve("60121234567",
@@ -173,13 +186,26 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       assert.equal(audit.rows[0].prior_status,"unknown");
       assert.equal(audit.rows[0].verified_billing_hub,true);
       assert.equal(audit.rows[0].actor,"admin");
+      const proofOfScopedRecovery=await guardDb.query(`
+        SELECT message_id,attempt_id FROM whatsapp_free_only_reconciliations
+        WHERE reservation_id=$1
+      `,[next.reservationId]);
+      assert.equal(proofOfScopedRecovery.rows[0].message_id,20);
+      assert.equal(String(proofOfScopedRecovery.rows[0].attempt_id),
+        String(secondClaim.rows[0].id));
+      const resumed=await zeroCostGuard.reserve("60121234567",{database:guardDb});
+      assert.equal(resumed.allowed,true,
+        "audited recovery excludes only its own former pending rows");
+      await zeroCostGuard.complete(resumed.reservationId,
+        {success:false,providerStatus:400},guardDb);
 
       // An ID from another lead must not exempt the current conversation.
       const invalid = await zeroCostGuard.reserve("60129876543",
         {database:guardDb,context:{currentMessageId:19}});
       assert.equal(invalid.code,"zero_cost_invalid_send_context");
       await client.query("DELETE FROM whatsapp_free_entry_followup_attempts WHERE id=$1",[attemptId]);
-      await client.query("DELETE FROM messages WHERE id=19");
+      await client.query("DELETE FROM whatsapp_free_entry_followup_attempts WHERE id=$1",[secondClaim.rows[0].id]);
+      await client.query("DELETE FROM messages WHERE id IN (19,20)");
     } finally {
       clinicConfig.automatedFollowUp = oldFollowUp;
       if (oldAccount === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
