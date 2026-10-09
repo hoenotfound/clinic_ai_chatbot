@@ -400,6 +400,13 @@ function isAutomatedFollowUpConfig(value) {
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
     (value.freeEntry !== undefined && !isFreeEntryFollowUpConfig(value.freeEntry)) ||
+    (value.whatsappFreeOnly !== undefined &&
+      (!isPlainObject(value.whatsappFreeOnly) ||
+       typeof value.whatsappFreeOnly.enabled !== "boolean" ||
+       (value.whatsappFreeOnly.activatedAt !== null &&
+        value.whatsappFreeOnly.activatedAt !== undefined &&
+        (typeof value.whatsappFreeOnly.activatedAt !== "string" ||
+         Number.isNaN(Date.parse(value.whatsappFreeOnly.activatedAt)))))) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
         typeof value.pricingReminder.enabled !== "boolean" ||
@@ -655,6 +662,24 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       : null,
   };
 
+  const requestedFreeOnly = requested.whatsappFreeOnly ?? current?.whatsappFreeOnly ?? { enabled: false };
+  if (!isPlainObject(requestedFreeOnly) || typeof requestedFreeOnly.enabled !== "boolean") return null;
+  const freeOnlyEnabled = requestedFreeOnly.enabled === true;
+  // Turning this on blocks direct/organic and unverified/late ad leads. A genuine CTWA first text reply inside 24h is allowed to open free entry, but remains contingent on Meta's later nonbillable classification.
+  // Require deliberate confirmation at the API layer, not only a UI warning.
+  if (freeOnlyEnabled && current?.whatsappFreeOnly?.enabled !== true &&
+      requested.whatsappFreeOnly?.acknowledgeImpact !== true) return null;
+  // Re-saving unrelated Tools settings cannot reset the billing alarm.
+  const sameFreeOnlyRun = freeOnlyEnabled && current?.whatsappFreeOnly?.enabled === true &&
+    typeof current.whatsappFreeOnly.activatedAt === "string" &&
+    Number.isFinite(Date.parse(current.whatsappFreeOnly.activatedAt));
+  const whatsappFreeOnly = {
+    enabled: freeOnlyEnabled,
+    activatedAt: freeOnlyEnabled
+      ? sameFreeOnlyRun ? current.whatsappFreeOnly.activatedAt : new Date().toISOString()
+      : null,
+  };
+
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
@@ -745,6 +770,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     ...firstStep,
     additionalSteps,
     freeEntry,
+    whatsappFreeOnly,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
       socialActivatedAt: socialActivation,
       requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
@@ -1144,12 +1170,75 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
+// Operational override; it does not change Meta pricing evidence or waive billing.
+router.post("/automated-follow-up/free-only-reconcile", async (req, res) => {
+  try {
+    const result = await require("../services/whatsappFreeOnlyReconciliationService").reconcile({
+      actor: req.user?.username,
+      reservationId: req.body?.reservationId,
+      reason: req.body?.reason,
+      confirmedBillingHub: req.body?.confirmedBillingHub === true,
+    });
+    res.json(result);
+  } catch (error) {
+    console.error("[WhatsApp free-only] Reconciliation rejected:", error);
+    res.status(error.status || 503).json({
+      error: error.message || "Billing reconciliation failed.",
+      code: error.code || "billing_reconciliation_unavailable",
+    });
+  }
+});
+
 router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
   try {
     const report = await freeEntryReportRepo.summarize();
-    const clinic = configRepo.getConfig().automatedFollowUp?.freeEntry;
+    const followUpConfig = configRepo.getConfig().automatedFollowUp || {};
+    const clinic = followUpConfig.freeEntry;
+    const freeOnly = followUpConfig.whatsappFreeOnly || {};
+    // Meta's callbacks, not the local send result, provide billing evidence.
+    // Monitor the whole WhatsApp account, including staff and AI replies.
+    const billing = await require("../db/db").pool.query(
+      `SELECT COUNT(*)::integer AS total_billable,
+         COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz)::integer AS since_switch,
+         MAX(updated_at) AS most_recent_billable_at
+       FROM whatsapp_free_entry_pricing_evidence WHERE billable=true`,
+      [freeOnly.enabled === true && freeOnly.activatedAt
+        ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]
+    );
+    const freeOnlyAccount = String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+    const db = require("../db/db").pool;
+    const zeroCostGuard = require("../services/whatsappZeroCostGuard");
+    const [gate, blocked, queuedAlerts, sevenDayEvidence] = freeOnlyAccount
+      ? await Promise.all([
+          db.query(`SELECT status,updated_at,reservation_id,wamid IS NOT NULL AS has_message_id
+             FROM whatsapp_free_only_send_gate WHERE phone_number_id=$1`,[freeOnlyAccount]),
+          db.query(`SELECT reason,SUM(count)::integer AS blocked_count,MAX(last_at) AS last_blocked_at
+             FROM whatsapp_free_only_block_events WHERE phone_number_id=$1
+             GROUP BY reason ORDER BY MAX(last_at) DESC LIMIT 8`,[freeOnlyAccount]),
+          db.query(`SELECT COUNT(*) FILTER (WHERE sent_at IS NULL)::integer AS pending,
+             COUNT(*)::integer AS total
+             FROM whatsapp_free_only_billing_alerts WHERE phone_number_id=$1
+               AND observed_at >= $2::timestamptz`,
+            [freeOnlyAccount,freeOnly.enabled === true && freeOnly.activatedAt
+              ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]),
+          db.query(require("../services/whatsappZeroCostGuard").SEVEN_DAY_PROOF_SQL),
+        ])
+      : [{rows:[]},{rows:[]},{rows:[]},{rows:[]}];
     return res.json({
       ...report,
+      freeOnlyEnabled: freeOnly.enabled === true,
+      billingSafety: billing.rows[0],
+      freeOnlyGate: gate.rows[0] || { status: "idle" },
+      recentBlocks: blocked.rows,
+      billingAlerts: queuedAlerts.rows[0] || { pending: 0,total: 0 },
+      telegramBillingAlertsEnabled: telegramAlertService.isTelegramEnabled(),
+      verifiedPost72h: sevenDayEvidence.rows[0]?.verified === true,
+      strictCeilingHours: freeOnly.enabled === true
+        ? await zeroCostGuard.authorizedCeilingHours({ database: db })
+        : process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
+      strictSevenDayBlocked: freeOnly.enabled === true &&
+        process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" &&
+        sevenDayEvidence.rows[0]?.verified !== true,
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
       periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,

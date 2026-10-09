@@ -283,6 +283,10 @@ function enforceConfigPolicy(req, res, user) {
   }
 
   if (parts[0] === "automated-follow-up") {
+    if (parts[1] === "free-only-reconcile") {
+      return req.method === "POST" && user.role === "admin" && canTools && canSettings
+        ? true : forbidden(res, "Billing reconciliation requires an administrator with Manage settings and Manage tools.");
+    }
     if (parts[1] === "free-entry-status" && !hasCapability(user, "view_all_leads")) {
       return forbidden(res, "Viewing cross-contact extended follow-up diagnostics requires View all leads.");
     }

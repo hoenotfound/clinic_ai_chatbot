@@ -4,6 +4,7 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const clinicConfig = require("../config/clinicConfig");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const whatsappTemplates = require("./whatsappTemplateService");
+const zeroCostGuard = require("./whatsappZeroCostGuard");
 const whatsapp = require("./whatsappService");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaCache = require("./whatsappFreeEntryMediaCache");
@@ -20,6 +21,23 @@ const {
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_BATCH_SIZE = 20;
+// Only a strictly policy-rejected request that NEVER reached Meta can be
+// re-claimed. Unknown, failed, accepted, and manual cancellations stay one-shot.
+const SAFE_POLICY_DEFERRAL = "FREE_ONLY_POLICY_DEFERRED_NO_PROVIDER_SEND";
+function safelyDeferredAttemptSql(alias) {
+  return `${alias}.status = 'cancelled'
+    AND ${alias}.error = '${SAFE_POLICY_DEFERRAL}'
+    AND ${alias}.wamid IS NULL
+    AND ${alias}.message_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM messages deferred_message
+      WHERE deferred_message.id = ${alias}.message_id
+        AND deferred_message.contact_id = ${alias}.contact_id
+        AND deferred_message.role = 'assistant'
+        AND deferred_message.whatsapp_message_id IS NULL
+        AND deferred_message.delivery_status = 'cancelled'
+    )`;
+}
 let running = false;
 let timer = null;
 
@@ -46,7 +64,8 @@ const candidateSql = `
            ORDER BY m.created_at DESC, m.id DESC LIMIT 8
          ) recent) AS recent_inbound_messages,
          (SELECT COALESCE(array_agg(slot_hours), '{}') FROM whatsapp_free_entry_followup_attempts existing
-          WHERE existing.first_reply_message_id = first_reply.id) AS claimed_slots,
+          WHERE existing.first_reply_message_id = first_reply.id
+            AND NOT (${safelyDeferredAttemptSql('existing')})) AS claimed_slots,
          (SELECT COALESCE(array_agg(DISTINCT m.whatsapp_template->>'name'), '{}')
             FROM whatsapp_free_entry_followup_attempts previous
             JOIN messages m ON m.id=previous.message_id
@@ -133,6 +152,13 @@ const candidateSql = `
         ON prior_billing.wamid = prior.wamid
       WHERE prior.first_reply_message_id = first_reply.id
         AND prior.id IS DISTINCT FROM $6::bigint
+        -- Reconciliation never retries the original claimed slot. It only
+        -- permits later eligible slots to advance after manual review.
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_free_only_reconciliations audit
+          WHERE audit.attempt_id=prior.id
+            AND audit.verified_billing_hub=true
+        )
         AND (
           prior.status IN ('sending', 'failed', 'unknown')
           OR (
@@ -189,6 +215,7 @@ const candidateSql = `
         SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
         WHERE prior.first_reply_message_id = first_reply.id
           AND prior.slot_hours = slot.hours
+          AND NOT (${safelyDeferredAttemptSql('prior')})
       )
       AND now() >= first_reply.created_at +
         (slot.hours - CASE WHEN slot.hours = (SELECT max(n) FROM unnest($4::integer[]) AS n WHERE n < $8::integer)
@@ -225,6 +252,16 @@ function settings(env = process.env) {
     templateName, language, fallbackLanguage, slots, templateRules, sevenDayVerified };
 }
 
+// The worker and the final provider-send guard MUST agree on the ceiling.
+// When free-only mode is on, the seven-day flag alone cannot consume slots
+// beyond 72h. Fail closed when pricing evidence is unavailable, before any
+// attempt is claimed or a template is uploaded to Meta.
+async function alignedSettings(active, database = pool) {
+  if (!active || !zeroCostGuard.enabled()) return active;
+  const ceiling = await zeroCostGuard.authorizedCeilingHours({ database });
+  return { ...active, sevenDayVerified: ceiling === 168 };
+}
+
 function selectedSlot(candidate, slots, now = new Date()) {
   const reply = new Date(candidate.first_reply_at).getTime();
   const clock = new Date(now).getTime();
@@ -251,18 +288,20 @@ function selectedSlot(candidate, slots, now = new Date()) {
 async function listCandidates(active, database = pool, contactId = null, {
   excludeMessageId = null, currentAttemptId = null, offset = 0,
 } = {}) {
+  const effective = await alignedSettings(active, database);
   const query = await database.query(candidateSql,
-    [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots,
-      excludeMessageId, currentAttemptId, offset, active.sevenDayVerified ? 168 : 72]);
+    [effective.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, effective.slots,
+      excludeMessageId, currentAttemptId, offset, effective.sevenDayVerified ? 168 : 72]);
   return query.rows;
 }
 
-async function claim(candidate, slotHours, active, database = pool) {
+async function claim(candidate, slotHours, requested, database = pool) {
   const client = await database.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
       [CONVERSATION_LOCK_NAMESPACE, candidate.contact_id]);
+    const active = await alignedSettings(requested, client);
     const fresh = (await listCandidates(active, client, candidate.contact_id))[0];
     if (!fresh || fresh.first_reply_message_id !== candidate.first_reply_message_id ||
         !active.slots.includes(slotHours) ||
@@ -281,14 +320,29 @@ async function claim(candidate, slotHours, active, database = pool) {
       await client.query("ROLLBACK");
       return null;
     }
-    const result = await client.query(
-      `INSERT INTO whatsapp_free_entry_followup_attempts
-       (contact_id, first_reply_message_id, slot_hours)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (first_reply_message_id, slot_hours) DO NOTHING
-       RETURNING id`,
-      [candidate.contact_id, candidate.first_reply_message_id, slotHours]
+    // Only a conclusively unattempted, strictly policy-blocked slot may
+    // be recycled under the same per-conversation advisory lock.
+    let result = await client.query(
+      `UPDATE whatsapp_free_entry_followup_attempts deferred
+       SET status='sending',message_id=NULL,wamid=NULL,error=NULL,
+           updated_at=now()
+       WHERE deferred.contact_id=$1
+         AND deferred.first_reply_message_id=$2
+         AND deferred.slot_hours=$3
+         AND (${safelyDeferredAttemptSql('deferred')})
+       RETURNING deferred.id`,
+      [candidate.contact_id,candidate.first_reply_message_id,slotHours]
     );
+    if (!result.rows.length) {
+      result = await client.query(
+        `INSERT INTO whatsapp_free_entry_followup_attempts
+         (contact_id, first_reply_message_id, slot_hours)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (first_reply_message_id, slot_hours) DO NOTHING
+         RETURNING id`,
+        [candidate.contact_id, candidate.first_reply_message_id, slotHours]
+      );
+    }
     await client.query("COMMIT");
     return result.rows[0]?.id || null;
   } catch (err) {
@@ -309,7 +363,8 @@ async function finish(attemptId, status, values = {}) {
   );
 }
 
-async function processCandidate(candidate, active, template, now = new Date(), explicitSpec = null) {
+async function processCandidate(candidate, requested, template, now = new Date(), explicitSpec = null) {
+  const active = await alignedSettings(requested);
   const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
   const spec = explicitSpec || enrichAutomatedTemplateSpec(
@@ -320,6 +375,16 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   if (!await validateApprovedMedia(template, spec)) return "media_validation_failed";
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
   if (quiet.active) return "quiet_hours";
+
+  // Never claim/consume a follow-up slot to discover that the provider-send
+  // guard is going to reject it. If another send is pending or the strict
+  // 7-day billing evidence is absent, leave this slot eligible for a later
+  // sweep. Final reserve() still locks and rechecks right before calling Meta.
+  const preflight = await zeroCostGuard.preflightTemplate(candidate.whatsapp_number, { now });
+  if (!preflight.allowed) {
+    console.warn("[WhatsApp FEP] deferred before claim:", preflight.code);
+    return "billing_preflight_deferred";
+  }
 
   const attemptId = await claim(candidate, slotHours, active);
   if (!attemptId) return "already_claimed_or_ineligible";
@@ -398,7 +463,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
 
     // Recheck after writes and immediately before the provider call. If Meta's
     // approval or the lead's state changed, keep the claim terminal.
-    const liveActive = settings();
+    const liveActive = await alignedSettings(settings());
     const fresh = liveActive &&
       (await listCandidates(liveActive, pool, candidate.contact_id, {
         excludeMessageId: message.id, currentAttemptId: attemptId,
@@ -453,7 +518,9 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       { templateName: template.name, languageCode: template.language,
         templateCategory: "MARKETING", components: readyToSend.components,
         treatmentInterest: spec.identifiedTreatment || null,
-        expectedOptInAt: fresh.whatsapp_opt_in_at }
+        expectedOptInAt: fresh.whatsapp_opt_in_at,
+        currentMessageId: message.id,
+        currentFollowUpAttemptId: attemptId }
     );
     if (response?.wamid) {
       acceptedWamid = response.wamid;
@@ -471,6 +538,23 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         reason: "free_entry_template_accepted"
       });
       return "accepted";
+    }
+    // Provider-policy blocks are not a failed send attempt. They cannot
+    // generate WhatsApp charges, and must not poison eligibility for later
+    // slots as though a provider request had actually been attempted.
+    if (response?.policyBlocked===true && !response?.wamid) {
+      await messagesRepo.setDeliveryStatusById(
+        message.id,"cancelled",response.error||"WhatsApp policy blocked send"
+      );
+      // Only central free-only guard denials can be retryable; consent and
+      // opt-out denials must not silently restart marketing sends.
+      const retryable = String(response?.policyCode || "").startsWith("zero_cost_");
+      await finish(attemptId,"cancelled",{
+        messageId:message.id,
+        error:retryable ? SAFE_POLICY_DEFERRAL :
+          (response.error || "WhatsApp messaging policy denied send")
+      });
+      return retryable ? "policy_deferred" : "policy_cancelled";
     }
     const status = response?.unknown ? "unknown" : "failed";
     // An explicit Meta rejection can indicate an invalid/expired media ID.
@@ -504,10 +588,11 @@ async function processCandidate(candidate, active, template, now = new Date(), e
 
 async function run({ now = new Date() } = {}) {
   if (running) return { skipped: true };
-  const active = settings();
-  if (!active) return { disabled: true };
+  const configured = settings();
+  if (!configured) return { disabled: true };
   running = true;
   try {
+    const active = await alignedSettings(configured);
     const result = { candidates: 0, accepted: 0, skipped: 0 };
     const catalog = await whatsappTemplates.listApprovedTemplates();
     if (!catalog.success) return { disabled: true, reason: "template_catalog_unavailable" };
@@ -572,4 +657,4 @@ function start() {
   return () => { clearInterval(timer); timer = null; };
 }
 
-module.exports = { settings, selectedSlot, listCandidates, claim, processCandidate, run, start };
+module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start, SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql };

@@ -560,9 +560,10 @@ function socialProviderSendOptions(message, contact, options = {}) {
     message?.id,
     contact?.channel
   );
+  const withCurrentMessage = { ...options, currentMessageId: message?.id };
   return recorder
-    ? { ...options, onProviderMessageId: recorder }
-    : options;
+    ? { ...withCurrentMessage, onProviderMessageId: recorder }
+    : withCurrentMessage;
 }
 
 async function sendStoredMessage(contact, message, options = {}) {
@@ -1543,6 +1544,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       expectedOptInAt: metadata.consentOptInAt,
       templateCategory: metadata.category,
       treatmentInterest: templateTreatmentInterest,
+      currentMessageId: saved.id,
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";
