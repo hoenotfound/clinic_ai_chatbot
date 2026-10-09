@@ -1295,11 +1295,10 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
     name: "feedback.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4"),
   });
   await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
-  await expect(page.getByText(/Uploaded MP4s are checked server-side/)).toBeVisible();
-  await page.getByText("Advanced: trusted HTTPS media URL").click();
-  await page.getByLabel("Extended template media URL 1").fill("https://approved.example.test/changed-video.mp4");
-  await expect(page.getByLabel(/I verified this video is H.264 with AAC audio/)).not.toBeChecked();
-  await page.getByLabel("Extended template media URL 1").fill("");
+  await expect(page.getByLabel("Video codec status 1"))
+    .toContainText("server rechecks the exact R2 video");
+  await expect(page.getByLabel("Extended template media URL 1")).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: /I verified this video is H.264/ })).toHaveCount(0);
   await page.getByLabel("Extended template video attachment 1").setInputFiles({
     name: "feedback-safe.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4"),
   });
