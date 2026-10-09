@@ -35,7 +35,7 @@ function explicitPromotionConsent(message, { businessName } = {}) {
   if (!raw || !businessIsNamed(raw, businessName)) return null;
   // Reject an otherwise matching message if it contains a refusal or an
   // opt-out. Never infer renewed consent from a later ordinary enquiry.
-  if (/(?:不同意|不愿意|不想|不要|别(?:发|通知)|拒绝|取消订阅|stop\s+promotions?|do\s+not|don't|not\s+interested|unsubscribe|tak\s+nak|tidak\s+mahu|jangan)/i.test(text)) return null;
+  if (/(?:不同意|不愿意|不想|不需要|不要|别(?:发|通知)|拒绝|取消订阅|stop\s+promotions?|do\s+not|don't|not\s+interested|unsubscribe|tak\s+nak|tidak\s+mahu|jangan|\b(?:another|other)\s+(?:clinic|business|provider)\b|(?:其他|别的|別的).{0,8}(?:诊所|診所|商家))/i.test(text)) return null;
   const chineseOffer = /(?:优惠|優惠|促销|促銷|推广|推廣|活动优惠)/.test(text);
   const englishOffer = /\b(?:offers?|promotions?|promos?|deals?)\b/i.test(text);
   const malayOffer = /\b(?:promosi|tawaran)\b/i.test(text);
