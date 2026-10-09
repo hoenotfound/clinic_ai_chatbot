@@ -224,7 +224,7 @@ export default function FollowUpActivity({ active }) {
         </div>
       )}
       {displayedResult && filters.type !== "pricing" && (
-        <div className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4"
+        <div role="region" className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4"
           aria-label="Potential missed FU3 diagnostics">
           <h3 className="text-sm font-bold">Possible missing Follow-up 3 — review only</h3>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
@@ -247,7 +247,7 @@ export default function FollowUpActivity({ active }) {
                   </p>
                   {item.possible_quiet_overlap && (
                     <p className="mt-1 text-amber-800">
-                      Nominal FU3 time overlaps today's configured quiet hours. Adaptive rescheduling,
+                      Nominal FU3 time overlaps the currently configured quiet hours. Adaptive rescheduling,
                       spacing and historical settings mean this does not establish the actual reason.
                     </p>
                   )}
