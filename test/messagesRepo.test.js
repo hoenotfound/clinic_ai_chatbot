@@ -1054,28 +1054,46 @@ test("Inbox message pages include only active reaction metadata", async (t) => {
 });
 
 
-test("contextual-ad history lookup checks earliest persisted inbound turns, not the AI window", async () => {
+test("contextual-ad history checks the earliest persisted full conversation, not the AI window", async () => {
   const scenarios = [
-    [],
-    [{ content: "Hi" }],
-    [{ content: "Hi" }, { content: "English please" }],
-    [{ content: "Hi" }, { content: "English" }, { content: "Hello" }],
+    { rows: [], texts: [] },
+    { rows: [{ role: "user", content: "Hi" }], texts: ["Hi"] },
+    { rows: [
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "Welcome to Neutro Sense" },
+      { role: "user", content: "English please" },
+      { role: "assistant", content: "How can I help?" },
+    ], texts: ["Hi", "English please"] },
+    { rows: [
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "Welcome" },
+      { role: "assistant", content: "Automated follow-up 1" },
+      { role: "assistant", content: "Automated follow-up 2" },
+      { role: "assistant", content: "Automated follow-up 3" },
+    ], texts: null },
+    { rows: [
+      { role: "user", content: "Hi" },
+      { role: "user", content: "English" },
+      { role: "user", content: "Hello" },
+    ], texts: ["Hi", "English", "Hello"] },
+    { rows: [{ role: "assistant", content: "Orphaned bot-only contact" }], texts: null },
   ];
-  for (const rows of scenarios) {
+
+  for (const { rows, texts } of scenarios) {
     let queries = 0;
     const actual = await messagesRepo.getPriorCustomerTextsForAdEnquiry(
       325, 1052, async (sql, params) => {
         queries++;
-        assert.match(sql, /FROM messages/);
-        assert.match(sql, /contact_id = \$1 AND role = 'user' AND id < \$2/);
+        assert.match(sql, /SELECT role, content FROM messages/);
+        assert.match(sql, /contact_id = \$1 AND id < \$2/);
         assert.match(sql, /ORDER BY id ASC/);
-        assert.match(sql, /LIMIT 3/);
+        assert.match(sql, /LIMIT 5/);
         assert.doesNotMatch(sql, /OFFSET|media_key|created_at/);
         assert.deepEqual(params, [325, 1052]);
         return { rows };
       }
     );
-    assert.deepEqual(actual, rows.map((row) => row.content));
+    assert.deepEqual(actual, texts);
     assert.equal(queries, 1);
   }
 });
