@@ -25,6 +25,15 @@ test("detects common WhatsApp opt-out requests in supported chat languages", () 
     "Unsubscribe from marketing",
     "我不想再收到优惠消息",
     "saya tak nak promosi",
+    "Please stop sending me promotions, thanks",
+    "Can you please stop all these promotional offers?",
+    "Please unsubscribe me from marketing updates, thank you.",
+    "I don't want any more offers",
+    "不要再给我发优惠了",
+    "优惠信息不要再发给我了，谢谢",
+    "请不要再发优惠活动给我，谢谢",
+    "Saya tak nak terima promosi lagi, terima kasih",
+    "Jangan hantar promosi lagi ya",
     "Stop promo",
     "Unsubscribe from promos",
     "Unsubcribe from Promos",
@@ -43,6 +52,10 @@ test("does not treat normal customer messages as opt-out requests", () => {
     "stop by at 3pm can?",
     "jangan risau",
     "可以联系我吗",
+    "Any offers for 3D treatment?",
+    "Do you still have promotions?",
+    "我想了解优惠配套",
+    "Does the promotion stop today?",
   ];
 
   for (const text of normalMessages) {
