@@ -174,6 +174,20 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
   };
 }
 
+// The Inbox filter is about time remaining, not whether a particular send is
+// permitted. An opt-out can block sending even while the reply window is open.
+// Messenger/Instagram Human Agent extends the staff-only window to 7 days when enabled.
+export function hasOpenReplyWindow(contact, now = Date.now()) {
+  const policy = messagingPolicyStatus(contact, now);
+  if (!policy.applies) return false;
+
+  const expiresAt = policy.humanAgentWindowExpiresAt || policy.replyWindowExpiresAt;
+  if (!expiresAt) return false;
+  const expiryMs = Date.parse(expiresAt);
+  const currentMs = now instanceof Date ? now.getTime() : Number(now);
+  return Number.isFinite(currentMs) && Number.isFinite(expiryMs) && currentMs < expiryMs;
+}
+
 // Keep the existing export while callers migrate to the channel-neutral name.
 export const whatsappPolicyStatus = messagingPolicyStatus;
 
