@@ -28,6 +28,31 @@ const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(
 // Keep this deliberately conservative: absent evidence means no automatic media.
 const SERVICE_ENQUIRY = /(?:\b(?:interested|enquir(?:y|e)|inquir(?:y|e)|information|details?|tell\s+me\s+more|learn\s+more|know\s+more|find\s+out|want\s+to\s+(?:know|try|do|improve|treat)|would\s+like\s+to\s+(?:know|try|do|improve|treat)|can\s+(?:i|you)\s+(?:try|do|know|see|improve|treat)|how\s+(?:does|do|can|long)|what\s+(?:is|are|does|results?|benefits?|treatment)|does\s+(?:it|this)|results?|before\s*(?:and|&)\s*after|pelvic|pelvis|postpartum|facial|jawline|double\s+chin|treatment)\b|\b(?:nak\s+(?:tahu|cuba|buat|rawatan)|mahu\s+(?:tahu|cuba|buat)|berminat|rawatan|hasil|kesan|boleh\s+(?:ke|tahu))\b|想了解|想知道|想咨询|想諮詢|想问|想問|想做|感兴趣|感興趣|可以改善|怎么做|怎麼做|如何做|怎么改善|怎麼改善|有什么效果|有什麼效果|有效吗|有效嗎|案例|效果|骨盆|小腹|产后|產後|脸型|臉型|下颚|下顎|双下巴|雙下巴|皮肤松弛|皮膚鬆弛|小颜|小顏|逆龄|逆齡|\b[39]\s*d\b)/iu;
 
+// A contextual enquiry ("more info on this") refers to an ad but does not
+// identify a treatment on its own. Callers must separately verify the current
+// Meta creative names exactly one configured service before using this signal
+// to select automatic before/after media.
+const CONTEXTUAL_AD_ENQUIRIES = [
+  /^(?:can|could|may)\s+i\s+(?:(?:get|have)\s+(?:(?:some|a\s+bit\s+of)\s+)?(?:more\s+)?(?:info(?:rmation)?|details?)|(?:know|learn)\s+more)\s+(?:on|about|regarding)\s+(?:this|it|the\s+(?:ad|offer|treatment))$/iu,
+  /^(?:(?:can|could)\s+you\s+)?tell\s+me\s+more(?:\s+about\s+(?:this|it))?$/iu,
+  /^i(?:'d|\s+would)\s+like\s+to\s+(?:know|learn)\s+more(?:\s+about\s+(?:this|it))?$/iu,
+  /^i(?:'m|\s+am)\s+interested(?:\s+in\s+(?:this|it))?$/iu,
+  /^more\s+(?:info(?:rmation)?|details?)\s+(?:please|about\s+(?:this|it))$/iu,
+  /^(?:可以(?:了解|知道|介绍|介紹)(?:一下|更多)?(?:这个|這個|这项|這項|疗程|療程)?[吗嗎]?|想(?:了解|知道)(?:一下|更多)?(?:这个|這個|这项|這項)(?:疗程|療程)?)$/iu,
+  /^(?:(?:boleh\s+(?:tahu|share)|nak\s+tahu|mahu\s+tahu)\s+(?:(?:lebih\s+)?lanjut\s+)?(?:tentang\s+)?(?:ini|rawatan\s+ini))$/iu,
+];
+
+function isContextualAdServiceEnquiry(customerText) {
+  const raw = String(customerText || "").trim();
+  if (!raw || raw.length > 180 || DECLINED_TREATMENT.test(raw) ||
+      ADMIN_TOPIC.test(raw) || hasCustomerPriceEnquiry(raw)) return false;
+  const text = raw
+    .replace(/^(?:(?:(?:hello|hi|hey)\b|你好|嗨|哈咯)[\s,，.!！。~]*)+/iu, "")
+    .replace(/[\s.!?？！。~]+$/u, "")
+    .trim();
+  return CONTEXTUAL_AD_ENQUIRIES.some((pattern) => pattern.test(text));
+}
+
 const ACK_ONLY = /^(?:ok(?:ay)?|kk|k|alright|all\s+right|noted|thanks?(?:\s+you)?|thank\s+you|tq|thx|sure|yes|yeah|yep|no|nope|later|fine|got\s+it|received|好的|好|好吧|谢谢|謝謝|收到|明白|嗯|哦|是的|可以|好呀|baik|terima\s+kasih|faham|boleh|ya|tak|👍|🙏|😊|🙂)[\s.!！。~👍🙏😊🙂]*$/iu;
 const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|can\s+you\s+(?:give|send)\s+(?:me\s+)?)\s*)?(?:address|location|branch(?:es)?|business\s+hours?|opening\s+hours?|contact|phone\s+number|whatsapp|opening\s+time|clinic\s+location|appointment\s+slots?|营业时间|營業時間|分店|地址|电话号码|電話號碼|在哪里|在哪裡|营业吗|營業嗎|lokasi|alamat|cawangan|waktu\s+operasi)(?:[\s?？!.。]*)$/iu;
 
@@ -50,4 +75,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry };
+module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry };
