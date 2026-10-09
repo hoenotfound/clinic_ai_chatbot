@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   hasCustomerPriceEnquiry,
   hasCustomerServiceEnquiry,
+  isContextualAdServiceEnquiry,
 } = require("../src/utils/customerEnquiryEvidence");
 
 test("customer enquiry evidence rejects greetings, acknowledgements and admin-only turns", () => {
@@ -156,4 +157,27 @@ test("English waiting and recovery-time questions cannot unlock pricing graphics
   ]) {
     assert.equal(hasCustomerPriceEnquiry(text), true, text);
   }
+});
+
+test("contextual Meta-ad enquiries are narrowly identified, independently of treatment attribution", () => {
+  for (const text of [
+    "Hello! Can I get more info on this?",
+    "Can I know more about this?",
+    "Hi, can I get some more details about it?",
+    "Tell me more",
+    "I'm interested",
+    "I would like to know more about this",
+    "More information please",
+    "你好，想了解这个疗程",
+    "Nak tahu tentang rawatan ini",
+  ]) {
+    assert.equal(isContextualAdServiceEnquiry(text), true, text);
+    assert.equal(hasCustomerPriceEnquiry(text), false, text);
+  }
+  for (const text of [
+    "Hi", "English", "OK", "Thanks", "I am not interested",
+    "What is your contact information?", "Can I have more information about your opening hours?",
+    "What is your address?", "Can I get more info on your pricing?",
+    "What treatment is this?", "I would like to know more about 3D 小颜术",
+  ]) assert.equal(isContextualAdServiceEnquiry(text), false, text);
 });
