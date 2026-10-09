@@ -43,11 +43,12 @@ test("daily AI cost reporting uses MYT, enforces contact scope in every query an
   assert.equal(result.leadSummary.pricedLeads, 1);
   assert.equal(result.leadSummary.attributedUsd, 0.005);
   assert.equal(statements.length, 6);
-  for (const { sql, params } of statements) {
+  statements.forEach(({ sql, params }, index) => {
     assert.match(sql, /Asia\/Kuala_Lumpur/);
     assert.match(sql, /ANY\(\$2::int\[\]\)/);
-    assert.deepEqual(params, [7, [7, 9], [77]]);
-  }
+    assert.deepEqual(params, [1, 2, 3].includes(index)
+      ? [7, [7, 9]] : [7, [7, 9], [77]]);
+  });
 });
 
 test("restricted staff with no contacts cannot receive unscoped cost data", async () => {
