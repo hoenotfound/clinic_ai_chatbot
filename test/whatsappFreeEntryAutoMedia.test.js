@@ -45,16 +45,16 @@ test("extended follow-up builds and sends only approved treatment-matched image 
   clinicConfig.services = [{ name: "3D 小颜术" }];
   clinicConfig.promotions = [{
     name: "3D First Trial", linkedService: "3D 小颜术",
-    validFrom: "2026-10-01", validUntil: "2026-10-31",
+    validFrom: "2020-01-01", validUntil: "2099-12-31",
     imageUrl: "https://clinic.example/promo-images/32",
   }];
   clinicConfig.automatedFollowUp = {
     enabled: true, quietHours: { enabled: false },
-    freeEntry: {enabled: true, activatedAt: "2026-10-08T00:00:00Z",
+    freeEntry: {enabled: true, activatedAt: "2020-01-01T00:00:00Z",
       templateName: "ns_fu_pricing_graphic", language: "zh_CN",
       fallbackLanguage: "zh_CN", slotsHours: [26], templateRules: []},
   };
-  const now = new Date("2026-10-09T04:00:00Z");
+  const now = new Date();
   const firstReply = new Date(now.getTime() - 26.2 * 3600000);
   const firstInbound = new Date(firstReply.getTime() - 2 * 60000);
   const candidate = {
