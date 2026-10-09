@@ -163,6 +163,21 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
       `SELECT * FROM whatsapp_free_only_send_gate
        WHERE phone_number_id=$1 FOR UPDATE`, [account])).rows[0];
 
+    // After an interrupted Render process, a dead reservation has no
+    // provider WAMID. Never release it automatically. Once sufficiently old
+    // to exceed the provider HTTP deadline many times over, mark it UNKNOWN
+    // for audited operator investigation; this request still fails closed.
+    if (gate.status === "reserved" &&
+        new Date(gate.updated_at).getTime() <= Date.now() - 15 * 60 * 1000) {
+      await client.query(
+        `UPDATE whatsapp_free_only_send_gate
+           SET status='unknown',updated_at=now()
+         WHERE phone_number_id=$1 AND reservation_id=$2 AND status='reserved'`,
+        [account,gate.reservation_id]
+      );
+      gate.status="unknown";
+    }
+
     if (gate.status !== "idle") {
       if (gate.status === "awaiting_pricing" && gate.wamid) {
         const priced = (await client.query(
