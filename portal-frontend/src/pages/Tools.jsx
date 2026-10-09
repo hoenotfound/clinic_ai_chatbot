@@ -1472,7 +1472,8 @@ function FollowUpMediaPicker({
   useEffect(() => {
     if (videoKey) setSelectedType("video");
     else if (imageUrl) setSelectedType("image");
-    else setSelectedType("none");
+    // Keep a newly selected empty media picker open during type switches.
+    // Only an explicit removal action should select "No media".
   }, [imageUrl, videoKey]);
 
   function choose(type) {
@@ -1530,13 +1531,14 @@ function FollowUpMediaPicker({
           imageUrl={imageUrl}
           uploading={uploadingImage}
           onUpload={onUploadImage}
-          onChange={(nextImageUrl) =>
+          onChange={(nextImageUrl) => {
+            if (!nextImageUrl) setSelectedType("none");
             onChange({
               imageUrl: nextImageUrl,
               videoKey: "",
               videoFilename: "",
-            })
-          }
+            });
+          }}
           label={`${label} image`}
         />
       )}
@@ -1547,13 +1549,14 @@ function FollowUpMediaPicker({
           videoFilename={videoFilename}
           uploading={uploadingVideo}
           onUpload={onUploadVideo}
-          onChange={({ key, filename }) =>
+          onChange={({ key, filename }) => {
+            if (!key) setSelectedType("none");
             onChange({
               imageUrl: "",
               videoKey: key,
               videoFilename: filename,
-            })
-          }
+            });
+          }}
           label={`${label} video`}
           description="MP4 up to 16MB. Export as H.264 video with AAC audio; no server conversion."
         />
@@ -2050,6 +2053,29 @@ function FollowUpTool({
             Extended templates are selected in Tools but the server sending switch is off. No extended templates will be sent.
           </p>
         )}
+        {freeEntryStatus?.freeOnlyEnabled && Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0 && (
+          <p role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
+            WhatsApp billing alarm: Meta reported a billable callback since strict free-only mode was enabled.
+            All WhatsApp sends are blocked until staff investigate in Meta Billing Hub and reset the safeguard.
+            Open WhatsApp templates for the audit details.
+          </p>
+        )}
+        {freeEntryStatus?.freeOnlyEnabled &&
+          freeEntryStatus.freeOnlyGate?.status &&
+          freeEntryStatus.freeOnlyGate.status !== "idle" &&
+          Number(freeEntryStatus.billingSafety?.since_switch || 0) === 0 && (
+          <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            WhatsApp billing verification pending ({String(freeEntryStatus.freeOnlyGate.status).replaceAll("_", " ")}).
+            Additional strict-mode WhatsApp sends are blocked until pricing evidence is resolved.
+            Review the reservation under WhatsApp templates.
+          </p>
+        )}
+        {freeEntryStatus?.strictSevenDayBlocked === true && form.freeEntry?.enabled === true && (
+          <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            Extended WhatsApp days 4–7 are unavailable until non-billable post-72-hour evidence is verified for this account.
+            The scheduler will defer those template slots rather than risk a charge.
+          </p>
+        )}
       </section>
 
       <nav role="tablist" aria-label="Follow-up sections" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -2057,7 +2083,7 @@ function FollowUpTool({
           { key: "sequence", label: "Sequence" },
           { key: "pricing", label: "Pricing" },
           { key: "whatsapp", label: "WhatsApp templates" },
-          { key: "activity", label: "Activity" },
+          { key: "activity", label: "WhatsApp activity" },
         ].map(({ key, label }) => (
           <button
             type="button"
@@ -2067,7 +2093,7 @@ function FollowUpTool({
             aria-selected={followUpTab === key}
             aria-controls={`follow-up-panel-${key}`}
             onClick={() => setFollowUpTab(key)}
-            className={`min-h-11 rounded-xl border px-3 py-2.5 text-xs font-semibold sm:text-sm ${followUpTab === key
+            className={`min-h-11 rounded-xl border px-3 py-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${followUpTab === key
               ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
               : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/35"}`}
           >
@@ -2076,7 +2102,8 @@ function FollowUpTool({
         ))}
       </nav>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]">
+      <div data-testid="follow-up-editor-layout"
+        className={`grid gap-5 ${followUpTab === "sequence" ? "xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]" : "xl:grid-cols-1"}`}>
         <div className="order-2 min-w-0 xl:order-1">
           <div id="follow-up-panel-sequence" role="tabpanel" aria-labelledby="follow-up-tab-sequence" className={followUpTab === "sequence" ? "space-y-5" : "hidden"}>
             <div className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
@@ -3056,9 +3083,10 @@ function FollowUpTool({
             <Card>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-bold">Extended WhatsApp follow-up activity</h2>
+                  <h2 className="text-base font-bold">Extended WhatsApp template activity</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Recent template eligibility, attempts and billing evidence. Normal 24-hour message history remains in Inbox.
+                    Shows extended WhatsApp templates only: eligibility, attempts and billing evidence.
+                    For regular 24-hour follow-ups and pricing reminders, review the conversation in Inbox.
                   </p>
                 </div>
                 <button type="button" onClick={refreshFreeEntryStatus} disabled={freeEntryStatusLoading}
