@@ -69,7 +69,7 @@ async function getAiCostAnalytics({
         COALESCE(SUM(e.prompt_tokens),0)::bigint AS prompt_tokens,
         COALESCE(SUM(e.cached_tokens),0)::bigint AS cached_tokens
       ${events} GROUP BY e.provider,e.purpose ORDER BY usd DESC`,
-      params
+      params.slice(0, 2)
     ),
     database.query(
       `SELECT e.contact_id, c.channel, COUNT(*)::int AS calls,
@@ -80,7 +80,7 @@ async function getAiCostAnalytics({
       WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
         AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))
       GROUP BY e.contact_id,c.channel ORDER BY usd DESC LIMIT 30`,
-      params
+      params.slice(0, 2)
     ),
     database.query(
       `SELECT e.model, e.purpose,
@@ -96,7 +96,7 @@ async function getAiCostAnalytics({
       AND e.model IN ('gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash')
       AND e.purpose IN ('customer_reply','follow_up_generation')
       GROUP BY e.model,e.purpose ORDER BY e.purpose,e.model`,
-      params
+      params.slice(0, 2)
     ),
     database.query(
       `SELECT e.lead_id, e.contact_id, COUNT(*)::int AS calls,
