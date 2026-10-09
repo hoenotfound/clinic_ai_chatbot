@@ -457,7 +457,7 @@ export default function Inbox() {
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
   const [visibleConversationIds, setVisibleConversationIds] = useState(null);
-  const [keepExplicitlyOpenedThread, setKeepNewlyOpenedUnreadThread] = useState(false);
+  const [keepExplicitlyOpenedThread, setKeepExplicitlyOpenedThread] = useState(false);
   const [acquisitionContext, setAcquisitionContext] = useState(null);
   const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
@@ -1341,7 +1341,7 @@ export default function Inbox() {
         selectedId={selectedId}
         onSelect={handleSelectConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
-        onExplicitFilterChange={() => setKeepNewlyOpenedUnreadThread(false)}
+        onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
         mobileThreadOpen={mobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
