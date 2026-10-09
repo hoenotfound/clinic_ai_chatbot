@@ -98,7 +98,18 @@ test("R2 media and public HTTPS header validation fail closed on MIME and size",
   assert.equal(await validateApprovedMedia(format("VIDEO"),
     scoped({mediaKey:"messages/follow-up-config/p.mp4",videoCodecVerified:true}), {mediaStore:{
       ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
-    }}),true);
+      downloadMedia:async()=>Buffer.from("video-test-bytes"),
+    },verifyVideo:async(bytes)=>assert.equal(bytes.toString(),"video-test-bytes")}),true);
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    scoped({mediaKey:"messages/follow-up-config/p.mp4",videoCodecVerified:true}), {mediaStore:{
+      ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
+      downloadMedia:async()=>Buffer.from("malformed-video"),
+    },verifyVideo:async()=>{throw new Error("Video is HEVC.");}}),false,
+    "A manually persisted verified flag cannot bypass the server codec probe");
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    scoped({mediaUrl:"https://cdn.example.com/test.mp4",videoCodecVerified:true}),{
+      env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:"cdn.example.com"},
+    }),false, "Remote VIDEO URLs cannot bypass immutable R2 verification");
   const remote="https://cdn.example.com/image.jpg";
   const fetchStub=async (_url,opts)=>{
     assert.equal(opts.method,"HEAD");
