@@ -63,9 +63,18 @@ function packageEntries(promotion) {
 
 function localizedMedia(item, language) {
   const override = item?.mediaTranslations?.[language] || {};
+  const imageUrl = String(override.imageUrl || item?.imageUrl || "").trim();
+  const caption = String(override.caption || item?.caption || "").trim();
   return {
-    imageUrl: String(override.imageUrl || item?.imageUrl || "").trim(),
-    caption: String(override.caption || item?.caption || "").trim(),
+    imageUrl,
+    caption,
+    // The provider will fall back to the base image/caption separately.
+    // Do not imply the clinic supplied a translated caption when it did not.
+    coverage: !imageUrl || !caption
+      ? "Missing media"
+      : String(override.imageUrl || "").trim() && String(override.caption || "").trim()
+        ? "Localized"
+        : "Using default",
   };
 }
 
@@ -98,17 +107,13 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
   const variants = packages.map((item, index) => {
     const languages = LANGUAGES.map(({ key: language, label }) => {
       const media = localizedMedia(item, language);
-      return { key: language, label, complete: Boolean(media.imageUrl && media.caption) };
+      return { key: language, label, status: media.coverage, complete: media.coverage !== "Missing media" };
     });
-    const base = { imageUrl: String(item.imageUrl || "").trim(), caption: String(item.caption || "").trim() };
-    const preview = base.imageUrl && base.caption
-      ? base : [localizedMedia(item, "zh"), localizedMedia(item, "en"), localizedMedia(item, "ms")]
-        .find((media) => media.imageUrl && media.caption) || base;
     if (!String(item.name || "").trim()) problems.push("A package is missing its name.");
     if (!languages.every((entry) => entry.complete)) {
       problems.push("Package " + (String(item.name || "").trim() || index + 1) + " has missing image or caption coverage in some languages.");
     }
-    return { item, index, languages, preview };
+    return { item, index, languages };
   });
 
   if (packages.length > 1) {
@@ -130,9 +135,13 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
       packages.length === 2 && packages.some((p) => normalized(p.name) === "package a") &&
       packages.some((p) => normalized(p.name) === "package b");
     if (isPelvisAB) {
-      const identities = packages.map((p) => imageIdentity(p.imageUrl));
-      if (identities.every(Boolean) && new Set(identities).size < identities.length) {
-        problems.push("Package A and B share the same image. Both-package delivery may be skipped.");
+      // The backend compares the final resolved image identity for the
+      // customer's language, not just each package's default graphic.
+      for (const { key: language, label } of LANGUAGES) {
+        const identities = packages.map((item) => imageIdentity(localizedMedia(item, language).imageUrl));
+        if (identities.every(Boolean) && new Set(identities).size < identities.length) {
+          problems.push("Package A and B share the same image for " + label + ". Both-package delivery may be skipped.");
+        }
       }
     } else {
       notes.push("Multiple packages: the customer must identify a package before its pricing graphic can be selected.");
@@ -170,9 +179,10 @@ function PricingImage({ url, name }) {
 export default function PricingPromotionReadiness({
   services = [], promotions = [], pricingEnabled = false, sequenceEnabled = false,
   hasThirdStep = false, sendBothPelvicPackages = false,
-  canManagePromotions = false, hasUnsavedChanges = false,
+  canManagePromotions = false, hasUnsavedChanges = false, savedPricingEnabled = false,
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [previewLanguage, setPreviewLanguage] = useState("en");
   const now = new Date();
   const today = malaysiaDate(now);
   const activePerService = new Map();
@@ -213,17 +223,27 @@ export default function PricingPromotionReadiness({
       <div aria-label="Pricing readiness summary" className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
         <div className="rounded-lg bg-[var(--color-bg)] p-3">
           <p className="text-lg font-bold">{ready.length}/{current.length}</p>
-          <p className="text-[11px] text-[var(--color-text-muted)]">Current promotions with full media</p>
+          <p className="text-[11px] text-[var(--color-text-muted)]">Current promotions with usable media (including fallback)</p>
         </div>
         <div className="rounded-lg bg-[var(--color-bg)] p-3">
           <p className="text-lg font-bold">{problems.length}</p>
           <p className="text-[11px] text-[var(--color-text-muted)]">Catalog entries needing attention</p>
         </div>
         <div className="col-span-2 rounded-lg bg-[var(--color-bg)] p-3 sm:col-span-1">
-          <p className="text-sm font-bold">{!pricingEnabled ? "Reminder off" : !prerequisitesMet ? "Prerequisite missing" : "Configured on"}</p>
-          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-            {!sequenceEnabled ? "Enable the regular sequence" : !hasThirdStep ? "Follow-up 3 is required" : "Per-contact eligibility still applies"}
+          <p className="text-sm font-bold">
+            {hasUnsavedChanges ? "Unsaved draft" : !pricingEnabled ? "Reminder off" : !prerequisitesMet ? "Prerequisite missing" : "Configured on"}
           </p>
+          {hasUnsavedChanges ? (
+            <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+              Draft reminder: {pricingEnabled ? "On" : "Off"} · Saved reminder: {savedPricingEnabled ? "On" : "Off"}.
+              Changes are not active until saved.
+              {!sequenceEnabled ? " Regular sequence is off in this draft." : !hasThirdStep ? " Follow-up 3 is missing in this draft." : ""}
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+              {!sequenceEnabled ? "Enable the regular sequence" : !hasThirdStep ? "Follow-up 3 is required" : "Per-contact eligibility still applies"}
+            </p>
+          )}
         </div>
       </div>
       {entries.length === 0 && (
@@ -252,6 +272,19 @@ export default function PricingPromotionReadiness({
           </button>
           {expanded && (
             <div id="pricing-promotion-catalog" role="region" aria-label="Promotion catalog previews" className="mt-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold">Preview language</p>
+                <div role="group" aria-label="Pricing catalog language preview"
+                  className="inline-flex max-w-full gap-1 rounded-lg border border-[var(--color-border)] bg-white p-1">
+                  {LANGUAGES.map(({ key, label }) => (
+                    <button key={key} type="button" aria-pressed={previewLanguage === key}
+                      onClick={() => setPreviewLanguage(key)}
+                      className={`min-h-9 rounded-md px-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${previewLanguage === key ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {entries.map((entry, index) => (
                 <article key={index} aria-label={"Promotion " + (entry.promotion.name || index + 1)}
                   className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4">
@@ -282,21 +315,22 @@ export default function PricingPromotionReadiness({
                   ))}
                   {entry.variants.length > 0 && (
                     <div className="mt-3 space-y-2">
-                      {entry.variants.map(({ item, index: packageIndex, languages, preview }) => (
+                      {entry.variants.map(({ item, index: packageIndex, languages }) => (
                         <div key={packageIndex} aria-label={"Package " + (item.name || packageIndex + 1)}
                           className="flex min-w-0 gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3">
-                          <PricingImage url={preview.imageUrl} name={String(item.name || "package")} />
+                          <PricingImage key={localizedMedia(item, previewLanguage).imageUrl || "missing"}
+                            url={localizedMedia(item, previewLanguage).imageUrl} name={String(item.name || "package")} />
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-xs font-bold">{item.name || "Unnamed package"}</p>
                             {item.title && <p className="mt-0.5 break-words text-[11px] text-[var(--color-text-muted)]">{item.title}</p>}
                             <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-[var(--color-text-muted)]">
-                              {preview.caption || "No preview caption"}
+                              {localizedMedia(item, previewLanguage).caption || "No preview caption"}
                             </p>
                             <div className="mt-2 flex flex-wrap gap-1" aria-label="Package language media coverage">
                               {languages.map((language) => (
                                 <span key={language.key} className={"rounded-full px-2 py-0.5 text-[10px] font-semibold " +
                                   (language.complete ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-amber-50 text-amber-800")}>
-                                  {language.label}: {language.complete ? "Ready" : "Incomplete"}
+                                  {language.label}: {language.status}
                                 </span>
                               ))}
                             </div>
