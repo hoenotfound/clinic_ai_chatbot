@@ -1169,9 +1169,23 @@ router.post("/automated-follow-up/translations", async (req, res) => {
 router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
   try {
     const report = await freeEntryReportRepo.summarize();
-    const clinic = configRepo.getConfig().automatedFollowUp?.freeEntry;
+    const followUpConfig = configRepo.getConfig().automatedFollowUp || {};
+    const clinic = followUpConfig.freeEntry;
+    const freeOnly = followUpConfig.whatsappFreeOnly || {};
+    // Meta's callbacks, not the local send result, provide billing evidence.
+    // Monitor the whole WhatsApp account, including staff and AI replies.
+    const billing = await require("../db/db").pool.query(
+      `SELECT COUNT(*)::integer AS total_billable,
+         COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz)::integer AS since_switch,
+         MAX(updated_at) AS most_recent_billable_at
+       FROM whatsapp_free_entry_pricing_evidence WHERE billable=true`,
+      [freeOnly.enabled === true && freeOnly.activatedAt
+        ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]
+    );
     return res.json({
       ...report,
+      freeOnlyEnabled: freeOnly.enabled === true,
+      billingSafety: billing.rows[0],
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
       periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
