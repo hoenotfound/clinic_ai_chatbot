@@ -1,42 +1,17 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
 const { sessionLateralSql } = require("../db/whatsappFreeEntrySessionSql");
 
-// Strict mode intentionally refuses to spend the unobservable 1,000-message
-// service allowance. No Meta API provides an atomic "will be free" quote.
-// The only allowed outbound path is an already-established, provider-priced
-// free-entry period. Use 72h and a one-hour safety margin, even if an account
-// is enrolled in the newer seven-day rollout.
-const CONSERVATIVE_HOURS = 72;
-const BUFFER_HOURS = 1;
-
-function settings() {
-  return clinicConfig.automatedFollowUp?.whatsappFreeOnly || {};
-}
-
-function enabled() {
-  return settings().enabled === true;
-}
-
-function deny(code, message) {
-  return { allowed: false, code, message };
-}
-
-function blockedResult(check) {
-  return {
-    success: false, wamid: null, externalMessageId: null,
-    policyBlocked: true, policyCode: check.code,
-    error: check.message,
-    retryable: false,
-  };
-}
-
+// Billing verdicts arrive AFTER Meta accepts messages. There is no pre-send
+// quote or Meta-enforced RM0 billing cap. Even strict mode cannot promise zero
+// charges from external senders or previously accepted sends.
+const SAFE_BUFFER_HOURS = 1;
 const VERIFIED_WINDOW_SQL = `
   SELECT EXISTS (
-    SELECT 1
-    FROM contacts c
+    SELECT 1 FROM contacts c
     ${sessionLateralSql({ contactAlias: "c", ceilingParam: "$1" })}
     JOIN messages origin ON origin.id=referral.origin_message_id
       AND origin.contact_id=c.id AND origin.role='user'
@@ -46,83 +21,254 @@ const VERIFIED_WINDOW_SQL = `
       WHERE reply.contact_id=c.id AND reply.role='assistant'
         AND reply.whatsapp_message_id IS NOT NULL
         AND reply.created_at>=origin.created_at
-        AND reply.created_at<origin.created_at + interval '24 hours'
-      ORDER BY reply.created_at, reply.id LIMIT 1
+        AND reply.created_at<origin.created_at+interval '24 hours'
+      ORDER BY reply.created_at,reply.id LIMIT 1
     ) first_reply ON TRUE
-    JOIN whatsapp_free_entry_pricing_evidence start_bill ON
-      start_bill.wamid=first_reply.whatsapp_message_id
+    JOIN whatsapp_free_entry_pricing_evidence start_bill
+      ON start_bill.wamid=first_reply.whatsapp_message_id
       AND start_bill.pricing_type='free_entry_point'
       AND start_bill.billable=false
       AND start_bill.delivery_status IN ('sent','delivered','read')
     WHERE c.channel='whatsapp'
-      AND regexp_replace(c.whatsapp_number, '[^0-9]', '', 'g')=$3::text
+      AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$3::text
       AND (referral.ctwa_clid IS NOT NULL OR referral.meta_ad_id IS NOT NULL)
-      AND $2::timestamptz >= first_reply.created_at
-      AND $2::timestamptz < first_reply.created_at
-            + (($1::integer - ${BUFFER_HOURS}) * interval '1 hour')
-      -- If Meta has not confirmed that a previously accepted message was
-      -- free, never gamble on sending another. Pricing callbacks arrive late.
+      AND $2::timestamptz>=first_reply.created_at
+      AND $2::timestamptz<first_reply.created_at
+        + (($1::integer - ${SAFE_BUFFER_HOURS}) * interval '1 hour')
+      -- A persisted message without a WhatsApp message id is also unresolved.
       AND NOT EXISTS (
-        SELECT 1
-        FROM messages earlier
+        SELECT 1 FROM messages earlier
         LEFT JOIN whatsapp_free_entry_pricing_evidence priced
           ON priced.wamid=earlier.whatsapp_message_id
         WHERE earlier.contact_id=c.id AND earlier.role='assistant'
           AND earlier.created_at>=first_reply.created_at
           AND earlier.created_at<$2::timestamptz
-          AND earlier.whatsapp_message_id IS NOT NULL
-          AND (priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
-               OR priced.billable IS DISTINCT FROM false
-               OR priced.delivery_status NOT IN ('sent','delivered','read'))
+          AND (earlier.whatsapp_message_id IS NULL
+            OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
+            OR priced.billable IS DISTINCT FROM false
+            OR priced.delivery_status NOT IN ('sent','delivered','read'))
+          -- A cancelled/failed message which never reached Meta cannot bill.
+          AND earlier.delivery_status NOT IN ('cancelled','failed')
       )
       AND NOT EXISTS (
         SELECT 1 FROM whatsapp_free_entry_followup_attempts attempt
-        WHERE attempt.contact_id=c.id AND
-          attempt.first_reply_message_id=first_reply.id AND
-          attempt.status IN ('sending','failed','unknown')
+        WHERE attempt.contact_id=c.id
+          AND attempt.first_reply_message_id=first_reply.id
+          AND attempt.status IN ('sending','unknown')
       )
   ) AS eligible
 `;
 
-async function authorize(to, { now = new Date(), database = pool } = {}) {
-  if (!enabled()) return { allowed: true };
-  const mode = settings();
-  const activatedAt = new Date(mode.activatedAt).getTime();
-  const clock = new Date(now);
-  if (!Number.isFinite(activatedAt) || !Number.isFinite(clock.getTime())) {
-    return deny("zero_cost_configuration_invalid",
-      "WhatsApp message blocked: Free Messaging Only configuration or clock is invalid.");
-  }
-  const number = String(to || "").replace(/\D/g, "");
-  if (!number || number.length < 8) {
-    return deny("zero_cost_recipient_unknown",
-      "WhatsApp message blocked: recipient cannot be verified for free billing.");
-  }
+// Do NOT interpret an environment flag as seven-day billing proof on its own.
+// A post-72h, nonbillable, qualified follow-up from THIS clinic is required.
+const SEVEN_DAY_PROOF_SQL = `
+  SELECT EXISTS (
+    SELECT 1 FROM whatsapp_free_entry_followup_attempts a
+    JOIN messages first_reply ON first_reply.id=a.first_reply_message_id
+    JOIN whatsapp_free_entry_pricing_evidence p ON p.wamid=a.wamid
+    WHERE a.status='accepted' AND a.slot_hours>=73
+      AND p.pricing_type='free_entry_point' AND p.billable=false
+      AND p.delivery_status IN ('sent','delivered','read')
+      AND a.created_at>=first_reply.created_at + interval '72 hours'
+      AND a.created_at<first_reply.created_at + interval '168 hours'
+  ) AS verified
+`;
+
+function settings() {
+  return clinicConfig.automatedFollowUp?.whatsappFreeOnly || {};
+}
+function enabled() { return settings().enabled === true; }
+function deny(code, message) { return { allowed: false, code, message }; }
+function blockedResult(check) {
+  return {
+    success: false, wamid: null, externalMessageId: null,
+    policyBlocked: true, policyCode: check.code,
+    error: check.message, retryable: false,
+  };
+}
+function configuredAccount() {
+  return String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+}
+
+async function logBlock(account, check, database = pool) {
+  if (!account || !check?.code) return;
   try {
-    // Account-wide brake: any billable callback since activation means the
-    // observed billing rules differ from the assumptions of this mode.
-    const alarm = await database.query(
-      `SELECT EXISTS (
-         SELECT 1 FROM whatsapp_free_entry_pricing_evidence
-         WHERE billable=true AND updated_at >= $1::timestamptz
-       ) AS tripped`, [new Date(activatedAt).toISOString()]
+    await database.query(
+      `INSERT INTO whatsapp_free_only_block_events
+       (phone_number_id,reason,hour_bucket)
+       VALUES ($1,$2,date_trunc('hour',now()))
+       ON CONFLICT (phone_number_id,reason,hour_bucket)
+       DO UPDATE SET count=whatsapp_free_only_block_events.count+1,
+                     last_at=now()`,
+      [account,check.code]
     );
-    if (alarm.rows?.[0]?.tripped !== false) {
-      return deny("zero_cost_billing_alarm",
-        "WhatsApp message blocked: Meta reported a billable message since Free Messaging Only was enabled. Review billing evidence before resuming.");
-    }
-    const result = await database.query(VERIFIED_WINDOW_SQL,
-      [CONSERVATIVE_HOURS, clock.toISOString(), number]);
-    if (result.rows?.[0]?.eligible !== true) {
-      return deny("zero_cost_unverified_free_entry",
-        "WhatsApp message blocked: no active, fully priced free-entry period is proven for this contact. A 24-hour reply window or an ad click alone is not enough.");
-    }
-    return { allowed: true };
-  } catch (err) {
-    console.error("[WhatsApp free-only] Unable to verify billing eligibility:", err);
-    return deny("zero_cost_database_unavailable",
-      "WhatsApp message blocked: free-entry billing evidence could not be checked.");
+  } catch (error) {
+    console.error("[WhatsApp free-only] Could not record a blocked send:", error);
   }
 }
 
-module.exports = { authorize, blockedResult, enabled, settings, VERIFIED_WINDOW_SQL };
+async function reserve(to, { database = pool, now = new Date() } = {}) {
+  if (!enabled()) return { allowed: true, reservationId: null };
+  const account = configuredAccount();
+  const recipient = String(to || "").replace(/\D/g,"");
+  const config = settings();
+  const activation = new Date(config.activatedAt).getTime();
+  const clock = new Date(now);
+  if (!account || !recipient || recipient.length<8 ||
+      !Number.isFinite(activation) || !Number.isFinite(clock.getTime())) {
+    const rejected = deny("zero_cost_configuration_invalid",
+      "WhatsApp free-only blocked: account, recipient or activation was not verifiable.");
+    await logBlock(account,rejected,database);
+    return rejected;
+  }
+
+  let client;
+  let transaction = false;
+  let rejected = null;
+  try {
+    client = await database.connect();
+    await client.query("BEGIN");
+    transaction = true;
+
+    // The same account has exactly one locked row. FOR UPDATE serializes
+    // reservations across Render workers without keeping a DB connection
+    // checked out while Meta handles the HTTP request.
+    await client.query(
+      `INSERT INTO whatsapp_free_only_send_gate(phone_number_id)
+       VALUES($1) ON CONFLICT DO NOTHING`, [account]);
+    const gate = (await client.query(
+      `SELECT * FROM whatsapp_free_only_send_gate
+       WHERE phone_number_id=$1 FOR UPDATE`, [account])).rows[0];
+
+    if (gate.status !== "idle") {
+      if (gate.status === "awaiting_pricing" && gate.wamid) {
+        const priced = (await client.query(
+          `SELECT pricing_type,billable,delivery_status
+           FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1`,
+          [gate.wamid])).rows[0];
+        if (priced?.pricing_type==="free_entry_point" && priced.billable===false &&
+            ["sent","delivered","read"].includes(priced.delivery_status)) {
+          await client.query(
+            `UPDATE whatsapp_free_only_send_gate SET status='idle',
+               reservation_id=NULL,wamid=NULL,recipient=NULL,updated_at=now()
+             WHERE phone_number_id=$1`,[account]);
+        } else {
+          rejected=deny("zero_cost_previous_send_unreconciled",
+            "WhatsApp free-only blocked: another message is awaiting Meta's confirmed free billing.");
+        }
+      } else {
+        rejected=deny("zero_cost_previous_send_unreconciled",
+          "WhatsApp free-only blocked: a previous or concurrent send has not been reconciled.");
+      }
+    }
+
+    if (!rejected) {
+      const alarm=(await client.query(
+        `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
+          WHERE billable=true AND updated_at>=$1::timestamptz) AS tripped`,
+        [new Date(activation).toISOString()])).rows[0];
+      if (alarm?.tripped!==false) {
+        rejected=deny("zero_cost_billing_alarm",
+          "WhatsApp free-only stopped: Meta reported a billable message after activation.");
+      }
+    }
+
+    let ceiling=72;
+    if (!rejected && String(process.env.WHATSAPP_FEP_7DAY_VERIFIED).toLowerCase()==="true") {
+      const proof=(await client.query(SEVEN_DAY_PROOF_SQL)).rows[0];
+      if (proof?.verified===true) ceiling=168;
+    }
+
+    if (!rejected) {
+      const eligible=(await client.query(VERIFIED_WINDOW_SQL,
+        [ceiling,clock.toISOString(),recipient])).rows[0];
+      if (eligible?.eligible!==true) {
+        rejected=deny("zero_cost_unverified_free_entry",
+          "WhatsApp free-only blocked: no fully proven, active Meta free-entry period. New ad leads cannot receive a first reply in strict mode.");
+      }
+    }
+
+    let reservationId=null;
+    if (!rejected) {
+      reservationId=crypto.randomUUID();
+      await client.query(
+        `UPDATE whatsapp_free_only_send_gate
+         SET status='reserved',reservation_id=$2,wamid=NULL,recipient=$3,updated_at=now()
+         WHERE phone_number_id=$1`,[account,reservationId,recipient]);
+    }
+    await client.query("COMMIT");
+    transaction=false;
+    if (rejected) {
+      await logBlock(account,rejected,database);
+      return rejected;
+    }
+    return { allowed:true,reservationId };
+  } catch(error) {
+    console.error("[WhatsApp free-only] Cannot reserve safe WhatsApp outbound:",error);
+    if (transaction && client) await client.query("ROLLBACK").catch(()=>{});
+    const rejectedError=deny("zero_cost_database_unavailable",
+      "WhatsApp free-only blocked: account-wide billing protection could not be verified.");
+    await logBlock(account,rejectedError,database);
+    return rejectedError;
+  } finally {
+    if (client) client.release();
+  }
+}
+
+// A confirmed non-2xx 4xx response cannot have created a Meta message. Do
+// NOT automatically clear reservations for timeouts, missing WAMIDs or 5xx.
+function definitelyRejected(result) {
+  return result?.policyBlocked===true ||
+    (result?.success===false &&
+      Number(result.providerStatus)>=400 && Number(result.providerStatus)<500) ||
+    result?.providerRejected===true;
+}
+
+async function complete(reservationId,result, database=pool) {
+  if (!reservationId) return;
+  const account=configuredAccount();
+  try {
+    if (result?.success===true && result.wamid) {
+      await database.query(
+        `UPDATE whatsapp_free_only_send_gate SET status='awaiting_pricing',
+           wamid=$3,updated_at=now()
+         WHERE phone_number_id=$1 AND reservation_id=$2`,
+        [account,reservationId,result.wamid]);
+    } else if (definitelyRejected(result)) {
+      await database.query(
+        `UPDATE whatsapp_free_only_send_gate SET status='idle',
+           reservation_id=NULL,wamid=NULL,recipient=NULL,updated_at=now()
+         WHERE phone_number_id=$1 AND reservation_id=$2`,
+        [account,reservationId]);
+    } else {
+      await database.query(
+        `UPDATE whatsapp_free_only_send_gate SET status='unknown',
+           updated_at=now()
+         WHERE phone_number_id=$1 AND reservation_id=$2`,
+        [account,reservationId]);
+    }
+  } catch(error) {
+    // A failed finalization must NEVER open the next slot; the original
+    // 'reserved' row remains and stops other outbound requests.
+    console.error("[WhatsApp free-only] Send reservation requires reconciliation:",error);
+  }
+}
+
+async function perform(to, operation) {
+  const check=await reserve(to);
+  if (!check.allowed) return blockedResult(check);
+  let result;
+  try {
+    result=await operation();
+  } catch (error) {
+    await complete(check.reservationId,{ success:false,ambiguous:true });
+    throw error;
+  }
+  await complete(check.reservationId,result);
+  return result;
+}
+
+module.exports = {
+  blockedResult,configuredAccount,enabled,settings,reserve,complete,perform,
+  VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,
+};
