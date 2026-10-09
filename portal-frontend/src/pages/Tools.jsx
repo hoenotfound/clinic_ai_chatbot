@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
 import LeadDistribution from "./LeadDistribution";
+import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../components/FollowUpTemplatePicker";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -1883,6 +1884,9 @@ function FollowUpTool({
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [followUpTab, setFollowUpTab] = useState("sequence");
+  const [templateCatalog, setTemplateCatalog] = useState(null);
+  const [templateCatalogLoading, setTemplateCatalogLoading] = useState(false);
+  const [templateCatalogError, setTemplateCatalogError] = useState("");
   const [freeEntryStatus, setFreeEntryStatus] = useState(null);
   const [freeEntryStatusError, setFreeEntryStatusError] = useState("");
   const [freeEntryStatusLoading, setFreeEntryStatusLoading] = useState(false);
@@ -1924,6 +1928,35 @@ function FollowUpTool({
     }
   }, []);
   useEffect(() => { refreshFreeEntryStatus(); }, [refreshFreeEntryStatus]);
+
+  const refreshTemplateCatalog = useCallback(async (refresh = false) => {
+    setTemplateCatalogLoading(true);
+    setTemplateCatalogError("");
+    try {
+      const data = await api.getFollowUpTemplateCatalog({ refresh });
+      setTemplateCatalog(data);
+    } catch (err) {
+      setTemplateCatalogError(err.message || "Could not load approved templates from Meta.");
+    } finally {
+      setTemplateCatalogLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (followUpTab === "whatsapp" && !templateCatalog && !templateCatalogLoading && !templateCatalogError) {
+      refreshTemplateCatalog();
+    }
+  }, [followUpTab, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
+
+  function updateTemplateRule(index, patch) {
+    setForm((current) => ({
+      ...current,
+      freeEntry: {
+        ...current.freeEntry,
+        templateRules: (current.freeEntry?.templateRules || []).map((rule, i) =>
+          i === index ? { ...rule, ...patch } : rule),
+      },
+    }));
+  }
 
   useEffect(() => {
     if (!validationIssue) return;
@@ -2965,20 +2998,33 @@ function FollowUpTool({
               ) : null}
             </div>
             </details>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+              <div>
+                <p className="text-xs font-bold">Approved WhatsApp marketing templates</p>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">Read directly from this clinic's Meta WABA. Image and video headers can be attached under each scheduled rule below.</p>
+              </div>
+              <button type="button" onClick={() => refreshTemplateCatalog(true)} disabled={templateCatalogLoading}
+                className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">
+                {templateCatalogLoading ? "Loading templates…" : "Refresh approved templates"}
+              </button>
+              {templateCatalogError && (
+                <p role="alert" className="w-full text-xs text-red-700">
+                  {templateCatalogError} Saved template names and attachments have not been changed. Retry when Meta is available.
+                </p>
+              )}
+            </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="block text-xs font-semibold">
-                Approved template name
-                <input
-                  type="text"
-                  value={form.freeEntry?.templateName || ""}
-                  onChange={(event) => setForm((current) => ({
-                    ...current, freeEntry: { ...current.freeEntry, templateName: event.target.value }
-                  }))}
-                  placeholder="lead_follow_up"
-                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
-                  aria-label="Free-entry template name"
-                />
-              </label>
+              <ApprovedFollowUpTemplatePicker
+                id="free-entry-default-template"
+                label="Free-entry template name"
+                name={form.freeEntry?.templateName || ""}
+                language={form.freeEntry?.language || "auto"}
+                catalog={templateCatalog}
+                defaultOnly
+                onChange={(value) => setForm((current) => ({
+                  ...current, freeEntry: { ...current.freeEntry, templateName: value },
+                }))}
+              />
               <label className="block text-xs font-semibold">
                 Template language
                 <select
@@ -3037,8 +3083,9 @@ function FollowUpTool({
                     Configure a different approved template per day for all treatments, or override a specific treatment.
                     For ns_fu1_service_checkin, the treatment name is filled automatically. For ns_fu_pricing_graphic
                     and ns_fu_meridian_gift, leave media fields blank: the active matching clinic promotion image
-                    and approved template variable are selected automatically. Other IMAGE/VIDEO templates may
-                    use trusted HTTPS URLs or existing shared R2 media keys.
+                    and approved template variable are selected automatically. For other IMAGE/VIDEO templates,
+                    select existing clinic media or upload a new image/video directly below. Stored attachments are
+                    reused from R2; each send remains subject to the existing eligibility and billing checks.
                   </p>
                 </div>
                 <button type="button" aria-label="Add treatment follow-up template"
@@ -3085,51 +3132,33 @@ function FollowUpTool({
                         <option key={service.name} value={service.name}>{service.name}</option>)}
                     </select>
                   </label>
-                  <label className="text-xs font-semibold">Approved marketing template name
-                    <input aria-label={`Extended treatment template name ${index + 1}`}
-                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
-                      value={rule.templateName}
-                      onChange={(event) => setForm((current) => ({
-                        ...current, freeEntry: { ...current.freeEntry,
-                          templateRules: current.freeEntry.templateRules.map((r, i) =>
-                            i === index ? { ...r, templateName: event.target.value } : r)
-                        }
-                      }))}/>
-                  </label>
-                  <label className="text-xs font-semibold">Stored follow-up video key (optional)
-                    <input aria-label={`Extended template R2 video key ${index + 1}`}
-                      placeholder="Paste the existing video key from Follow-up Tools"
-                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
-                      value={rule.mediaKey || ""}
-                      onChange={(event) => setForm((current) => ({
-                        ...current, freeEntry: { ...current.freeEntry,
-                          templateRules: current.freeEntry.templateRules.map((r, i) =>
-                            i === index ? { ...r, mediaKey: event.target.value } : r)
-                        }
-                      }))}/>
-                  </label>
-                  <label className="text-xs font-semibold">Approved media URL (optional)
-                    <input type="url" aria-label={`Extended template media URL ${index + 1}`}
-                      placeholder="https://..."
-                      className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
-                      value={rule.mediaUrl || ""}
-                      onChange={(event) => setForm((current) => ({
-                        ...current, freeEntry: { ...current.freeEntry,
-                          templateRules: current.freeEntry.templateRules.map((r, i) =>
-                            i === index ? { ...r, mediaUrl: event.target.value } : r)
-                        }
-                      }))}/>
-                  </label>
-                  <label className="flex items-center gap-2 text-xs font-medium sm:col-span-2">
-                    <input type="checkbox" checked={rule.videoCodecVerified === true}
-                      onChange={(event) => setForm((current) => ({
-                        ...current, freeEntry: { ...current.freeEntry,
-                          templateRules: current.freeEntry.templateRules.map((r, i) =>
-                            i === index ? { ...r, videoCodecVerified: event.target.checked } : r)
-                        }
-                      }))}/>
-                    I have verified the approved MP4 is encoded with H.264 video and AAC audio (not HEVC). Required for VIDEO headers.
-                  </label>
+                  <div className="sm:col-span-2">
+                    <ApprovedFollowUpTemplatePicker
+                      id={`extended-treatment-template-${index + 1}`}
+                      label={`Approved marketing template for rule ${index + 1}`}
+                      name={rule.templateName}
+                      language={form.freeEntry?.language || "auto"}
+                      catalog={templateCatalog}
+                      onChange={(value) => updateTemplateRule(index, {
+                        templateName: value,
+                        mediaKey: "", mediaUrl: "", videoCodecVerified: false,
+                      })}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <FollowUpTemplateMediaPicker
+                      rule={rule}
+                      index={index}
+                      template={
+                        (templateCatalog?.templates || []).find((t) =>
+                          t.name === rule.templateName &&
+                          t.language === (form.freeEntry?.language === "auto" ? "zh_CN" : form.freeEntry?.language)
+                        ) || (templateCatalog?.templates || []).find((t) => t.name === rule.templateName) || null
+                      }
+                      catalog={templateCatalog}
+                      onChange={(patch) => updateTemplateRule(index, patch)}
+                    />
+                  </div>
                   <button type="button" className="text-left text-xs text-red-600"
                     aria-label={`Remove treatment template rule ${index + 1}`}
                     onClick={() => setForm((current) => ({
