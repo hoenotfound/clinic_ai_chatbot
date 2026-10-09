@@ -148,7 +148,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, la
   const readinessNote = (
     <div className="space-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs"
       aria-label={`Template rule configuration readiness ${index + 1}`}>
-      <p className="font-semibold">Template/media configuration: {configReady ? "Checks passed" : "Not ready"}</p>
+      <p className="font-semibold">Template/media fields: {configReady ? "Complete" : "Incomplete"}</p>
       {mediaBlocked && <p className="text-amber-800">
         {format === "VIDEO" && attached && !rule.videoCodecVerified
           ? "Blocked: video codec not verified. Verify the clinic video or upload a supported MP4."
