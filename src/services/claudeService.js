@@ -1,3 +1,4 @@
+const { recordClaudeUsage } = require("./claudeUsageTelemetry");
 const { normalizeWorkspaceId } = require("./anthropicClient");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
@@ -241,6 +242,13 @@ async function getReply(
         },
       },
     },
+  });
+
+  recordClaudeUsage(response, {
+    purpose: options.surface === "follow_up" ? "follow_up_generation" : "customer_reply",
+    model: MODEL,
+    contactId: options.contactId,
+    leadId: options.leadId,
   });
 
   if (response.stop_reason === "refusal") {
