@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Client } = require("pg");
+const { Client, Pool } = require("pg");
+const zeroCostGuard = require("../src/services/whatsappZeroCostGuard");
+const freeOnlyReconciliation = require("../src/services/whatsappFreeOnlyReconciliationService");
+const clinicConfig = require("../src/config/clinicConfig");
 const fs = require("node:fs");
 const path = require("node:path");
 const worker = require("../src/services/whatsappFreeEntryFollowUpService");
@@ -77,6 +80,113 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       INSERT INTO whatsapp_free_entry_pricing_evidence(wamid,pricing_type,billable,delivery_status)
       VALUES('wamid.first','free_entry_point',false,'delivered');
     `);
+    // Strict-mode integration: the current claimed follow-up is not a
+    // "previous" send. A second worker cannot pass the account reservation.
+    const oldFollowUp = clinicConfig.automatedFollowUp;
+    const oldAccount = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const oldSevenDay = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+    const guardDb = new Pool({
+      connectionString, options: "-c search_path=" + schema, max: 4,
+    });
+    try {
+      clinicConfig.automatedFollowUp = {
+        ...oldFollowUp,
+        whatsappFreeOnly: {
+          enabled: true,
+          activatedAt: new Date(Date.now()-3600000).toISOString(),
+        },
+      };
+      process.env.WHATSAPP_PHONE_NUMBER_ID = "free-only-test-account";
+      process.env.WHATSAPP_FEP_7DAY_VERIFIED = "false";
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status)
+        VALUES(19,1,'assistant','Current reserved follow-up',now(),'unknown');
+      `);
+      const pending = await client.query(`
+        INSERT INTO whatsapp_free_entry_followup_attempts
+          (contact_id,first_reply_message_id,slot_hours,message_id,status)
+        VALUES(1,11,50,19,'sending') RETURNING id
+      `);
+      const attemptId = pending.rows[0].id;
+      const ownContext = {
+        currentMessageId: 19,
+        currentFollowUpAttemptId: attemptId,
+      };
+      const withoutIdentity = await zeroCostGuard.reserve("60121234567", { database: guardDb });
+      assert.equal(withoutIdentity.code, "zero_cost_unverified_free_entry",
+        "an unresolved pending message must not be ignored without identity");
+
+      const [one, two] = await Promise.all([
+        zeroCostGuard.reserve("60121234567", {database: guardDb, context: ownContext}),
+        zeroCostGuard.reserve("60121234567", {database: guardDb, context: ownContext}),
+      ]);
+      assert.equal([one,two].filter(item=>item.allowed).length,1,
+        "only one of two concurrently arriving worker requests can reserve");
+      const winner=one.allowed?one:two;
+      assert.equal((one.allowed?two:one).code,"zero_cost_previous_send_unreconciled");
+
+      const otherContact=await zeroCostGuard.reserve("60129876543",
+        {database:guardDb,context:ownContext});
+      assert.equal(otherContact.code,"zero_cost_previous_send_unreconciled",
+        "the locked account cannot send to a second recipient");
+
+      await zeroCostGuard.complete(winner.reservationId,
+        {success:true,wamid:"wamid.strict.current"},guardDb);
+      assert.equal((await zeroCostGuard.reserve("60121234567",
+        {database:guardDb,context:ownContext})).allowed,false,
+        "provider acceptance alone never releases the account gate");
+
+      await client.query(`
+        UPDATE messages SET whatsapp_message_id='wamid.strict.current',
+          delivery_status='delivered' WHERE id=19;
+        UPDATE whatsapp_free_entry_followup_attempts
+          SET wamid='wamid.strict.current',status='accepted'
+          WHERE id=$1
+      `,[attemptId]);
+      await client.query(`
+        INSERT INTO whatsapp_free_entry_pricing_evidence
+          (wamid,pricing_type,billable,delivery_status)
+        VALUES('wamid.strict.current','free_entry_point',false,'delivered')
+      `);
+
+      const next = await zeroCostGuard.reserve("60121234567", {database:guardDb});
+      assert.equal(next.allowed,true,
+        "Meta confirmed nonbillable pricing permits one further outbound");
+      await zeroCostGuard.complete(next.reservationId,
+        {success:false,ambiguous:true},guardDb);
+      assert.equal((await zeroCostGuard.reserve("60121234567",
+        {database:guardDb})).allowed,false,"unknown send stays locked");
+
+      const released=await freeOnlyReconciliation.reconcile({
+        actor:"admin",reservationId:next.reservationId,
+        reason:"Reviewed the exact WhatsApp conversation and Meta billing records; no unmatched delivery remains.",
+        confirmedBillingHub:true,
+      },guardDb);
+      assert.equal(released.success,true);
+      const audit=await guardDb.query(`
+        SELECT actor,prior_status,verified_billing_hub
+        FROM whatsapp_free_only_reconciliations
+        WHERE reservation_id=$1
+      `,[next.reservationId]);
+      assert.equal(audit.rows[0].prior_status,"unknown");
+      assert.equal(audit.rows[0].verified_billing_hub,true);
+      assert.equal(audit.rows[0].actor,"admin");
+
+      // An ID from another lead must not exempt the current conversation.
+      const invalid = await zeroCostGuard.reserve("60129876543",
+        {database:guardDb,context:{currentMessageId:19}});
+      assert.equal(invalid.code,"zero_cost_invalid_send_context");
+      await client.query("DELETE FROM whatsapp_free_entry_followup_attempts WHERE id=$1",[attemptId]);
+      await client.query("DELETE FROM messages WHERE id=19");
+    } finally {
+      clinicConfig.automatedFollowUp = oldFollowUp;
+      if (oldAccount === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+      else process.env.WHATSAPP_PHONE_NUMBER_ID = oldAccount;
+      if (oldSevenDay === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+      else process.env.WHATSAPP_FEP_7DAY_VERIFIED = oldSevenDay;
+      await guardDb.end();
+    }
+
     const settings = {
       activatedAt: new Date(Date.now()-60*3600000).toISOString(),
       templateName:"ns_enquiry_reengagement", language:"auto",
