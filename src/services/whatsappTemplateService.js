@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const whatsappPolicy = require("./whatsappPolicyService");
+const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 
 const GRAPH_API_VERSION = "v26.0";
 const TEMPLATE_CACHE_TTL_MS = 60 * 1000;
@@ -504,6 +505,9 @@ async function sendApprovedTemplate(
       });
     }
   }
+
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(contact?.whatsapp_number);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
 
   const { phoneNumberId, token } = templateConfig(process.env);
   if (!phoneNumberId || !token) {
