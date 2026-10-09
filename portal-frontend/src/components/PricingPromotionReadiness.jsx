@@ -112,6 +112,20 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
   });
 
   if (packages.length > 1) {
+    // Mirror the server's exact package-name/title/alias ambiguity check.
+    const termOwners = new Map();
+    const normalizedTerm = (value) => String(value || "").toLocaleLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+    for (const [packageIndex, option] of packages.entries()) {
+      const terms = [option.name, option.title, ...(Array.isArray(option.aliases) ? option.aliases : [])];
+      for (const term of new Set(terms.map(normalizedTerm).filter(Boolean))) {
+        const owner = termOwners.get(term);
+        if (owner !== undefined && owner !== packageIndex) {
+          problems.push("Packages share the name or alias '" + term + "'. The package selector may be ambiguous.");
+        }
+        termOwners.set(term, packageIndex);
+      }
+    }
     const isPelvisAB = sendBothPelvicPackages && normalized(service) === normalized("骨盆调理") &&
       packages.length === 2 && packages.some((p) => normalized(p.name) === "package a") &&
       packages.some((p) => normalized(p.name) === "package b");
