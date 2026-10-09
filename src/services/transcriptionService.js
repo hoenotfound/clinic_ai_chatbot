@@ -235,6 +235,7 @@ async function runTranscription(
     runWithKeys = runWithGeminiKeys,
     prepareAudio = prepareAudioForTranscription,
     inlineAudioMaxBytes = DEFAULT_INLINE_AUDIO_MAX_BYTES,
+    contactId = null,
   } = {}
 ) {
   if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) return null;
@@ -290,7 +291,7 @@ async function runTranscription(
                 model,
                 input: [interactionAudioInput],
               },
-              { purpose: "voice_transcription" }
+              { purpose: "voice_transcription", contactId }
             );
           } catch (err) {
             throw markDeterministicTranscriptionMediaError(err);
@@ -318,8 +319,8 @@ async function runTranscription(
  * Convert an inbound customer voice note to text for the AI conversation.
  * Gemini 3.5 Transcribe automatically detects language and code switching.
  */
-async function transcribeAudio(audioBuffer, mimeType) {
-  return runTranscription(audioBuffer, mimeType);
+async function transcribeAudio(audioBuffer, mimeType, { contactId = null } = {}) {
+  return runTranscription(audioBuffer, mimeType, { contactId });
 }
 
 /**
