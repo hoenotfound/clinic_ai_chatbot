@@ -1,3 +1,4 @@
+const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 const GRAPH_API_VERSION = "v26.0";
 const DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS = 15 * 1000;
@@ -167,6 +168,8 @@ function replyContext(options = {}) {
  *   fallback logic around this.
  */
 async function sendMessage(to, text, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -217,6 +220,8 @@ async function sendMessage(to, text, options = {}) {
  *   take down the actual text reply around it)
  */
 async function sendImage(to, imageUrl, caption, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -324,6 +329,8 @@ async function uploadMedia(buffer, mimeType, filename = "upload", options = {}) 
  *   Meta accepted the send request
  */
 async function sendImageById(to, mediaId, caption, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -366,6 +373,8 @@ async function sendImageById(to, mediaId, caption, options = {}) {
 }
 
 async function sendVideoById(to, mediaId, caption, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -408,6 +417,8 @@ async function sendVideoById(to, mediaId, caption, options = {}) {
 }
 
 async function sendDocumentById(to, mediaId, filename, caption, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -455,6 +466,8 @@ async function sendDocumentById(to, mediaId, filename, caption, options = {}) {
 }
 
 async function sendStickerById(to, mediaId, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -508,6 +521,8 @@ async function sendStickerById(to, mediaId, options = {}) {
  *   webhook (see parseStatusUpdates), matched back to this send by wamid.
  */
 async function sendVoiceById(to, mediaId, options = {}) {
+  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
+  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
