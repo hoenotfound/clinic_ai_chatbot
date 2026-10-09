@@ -398,7 +398,7 @@ async function scoreWithGemini(input) {
                 thinkingConfig: { thinkingLevel: "minimal" },
               },
             },
-            { purpose: "lead_scoring" }
+            { purpose: "lead_scoring", contactId: input.lead?.contact_id, leadId: input.lead?.lead_id || input.lead?.id }
           );
           return parseLeadScore(response.text, input.messages);
         } catch (error) {
