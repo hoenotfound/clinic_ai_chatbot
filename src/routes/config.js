@@ -22,6 +22,7 @@ const { normalizeQuietHours } = require("../utils/quietHours");
 const { SUPPORTED_LANGUAGES, validateTemplateRules } = require("../utils/freeEntryTemplateSelection");
 const whatsappTemplate = require("../services/whatsappTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
+const { invalidConfiguredMediaRule } = require("../utils/followUpTemplateMediaPolicy");
 const {
   findAmbiguousPromotionPackageTerm,
   findOverlappingPromotionFollowUpPair,
@@ -878,6 +879,18 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
         ok: false,
         status: 400,
         error: "Invalid automated follow-up settings. Check quiet hours and use 1 to 3 steps with increasing delays between 5 minutes and 23 hours.",
+      };
+    }
+    // Reject invalid media associations before saving. The live worker
+    // independently repeats these checks and also verifies R2 HEAD metadata.
+    const proposedClinic = { ...currentConfig, ...updates, automatedFollowUp: prepared };
+    const invalidMedia = invalidConfiguredMediaRule(
+      prepared.freeEntry?.templateRules || [], proposedClinic
+    );
+    if (invalidMedia) {
+      return {
+        ok: false, status: 400, invalidKeys: ["automatedFollowUp"],
+        error: `Extended WhatsApp rule ${invalidMedia.index + 1}: ${invalidMedia.reason}`,
       };
     }
     updates.automatedFollowUp = prepared;
