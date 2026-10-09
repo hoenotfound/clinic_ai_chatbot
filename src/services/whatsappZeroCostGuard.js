@@ -48,7 +48,8 @@ const VERIFIED_WINDOW_SQL = `
             OR priced.billable IS DISTINCT FROM false
             OR priced.delivery_status NOT IN ('sent','delivered','read'))
           -- A cancelled/failed message which never reached Meta cannot bill.
-          AND earlier.delivery_status NOT IN ('cancelled','failed')
+          AND earlier.delivery_status IS DISTINCT FROM 'cancelled'
+          AND earlier.delivery_status IS DISTINCT FROM 'failed'
       )
       AND NOT EXISTS (
         SELECT 1 FROM whatsapp_free_entry_followup_attempts attempt
@@ -112,7 +113,8 @@ async function reserve(to, { database = pool, now = new Date() } = {}) {
   const account = configuredAccount();
   const recipient = String(to || "").replace(/\D/g,"");
   const config = settings();
-  const activation = new Date(config.activatedAt).getTime();
+  const activation = typeof config.activatedAt === "string" && config.activatedAt.trim()
+    ? Date.parse(config.activatedAt) : NaN;
   const clock = new Date(now);
   if (!account || !recipient || recipient.length<8 ||
       !Number.isFinite(activation) || !Number.isFinite(clock.getTime())) {
