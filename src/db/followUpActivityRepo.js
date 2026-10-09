@@ -30,7 +30,8 @@ const ACTIVITY_SQL = `WITH activity AS (
     m.automated_follow_up_step AS step,
     CASE
       WHEN m.delivery_status IN ('sent', 'delivered', 'read') THEN 'sent'
-      WHEN m.delivery_status IN ('failed', 'cancelled') THEN 'failed'
+      WHEN m.delivery_status = 'failed' THEN 'failed'
+      WHEN m.delivery_status = 'cancelled' THEN 'skipped'
       WHEN m.delivery_status IN ('unknown') THEN 'attention'
       ELSE 'pending'
     END AS state,
@@ -76,7 +77,7 @@ SELECT
     'attention', COUNT(*) FILTER (WHERE state = 'attention')
   ) FROM scoped) AS summary,
   (SELECT COUNT(*)::integer FROM visible) AS total,
-  COALESCE((SELECT jsonb_agg(row_to_json(paged)) FROM (
+  COALESCE((SELECT jsonb_agg(to_jsonb(paged) ORDER BY paged.occurred_at DESC, paged.event_id DESC) FROM (
     SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status
     FROM visible
     ORDER BY occurred_at DESC, event_id DESC
