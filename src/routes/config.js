@@ -665,7 +665,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const requestedFreeOnly = requested.whatsappFreeOnly ?? current?.whatsappFreeOnly ?? { enabled: false };
   if (!isPlainObject(requestedFreeOnly) || typeof requestedFreeOnly.enabled !== "boolean") return null;
   const freeOnlyEnabled = requestedFreeOnly.enabled === true;
-  // Turning this on silences new ad leads and may interrupt patient support.
+  // Turning this on blocks direct/organic and unverified/late ad leads. A genuine CTWA first text reply inside 24h is allowed to open free entry, but remains contingent on Meta's later nonbillable classification.
   // Require deliberate confirmation at the API layer, not only a UI warning.
   if (freeOnlyEnabled && current?.whatsappFreeOnly?.enabled !== true &&
       requested.whatsappFreeOnly?.acknowledgeImpact !== true) return null;
