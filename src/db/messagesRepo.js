@@ -257,6 +257,34 @@ async function updateInboundMessage(messageId, contactId, content, mediaBase64, 
  * Recent history used internally by the AI. This stays array-based so the AI
  * path is independent from portal pagination.
  */
+/**
+ * Read the first three persisted customer messages preceding a saved inbound.
+ * Third is a sentinel: a contextual-ad fallback is only for 0-2 earlier
+ * greeting/language-only customer turns, never a longstanding conversation.
+ * This is independent of the 20-message AI context and never loads media.
+ * Database errors propagate so the optional media caller can fail closed.
+ */
+async function getPriorCustomerTextsForAdEnquiry(
+  contactId,
+  inboundMessageId,
+  query = pool.query.bind(pool)
+) {
+  const contact = Number(contactId);
+  const inbound = Number(inboundMessageId);
+  if (!Number.isSafeInteger(contact) || contact < 1 ||
+      !Number.isSafeInteger(inbound) || inbound < 1) {
+    throw new TypeError("Valid contact and inbound message IDs are required.");
+  }
+  const result = await query(
+    `SELECT content FROM messages
+      WHERE contact_id = $1 AND role = 'user' AND id < $2
+      ORDER BY id ASC
+      LIMIT 3`,
+    [contact, inbound]
+  );
+  return result.rows.map((row) => String(row.content || ""));
+}
+
 async function getMessagesForContact(contactId, limit = 50, includeMedia = true) {
   const safeLimit = clampPageSize(limit);
   const mediaColumn = includeMedia
@@ -1642,6 +1670,7 @@ module.exports = {
   saveInboundMessageIfNew,
   updateInboundMessage,
   getMessagesForContact,
+  getPriorCustomerTextsForAdEnquiry,
   wasPromoRecentlySent,
   wasPromoRecentlySentWithExecutor,
   wasMediaRecentlySent,
