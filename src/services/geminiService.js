@@ -102,6 +102,8 @@ async function getReply(
     purpose,
     signal: requestControl.signal || null,
     validateResponse: requestControl.validateResponse || null,
+    contactId: options.contactId || null,
+    leadId: options.leadId || null,
   });
 
   const text = response.text?.trim();
