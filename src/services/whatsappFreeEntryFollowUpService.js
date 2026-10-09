@@ -5,6 +5,8 @@ const clinicConfig = require("../config/clinicConfig");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const whatsappTemplates = require("./whatsappTemplateService");
 const whatsapp = require("./whatsappService");
+const promoImagesRepo = require("../db/promoImagesRepo");
+const mediaCache = require("./whatsappFreeEntryMediaCache");
 const messagesRepo = require("../db/messagesRepo");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -332,18 +334,27 @@ async function processCandidate(candidate, active, template, now = new Date(), e
     let uploadedImageId = null;
     let uploadedImageMime = null;
     if (spec.autoPromoImageId) {
-      const prepared = await prepareAutoPromotionMedia(spec);
-      if (!prepared) {
-        await finish(attemptId, "cancelled", { error: "Configured promotion image no longer available or valid" });
+      const metadata = await promoImagesRepo.getPublicImageMetadata(spec.autoPromoImageId);
+      if (!["image/jpeg","image/png"].includes(metadata?.mime_type)) {
+        await finish(attemptId, "cancelled", { error: "Configured promotion image is no longer public" });
         return "media_unavailable";
       }
-      uploadedImageMime = prepared.mimeType;
-      uploadedImageId = await whatsapp.uploadMedia(
-        prepared.buffer, prepared.mimeType, prepared.filename
-      );
+      uploadedImageMime = metadata.mime_type;
+      uploadedImageId = mediaCache.get(spec.autoPromoImageId, uploadedImageMime);
       if (!uploadedImageId) {
-        await finish(attemptId, "cancelled", { error: "Meta refused the promotion image upload" });
-        return "media_upload_failed";
+        const prepared = await prepareAutoPromotionMedia(spec);
+        if (!prepared || prepared.mimeType !== uploadedImageMime) {
+          await finish(attemptId, "cancelled", { error: "Configured promotion image no longer available or valid" });
+          return "media_unavailable";
+        }
+        uploadedImageId = await whatsapp.uploadMedia(
+          prepared.buffer, prepared.mimeType, prepared.filename
+        );
+        if (!uploadedImageId) {
+          await finish(attemptId, "cancelled", { error: "Meta refused the promotion image upload" });
+          return "media_upload_failed";
+        }
+        mediaCache.put(spec.autoPromoImageId, uploadedImageMime, uploadedImageId);
       }
     }
     const built = buildStaticMarketingTemplate(
@@ -461,6 +472,9 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       return "accepted";
     }
     const status = response?.unknown ? "unknown" : "failed";
+    // An explicit Meta rejection can indicate an invalid/expired media ID.
+    // Force a fresh upload next time; never retry this ambiguous slot.
+    if (spec.autoPromoImageId && status === "failed") mediaCache.forget(spec.autoPromoImageId);
     await messagesRepo.setDeliveryStatusById(
       message.id, status, response?.error || "Template delivery not confirmed"
     );
