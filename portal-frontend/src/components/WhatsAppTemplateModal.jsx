@@ -169,14 +169,14 @@ export default function WhatsAppTemplateModal({
           setSelectedKey(key);
           setValues(emptyValuesFor(nextTemplate));
           setMediaFile(null);
-        setMediaSelectionId("");
+          setMediaSelectionId("");
           setMarketingConsentConfirmed(false);
         }
       } else {
         setSelectedKey("");
         setValues({ header: [], body: [] });
         setMediaFile(null);
-        setMediaSelectionId("");
+    setMediaSelectionId("");
         setMarketingConsentConfirmed(false);
       }
     } catch (err) {
@@ -191,7 +191,7 @@ export default function WhatsAppTemplateModal({
     setSelectedKey("");
     setValues({ header: [], body: [] });
     setMediaFile(null);
-        setMediaSelectionId("");
+    setMediaSelectionId("");
     setOptInSource("");
     setOptInConfirmed(false);
     setMarketingOptInConfirmed(false);
@@ -281,7 +281,7 @@ export default function WhatsAppTemplateModal({
           selected.category === "MARKETING"
             ? marketingConsentConfirmed
             : false,
-        mediaSelectionId: mediaFile ? "" : mediaSelectionId,
+        ...(mediaSelectionId && !mediaFile ? { mediaSelectionId } : {}),
       }, mediaFile);
       onSent?.(result);
       onClose();
