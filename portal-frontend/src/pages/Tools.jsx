@@ -1011,6 +1011,7 @@ export default function Tools() {
       <div className="min-h-0 min-w-0 flex-1">
         {activeTool === "followUp" && (
           <FollowUpTool
+            isAdmin={user?.role === "admin"}
             form={form}
             setForm={setForm}
             freeOnlyAlreadyEnabled={config?.automatedFollowUp?.whatsappFreeOnly?.enabled === true}
@@ -1820,6 +1821,7 @@ function ServiceOverridesEditor({
 }
 
 function FollowUpTool({
+  isAdmin,
   form,
   setForm,
   freeOnlyAlreadyEnabled,
@@ -1857,6 +1859,31 @@ function FollowUpTool({
   const [freeEntryStatus, setFreeEntryStatus] = useState(null);
   const [freeEntryStatusError, setFreeEntryStatusError] = useState("");
   const [freeEntryStatusLoading, setFreeEntryStatusLoading] = useState(false);
+  const [reconcileReason, setReconcileReason] = useState("");
+  const [billingHubChecked, setBillingHubChecked] = useState(false);
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileError, setReconcileError] = useState("");
+  const handleReconcile = async () => {
+    if (!billingHubChecked || reconcileReason.trim().length < 30) {
+      setReconcileError("Check Meta Billing Hub and provide at least 30 characters describing your investigation.");
+      return;
+    }
+    setReconcileBusy(true);
+    setReconcileError("");
+    try {
+      await api.reconcileWhatsAppFreeOnly({
+        reservationId: freeEntryStatus?.freeOnlyGate?.reservation_id,
+        reason: reconcileReason.trim(), confirmedBillingHub: true,
+      });
+      setReconcileReason("");
+      setBillingHubChecked(false);
+      await refreshFreeEntryStatus();
+    } catch (error) {
+      setReconcileError(error.message || "Unable to reconcile this reservation.");
+    } finally {
+      setReconcileBusy(false);
+    }
+  };
   const refreshFreeEntryStatus = useCallback(async () => {
     setFreeEntryStatusLoading(true);
     try {
@@ -2642,6 +2669,33 @@ function FollowUpTool({
                     <p className="mt-1 text-xs font-semibold text-amber-700">
                       A previous WhatsApp send is awaiting billing verification. Further strict-mode sends are blocked until Meta confirms free pricing. An unknown send requires manual reconciliation, not an automatic retry.
                     </p>
+                  ) : null}
+                  {isAdmin && freeEntryStatus.freeOnlyEnabled &&
+                    ["reserved", "awaiting_pricing", "unknown"].includes(freeEntryStatus.freeOnlyGate?.status) &&
+                    Number(freeEntryStatus.billingSafety?.since_switch || 0) === 0 ? (
+                    <div className="mt-3 rounded-xl border border-amber-300 p-3 space-y-2">
+                      <p className="text-xs font-semibold">Admin-only: manually reconcile a stuck send</p>
+                      <p className="text-xs text-[var(--color-text-muted)]">
+                        Verify the customer conversation and the exact send in Meta Billing Hub.
+                        This is an audited operator release, NOT confirmation that Meta charged RM0.
+                        A billable callback cannot be overridden here.
+                      </p>
+                      <textarea className="w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs"
+                        aria-label="Billing investigation reason" rows={3}
+                        placeholder="Document the customer conversation, Meta Billing Hub evidence and why manual release is safe (30+ characters)."
+                        value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)}/>
+                      <label className="flex items-start gap-2 text-xs">
+                        <input type="checkbox" checked={billingHubChecked}
+                          onChange={(event) => setBillingHubChecked(event.target.checked)}/>
+                        I personally checked the corresponding send in Meta Billing Hub and the customer chat.
+                      </label>
+                      {reconcileError ? <p className="text-xs text-red-600">{reconcileError}</p> : null}
+                      <button type="button" className="rounded-lg border border-amber-400 px-3 py-2 text-xs font-semibold"
+                        disabled={reconcileBusy || !billingHubChecked || reconcileReason.trim().length < 30}
+                        onClick={handleReconcile}>
+                        {reconcileBusy ? "Reconciling..." : "Release audited send reservation"}
+                      </button>
+                    </div>
                   ) : null}
                   {(freeEntryStatus.recentBlocks || []).length ? (
                     <div className="mt-2 text-[11px] text-[var(--color-text-muted)]" aria-label="Recent free-only blocked sends">
