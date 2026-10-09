@@ -1609,7 +1609,7 @@ function StepSummaryChips({ step }) {
   if (!chips.length) return null;
 
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
+    <span className="mt-2 flex flex-wrap gap-1.5">
       {chips.map((chip) => (
         <span
           key={chip}
@@ -1618,7 +1618,7 @@ function StepSummaryChips({ step }) {
           {chip}
         </span>
       ))}
-    </div>
+    </span>
   );
 }
 
@@ -2058,7 +2058,7 @@ function FollowUpTool({
   function editSequenceStep(index) {
     setPreviewStepIndex(index);
     setPreviewServiceName("");
-    if (index > 0) setExpandedStepIndex(index - 1);
+    setExpandedStepIndex(index > 0 ? index - 1 : null);
     setJumpStepIndex(index);
   }
 
@@ -2281,7 +2281,8 @@ function FollowUpTool({
                           {sequenceTargetSummary(step)}
                         </span>
                         <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">
-                          {step.messageMode === "ai" ? "AI message with fallback" : "Saved message"} · {readyLanguages}/3 languages ready
+                          {step.messageMode === "ai" ? "AI message with fallback" : "Standard message"} · {index === 0 && translationsNeedRefresh
+                            ? "Languages will refresh when saved" : `${readyLanguages}/3 languages configured`}
                         </span>
                         <StepSummaryChips step={step} />
                       </button>
