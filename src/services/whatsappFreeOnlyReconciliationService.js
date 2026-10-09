@@ -35,6 +35,19 @@ async function reconcile({ actor, reservationId, reason, confirmedBillingHub }, 
     if (!gate || gate.status === "idle" || gate.reservation_id !== reservationId)
       throw new ReconcileError("reservation_changed",
         "The reservation changed. Refresh before reconciling.");
+    // A reserved send may still be making its Meta request: an override at
+    // this point would permit a second overlapping send and defeat the lock.
+    // Ambiguous sends are operator-recoverable only after a grace period.
+    if (gate.status === "reserved") {
+      throw new ReconcileError("send_still_reserved",
+        "An active or interrupted Meta send cannot be released here. Confirm an unknown outcome through the recovery process; never unlock an active request.");
+    }
+    const ageMs = Date.now() - new Date(gate.updated_at).getTime();
+    if (!["unknown", "awaiting_pricing"].includes(gate.status) ||
+        !Number.isFinite(ageMs) || ageMs < 5 * 60 * 1000) {
+      throw new ReconcileError("reconciliation_grace_period",
+        "Reconciliation requires an unknown or unpriced send that has been pending for at least five minutes. Refresh its status before overriding.");
+    }
 
     const activatedAt=clinicConfig.automatedFollowUp?.whatsappFreeOnly?.activatedAt;
     const validActivation=typeof activatedAt === "string" && Number.isFinite(Date.parse(activatedAt));
