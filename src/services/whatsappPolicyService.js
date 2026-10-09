@@ -425,6 +425,31 @@ async function checkTemplateAllowed(contact, { category = null } = {}) {
     );
   }
 
+  if (String(category || "").trim().toUpperCase() === "MARKETING") {
+    // A general WhatsApp service opt-in does not permit promotional templates.
+    // Require the current CRM lead AND a durable consent audit event.
+    const consent = await pool.query(
+      `SELECT l.marketing_consent,
+         EXISTS (
+           SELECT 1 FROM whatsapp_marketing_consent_events e
+           WHERE e.contact_id=$1 AND e.lead_id=l.id
+             AND e.created_at >= COALESCE($2::timestamptz, '-infinity'::timestamptz)
+         ) AS has_evidence
+       FROM leads l
+       WHERE l.contact_id=$1
+       ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1`,
+      [contactId, state.whatsapp_opt_in_at]
+    );
+    const current = consent.rows[0];
+    if (current?.marketing_consent !== "opted_in" || current.has_evidence !== true) {
+      return policyError(
+        "marketing_consent_unverified",
+        "WhatsApp promotional templates require a verified Marketing consent event for the current lead. Record the customer's explicit permission and its source first.",
+        { state }
+      );
+    }
+  }
+
   return { allowed: true, code: null, message: null, state };
 }
 
