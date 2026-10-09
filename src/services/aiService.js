@@ -648,6 +648,8 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
       privateReplyEnabled: true,
       metaAdContext: null,
       followUpContext: null,
+      contactId: null,
+      leadId: null,
     };
   }
 
@@ -661,6 +663,8 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
+    contactId: optionsOrFirstMessage?.contactId || null,
+    leadId: optionsOrFirstMessage?.leadId || null,
   };
 }
 

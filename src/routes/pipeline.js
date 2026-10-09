@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const analyticsRepo = require("../db/analyticsRepo");
+const aiCostAnalyticsRepo = require("../db/aiCostAnalyticsRepo");
 const metaAdsAnalyticsRepo = require("../db/metaAdsAnalyticsRepo");
 const configRepo = require("../db/configRepo");
 const { getAnalyticsPipelineProfile } = require("../db/analyticsPipelineProfile");
@@ -197,6 +198,24 @@ router.get("/analytics/meta-ads", async (req, res) => {
     });
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong loading Meta Ads analytics.");
+  }
+});
+
+// Keep this before /analytics and under the existing authenticated pipeline router.
+router.get("/analytics/ai-costs", async (req, res) => {
+  try {
+    const [accessibleContactIds, accessibleLeadIds] = await Promise.all([
+      getAccessibleContactIds(req.user),
+      getAccessibleLeadIds(req.user),
+    ]);
+    const result = await aiCostAnalyticsRepo.getAiCostAnalytics({
+      days: req.query.days,
+      accessibleContactIds,
+      accessibleLeadIds,
+    });
+    res.json(result);
+  } catch (err) {
+    handlePipelineError(res, err, "Something went wrong loading AI cost analytics.");
   }
 });
 
