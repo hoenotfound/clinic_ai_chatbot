@@ -31,6 +31,7 @@ const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
 } = require("./utils/resultMediaTrigger");
+const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -882,7 +883,6 @@ async function processIncomingMessage(
     const isFirstMessage = forceFirstMessage || history.length === 1;
     const customerMessages = history.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
-    const priorCustomerTexts = customerMessages.slice(0, -1).map((message) => message.content);
     const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
       newestCustomerText,
       clinicConfig.introMessage
@@ -1216,26 +1216,45 @@ async function processIncomingMessage(
         // If the second read fails or creative remains ambiguous, fail closed
         // rather than relying on an earlier stale/ad-name-only service hint.
         let resultMediaCreativeService = metaAdCreativeService;
-        if (
-          sendOutcome.sendResult.success &&
-          isEarlyContextualAdEnquiry({ customerText: text, isFirstMessage, priorCustomerTexts })
-        ) {
+        let verifiedPriorCustomerTexts = null;
+        if (sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
           try {
-            const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
-              services: clinicConfig.services,
-              aliases: clinicConfig.serviceAliases,
-            });
-            resultMediaCreativeService = resolveMetaAdCreativeService(
-              refreshedMetaAdContext,
-              clinicConfig.services,
-              clinicConfig.serviceAliases
+            // Query earliest persisted inbound messages, NOT the shortened AI
+            // snapshot. The third previous message is an ineligible sentinel.
+            verifiedPriorCustomerTexts = await messagesRepo.getPriorCustomerTextsForAdEnquiry(
+              contact.id,
+              savedInbound.id
             );
-          } catch (refreshErr) {
-            resultMediaCreativeService = null;
+          } catch (historyErr) {
             console.warn(
-              `[Result media] local Meta attribution refresh failed for contact ${contact.id}; skipping unverified ad media:`,
-              refreshErr
+              `[Result media] inbound-history verification failed for contact ${contact.id}; skipping contextual ad media:`,
+              historyErr
             );
+          }
+
+          if (isEarlyContextualAdEnquiry({
+            customerText: text,
+            priorCustomerTexts: verifiedPriorCustomerTexts,
+          })) {
+            try {
+              const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
+                services: clinicConfig.services,
+                aliases: clinicConfig.serviceAliases,
+              });
+              resultMediaCreativeService = resolveMetaAdCreativeService(
+                refreshedMetaAdContext,
+                clinicConfig.services,
+                clinicConfig.serviceAliases
+              );
+            } catch (refreshErr) {
+              resultMediaCreativeService = null;
+              console.warn(
+                `[Result media] local Meta attribution refresh failed for contact ${contact.id}; skipping unverified ad media:`,
+                refreshErr
+              );
+            }
+          } else {
+            resultMediaCreativeService = null;
           }
         }
 
@@ -1244,8 +1263,7 @@ async function processIncomingMessage(
           serviceQuerySource,
           metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
-          isFirstMessage,
-          priorCustomerTexts,
+          priorCustomerTexts: verifiedPriorCustomerTexts,
           onSkip: (reason) => console.info(`[Result media] skipped for contact ${contact.id}: ${reason}`),
           priceQuery,
           packageQuery,
