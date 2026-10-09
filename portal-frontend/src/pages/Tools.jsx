@@ -2628,6 +2628,11 @@ function FollowUpTool({
                       ? " · BILLING ALARM: all WhatsApp sends are blocked until investigated and the switch is reset."
                       : ""}
                   </div>
+                  {freeEntryStatus.freeOnlyEnabled && !freeEntryStatus.telegramBillingAlertsEnabled ? (
+                    <p className="mt-1 text-xs font-semibold text-amber-700">
+                      Telegram billing alarms are not configured. Billable callbacks still block strict-mode sends, but no automatic Telegram notification will reach staff.
+                    </p>
+                  ) : null}
                   <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                     Strict free-only period: {freeEntryStatus.strictCeilingHours === 168 ? "167h with verified account evidence" : "71h (no verified 7-day billing proof)"}
                     {" · "}Outbound reservation: {freeEntryStatus.freeOnlyGate?.status || "idle"}
