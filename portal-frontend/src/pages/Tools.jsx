@@ -1052,6 +1052,7 @@ export default function Tools() {
             saving={saving}
             services={config.services || []}
             promotions={config.promotions || []}
+            savedPricingEnabled={savedSettings.pricingReminder?.enabled === true}
             canManagePromotions={user?.role === "admin" || permissions?.manage_settings === true}
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
@@ -1882,6 +1883,7 @@ function FollowUpTool({
   services,
   promotions,
   canManagePromotions,
+  savedPricingEnabled,
   onSourceMessageChange,
   onTranslationChange,
   onGenerateTranslations,
@@ -2803,6 +2805,7 @@ function FollowUpTool({
             services={services}
             promotions={promotions}
             pricingEnabled={form.pricingReminder?.enabled === true}
+            savedPricingEnabled={savedPricingEnabled}
             sequenceEnabled={form.enabled === true}
             hasThirdStep={form.additionalSteps.length === 2}
             sendBothPelvicPackages={form.pricingReminder?.sendBothPelvicPackages === true}
