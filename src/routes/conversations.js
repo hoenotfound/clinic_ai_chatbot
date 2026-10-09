@@ -1273,8 +1273,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (["IMAGE", "VIDEO"].includes(mediaFormat) && !req.file && !mediaSelectionId) {
       return res.status(400).json({ error: `Choose an ${mediaFormat.toLowerCase()} to send this template.` });
     }
+    let selectedClinicMedia = null;
     try {
-      whatsappTemplateMedia.validateTemplateMediaChoice(
+      selectedClinicMedia = whatsappTemplateMedia.validateTemplateMediaChoice(
         resolved.template.name, languageCode, mediaSelectionId, values
       );
     } catch (error) {
@@ -1309,18 +1310,10 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     // broader Marketing permission.
     let templateTreatmentInterest = null;
     if (resolved.template.category === "MARKETING" && mediaSelectionId) {
-      const matches = whatsappTemplateMedia.listReusableMedia()
-        .filter((item) => item.id === mediaSelectionId);
-      if (matches.length !== 1) {
-        return res.status(400).json({
-          error: "The selected clinic media item is not available.",
-          code: "template_treatment_unverified",
-        });
-      }
-      // Generic shared testimonial media may not be treatment-specific.
-      // Restricted promotion/media templates are still verified against
-      // their exact configured service by validateTemplateMediaChoice().
-      templateTreatmentInterest = matches[0].serviceName || null;
+      // Restricted media templates are already verified against the current
+      // clinic config above. Reuse that trusted selection instead of making
+      // a second lookup, or relying on a browser-supplied treatment.
+      templateTreatmentInterest = selectedClinicMedia?.serviceName || null;
     }
     if (resolved.template.category === "MARKETING" &&
         resolved.template.name === "ns_fu1_service_checkin") {
