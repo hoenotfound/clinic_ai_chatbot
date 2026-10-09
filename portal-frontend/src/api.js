@@ -256,6 +256,7 @@ export const api = {
     request(`/advanced-config/restore/${snapshotId}`, { method: "POST" }),
   getCommentAutomationStatus: () => request("/config/comment-automation/status"),
   getFreeEntryStatus: () => request("/config/automated-follow-up/free-entry-status"),
+  reconcileWhatsAppFreeOnly: (payload) => request("/config/automated-follow-up/free-only-reconcile", { method: "POST", body: JSON.stringify(payload) }),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
   recoverUnassignedLeads: () =>
     request("/config/lead-distribution/recover-unassigned", { method: "POST" }),
