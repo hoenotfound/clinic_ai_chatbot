@@ -57,10 +57,13 @@ async function mockPortalApi(
     followUpStatus = null,
     followUpStatusFailures = 0,
     templateCatalog = null,
+    followUpActivity = null,
+    followUpActivityFailures = 0,
   } = {}
 ) {
   let authenticated = loggedIn;
   let remainingFollowUpStatusFailures = followUpStatusFailures;
+  let remainingActivityFailures = followUpActivityFailures;
   let advancedConfig = {
     businessName: "Test Clinic",
     clinicName: "Test Clinic",
@@ -499,6 +502,21 @@ async function mockPortalApi(
       return route.fulfill({
         status: 200, contentType: "image/jpeg", body: "mock-preview",
       });
+    }
+
+    if (path === "/api/follow-up-activity" && method === "GET") {
+      if (remainingActivityFailures > 0) {
+        remainingActivityFailures -= 1;
+        return route.fulfill({ status: 503, contentType: "application/json",
+          body: JSON.stringify({ error: "Activity is temporarily unavailable." }) });
+      }
+      const filters = Object.fromEntries(url.searchParams.entries());
+      const defaultActivity = { items: [], total: 0, page: Number(filters.page || 1), pageSize: 25,
+        hasMore: false, summary: { sent: 0, pending: 0, failed: 0, skipped: 0, attention: 0 } };
+      const payload = typeof followUpActivity === "function"
+        ? followUpActivity(filters)
+        : (followUpActivity || defaultActivity);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) });
     }
 
     if (path === "/api/config/automated-follow-up/free-entry-status" &&
@@ -1443,12 +1461,87 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
 
-  await page.getByRole("tab", { name: "WhatsApp activity" }).click();
+  await page.getByRole("tab", { name: "Activity" }).click();
   await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
 
   await page.getByRole("tab", { name: "Sequence" }).click();
   await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up Activity shows recorded outcomes, precise skips and navigable Inbox links across channels", async ({ page }) => {
+  const calls = [];
+  const events = [
+    { event_id: "message:10", occurred_at: "2026-10-09T09:20:00Z", contact_id: 101,
+      channel: "whatsapp", type: "sequence", step: 3, state: "sent", raw_status: "delivered", detail: "" },
+    { event_id: "pricing_decision:12", occurred_at: "2026-10-09T09:10:00Z", contact_id: 102,
+      channel: "facebook", type: "pricing", step: 4, state: "skipped", raw_status: "missing_promotion", detail: "missing_promotion" },
+    { event_id: "message:13", occurred_at: "2026-10-09T09:00:00Z", contact_id: 103,
+      channel: "instagram", type: "sequence", step: 2, state: "failed", raw_status: "failed", detail: "API error" },
+    { event_id: "pricing_decision:14", occurred_at: "2026-10-09T08:50:00Z", contact_id: 104,
+      channel: "whatsapp", type: "pricing", step: 4, state: "attention", raw_status: "delivery_review", detail: "delivery_review" },
+    { event_id: "message:15", occurred_at: "2026-10-09T08:20:00Z", contact_id: 105,
+      channel: "whatsapp", type: "sequence", step: 1, state: "pending", raw_status: "pending", detail: "" },
+  ];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    followUpActivity: (filters) => {
+      calls.push(filters);
+      const matching = events.filter((e) =>
+        (filters.channel === "all" || e.channel === filters.channel) &&
+        (filters.type === "all" || e.type === filters.type) &&
+        (filters.state === "all" || e.state === filters.state));
+      return {
+        items: matching, total: matching.length, page: Number(filters.page), pageSize: 25,
+        hasMore: false, summary: {
+          sent: events.filter((e) => e.state === "sent").length,
+          pending: events.filter((e) => e.state === "pending").length,
+          failed: events.filter((e) => e.state === "failed").length,
+          skipped: events.filter((e) => e.state === "skipped").length,
+          attention: events.filter((e) => e.state === "attention").length,
+        },
+      };
+    },
+  });
+  await page.goto("/tools");
+  await expect.poll(() => calls.length).toBe(0); // lazy load; no unnecessary database query
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const activity = page.getByRole("region", { name: "Follow-up delivery activity" });
+  await expect(activity.getByRole("article")).toHaveCount(5);
+  await expect(activity).toContainText("Follow-up 3");
+  await expect(activity).toContainText("Pricing reminder");
+  await expect(activity).toContainText("Messenger");
+  await expect(activity).toContainText("Instagram");
+  await expect(activity).toContainText("Matching pricing promotion or media unavailable");
+  await expect(activity).toContainText("Earlier pricing delivery is unconfirmed");
+  await expect(activity).toContainText("Provider acceptance or delivery has not been confirmed");
+  await expect(activity.getByRole("link", { name: "Open conversation" }).first())
+    .toHaveAttribute("href", "/inbox?contact=101");
+  await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
+  await activity.getByRole("button", { name: "Failed" }).click();
+  await expect.poll(() => calls.at(-1)?.state).toBe("failed");
+  await expect(activity.getByRole("article")).toHaveCount(1);
+  await expect(activity).toContainText("API error");
+  await activity.getByRole("combobox", { name: "Activity channel" }).selectOption("instagram");
+  await expect.poll(() => calls.at(-1)?.channel).toBe("instagram");
+  await activity.getByRole("combobox", { name: "Activity period" }).selectOption("30");
+  await expect.poll(() => calls.at(-1)?.days).toBe("30");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up Activity handles API error and recovery without changing the saved sequence", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, { loggedIn: true, followUpActivityFailures: 1,
+    onConfigUpdate: (data) => writes.push(data),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const activity = page.getByRole("region", { name: "Follow-up delivery activity" });
+  await expect(activity.getByRole("alert")).toContainText("Activity is temporarily unavailable");
+  await activity.getByRole("button", { name: "Try again" }).click();
+  await expect(activity.getByText("No recorded events match these filters")).toBeVisible();
+  expect(writes).toHaveLength(0);
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -1474,7 +1567,7 @@ test("Follow-up tab settings save without changing the separate follow-up contro
   expect(saved[1].freeEntry.fallbackLanguage).toBe("ms");
   expect(saved[1].pricingReminder.enabled).toBe(true);
 
-  await page.getByRole("tab", { name: "WhatsApp activity" }).click();
+  await page.getByRole("tab", { name: "Activity" }).click();
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved.length).toBe(3);
@@ -1493,7 +1586,7 @@ test("Follow-up pricing and WhatsApp tabs fill desktop width", async ({ page }) 
   for (const [tab, id] of [
     ["Pricing", "follow-up-panel-pricing"],
     ["WhatsApp templates", "follow-up-panel-whatsapp"],
-    ["WhatsApp activity", "follow-up-panel-activity"],
+    ["Activity", "follow-up-panel-activity"],
   ]) {
     await page.getByRole("tab", { name: tab }).click();
     const sizes = await page.locator(`#${id}`).evaluate((node) => ({
