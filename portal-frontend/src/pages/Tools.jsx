@@ -3164,6 +3164,8 @@ function FollowUpTool({
                         ) || (templateCatalog?.templates || []).find((t) => t.name === rule.templateName) || null
                       }
                       catalog={templateCatalog}
+                      language={form.freeEntry?.language || "auto"}
+                      freeEntryStatus={freeEntryStatus}
                       onChange={(patch) => updateTemplateRule(index, patch, rule.templateName)}
                     />
                   </div>
