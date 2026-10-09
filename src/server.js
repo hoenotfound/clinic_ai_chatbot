@@ -27,7 +27,10 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
-const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
+const {
+  resolveResultMediaForReply,
+  isEarlyContextualAdEnquiry,
+} = require("./utils/resultMediaTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -878,6 +881,7 @@ async function processIncomingMessage(
     const isFirstMessage = forceFirstMessage || history.length === 1;
     const customerMessages = history.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
+    const priorCustomerTexts = customerMessages.slice(0, -1).map((message) => message.content);
     const generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro(
       newestCustomerText,
       clinicConfig.introMessage
@@ -1205,12 +1209,42 @@ async function processIncomingMessage(
       let pendingResultSend = null;
       let pendingResultError = null;
       try {
+        // A Meta ad may be enriched while the AI composes/sends its text reply.
+        // Refresh the local Neon attribution only AFTER the text was accepted,
+        // so this optional evidence read never delays the customer's answer.
+        // If the second read fails or creative remains ambiguous, fail closed
+        // rather than relying on an earlier stale/ad-name-only service hint.
+        let resultMediaCreativeService = metaAdCreativeService;
+        if (
+          sendOutcome.sendResult.success &&
+          isEarlyContextualAdEnquiry({ customerText: text, isFirstMessage, priorCustomerTexts })
+        ) {
+          try {
+            const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
+              services: clinicConfig.services,
+              aliases: clinicConfig.serviceAliases,
+            });
+            resultMediaCreativeService = resolveMetaAdCreativeService(
+              refreshedMetaAdContext,
+              clinicConfig.services,
+              clinicConfig.serviceAliases
+            );
+          } catch (refreshErr) {
+            resultMediaCreativeService = null;
+            console.warn(
+              `[Result media] local Meta attribution refresh failed for contact ${contact.id}; skipping unverified ad media:`,
+              refreshErr
+            );
+          }
+        }
+
         const resultBundle = await resolveResultMediaForReply({
           serviceQuery,
           serviceQuerySource,
-          metaAdCreativeService,
+          metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
           isFirstMessage,
+          priorCustomerTexts,
           onSkip: (reason) => console.info(`[Result media] skipped for contact ${contact.id}: ${reason}`),
           priceQuery,
           packageQuery,
