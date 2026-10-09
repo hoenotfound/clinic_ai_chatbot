@@ -146,18 +146,20 @@ async function storeInboundClaim({
        -- successfully saved; no marketing worker sees a stale opt-in.
        UPDATE contacts
        SET whatsapp_opt_out_at = CASE WHEN $9::text = 'all'
-             THEN now() ELSE whatsapp_opt_out_at END,
+             THEN COALESCE($6::timestamptz,now()) ELSE whatsapp_opt_out_at END,
            whatsapp_opt_out_source = CASE WHEN $9::text = 'all'
              THEN 'customer_message' ELSE whatsapp_opt_out_source END,
            whatsapp_opt_in_at = CASE WHEN $9::text = 'all'
              THEN NULL ELSE whatsapp_opt_in_at END,
            whatsapp_opt_in_source = CASE WHEN $9::text = 'all'
              THEN NULL ELSE whatsapp_opt_in_source END,
-           whatsapp_marketing_opt_out_at = now(),
+           whatsapp_marketing_opt_out_at = COALESCE($6::timestamptz,now()),
            whatsapp_marketing_opt_out_source = 'customer_message',
            updated_at = now()
        WHERE id=$1 AND $4::text='whatsapp'
          AND $9::text IN ('all','marketing')
+         AND (whatsapp_opt_in_at IS NULL OR
+              whatsapp_opt_in_at <= COALESCE($6::timestamptz,now()))
          AND EXISTS(SELECT 1 FROM inserted_message)
        RETURNING id
      ), synchronized_stop_leads AS (
