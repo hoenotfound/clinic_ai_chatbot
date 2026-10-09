@@ -28,9 +28,9 @@ function templateRuleValid(rule, slots, services) {
   const templateName = String(rule.templateName || "").trim();
   return Number.isInteger(rule.slotHours) && slots.includes(rule.slotHours) &&
     serviceName.length > 0 &&
-    services.some((service) =>
+    (serviceName === "*" || services.some((service) =>
       normalizeServiceText(service.name) === normalizeServiceText(serviceName)
-    ) &&
+    )) &&
     /^[a-z0-9_]+$/.test(templateName) &&
     validMediaUrl(rule.mediaUrl || "") &&
     !(rule.mediaKey && rule.mediaUrl) &&
@@ -65,9 +65,13 @@ function selectTemplateSpec(candidate, slotHours, settings) {
       String(candidate.lead_started_message_id) === String(candidate.latest_ad_message_id));
   const interest = normalizeServiceText(customerInterest || adInterest ||
     (sameLeadJourney ? candidate.treatment_interest : null) || "");
-  const matching = (settings.templateRules || []).find((rule) =>
+  const rules = settings.templateRules || [];
+  const matching = rules.find((rule) =>
     rule.slotHours === slotHours &&
+    rule.serviceName !== "*" &&
     normalizeServiceText(rule.serviceName) === interest
+  ) || rules.find((rule) =>
+    rule.slotHours === slotHours && rule.serviceName === "*"
   );
   return {
     templateName: matching?.templateName || settings.templateName,
