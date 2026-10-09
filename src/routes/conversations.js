@@ -1204,7 +1204,7 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
 
 router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, async (req, res) => {
   let mediaKey = null;
-  let mediaSaved = false;
+  let cleanupUnsubmittedMedia = true;
   try {
     const contactId = parsePositiveInt(req.params.contactId);
     if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
@@ -1426,6 +1426,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
           : null,
       consentOptInAt,
     };
+    // From this point a database error may have committed the message row.
+    // Never delete its private attachment on an ambiguous write failure.
+    cleanupUnsubmittedMedia = false;
     const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
       async () => {
@@ -1458,7 +1461,6 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     );
 
     const { preparedContact, saved } = prepared;
-    mediaSaved = true;
     const sendResult = await whatsappTemplate.sendApprovedTemplate(preparedContact, {
       templateName: metadata.name,
       languageCode: metadata.language,
@@ -1501,9 +1503,11 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     res.status(500).json({ error: "Something went wrong sending this WhatsApp template." });
   } finally {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
-    // If Meta upload failed before a message record was created, the R2
-    // object is an orphan and can safely be removed. Keep ambiguous DB
-    // writes instead of risking deletion of media referenced by Inbox.
+    if (mediaKey && cleanupUnsubmittedMedia) {
+      await mediaStorage.deleteMedia(mediaKey).catch((err) => {
+        console.warn("Could not clean up unsent template media:", err);
+      });
+    }
   }
 });
 
@@ -1645,7 +1649,8 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
       const rebuiltTemplate = whatsappTemplate.buildTemplateComponents(
         currentTemplate.template,
-        message.whatsapp_template.values || {}
+        message.whatsapp_template.values || {},
+        { allowMissingMedia: true }
       );
       if (!rebuiltTemplate.valid) {
         return res.status(409).json({
