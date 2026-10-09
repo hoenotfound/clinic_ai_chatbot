@@ -1073,6 +1073,12 @@ test("Sequence timeline navigates existing editors without changing schedule or 
 });
 
 test("Pricing catalog previews service packages, localized media and saved reminder controls", async ({ page }) => {
+  // Serve stable mock thumbnails so image load failures cannot hide <img>
+  // before assertions check which localized source is currently selected.
+  await page.route("https://cdn.example.test/**", (route) => route.fulfill({
+    status: 200, contentType: "image/png",
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+iCK8AAAAASUVORK5CYII=", "base64"),
+  }));
   const promotion = {
     name: "October Pelvis Offer", linkedService: "骨盆调理", validFrom: "2026-10-01",
     validUntil: "2027-12-31", sendOnPriceQuery: false,
