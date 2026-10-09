@@ -856,7 +856,10 @@ function parseStatusUpdates(body) {
  // The reservation lives across all Meta requests; a different worker cannot
  // send until a confirmed nonbillable pricing callback releases the account.
  async function sendMessage(to,text,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), {
+    currentMessageId: options.currentMessageId,
+    messageKind: "first_reply_text",
+  });
  }
  async function sendImage(to,url,caption,options={}) {
    return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), { currentMessageId: options.currentMessageId });
