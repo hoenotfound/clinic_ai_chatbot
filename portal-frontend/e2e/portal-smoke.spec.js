@@ -1263,6 +1263,7 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   });
   await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
   await expect(page.getByText(/Uploaded MP4s are checked server-side/)).toBeVisible();
+  await page.getByText("Advanced: trusted HTTPS media URL").click();
   await page.getByLabel("Extended template media URL 1").fill("https://approved.example.test/changed-video.mp4");
   await expect(page.getByLabel(/I verified this video is H.264 with AAC audio/)).not.toBeChecked();
   await page.getByLabel("Extended template media URL 1").fill("");
