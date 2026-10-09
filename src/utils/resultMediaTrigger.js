@@ -1,3 +1,4 @@
+const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 const {
   hasCustomerPriceEnquiry,
   hasCustomerServiceEnquiry,
@@ -109,12 +110,29 @@ function rotateAfter(items, lastImageUrl) {
   return [...items.slice(start), ...items.slice(0, start)];
 }
 
+// The second (or third) customer turn can still refer to a verified Meta ad
+// when earlier turns were strictly greetings or language-selection messages.
+// Never revive an old ad after a substantive customer topic or price request.
+function isEarlyContextualAdEnquiry({
+  customerText,
+  isFirstMessage = false,
+  priorCustomerTexts = [],
+} = {}) {
+  if (!isContextualAdServiceEnquiry(customerText)) return false;
+  if (isFirstMessage === true) return true;
+  return Array.isArray(priorCustomerTexts) &&
+    priorCustomerTexts.length > 0 &&
+    priorCustomerTexts.length <= 2 &&
+    priorCustomerTexts.every((text) => isGreetingOrLanguageOnly(text));
+}
+
 async function resolveResultMediaForReply({
   serviceQuery,
   serviceQuerySource,
   metaAdCreativeService = null,
   customerText = null,
   isFirstMessage = false,
+  priorCustomerTexts = [],
   onSkip = null,
   priceQuery,
   packageQuery,
@@ -131,12 +149,14 @@ async function resolveResultMediaForReply({
   getMostRecentlySentMediaUrl,
   duplicateWindowHours = DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
 }) {
-  // A first-turn "more info on this?" can point to a Click-to-WhatsApp
-  // creative even if the AI omits its optional structured serviceQuery fields.
-  // This exception requires BOTH an independent enquiry in the customer text
-  // and a unique service extracted from the Meta headline/body (never ad name).
-  const contextualAdEnquiry =
-    isFirstMessage === true && isContextualAdServiceEnquiry(customerText);
+  // A contextual Click-to-WhatsApp question can follow a greeting or language
+  // preference. Never apply this exception after a substantive customer turn,
+  // and never use an ad name or an AI model guess as verification.
+  const contextualAdEnquiry = isEarlyContextualAdEnquiry({
+    customerText,
+    isFirstMessage,
+    priorCustomerTexts,
+  });
   const skip = (reason) => {
     if (contextualAdEnquiry && typeof onSkip === "function") onSkip(reason);
     return null;
@@ -236,6 +256,7 @@ module.exports = {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
   RESULT_MEDIA_TRIGGER_MODES,
   SERVICE_QUERY_SOURCES,
+  isEarlyContextualAdEnquiry,
   normalizeResultMediaTriggerMode,
   itemImageUrls,
   matchingResultMediaSet,
