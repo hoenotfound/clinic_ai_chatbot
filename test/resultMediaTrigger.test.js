@@ -448,7 +448,7 @@ test("Agnes-style first Click-to-WhatsApp enquiry sends configured 3D proof with
     serviceQuerySource: null,
     treatment: null,
     priceQuery: false,
-    isFirstMessage: true,
+    priorCustomerTexts: [],
     metaAdCreativeService: "3D 小颜术",
     resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
   }));
@@ -463,7 +463,7 @@ test("generic enquiries fail closed without a single matching, verified Meta cre
     { metaAdCreativeService: null, treatment: "3D 小颜术" },
     { metaAdCreativeService: "骨盆调理", treatment: "3D 小颜术" },
     { metaAdCreativeService: null, treatment: null },
-    { isFirstMessage: false, metaAdCreativeService: "3D 小颜术" },
+    { priorCustomerTexts: null, metaAdCreativeService: "3D 小颜术" },
     { resultMedia: [{ ...resultMedia[0], triggerMode: "price_only" }] },
     { resultMedia: [{ ...resultMedia[0], enabled: false }] },
     { flagged: true },
@@ -476,7 +476,7 @@ test("generic enquiries fail closed without a single matching, verified Meta cre
       serviceQuery: false,
       serviceQuerySource: null,
       priceQuery: false,
-      isFirstMessage: true,
+      priorCustomerTexts: [],
       metaAdCreativeService: "3D 小颜术",
       resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
       onSkip: (reason) => skipped.push(reason),
@@ -492,7 +492,7 @@ test("verified contextual ad enquiry respects existing duplicate protection and 
   let checked = 0;
   const decision = await resolveResultMediaForReply(base({
     customerText: "Hello! Can I get more info on this?",
-    isFirstMessage: true,
+    priorCustomerTexts: [],
     serviceQuery: false,
     treatment: "3D 小颜术",
     priceQuery: false,
@@ -507,7 +507,6 @@ test("verified contextual ad enquiry respects existing duplicate protection and 
 test("early contextual enquiry after greeting or language choice uses verified Meta proof", async () => {
   for (const priorCustomerTexts of [["Hi"], ["你好"], ["English please"], ["Hi", "English"]]) {
     const selected = await resolveResultMediaForReply(base({
-      isFirstMessage: false,
       priorCustomerTexts,
       customerText: "Hello! Can I get more info on this?",
       serviceQuery: false,
@@ -532,7 +531,6 @@ test("contextual Meta fallback is bounded to early nonsubstantive customer turns
   ]) {
     const checked = [];
     const result = await resolveResultMediaForReply(base({
-      isFirstMessage: false,
       priorCustomerTexts,
       customerText: "Hello! Can I get more info on this?",
       serviceQuery: false,
@@ -552,7 +550,6 @@ test("contextual Meta fallback is bounded to early nonsubstantive customer turns
 
 test("second-turn contextual enquiry preserves safety, verified-service matching, and duplicate cooldown", async () => {
   const common = {
-    isFirstMessage: false,
     priorCustomerTexts: ["Hi"],
     customerText: "Can I get more info on this?",
     serviceQuery: false,
@@ -579,4 +576,53 @@ test("second-turn contextual enquiry preserves safety, verified-service matching
     metaAdCreativeService: null,
   }));
   assert.equal(noCreative, null);
+});
+
+
+test("generic ad wording fails closed without DB-verified prior history, even if the AI says first message", async () => {
+  for (const customerText of ["Hello! Can I get more info on this?", "I'm interested", "Tell me more"]) {
+    const checked = [];
+    const result = await resolveResultMediaForReply(base({
+      isFirstMessage: true, // historical/AI guesses must no longer bypass the DB check
+      priorCustomerTexts: null,
+      customerText,
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      priceQuery: false,
+      metaAdCreativeService: "3D 小颜术",
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      wasMediaRecentlySent: async () => { checked.push(true); return false; },
+    }));
+    assert.equal(result, null, customerText);
+    assert.equal(checked.length, 0);
+  }
+});
+
+test("established conversations cannot revive old creative when the AI snapshot only shows greetings", async () => {
+  // The DB's first-three sentinel rejects long conversations, including those
+  // whose last-20-message AI view contains only recent Hi/English customer texts.
+  for (const priorCustomerTexts of [
+    ["Hi", "English", "Hello"],
+    ["Hi", "I wanted 9D", "Hello"],
+    ["Hi", "English", "Hi", "Hi"],
+  ]) {
+    let checked = false;
+    const result = await resolveResultMediaForReply(base({
+      priorCustomerTexts,
+      customerText: "Tell me more",
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      treatment: "3D 小颜术",
+      priceQuery: false,
+      metaAdCreativeService: "3D 小颜术",
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      wasMediaRecentlySent: async () => { checked = true; return false; },
+    }));
+    assert.equal(result, null, JSON.stringify(priorCustomerTexts));
+    assert.equal(checked, false);
+  }
+  assert.equal(isEarlyContextualAdEnquiry({ customerText: "Tell me more", priorCustomerTexts: null }), false);
+  assert.equal(isEarlyContextualAdEnquiry({ customerText: "Tell me more", priorCustomerTexts: [] }), true);
+  assert.equal(isEarlyContextualAdEnquiry({ customerText: "Tell me more", priorCustomerTexts: ["Hi","English"] }), true);
+  assert.equal(isEarlyContextualAdEnquiry({ customerText: "Tell me more", priorCustomerTexts: ["Hi","English","Hi"] }), false);
 });
