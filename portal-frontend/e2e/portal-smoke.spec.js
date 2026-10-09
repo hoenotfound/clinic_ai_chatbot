@@ -54,6 +54,7 @@ async function mockPortalApi(
     },
     businessConfig = null,
     onConfigUpdate = null,
+    followUpStatus = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -455,6 +456,14 @@ async function mockPortalApi(
         status: 200,
         contentType: "video/mp4",
         body: "fake-mp4-preview",
+      });
+    }
+
+    if (path === "/api/config/automated-follow-up/free-entry-status" && followUpStatus !== null) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(followUpStatus),
       });
     }
 
@@ -905,13 +914,85 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Activity" }).click();
-  await expect(page.getByRole("heading", { name: "Extended WhatsApp follow-up activity" })).toBeVisible();
+  await page.getByRole("tab", { name: "WhatsApp activity" }).click();
+  await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
 
   await page.getByRole("tab", { name: "Sequence" }).click();
   await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up tab settings save without changing the separate follow-up controls", async ({ page }) => {
+  const saved = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
+  });
+  await page.goto("/tools");
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].pricingReminder.enabled).toBe(true);
+  expect(saved[0].freeEntry.enabled).toBe(false);
+
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByLabel("Approved template fallback language").selectOption("ms");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(2);
+  expect(saved[1].freeEntry.fallbackLanguage).toBe("ms");
+  expect(saved[1].pricingReminder.enabled).toBe(true);
+
+  await page.getByRole("tab", { name: "WhatsApp activity" }).click();
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(3);
+  expect(saved[2].enabled).toBe(true);
+  expect(saved[2].pricingReminder.enabled).toBe(true);
+  expect(saved[2].freeEntry.fallbackLanguage).toBe("ms");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up pricing and WhatsApp tabs fill desktop width", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chromium", "desktop grid regression");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockPortalApi(page, { loggedIn: true });
+  await page.goto("/tools");
+
+  for (const [tab, id] of [
+    ["Pricing", "follow-up-panel-pricing"],
+    ["WhatsApp templates", "follow-up-panel-whatsapp"],
+    ["WhatsApp activity", "follow-up-panel-activity"],
+  ]) {
+    await page.getByRole("tab", { name: tab }).click();
+    const sizes = await page.locator(`#${id}`).evaluate((node) => ({
+      panelWidth: node.getBoundingClientRect().width,
+      editorWidth: node.parentElement.parentElement.getBoundingClientRect().width,
+    }));
+    expect(sizes.panelWidth).toBeGreaterThan(sizes.editorWidth * 0.94);
+    await expectNoHorizontalPageOverflow(page);
+  }
+});
+
+test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    followUpStatus: {
+      enabledOnServer: true,
+      enabledInTools: true,
+      freeOnlyEnabled: true,
+      billingSafety: { since_switch: 1 },
+      freeOnlyGate: { status: "unknown" },
+      strictSevenDayBlocked: false,
+    },
+  });
+  await page.goto("/tools");
+  await expect(page.getByRole("alert")).toContainText("WhatsApp billing alarm");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("All WhatsApp sends are blocked");
 });
 
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
@@ -990,6 +1071,8 @@ test("Automated follow-up switches cleanly between image and video attachments",
   await expect(page.getByRole("button", { name: "Remove image" })).toBeVisible();
 
   await mediaGroup.getByRole("radio", { name: "Video" }).click();
+  await expect(mediaGroup.getByRole("radio", { name: "Video" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Add video" })).toBeVisible();
   const videoInput = page.getByLabel("Follow-up 1 media video upload");
   await videoInput.setInputFiles({
     name: "follow-up.mp4",
@@ -1014,6 +1097,8 @@ test("Automated follow-up switches cleanly between image and video attachments",
 
   savedPayload = null;
   await mediaGroup.getByRole("radio", { name: "Image" }).click();
+  await expect(mediaGroup.getByRole("radio", { name: "Image" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Add image" })).toBeVisible();
   const replacementImageInput = page.getByLabel("Follow-up 1 media image upload");
   await replacementImageInput.setInputFiles({
     name: "follow-up-replacement.jpg",
@@ -1031,6 +1116,11 @@ test("Automated follow-up switches cleanly between image and video attachments",
     videoKey: "",
     videoFilename: "",
   });
+
+  await page.getByRole("button", { name: "Remove image" }).click();
+  await expect(mediaGroup.getByRole("radio", { name: "No media" })).toHaveAttribute("aria-checked", "true");
+  await mediaGroup.getByRole("radio", { name: "Video" }).click();
+  await expect(page.getByRole("button", { name: "Add video" })).toBeVisible();
 
   await expectNoHorizontalPageOverflow(page);
 });
