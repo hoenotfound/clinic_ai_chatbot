@@ -98,6 +98,74 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       };
       process.env.WHATSAPP_PHONE_NUMBER_ID = "free-only-test-account";
       process.env.WHATSAPP_FEP_7DAY_VERIFIED = "false";
+
+      // Meta's genuine CTWA first reply IS the free-entry activation.
+      // Verify strict mode lets this one text reply out without requiring a
+      // pricing callback that cannot exist until AFTER it has been sent.
+      await client.query(`
+        INSERT INTO contacts(id,channel,whatsapp_number,mode)
+        VALUES (2,'whatsapp','60137777777','ai'),
+               (3,'whatsapp','60138888888','ai'),
+               (4,'whatsapp','60139999999','ai');
+        INSERT INTO messages(id,contact_id,role,content,created_at,whatsapp_message_id)
+        VALUES (170,2,'user','Real CTWA enquiry',now()-interval '2 minutes','wamid.ad.inbound'),
+               (172,3,'user','Old ad enquiry',now()-interval '25 hours','wamid.old.inbound'),
+               (174,4,'user','Organic enquiry',now()-interval '2 minutes','wamid.direct.inbound');
+        INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status)
+        VALUES (171,2,'assistant','First ad reply',now()-interval '1 minute','unknown'),
+               (173,3,'assistant','Late ad reply',now()-interval '1 minute','unknown'),
+               (175,4,'assistant','Organic reply',now()-interval '1 minute','unknown');
+        INSERT INTO whatsapp_free_entry_referrals(origin_message_id,contact_id,ctwa_clid,source_type)
+        VALUES (170,2,'valid-ctwa-click','ad'),
+               (172,3,'expired-ctwa-click','ad');
+      `);
+      const bootstrap=await zeroCostGuard.reserve("60137777777",{
+        database:guardDb,context:{currentMessageId:171,messageKind:"first_reply_text"}});
+      assert.equal(bootstrap.allowed,true,
+        "one confirmed inbound CTWA ad permits its first text reply while the 24h window is open");
+      const concurrentBootstrap=await zeroCostGuard.reserve("60137777777",{
+        database:guardDb,context:{currentMessageId:171,messageKind:"first_reply_text"}});
+      assert.equal(concurrentBootstrap.code,"zero_cost_previous_send_unreconciled",
+        "a second business message cannot race ahead of the first provider pricing callback");
+      await zeroCostGuard.complete(bootstrap.reservationId,
+        {success:true,wamid:"wamid.ad.first.reply"},guardDb);
+      const prePrice=await zeroCostGuard.reserve("60137777777",{
+        database:guardDb,context:{messageKind:"template"}});
+      assert.equal(prePrice.code,"zero_cost_previous_send_unreconciled",
+        "Meta acceptance alone does not permit any template before billing proof");
+
+      await client.query(`
+        UPDATE messages SET whatsapp_message_id='wamid.ad.first.reply',
+          delivery_status='delivered' WHERE id=171
+      `);
+      await client.query(`
+        INSERT INTO whatsapp_free_entry_pricing_evidence
+          (wamid,pricing_type,billable,delivery_status)
+        VALUES ('wamid.ad.first.reply','free_entry_point',false,'delivered')
+      `);
+      const verified=await zeroCostGuard.reserve("60137777777",{
+        database:guardDb,context:{messageKind:"template"}});
+      assert.equal(verified.allowed,true,
+        "subsequent templates may proceed only after Meta confirms the first reply was free");
+      await zeroCostGuard.complete(verified.reservationId,
+        {success:false,providerStatus:400},guardDb);
+
+      const late=await zeroCostGuard.reserve("60138888888",{
+        database:guardDb,context:{currentMessageId:173,messageKind:"first_reply_text"}});
+      assert.equal(late.code,"zero_cost_unverified_free_entry",
+        "an ad referral more than 24h old cannot bootstrap a free entry");
+      const organic=await zeroCostGuard.reserve("60139999999",{
+        database:guardDb,context:{currentMessageId:175,messageKind:"first_reply_text"}});
+      assert.equal(organic.code,"zero_cost_unverified_free_entry",
+        "ordinary WhatsApp profile/link/direct enquiry cannot obtain a CTWA first-reply exception");
+      const unsafeMedia=await zeroCostGuard.reserve("60138888888",{
+        database:guardDb,context:{currentMessageId:173,messageKind:"freeform"}});
+      assert.equal(unsafeMedia.code,"zero_cost_unverified_free_entry",
+        "an initial media/free-form path cannot invent a CTWA bootstrap");
+      await client.query("DELETE FROM whatsapp_free_entry_referrals WHERE contact_id IN (2,3)");
+      await client.query("DELETE FROM messages WHERE id BETWEEN 170 AND 175");
+      await client.query("DELETE FROM contacts WHERE id IN (2,3,4)");
+
       await client.query(`
         INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status)
         VALUES(19,1,'assistant','Current reserved follow-up',now(),'unknown');
