@@ -231,6 +231,33 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       await zeroCostGuard.complete(resumed.reservationId,
         {success:false,providerStatus:400},guardDb);
 
+      // A Render crash after reserve cannot silently unlock a send.
+      // Stale "reserved" becomes "unknown", not "idle", after 15 minutes.
+      const crashed=await zeroCostGuard.reserve("60121234567",{
+        database:guardDb,context:{messageKind:"template"}});
+      assert.equal(crashed.allowed,true);
+      await guardDb.query(
+        "UPDATE whatsapp_free_only_send_gate SET updated_at=now()-interval '16 minutes' WHERE reservation_id=$1",
+        [crashed.reservationId]
+      );
+      const stale=await zeroCostGuard.reserve("60121234567",{
+        database:guardDb,context:{messageKind:"template"}});
+      assert.equal(stale.code,"zero_cost_previous_send_unreconciled");
+      const staleGate=await guardDb.query(
+        "SELECT status FROM whatsapp_free_only_send_gate WHERE reservation_id=$1",
+        [crashed.reservationId]
+      );
+      assert.equal(staleGate.rows[0].status,"unknown");
+      await assert.rejects(
+        freeOnlyReconciliation.reconcile({
+          actor:"admin",reservationId:crashed.reservationId,
+          reason:"Checked the entire WhatsApp chat and Meta billing entries; prior send was interrupted.",
+          confirmedBillingHub:true
+        },guardDb),
+        (error)=>error.code==="reconciliation_grace_period",
+        "newly classified unknown send still requires an investigation grace period"
+      );
+
       // An ID from another lead must not exempt the current conversation.
       const invalid = await zeroCostGuard.reserve("60129876543",
         {database:guardDb,context:{currentMessageId:19}});
