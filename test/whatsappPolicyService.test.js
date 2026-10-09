@@ -356,3 +356,33 @@ test("multilingual STOP promotions only revokes marketing, not service replies",
   }
   assert.equal(policy.classifyOptOutText("Neutro Sense TCM 有优惠可以 WhatsApp 发给我"), null);
 });
+
+test("MARKETING templates require verified CRM consent and a real consent event; UTILITY does not", async (t) => {
+  const original=pool.query;
+  t.after(()=>{pool.query=original;});
+  const queries=[];
+  let leadConsent="unknown", hasEvidence=false;
+  pool.query=async (sql) => {
+    queries.push(sql);
+    if (sql.includes("FROM leads l")) return {rows:[{
+      marketing_consent:leadConsent,has_evidence:hasEvidence,
+    }]};
+    return {rows:[{
+      id:42,channel:"whatsapp",whatsapp_number:"60123456789",
+      whatsapp_opt_in_at:new Date("2026-10-09T01:00:00Z"),
+      whatsapp_opt_in_source:"customer message",
+      whatsapp_opt_out_at:null,whatsapp_marketing_opt_out_at:null,
+    }]};
+  };
+  const contact={id:42,channel:"whatsapp"};
+  assert.equal((await policy.checkTemplateAllowed(contact,{category:"UTILITY"})).allowed,true);
+  assert.equal(queries.length,1);
+  const missing=await policy.checkTemplateAllowed(contact,{category:"MARKETING"});
+  assert.equal(missing.allowed,false);
+  assert.equal(missing.code,"marketing_consent_unverified");
+  leadConsent="opted_in";
+  assert.equal((await policy.checkTemplateAllowed(contact,{category:"MARKETING"})).allowed,false,
+    "CRM checkbox alone is not verification");
+  hasEvidence=true;
+  assert.equal((await policy.checkTemplateAllowed(contact,{category:"MARKETING"})).allowed,true);
+});
