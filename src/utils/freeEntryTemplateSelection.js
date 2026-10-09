@@ -5,6 +5,7 @@ const mediaStorage = require("../services/mediaStorageService");
 const clinicConfig = require("../config/clinicConfig");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const templateMedia = require("../services/whatsappTemplateMediaService");
+const { isSafeTemplateMediaContext } = require("./followUpTemplateMediaPolicy");
 const { findMentionedPromotionPackages } = require("./activePromotion");
 
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
@@ -35,6 +36,12 @@ function templateRuleValid(rule, slots, services) {
     /^[a-z0-9_]+$/.test(templateName) &&
     validMediaUrl(rule.mediaUrl || "") &&
     !(rule.mediaKey && rule.mediaUrl) &&
+    (!rule.mediaSourceId || (
+      typeof rule.mediaSourceId === "string" &&
+      rule.mediaSourceId.length <= 100 &&
+      /^(?:promo:[1-9]\d*|video:[a-f0-9]{24})$/.test(rule.mediaSourceId) &&
+      Boolean(rule.mediaKey) && !rule.mediaUrl
+    )) &&
     (!rule.mediaKey ||
       (mediaStorage.isSharedFollowUpConfigKey(rule.mediaKey) &&
         /\.(?:mp4|jpe?g|png)$/i.test(rule.mediaKey)));
@@ -79,6 +86,7 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     language: locale,
     mediaUrl: matching?.mediaUrl || "",
     mediaKey: matching?.mediaKey || "",
+    mediaSourceId: matching?.mediaSourceId || "",
     videoCodecVerified: matching?.videoCodecVerified === true,
     serviceName: matching?.serviceName || null,
     identifiedTreatment: customerInterest || adInterest ||
@@ -230,6 +238,7 @@ async function validateApprovedMedia(template, spec, {
   promos = promoImagesRepo, validateImage = templateMedia.prepareImage,
 } = {}) {
   if (!template || !spec) return false;
+  if (!isSafeTemplateMediaContext(spec, template, { config: clinicConfig })) return false;
   const format = template.header?.format || "TEXT";
   if (spec.autoPromoImageId) {
     if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
@@ -262,6 +271,13 @@ async function validateApprovedMedia(template, spec, {
       if (format === "VIDEO" && !extension.endsWith(".mp4")) return false;
       if (format === "IMAGE" && !/\.(?:jpe?g|png)$/.test(extension)) return false;
       info = await mediaStore.getSharedFollowUpMediaInfo(spec.mediaKey);
+      if (spec.mediaSourceId?.startsWith("promo:")) {
+        // Origin metadata is signed by R2's own object HEAD response, not by
+        // browser-supplied fields. Retired/changed promos fail closed.
+        const imageId = String(spec.mediaSourceId.slice("promo:".length));
+        if (String(info?.metadata?.["clinic-promo-image-id"] || "") !== imageId)
+          return false;
+      }
     } else if (spec.mediaUrl) {
       const url = new URL(spec.mediaUrl);
       const allowed = String(env.WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS || "")
