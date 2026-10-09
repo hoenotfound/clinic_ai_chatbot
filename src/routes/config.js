@@ -1170,6 +1170,25 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
+// Operational override; it does not change Meta pricing evidence or waive billing.
+router.post("/automated-follow-up/free-only-reconcile", async (req, res) => {
+  try {
+    const result = await require("../services/whatsappFreeOnlyReconciliationService").reconcile({
+      actor: req.user?.username,
+      reservationId: req.body?.reservationId,
+      reason: req.body?.reason,
+      confirmedBillingHub: req.body?.confirmedBillingHub === true,
+    });
+    res.json(result);
+  } catch (error) {
+    console.error("[WhatsApp free-only] Reconciliation rejected:", error);
+    res.status(error.status || 503).json({
+      error: error.message || "Billing reconciliation failed.",
+      code: error.code || "billing_reconciliation_unavailable",
+    });
+  }
+});
+
 router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
   try {
     const report = await freeEntryReportRepo.summarize();
@@ -1190,7 +1209,7 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
     const db = require("../db/db").pool;
     const [gate, blocked, queuedAlerts, sevenDayEvidence] = freeOnlyAccount
       ? await Promise.all([
-          db.query(`SELECT status,updated_at,wamid IS NOT NULL AS has_message_id
+          db.query(`SELECT status,updated_at,reservation_id,wamid IS NOT NULL AS has_message_id
              FROM whatsapp_free_only_send_gate WHERE phone_number_id=$1`,[freeOnlyAccount]),
           db.query(`SELECT reason,SUM(count)::integer AS blocked_count,MAX(last_at) AS last_blocked_at
              FROM whatsapp_free_only_block_events WHERE phone_number_id=$1
