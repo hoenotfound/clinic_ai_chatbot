@@ -18,11 +18,12 @@ test("daily AI cost reporting uses MYT, enforces contact scope in every query an
       if (statements.length === 3) return { rows: [{
         contact_id: 7, channel: "whatsapp", calls: 5, usd: "0.0084", unpriced_calls: 2,
       }] };
-      return { rows: [{
+      if (statements.length === 4) return { rows: [{
         model: "gemini-3.8-flash", purpose: "customer_reply",
         successful_calls: 5, below_4096: 0, at_least_4096: 5,
         cache_hits: 0, cache_metadata_missing: 5, distinct_prefixes: 1, mean_prompt_tokens: 14000,
       }] };
+      return { rows: [{ lead_id: 77, contact_id: 7, calls: 4, usd: "0.0084", unpriced_calls: 1 }] };
     },
   };
   const result = await getAiCostAnalytics({
@@ -33,8 +34,9 @@ test("daily AI cost reporting uses MYT, enforces contact scope in every query an
   assert.equal(result.daily[0].unpricedCalls, 2);
   assert.equal(result.byContact[0].contactId, 7);
   assert.equal(result.cacheDiagnostics[0].cacheMetadataMissing, 5);
+  assert.equal(result.byLead[0].leadId, 77);
   assert.equal(result.daily[0].estimatedMyr, 0.0084 * 4.10);
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 5);
   for (const { sql, params } of statements) {
     assert.match(sql, /Asia\/Kuala_Lumpur/);
     assert.match(sql, /ANY\(\$2::int\[\]\)/);
@@ -46,6 +48,6 @@ test("restricted staff with no contacts cannot receive unscoped cost data", asyn
   const paramsSeen = [];
   const mock = { async query(sql, params) { paramsSeen.push(params); return { rows: [] }; } };
   await getAiCostAnalytics({ accessibleContactIds: [], database: mock, days: 200 });
-  assert.equal(paramsSeen.length, 4);
+  assert.equal(paramsSeen.length, 5);
   assert.deepEqual(paramsSeen[0], [30, []]);
 });
