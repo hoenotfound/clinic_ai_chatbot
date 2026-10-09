@@ -1,6 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const express = require("express");
+const { Client } = require("pg");
+if (process.env.TEST_DATABASE_URL && !process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+}
 const { pool } = require("../src/db/db");
 const repo = require("../src/db/followUpActivityRepo");
 const route = require("../src/routes/followUpActivity");
@@ -89,5 +93,65 @@ test("read-only activity endpoint requires manage_tools and respects contact per
   } finally {
     pool.query = originalQuery;
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("Postgres activity feed returns real persisted send, cancellation, pricing skip and review events", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const client = new Client({ connectionString: process.env.TEST_DATABASE_URL, ssl: false });
+  const schema = "followup_activity_" + process.pid + "_" + Date.now();
+  await client.connect();
+  try {
+    await client.query("CREATE SCHEMA " + schema);
+    await client.query("SET search_path TO " + schema);
+    await client.query(`
+      CREATE TABLE contacts(id INTEGER PRIMARY KEY, channel TEXT NOT NULL);
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, created_at TIMESTAMPTZ DEFAULT now(),
+        delivery_status TEXT, delivery_error TEXT, is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
+        automated_follow_up_for_message_id INTEGER,
+        pricing_reminder_anchor_id INTEGER, automated_follow_up_step INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE pricing_reminder_decisions (
+        id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, created_at TIMESTAMPTZ DEFAULT now(),
+        reason TEXT NOT NULL
+      );
+      CREATE TABLE follow_up_ai_decisions (
+        id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL,
+        follow_up_step INTEGER, created_at TIMESTAMPTZ DEFAULT now(),
+        action TEXT, reason TEXT
+      );
+      INSERT INTO contacts(id,channel) VALUES (1,'whatsapp'), (2,'facebook');
+      INSERT INTO messages(id,contact_id,delivery_status,is_automated_follow_up,automated_follow_up_for_message_id,automated_follow_up_step)
+      VALUES (20,1,'sent',true,10,1),
+             (21,1,'failed',true,10,2),
+             (23,2,'cancelled',true,11,1),
+             (99,1,'sent',false,10,1),
+             (100,2,'sent',true,NULL,1);
+      INSERT INTO messages(id,contact_id,delivery_status,is_automated_follow_up,pricing_reminder_anchor_id,automated_follow_up_step)
+      VALUES (22,2,'pending',true,12,4);
+      INSERT INTO pricing_reminder_decisions(id,contact_id,reason)
+      VALUES (11,2,'missing_promotion');
+      INSERT INTO follow_up_ai_decisions(id,contact_id,follow_up_step,action,reason)
+      VALUES (9,1,3,'human_review','manual_handoff');
+    `);
+    const execute = (sql, params) => client.query(sql, params);
+    const result = await repo.listActivity({ channel: "all", type: "all" }, null, execute);
+    assert.equal(result.total, 6);
+    assert.deepEqual(result.summary, { sent: 1, pending: 1, failed: 1, skipped: 2, attention: 1 });
+    assert.equal(result.items.some((x) => x.event_id === "message:99"), false);
+    assert.equal(result.items.some((x) => x.event_id === "message:100"), false);
+    const failed = await repo.listActivity({ state: "failed" }, [1], execute);
+    assert.equal(failed.total, 1);
+    assert.equal(failed.items[0].event_id, "message:21");
+    const facebook = await repo.listActivity({ channel: "facebook" }, [2], execute);
+    assert.equal(facebook.total, 3);
+    assert.equal(facebook.summary.skipped, 2);
+    assert.equal(facebook.summary.pending, 1);
+  } finally {
+    await client.query("SET search_path TO public");
+    await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    await client.end();
   }
 });
