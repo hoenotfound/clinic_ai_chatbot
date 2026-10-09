@@ -79,7 +79,9 @@ async function getAiCostAnalytics({
         COUNT(DISTINCT e.prompt_prefix_hash)::int AS distinct_prefixes,
         COALESCE(ROUND(AVG(e.prompt_tokens) FILTER(WHERE e.status='success')),0)::int AS mean_prompt_tokens
       ${events}
-      AND e.provider = 'gemini' AND e.purpose IN ('customer_reply','follow_up_generation')
+      AND e.provider = 'gemini'
+      AND e.model IN ('gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash')
+      AND e.purpose IN ('customer_reply','follow_up_generation')
       GROUP BY e.model,e.purpose ORDER BY e.purpose,e.model`,
       params
     ),
