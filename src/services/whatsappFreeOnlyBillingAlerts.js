@@ -63,4 +63,18 @@ async function flush({ database=pool, send=postTelegramMessage, env=process.env 
   return successes;
 }
 
-module.exports={activeSince,flush};
+// This signal is used by the delivery worker to keep retry cadence short
+// whenever an unsent billing alarm exists, even with no new webhooks.
+async function pending({ database=pool }={}) {
+  const since=activeSince();
+  const account=configuredAccount();
+  if (!since || !account) return false;
+  const r=await database.query(
+    `SELECT EXISTS(SELECT 1 FROM whatsapp_free_only_billing_alerts
+       WHERE phone_number_id=$1 AND observed_at>=$2::timestamptz
+         AND sent_at IS NULL) AS pending`,[account,since]
+  );
+  return r.rows?.[0]?.pending === true;
+}
+
+module.exports={activeSince,flush,pending};
