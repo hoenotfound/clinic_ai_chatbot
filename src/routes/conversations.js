@@ -188,6 +188,27 @@ const inboxVideoUpload = multer({
   },
 });
 
+const templateMediaUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, os.tmpdir()),
+    filename: (req, file, cb) => cb(null, `whatsapp-template-${process.pid}-${randomUUID()}.upload`),
+  }),
+  limits: { fileSize: 16 * 1024 * 1024, files: 1, fields: 6 },
+}).single("media");
+
+function handleTemplateMediaUpload(req, res, next) {
+  if (!req.is("multipart/form-data")) return next();
+  templateMediaUpload(req, res, (err) => {
+    if (!err) return next();
+    return res.status(400).json({
+      code: "invalid_template_media_upload",
+      error: err.code === "LIMIT_FILE_SIZE"
+        ? "WhatsApp template video must be at most 16MB (images at most 5MB)."
+        : "Could not upload template media. Choose one JPEG, PNG or H.264 MP4 file.",
+    });
+  });
+}
+
 const inboxDocumentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_INBOX_DOCUMENT_BYTES },
@@ -1181,7 +1202,9 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
   }
 });
 
-router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
+router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, async (req, res) => {
+  let mediaKey = null;
+  let mediaSaved = false;
   try {
     const contactId = parsePositiveInt(req.params.contactId);
     if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
@@ -1230,9 +1253,20 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       });
     }
 
-    const built = whatsappTemplate.buildTemplateComponents(
-      resolved.template,
-      req.body?.values || {}
+    let values = req.body?.values || {};
+    if (typeof values === "string") {
+      try { values = JSON.parse(values); }
+      catch { return res.status(400).json({ error: "Template variable values must be valid JSON." }); }
+    }
+    const mediaFormat = resolved.template.header?.format || "TEXT";
+    if (!["IMAGE", "VIDEO"].includes(mediaFormat) && req.file) {
+      return res.status(400).json({ error: "The selected template does not accept a media attachment." });
+    }
+    if (["IMAGE", "VIDEO"].includes(mediaFormat) && !req.file) {
+      return res.status(400).json({ error: `Choose an ${mediaFormat.toLowerCase()} to send this template.` });
+    }
+    let built = whatsappTemplate.buildTemplateComponents(
+      resolved.template, values, { allowMissingMedia: true }
     );
     if (!built.valid) {
       return res.status(400).json({
@@ -1254,7 +1288,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
 
     const marketingConsentConfirmed =
       resolved.template.category !== "MARKETING" ||
-      req.body?.marketingConsentConfirmed === true;
+      (req.body?.marketingConsentConfirmed === true || req.body?.marketingConsentConfirmed === "true");
     if (!marketingConsentConfirmed) {
       return res.status(400).json({
         error:
@@ -1324,12 +1358,67 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       });
     }
 
+    let mediaMimeType = null;
+    let mediaFilename = null;
+    if (req.file) {
+      let buffer;
+      if (mediaFormat === "IMAGE") {
+        mediaMimeType = String(req.file.mimetype || "").toLowerCase();
+        if (!WHATSAPP_IMAGE_MIME_TYPES.has(mediaMimeType) ||
+            req.file.size > WHATSAPP_IMAGE_MAX_BYTES || req.file.size <= 0) {
+          return res.status(400).json({ error: "Choose a JPEG or PNG image no larger than 5MB." });
+        }
+        buffer = await fs.readFile(req.file.path);
+        const jpeg = buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+        const png = buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+        if ((mediaMimeType === "image/jpeg" && !jpeg) ||
+            (mediaMimeType === "image/png" && !png)) {
+          return res.status(400).json({ error: "The image contents do not match the selected JPEG or PNG format." });
+        }
+      } else {
+        if (!isAllowedInboxVideo(req.file) || req.file.size <= 0) {
+          return res.status(400).json({ error: "Choose an MP4 video exported as H.264 with AAC audio." });
+        }
+        try {
+          const preparedVideo = await followUpVideoPreparation.prepareFollowUpVideoFile(req.file.path, {
+            originalBytes: req.file.size,
+            ensureWhatsAppCompatible: true,
+          });
+          buffer = preparedVideo.buffer;
+        } catch (error) {
+          return res.status(400).json({
+            code: error.code || "invalid_template_video",
+            error: error.message || "Video must be H.264 MP4 with AAC audio, under 16MB.",
+          });
+        }
+        mediaMimeType = "video/mp4";
+      }
+      mediaFilename = safeInboxFilename(req.file.originalname,
+        mediaFormat === "IMAGE" ? "template-image.jpg" : "template-video.mp4");
+      // Keep a durable private R2 copy for the Inbox history and future
+      // retries, then upload the same bytes directly to Meta. No public URL,
+      // transcoding or duplicate permanent R2 copy is required.
+      mediaKey = await mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId: contact.id });
+      const metaId = await whatsapp.uploadMedia(buffer, mediaMimeType, mediaFilename);
+      buffer = null;
+      if (!metaId) {
+        return res.status(502).json({ error: "WhatsApp could not upload the template attachment. No message was sent." });
+      }
+      built = whatsappTemplate.buildTemplateComponents(
+        resolved.template, values, { media: { id: metaId } }
+      );
+      if (!built.valid) {
+        return res.status(400).json({ error: built.error, code: "invalid_template_media" });
+      }
+    }
+
     const metadata = {
       name: resolved.template.name,
       language: resolved.template.language,
       category: resolved.template.category,
       components: built.components,
       values: built.values,
+      ...(mediaKey ? { mediaFormat, mediaFilename } : {}),
       templateSignature: whatsappTemplate.templateSignature(resolved.template),
       marketingConsentConfirmed:
         resolved.template.category === "MARKETING"
@@ -1351,8 +1440,10 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
           null,
           req.session.username,
           null,
-          null,
+          mediaMimeType ? { mimeType: mediaMimeType } : null,
           {
+            mediaKey,
+            mediaFilename,
             whatsappTemplate: metadata,
             initialDeliveryStatus: "unknown",
             initialDeliveryError:
@@ -1367,6 +1458,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
     );
 
     const { preparedContact, saved } = prepared;
+    mediaSaved = true;
     const sendResult = await whatsappTemplate.sendApprovedTemplate(preparedContact, {
       templateName: metadata.name,
       languageCode: metadata.language,
@@ -1407,6 +1499,11 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
   } catch (err) {
     console.error("Failed to send WhatsApp template:", err);
     res.status(500).json({ error: "Something went wrong sending this WhatsApp template." });
+  } finally {
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    // If Meta upload failed before a message record was created, the R2
+    // object is an orphan and can safely be removed. Keep ambiguous DB
+    // writes instead of risking deletion of media referenced by Inbox.
   }
 });
 
@@ -1579,17 +1676,52 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         }
       }
 
-      performRetrySend = (activeContact) =>
-        whatsappTemplate.sendApprovedTemplate(activeContact, {
+      const retryFormat = currentTemplate.template.header?.format || "TEXT";
+      if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
+        const expectedMime = retryFormat === "VIDEO" ? "video/mp4" : null;
+        if (!message.media_key ||
+            !mediaStorage.isOwnedStoredMediaKey(message.media_key) ||
+            message.whatsapp_template.mediaFormat !== retryFormat ||
+            (expectedMime && message.media_mime_type !== expectedMime) ||
+            (retryFormat === "IMAGE" && !WHATSAPP_IMAGE_MIME_TYPES.has(message.media_mime_type))) {
+          return res.status(409).json({
+            code: "template_media_missing",
+            error: "The original template attachment is unavailable. Choose the approved template and attach the file again.",
+          });
+        }
+      }
+      performRetrySend = async (activeContact) => {
+        let components = rebuiltTemplate.components;
+        if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
+          let buffer;
+          try {
+            buffer = await mediaStorage.downloadMedia(message.media_key, {
+              maxBytes: retryFormat === "IMAGE" ? WHATSAPP_IMAGE_MAX_BYTES : 16 * 1024 * 1024,
+            });
+          } catch (err) {
+            return { success: false, error: "The original template attachment could not be loaded from storage." };
+          }
+          if (!buffer?.length) return { success: false, error: "The original template attachment is empty." };
+          const mediaId = await whatsapp.uploadMedia(buffer, message.media_mime_type,
+            message.whatsapp_template.mediaFilename || "template-media");
+          if (!mediaId) return { success: false, error: "WhatsApp could not re-upload the template attachment." };
+          const withMedia = whatsappTemplate.buildTemplateComponents(
+            currentTemplate.template, message.whatsapp_template.values || {}, { media: { id: mediaId } }
+          );
+          if (!withMedia.valid) return { success: false, error: withMedia.error };
+          components = withMedia.components;
+        }
+        return whatsappTemplate.sendApprovedTemplate(activeContact, {
           templateName: message.whatsapp_template.name,
           languageCode: message.whatsapp_template.language,
-          components: rebuiltTemplate.components,
+          components,
           expectedOptInAt:
             currentTemplate.template.category === "MARKETING"
               ? message.whatsapp_template.consentOptInAt
               : null,
           templateCategory: currentTemplate.template.category,
         });
+      };
     } else {
       const retryPurpose =
         message.is_automated_follow_up === true
