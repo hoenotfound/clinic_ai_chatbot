@@ -151,10 +151,8 @@ async function inheritForNewLead({
          AND e.consent_category='MARKETING'
          AND e.consent_scope='treatment_followups_and_related_offers'
          AND e.consented_at=c.whatsapp_opt_in_at
-         AND (
-           e.consent_service IS NULL OR
-           LOWER(BTRIM(e.consent_service))=LOWER(BTRIM($3::text))
-         )
+         AND NULLIF(BTRIM(e.consent_service),'') IS NOT NULL
+         AND LOWER(BTRIM(e.consent_service))=LOWER(BTRIM($3::text))
        ORDER BY e.consented_at DESC,e.id DESC LIMIT 1
      )
      UPDATE leads l
@@ -164,6 +162,8 @@ async function inheritForNewLead({
      WHERE l.id=$2 AND l.contact_id=$1
        AND l.marketing_consent='unknown'
        AND l.is_closed=false
+       AND (l.treatment_interest IS NULL OR
+            LOWER(BTRIM(l.treatment_interest))=LOWER(BTRIM($3::text)))
        AND EXISTS(SELECT 1 FROM current_permission)
      RETURNING l.id`,
     [contactId,leadId,service]
