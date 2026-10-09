@@ -227,3 +227,26 @@ test("auto promotion media is limited to configured public JPEG/PNG assets <=5Mi
   assert.equal(await validateApprovedMedia({header:{format:"VIDEO"}},spec,
     {promos,validateImage}),false);
 });
+
+test("all-treatment day rules enable distinct templates with specific treatment precedence",()=>{
+  const cfg={templateName:"ns_fu2_general_checkin",language:"zh_CN",templateRules:[
+    {slotHours:26,serviceName:"*",templateName:"ns_fu1_service_checkin"},
+    {slotHours:50,serviceName:"*",templateName:"ns_fu_pricing_graphic"},
+    {slotHours:50,serviceName:"骨盆调理",templateName:"ns_fu2_general_checkin"},
+    {slotHours:98,serviceName:"*",templateName:"ns_fu_meridian_gift"},
+  ]};
+  assert.equal(validateTemplateRules(cfg.templateRules,[26,50,98],currentClinicPromos().services),true);
+  assert.equal(selectTemplateSpec({
+    treatment_interest:"9D 逆龄抗衰",recent_inbound_messages:["9D"]
+  },26,cfg).templateName,"ns_fu1_service_checkin");
+  assert.equal(selectTemplateSpec({
+    treatment_interest:"9D 逆龄抗衰",recent_inbound_messages:["9D"]
+  },50,cfg).templateName,"ns_fu_pricing_graphic");
+  assert.equal(selectTemplateSpec({
+    treatment_interest:"骨盆调理",recent_inbound_messages:["骨盆"]
+  },50,cfg).templateName,"ns_fu2_general_checkin",
+    "individual treatment overrides take precedence");
+  assert.equal(validateTemplateRules([
+    ...cfg.templateRules,{slotHours:26,serviceName:"*",templateName:"duplicate"}
+  ],[26,50,98],currentClinicPromos().services),false);
+});
