@@ -65,7 +65,8 @@ async function flush({ database=pool, send=postTelegramMessage, env=process.env 
 
 // This signal is used by the delivery worker to keep retry cadence short
 // whenever an unsent billing alarm exists, even with no new webhooks.
-async function pending({ database=pool }={}) {
+async function pending({ database=pool, env=process.env }={}) {
+  if (!isTelegramEnabled(env)) return false;
   const since=activeSince();
   const account=configuredAccount();
   if (!since || !account) return false;
