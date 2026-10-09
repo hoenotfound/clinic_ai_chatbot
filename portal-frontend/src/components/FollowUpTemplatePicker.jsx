@@ -170,6 +170,12 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
           {reusable.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>
+      {format === "IMAGE" && reusable.some((item) => item.imageId) && (
+        <p className="text-[11px] text-amber-800">
+          A pricing image attached here becomes a static R2 asset. Recheck it when a promotion expires.
+          For date-sensitive offers, use the supported automatic promotion-image template instead.
+        </p>
+      )}
       <label className="block text-xs font-semibold">
         Or upload a new {format === "VIDEO" ? "H.264/AAC MP4" : "JPG/PNG"}
         <input type="file" aria-label={`Extended template ${format.toLowerCase()} attachment ${index + 1}`}
