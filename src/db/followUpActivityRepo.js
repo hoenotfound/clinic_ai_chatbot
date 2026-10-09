@@ -130,4 +130,88 @@ async function listActivity(query = {}, allowedContactIds = null, queryFn = (sql
   };
 }
 
-module.exports = { listActivity, parseActivityFilters, ACTIVITY_SQL, PAGE_SIZE };
+// Separate, conservative diagnostic: an expired most-recent conversation
+// window whose configured Follow-up 3 has no message or terminal decision.
+// This is NOT a recorded skip: staff takeover, customer opt-out, booking,
+// scheduling limits or quiet hours may explain the gap. Never insert events.
+const MISSING_FINAL_STEP_SQL = `SELECT c.id AS contact_id, c.channel,
+    inbound.created_at AS inbound_at, anchor.created_at AS anchor_at
+  FROM contacts c
+  JOIN LATERAL (
+    SELECT id, created_at FROM messages
+    WHERE contact_id = c.id AND role = 'user'
+    ORDER BY created_at DESC, id DESC LIMIT 1
+  ) inbound ON true
+  JOIN LATERAL (
+    SELECT id, created_at FROM messages normal
+    WHERE normal.contact_id = c.id AND normal.role = 'assistant'
+      AND normal.is_automated_follow_up = false
+      AND normal.delivery_status IS DISTINCT FROM 'failed'
+      AND normal.delivery_status IS DISTINCT FROM 'cancelled'
+      AND (normal.created_at, normal.id) > (inbound.created_at, inbound.id)
+      AND NOT EXISTS (SELECT 1 FROM outbound_message_evidence e
+        WHERE e.message_id = normal.id AND e.origin = 'system_fallback')
+    ORDER BY normal.created_at DESC, normal.id DESC LIMIT 1
+  ) anchor ON true
+  WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+    AND ($2::text = 'all' OR c.channel = $2)
+    AND ($4::integer[] IS NULL OR c.id = ANY($4::integer[]))
+    AND inbound.created_at >= now() - $1::integer * interval '1 day'
+    AND inbound.created_at <= now() - interval '23 hours 50 minutes'
+    AND anchor.created_at >= $3::timestamptz
+    AND NOT EXISTS (
+      SELECT 1 FROM messages m
+      WHERE m.contact_id = c.id
+        AND m.is_automated_follow_up = true
+        AND m.automated_follow_up_for_message_id = anchor.id
+        AND m.automated_follow_up_step = 3
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM follow_up_ai_decisions d
+      WHERE d.contact_id = c.id AND d.trigger_message_id = anchor.id
+        AND d.action IN ('skip', 'human_review')
+    )
+  ORDER BY inbound.created_at DESC, c.id DESC
+  LIMIT 15`;
+
+function currentFinalStepSettings(config = clinicConfig.automatedFollowUp) {
+  if (config?.enabled !== true || !Array.isArray(config.additionalSteps) ||
+      config.additionalSteps.length < 2 || !Number.isFinite(Date.parse(config.activatedAt))) return null;
+  const step = config.additionalSteps[1];
+  return {
+    activation: config.activatedAt,
+    timingMode: step?.timingMode === 'before_window_expiry' ? 'before_window_expiry' : 'after_reply',
+    delay: Number(step?.delayMinutes) || 1200,
+    expiryOffset: Number(step?.beforeWindowExpiryMinutes) || 120,
+    quietHours: config.quietHours,
+  };
+}
+
+async function listSchedulingDiagnostics(filters, allowedContactIds, queryFn = (sql, params) => pool.query(sql, params), config = clinicConfig.automatedFollowUp) {
+  const finalStep = currentFinalStepSettings(config);
+  if (!filters || !finalStep || (Array.isArray(allowedContactIds) && allowedContactIds.length === 0) ||
+      filters.type === 'pricing') return [];
+  const records = await queryFn(MISSING_FINAL_STEP_SQL, [
+    filters.days, filters.channel, finalStep.activation, allowedContactIds,
+  ]);
+  return (records.rows || []).map((item) => {
+    const inbound = Date.parse(item.inbound_at);
+    const anchor = Date.parse(item.anchor_at);
+    const nominal = finalStep.timingMode === 'before_window_expiry'
+      ? inbound + (1440 - finalStep.expiryOffset) * 60000
+      : anchor + finalStep.delay * 60000;
+    const quietOverlap = Number.isFinite(nominal) && quietHoursStatus(
+      new Date(nominal), finalStep.quietHours,
+    ).active;
+    return {
+      contact_id: item.contact_id, channel: item.channel,
+      inbound_at: item.inbound_at,
+      possible_quiet_overlap: quietOverlap,
+    };
+  });
+}
+
+module.exports = {
+  listActivity, listSchedulingDiagnostics, parseActivityFilters,
+  ACTIVITY_SQL, MISSING_FINAL_STEP_SQL, PAGE_SIZE,
+};
