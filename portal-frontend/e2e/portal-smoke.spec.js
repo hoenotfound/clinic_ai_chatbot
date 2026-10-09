@@ -1170,6 +1170,8 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await expect(page.getByLabel("Free-entry template name")).toBeVisible();
   await page.getByLabel("Free-entry template name").selectOption("clinic_text_reminder");
+  await expect(page.locator("#free-entry-default-template option", { hasText: "clinic_utility_notice" })).toHaveCount(0);
+  await expect(page.locator("#free-entry-default-template option", { hasText: "clinic_unapproved" })).toHaveCount(0);
   await expect(page.getByLabel("Approved template preview").first()).toContainText("We can answer your questions.");
 
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
@@ -1203,6 +1205,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
 });
 
 test("WhatsApp template picker uploads new JPG or video and preserves selected media until saved", async ({ page }) => {
+  const saved = [];
   const templates = ["IMAGE", "VIDEO"].map((format) => ({
     name: format === "VIDEO" ? "clinic_media_video" : "clinic_media_image",
     language: "zh_CN", status: "APPROVED", category: "MARKETING",
@@ -1211,6 +1214,7 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   await mockPortalApi(page, {
     loggedIn: true,
     templateCatalog: { templates, reusableMedia: [] },
+    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
   });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
@@ -1227,6 +1231,13 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
   await expect(page.getByText(/Uploaded MP4s are checked server-side/)).toBeVisible();
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules[0]).toMatchObject({
+    templateName: "clinic_media_video",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/follow-up.mp4",
+    videoCodecVerified: true,
+  });
 });
 
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
