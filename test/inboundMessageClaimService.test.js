@@ -16,6 +16,7 @@ function makeService({
 } = {}) {
   const calls = [];
   let completed = false;
+  let lastIncoming = null;
   const contacts = {
     async getOrCreateContact(from, profileName) {
       calls.push(["contact", from, profileName]);
@@ -40,6 +41,7 @@ function makeService({
   const processing = {
     async storeInboundClaim({ contactId, content, storedMessageId, incoming }) {
       calls.push(["claim", contactId, content, storedMessageId, incoming.id]);
+      lastIncoming = incoming;
       if (duplicate) return null;
       return {
         savedInbound: { id: 777, contact_id: contactId, content },
@@ -75,7 +77,7 @@ function makeService({
         job: {
           id: jobId,
           contact_id: 42,
-          incoming_payload: {
+          incoming_payload: lastIncoming || {
             id: "wamid-recovered",
             from: "60123456789",
             text: "hello",
@@ -141,7 +143,7 @@ function makeService({
     events,
     reengagement: reengagementService,
     ...(policy ? { policy } : {}),
-    ...(inboundConsent ? { inboundConsent } : {}),
+    inboundConsent: inboundConsent || { async inheritForNewLead(){ return { inherited:false }; } },
     ...(config ? { config } : {}),
   });
 
@@ -456,4 +458,51 @@ test("opt-out beats promotional opt-in and never records new marketing permissio
   await claim.prepareIncomingClaim(durable);
   assert.equal(consentCalls,0);
   assert.equal(wasCompleted(),true);
+});
+
+test("failed STOP persistence is never marked complete and is retried without any reply",async(t)=>{
+  const originalError=console.error;
+  console.error=()=>{};
+  t.after(()=>{console.error=originalError;});
+  let attempts=0;
+  const policy={
+    classifyOptOutText:(text)=>/stop promotions/i.test(text)?"marketing":null,
+    async recordMarketingOptOut(_id,_src,originalTime){
+      assert.ok(originalTime);
+      attempts++;
+      if(attempts===1)throw Error("Neon temporarily unavailable");
+    }
+  };
+  const {claim,calls,wasCompleted}=makeService({policy});
+  const durable=await claim.storeIncomingMessage({
+    id:"wamid-stop-retry",from:"60123456789",channel:"whatsapp",
+    text:"Stop promotions",timestamp:1791507600,
+  });
+  await assert.rejects(claim.prepareIncomingClaim(durable),/Neon temporarily unavailable/);
+  assert.equal(wasCompleted(),false);
+  assert.ok(calls.some(x=>x[0]==="failed"));
+  assert.equal(calls.some(x=>x[0]==="prepared"),false);
+  await claim.resumeProcessingJob({id:91});
+  assert.equal(attempts,2);
+  assert.equal(wasCompleted(),true);
+  assert.equal(calls.some(x=>x[0]==="prepared"),false);
+});
+
+test("new CRM journeys check scope-compatible contact marketing consent without blocking replies",async()=>{
+  const inherited=[];
+  const {claim,calls}=makeService({
+    inboundConsent:{
+      async inheritForNewLead(payload){inherited.push(payload);return {inherited:false};}
+    }
+  });
+  const durable=await claim.storeIncomingMessage({
+    id:"wamid-return-ad",from:"60123456789",channel:"whatsapp",
+    text:"Hi I am interested in 3D face treatment",
+    attribution:{adName:"3D 小颜术 First Trial",source:"meta_ads",sourceType:"ad"}
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.equal(inherited.length,1);
+  assert.equal(inherited[0].leadId,9);
+  assert.equal(inherited[0].adName,"3D 小颜术 First Trial");
+  assert.ok(calls.some(x=>x[0]==="prepared"));
 });
