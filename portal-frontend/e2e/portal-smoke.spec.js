@@ -1154,6 +1154,17 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     header: { format }, body: { text }, variableFields: [], sendable: true, buttons: [],
   });
   await mockPortalApi(page, {
+    businessConfig: {
+      services: [
+        { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+        { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+      ],
+      automatedFollowUp: {
+        enabled: false, delayMinutes: 10, triggerMode: "all",
+        message: "Following up", imageUrl: "",
+        translations: { en: "Following up", ms: "Following up", zh: "Following up" },
+      },
+    },
     loggedIn: true,
     onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
     templateCatalog: {
@@ -1166,8 +1177,9 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
         { ...template("clinic_unapproved", "TEXT", "Do not send"), status: "REJECTED", sendable: false },
       ],
       reusableMedia: [
-        { id: "promo:1", label: "Package A image", format: "IMAGE", imageId: 1 },
-        { id: "video:test", label: "Pelvis feedback", format: "VIDEO",
+        { id: "promo:1", label: "Package A image", format: "IMAGE", imageId: 1, serviceName: "骨盆调理" },
+        { id: "promo:2", label: "Wrong treatment image", format: "IMAGE", imageId: 2, serviceName: "3D 小颜术" },
+        { id: "video:test", label: "Pelvis feedback", format: "VIDEO", serviceName: "骨盆调理",
           mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4" },
       ],
     },
@@ -1181,6 +1193,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   await expect(page.getByLabel("Approved template preview").first()).toContainText("We can answer your questions.");
 
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
   const rule = page.getByLabel("Approved marketing template for rule 1");
   await rule.selectOption("clinic_video_feedback");
   await expect(page.getByText("Video attachment · required")).toBeVisible();
@@ -1198,6 +1211,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   await rule.selectOption("clinic_image_offer");
   await expect(page.getByText("Image attachment · required")).toBeVisible();
   await expect(page.getByText("Attached: pelvis.mp4")).toHaveCount(0);
+  await expect(page.getByLabel("Extended template media library 1").locator('option[value="promo:2"]')).toHaveCount(0);
   await page.getByLabel("Extended template media library 1").selectOption("promo:1");
   await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
@@ -1206,6 +1220,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     templateName: "clinic_image_offer",
     mediaKey: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
     mediaUrl: "",
+    mediaSourceId: "promo:1",
   });
   await expectNoHorizontalPageOverflow(page);
 });
@@ -1218,6 +1233,17 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
     header: { format }, body: { text: "Approved media text" }, variableFields: [], sendable: true,
   }));
   await mockPortalApi(page, {
+    businessConfig: {
+      services: [
+        { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+        { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+      ],
+      automatedFollowUp: {
+        enabled: false, delayMinutes: 10, triggerMode: "all",
+        message: "Following up", imageUrl: "",
+        translations: { en: "Following up", ms: "Following up", zh: "Following up" },
+      },
+    },
     loggedIn: true,
     templateCatalog: { templates, reusableMedia: [] },
     onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
@@ -1225,6 +1251,7 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   await page.goto("/tools");
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
   await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_media_image");
   await page.getByLabel("Extended template image attachment 1").setInputFiles({
     name: "promo.jpg", mimeType: "image/jpeg", buffer: Buffer.from("fake-jpeg"),
@@ -1236,6 +1263,13 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   });
   await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
   await expect(page.getByText(/Uploaded MP4s are checked server-side/)).toBeVisible();
+  await page.getByLabel("Extended template media URL 1").fill("https://approved.example.test/changed-video.mp4");
+  await expect(page.getByLabel(/I verified this video is H.264 with AAC audio/)).not.toBeChecked();
+  await page.getByLabel("Extended template media URL 1").fill("");
+  await page.getByLabel("Extended template video attachment 1").setInputFiles({
+    name: "feedback-safe.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4"),
+  });
+  await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved.length).toBe(1);
