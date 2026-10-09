@@ -312,8 +312,11 @@ test("social follow-up video companion persists a durable MP4 attachment", async
     assert.match(sql, /media_key/);
     assert.match(sql, /media_mime_type/);
     assert.match(sql, /is_automated_follow_up/);
+    assert.match(sql, /automated_follow_up_parent_message_id/);
+    assert.match(sql, /parent\.automated_follow_up_for_message_id IS NOT NULL/);
     assert.deepEqual(params, [
       23,
+      129,
       "clients/neutro/messages/23/service-video.mp4",
       "video/mp4",
     ]);
@@ -329,6 +332,7 @@ test("social follow-up video companion persists a durable MP4 attachment", async
 
   const saved = await followUpRepo.saveSocialVideoCompanion({
     contactId: 23,
+    parentMessageId: 129,
     mediaKey: "clients/neutro/messages/23/service-video.mp4",
     mediaMimeType: "video/mp4",
   });
