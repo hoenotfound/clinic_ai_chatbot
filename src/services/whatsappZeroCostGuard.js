@@ -146,6 +146,26 @@ function configuredAccount() {
   return String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
 }
 
+// One authoritative ceiling decision for the strict dispatch guard, the
+// candidate scheduler, and Tools. Do not schedule a post-72h message merely
+// because the deployment flag is set; the dispatch guard would reject it and
+// permanently consume a claimed follow-up slot.
+//
+// Independent evidence can be recorded by a verified post-72h FEP callback
+// from a different preexisting, non-strict session. NEVER send a new message
+// under strict mode merely to bootstrap this evidence.
+async function authorizedCeilingHours({ database = pool, env = process.env } = {}) {
+  if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() !== "true") {
+    return 72;
+  }
+  if (!enabled()) return 168;
+  const query = typeof database?.query === "function"
+    ? database.query.bind(database) : null;
+  if (!query) throw new Error("WhatsApp free-only pricing database unavailable");
+  const result = await query(SEVEN_DAY_PROOF_SQL);
+  return result.rows?.[0]?.verified === true ? 168 : 72;
+}
+
 async function logBlock(account, check, database = pool) {
   if (!account || !check?.code) return;
   try {
@@ -247,10 +267,7 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     }
 
     let ceiling=72;
-    if (!rejected && String(process.env.WHATSAPP_FEP_7DAY_VERIFIED).toLowerCase()==="true") {
-      const proof=(await client.query(SEVEN_DAY_PROOF_SQL)).rows[0];
-      if (proof?.verified===true) ceiling=168;
-    }
+    if (!rejected) ceiling=await authorizedCeilingHours({ database: client });
 
     // Exclusions may refer ONLY to the exact saved outbound message and
     // claimed follow-up belonging to this recipient. Never trust unverified
@@ -398,5 +415,5 @@ async function perform(to, operation, context = {}) {
 
 module.exports = {
   blockedResult,configuredAccount,enabled,settings,reserve,complete,perform,
-  VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
+  authorizedCeilingHours,VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
