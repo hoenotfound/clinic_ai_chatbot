@@ -136,9 +136,8 @@ async function processScheduledMessage(item) {
     sendResult = await channelMessaging.sendText(
       contact,
       item.content,
-      providerRecorder
-        ? { onProviderMessageId: providerRecorder }
-        : {}
+      { ...(providerRecorder ? { onProviderMessageId: providerRecorder } : {}),
+          currentMessageId: saved.id }
     );
   } catch (err) {
     console.error(`Scheduled message ${item.id} send failed:`, err);

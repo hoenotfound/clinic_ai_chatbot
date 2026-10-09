@@ -1385,6 +1385,7 @@ async function sendCandidate(candidate) {
       const policyOptions = {
         purpose: "marketing",
         preSendCheck: finalPreSendCheck,
+        currentMessageId: saved.id,
       };
       sendResult = effectiveVideoKey
         ? await channelMessaging.sendVideoByStoredKey(

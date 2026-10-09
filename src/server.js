@@ -203,6 +203,7 @@ async function sendTrackedText(
       text,
       {
         ...(guarded ? { preSendCheck: canSend } : {}),
+        currentMessageId: saved.id,
         ...(socialProviderRecorder
           ? { onProviderMessageId: socialProviderRecorder }
           : {}),

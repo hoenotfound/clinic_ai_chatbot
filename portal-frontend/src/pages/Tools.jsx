@@ -32,6 +32,7 @@ const DEFAULT_FOLLOW_UP = {
   additionalSteps: [],
   freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
+  whatsappFreeOnly: { enabled: false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -190,6 +191,7 @@ function normalizeFollowUpSettings(value = {}) {
         ? value.freeEntry.slotsHours.map(Number)
         : [26, 50, 74, 98, 122, 162],
     },
+    whatsappFreeOnly: { enabled: value?.whatsappFreeOnly?.enabled === true },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
@@ -218,6 +220,7 @@ function followUpFormFromSettings(value = {}) {
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
     freeEntry: settings.freeEntry,
+    whatsappFreeOnly: settings.whatsappFreeOnly,
     pricingReminder: settings.pricingReminder,
   };
 }
@@ -282,6 +285,7 @@ export default function Tools() {
   const [commentForm, setCommentForm] = useState(DEFAULT_COMMENT_AUTOMATION);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [freeOnlyImpactConfirmed, setFreeOnlyImpactConfirmed] = useState(false);
   const [scoringSaving, setScoringSaving] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentChannelStatus, setCommentChannelStatus] = useState(null);
@@ -377,6 +381,7 @@ export default function Tools() {
     if (activeTool === "followUp") {
       const saved = followUpFormFromSettings(config?.automatedFollowUp);
       setForm(saved);
+      setFreeOnlyImpactConfirmed(false);
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
       setReviewTranslations(false);
@@ -780,6 +785,12 @@ export default function Tools() {
   }
 
   async function handleSave() {
+    if (form.whatsappFreeOnly?.enabled === true &&
+        config?.automatedFollowUp?.whatsappFreeOnly?.enabled !== true &&
+        !freeOnlyImpactConfirmed) {
+      showToast("Confirm that ordinary/direct enquiries can be blocked and Meta billing is never absolutely guaranteed.", "error");
+      return;
+    }
     const validationError = followUpValidationError();
     if (validationError) {
       showToast(validationError, "error");
@@ -864,6 +875,7 @@ export default function Tools() {
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
+          whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true, acknowledgeImpact: freeOnlyImpactConfirmed },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -999,8 +1011,12 @@ export default function Tools() {
       <div className="min-h-0 min-w-0 flex-1">
         {activeTool === "followUp" && (
           <FollowUpTool
+            isAdmin={user?.role === "admin"}
             form={form}
             setForm={setForm}
+            freeOnlyAlreadyEnabled={config?.automatedFollowUp?.whatsappFreeOnly?.enabled === true}
+            freeOnlyImpactConfirmed={freeOnlyImpactConfirmed}
+            setFreeOnlyImpactConfirmed={setFreeOnlyImpactConfirmed}
             savedEnabled={savedEnabled}
             hasUnsavedChanges={hasUnsavedChanges}
             translationsNeedRefresh={translationsNeedRefresh}
@@ -1805,8 +1821,12 @@ function ServiceOverridesEditor({
 }
 
 function FollowUpTool({
+  isAdmin,
   form,
   setForm,
+  freeOnlyAlreadyEnabled,
+  freeOnlyImpactConfirmed,
+  setFreeOnlyImpactConfirmed,
   savedEnabled,
   hasUnsavedChanges,
   translationsNeedRefresh,
@@ -1839,6 +1859,31 @@ function FollowUpTool({
   const [freeEntryStatus, setFreeEntryStatus] = useState(null);
   const [freeEntryStatusError, setFreeEntryStatusError] = useState("");
   const [freeEntryStatusLoading, setFreeEntryStatusLoading] = useState(false);
+  const [reconcileReason, setReconcileReason] = useState("");
+  const [billingHubChecked, setBillingHubChecked] = useState(false);
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileError, setReconcileError] = useState("");
+  const handleReconcile = async () => {
+    if (!billingHubChecked || reconcileReason.trim().length < 30) {
+      setReconcileError("Check Meta Billing Hub and provide at least 30 characters describing your investigation.");
+      return;
+    }
+    setReconcileBusy(true);
+    setReconcileError("");
+    try {
+      await api.reconcileWhatsAppFreeOnly({
+        reservationId: freeEntryStatus?.freeOnlyGate?.reservation_id,
+        reason: reconcileReason.trim(), confirmedBillingHub: true,
+      });
+      setReconcileReason("");
+      setBillingHubChecked(false);
+      await refreshFreeEntryStatus();
+    } catch (error) {
+      setReconcileError(error.message || "Unable to reconcile this reservation.");
+    } finally {
+      setReconcileBusy(false);
+    }
+  };
   const refreshFreeEntryStatus = useCallback(async () => {
     setFreeEntryStatusLoading(true);
     try {
@@ -2528,6 +2573,45 @@ function FollowUpTool({
           <Card>
             <div className="flex items-center justify-between gap-4">
               <div>
+                <h3 className="text-sm font-semibold">WhatsApp Free Messaging Only</h3>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  Strict free-only safety switch for ALL WhatsApp sends, including AI replies,
+                  staff Inbox messages, attachments, templates and scheduled follow-ups.
+                  Only send inside an already-confirmed Meta free-entry period, capped at 71 hours.
+                  An ad click, an open 24-hour reply window, or remaining monthly free allowance
+                  alone are not accepted as proof of free delivery.
+                </p>
+              </div>
+              <Switch
+                checked={form.whatsappFreeOnly?.enabled === true}
+                ariaLabel="Block potentially paid WhatsApp sends"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  whatsappFreeOnly: { enabled: current.whatsappFreeOnly?.enabled !== true },
+                }))}
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-amber-700">
+              {form.whatsappFreeOnly?.enabled
+                ? "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
+                : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
+              Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
+              A billable callback after activation trips the account-wide stop until you investigate and deliberately reset this switch.
+            </p>
+            {form.whatsappFreeOnly?.enabled === true &&
+              !freeOnlyAlreadyEnabled ? (
+              <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
+                <input type="checkbox" checked={freeOnlyImpactConfirmed}
+                  onChange={event => setFreeOnlyImpactConfirmed(event.target.checked)}/>
+                I understand verified ad enquiries may receive one qualifying first text reply, but organic/direct leads and unverified or late ad enquiries will be blocked;
+                enabling strict mode does not establish a guaranteed RM0 Meta billing limit.
+              </label>
+            ) : null}
+          </Card>
+
+          <Card>
+            <div className="flex items-center justify-between gap-4">
+              <div>
                 <h3 className="text-sm font-semibold">WhatsApp ad leads: extended free-entry follow-ups</h3>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                   Up to 7 days for verified Click-to-WhatsApp conversations. Use approved MARKETING templates;
@@ -2560,6 +2644,79 @@ function FollowUpTool({
                     {" · "}Tools: {freeEntryStatus.enabledInTools ? "Enabled" : "Disabled"}
                     {" · "}Safe billing ceiling: {freeEntryStatus.periodMaxHours || 72}h
                     {freeEntryStatus.sevenDayVerified ? " (7-day rollout verified)" : " (extended rollout unverified)"}
+                  </p>
+                  <div className={`mt-2 rounded-lg border p-2 text-[11px] ${Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
+                    ? "border-red-300 bg-red-50 text-red-700"
+                    : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    Free-only safeguard: {freeEntryStatus.freeOnlyEnabled ? "ON" : "OFF"}
+                    {" · "}Account-wide billable Meta callbacks: {freeEntryStatus.billingSafety?.total_billable ?? "unknown"}
+                    {" · "}Since free-only enabled: {freeEntryStatus.billingSafety?.since_switch ?? "unknown"}
+                    {Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
+                      ? " · BILLING ALARM: all WhatsApp sends are blocked until investigated and the switch is reset."
+                      : ""}
+                  </div>
+                  {freeEntryStatus.freeOnlyEnabled && !freeEntryStatus.telegramBillingAlertsEnabled ? (
+                    <p className="mt-1 text-xs font-semibold text-amber-700">
+                      Telegram billing alarms are not configured. Billable callbacks still block strict-mode sends, but no automatic Telegram notification will reach staff.
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    Strict free-only period: {freeEntryStatus.strictCeilingHours === 168 ? "167h with verified account evidence" : "71h (no verified 7-day billing proof)"}
+                    {" · "}Outbound reservation: {freeEntryStatus.freeOnlyGate?.status || "idle"}
+                    {" · "}Pending billing alerts: {freeEntryStatus.billingAlerts?.pending ?? "unknown"}
+                  </p>
+                  {freeEntryStatus.strictSevenDayBlocked === true ? (
+                    <p className="mt-2 text-xs font-semibold text-amber-700">
+                      Seven-day strict sending is not yet supported by recorded post-72h Meta nonbillable evidence.
+                      Days 4–7 will be deferred BEFORE a template slot is claimed, avoiding paid sends or failed follow-up attempts.
+                      Do not send a customer a potentially chargeable template just to test eligibility.
+                    </p>
+                  ) : null}
+                  {freeEntryStatus.freeOnlyGate?.status && freeEntryStatus.freeOnlyGate.status !== "idle" ? (
+                    <p className="mt-1 text-xs font-semibold text-amber-700">
+                      A previous WhatsApp send is awaiting billing verification. Further strict-mode sends are blocked until Meta confirms free pricing. An unknown send requires manual reconciliation, not an automatic retry. A reserved send cannot be manually released; after 15 minutes without confirmation it changes to unknown and still requires review.
+                    </p>
+                  ) : null}
+                  {isAdmin && freeEntryStatus.freeOnlyEnabled &&
+                    ["awaiting_pricing", "unknown"].includes(freeEntryStatus.freeOnlyGate?.status) &&
+                    Number(freeEntryStatus.billingSafety?.since_switch || 0) === 0 ? (
+                    <div className="mt-3 rounded-xl border border-amber-300 p-3 space-y-2">
+                      <p className="text-xs font-semibold">Admin-only: manually reconcile a stuck send</p>
+                      <p className="text-xs text-[var(--color-text-muted)]">
+                        Verify the customer conversation and the exact send in Meta Billing Hub.
+                        This is an audited operator release, NOT confirmation that Meta charged RM0.
+                        A billable callback cannot be overridden here.
+                      </p>
+                      <textarea className="w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs"
+                        aria-label="Billing investigation reason" rows={3}
+                        placeholder="Document the customer conversation, Meta Billing Hub evidence and why manual release is safe (30+ characters)."
+                        value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)}/>
+                      <label className="flex items-start gap-2 text-xs">
+                        <input type="checkbox" checked={billingHubChecked}
+                          onChange={(event) => setBillingHubChecked(event.target.checked)}/>
+                        I personally checked the corresponding send in Meta Billing Hub and the customer chat.
+                      </label>
+                      {reconcileError ? <p className="text-xs text-red-600">{reconcileError}</p> : null}
+                      <button type="button" className="rounded-lg border border-amber-400 px-3 py-2 text-xs font-semibold"
+                        disabled={reconcileBusy || !billingHubChecked || reconcileReason.trim().length < 30}
+                        onClick={handleReconcile}>
+                        {reconcileBusy ? "Reconciling..." : "Release audited send reservation"}
+                      </button>
+                    </div>
+                  ) : null}
+                  {(freeEntryStatus.recentBlocks || []).length ? (
+                    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]" aria-label="Recent free-only blocked sends">
+                      {freeEntryStatus.recentBlocks.map(item => (
+                        <p key={item.reason}>{item.reason}: {item.blocked_count} blocked</p>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    Meta callback records are not a spending statement. Reconcile with
+                    {" "}<a className="underline" target="_blank" rel="noreferrer"
+                      href="https://business.facebook.com/billing_hub/">WhatsApp Billing Hub</a>.
+                    Strict mode allows one qualified CTWA first text reply within 24 hours, then blocks further sends until Meta confirms free billing. It cannot absolutely guarantee zero Meta charges.
+                    Unverified ad referrals, stale CTWA enquiries and organic leads stay blocked; Meta billing must be reconciled independently.
                   </p>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[

@@ -1,4 +1,5 @@
 const messagesRepo = require("../db/messagesRepo");
+const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
@@ -10,6 +11,7 @@ const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 // Fast retry while a real delivery-status job needs work.
 const RECOVERY_INTERVAL_MS = 10 * 1000;
 const IDLE_RECOVERY_INTERVAL_MS = 15 * 60 * 1000;
+const BILLING_ALERT_RETRY_INTERVAL_MS = 30 * 1000;
 const UNMATCHED_CALLBACK_GRACE_SECONDS = 5 * 60;
 const STALE_AFTER_SECONDS = 60;
 const STALE_RECHECK_GRACE_MS = 5 * 1000;
@@ -91,7 +93,14 @@ function createWhatsAppDeliveryStatusService({
   }
 
   async function storeDeliveryStatusUpdates(updates) {
-    return repo.storeBatch(updates);
+    const stored = await repo.storeBatch(updates);
+    // Never delay a webhook or drop persisted pricing evidence if Telegram
+    // is unavailable. Durable alerts will be retried by recovery.
+    if (updates?.some((update) => update?.pricingBillable === true)) {
+      Promise.resolve().then(() => billingAlerts.flush()).catch((err) =>
+        logger.error("[WhatsApp free-only] Billing-alert attempt failed:", err));
+    }
+    return stored;
   }
 
   function publishContactSafely(contactId) {
@@ -321,8 +330,15 @@ function createWhatsAppDeliveryStatusService({
       }
       const exhaustedCount = await surfaceExhaustedJobs();
       const unmatchedCount = await surfaceUnmatchedCompletedFailures();
+      try {
+        await billingAlerts.flush();
+      } catch (err) {
+        logger.error("[WhatsApp free-only] Billing alert recovery failed:", err);
+      }
+      const pendingBillingAlerts = await billingAlerts.pending();
       await maybePruneCompleted();
-      return { workCount: claimed.length + exhaustedCount + unmatchedCount };
+      return { workCount: claimed.length + exhaustedCount + unmatchedCount,
+        pendingBillingAlerts };
     } catch (err) {
       logger.error("WhatsApp delivery-status recovery sweep failed:", err);
       throw err;
@@ -333,6 +349,7 @@ function createWhatsAppDeliveryStatusService({
 
   function recoveryDelayForResult(result, { runCount }) {
     if (Number(result?.workCount) > 0) return RECOVERY_INTERVAL_MS;
+    if (result?.pendingBillingAlerts === true) return BILLING_ALERT_RETRY_INTERVAL_MS;
     // On startup, a lease held by the previous Render process may still look
     // fresh. Recheck once after the stale window, then become truly idle.
     if (runCount === 1) {
