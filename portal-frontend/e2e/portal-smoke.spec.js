@@ -1313,6 +1313,50 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   });
 });
 
+test("Delayed treatment image upload cannot attach to a changed rule", async ({ page }) => {
+  const catalog = {
+    templates: [{
+      name: "clinic_image_offer", language: "zh_CN", status: "APPROVED",
+      category: "MARKETING", header: { format: "IMAGE" }, body: { text: "An offer" },
+      variableFields: [], sendable: true,
+    }],
+    reusableMedia: [],
+  };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [
+        { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+        { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+      ],
+    },
+    templateCatalog: catalog,
+  });
+  let delayedRequest = null;
+  await page.route("**/api/config/automated-follow-up/template-media-image",
+    (route) => { delayedRequest = route; });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
+  await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_image_offer");
+  await page.getByLabel("Extended template image attachment 1").setInputFiles({
+    name: "pelvic-image.jpg", mimeType: "image/jpeg", buffer: Buffer.from("fake-jpeg"),
+  });
+  await expect.poll(() => Boolean(delayedRequest)).toBe(true);
+  await page.getByLabel("Extended template treatment 1").selectOption("3D 小颜术");
+  await delayedRequest.fulfill({
+    status: 201, contentType: "application/json",
+    body: JSON.stringify({
+      key: "clients/test-clinic/messages/follow-up-config/pelvic-image.jpg",
+      format: "IMAGE", previewUrl: "https://example.test/pelvic-image.jpg",
+    }),
+  });
+  await expect(page.getByLabel("Extended template treatment 1")).toHaveValue("3D 小颜术");
+  await expect(page.getByText("Attached: pelvic-image.jpg")).toHaveCount(0);
+  await expect(page.getByLabel("Template rule configuration readiness 1")).toContainText("Incomplete");
+});
+
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
   let savedPayload = null;
   await mockPortalApi(page, {
