@@ -1037,6 +1037,38 @@ test("Saving pricing changes opens invalid Follow-up 2 and keeps the unsaved edi
   await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
 });
 
+test("Saving from another tab reveals hidden invalid service targeting", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "3D 小颜术", description: "", priceRange: "", duration: "" }],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "Checking in with you.",
+        additionalSteps: [{
+          delayMinutes: 480,
+          message: "Another reminder.",
+          serviceOverrides: [{
+            serviceName: "Retired pelvis treatment",
+            message: "A targeted follow-up for an old treatment.",
+          }],
+        }],
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Retired pelvis treatment is no longer in Services");
+  const step = page.locator("#follow-up-step-2");
+  await expect(step.getByText("This service no longer exists.")).toBeVisible();
+  await expect(step.getByPlaceholder("Write a more relevant follow-up for customers interested in this service.")).toBeVisible();
+});
+
 test("Saving an invalid extended template redirects to WhatsApp templates", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
