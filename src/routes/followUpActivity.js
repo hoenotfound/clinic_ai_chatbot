@@ -14,9 +14,12 @@ router.get("/", async (req, res) => {
   }
   try {
     const allowedContactIds = await getAccessibleContactIds(req.user);
-    const activity = await activityRepo.listActivity(req.query, allowedContactIds);
+    const filters = activityRepo.parseActivityFilters(req.query);
+    if (!filters) return res.status(400).json({ error: "Invalid activity filters." });
+    const activity = await activityRepo.listActivity(filters, allowedContactIds);
+    const diagnostics = await activityRepo.listSchedulingDiagnostics(filters, allowedContactIds);
     res.set("Cache-Control", "no-store");
-    return res.json(activity);
+    return res.json({ ...activity, diagnostics });
   } catch (error) {
     if (error.status === 400) return res.status(400).json({ error: error.message });
     console.error("Failed to load follow-up activity:", error);
