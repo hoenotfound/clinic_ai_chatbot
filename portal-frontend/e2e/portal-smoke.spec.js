@@ -1027,6 +1027,20 @@ test("Sequence timeline navigates existing editors without changing schedule or 
   await expect(secondEditor).toBeFocused();
   await expect(second).toHaveAttribute("aria-current", "step");
 
+  // Using the independent preview picker must not imply another editor is open.
+  if ((page.viewportSize()?.width || 0) < 1280) {
+    const previewToggle = page.getByRole("button", { name: "Toggle follow-up preview" });
+    if (await previewToggle.getAttribute("aria-expanded") === "false") {
+      await previewToggle.click();
+    }
+  }
+  await page.getByRole("button", { name: "Preview Follow-up 3" }).click();
+  await expect(second).toHaveAttribute("aria-current", "step");
+  await expect(second).toContainText("Editing");
+  await expect(third).not.toHaveAttribute("aria-current", "step");
+  await expect(third).toContainText("Previewing only");
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+
   await first.focus();
   await first.press("Enter");
   const firstEditor = page.getByRole("region", { name: "Follow-up 1 editor" });
@@ -1079,8 +1093,14 @@ test("Pricing reminder explains the missing third follow-up without disabling ex
   await expect(page.getByRole("region", { name: "Pricing reminder dependency" }))
     .toContainText("cannot send without Follow-up 3");
 
-  await page.getByRole("button", { name: "View pricing settings" }).click();
-  await expect(page.getByRole("tab", { name: "Pricing" })).toHaveAttribute("aria-selected", "true");
+  const pricingShortcut = page.getByRole("button", { name: "View pricing settings" });
+  await pricingShortcut.focus();
+  await pricingShortcut.press("Enter");
+  const pricingTab = page.getByRole("tab", { name: "Pricing" });
+  await expect(pricingTab).toHaveAttribute("aria-selected", "true");
+  await expect(pricingTab).toBeFocused();
+  await expect(page.getByRole("region", { name: "Pricing reminder dependency" })).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Pricing is configured but cannot run without Follow-up 3" }))
     .toBeVisible();
   await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
