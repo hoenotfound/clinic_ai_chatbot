@@ -91,11 +91,14 @@ test("pelvic/face templates cannot reuse media intended for another treatment", 
 
 test("legacy R2 preview requires an exact clinic reference, not just a shared prefix", () => {
   const env = { CLIENT_SLUG: "clinic-one" };
+  const ownedKey = "clients/clinic-one/messages/follow-up-config/copied-package.jpg";
   const own = { automatedFollowUp: {
     videoKey: "messages/follow-up-config/clinic-video.mp4",
-    freeEntry: { templateRules: [{ mediaKey: key }] },
+    freeEntry: { templateRules: [{ mediaKey: ownedKey }, { mediaKey: key }] },
   } };
-  assert.equal(storage.isReferencedClinicFollowUpMediaKey(key, own, env), true);
+  assert.equal(storage.isReferencedClinicFollowUpMediaKey(ownedKey, own, env), true);
+  assert.equal(storage.isReferencedClinicFollowUpMediaKey(key, own, env), false,
+    "legacy shared-bucket prefix cannot establish tenant ownership");
   assert.equal(storage.isReferencedClinicFollowUpMediaKey("messages/follow-up-config/foreign.jpg", own, env), false);
   assert.equal(storage.isReferencedClinicFollowUpMediaKey("clients/another-clinic/messages/follow-up-config/video.mp4", own, env), false);
 });
