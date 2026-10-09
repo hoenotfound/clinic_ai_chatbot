@@ -151,7 +151,36 @@ const SEVEN_DAY_PROOF_SQL = `
       AND priced.pricing_type='free_entry_point'
       AND priced.billable=false
       AND priced.delivery_status IN ('sent','delivered','read')
+    -- An overlapping later ad may open its OWN free window. A message in
+    -- that newer window is not independent proof that the old window lasted
+    -- beyond 72 hours. Conservatively exclude all such re-entry evidence.
+    AND NOT EXISTS (
+      SELECT 1 FROM whatsapp_free_entry_referrals newer
+      JOIN messages newer_inbound ON newer_inbound.id=newer.origin_message_id
+        AND newer_inbound.contact_id=ad.contact_id
+        AND newer_inbound.role='user'
+      JOIN LATERAL (
+        SELECT newer_reply.whatsapp_message_id,newer_reply.created_at
+        FROM messages newer_reply
+        WHERE newer_reply.contact_id=ad.contact_id
+          AND newer_reply.role='assistant'
+          AND newer_reply.whatsapp_message_id IS NOT NULL
+          AND newer_reply.created_at>=newer_inbound.created_at
+          AND newer_reply.created_at<newer_inbound.created_at+interval '24 hours'
+        ORDER BY newer_reply.created_at,newer_reply.id LIMIT 1
+      ) new_open ON true
+      JOIN whatsapp_free_entry_pricing_evidence new_pricing
+        ON new_pricing.wamid=new_open.whatsapp_message_id
+        AND new_pricing.pricing_type='free_entry_point'
+        AND new_pricing.billable=false
+      WHERE newer.contact_id=ad.contact_id
+        AND newer.source_type='ad'
+        AND newer.origin_message_id<>ad.origin_message_id
+        AND new_open.created_at>opened.created_at
+        AND new_open.created_at<=observed.created_at
+    )
     WHERE ad.source_type='ad'
+      AND opened.created_at>=TIMESTAMPTZ '2026-09-28 00:00:00+00'
       AND (ad.ctwa_clid IS NOT NULL OR ad.meta_ad_id IS NOT NULL)
   ) AS verified
 `;
