@@ -121,26 +121,11 @@ async function storeInboundClaim({
 }, database = pool) {
   const payload = serializeIncoming(incoming);
   const sourceCreatedAt = whatsappMessageSourceCreatedAt(channel, incoming);
-  const result = await database.query(
-    `WITH conversation_lock AS MATERIALIZED (
-       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
-     ), inserted_message AS (
-       INSERT INTO messages (
-         contact_id, role, content, whatsapp_message_id, source_created_at,
-         reply_to_provider_message_id, is_forwarded
-       )
-       SELECT $1, 'user', $2, $3, $6::timestamptz, $7, $8
-       FROM conversation_lock
-       ON CONFLICT (whatsapp_message_id) DO NOTHING
-       RETURNING ${MESSAGE_COLUMNS}
-     ), inserted_job AS (
-       INSERT INTO inbound_processing_jobs (
-         message_id, contact_id, channel, incoming_payload
-       )
-       SELECT id, contact_id, $4, $5::jsonb
-       FROM inserted_message
-       RETURNING ${JOB_COLUMNS}
-     ), enforced_whatsapp_stop AS (
+  const stopScope = channel === "whatsapp" && ["marketing","all"].includes(optOutScope)
+    ? optOutScope : null;
+  // Keep the original eight-parameter statement for ordinary inbound messages.
+  // The STOP-only CTEs add consent-table dependencies only to STOP webhooks.
+  const stopCtes = stopScope ? `, enforced_whatsapp_stop AS (
        -- Apply STOP in the very same statement as the durable inbound. If
        -- Neon cannot store the opt-out, it cannot ACK the webhook claim as
        -- successfully saved; no marketing worker sees a stale opt-in.
@@ -166,7 +151,27 @@ async function storeInboundClaim({
        UPDATE leads SET marketing_consent='opted_out',updated_at=now()
        WHERE contact_id IN (SELECT id FROM enforced_whatsapp_stop)
        RETURNING id
-     )
+     )` : "";
+  const result = await database.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     ), inserted_message AS (
+       INSERT INTO messages (
+         contact_id, role, content, whatsapp_message_id, source_created_at,
+         reply_to_provider_message_id, is_forwarded
+       )
+       SELECT $1, 'user', $2, $3, $6::timestamptz, $7, $8
+       FROM conversation_lock
+       ON CONFLICT (whatsapp_message_id) DO NOTHING
+       RETURNING ${MESSAGE_COLUMNS}
+     ), inserted_job AS (
+       INSERT INTO inbound_processing_jobs (
+         message_id, contact_id, channel, incoming_payload
+       )
+       SELECT id, contact_id, $4, $5::jsonb
+       FROM inserted_message
+       RETURNING ${JOB_COLUMNS}
+     )${stopCtes}
      SELECT
        row_to_json(m.*) AS saved_inbound,
        row_to_json(j.*) AS processing_job,
@@ -187,7 +192,7 @@ async function storeInboundClaim({
       sourceCreatedAt,
       incoming?.replyToProviderMessageId || null,
       incoming?.isForwarded === true,
-      channel === 'whatsapp' && ['marketing','all'].includes(optOutScope) ? optOutScope : null,
+      ...(stopScope ? [stopScope] : []),
     ]
   );
 
