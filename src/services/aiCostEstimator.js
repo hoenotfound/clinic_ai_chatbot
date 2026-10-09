@@ -2,6 +2,8 @@
 // These are estimates, never provider invoices. Update when Google changes rates.
 // https://ai.google.dev/gemini-api/docs/pricing
 const PRICES = Object.freeze({
+  // https://platform.claude.com/docs/en/about-claude/pricing
+  "claude-sonnet-5": { input: 2.00, output: 10.00, cache: 0.20, cacheWrite: 2.50 },
   "gemini-3.8-flash": { input: 0.75, output: 3.75, cache: 0.075, promotional: true },
   "gemini-3.7-flash": { input: 0.75, output: 3.75, cache: 0.075, promotional: true },
   "gemini-3.6-flash": { input: 0.75, output: 3.75, cache: 0.075, promotional: true },
@@ -16,7 +18,7 @@ function nonNegativeCount(value) {
 }
 
 function getRate(provider, model, at = new Date()) {
-  if (provider !== "gemini") return null;
+  if (!["gemini", "claude"].includes(provider)) return null;
   const rate = PRICES[String(model || "").trim()];
   if (!rate) return null;
   // Google states that the 3.6/3.7/3.8 Flash introductory rates end in 2026.
@@ -31,6 +33,7 @@ function estimateAiUsage(event, at = new Date()) {
   const output = nonNegativeCount(event?.outputTokens);
   const thinking = nonNegativeCount(event?.thinkingTokens);
   const cached = Math.min(prompt, nonNegativeCount(event?.cachedTokens));
+  const cacheWrite = Math.min(Math.max(0, prompt - cached), nonNegativeCount(event?.cacheWriteTokens));
   const hasUsage = prompt + output + thinking > 0;
   if (!hasUsage) {
     // A timeout may have been charged by the provider even with no usage metadata.
@@ -39,8 +42,9 @@ function estimateAiUsage(event, at = new Date()) {
   const rate = getRate(event?.provider, event?.model, at);
   if (!rate) return { costUsd: null, pricingStatus: "unpriced_model" };
   // Do not infer cached tokens from prefix reuse. Bill only explicitly reported hits.
-  const price = ((prompt - cached) * rate.input +
+  const price = ((prompt - cached - cacheWrite) * rate.input +
     cached * (rate.cache ?? rate.input) +
+    cacheWrite * (rate.cacheWrite ?? rate.input) +
     (output + thinking) * rate.output) / 1_000_000;
   return { costUsd: Number(price.toFixed(10)), pricingStatus: "estimated" };
 }
