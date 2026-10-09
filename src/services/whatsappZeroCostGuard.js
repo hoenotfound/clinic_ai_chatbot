@@ -33,6 +33,15 @@ const VERIFIED_WINDOW_SQL = `
       AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$3::text
       AND (referral.ctwa_clid IS NOT NULL OR referral.meta_ad_id IS NOT NULL)
       AND $2::timestamptz>=first_reply.created_at
+      -- The customer service window and the free-entry billing period
+      -- are independent. After ~24h only approved templates may be sent.
+      -- Leave a 2-minute margin for network/queue delays.
+      AND ($6::text='template' OR EXISTS (
+        SELECT 1 FROM messages customer
+        WHERE customer.contact_id=c.id AND customer.role='user'
+          AND customer.created_at <= $2::timestamptz
+          AND customer.created_at > $2::timestamptz - interval '23 hours 58 minutes'
+      ))
       AND $2::timestamptz<first_reply.created_at
         + (($1::integer - ${SAFE_BUFFER_HOURS}) * interval '1 hour')
       -- A persisted message without a WhatsApp message id is also unresolved.
@@ -231,7 +240,8 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
 
     if (!rejected) {
       const eligible=(await client.query(VERIFIED_WINDOW_SQL,
-        [ceiling,clock.toISOString(),recipient,currentMessageId,currentAttemptId])).rows[0];
+        [ceiling,clock.toISOString(),recipient,currentMessageId,currentAttemptId,
+          context.messageKind === "template" ? "template" : "freeform"])).rows[0];
       if (eligible?.eligible!==true) {
         rejected=deny("zero_cost_unverified_free_entry",
           "WhatsApp free-only blocked: no fully proven, active Meta free-entry period. New ad leads cannot receive a first reply in strict mode.");
