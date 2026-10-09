@@ -1,3 +1,4 @@
+const { recordClaudeUsage } = require("./claudeUsageTelemetry");
 const { createAnthropicClient } = require("./anthropicClient");
 const { GoogleGenAI } = require("@google/genai");
 const clinicConfig = require("../config/clinicConfig");
@@ -448,6 +449,12 @@ async function scoreWithClaude(input) {
       input_schema: SCORE_JSON_SCHEMA,
     }],
     tool_choice: { type: "tool", name: "record_lead_score" },
+  });
+  recordClaudeUsage(response, {
+    purpose: "lead_scoring",
+    model: CLAUDE_MODEL,
+    contactId: input.lead?.contact_id,
+    leadId: input.lead?.lead_id || input.lead?.id,
   });
   const scoreBlock = response.content.find(
     (block) => block.type === "tool_use" && block.name === "record_lead_score"
