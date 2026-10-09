@@ -1947,13 +1947,14 @@ function FollowUpTool({
     }
   }, [followUpTab, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
 
-  function updateTemplateRule(index, patch) {
+  function updateTemplateRule(index, patch, expectedTemplateName = null) {
     setForm((current) => ({
       ...current,
       freeEntry: {
         ...current.freeEntry,
         templateRules: (current.freeEntry?.templateRules || []).map((rule, i) =>
-          i === index ? { ...rule, ...patch } : rule),
+          i === index && (expectedTemplateName === null || rule.templateName === expectedTemplateName)
+            ? { ...rule, ...patch } : rule),
       },
     }));
   }
@@ -3099,7 +3100,7 @@ function FollowUpTool({
                         ...(current.freeEntry?.templateRules || []),
                         { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
                           serviceName: "*",
-                          templateName: "", mediaUrl: "", mediaKey: "", videoCodecVerified: false }
+                          templateName: "", mediaUrl: "", mediaKey: "", mediaSourceId: "", videoCodecVerified: false }
                       ],
                     },
                   }))}>Add template + media</button>
@@ -3124,7 +3125,10 @@ function FollowUpTool({
                       onChange={(event) => setForm((current) => ({
                         ...current, freeEntry: { ...current.freeEntry,
                           templateRules: current.freeEntry.templateRules.map((r, i) =>
-                            i === index ? { ...r, serviceName: event.target.value } : r)
+                            i === index ? {
+                            ...r, serviceName: event.target.value,
+                            mediaKey: "", mediaUrl: "", mediaSourceId: "", videoCodecVerified: false,
+                          } : r)
                         }
                       }))}>
                       <option value="">Select treatment</option>
@@ -3142,7 +3146,7 @@ function FollowUpTool({
                       catalog={templateCatalog}
                       onChange={(value) => updateTemplateRule(index, {
                         templateName: value,
-                        mediaKey: "", mediaUrl: "", videoCodecVerified: false,
+                        mediaKey: "", mediaUrl: "", mediaSourceId: "", videoCodecVerified: false,
                       })}
                     />
                   </div>
@@ -3157,7 +3161,7 @@ function FollowUpTool({
                         ) || (templateCatalog?.templates || []).find((t) => t.name === rule.templateName) || null
                       }
                       catalog={templateCatalog}
-                      onChange={(patch) => updateTemplateRule(index, patch)}
+                      onChange={(patch) => updateTemplateRule(index, patch, rule.templateName)}
                     />
                   </div>
                   <button type="button" className="text-left text-xs text-red-600"
