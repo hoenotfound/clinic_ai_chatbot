@@ -6,6 +6,7 @@ ALTER TABLE whatsapp_marketing_consent_events
   ADD COLUMN IF NOT EXISTS message_text TEXT,
   ADD COLUMN IF NOT EXISTS business_name TEXT,
   ADD COLUMN IF NOT EXISTS consent_scope TEXT,
+  ADD COLUMN IF NOT EXISTS consent_service TEXT,
   ADD COLUMN IF NOT EXISTS consent_category TEXT,
   ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS consent_method TEXT;
