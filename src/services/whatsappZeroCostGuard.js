@@ -117,16 +117,41 @@ const CTWA_FIRST_REPLY_SQL = `
   ) AS eligible_first_reply
 `;
 
+// Independently observed nonbillable delivery on THIS clinic's actual CTWA
+// free-entry session is acceptable proof even if the message was not sent
+// by our automated follow-up worker (e.g., a prior non-strict manual test).
+// We cannot bootstrap such evidence with strict sends after hour 72.
 const SEVEN_DAY_PROOF_SQL = `
   SELECT EXISTS (
-    SELECT 1 FROM whatsapp_free_entry_followup_attempts a
-    JOIN messages first_reply ON first_reply.id=a.first_reply_message_id
-    JOIN whatsapp_free_entry_pricing_evidence p ON p.wamid=a.wamid
-    WHERE a.status='accepted' AND a.slot_hours>=73
-      AND p.pricing_type='free_entry_point' AND p.billable=false
-      AND p.delivery_status IN ('sent','delivered','read')
-      AND a.created_at>=first_reply.created_at + interval '72 hours'
-      AND a.created_at<first_reply.created_at + interval '168 hours'
+    SELECT 1 FROM whatsapp_free_entry_referrals ad
+    JOIN messages inbound ON inbound.id=ad.origin_message_id
+      AND inbound.contact_id=ad.contact_id AND inbound.role='user'
+    JOIN LATERAL (
+      SELECT first_reply.id,first_reply.created_at,first_reply.whatsapp_message_id
+      FROM messages first_reply
+      WHERE first_reply.contact_id=ad.contact_id
+        AND first_reply.role='assistant'
+        AND first_reply.whatsapp_message_id IS NOT NULL
+        AND first_reply.created_at>=inbound.created_at
+        AND first_reply.created_at<inbound.created_at+interval '24 hours'
+      ORDER BY first_reply.created_at,first_reply.id LIMIT 1
+    ) opened ON true
+    JOIN whatsapp_free_entry_pricing_evidence activation
+      ON activation.wamid=opened.whatsapp_message_id
+      AND activation.pricing_type='free_entry_point'
+      AND activation.billable=false
+      AND activation.delivery_status IN ('sent','delivered','read')
+    JOIN messages observed ON observed.contact_id=ad.contact_id
+      AND observed.role='assistant' AND observed.whatsapp_message_id IS NOT NULL
+      AND observed.created_at>=opened.created_at+interval '72 hours'
+      AND observed.created_at<opened.created_at+interval '168 hours'
+    JOIN whatsapp_free_entry_pricing_evidence priced
+      ON priced.wamid=observed.whatsapp_message_id
+      AND priced.pricing_type='free_entry_point'
+      AND priced.billable=false
+      AND priced.delivery_status IN ('sent','delivered','read')
+    WHERE ad.source_type='ad'
+      AND (ad.ctwa_clid IS NOT NULL OR ad.meta_ad_id IS NOT NULL)
   ) AS verified
 `;
 
