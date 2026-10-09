@@ -283,6 +283,9 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
 
       await zeroCostGuard.complete(winner.reservationId,
         {success:true,wamid:"wamid.strict.current"},guardDb);
+      assert.equal((await zeroCostGuard.preflightTemplate("60121234567",
+        {database:guardDb})).allowed,false,
+        "unpriced accepted message does not allow the next scheduled template");
       assert.equal((await zeroCostGuard.reserve("60121234567",
         {database:guardDb,context:ownContext})).allowed,false,
         "provider acceptance alone never releases the account gate");
@@ -301,6 +304,9 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
           (wamid,pricing_type,billable,delivery_status)
         VALUES('wamid.strict.current','free_entry_point',false,'delivered')
       `);
+      assert.equal((await zeroCostGuard.preflightTemplate("60121234567",
+        {database:guardDb})).allowed,true,
+        "scheduled template preflight resumes after confirmed free callback, even while gate still awaits lazy release");
 
       // A second current follow-up is allowed to stage its own pending rows.
       await client.query(`
