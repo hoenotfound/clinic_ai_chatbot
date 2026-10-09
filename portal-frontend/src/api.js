@@ -373,6 +373,7 @@ export const api = {
     const query = params.toString();
     return request(`/pipeline/analytics${query ? `?${query}` : ""}`);
   },
+  getAiCostAnalytics: ({ days = 7 } = {}) => request(`/pipeline/analytics/ai-costs?days=${encodeURIComponent(days)}`),
   getMetaAdsAnalytics: (filters = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(filters)) {
