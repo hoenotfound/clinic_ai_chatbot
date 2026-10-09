@@ -51,6 +51,17 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(service, /status === "APPROVED"/);
   assert.match(service, /category.*AUTHENTICATION/);
   assert.match(service, /Dynamic URL button variables/);
+  assert.match(service, /format === "IMAGE" \|\| format === "VIDEO"/);
+  assert.match(service, /\[format\.toLowerCase\(\)\]: \{ id:/);
+  assert.match(route, /handleTemplateMediaUpload/);
+  assert.match(route, /ensureWhatsAppCompatible: true/);
+  assert.match(route, /mediaStorage\.uploadMedia\(buffer, mediaMimeType/);
+  assert.match(route, /whatsapp\.uploadMedia\(buffer, mediaMimeType/);
+  assert.match(route, /mediaKey,/);
+  assert.match(route, /mediaStorage\.downloadMedia\(message\.media_key/);
+  assert.match(api, /form\.append\("media", mediaFile\)/);
+  assert.match(modal, /type="file"/);
+  assert.match(modal, /mediaFileValid/);
 
   assert.match(api, /listWhatsAppTemplates/);
   assert.match(api, /refresh=true/);
