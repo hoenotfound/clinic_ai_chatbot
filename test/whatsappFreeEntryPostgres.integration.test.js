@@ -111,8 +111,16 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       const ownContext = {
         currentMessageId: 19,
         currentFollowUpAttemptId: attemptId,
+        messageKind: "template",
       };
-      const withoutIdentity = await zeroCostGuard.reserve("60121234567", { database: guardDb });
+      // After 24 hours since the last inbound, free-form is always blocked
+      // even while a verified CTWA billing window remains active.
+      const ordinary = await zeroCostGuard.reserve("60121234567", { database: guardDb });
+      assert.equal(ordinary.code, "zero_cost_unverified_free_entry",
+        "never send a non-template on Day 2");
+      const withoutIdentity = await zeroCostGuard.reserve("60121234567", {
+        database: guardDb, context: { messageKind: "template" },
+      });
       assert.equal(withoutIdentity.code, "zero_cost_unverified_free_entry",
         "an unresolved pending message must not be ignored without identity");
 
@@ -124,6 +132,15 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         "only one of two concurrently arriving worker requests can reserve");
       const winner=one.allowed?one:two;
       assert.equal((one.allowed?two:one).code,"zero_cost_previous_send_unreconciled");
+      await assert.rejects(
+        freeOnlyReconciliation.reconcile({
+          actor:"admin",reservationId:winner.reservationId,
+          reason:"I checked the chat, but the provider call is still active.",
+          confirmedBillingHub:true,
+        },guardDb),
+        (error)=>error.code==="send_still_reserved",
+        "an administrator cannot release an in-flight provider send"
+      );
 
       const otherContact=await zeroCostGuard.reserve("60129876543",
         {database:guardDb,context:ownContext});
@@ -163,7 +180,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       `);
       const next = await zeroCostGuard.reserve("60121234567", {
         database:guardDb,
-        context:{currentMessageId:20,currentFollowUpAttemptId:secondClaim.rows[0].id},
+        context:{currentMessageId:20,currentFollowUpAttemptId:secondClaim.rows[0].id,
+          messageKind:"template"},
       });
       assert.equal(next.allowed,true,
         "Meta confirmed nonbillable pricing permits another claimed follow-up");
@@ -172,6 +190,19 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       assert.equal((await zeroCostGuard.reserve("60121234567",
         {database:guardDb})).allowed,false,"unknown send stays locked");
 
+      await assert.rejects(
+        freeOnlyReconciliation.reconcile({
+          actor:"admin",reservationId:next.reservationId,
+          reason:"I checked the Meta billing evidence and recent delivery details.",
+          confirmedBillingHub:true,
+        },guardDb),
+        (error)=>error.code==="reconciliation_grace_period",
+        "an uncertain provider response must not be released immediately"
+      );
+      await guardDb.query(
+        "UPDATE whatsapp_free_only_send_gate SET updated_at=now()-interval '6 minutes' WHERE reservation_id=$1",
+        [next.reservationId]
+      );
       const released=await freeOnlyReconciliation.reconcile({
         actor:"admin",reservationId:next.reservationId,
         reason:"Reviewed the exact WhatsApp conversation and Meta billing records; no unmatched delivery remains.",
@@ -193,7 +224,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       assert.equal(proofOfScopedRecovery.rows[0].message_id,20);
       assert.equal(String(proofOfScopedRecovery.rows[0].attempt_id),
         String(secondClaim.rows[0].id));
-      const resumed=await zeroCostGuard.reserve("60121234567",{database:guardDb});
+      const resumed=await zeroCostGuard.reserve("60121234567",{
+        database:guardDb,context:{messageKind:"template"}});
       assert.equal(resumed.allowed,true,
         "audited recovery excludes only its own former pending rows");
       await zeroCostGuard.complete(resumed.reservationId,
