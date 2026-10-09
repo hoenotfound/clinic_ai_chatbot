@@ -560,9 +560,10 @@ function socialProviderSendOptions(message, contact, options = {}) {
     message?.id,
     contact?.channel
   );
+  const withCurrentMessage = { ...options, currentMessageId: message?.id };
   return recorder
-    ? { ...options, onProviderMessageId: recorder }
-    : options;
+    ? { ...withCurrentMessage, onProviderMessageId: recorder }
+    : withCurrentMessage;
 }
 
 async function sendStoredMessage(contact, message, options = {}) {
