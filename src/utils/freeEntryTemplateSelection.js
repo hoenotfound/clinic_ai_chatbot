@@ -5,6 +5,7 @@ const mediaStorage = require("../services/mediaStorageService");
 const clinicConfig = require("../config/clinicConfig");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const templateMedia = require("../services/whatsappTemplateMediaService");
+const { findMentionedPromotionPackages } = require("./activePromotion");
 
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
 const SUPPORTED_LANGUAGES = new Set(["auto", "zh_CN", "en_US", "ms"]);
@@ -98,12 +99,34 @@ function exactConfiguredService(value, config = clinicConfig) {
     normalizeServiceText(item?.name) === normalized)?.name || null;
 }
 
-function chosenPelvisPackage(messages = []) {
-  // A single, explicit package choice only. "Package A or B" is ambiguous.
-  const combined = (messages || []).slice(0, 8).join(" ").normalize("NFKC");
-  const a = /(?:package|pakej|配套|套餐)\s*[aAＡ]/i.test(combined);
-  const b = /(?:package|pakej|配套|套餐)\s*[bBＢ]/i.test(combined);
-  return a !== b ? (a ? "A" : "B") : null;
+function chosenPelvisPackage(messages = [], packages = []) {
+  // Match the exact currently configured package names, titles and aliases.
+  // Every mention in the recent customer messages is considered; opposing
+  // choices or "A or B" must fail closed instead of guessing a package.
+  const options = Array.isArray(packages) ? packages : [];
+  const packageA = options.find((item) =>
+    normalizeServiceText(item?.name) === "package a");
+  const packageB = options.find((item) =>
+    normalizeServiceText(item?.name) === "package b");
+  if (!packageA || !packageB || options.length !== 2) return null;
+  const mentioned = new Set();
+  for (const entry of Array.isArray(messages) ? messages.slice(0, 8) : []) {
+    const message = String(entry || "").normalize("NFKC");
+    // Shorthand comparisons such as "Package A or B" mention both packages,
+    // even though the second one does not repeat the word "Package".
+    if (/(?:\\bA\\b.{0,20}\\bB\\b|\\bB\\b.{0,20}\\bA\\b)/iu.test(message) &&
+        /(?:package|pakej|配套|套餐|还是|或者|或是|比较|\\bor\\b|\\bvs\\b)/iu.test(message)) {
+      return null;
+    }
+    for (const match of findMentionedPromotionPackages(options, message)) {
+      mentioned.add(normalizeServiceText(match.name));
+    }
+    if (mentioned.size > 1) return null;
+  }
+  if (mentioned.size !== 1) return null;
+  const choice = [...mentioned][0];
+  return choice === "package a" ? "A" :
+    choice === "package b" ? "B" : null;
 }
 
 /**
@@ -130,9 +153,17 @@ function enrichAutomatedTemplateSpec(spec, template, {
   );
   let matching = options;
   if (normalizeServiceText(service) === normalizeServiceText("骨盆调理")) {
-    const choice = chosenPelvisPackage(spec.recentInboundMessages || []);
+    const activePromotions = (config.promotions || []).filter((promotion) =>
+      normalizeServiceText(promotion?.linkedService) === normalizeServiceText(service) &&
+      templateMedia.currentlyValid(promotion, now, config.timezone || config.timeZone)
+    );
+    const active = activePromotions.length === 1 ? activePromotions[0] : null;
+    const choice = active ? chosenPelvisPackage(
+      spec.recentInboundMessages || [], active.packages || []
+    ) : null;
     matching = choice
-      ? options.filter((item) => String(item.packageName || "").toUpperCase() === "PACKAGE " + choice)
+      ? options.filter((item) =>
+          normalizeServiceText(item.packageName) === "package " + choice.toLowerCase())
       : [];
   }
   if (matching.length !== 1 || !matching[0].imageId) return null;
