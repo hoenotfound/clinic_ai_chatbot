@@ -32,6 +32,7 @@ const DEFAULT_FOLLOW_UP = {
   additionalSteps: [],
   freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
+  whatsappFreeOnly: { enabled: false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -190,6 +191,7 @@ function normalizeFollowUpSettings(value = {}) {
         ? value.freeEntry.slotsHours.map(Number)
         : [26, 50, 74, 98, 122, 162],
     },
+    whatsappFreeOnly: { enabled: value?.whatsappFreeOnly?.enabled === true },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
@@ -218,6 +220,7 @@ function followUpFormFromSettings(value = {}) {
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
     freeEntry: settings.freeEntry,
+    whatsappFreeOnly: settings.whatsappFreeOnly,
     pricingReminder: settings.pricingReminder,
   };
 }
@@ -864,6 +867,7 @@ export default function Tools() {
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
+          whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -2523,6 +2527,36 @@ function FollowUpTool({
                 />
               </div>
             </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold">WhatsApp Free Messaging Only</h3>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  Strict free-only safety switch for ALL WhatsApp sends, including AI replies,
+                  staff Inbox messages, attachments, templates and scheduled follow-ups.
+                  Only send inside an already-confirmed Meta free-entry period, capped at 71 hours.
+                  An ad click, an open 24-hour reply window, or remaining monthly free allowance
+                  alone are not accepted as proof of free delivery.
+                </p>
+              </div>
+              <Switch
+                checked={form.whatsappFreeOnly?.enabled === true}
+                ariaLabel="Block potentially paid WhatsApp sends"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  whatsappFreeOnly: { enabled: current.whatsappFreeOnly?.enabled !== true },
+                }))}
+              />
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-amber-700">
+              {form.whatsappFreeOnly?.enabled
+                ? "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. Initial replies to new ad leads cannot start a free-entry window while this is active. This is not a Meta billing cap or an absolute RM0 guarantee."
+                : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
+              Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
+              A billable callback after activation trips the account-wide stop until you investigate and deliberately reset this switch.
+            </p>
           </Card>
 
           <Card>
