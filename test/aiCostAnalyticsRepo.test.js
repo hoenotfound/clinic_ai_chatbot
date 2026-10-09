@@ -66,5 +66,8 @@ test("lead report is constrained by current lead permissions even with contact a
   assert.equal(statements.length, 6);
   assert.match(statements[4].sql, /e\.lead_id = ANY\(\$3::int\[\]\)/);
   assert.match(statements[5].sql, /e\.lead_id = ANY\(\$3::int\[\]\)/);
-  for (const statement of statements) assert.deepEqual(statement.params, [7, [7], [91]]);
+  statements.forEach((statement, index) => {
+    assert.deepEqual(statement.params, [1, 2, 3].includes(index)
+      ? [7, [7]] : [7, [7], [91]]);
+  });
 });
