@@ -74,6 +74,42 @@ function isSafeTemplateMediaContext(spec, template, {
   return !media || mediaStore.isSharedFollowUpConfigKey(media);
 }
 
+function invalidConfiguredMediaRule(rules, config, now = Date.now()) {
+  const options = templateMedia.listReusableMedia({ config, now });
+  for (const [index, rule] of (rules || []).entries()) {
+    const mediaKey = String(rule.mediaKey || "");
+    const mediaUrl = String(rule.mediaUrl || "");
+    const sourceId = String(rule.mediaSourceId || "");
+    if (!mediaKey && !mediaUrl && !sourceId) continue;
+    if (!rule.serviceName || rule.serviceName === "*") {
+      return { index, reason: "Choose a specific treatment for every static image/video." };
+    }
+    if (!allowedForTreatment(rule.templateName, rule.serviceName)) {
+      return { index, reason: "This template does not match the selected treatment." };
+    }
+    const option = sourceId
+      ? options.find((entry) => entry.id === sourceId)
+      : options.find((entry) => entry.mediaKey === mediaKey);
+    if (sourceId && !option) {
+      return { index, reason: "The source image/video is no longer active or available." };
+    }
+    if (option && !mediaOptionMatches(option, {
+      templateName: rule.templateName,
+      serviceName: rule.serviceName,
+      treatment: rule.serviceName,
+    })) {
+      return { index, reason: "The media belongs to a different treatment or template." };
+    }
+    if (sourceId?.startsWith("video:") && option?.mediaKey !== mediaKey) {
+      return { index, reason: "The chosen video no longer matches its saved reference." };
+    }
+    if (sourceId?.startsWith("promo:") && (!mediaKey || !sourceId.endsWith(String(option?.imageId)))) {
+      return { index, reason: "The selected promotional image does not match its source." };
+    }
+  }
+  return null;
+}
+
 module.exports = {
-  allowedForTreatment, mediaOptionMatches, isSafeTemplateMediaContext,
+  allowedForTreatment, mediaOptionMatches, isSafeTemplateMediaContext, invalidConfiguredMediaRule,
 };
