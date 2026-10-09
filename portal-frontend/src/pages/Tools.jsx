@@ -2605,6 +2605,30 @@ function FollowUpTool({
                       ? " · BILLING ALARM: all WhatsApp sends are blocked until investigated and the switch is reset."
                       : ""}
                   </div>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    Strict free-only period: {freeEntryStatus.strictCeilingHours === 168 ? "167h with verified account evidence" : "71h (no verified 7-day billing proof)"}
+                    {" · "}Outbound reservation: {freeEntryStatus.freeOnlyGate?.status || "idle"}
+                    {" · "}Pending billing alerts: {freeEntryStatus.billingAlerts?.pending ?? "unknown"}
+                  </p>
+                  {freeEntryStatus.freeOnlyGate?.status && freeEntryStatus.freeOnlyGate.status !== "idle" ? (
+                    <p className="mt-1 text-xs font-semibold text-amber-700">
+                      A previous WhatsApp send is awaiting billing verification. Further strict-mode sends are blocked until Meta confirms free pricing. An unknown send requires manual reconciliation, not an automatic retry.
+                    </p>
+                  ) : null}
+                  {(freeEntryStatus.recentBlocks || []).length ? (
+                    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]" aria-label="Recent free-only blocked sends">
+                      {freeEntryStatus.recentBlocks.map(item => (
+                        <p key={item.reason}>{item.reason}: {item.blocked_count} blocked</p>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                    Meta callback records are not a spending statement. Reconcile with
+                    {" "}<a className="underline" target="_blank" rel="noreferrer"
+                      href="https://business.facebook.com/billing_hub/">WhatsApp Billing Hub</a>.
+                    Strict mode cannot guarantee zero Meta charges or send the first reply to a new ad lead.
+                    For initial ad replies, turn strict mode off only if the business knowingly accepts billing risk.
+                  </p>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
                       ["Ad leads", freeEntryStatus.leads?.ad_leads || 0],
