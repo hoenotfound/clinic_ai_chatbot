@@ -224,6 +224,20 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       assert.equal(proofOfScopedRecovery.rows[0].message_id,20);
       assert.equal(String(proofOfScopedRecovery.rows[0].attempt_id),
         String(secondClaim.rows[0].id));
+      // The follow-up candidate query must also recognize the reconciled
+      // unknown attempt. It must never re-claim its original slot.
+      await client.query(
+        "UPDATE messages SET created_at=now()-interval '6 hours' WHERE id IN (19,20)"
+      );
+      const restoredCandidates=await worker.listCandidates({
+        activatedAt: new Date(Date.now()-60*3600000).toISOString(),
+        slots:[26,50,74],sevenDayVerified:false,
+      },client,1);
+      assert.equal(restoredCandidates.length,1,
+        "a manually audited unknown attempt cannot starve later eligible slots");
+      assert.ok(restoredCandidates[0].claimed_slots.includes(26),
+        "the recovered 26h slot remains claimed and cannot be resent");
+
       const resumed=await zeroCostGuard.reserve("60121234567",{
         database:guardDb,context:{messageKind:"template"}});
       assert.equal(resumed.allowed,true,
