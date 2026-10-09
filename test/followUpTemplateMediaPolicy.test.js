@@ -73,6 +73,21 @@ test("automated sends verify R2 origin metadata as well as promotion validity", 
       metadata: { "clinic-promo-image-id": "99" },
     }) },
   }), false);
+  assert.equal(await validateApprovedMedia(imageTemplate, {
+    ...promoSpec, mediaSourceId: "",
+  }, { config, now: at("2026-10-09"), mediaStore }), false,
+  "R2 promotion provenance cannot be bypassed by deleting mediaSourceId");
+  assert.equal(await validateApprovedMedia(imageTemplate, {
+    ...promoSpec, mediaSourceId: "",
+  }, { config, now: at("2026-11-02"), mediaStore }), false,
+  "Expired copied promotions remain blocked when saved source metadata is missing");
+  assert.equal(await validateApprovedMedia(imageTemplate, {
+    ...promoSpec, mediaSourceId: "",
+  }, { config, now: at("2026-10-09"),
+    mediaStore: { ...mediaStore, getSharedFollowUpMediaInfo: async () => ({
+      bytes: 1000, mimeType: "image/jpeg", metadata: {},
+    }) },
+  }), true, "Standalone uploaded clinic images remain supported");
 });
 
 test("copied Package A promotion media cannot be sent without an explicit A choice", async () => {
