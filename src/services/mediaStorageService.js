@@ -294,6 +294,7 @@ async function getSharedFollowUpMediaInfo(key) {
     bytes: Number(head.ContentLength),
     mimeType: String(head.ContentType || "").split(";")[0].trim().toLowerCase(),
     metadata: head.Metadata || {},
+    etag: String(head.ETag || "").replaceAll('"', ""),
   };
 }
 
