@@ -1515,7 +1515,7 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
   await expect(activity).toContainText("Instagram");
   await expect(activity).toContainText("Matching pricing promotion or media unavailable");
   await expect(activity).toContainText("Earlier pricing delivery is unconfirmed");
-  await expect(activity).toContainText("Provider acceptance or delivery has not been confirmed");
+  await expect(activity).toContainText("The stored delivery status is pending. Check provider receipts before retrying.");
   await expect(activity.getByRole("link", { name: "Open conversation" }).first())
     .toHaveAttribute("href", "/inbox?contact=101");
   await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
