@@ -1013,6 +1013,7 @@ test("Sequence timeline navigates existing editors without changing schedule or 
   await first.click();
   await expect(page.locator("#follow-up-step-1")).toBeVisible();
   await expect(first).toHaveAttribute("aria-current", "step");
+  await expect(thirdMessage).not.toBeVisible();
 
   await third.click();
   await expect(thirdMessage).toHaveValue("Updated third testimonial.");
