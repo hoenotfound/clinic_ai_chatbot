@@ -99,6 +99,53 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       process.env.WHATSAPP_PHONE_NUMBER_ID = "free-only-test-account";
       process.env.WHATSAPP_FEP_7DAY_VERIFIED = "false";
 
+      // Strict-mode day 4–7 proof is obtained from any independently
+      // delivered nonbillable CTWA message, not only a worker-claimed slot.
+      // The worker and provider guard MUST report the same ceiling.
+      process.env.WHATSAPP_FEP_7DAY_VERIFIED = "true";
+      assert.equal(await zeroCostGuard.authorizedCeilingHours({database:guardDb}),72);
+      assert.equal((await worker.alignedSettings({
+        sevenDayVerified:true
+      },guardDb)).sevenDayVerified,false,
+      "the scheduler cannot consume a 74h slot while strict mode lacks proof");
+
+      await client.query(`
+        INSERT INTO contacts(id,channel,whatsapp_number,mode)
+        VALUES(6,'whatsapp','60136666666','ai');
+        INSERT INTO messages(id,contact_id,role,content,created_at,whatsapp_message_id,delivery_status)
+        VALUES
+          (191,6,'user','Paid CTWA lead',now()-interval '82 hours','wamid.inbound.day7','delivered'),
+          (192,6,'assistant','First reply',now()-interval '81 hours','wamid.fep.activated','delivered'),
+          (193,6,'assistant','Previously verified outside strict mode',now()-interval '7 hours',
+             'wamid.fep.day4','delivered');
+        INSERT INTO whatsapp_free_entry_referrals
+          (origin_message_id,contact_id,ctwa_clid,source_type)
+        VALUES(191,6,'ctwa-independent-evidence','ad');
+        INSERT INTO whatsapp_free_entry_pricing_evidence
+          (wamid,pricing_type,billable,delivery_status)
+        VALUES
+          ('wamid.fep.activated','free_entry_point',false,'delivered'),
+          ('wamid.fep.day4','regular',false,'delivered');
+      `);
+      assert.equal(await zeroCostGuard.authorizedCeilingHours({database:guardDb}),72,
+        "nonbillable regular message does not prove seven-day CTWA free entry");
+      await client.query(`
+        UPDATE whatsapp_free_entry_pricing_evidence
+        SET pricing_type='free_entry_point'
+        WHERE wamid='wamid.fep.day4'
+      `);
+      assert.equal(await zeroCostGuard.authorizedCeilingHours({database:guardDb}),168,
+        "independent day-4 Meta free-entry callback verifies seven-day account eligibility");
+      assert.equal((await worker.alignedSettings({sevenDayVerified:true},guardDb)).sevenDayVerified,true,
+        "scheduler and guard agree when independent billing evidence exists");
+      await client.query("DELETE FROM whatsapp_free_entry_pricing_evidence WHERE wamid IN ('wamid.fep.activated','wamid.fep.day4')");
+      await client.query("DELETE FROM whatsapp_free_entry_referrals WHERE contact_id=6");
+      await client.query("DELETE FROM messages WHERE contact_id=6");
+      await client.query("DELETE FROM contacts WHERE id=6");
+      assert.equal(await zeroCostGuard.authorizedCeilingHours({database:guardDb}),72,
+        "strict mode fails closed again without current durable proof");
+      process.env.WHATSAPP_FEP_7DAY_VERIFIED = "false";
+
       // Meta's genuine CTWA first reply IS the free-entry activation.
       // Verify strict mode lets this one text reply out without requiring a
       // pricing callback that cannot exist until AFTER it has been sent.
