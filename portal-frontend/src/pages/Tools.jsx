@@ -286,6 +286,7 @@ export default function Tools() {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [freeOnlyImpactConfirmed, setFreeOnlyImpactConfirmed] = useState(false);
+  const [followUpSaveIssue, setFollowUpSaveIssue] = useState(null);
   const [scoringSaving, setScoringSaving] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentChannelStatus, setCommentChannelStatus] = useState(null);
@@ -558,12 +559,15 @@ export default function Tools() {
   }
 
   function followUpValidationError() {
+    // Keep the existing save checks intact while identifying the editor location.
+    const issue = (message, tab = "sequence", stepIndex = null, target = null) =>
+      ({ message, tab, stepIndex, target });
     if (form.freeEntry?.enabled) {
       if (!/^[a-z0-9_]+$/.test(String(form.freeEntry.templateName || ""))) {
-        return "Enter an approved WhatsApp MARKETING template name before enabling free-entry follow-ups.";
+        return issue("Enter an approved WhatsApp MARKETING template name before enabling free-entry follow-ups.", "whatsapp");
       }
       if (!Array.isArray(form.freeEntry.slotsHours) || !form.freeEntry.slotsHours.length) {
-        return "Select an extended WhatsApp follow-up schedule.";
+        return issue("Select an extended WhatsApp follow-up schedule.", "whatsapp");
       }
     }
     const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -574,7 +578,7 @@ export default function Tools() {
       !quietTimePattern.test(quietEnd) ||
       quietStart === quietEnd
     ) {
-      return "Choose two different valid times for follow-up quiet hours.";
+      return issue("Choose two different valid times for follow-up quiet hours.");
     }
 
     const steps = [
@@ -591,7 +595,7 @@ export default function Tools() {
       },
       ...(form.additionalSteps || []),
     ];
-    if (steps.length > 3) return "You can configure up to 3 follow-ups.";
+    if (steps.length > 3) return issue("You can configure up to 3 follow-ups.");
 
     const configuredServices = new Set(
       (config?.services || [])
@@ -616,7 +620,7 @@ export default function Tools() {
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
       if (String(step.imageUrl || "").trim() && String(step.videoKey || "").trim()) {
-        return `Follow-up ${index + 1} can use either an image or a video, not both.`;
+        return issue(`Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index);
       }
       if (
         timingMode === "before_window_expiry" &&
@@ -626,31 +630,34 @@ export default function Tools() {
           beforeWindowExpiryMinutes > 360
         )
       ) {
-        return `Follow-up ${index + 1} needs an expiry offset between 1 and 6 hours.`;
+        return issue(`Follow-up ${index + 1} needs an expiry offset between 1 and 6 hours.`, "sequence", index);
       }
       if (
         !Number.isInteger(delayMinutes) ||
         delayMinutes < 5 ||
         delayMinutes > 1380
       ) {
-        return `Follow-up ${index + 1} needs a delay between 5 minutes and 23 hours.`;
+        return issue(`Follow-up ${index + 1} needs a delay between 5 minutes and 23 hours.`, "sequence", index);
       }
       if (index > 0 && delayMinutes <= previousDelay) {
-        return `Follow-up ${index + 1} must be later than Follow-up ${index}.`;
+        return issue(`Follow-up ${index + 1} must be later than Follow-up ${index}.`, "sequence", index);
       }
       if (!["fixed", "ai"].includes(messageMode)) {
-        return `Choose a message type for Follow-up ${index + 1}.`;
+        return issue(`Choose a message type for Follow-up ${index + 1}.`, "sequence", index);
       }
       if (aiInstruction.length > 1000) {
-        return `Keep the AI instruction for Follow-up ${index + 1} under 1,000 characters.`;
+        return issue(`Keep the AI instruction for Follow-up ${index + 1} under 1,000 characters.`, "sequence", index);
       }
       if (!message) {
-        return messageMode === "ai"
-          ? `Add a fallback message for Follow-up ${index + 1}.`
-          : `Add a message for Follow-up ${index + 1}.`;
+        return issue(
+          messageMode === "ai"
+            ? `Add a fallback message for Follow-up ${index + 1}.`
+            : `Add a message for Follow-up ${index + 1}.`,
+          "sequence", index
+        );
       }
       if (message.length > 1000) {
-        return `Keep Follow-up ${index + 1} under 1,000 characters.`;
+        return issue(`Keep Follow-up ${index + 1} under 1,000 characters.`, "sequence", index);
       }
 
       const seenServices = new Set();
@@ -658,20 +665,20 @@ export default function Tools() {
         const serviceName = String(override?.serviceName || "").trim();
         const targetedMessage = String(override?.message || "").trim();
         if (!serviceName || !targetedMessage) {
-          return `Complete every targeted service message in Follow-up ${index + 1}.`;
+          return issue(`Complete every targeted service message in Follow-up ${index + 1}.`, "sequence", index, "service");
         }
         if (!configuredServices.has(serviceName.toLocaleLowerCase())) {
-          return `${serviceName} is no longer in Services. Remap or remove that targeted follow-up.`;
+          return issue(`${serviceName} is no longer in Services. Remap or remove that targeted follow-up (Follow-up ${index + 1}).`, "sequence", index, "service");
         }
         if (targetedMessage.length > 1000) {
-          return `Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`;
+          return issue(`Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`, "sequence", index, "service");
         }
         if (String(override.imageUrl || "").trim() && String(override.videoKey || "").trim()) {
-          return `${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`;
+          return issue(`${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index, "service");
         }
         const serviceKey = serviceName.toLocaleLowerCase();
         if (seenServices.has(serviceKey)) {
-          return `${serviceName} is targeted more than once in Follow-up ${index + 1}.`;
+          return issue(`${serviceName} is targeted more than once in Follow-up ${index + 1}.`, "sequence", index, "service");
         }
         seenServices.add(serviceKey);
       }
@@ -788,14 +795,18 @@ export default function Tools() {
     if (form.whatsappFreeOnly?.enabled === true &&
         config?.automatedFollowUp?.whatsappFreeOnly?.enabled !== true &&
         !freeOnlyImpactConfirmed) {
-      showToast("Confirm that ordinary/direct enquiries can be blocked and Meta billing is never absolutely guaranteed.", "error");
+      const message = "Confirm that ordinary/direct enquiries can be blocked and Meta billing is never absolutely guaranteed.";
+      setFollowUpSaveIssue({ message, tab: "whatsapp", stepIndex: null });
+      showToast(message, "error");
       return;
     }
     const validationError = followUpValidationError();
     if (validationError) {
-      showToast(validationError, "error");
+      setFollowUpSaveIssue(validationError);
+      showToast(validationError.message, "error");
       return;
     }
+    setFollowUpSaveIssue(null);
 
     const delayMinutes = Number(form.delayMinutes);
     const message = form.message.trim();
@@ -889,6 +900,7 @@ export default function Tools() {
       setForm(saved);
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
+      setFollowUpSaveIssue(null);
       showToast(
         saved.enabled
           ? `Automated follow-up sequence is active (${1 + saved.additionalSteps.length} step${saved.additionalSteps.length ? "s" : ""}).`
@@ -1018,6 +1030,9 @@ export default function Tools() {
             freeOnlyImpactConfirmed={freeOnlyImpactConfirmed}
             setFreeOnlyImpactConfirmed={setFreeOnlyImpactConfirmed}
             savedEnabled={savedEnabled}
+            savedFreeEntryEnabled={config?.automatedFollowUp?.freeEntry?.enabled === true}
+            validationIssue={followUpSaveIssue}
+            onDismissValidationIssue={() => setFollowUpSaveIssue(null)}
             hasUnsavedChanges={hasUnsavedChanges}
             translationsNeedRefresh={translationsNeedRefresh}
             translationReadyCount={translationReadyCount}
@@ -1471,6 +1486,8 @@ function FollowUpMediaPicker({
   useEffect(() => {
     if (videoKey) setSelectedType("video");
     else if (imageUrl) setSelectedType("image");
+    // Keep a newly selected empty media picker open during type switches.
+    // Only an explicit removal action should select "No media".
   }, [imageUrl, videoKey]);
 
   function choose(type) {
@@ -1528,13 +1545,14 @@ function FollowUpMediaPicker({
           imageUrl={imageUrl}
           uploading={uploadingImage}
           onUpload={onUploadImage}
-          onChange={(nextImageUrl) =>
+          onChange={(nextImageUrl) => {
+            if (!nextImageUrl) setSelectedType("none");
             onChange({
               imageUrl: nextImageUrl,
               videoKey: "",
               videoFilename: "",
-            })
-          }
+            });
+          }}
           label={`${label} image`}
         />
       )}
@@ -1545,15 +1563,16 @@ function FollowUpMediaPicker({
           videoFilename={videoFilename}
           uploading={uploadingVideo}
           onUpload={onUploadVideo}
-          onChange={({ key, filename }) =>
+          onChange={({ key, filename }) => {
+            if (!key) setSelectedType("none");
             onChange({
               imageUrl: "",
               videoKey: key,
               videoFilename: filename,
-            })
-          }
+            });
+          }}
           label={`${label} video`}
-          description="MP4 attachment. Large files are prepared automatically."
+          description="MP4 up to 16MB. Export as H.264 video with AAC audio; no server conversion."
         />
       )}
     </div>
@@ -1603,8 +1622,12 @@ function ServiceOverridesEditor({
   onUploadImage,
   onUploadVideo,
   onTranslateMessage,
+  forceOpen = false,
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (forceOpen) setExpanded(true);
+  }, [forceOpen]);
   const serviceNames = services
     .map((service) => String(service?.name || "").trim())
     .filter(Boolean);
@@ -1828,6 +1851,9 @@ function FollowUpTool({
   freeOnlyImpactConfirmed,
   setFreeOnlyImpactConfirmed,
   savedEnabled,
+  savedFreeEntryEnabled,
+  validationIssue,
+  onDismissValidationIssue,
   hasUnsavedChanges,
   translationsNeedRefresh,
   translationReadyCount,
@@ -1856,6 +1882,7 @@ function FollowUpTool({
   const [previewStepIndex, setPreviewStepIndex] = useState(0);
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
+  const [followUpTab, setFollowUpTab] = useState("sequence");
   const [freeEntryStatus, setFreeEntryStatus] = useState(null);
   const [freeEntryStatusError, setFreeEntryStatusError] = useState("");
   const [freeEntryStatusLoading, setFreeEntryStatusLoading] = useState(false);
@@ -1897,6 +1924,25 @@ function FollowUpTool({
     }
   }, []);
   useEffect(() => { refreshFreeEntryStatus(); }, [refreshFreeEntryStatus]);
+
+  useEffect(() => {
+    if (!validationIssue) return;
+    setFollowUpTab(validationIssue.tab);
+    if (validationIssue.tab === "sequence" && validationIssue.stepIndex > 0) {
+      setExpandedStepIndex(validationIssue.stepIndex - 1);
+      setPreviewStepIndex(validationIssue.stepIndex);
+    }
+  }, [validationIssue]);
+
+  useEffect(() => {
+    if (!validationIssue || followUpTab !== validationIssue.tab) return;
+    if (validationIssue.stepIndex > 0 &&
+        expandedStepIndex !== validationIssue.stepIndex - 1) return;
+    const targetId = validationIssue.tab === "sequence" && validationIssue.stepIndex > 0
+      ? `follow-up-step-${validationIssue.stepIndex + 1}`
+      : `follow-up-panel-${validationIssue.tab}`;
+    document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [validationIssue, followUpTab, expandedStepIndex]);
 
   const allSteps = [
     {
@@ -1989,6 +2035,7 @@ function FollowUpTool({
     <ToolShell
       title="Automated follow-up"
       description="Send a short sequence when a customer goes quiet, with optional service-specific messages."
+      switchLabel="24-hour follow-ups"
       enabled={form.enabled}
       savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
@@ -2021,8 +2068,133 @@ function FollowUpTool({
         </div>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]">
-        <div className="order-2 space-y-5 xl:order-1">
+      <section aria-label="Follow-up activation overview" className="mb-4 rounded-xl border border-[var(--color-border)] bg-white px-4 py-3.5">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+          <div>
+            <span className="text-[var(--color-text-muted)]">24-hour follow-ups: </span>
+            <span className="font-semibold">{form.enabled !== savedEnabled ? "Pending save" : form.enabled ? "On" : "Off"}</span>
+          </div>
+          <div>
+            <span className="text-[var(--color-text-muted)]">Extended WhatsApp templates: </span>
+            <span className="font-semibold">
+              {form.freeEntry?.enabled !== savedFreeEntryEnabled
+                ? "Pending save"
+                : form.freeEntry?.enabled ? "On in Tools" : "Off"}
+            </span>
+          </div>
+          <div>
+            <span className="text-[var(--color-text-muted)]">Template server: </span>
+            <span className="font-semibold">{freeEntryStatusLoading && !freeEntryStatus ? "Checking…" : freeEntryStatus ? (freeEntryStatus.enabledOnServer ? "On" : "Off") : "Unknown"}</span>
+          </div>
+        </div>
+        {form.freeEntry?.enabled === true && freeEntryStatus && !freeEntryStatus.enabledOnServer && (
+          <p role="status" className="mt-2 text-xs text-amber-700">
+            Extended templates are selected in Tools but the server sending switch is off. No extended templates will be sent.
+          </p>
+        )}
+        {freeEntryStatus?.freeOnlyEnabled && Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0 && (
+          <p role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
+            WhatsApp billing alarm: Meta reported a billable callback since strict free-only mode was enabled.
+            All WhatsApp sends are blocked until staff investigate in Meta Billing Hub and reset the safeguard.
+            Open WhatsApp templates for the audit details.
+          </p>
+        )}
+        {freeEntryStatus?.freeOnlyEnabled &&
+          freeEntryStatus.freeOnlyGate?.status &&
+          freeEntryStatus.freeOnlyGate.status !== "idle" &&
+          Number(freeEntryStatus.billingSafety?.since_switch || 0) === 0 && (
+          <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            WhatsApp billing verification pending ({String(freeEntryStatus.freeOnlyGate.status).replaceAll("_", " ")}).
+            Additional strict-mode WhatsApp sends are blocked until pricing evidence is resolved.
+            Review the reservation under WhatsApp templates.
+          </p>
+        )}
+        {freeEntryStatus?.strictSevenDayBlocked === true && form.freeEntry?.enabled === true && (
+          <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            Extended WhatsApp days 4–7 are unavailable until non-billable post-72-hour evidence is verified for this account.
+            The scheduler will defer those template slots rather than risk a charge.
+          </p>
+        )}
+        {freeEntryStatusError && (
+          <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="min-w-0 flex-1">
+              WhatsApp eligibility and billing status could not be verified: {freeEntryStatusError}
+              {" "}Do not assume extended templates are active or free.
+            </p>
+            <button type="button" onClick={refreshFreeEntryStatus} disabled={freeEntryStatusLoading}
+              className="rounded-lg border border-amber-500 px-3 py-2 text-xs font-semibold disabled:opacity-50">
+              {freeEntryStatusLoading ? "Checking…" : "Retry check"}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <nav role="tablist" aria-label="Follow-up sections" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {[
+          { key: "sequence", label: "Sequence" },
+          { key: "pricing", label: "Pricing" },
+          { key: "whatsapp", label: "WhatsApp templates" },
+          { key: "activity", label: "WhatsApp activity" },
+        ].map(({ key, label }) => (
+          <button
+            type="button"
+            key={key}
+            id={`follow-up-tab-${key}`}
+            role="tab"
+            aria-selected={followUpTab === key}
+            aria-controls={`follow-up-panel-${key}`}
+            onClick={() => setFollowUpTab(key)}
+            className={`min-h-11 rounded-xl border px-3 py-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${followUpTab === key
+              ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+              : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/35"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {validationIssue && (
+        <div role="alert" className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+          <div>
+            <p className="font-semibold">Fix this setting before saving</p>
+            <p className="mt-1">{validationIssue.message}</p>
+            <p className="mt-1 text-xs">
+              Opened {validationIssue.tab === "whatsapp" ? "WhatsApp templates" : "Sequence"}
+              {validationIssue.stepIndex !== null ? ` · Follow-up ${validationIssue.stepIndex + 1}` : ""}.
+            </p>
+          </div>
+          <button type="button" onClick={onDismissValidationIssue}
+            aria-label="Dismiss follow-up validation message"
+            className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-red-800 hover:bg-red-100">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      <div data-testid="follow-up-editor-layout"
+        className={`grid gap-5 ${followUpTab === "sequence" ? "xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]" : "xl:grid-cols-1"}`}>
+        <div className="order-2 min-w-0 xl:order-1">
+          <div id="follow-up-panel-sequence" role="tabpanel" aria-labelledby="follow-up-tab-sequence" className={followUpTab === "sequence" ? "space-y-5" : "hidden"}>
+            <div className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
+              <h2 className="text-sm font-bold">Sequence at a glance</h2>
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                Target times only. Actual sends still respect quiet hours, message spacing and each channel's reply window.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {allSteps.map((step, index) => (
+                  <div key={index} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <p className="text-xs font-semibold">Follow-up {index + 1}</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">{followUpTimingSummary(step)}</p>
+                  </div>
+                ))}
+                {form.pricingReminder?.enabled === true && (
+                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <p className="text-xs font-semibold">Pricing graphic</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">After accepted Follow-up 3, if eligible</p>
+                  </div>
+                )}
+              </div>
+            </div>
           <Card>
             <SectionHeading
               number="1"
@@ -2123,7 +2295,7 @@ function FollowUpTool({
                     </div>
                   </div>
                   <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                    Due follow-ups wait until quiet hours end. If multiple steps become overdue, only the next step resumes; later steps keep their configured spacing and still require an open reply window.
+                    Follow-ups normally wait until quiet hours end. The final pre-expiry step may move earlier when eligible. Sends are skipped if safe spacing and reply-window limits cannot be met.
                   </p>
                 </div>
               )}
@@ -2254,6 +2426,7 @@ function FollowUpTool({
               overrides={form.serviceOverrides}
               services={services}
               stepLabel="Follow-up 1"
+              forceOpen={validationIssue?.tab === "sequence" && validationIssue.stepIndex === 0 && validationIssue.target === "service"}
               translating={translating}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
@@ -2280,6 +2453,7 @@ function FollowUpTool({
                   return (
                     <div
                       key={index}
+                      id={`follow-up-step-${index + 2}`}
                       className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]"
                     >
                       <div className="flex items-start gap-3 p-4">
@@ -2403,6 +2577,7 @@ function FollowUpTool({
                             overrides={step.serviceOverrides}
                             services={services}
                             stepLabel={`Follow-up ${index + 2}`}
+                            forceOpen={validationIssue?.tab === "sequence" && validationIssue.stepIndex === index + 1 && validationIssue.target === "service"}
                             translating={translating}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
@@ -2461,6 +2636,8 @@ function FollowUpTool({
             </button>
           </Card>
 
+          </div>
+          <div id="follow-up-panel-pricing" role="tabpanel" aria-labelledby="follow-up-tab-pricing" className={followUpTab === "pricing" ? "space-y-5" : "hidden"}>
           <Card>
             <SectionHeading
               number="4"
@@ -2570,6 +2747,8 @@ function FollowUpTool({
             </div>
           </Card>
 
+          </div>
+          <div id="follow-up-panel-whatsapp" role="tabpanel" aria-labelledby="follow-up-tab-whatsapp" className={followUpTab === "whatsapp" ? "space-y-5" : "hidden"}>
           <Card>
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -2628,6 +2807,17 @@ function FollowUpTool({
                 }))}
               />
             </div>
+            {freeEntryStatus && (
+              <p role="status" className="mt-3 rounded-lg bg-[var(--color-bg)] px-3 py-2.5 text-xs leading-5 text-[var(--color-text-muted)]">
+                Server: {freeEntryStatus.enabledOnServer ? "On" : "Off"} · Tools: {freeEntryStatus.enabledInTools ? "On" : "Off"}
+                {" · "}Verified period: {freeEntryStatus.sevenDayVerified ? "7-day rollout verified" : "Extended period unverified (72h default)"}
+                {Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0 ? " · Billing alarm: sending blocked" : ""}
+              </p>
+            )}
+            <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-white p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-[var(--color-primary)]">
+                Advanced eligibility and billing details
+              </summary>
             <div className="mt-3 rounded-xl border border-[var(--color-border)] p-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-semibold">Free-entry eligibility and billing</p>
@@ -2774,6 +2964,7 @@ function FollowUpTool({
                 </>
               ) : null}
             </div>
+            </details>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="block text-xs font-semibold">
                 Approved template name
@@ -2950,7 +3141,7 @@ function FollowUpTool({
               ))}
             </div>
             <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-              Template names are never repeated within a verified period (maximum three sends). If pelvic Package A/B
+              At most three distinct approved extended templates can be sent per verified period, even if you select a schedule with more slots. Template names are never repeated. If pelvic Package A/B
               is unclear, the pricing-image template is skipped instead of guessing. An offer without the advertised
               free 1-hour meridian massage cannot use ns_fu_meridian_gift.
               Times are measured from the first qualifying business reply. The server kill switch
@@ -2959,9 +3150,77 @@ function FollowUpTool({
               Meta does not guarantee every template will be free, so confirm billing with actual callbacks.
             </p>
           </Card>
+          </div>
+          <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
+            <Card>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold">Extended WhatsApp template activity</h2>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Shows extended WhatsApp templates only: eligibility, attempts and billing evidence.
+                    For regular 24-hour follow-ups and pricing reminders, review the conversation in Inbox.
+                  </p>
+                </div>
+                <button type="button" onClick={refreshFreeEntryStatus} disabled={freeEntryStatusLoading}
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-primary)]">
+                  {freeEntryStatusLoading ? "Checking…" : "Refresh"}
+                </button>
+              </div>
+              {freeEntryStatusError && <p role="alert" className="mt-3 text-xs text-red-600">{freeEntryStatusError}</p>}
+              {!freeEntryStatus ? (
+                <p className="mt-4 text-sm text-[var(--color-text-muted)]">No live diagnostics available.</p>
+              ) : (
+                <>
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {[
+                      ["Ad leads", freeEntryStatus.leads?.ad_leads ?? 0],
+                      ["Marketing opted-in", freeEntryStatus.leads?.explicit_marketing_optins ?? 0],
+                      ["Verified free-entry", freeEntryStatus.leads?.verified_free_entry ?? 0],
+                      ["Billable callbacks", freeEntryStatus.leads?.confirmed_billable ?? 0],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-lg bg-[var(--color-bg)] p-3">
+                        <p className="text-lg font-bold">{value}</p>
+                        <p className="text-xs text-[var(--color-text-muted)]">{label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <h3 className="mt-5 text-sm font-bold">Recent template attempts</h3>
+                  {(freeEntryStatus.recentAttempts || []).length ? (
+                    <div className="mt-2 space-y-2">
+                      {(freeEntryStatus.recentAttempts || []).slice(0, 10).map((item, index) => (
+                        <div key={index} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
+                          <p className="font-semibold">Contact #{item.contact_id} · {item.slot_hours}h · {String(item.status || "unknown").replaceAll("_", " ")}</p>
+                          {item.error && <p className="mt-1 break-words text-red-600">{item.error}</p>}
+                          {item.billable && <p className="mt-1 font-semibold text-red-600">Meta reported billable</p>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="mt-2 text-xs text-[var(--color-text-muted)]">No extended template attempts recorded.</p>}
+                  <h3 className="mt-5 text-sm font-bold">Recent lead eligibility</h3>
+                  {(freeEntryStatus.contactDetails || []).length ? (
+                    <div className="mt-2 space-y-2">
+                      {(freeEntryStatus.contactDetails || []).slice(0, 12).map((item) => (
+                        <div key={item.contact_id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
+                          <p className="font-semibold">Contact #{item.contact_id}{item.treatment_interest ? ` · ${item.treatment_interest}` : ""}</p>
+                          <p className="mt-1 text-[var(--color-text-muted)]">{String(item.eligibility_reason || "Unknown").replaceAll("_", " ")}</p>
+                          {item.last_skip_reason && <p className="mt-1 text-amber-700">Last skipped: {String(item.last_skip_reason).replaceAll("_", " ")}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="mt-2 text-xs text-[var(--color-text-muted)]">No recent eligibility records.</p>}
+                  <p className="mt-4 text-xs text-[var(--color-text-muted)]">
+                    Meta callbacks are not a complete billing statement. Check Meta Billing Hub for actual charges.
+                  </p>
+                </>
+              )}
+              <Link to="/inbox" className="mt-4 inline-flex rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-xs font-semibold text-[var(--color-primary)]">
+                Open Inbox
+              </Link>
+            </Card>
+          </div>
         </div>
 
-        <aside className="order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start">
+        <aside className={`order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start ${followUpTab === "sequence" ? "" : "hidden"}`}>
           <button
             type="button"
             aria-label="Toggle follow-up preview"
@@ -3655,7 +3914,7 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
   );
 }
 
-function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
+function ToolShell({ title, description, switchLabel = null, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
   const enabledStateChanged = enabled !== savedEnabled;
   const enabledLabel = enabledStateChanged
     ? enabled
@@ -3678,8 +3937,9 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
             </div>
 
             <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+              {switchLabel && <span className="text-xs font-medium text-[var(--color-text-muted)]">{switchLabel}</span>}
               <span className="text-sm font-semibold text-[var(--color-text)]">{enabledLabel}</span>
-              <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${title}`} />
+              <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${switchLabel || title}`} />
             </div>
           </header>
 

@@ -54,9 +54,12 @@ async function mockPortalApi(
     },
     businessConfig = null,
     onConfigUpdate = null,
+    followUpStatus = null,
+    followUpStatusFailures = 0,
   } = {}
 ) {
   let authenticated = loggedIn;
+  let remainingFollowUpStatusFailures = followUpStatusFailures;
   let advancedConfig = {
     businessName: "Test Clinic",
     clinicName: "Test Clinic",
@@ -455,6 +458,23 @@ async function mockPortalApi(
         status: 200,
         contentType: "video/mp4",
         body: "fake-mp4-preview",
+      });
+    }
+
+    if (path === "/api/config/automated-follow-up/free-entry-status" &&
+        (followUpStatus !== null || remainingFollowUpStatusFailures > 0)) {
+      if (remainingFollowUpStatusFailures > 0) {
+        remainingFollowUpStatusFailures -= 1;
+        return route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "WhatsApp status temporarily unavailable." }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(followUpStatus),
       });
     }
 
@@ -886,6 +906,219 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Automated follow-up sections preserve draft settings while switching tabs", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  await page.goto("/tools");
+
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Sequence at a glance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).not.toBeVisible();
+
+  await page.getByRole("switch", { name: "Follow-up quiet hours" }).click();
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequence at a glance" })).not.toBeVisible();
+
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();
+  await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
+
+  await page.getByRole("tab", { name: "WhatsApp activity" }).click();
+  await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Sequence" }).click();
+  await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up tab settings save without changing the separate follow-up controls", async ({ page }) => {
+  const saved = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
+  });
+  await page.goto("/tools");
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].pricingReminder.enabled).toBe(true);
+  expect(saved[0].freeEntry.enabled).toBe(false);
+
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByLabel("Approved template fallback language").selectOption("ms");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(2);
+  expect(saved[1].freeEntry.fallbackLanguage).toBe("ms");
+  expect(saved[1].pricingReminder.enabled).toBe(true);
+
+  await page.getByRole("tab", { name: "WhatsApp activity" }).click();
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(3);
+  expect(saved[2].enabled).toBe(true);
+  expect(saved[2].pricingReminder.enabled).toBe(true);
+  expect(saved[2].freeEntry.fallbackLanguage).toBe("ms");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up pricing and WhatsApp tabs fill desktop width", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chromium", "desktop grid regression");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockPortalApi(page, { loggedIn: true });
+  await page.goto("/tools");
+
+  for (const [tab, id] of [
+    ["Pricing", "follow-up-panel-pricing"],
+    ["WhatsApp templates", "follow-up-panel-whatsapp"],
+    ["WhatsApp activity", "follow-up-panel-activity"],
+  ]) {
+    await page.getByRole("tab", { name: tab }).click();
+    const sizes = await page.locator(`#${id}`).evaluate((node) => ({
+      panelWidth: node.getBoundingClientRect().width,
+      editorWidth: node.parentElement.parentElement.getBoundingClientRect().width,
+    }));
+    expect(sizes.panelWidth).toBeGreaterThan(sizes.editorWidth * 0.94);
+    await expectNoHorizontalPageOverflow(page);
+  }
+});
+
+test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    followUpStatus: {
+      enabledOnServer: true,
+      enabledInTools: true,
+      freeOnlyEnabled: true,
+      billingSafety: { since_switch: 1 },
+      freeOnlyGate: { status: "unknown" },
+      strictSevenDayBlocked: false,
+    },
+  });
+  await page.goto("/tools");
+  await expect(page.getByRole("alert")).toContainText("WhatsApp billing alarm");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("All WhatsApp sends are blocked");
+});
+
+test("Saving pricing changes opens invalid Follow-up 2 and keeps the unsaved edit", async ({ page }) => {
+  let requests = 0;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "Checking in with you.",
+        additionalSteps: [{ delayMinutes: 1, message: "Another reminder." }],
+        pricingReminder: { enabled: false },
+      },
+    },
+    onConfigUpdate: () => { requests += 1; },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Follow-up 2 needs a delay between 5 minutes and 23 hours.");
+  await expect(page.locator("#follow-up-step-2").getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+  expect(requests).toBe(0);
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("Saving from another tab reveals hidden invalid service targeting", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "3D 小颜术", description: "", priceRange: "", duration: "" }],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "Checking in with you.",
+        additionalSteps: [{
+          delayMinutes: 480,
+          message: "Another reminder.",
+          serviceOverrides: [{
+            serviceName: "Retired pelvis treatment",
+            message: "A targeted follow-up for an old treatment.",
+          }],
+        }],
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Retired pelvis treatment is no longer in Services");
+  const step = page.locator("#follow-up-step-2");
+  await expect(step.getByText("This service no longer exists.")).toBeVisible();
+  await expect(step.getByPlaceholder("Write a more relevant follow-up for customers interested in this service.")).toBeVisible();
+});
+
+test("Saving an invalid extended template redirects to WhatsApp templates", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [],
+      automatedFollowUp: {
+        enabled: false,
+        delayMinutes: 120,
+        message: "Checking in with you.",
+        freeEntry: { enabled: true, templateName: "", slotsHours: [26, 50] },
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Enter an approved WhatsApp MARKETING template name");
+  await expect(page.getByLabel("Free-entry template name")).toBeVisible();
+});
+
+test("Failed WhatsApp status check shows a visible warning and supports retry", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  // React's development StrictMode may request status more than once on mount.
+  // Keep every initial request failing until the test explicitly allows a retry.
+  let allowRecovery = false;
+  await page.route("**/api/config/automated-follow-up/free-entry-status", (route) =>
+    route.fulfill({
+      status: allowRecovery ? 200 : 503,
+      contentType: "application/json",
+      body: JSON.stringify(allowRecovery
+        ? {
+            enabledOnServer: false, enabledInTools: false,
+            freeOnlyEnabled: false, freeOnlyGate: { status: "idle" },
+            sevenDayVerified: false, billingSafety: { since_switch: 0 },
+          }
+        : { error: "WhatsApp status temporarily unavailable." }),
+    })
+  );
+  await page.goto("/tools");
+  const warning = page.getByRole("alert").filter({ hasText: "WhatsApp eligibility and billing status could not be verified" });
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("Do not assume extended templates are active or free.");
+  allowRecovery = true;
+  await warning.getByRole("button", { name: "Retry check" }).click();
+  await expect(warning).not.toBeVisible();
+  await expect(page.getByRole("region", { name: "Follow-up activation overview" })).toContainText("Template server:");
+});
+
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
   let savedPayload = null;
   await mockPortalApi(page, {
@@ -962,6 +1195,8 @@ test("Automated follow-up switches cleanly between image and video attachments",
   await expect(page.getByRole("button", { name: "Remove image" })).toBeVisible();
 
   await mediaGroup.getByRole("radio", { name: "Video" }).click();
+  await expect(mediaGroup.getByRole("radio", { name: "Video" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Add video" })).toBeVisible();
   const videoInput = page.getByLabel("Follow-up 1 media video upload");
   await videoInput.setInputFiles({
     name: "follow-up.mp4",
@@ -986,6 +1221,8 @@ test("Automated follow-up switches cleanly between image and video attachments",
 
   savedPayload = null;
   await mediaGroup.getByRole("radio", { name: "Image" }).click();
+  await expect(mediaGroup.getByRole("radio", { name: "Image" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: "Add image" })).toBeVisible();
   const replacementImageInput = page.getByLabel("Follow-up 1 media image upload");
   await replacementImageInput.setInputFiles({
     name: "follow-up-replacement.jpg",
@@ -1003,6 +1240,11 @@ test("Automated follow-up switches cleanly between image and video attachments",
     videoKey: "",
     videoFilename: "",
   });
+
+  await page.getByRole("button", { name: "Remove image" }).click();
+  await expect(mediaGroup.getByRole("radio", { name: "No media" })).toHaveAttribute("aria-checked", "true");
+  await mediaGroup.getByRole("radio", { name: "Video" }).click();
+  await expect(page.getByRole("button", { name: "Add video" })).toBeVisible();
 
   await expectNoHorizontalPageOverflow(page);
 });
