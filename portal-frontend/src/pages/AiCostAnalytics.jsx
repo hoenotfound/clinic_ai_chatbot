@@ -50,7 +50,6 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
   }), { usd: 0, myr: 0, leads: 0, priced: 0, unpriced: 0, missing: 0 }), [daily]);
   const currency = payload?.currency || "USD";
   const value = (usd, myr) => money(currency === "MYR" ? myr : usd, currency);
-  const total = currency === "MYR" ? totals.myr : totals.usd;
   const leadSummary = payload?.leadSummary || {};
   const perLead = leadSummary.pricedLeads
     ? (currency === "MYR" ? leadSummary.attributedMyr : leadSummary.attributedUsd) / leadSummary.pricedLeads
