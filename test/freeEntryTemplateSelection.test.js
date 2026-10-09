@@ -119,8 +119,12 @@ function currentClinicPromos() {
       {name:"9D First Trial",linkedService:"9D 逆龄抗衰",validFrom:"2026-10-01",validUntil:"2026-10-31",imageUrl:"https://clinic.test/promo-images/21",caption:"免费赠送 1 小时经络按摩"},
       {name:"3D + 9D Trial",linkedService:"3D + 9D 组合",validFrom:"2026-10-01",validUntil:"2026-10-31",imageUrl:"https://clinic.test/promo-images/22",caption:"免费赠送 1 小时经络按摩"},
       {name:"Pelvis Packages",linkedService:"骨盆调理",validFrom:"2026-10-01",validUntil:"2026-10-31",packages:[
-        {name:"Package A",followUpImageUrl:"https://clinic.test/promo-images/28"},
-        {name:"Package B",followUpImageUrl:"https://clinic.test/promo-images/29"},
+        {name:"Package A",title:"尊享护理配套｜2小时30分钟",
+          aliases:["A套餐","A配套","RM488配套","488配套"],
+          followUpImageUrl:"https://clinic.test/promo-images/28"},
+        {name:"Package B",title:"1小时30分钟女性护理配套",
+          aliases:["B套餐","B配套","RM288配套","288配套","女性护理配套"],
+          followUpImageUrl:"https://clinic.test/promo-images/29"},
       ]},
     ],
   };
@@ -182,6 +186,24 @@ test("pelvis package needs unambiguous package choice and never selects a single
   assert.equal(derive(["我要 Package A"]).autoPromoImageId,28);
   assert.equal(derive(["我想了解 Package B"]).autoPromoImageId,29);
   assert.equal(derive(["我要 Package A"]).bodyValue,"骨盆调理 Package A");
+  for (const text of ["我要A配套","我想了解A套餐","RM488配套可以吗","488配套还有吗","尊享护理配套"]) {
+    assert.equal(derive([text])?.autoPromoImageId,28,text);
+  }
+  for (const text of ["我要B配套","B套餐多少钱","RM288配套","288配套","女性护理配套"]) {
+    assert.equal(derive([text])?.autoPromoImageId,29,text);
+  }
+  for (const text of ["A配套还是B配套？","Package A or B?","Package B or Package A?",
+     "我想比较A套餐和B套餐","Package A and B","我想了解骨盆调理","A和B哪个好？"]) {
+    assert.equal(derive([text]),null,text);
+  }
+  assert.equal(derive(["我要A配套","我也看看B套餐"]),null,
+    "conflicting messages must not guess a package");
+  const missingAliases = currentClinicPromos();
+  missingAliases.promotions[3].packages[0].aliases=[];
+  assert.equal(enrichAutomatedTemplateSpec(chosenSpec(template.name,"骨盆调理",
+      "zh_CN",["我要A配套"]),template,
+      {config:missingAliases,now:"2026-10-09T10:00:00+08:00"}),null,
+    "configured aliases, not hardcoded marketing guesses, control selection");
 });
 test("free meridian template never attaches a non-gift promotion",()=>{
   const cfg=currentClinicPromos(),template=approvedTemplate("ns_fu_meridian_gift","IMAGE");
