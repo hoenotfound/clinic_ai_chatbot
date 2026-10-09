@@ -37,7 +37,7 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true, templateN
     name: templateName, language: "en_US", status: "APPROVED", category: "MARKETING",
     components: [
       { type: "HEADER", format },
-      { type: "BODY", text: "Hello, this is our offer." },
+      { type: "BODY", text: templateName === "ns_fu_meridian_gift" ? "Free gift for {{1}}" : "Hello, this is our offer." },
     ],
   };
   const template = templateService.normalizeTemplate(rawTemplate);
