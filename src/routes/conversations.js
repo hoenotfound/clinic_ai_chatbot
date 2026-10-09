@@ -1710,16 +1710,34 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       }
 
       const retryFormat = currentTemplate.template.header?.format || "TEXT";
+      const retryMediaSelectionId = message.whatsapp_template.mediaSelectionId || null;
       if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
-        const expectedMime = retryFormat === "VIDEO" ? "video/mp4" : null;
-        if (!message.media_key ||
-            !mediaStorage.isOwnedStoredMediaKey(message.media_key) ||
-            message.whatsapp_template.mediaFormat !== retryFormat ||
-            (expectedMime && message.media_mime_type !== expectedMime) ||
-            (retryFormat === "IMAGE" && !WHATSAPP_IMAGE_MIME_TYPES.has(message.media_mime_type))) {
+        if (retryMediaSelectionId) {
+          const selected = whatsappTemplateMedia.listReusableMedia()
+            .find((item) => item.id === retryMediaSelectionId && item.format === retryFormat);
+          if (!selected || (selected.mediaKey && selected.mediaKey !== message.media_key) ||
+              (selected.imageId && message.media_url !== "/promo-images/" + selected.imageId)) {
+            return res.status(409).json({
+              code: "template_media_changed",
+              error: "The shared media or promotion changed. Choose the approved template and review the current asset before sending.",
+            });
+          }
+        } else {
+          const expectedMime = retryFormat === "VIDEO" ? "video/mp4" : null;
+          if (!message.media_key ||
+              !mediaStorage.isOwnedStoredMediaKey(message.media_key) ||
+              (expectedMime && message.media_mime_type !== expectedMime) ||
+              (retryFormat === "IMAGE" && !WHATSAPP_IMAGE_MIME_TYPES.has(message.media_mime_type))) {
+            return res.status(409).json({
+              code: "template_media_missing",
+              error: "The original template attachment is unavailable. Choose the approved template and attach the file again.",
+            });
+          }
+        }
+        if (message.whatsapp_template.mediaFormat !== retryFormat) {
           return res.status(409).json({
-            code: "template_media_missing",
-            error: "The original template attachment is unavailable. Choose the approved template and attach the file again.",
+            code: "template_media_format_changed",
+            error: "The saved template media format is different. Review and send again from the template picker.",
           });
         }
       }
@@ -1727,16 +1745,26 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         let components = rebuiltTemplate.components;
         if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
           let buffer;
+          let mimeType = message.media_mime_type;
+          let filename = message.whatsapp_template.mediaFilename || "template-media";
           try {
-            buffer = await mediaStorage.downloadMedia(message.media_key, {
-              maxBytes: retryFormat === "IMAGE" ? WHATSAPP_IMAGE_MAX_BYTES : 16 * 1024 * 1024,
-            });
+            if (retryMediaSelectionId) {
+              const reused = await whatsappTemplateMedia.resolveReusableMedia(
+                retryMediaSelectionId, retryFormat
+              );
+              buffer = reused.buffer;
+              mimeType = reused.mimeType;
+              filename = reused.filename;
+            } else {
+              buffer = await mediaStorage.downloadMedia(message.media_key, {
+                maxBytes: retryFormat === "IMAGE" ? WHATSAPP_IMAGE_MAX_BYTES : 16 * 1024 * 1024,
+              });
+            }
           } catch (err) {
-            return { success: false, error: "The original template attachment could not be loaded from storage." };
+            return { success: false, error: "The original template attachment could not be loaded or is no longer eligible." };
           }
           if (!buffer?.length) return { success: false, error: "The original template attachment is empty." };
-          const mediaId = await whatsapp.uploadMedia(buffer, message.media_mime_type,
-            message.whatsapp_template.mediaFilename || "template-media");
+          const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
           if (!mediaId) return { success: false, error: "WhatsApp could not re-upload the template attachment." };
           const withMedia = whatsappTemplate.buildTemplateComponents(
             currentTemplate.template, message.whatsapp_template.values || {}, { media: { id: mediaId } }
