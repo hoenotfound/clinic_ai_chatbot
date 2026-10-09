@@ -1,4 +1,6 @@
 const { pool } = require("../db/db");
+const clinicConfig = require("../config/clinicConfig");
+const { quietHoursStatus } = require("../utils/quietHours");
 
 const ACTIVITY_DAYS = new Set([7, 30]);
 const ACTIVITY_CHANNELS = new Set(["all", "whatsapp", "facebook", "instagram"]);
@@ -36,7 +38,23 @@ const ACTIVITY_SQL = `WITH activity AS (
       ELSE 'pending'
     END AS state,
     LEFT(COALESCE(m.delivery_error, ''), 240) AS detail,
-    COALESCE(m.delivery_status, 'pending') AS raw_status
+    COALESCE(m.delivery_status, 'pending') AS raw_status,
+    CASE
+      WHEN c.channel = 'whatsapp' AND m.whatsapp_accepted_at IS NOT NULL
+        AND m.whatsapp_message_id IS NOT NULL THEN 'accepted'
+      WHEN c.channel IN ('facebook', 'instagram') AND m.social_accepted_at IS NOT NULL
+        AND m.whatsapp_message_id LIKE (c.channel || ':%') THEN 'accepted'
+      WHEN m.whatsapp_message_id IS NOT NULL THEN 'provider_id'
+      ELSE 'none'
+    END AS provider_evidence,
+    CASE
+      WHEN LOWER(COALESCE(m.media_mime_type, '')) LIKE 'video/%'
+        OR LOWER(COALESCE(m.media_key, '')) ~ '\\.(mp4|mov)(\\?|$)' THEN 'video'
+      WHEN LOWER(COALESCE(m.media_mime_type, '')) LIKE 'image/%'
+        OR NULLIF(m.media_url, '') IS NOT NULL THEN 'image'
+      WHEN m.media_key IS NOT NULL THEN 'attachment'
+      ELSE 'text'
+    END AS media_type
   FROM messages m
   JOIN contacts c ON c.id = m.contact_id
   WHERE m.is_automated_follow_up = true
@@ -48,7 +66,7 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'pricing_decision:' || p.id::text, p.created_at, p.contact_id, c.channel,
     'pricing', 4,
     CASE WHEN p.reason = 'delivery_review' THEN 'attention' ELSE 'skipped' END,
-    LEFT(p.reason, 240), p.reason
+    LEFT(p.reason, 240), p.reason, NULL::text, NULL::text
   FROM pricing_reminder_decisions p
   JOIN contacts c ON c.id = p.contact_id
   WHERE p.created_at >= now() - $1::integer * interval '1 day'
@@ -56,7 +74,7 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'sequence_decision:' || d.id::text, d.created_at, d.contact_id, c.channel,
     'sequence', d.follow_up_step,
     CASE WHEN d.action = 'human_review' THEN 'attention' ELSE 'skipped' END,
-    LEFT(COALESCE(d.reason, d.action), 240), d.action
+    LEFT(COALESCE(d.reason, d.action), 240), d.action, NULL::text, NULL::text
   FROM follow_up_ai_decisions d
   JOIN contacts c ON c.id = d.contact_id
   WHERE d.created_at >= now() - $1::integer * interval '1 day'
@@ -78,7 +96,7 @@ SELECT
   ) FROM scoped) AS summary,
   (SELECT COUNT(*)::integer FROM visible) AS total,
   COALESCE((SELECT jsonb_agg(to_jsonb(paged) ORDER BY paged.occurred_at DESC, paged.event_id DESC) FROM (
-    SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status
+    SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status, provider_evidence, media_type
     FROM visible
     ORDER BY occurred_at DESC, event_id DESC
     LIMIT $5::integer OFFSET $6::integer
