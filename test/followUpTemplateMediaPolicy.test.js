@@ -45,6 +45,9 @@ test("configured promotional image is valid only for its original service and ac
     imageTemplate, { config, now: at("2026-10-09") }), false);
   assert.equal(policy.invalidConfiguredMediaRule([
     { ...promoSpec, slotHours: 50 },
+  ], config, at("2026-10-09")), null, "active clinic promotion can be saved");
+  assert.equal(policy.invalidConfiguredMediaRule([
+    { ...promoSpec, slotHours: 50 },
   ], config, at("2026-11-02"))?.reason,
   "The source image/video is no longer active or available.");
 });
