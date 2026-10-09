@@ -11,6 +11,8 @@ function makeService({
   channel = "whatsapp",
   policy = undefined,
   reengagement = undefined,
+  inboundConsent = undefined,
+  config = undefined,
 } = {}) {
   const calls = [];
   let completed = false;
@@ -139,6 +141,8 @@ function makeService({
     events,
     reengagement: reengagementService,
     ...(policy ? { policy } : {}),
+    ...(inboundConsent ? { inboundConsent } : {}),
+    ...(config ? { config } : {}),
   });
 
   return {
@@ -391,3 +395,65 @@ for (const channel of ["facebook","instagram"]) {
     assert.equal(calls.some(c=>c[0]==="processing-claim"),false);
   });
 }
+
+
+test("inbound customer-authored promotional opt-in is recorded only after lead resolution", async () => {
+  const consentCalls = [];
+  const { calls, claim } = makeService({
+    config: { clinicName: "Neutro Sense TCM Centre" },
+    inboundConsent: {
+      async recordFromInbound(input) {
+        consentCalls.push(input);
+        return { recorded:true };
+      },
+    },
+  });
+  const durable = await claim.storeIncomingMessage({
+    id:"wamid.ctwa-consent", from:"60123456789", channel:"whatsapp",
+    text:"Hi～想了解 Neutro Sense TCM 的骨盆调理，之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    attribution: { source:"meta_ads", sourceType:"ad" },
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.equal(consentCalls.length,1);
+  assert.deepEqual(consentCalls[0],{
+    contactId:42,messageId:777,leadId:9,
+    businessName:"Neutro Sense TCM Centre",isClickToWhatsApp:true,
+  });
+  assert.ok(calls.some(c=>c[0]==="prepared"),
+    "normal 24-hour processing proceeds after opt-in bookkeeping");
+});
+
+test("nonconsenting CTWA enquiry keeps 24-hour flow without recording marketing permission", async () => {
+  let consentCalls=0;
+  const { claim,calls }=makeService({
+    config:{clinicName:"Neutro Sense TCM Centre"},
+    inboundConsent:{async recordFromInbound(){consentCalls++;}},
+  });
+  const durable=await claim.storeIncomingMessage({
+    id:"wamid.real-old-ad",from:"60123456789",channel:"whatsapp",
+    text:"你好！我想了解你们骨盆的疗程",
+    attribution:{source:"meta_ads",sourceType:"ad"},
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.equal(consentCalls,0);
+  assert.ok(calls.some(c=>c[0]==="prepared"));
+});
+
+test("opt-out beats promotional opt-in and never records new marketing permission", async () => {
+  let consentCalls=0;
+  const policy={
+    classifyOptOutText:(text)=> /stop promotions/i.test(text)?"marketing":null,
+    async recordMarketingOptOut(){},
+  };
+  const { claim,wasCompleted }=makeService({
+    config:{clinicName:"Neutro Sense TCM Centre"},policy,
+    inboundConsent:{async recordFromInbound(){consentCalls++;}},
+  });
+  const durable=await claim.storeIncomingMessage({
+    id:"wamid.stop-promo",from:"60123456789",channel:"whatsapp",
+    text:"Stop promotions",
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.equal(consentCalls,0);
+  assert.equal(wasCompleted(),true);
+});
