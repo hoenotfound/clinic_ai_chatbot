@@ -1300,6 +1300,38 @@ router.post("/automated-follow-up/template-library-image", async (req, res) => {
   }
 });
 
+// Reusing an existing follow-up video still requires server-side MP4 codec
+// verification. The old setting's filename/checkbox does not prove H.264/AAC.
+router.post("/automated-follow-up/template-library-video", async (req, res) => {
+  if (!mediaStorage.isStorageConfigured()) {
+    return res.status(503).json({ error: "Clinic media storage is not configured." });
+  }
+  const selectionId = String(req.body?.selectionId || "");
+  const config = configRepo.getConfig();
+  const selected = whatsappTemplateMedia.listReusableMedia({ config })
+    .find((item) => item.id === selectionId && item.format === "VIDEO");
+  const prefix = mediaStorage.getMediaIsolationStatus().prefix;
+  if (!selected || !prefix ||
+      !String(selected.mediaKey || "").startsWith(`${prefix}/messages/follow-up-config/`)) {
+    return res.status(400).json({ error: "Choose an isolated clinic video or upload a new H.264 MP4." });
+  }
+  try {
+    const verified = await whatsappTemplateMedia.resolveReusableMedia(selectionId, "VIDEO", { config });
+    const previewUrl = mediaStorage.createPresignedGetUrl(verified.mediaKey, { expiresSeconds: 5 * 60 });
+    res.set("Cache-Control", "private, no-store");
+    return res.json({
+      key: verified.mediaKey, mediaSourceId: selectionId,
+      videoCodecVerified: true, previewUrl, filename: verified.filename, format: "VIDEO",
+    });
+  } catch (err) {
+    if (err.code === "invalid_template_media" || err.code === "reusable_media_unavailable") {
+      return res.status(400).json({ error: err.message || "Video failed validation." });
+    }
+    console.error("Reusable follow-up video validation failed:", err);
+    return res.status(503).json({ error: "Could not verify the selected video. No attachment was saved." });
+  }
+});
+
 router.get("/automated-follow-up/template-media-preview", (req, res) => {
   const key = String(req.query.key || "").trim();
   if (!key || key.length > 1024 ||
