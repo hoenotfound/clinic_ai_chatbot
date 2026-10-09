@@ -95,21 +95,27 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
   const serviceExists = services.some((entry) => normalized(entry?.name) === key);
   const packages = packageEntries(promotion);
   const problems = [];
+  const structuralBlockers = [];
+  const mediaConflictsByLanguage = new Set();
   const notes = [];
-
-  if (!service || !serviceExists) problems.push("Linked treatment is missing from Settings → Services.");
-  if (status === "invalid") problems.push("Promotion dates are invalid.");
-  if (status === "current" && key && activePerService.get(key) > 1) {
-    problems.push("More than one current promotion is linked to this treatment. The selector will skip it.");
+  function blockingIssue(message) {
+    problems.push(message);
+    structuralBlockers.push(message);
   }
-  if (!packages.length) problems.push("No pricing package image/caption configured.");
+
+  if (!service || !serviceExists) blockingIssue("Linked treatment is missing from Settings → Services.");
+  if (status === "invalid") blockingIssue("Promotion dates are invalid.");
+  if (status === "current" && key && activePerService.get(key) > 1) {
+    blockingIssue("More than one current promotion is linked to this treatment. The selector will skip it.");
+  }
+  if (!packages.length) blockingIssue("No pricing package image/caption configured.");
 
   const variants = packages.map((item, index) => {
     const languages = LANGUAGES.map(({ key: language, label }) => {
       const media = localizedMedia(item, language);
       return { key: language, label, status: media.coverage, complete: media.coverage !== "Missing media" };
     });
-    if (!String(item.name || "").trim()) problems.push("A package is missing its name.");
+    if (!String(item.name || "").trim()) blockingIssue("A package is missing its name.");
     if (!languages.every((entry) => entry.complete)) {
       problems.push("Package " + (String(item.name || "").trim() || index + 1) + " has missing image or caption coverage in some languages.");
     }
@@ -126,7 +132,7 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
       for (const term of new Set(terms.map(normalizedTerm).filter(Boolean))) {
         const owner = termOwners.get(term);
         if (owner !== undefined && owner !== packageIndex) {
-          problems.push("Packages share the name or alias '" + term + "'. The package selector may be ambiguous.");
+          blockingIssue("Packages share the name or alias '" + term + "'. The package selector may be ambiguous.");
         }
         termOwners.set(term, packageIndex);
       }
@@ -140,6 +146,7 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
       for (const { key: language, label } of LANGUAGES) {
         const identities = packages.map((item) => imageIdentity(localizedMedia(item, language).imageUrl));
         if (identities.every(Boolean) && new Set(identities).size < identities.length) {
+          mediaConflictsByLanguage.add(language);
           problems.push("Package A and B share the same image for " + label + ". Both-package delivery may be skipped.");
         }
       }
@@ -147,9 +154,21 @@ function inspectPromotion(promotion, services, activePerService, now, today, sen
       notes.push("Multiple packages: the customer must identify a package before its pricing graphic can be selected.");
     }
   }
+  // Readiness is catalog-only and language-specific. A missing BM graphic
+  // should not make an otherwise valid Chinese selection look unusable.
+  // Check every package conservatively: customer package choice and actual
+  // channel eligibility are still decided by the backend at send time.
+  const mediaConfiguredByLanguage = Object.fromEntries(LANGUAGES.map(({ key: language }) => [
+    language,
+    status === "current" && structuralBlockers.length === 0 &&
+      !mediaConflictsByLanguage.has(language) &&
+      variants.length > 0 && variants.every((variant) =>
+        variant.languages.some((entry) => entry.key === language && entry.complete)),
+  ]));
+  const allLanguagesConfigured = LANGUAGES.every(({ key: language }) => mediaConfiguredByLanguage[language]);
   const uniqueProblems = [...new Set(problems)];
   return { promotion, service, status, problems: uniqueProblems, notes, variants,
-    complete: status === "current" && uniqueProblems.length === 0 };
+    mediaConfiguredByLanguage, allLanguagesConfigured };
 }
 
 function statusLabel(status) {
@@ -161,15 +180,23 @@ function statusLabel(status) {
 
 function PricingImage({ url, name }) {
   const [failed, setFailed] = useState(false);
-  if (!url || failed) {
-    return (
-      <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-center text-[10px] text-[var(--color-text-muted)]">
-        {url ? "Preview unavailable" : "No image"}
-      </div>
-    );
-  }
-  return <img src={url} alt={"Pricing graphic for " + name} onError={() => setFailed(true)}
-    className="h-24 w-24 shrink-0 rounded-lg border border-[var(--color-border)] bg-white object-contain" loading="lazy" />;
+  return (
+    <div className="w-24 shrink-0">
+      {!url || failed ? (
+        <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-center text-[10px] text-[var(--color-text-muted)]">
+          {url ? "Preview unavailable" : "No image"}
+        </div>
+      ) : (
+        <img src={url} alt={"Pricing graphic for " + name} onError={() => setFailed(true)}
+          className="h-24 w-24 rounded-lg border border-[var(--color-border)] bg-white object-contain" loading="lazy" />
+      )}
+      {failed && (
+        <p role="status" className="mt-1 break-words text-[10px] leading-4 text-amber-800">
+          Image preview failed. Check the URL and access in Settings; delivery is not verified.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -195,7 +222,9 @@ export default function PricingPromotionReadiness({
   const entries = promotions.map((promotion) =>
     inspectPromotion(promotion || {}, services, activePerService, now, today, sendBothPelvicPackages));
   const current = entries.filter((entry) => entry.status === "current");
-  const ready = current.filter((entry) => entry.complete);
+  const selectedLanguage = LANGUAGES.find(({ key }) => key === previewLanguage);
+  const configuredForSelectedLanguage = current.filter((entry) => entry.mediaConfiguredByLanguage[previewLanguage]);
+  const configuredForAllLanguages = current.filter((entry) => entry.allLanguagesConfigured);
   const problems = entries.filter((entry) => entry.problems.length > 0);
   const noCurrent = entries.length > 0 && current.length === 0;
   const prerequisitesMet = sequenceEnabled && hasThirdStep;
@@ -220,10 +249,14 @@ export default function PricingPromotionReadiness({
           >Edit in Settings</Link>
         )}
       </div>
-      <div aria-label="Pricing readiness summary" className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div aria-label="Pricing readiness summary" className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-lg bg-[var(--color-bg)] p-3">
-          <p className="text-lg font-bold">{ready.length}/{current.length}</p>
-          <p className="text-[11px] text-[var(--color-text-muted)]">Current promotions with usable media (including fallback)</p>
+          <p className="text-lg font-bold">{configuredForSelectedLanguage.length}/{current.length}</p>
+          <p className="text-[11px] text-[var(--color-text-muted)]">Media configured for {selectedLanguage.label} (includes fallback)</p>
+        </div>
+        <div className="rounded-lg bg-[var(--color-bg)] p-3">
+          <p className="text-lg font-bold">{configuredForAllLanguages.length}/{current.length}</p>
+          <p className="text-[11px] text-[var(--color-text-muted)]">Media configured for all 3 languages (includes fallback)</p>
         </div>
         <div className="rounded-lg bg-[var(--color-bg)] p-3">
           <p className="text-lg font-bold">{problems.length}</p>
@@ -307,8 +340,15 @@ export default function PricingPromotionReadiness({
                       {entry.problems.map((issue) => <p key={issue}>{issue}</p>)}
                     </div>
                   )}
-                  {entry.complete && (
-                    <p className="mt-2 text-xs font-semibold text-[var(--color-primary)]">Catalog media complete · not a delivery guarantee</p>
+                  {entry.mediaConfiguredByLanguage[previewLanguage] && (
+                    <p className="mt-2 text-xs font-semibold text-[var(--color-primary)]">
+                      Media configured for {selectedLanguage.label} · URL availability and delivery not verified
+                    </p>
+                  )}
+                  {entry.allLanguagesConfigured && (
+                    <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                      Catalog media complete across all languages (fallback included)
+                    </p>
                   )}
                   {entry.notes.map((note) => (
                     <p key={note} className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{note}</p>
@@ -346,6 +386,7 @@ export default function PricingPromotionReadiness({
         </>
       )}
       <p className="mt-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
+        These counts check configured image URLs and captions only, not whether a graphic loads or Meta accepts it.
         Date-only ranges are previewed using Malaysia time. The server's clinic timezone and live promotion settings
         are authoritative. Actual sends also require a matching treatment/package, accepted Follow-up 3, safe spacing,
         an open channel reply window, consent where applicable, and provider approval.
