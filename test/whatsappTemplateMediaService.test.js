@@ -253,3 +253,21 @@ test("the reusable-media selector exposes compatibility without leaking private 
   assert.equal(options[0].compatibleTemplates.includes("ns_fu2_pelvis_video"), true);
   assert.equal(Object.hasOwn(options[0], "mediaKey"), false);
 });
+
+
+test("staff template upload reuse is content-addressed within its clinic namespace", () => {
+  const isolated = { CLIENT_SLUG: "neutro-sense-tcm" };
+  const other = { CLIENT_SLUG: "another-client" };
+  const a = mediaStorage.reusableTemplateMediaKey(png, "image/png", isolated);
+  const b = mediaStorage.reusableTemplateMediaKey(Buffer.from(png), "image/png", isolated);
+  const c = mediaStorage.reusableTemplateMediaKey(Buffer.concat([png, Buffer.from([0])]), "image/png", isolated);
+  assert.equal(a, b, "identical uploads must map to one permanent object");
+  assert.notEqual(a, c, "different file contents must not be mixed");
+  assert.match(a, /^clients\/neutro-sense-tcm\/messages\/follow-up-config\/templates\/[0-9a-f]{64}\.png$/);
+  assert.notEqual(a, mediaStorage.reusableTemplateMediaKey(png, "image/png", other),
+    "cross-client media must have distinct keys");
+  assert.equal(mediaStorage.reusableTemplateMediaKey(png, "image/png", {}), null,
+    "legacy shared buckets fall back to per-contact keys for tenant safety");
+  assert.throws(() => mediaStorage.reusableTemplateMediaKey(png, "application/pdf", isolated),
+    /validated JPEG, PNG or MP4/);
+});
