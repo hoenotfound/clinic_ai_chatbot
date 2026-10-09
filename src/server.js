@@ -1219,8 +1219,9 @@ async function processIncomingMessage(
         let verifiedPriorCustomerTexts = null;
         if (sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
           try {
-            // Query earliest persisted inbound messages, NOT the shortened AI
-            // snapshot. The third previous message is an ineligible sentinel.
+            // Query earliest persisted conversation messages, NOT the AI
+            // snapshot. A fifth prior message is an ineligible sentinel,
+            // including automated and staff replies.
             verifiedPriorCustomerTexts = await messagesRepo.getPriorCustomerTextsForAdEnquiry(
               contact.id,
               savedInbound.id
