@@ -254,10 +254,26 @@ async function preflightTemplate(to, { database = pool, now = new Date() } = {})
   }
   try {
     const gate=await database.query(
-      `SELECT status FROM whatsapp_free_only_send_gate WHERE phone_number_id=$1`,[account]);
-    if (gate.rows?.[0] && gate.rows[0].status!=="idle")
-      return deny("zero_cost_previous_send_unreconciled",
-        "An earlier WhatsApp send has not finished pricing verification.");
+      `SELECT status,wamid FROM whatsapp_free_only_send_gate WHERE phone_number_id=$1`,[account]);
+    const previous=gate.rows?.[0];
+    if (previous && previous.status!=="idle") {
+      // The final reservation performs the actual locked transition from
+      // awaiting_pricing to idle. Read-only preflight must not permanently
+      // starve followups once the earlier callback has confirmed free billing.
+      let reconciled=false;
+      if (previous.status==="awaiting_pricing" && previous.wamid) {
+        const priced=(await database.query(
+          `SELECT pricing_type,billable,delivery_status
+             FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1`,
+          [previous.wamid])).rows?.[0];
+        reconciled=priced?.pricing_type==="free_entry_point" &&
+          priced.billable===false &&
+          ["sent","delivered","read"].includes(priced.delivery_status);
+      }
+      if (!reconciled)
+        return deny("zero_cost_previous_send_unreconciled",
+          "An earlier WhatsApp send has not finished pricing verification.");
+    }
     const billed=await database.query(
       `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
         WHERE billable=true AND updated_at>=$1::timestamptz) AS tripped`,
