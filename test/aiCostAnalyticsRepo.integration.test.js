@@ -33,18 +33,20 @@ test("AI costs aggregate correctly in PostgreSQL and never leak unassigned conta
       prompt_tokens BIGINT NOT NULL DEFAULT 0,
       cached_tokens BIGINT NOT NULL DEFAULT 0,
       cache_metadata_present BOOLEAN,
-      prompt_prefix_hash VARCHAR(16)
+      prompt_prefix_hash VARCHAR(16),
+      lead_id INTEGER
     );
   `);
+  await db.query(`CREATE TABLE leads (id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL); INSERT INTO leads VALUES (101,1),(102,2);`);
   await db.query(`
     INSERT INTO contacts VALUES
       (1,'whatsapp',now()),
       (2,'instagram',now());
     INSERT INTO ai_usage_events VALUES
-      (1,1,now(),'success','gemini','customer_reply','gemini-3.8-flash',0.0060,10000,0,false,'0123456789abcdef'),
-      (2,1,now(),'failed','gemini','customer_reply','gemini-3.8-flash',NULL,0,0,NULL,NULL),
-      (3,2,now(),'success','claude','customer_reply','claude-sonnet-5',0.0120,1200,0,NULL,NULL),
-      (4,NULL,now(),'success','gemini','follow_up_generation','gemini-3.8-flash',0.0020,3500,0,false,'0123456789abcdef');
+      (1,1,now(),'success','gemini','customer_reply','gemini-3.8-flash',0.0060,10000,0,false,'0123456789abcdef',101),
+      (2,1,now(),'failed','gemini','customer_reply','gemini-3.8-flash',NULL,0,0,NULL,NULL,101),
+      (3,2,now(),'success','claude','customer_reply','claude-sonnet-5',0.0120,1200,0,NULL,NULL,102),
+      (4,NULL,now(),'success','gemini','follow_up_generation','gemini-3.8-flash',0.0020,3500,0,false,'0123456789abcdef',NULL);
   `);
   const restricted = await getAiCostAnalytics({ database: db, accessibleContactIds: [1], fxRate: "4" });
   assert.equal(restricted.daily.at(-1).calls, 2);
@@ -53,6 +55,7 @@ test("AI costs aggregate correctly in PostgreSQL and never leak unassigned conta
   assert.equal(restricted.daily.at(-1).estimatedUsd, 0.006);
   assert.deepEqual(restricted.byContact.map((x) => x.contactId), [1]);
   assert.equal(restricted.byCategory.length, 1);
+  assert.equal(restricted.byLead[0].leadId, 101);
   const all = await getAiCostAnalytics({ database: db, accessibleContactIds: null });
   assert.equal(all.daily.at(-1).calls, 4);
   assert.equal(all.daily.at(-1).unattributedCalls, 1);
@@ -61,4 +64,5 @@ test("AI costs aggregate correctly in PostgreSQL and never leak unassigned conta
   const empty = await getAiCostAnalytics({ database: db, accessibleContactIds: [] });
   assert.equal(empty.daily.at(-1).calls, 0);
   assert.equal(empty.byContact.length, 0);
+  assert.equal(empty.byLead.length, 0);
 });
