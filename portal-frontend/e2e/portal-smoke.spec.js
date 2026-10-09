@@ -1080,7 +1080,10 @@ test("Pricing catalog previews service packages, localized media and saved remin
       {
         name: "Package A", imageUrl: "https://cdn.example.test/a.png",
         caption: "Package A trial RM388",
-        mediaTranslations: { zh: { caption: "骨盆 A 配套 RM388" } },
+        mediaTranslations: {
+          zh: { imageUrl: "https://cdn.example.test/a-zh.png", caption: "骨盆 A 配套 RM388" },
+          ms: { caption: "BM Pelvis A RM388" },
+        },
       },
       {
         name: "Package B", imageUrl: "https://cdn.example.test/b.png",
@@ -1118,10 +1121,29 @@ test("Pricing catalog previews service packages, localized media and saved remin
   await readiness.getByRole("button", { name: "Review promotion catalog (1)" }).click();
   const catalog = readiness.getByRole("region", { name: "Promotion catalog previews" });
   await expect(catalog.getByRole("article", { name: "Promotion October Pelvis Offer" })).toBeVisible();
-  await expect(catalog.getByLabel("Package Package A")).toContainText("Package A trial RM388");
-  await expect(catalog.getByLabel("Package Package B")).toContainText("Package B assessment RM588");
-  await expect(catalog.getByLabel("Package Package A")).toContainText("中文: Ready");
-  await expect(catalog.getByLabel("Package Package B")).toContainText("BM: Ready");
+  const packageA = catalog.getByLabel("Package Package A");
+  const packageB = catalog.getByLabel("Package Package B");
+  const languagePreview = catalog.getByRole("group", { name: "Pricing catalog language preview" });
+  await expect(packageA).toContainText("Package A trial RM388");
+  await expect(packageB).toContainText("Package B assessment RM588");
+  await expect(packageA).toContainText("中文: Localized");
+  await expect(packageA).toContainText("BM: Using default");
+  await expect(packageB).toContainText("中文: Using default");
+  await expect(packageB).toContainText("English: Using default");
+  await expect(packageA.getByRole("img", { name: "Pricing graphic for Package A" }))
+    .toHaveAttribute("src", "https://cdn.example.test/a.png");
+
+  await languagePreview.getByRole("button", { name: "中文" }).click();
+  await expect(languagePreview.getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
+  await expect(packageA).toContainText("骨盆 A 配套 RM388");
+  await expect(packageA.getByRole("img", { name: "Pricing graphic for Package A" }))
+    .toHaveAttribute("src", "https://cdn.example.test/a-zh.png");
+  await expect(packageB).toContainText("Package B assessment RM588");
+
+  await languagePreview.getByRole("button", { name: "BM" }).click();
+  await expect(packageA).toContainText("BM Pelvis A RM388");
+  await expect(packageA.getByRole("img", { name: "Pricing graphic for Package A" }))
+    .toHaveAttribute("src", "https://cdn.example.test/a.png");
   await expect(catalog).toContainText("Catalog media complete");
   await expect(readiness).toContainText("Complete media does not guarantee");
   await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
@@ -1187,6 +1209,52 @@ test("Pricing catalog flags duplicate current offers, ambiguous packages, media 
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Pricing catalog detects Chinese A/B graphic collisions despite distinct default images", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理" }],
+      promotions: [{
+        name: "Pelvic bilingual packages", linkedService: "骨盆调理",
+        packages: [
+          {
+            name: "Package A", imageUrl: "https://cdn.example.test/default-a.jpg",
+            caption: "Base A",
+            mediaTranslations: {
+              zh: { imageUrl: "https://cdn.example.test/zh-shared.jpg?version=1", caption: "中文 A" },
+            },
+          },
+          {
+            name: "Package B", imageUrl: "https://cdn.example.test/default-b.jpg",
+            caption: "Base B",
+            mediaTranslations: {
+              zh: { imageUrl: "https://cdn.example.test/zh-shared.jpg?version=2", caption: "中文 B" },
+            },
+          },
+        ],
+      }],
+      automatedFollowUp: {
+        enabled: true, message: "First",
+        additionalSteps: [{ message: "Second" }, { message: "Third" }],
+        pricingReminder: { enabled: true, sendBothPelvicPackages: true },
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  const readiness = page.getByRole("region", { name: "Pricing promotion readiness" });
+  await expect(readiness.getByLabel("Pricing readiness summary")).toContainText("0/1");
+  await readiness.getByRole("button", { name: "Review promotion catalog (1)" }).click();
+  const catalog = readiness.getByRole("region", { name: "Promotion catalog previews" });
+  await expect(catalog).toContainText("Package A and B share the same image for 中文");
+  await expect(catalog).not.toContainText("Package A and B share the same image for English");
+  const previews = catalog.getByRole("group", { name: "Pricing catalog language preview" });
+  await previews.getByRole("button", { name: "中文" }).click();
+  await expect(catalog.getByLabel("Package Package A")).toContainText("中文 A");
+  await expect(catalog.getByLabel("Package Package B")).toContainText("中文 B");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Pricing catalog empty state and unsaved-edit navigation protect existing follow-up settings", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
@@ -1205,9 +1273,14 @@ test("Pricing catalog empty state and unsaved-edit navigation protect existing f
   const readiness = page.getByRole("region", { name: "Pricing promotion readiness" });
   await expect(readiness).toContainText("No pricing promotions configured");
   await expect(readiness).toContainText("Reminder off");
+  await expect(readiness).not.toContainText("Unsaved draft");
   await expect(readiness.getByRole("button", { name: /promotion catalog/ })).toHaveCount(0);
   await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await expect(readiness).toContainText("Unsaved draft");
+  await expect(readiness).toContainText("Draft reminder: On · Saved reminder: Off");
+  await expect(readiness).toContainText("Changes are not active until saved");
+  await expect(readiness).not.toContainText("Configured on");
   page.once("dialog", (dialog) => dialog.dismiss());
   await readiness.getByRole("link", { name: "Edit in Settings" }).click();
   await expect(page).toHaveURL(/\/tools$/);
