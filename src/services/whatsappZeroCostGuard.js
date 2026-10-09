@@ -43,6 +43,7 @@ const VERIFIED_WINDOW_SQL = `
         WHERE earlier.contact_id=c.id AND earlier.role='assistant'
           AND earlier.created_at>=first_reply.created_at
           AND earlier.created_at<$2::timestamptz
+          AND earlier.id IS DISTINCT FROM $4::integer
           AND (earlier.whatsapp_message_id IS NULL
             OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
             OR priced.billable IS DISTINCT FROM false
@@ -55,6 +56,7 @@ const VERIFIED_WINDOW_SQL = `
         SELECT 1 FROM whatsapp_free_entry_followup_attempts attempt
         WHERE attempt.contact_id=c.id
           AND attempt.first_reply_message_id=first_reply.id
+          AND attempt.id IS DISTINCT FROM $5::bigint
           AND attempt.status IN ('sending','unknown')
       )
   ) AS eligible
@@ -108,7 +110,7 @@ async function logBlock(account, check, database = pool) {
   }
 }
 
-async function reserve(to, { database = pool, now = new Date() } = {}) {
+async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
   const account = configuredAccount();
   const recipient = String(to || "").replace(/\D/g,"");
@@ -181,9 +183,44 @@ async function reserve(to, { database = pool, now = new Date() } = {}) {
       if (proof?.verified===true) ceiling=168;
     }
 
+    // Exclusions may refer ONLY to the exact saved outbound message and
+    // claimed follow-up belonging to this recipient. Never trust unverified
+    // IDs as a reason to disregard an unresolved message or another worker.
+    let currentMessageId = null;
+    let currentAttemptId = null;
+    if (!rejected && (context.currentMessageId != null ||
+                      context.currentFollowUpAttemptId != null)) {
+      const messageId = Number(context.currentMessageId);
+      const attemptId = context.currentFollowUpAttemptId == null
+        ? null : Number(context.currentFollowUpAttemptId);
+      if (!Number.isSafeInteger(messageId) || messageId <= 0 ||
+          (attemptId != null && (!Number.isSafeInteger(attemptId) || attemptId <= 0))) {
+        rejected=deny("zero_cost_invalid_send_context",
+          "WhatsApp free-only blocked: current outbound identity is invalid.");
+      } else {
+        const owned=await client.query(
+          `SELECT m.id FROM messages m JOIN contacts c ON c.id=m.contact_id
+           WHERE m.id=$1 AND m.role='assistant'
+             AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2
+             AND m.whatsapp_message_id IS NULL
+             AND ($3::bigint IS NULL OR EXISTS (
+               SELECT 1 FROM whatsapp_free_entry_followup_attempts a
+               WHERE a.id=$3 AND a.message_id=m.id
+                 AND a.contact_id=m.contact_id AND a.status='sending'))`,
+          [messageId,recipient,attemptId]);
+        if (owned.rows.length !== 1) {
+          rejected=deny("zero_cost_invalid_send_context",
+            "WhatsApp free-only blocked: the current message or attempt does not match the recipient.");
+        } else {
+          currentMessageId=messageId;
+          currentAttemptId=attemptId;
+        }
+      }
+    }
+
     if (!rejected) {
       const eligible=(await client.query(VERIFIED_WINDOW_SQL,
-        [ceiling,clock.toISOString(),recipient])).rows[0];
+        [ceiling,clock.toISOString(),recipient,currentMessageId,currentAttemptId])).rows[0];
       if (eligible?.eligible!==true) {
         rejected=deny("zero_cost_unverified_free_entry",
           "WhatsApp free-only blocked: no fully proven, active Meta free-entry period. New ad leads cannot receive a first reply in strict mode.");
@@ -260,8 +297,8 @@ async function complete(reservationId,result, database=pool) {
   }
 }
 
-async function perform(to, operation) {
-  const check=await reserve(to);
+async function perform(to, operation, context = {}) {
+  const check=await reserve(to,{ context });
   if (!check.allowed) return blockedResult(check);
   let result;
   try {
