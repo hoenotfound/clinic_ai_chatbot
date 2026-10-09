@@ -1,4 +1,4 @@
-const { recordClaudeUsage } = require("./claudeUsageTelemetry");
+const { trackClaudeRequest } = require("./claudeUsageTelemetry");
 const { normalizeWorkspaceId } = require("./anthropicClient");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
@@ -224,7 +224,7 @@ async function getReply(
       }
     : options;
 
-  const response = await createClaudeMessage({
+  const response = await trackClaudeRequest(() => createClaudeMessage({
     apiKey: resolvedKey,
     workspaceId: workspaceId || process.env.ANTHROPIC_WORKSPACE_ID,
     signal: requestControl?.signal || null,
@@ -242,9 +242,7 @@ async function getReply(
         },
       },
     },
-  });
-
-  recordClaudeUsage(response, {
+  }), {
     purpose: options.surface === "follow_up" ? "follow_up_generation" : "customer_reply",
     model: MODEL,
     contactId: options.contactId,
