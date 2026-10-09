@@ -1244,8 +1244,15 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   await page.reload();
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
-  await page.getByRole("button", { name: "Save changes" }).click({ force: true });
-  // Loading and resaving the image must preserve the original promotional image ID.
+  await expect(page.getByLabel("Extended template treatment 1")).toHaveValue("骨盆调理");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(3);
+  expect(saved[2].freeEntry.templateRules[0]).toMatchObject({
+    mediaSourceId: "promo:1",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
+  });
   await expectNoHorizontalPageOverflow(page);
 });
 
