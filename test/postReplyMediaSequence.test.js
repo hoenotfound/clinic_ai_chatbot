@@ -380,7 +380,7 @@ test("Click-to-WhatsApp default enquiry resolves a single proof image from creat
   ]);
   assert.equal(creative, treatment);
   const select = (metaAdCreativeService) => resolveResultMediaForReply({
-    isFirstMessage: true,
+    priorCustomerTexts: [],
     customerText: "Hello! Can I get more info on this?",
     metaAdCreativeService,
     serviceQuery: false,
