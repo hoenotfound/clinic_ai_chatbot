@@ -299,7 +299,19 @@ export default function WhatsAppTemplateModal({
   const mediaFormat = selected?.header?.format;
   const needsMedia = mediaFormat === "IMAGE" || mediaFormat === "VIDEO";
   const maxMediaBytes = mediaFormat === "IMAGE" ? 5 * 1024 * 1024 : 16 * 1024 * 1024;
-  const mediaFileValid = !needsMedia || Boolean(mediaSelectionId) || (mediaFile != null &&
+  const isTargetedFollowUpMedia = [
+    "ns_fu2_pelvis_video", "ns_fu3_pelvis_feedback", "ns_fu3_face_feedback",
+    "ns_fu_pricing_graphic", "ns_fu_meridian_gift",
+  ].includes(selected?.name);
+  const eligibleClinicMedia = (catalog?.reusableMedia || []).filter(
+    (item) => item.format === mediaFormat && (
+      !isTargetedFollowUpMedia || item.compatibleTemplates?.includes(selected?.name)
+    )
+  );
+  const mediaFileValid = !needsMedia || (
+    mediaSelectionId
+      ? eligibleClinicMedia.some((item) => item.id === mediaSelectionId)
+      : !isTargetedFollowUpMedia && mediaFile != null &&
     mediaFile.size > 0 && mediaFile.size <= maxMediaBytes &&
     (mediaFormat === "IMAGE"
       ? ["image/jpeg", "image/png"].includes(mediaFile.type)
@@ -465,28 +477,33 @@ export default function WhatsAppTemplateModal({
 
                   {needsMedia && (
                     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                      {(catalog?.reusableMedia || []).some((item) => item.format === mediaFormat) && (
+                      {eligibleClinicMedia.length > 0 && (
                         <label className="mb-3 block text-[11px] font-semibold">
                           Reuse existing clinic media
                           <select
                             value={mediaSelectionId}
                             onChange={(event) => {
+                              const option = eligibleClinicMedia.find((item) => item.id === event.target.value);
                               setMediaSelectionId(event.target.value);
                               setMediaFile(null);
+                              if (option && ["ns_fu_pricing_graphic", "ns_fu_meridian_gift"].includes(selected.name)) {
+                                const suggested = option.suggestedValues?.[selected.language] || "";
+                                setValues((current) => ({
+                                  ...current, body: [suggested, ...(current.body || []).slice(1)],
+                                }));
+                              }
                               setActionError("");
                             }}
                             className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs"
                           >
-                            <option value="">Upload a new file instead</option>
-                            {(catalog?.reusableMedia || [])
-                              .filter((item) => item.format === mediaFormat)
-                              .map((item) => (
+                            <option value="">{isTargetedFollowUpMedia ? "Choose the matching clinic media" : "Upload a new file instead"}</option>
+                            {eligibleClinicMedia.map((item) => (
                                 <option key={item.id} value={item.id}>{item.label}</option>
                               ))}
                           </select>
                         </label>
                       )}
-                      {!mediaSelectionId && <label className="block text-[11px] font-semibold">
+                      {!mediaSelectionId && !isTargetedFollowUpMedia && <label className="block text-[11px] font-semibold">
                         {mediaFormat === "IMAGE" ? "Select a template image" : "Select a template video"}
                         <input
                           key={selectedKey}
@@ -500,6 +517,9 @@ export default function WhatsAppTemplateModal({
                           className="mt-2 block w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--color-primary-light)] file:px-3 file:py-2 file:font-semibold file:text-[var(--color-primary)]"
                         />
                       </label>}
+                      {isTargetedFollowUpMedia && eligibleClinicMedia.length === 0 && (
+                        <p className="text-xs text-amber-800">No eligible clinic media is configured for this template. Check the service, active promotion and media settings first.</p>
+                      )}
                       {mediaFile && !mediaSelectionId && (
                         <p className={`mt-2 break-all text-[11px] ${mediaFileValid ? "text-[var(--color-text-muted)]" : "text-red-700"}`}>
                           {mediaFile.name} · {(mediaFile.size / (1024 * 1024)).toFixed(2)} MB
@@ -520,6 +540,8 @@ export default function WhatsAppTemplateModal({
                       <input
                         value={values[field.component]?.[field.index - 1] || ""}
                         onChange={(event) => updateVariable(field, event.target.value)}
+                        readOnly={field.component === "body" && field.index === 1 &&
+                          ["ns_fu_pricing_graphic", "ns_fu_meridian_gift"].includes(selected.name) && Boolean(mediaSelectionId)}
                         maxLength={1024}
                         placeholder={field.example ? `Example: ${field.example}` : "Enter value"}
                         className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
