@@ -641,7 +641,14 @@ function isSharedFollowUpConfigKey(key, env = process.env) {
  * Legacy messages/follow-up-config keys have no tenant namespace in a shared
  * bucket; a prefix match alone is never proof of ownership. */
 function isReferencedClinicFollowUpMediaKey(key, config, env = process.env) {
-  if (!isSharedFollowUpConfigKey(key, env) || !config || typeof config !== "object") return false;
+  const isolation = getMediaIsolationStatus(env);
+  // The new template preview never grants R2 access from an unnamespaced
+  // legacy prefix, even if someone writes that string into clinic settings.
+  // Existing ordinary follow-up playback uses its separate legacy route.
+  if (!isolation.prefix ||
+      !String(key).startsWith(`${isolation.prefix}/messages/follow-up-config/`) ||
+      !isSharedFollowUpConfigKey(key, env) ||
+      !config || typeof config !== "object") return false;
   const followUp = config.automatedFollowUp || {};
   const steps = [followUp, ...(Array.isArray(followUp.additionalSteps) ? followUp.additionalSteps : [])];
   for (const step of steps) {
