@@ -1589,6 +1589,13 @@ function followUpTimingSummary(step) {
     : formatDelay(Number(step?.delayMinutes || 0));
 }
 
+// Display-only target labels. The worker remains the authority for actual send times.
+function sequenceTargetSummary(step) {
+  return step?.timingMode === "before_window_expiry"
+    ? `Target: ${formatDelay(Number(step?.beforeWindowExpiryMinutes || 120))} before the 24-hour reply window closes`
+    : `Target: ${formatDelay(Number(step?.delayMinutes || 0))} after the sequence-start message`;
+}
+
 function StepSummaryChips({ step }) {
   const serviceCount = Array.isArray(step?.serviceOverrides)
     ? step.serviceOverrides.length
@@ -1887,6 +1894,7 @@ function FollowUpTool({
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [followUpTab, setFollowUpTab] = useState("sequence");
+  const [jumpStepIndex, setJumpStepIndex] = useState(null);
   const [templateCatalog, setTemplateCatalog] = useState(null);
   const [templateCatalogLoading, setTemplateCatalogLoading] = useState(false);
   const [templateCatalogError, setTemplateCatalogError] = useState("");
@@ -2046,6 +2054,21 @@ function FollowUpTool({
       setPreviewServiceName("");
     }
   }, [previewServiceName, previewStep]);
+
+  function editSequenceStep(index) {
+    setPreviewStepIndex(index);
+    setPreviewServiceName("");
+    if (index > 0) setExpandedStepIndex(index - 1);
+    setJumpStepIndex(index);
+  }
+
+  useEffect(() => {
+    if (jumpStepIndex === null || followUpTab !== "sequence") return;
+    // Wait for the selected step's accordion to render before scrolling.
+    document.getElementById(`follow-up-step-${jumpStepIndex + 1}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setJumpStepIndex(null);
+  }, [jumpStepIndex, followUpTab, expandedStepIndex]);
 
   function updateAdditionalStep(index, patch) {
     setForm((current) => ({
@@ -2213,26 +2236,88 @@ function FollowUpTool({
         className={`grid gap-5 ${followUpTab === "sequence" ? "xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]" : "xl:grid-cols-1"}`}>
         <div className="order-2 min-w-0 xl:order-1">
           <div id="follow-up-panel-sequence" role="tabpanel" aria-labelledby="follow-up-tab-sequence" className={followUpTab === "sequence" ? "space-y-5" : "hidden"}>
-            <div className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
-              <h2 className="text-sm font-bold">Sequence at a glance</h2>
-              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                Target times only. Actual sends still respect quiet hours, message spacing and each channel's reply window.
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {allSteps.map((step, index) => (
-                  <div key={index} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                    <p className="text-xs font-semibold">Follow-up {index + 1}</p>
-                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">{followUpTimingSummary(step)}</p>
-                  </div>
-                ))}
-                {form.pricingReminder?.enabled === true && (
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                    <p className="text-xs font-semibold">Pricing graphic</p>
-                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">After accepted Follow-up 3, if eligible</p>
-                  </div>
-                )}
+            <section aria-label="Follow-up sequence overview" className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-bold">Sequence at a glance</h2>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Select a step to edit it. These are target times, not promised delivery times.
+                  </p>
+                </div>
+                <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
+                  {allSteps.length} of 3 follow-ups
+                </span>
               </div>
-            </div>
+              <ol aria-label="Follow-up sequence timeline" className="mt-4 space-y-2">
+                {allSteps.map((step, index) => {
+                  const selected = safePreviewIndex === index;
+                  const readyLanguages = FOLLOW_UP_LANGUAGES.filter(({ key }) =>
+                    String(step.translations?.[key] || "").trim()
+                  ).length;
+                  return (
+                    <li key={index} className="relative pl-9">
+                      {index < allSteps.length - 1 && (
+                        <span aria-hidden="true" className="absolute -bottom-3 left-[13px] top-7 w-px bg-[var(--color-border)]" />
+                      )}
+                      <span aria-hidden="true" className={`absolute left-0 top-3 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold ${selected
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
+                        : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}>
+                        {index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Edit Follow-up ${index + 1} from sequence overview`}
+                        aria-current={selected ? "step" : undefined}
+                        onClick={() => editSequenceStep(index)}
+                        className={`w-full min-w-0 rounded-xl border px-3 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] ${selected
+                          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/45"
+                          : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)]/40"}`}
+                      >
+                        <span className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm font-semibold">Follow-up {index + 1}</span>
+                          <span className="text-[11px] font-semibold text-[var(--color-primary)]">Edit step</span>
+                        </span>
+                        <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">
+                          {sequenceTargetSummary(step)}
+                        </span>
+                        <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">
+                          {step.messageMode === "ai" ? "AI message with fallback" : "Saved message"} · {readyLanguages}/3 languages ready
+                        </span>
+                        <StepSummaryChips step={step} />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+              {form.pricingReminder?.enabled === true && (
+                <section aria-label="Pricing reminder dependency" className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold">Optional pricing reminder</p>
+                    <button type="button" onClick={() => setFollowUpTab("pricing")}
+                      className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline">
+                      View pricing settings
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    {allSteps.length < 3
+                      ? "Enabled in settings, but cannot send without Follow-up 3. Add the third step before expecting pricing reminders."
+                      : "Eligible no sooner than 5 minutes after the provider accepts Follow-up 3. Treatment, media, spacing and the reply window are still checked."}
+                  </p>
+                </section>
+              )}
+              <div className="mt-3 rounded-lg bg-[var(--color-bg)] px-3 py-3 text-xs leading-5 text-[var(--color-text-muted)]">
+                {form.quietHours?.enabled !== false
+                  ? `Quiet hours: ${form.quietHours?.start || "00:00"}–${form.quietHours?.end || "07:00"} (clinic timezone). Regular follow-ups wait; the eligible final pre-expiry step can move earlier.`
+                  : "Quiet hours are off. Channel reply-window deadlines and message spacing still apply."}
+                <details className="mt-1.5">
+                  <summary className="cursor-pointer font-semibold text-[var(--color-primary)]">Why might a step not send?</summary>
+                  <p className="mt-1">
+                    Customer replies can restart the sequence. Bookings, human takeover, opt-outs, unconfirmed earlier sends,
+                    closed reply windows or insufficient safe spacing can stop a step. The scheduler makes the final decision.
+                  </p>
+                </details>
+              </div>
+            </section>
           <Card>
             <SectionHeading
               number="1"
@@ -2340,7 +2425,7 @@ function FollowUpTool({
             </div>
           </Card>
 
-          <Card>
+          <Card id="follow-up-step-1">
             <SectionHeading
               number="2"
               title="Follow-up 1"
@@ -2723,6 +2808,11 @@ function FollowUpTool({
                 }))}
               />
             </div>
+            {form.pricingReminder?.enabled === true && allSteps.length < 3 && (
+              <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+                Pricing is configured but cannot run without Follow-up 3. The provider must accept that third follow-up before pricing becomes eligible.
+              </p>
+            )}
             <div className="mt-3 space-y-3 rounded-xl border border-[var(--color-border)] p-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -4054,8 +4144,8 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
   );
 }
 
-function Card({ children }) {
-  return <section className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">{children}</section>;
+function Card({ children, id }) {
+  return <section id={id} className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">{children}</section>;
 }
 
 function SectionHeading({ number, title, description }) {
