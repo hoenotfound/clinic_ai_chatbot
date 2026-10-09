@@ -2,6 +2,7 @@
 
 const { pool } = require("./db");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
+const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 
 /**
  * Records the actual customer message, not the suggested message displayed
@@ -83,12 +84,13 @@ async function recordFromInbound({
       `INSERT INTO whatsapp_marketing_consent_events
        (contact_id,lead_id,source,recorded_by,message_id,
         provider_message_id,message_text,business_name,
-        consent_scope,consent_category,consented_at,consent_method)
-       VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10,$11)
+        consent_scope,consent_category,consented_at,consent_method,consent_service)
+       VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT DO NOTHING RETURNING id`,
       [contactId,leadId,source,messageId,message.whatsapp_message_id,
         message.content,businessName,explicit.scope,explicit.category,
-        sentAt.toISOString(),explicit.method]
+        sentAt.toISOString(),explicit.method,
+        inferConfiguredServiceFromText(message.content) || null]
     );
     if (inserted.rowCount !== 1) {
       await client.query("ROLLBACK");
@@ -119,4 +121,53 @@ async function recordFromInbound({
   }
 }
 
-module.exports = { recordFromInbound };
+/**
+ * A customer's scoped marketing permission may outlive a CRM lead.
+ * Inherit only the latest real customer-sent consent that is still the
+ * active WhatsApp opt-in AND matches the next lead's identified treatment.
+ */
+async function inheritForNewLead({
+  contactId, leadId, inboundText, adName = null, referralTreatment = null,
+}, { database = pool } = {}) {
+  if (![contactId, leadId].every((v) => Number.isSafeInteger(Number(v)) && Number(v)>0)) {
+    return { inherited:false,reason:"invalid_input" };
+  }
+  const service = inferConfiguredServiceFromText(inboundText) ||
+    inferConfiguredServiceFromText(referralTreatment) ||
+    inferConfiguredServiceFromText(adName);
+  if (!service) return { inherited:false,reason:"unknown_treatment" };
+  const result = await database.query(
+    `WITH current_permission AS (
+       SELECT e.id, e.consent_service
+       FROM contacts c
+       JOIN whatsapp_marketing_consent_events e ON e.contact_id=c.id
+       WHERE c.id=$1 AND c.channel='whatsapp'
+         AND c.whatsapp_opt_in_at IS NOT NULL
+         AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
+         AND c.whatsapp_opt_out_at IS NULL
+         AND c.whatsapp_marketing_opt_out_at IS NULL
+         AND e.message_id IS NOT NULL
+         AND e.consent_category='MARKETING'
+         AND e.consent_scope='treatment_followups_and_related_offers'
+         AND e.consented_at=c.whatsapp_opt_in_at
+         AND (
+           e.consent_service IS NULL OR
+           LOWER(BTRIM(e.consent_service))=LOWER(BTRIM($3::text))
+         )
+       ORDER BY e.consented_at DESC,e.id DESC LIMIT 1
+     )
+     UPDATE leads l
+     SET marketing_consent='opted_in',
+         treatment_interest=COALESCE(l.treatment_interest,$3::text),
+         updated_at=now()
+     WHERE l.id=$2 AND l.contact_id=$1
+       AND l.marketing_consent='unknown'
+       AND l.is_closed=false
+       AND EXISTS(SELECT 1 FROM current_permission)
+     RETURNING l.id`,
+    [contactId,leadId,service]
+  );
+  return { inherited:result.rowCount===1,service };
+}
+
+module.exports = { recordFromInbound, inheritForNewLead };
