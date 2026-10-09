@@ -204,10 +204,14 @@ router.get("/analytics/meta-ads", async (req, res) => {
 // Keep this before /analytics and under the existing authenticated pipeline router.
 router.get("/analytics/ai-costs", async (req, res) => {
   try {
-    const accessibleContactIds = await getAccessibleContactIds(req.user);
+    const [accessibleContactIds, accessibleLeadIds] = await Promise.all([
+      getAccessibleContactIds(req.user),
+      getAccessibleLeadIds(req.user),
+    ]);
     const result = await aiCostAnalyticsRepo.getAiCostAnalytics({
       days: req.query.days,
       accessibleContactIds,
+      accessibleLeadIds,
     });
     res.json(result);
   } catch (err) {
