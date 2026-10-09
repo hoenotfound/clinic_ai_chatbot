@@ -1052,3 +1052,47 @@ test("Inbox message pages include only active reaction metadata", async (t) => {
   const page = await messagesRepo.getMessagePageForContact(7, { limit: 50 });
   assert.deepEqual(page.rows[0].reactions, [{ emoji: "👍" }]);
 });
+
+
+test("contextual-ad history lookup checks earliest persisted inbound turns, not the AI window", async () => {
+  const scenarios = [
+    [],
+    [{ content: "Hi" }],
+    [{ content: "Hi" }, { content: "English please" }],
+    [{ content: "Hi" }, { content: "English" }, { content: "Hello" }],
+  ];
+  for (const rows of scenarios) {
+    let queries = 0;
+    const actual = await messagesRepo.getPriorCustomerTextsForAdEnquiry(
+      325, 1052, async (sql, params) => {
+        queries++;
+        assert.match(sql, /FROM messages/);
+        assert.match(sql, /contact_id = \$1 AND role = 'user' AND id < \$2/);
+        assert.match(sql, /ORDER BY id ASC/);
+        assert.match(sql, /LIMIT 3/);
+        assert.doesNotMatch(sql, /OFFSET|media_key|created_at/);
+        assert.deepEqual(params, [325, 1052]);
+        return { rows };
+      }
+    );
+    assert.deepEqual(actual, rows.map((row) => row.content));
+    assert.equal(queries, 1);
+  }
+});
+
+test("contextual-ad history lookup rejects invalid IDs and propagates database failures", async () => {
+  await assert.rejects(
+    messagesRepo.getPriorCustomerTextsForAdEnquiry(0, 1052, async () => ({ rows: [] })),
+    TypeError
+  );
+  await assert.rejects(
+    messagesRepo.getPriorCustomerTextsForAdEnquiry(325, NaN, async () => ({ rows: [] })),
+    TypeError
+  );
+  await assert.rejects(
+    messagesRepo.getPriorCustomerTextsForAdEnquiry(325, 1052, async () => {
+      throw new Error("Neon unavailable");
+    }),
+    /Neon unavailable/
+  );
+});
