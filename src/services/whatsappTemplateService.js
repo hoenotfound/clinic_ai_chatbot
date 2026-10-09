@@ -479,7 +479,7 @@ async function sendApprovedTemplate(
   try {
     policy = await whatsappPolicy.checkTemplateAllowed(contact, {
       category: templateCategory,
-      treatmentInterest,
+      ...(treatmentInterest ? { treatmentInterest } : {}),
     });
   } catch (err) {
     console.error("Failed to verify WhatsApp template policy state:", err);
