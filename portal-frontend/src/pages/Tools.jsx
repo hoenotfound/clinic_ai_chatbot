@@ -560,7 +560,8 @@ export default function Tools() {
 
   function followUpValidationError() {
     // Keep the existing save checks intact while identifying the editor location.
-    const issue = (message, tab = "sequence", stepIndex = null) => ({ message, tab, stepIndex });
+    const issue = (message, tab = "sequence", stepIndex = null, target = null) =>
+      ({ message, tab, stepIndex, target });
     if (form.freeEntry?.enabled) {
       if (!/^[a-z0-9_]+$/.test(String(form.freeEntry.templateName || ""))) {
         return issue("Enter an approved WhatsApp MARKETING template name before enabling free-entry follow-ups.", "whatsapp");
@@ -664,20 +665,20 @@ export default function Tools() {
         const serviceName = String(override?.serviceName || "").trim();
         const targetedMessage = String(override?.message || "").trim();
         if (!serviceName || !targetedMessage) {
-          return issue(`Complete every targeted service message in Follow-up ${index + 1}.`, "sequence", index);
+          return issue(`Complete every targeted service message in Follow-up ${index + 1}.`, "sequence", index, "service");
         }
         if (!configuredServices.has(serviceName.toLocaleLowerCase())) {
-          return issue(`${serviceName} is no longer in Services. Remap or remove that targeted follow-up (Follow-up ${index + 1}).`, "sequence", index);
+          return issue(`${serviceName} is no longer in Services. Remap or remove that targeted follow-up (Follow-up ${index + 1}).`, "sequence", index, "service");
         }
         if (targetedMessage.length > 1000) {
-          return issue(`Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`, "sequence", index);
+          return issue(`Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`, "sequence", index, "service");
         }
         if (String(override.imageUrl || "").trim() && String(override.videoKey || "").trim()) {
-          return issue(`${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index);
+          return issue(`${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index, "service");
         }
         const serviceKey = serviceName.toLocaleLowerCase();
         if (seenServices.has(serviceKey)) {
-          return issue(`${serviceName} is targeted more than once in Follow-up ${index + 1}.`, "sequence", index);
+          return issue(`${serviceName} is targeted more than once in Follow-up ${index + 1}.`, "sequence", index, "service");
         }
         seenServices.add(serviceKey);
       }
@@ -1621,8 +1622,12 @@ function ServiceOverridesEditor({
   onUploadImage,
   onUploadVideo,
   onTranslateMessage,
+  forceOpen = false,
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (forceOpen) setExpanded(true);
+  }, [forceOpen]);
   const serviceNames = services
     .map((service) => String(service?.name || "").trim())
     .filter(Boolean);
@@ -2421,6 +2426,7 @@ function FollowUpTool({
               overrides={form.serviceOverrides}
               services={services}
               stepLabel="Follow-up 1"
+              forceOpen={validationIssue?.tab === "sequence" && validationIssue.stepIndex === 0 && validationIssue.target === "service"}
               translating={translating}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
@@ -2571,6 +2577,7 @@ function FollowUpTool({
                             overrides={step.serviceOverrides}
                             services={services}
                             stepLabel={`Follow-up ${index + 2}`}
+                            forceOpen={validationIssue?.tab === "sequence" && validationIssue.stepIndex === index + 1 && validationIssue.target === "service"}
                             translating={translating}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
