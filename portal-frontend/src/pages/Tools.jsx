@@ -6,6 +6,7 @@ import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
 import LeadDistribution from "./LeadDistribution";
 import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../components/FollowUpTemplatePicker";
+import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -303,7 +304,7 @@ export default function Tools() {
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
-  const { user } = useAuth();
+  const { user, permissions } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
 
   useEffect(() => {
@@ -1051,6 +1052,8 @@ export default function Tools() {
             saving={saving}
             services={config.services || []}
             promotions={config.promotions || []}
+            savedPricingEnabled={savedSettings.pricingReminder?.enabled === true}
+            canManagePromotions={user?.role === "admin" || permissions?.manage_settings === true}
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
             onGenerateTranslations={handleGenerateTranslations}
@@ -1879,6 +1882,8 @@ function FollowUpTool({
   saving,
   services,
   promotions,
+  canManagePromotions,
+  savedPricingEnabled,
   onSourceMessageChange,
   onTranslationChange,
   onGenerateTranslations,
@@ -2796,6 +2801,17 @@ function FollowUpTool({
 
           </div>
           <div id="follow-up-panel-pricing" role="tabpanel" aria-labelledby="follow-up-tab-pricing" className={followUpTab === "pricing" ? "space-y-5" : "hidden"}>
+          <PricingPromotionReadiness
+            services={services}
+            promotions={promotions}
+            pricingEnabled={form.pricingReminder?.enabled === true}
+            savedPricingEnabled={savedPricingEnabled}
+            sequenceEnabled={form.enabled === true}
+            hasThirdStep={form.additionalSteps.length === 2}
+            sendBothPelvicPackages={form.pricingReminder?.sendBothPelvicPackages === true}
+            canManagePromotions={canManagePromotions}
+            hasUnsavedChanges={hasUnsavedChanges}
+          />
           <Card>
             <SectionHeading
               number="4"
