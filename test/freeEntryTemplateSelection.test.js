@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   selectTemplateSpec, validateTemplateRules, buildStaticMarketingTemplate, validMediaUrl,
-  validateApprovedMedia,
+  validateApprovedMedia, enrichAutomatedTemplateSpec, prepareAutoPromotionMedia,
 } = require("../src/utils/freeEntryTemplateSelection");
 const whatsapp = require("../src/services/whatsappTemplateService");
 
@@ -108,4 +108,122 @@ test("R2 media and public HTTPS header validation fail closed on MIME and size",
     {fetchImpl:fetchStub,env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:""}}),false);
   assert.equal(await validateApprovedMedia(format("IMAGE"),{mediaUrl:remote},
     {fetchImpl:fetchStub,env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:"cdn.example.com"}}),true);
+});
+
+
+function currentClinicPromos() {
+  return {
+    services: ["骨盆调理", "3D 小颜术", "9D 逆龄抗衰", "3D + 9D 组合"].map(name=>({name})),
+    promotions: [
+      {name:"3D First Trial",linkedService:"3D 小颜术",validFrom:"2026-10-01",validUntil:"2026-10-31",imageUrl:"https://clinic.test/promo-images/32"},
+      {name:"9D First Trial",linkedService:"9D 逆龄抗衰",validFrom:"2026-10-01",validUntil:"2026-10-31",imageUrl:"https://clinic.test/promo-images/21",caption:"免费赠送 1 小时经络按摩"},
+      {name:"3D + 9D Trial",linkedService:"3D + 9D 组合",validFrom:"2026-10-01",validUntil:"2026-10-31",imageUrl:"https://clinic.test/promo-images/22",caption:"免费赠送 1 小时经络按摩"},
+      {name:"Pelvis Packages",linkedService:"骨盆调理",validFrom:"2026-10-01",validUntil:"2026-10-31",packages:[
+        {name:"Package A",followUpImageUrl:"https://clinic.test/promo-images/28"},
+        {name:"Package B",followUpImageUrl:"https://clinic.test/promo-images/29"},
+      ]},
+    ],
+  };
+}
+function approvedTemplate(name,format="TEXT",language="zh_CN",bodyVariable=true) {
+  return whatsapp.normalizeTemplate({
+    name,language,category:"MARKETING",status:"APPROVED",components:[
+      ...(format==="TEXT"?[]:[{type:"HEADER",format}]),
+      {type:"BODY",text:bodyVariable?"谢谢你了解 {{1}} 的护理，欢迎回复我们": "欢迎回复我们"},
+    ],
+  });
+}
+function chosenSpec(name,service,language="zh_CN",messages=[]) {
+  return { templateName:name, language,mediaKey:"",mediaUrl:"",
+    identifiedTreatment:service,recentInboundMessages:messages };
+}
+test("approved service check-in fills treatment name without AI substitution",()=>{
+  const cfg=currentClinicPromos();
+  const template=approvedTemplate("ns_fu1_service_checkin");
+  const spec=enrichAutomatedTemplateSpec(chosenSpec(template.name,"3D + 9D 组合"),template,{config:cfg,now:"2026-10-09"});
+  assert.equal(spec.bodyValue,"3D + 9D 组合");
+  const built=buildStaticMarketingTemplate(template,spec,whatsapp);
+  assert.ok(built);
+  assert.deepEqual(built.values,{header:[],body:["3D + 9D 组合"]});
+  assert.equal(built.components[0].type,"body");
+  assert.deepEqual(built.components[0].parameters,[{type:"text",text:"3D + 9D 组合"}]);
+  assert.match(built.preview,/3D \+ 9D 组合/);
+  const enTemplate=approvedTemplate(template.name,"TEXT","en_US");
+  assert.equal(enrichAutomatedTemplateSpec(chosenSpec(enTemplate.name,"9D 逆龄抗衰","en_US"),
+    enTemplate,{config:cfg}).bodyValue,"9D Anti-Ageing");
+  assert.equal(enrichAutomatedTemplateSpec(chosenSpec(template.name,"Unknown Service"),
+    template,{config:cfg}),null);
+});
+test("pricing graphic chooses exactly one configured active image and correct approved variable",()=>{
+  const cfg=currentClinicPromos();
+  const template=approvedTemplate("ns_fu_pricing_graphic","IMAGE");
+  const spec=enrichAutomatedTemplateSpec(chosenSpec(template.name,"3D 小颜术"),template,
+    {config:cfg,now:"2026-10-09T10:00:00+08:00"});
+  assert.equal(spec.autoPromoImageId,32);
+  assert.equal(spec.bodyValue,"3D 小颜术");
+  const preflight=buildStaticMarketingTemplate(template,spec,whatsapp,{allowUnuploadedMedia:true});
+  assert.ok(preflight);
+  assert.equal(preflight.components.some(p=>p.type==="header"),false);
+  assert.equal(buildStaticMarketingTemplate(template,spec,whatsapp),null,"cannot send without actual uploaded media ID");
+  const built=buildStaticMarketingTemplate(template,spec,whatsapp,{mediaId:"123456"});
+  assert.equal(built.components[0].parameters[0].image.id,"123456");
+  assert.equal(built.components[1].parameters[0].text,"3D 小颜术");
+  assert.equal(enrichAutomatedTemplateSpec(chosenSpec(template.name,"3D 小颜术"),
+    template,{config:cfg,now:"2026-11-01T10:00:00+08:00"}),null,
+    "expired promo cannot be used");
+});
+test("pelvis package needs unambiguous package choice and never selects a single guessed graphic",()=>{
+  const cfg=currentClinicPromos(),template=approvedTemplate("ns_fu_pricing_graphic","IMAGE");
+  const derive=(messages)=>enrichAutomatedTemplateSpec(
+    chosenSpec(template.name,"骨盆调理","zh_CN",messages),template,
+    {config:cfg,now:"2026-10-09T10:00:00+08:00"});
+  assert.equal(derive(["我想了解骨盆调理"]),null);
+  assert.equal(derive(["Package A or Package B?"]),null);
+  assert.equal(derive(["我要 Package A"]).autoPromoImageId,28);
+  assert.equal(derive(["我想了解 Package B"]).autoPromoImageId,29);
+  assert.equal(derive(["我要 Package A"]).bodyValue,"骨盆调理 Package A");
+});
+test("free meridian template never attaches a non-gift promotion",()=>{
+  const cfg=currentClinicPromos(),template=approvedTemplate("ns_fu_meridian_gift","IMAGE");
+  const pick=(service)=>enrichAutomatedTemplateSpec(chosenSpec(template.name,service),template,
+    {config:cfg,now:"2026-10-09"});
+  assert.equal(pick("3D 小颜术"),null);
+  assert.equal(pick("骨盆调理"),null);
+  assert.equal(pick("9D 逆龄抗衰").autoPromoImageId,21);
+  assert.equal(pick("3D + 9D 组合").autoPromoImageId,22);
+});
+test("unapproved variables, wrong media, empty label or arbitrary dynamic media are rejected",()=>{
+  const cfg=currentClinicPromos();
+  const template=approvedTemplate("ns_fu1_service_checkin");
+  assert.equal(enrichAutomatedTemplateSpec(chosenSpec("ns_fu1_service_checkin","3D 小颜术",
+    "zh_CN",[]),approvedTemplate("random_variable_template"),{config:cfg}),null);
+  const missing=approvedTemplate("ns_fu1_service_checkin","TEXT","zh_CN",false);
+  const spec=enrichAutomatedTemplateSpec(chosenSpec(missing.name,"3D 小颜术"),missing,{config:cfg});
+  assert.equal(buildStaticMarketingTemplate(missing,spec,whatsapp),null);
+  const wrongHeader=approvedTemplate("ns_fu_pricing_graphic","VIDEO");
+  const promoSpec=enrichAutomatedTemplateSpec(chosenSpec(wrongHeader.name,"3D 小颜术"),
+    wrongHeader,{config:cfg,now:"2026-10-09"});
+  assert.equal(buildStaticMarketingTemplate(wrongHeader,promoSpec,whatsapp,{mediaId:"123"}),null);
+  assert.equal(enrichAutomatedTemplateSpec({...chosenSpec(template.name,"3D 小颜术"),
+    mediaUrl:"https://malicious.test/a.jpg"},template,{config:cfg}),null);
+});
+test("auto promotion media is limited to configured public JPEG/PNG assets <=5MiB",async()=>{
+  const spec={autoPromoImageId:21,mediaKey:"",mediaUrl:""};
+  const base64=Buffer.from([137,80,78,71]).toString("base64");
+  const promos={getPublicImage:async id=>id===21?
+    {mime_type:"image/png",data:base64}:null};
+  const validateImage=async()=>Buffer.from([1,2,3]);
+  const prepared=await prepareAutoPromotionMedia(spec,{promos,validateImage});
+  assert.equal(prepared.mimeType,"image/png");
+  assert.equal(prepared.filename,"follow-up-promotion-21.png");
+  assert.equal((await validateApprovedMedia({header:{format:"IMAGE"}},spec,
+    {promos,validateImage})),true);
+  assert.equal(await prepareAutoPromotionMedia(spec,{
+    promos:{getPublicImage:async()=>({mime_type:"application/pdf",data:base64})},
+    validateImage}),null);
+  assert.equal(await prepareAutoPromotionMedia(spec,{
+    promos:{getPublicImage:async()=>({mime_type:"image/png",data:"X".repeat(8e6)})},
+    validateImage}),null);
+  assert.equal(await validateApprovedMedia({header:{format:"VIDEO"}},spec,
+    {promos,validateImage}),false);
 });
