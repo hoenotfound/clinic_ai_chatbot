@@ -15,7 +15,8 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
       await client.query("SET search_path TO " + schema);
       await client.query(`
         CREATE TABLE contacts (
-          id integer PRIMARY KEY, channel text, whatsapp_opt_in_at timestamptz,
+          id integer PRIMARY KEY, channel text, whatsapp_number text,
+          whatsapp_opt_in_at timestamptz,
           whatsapp_opt_in_source text, whatsapp_opt_out_at timestamptz,
           whatsapp_opt_out_source text, whatsapp_marketing_opt_out_at timestamptz,
           whatsapp_marketing_opt_out_source text,
@@ -25,7 +26,9 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
         );
         CREATE TABLE leads (
           id integer PRIMARY KEY, contact_id integer REFERENCES contacts(id),
-          marketing_consent text NOT NULL DEFAULT 'unknown', updated_at timestamptz DEFAULT now()
+          marketing_consent text NOT NULL DEFAULT 'unknown',
+          treatment_interest text, is_closed boolean NOT NULL DEFAULT false,
+          created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
         );
         CREATE TABLE messages (
           id integer PRIMARY KEY, contact_id integer REFERENCES contacts(id),
@@ -53,7 +56,8 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
       })};
       const opts = {contactId:1, leadId:2, messageId:3,
         businessName:"Neutro Sense TCM Centre", isClickToWhatsApp:true};
-      const first = await consent.recordFromInbound(opts, { database });
+      const config = {services:[{name:"骨盆调理"},{name:"9D 逆龄抗衰"}],serviceAliases:[]};
+      const first = await consent.recordFromInbound(opts, { database, config });
       assert.equal(first.recorded,true);
       const saved = (await client.query(`
         SELECT e.message_id,e.provider_message_id,e.message_text,
@@ -69,8 +73,22 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
       assert.equal(saved[0].consent_category,"MARKETING");
       assert.equal(saved[0].marketing_consent,"opted_in");
       assert.equal(saved[0].whatsapp_opt_in_source,"ctwa_explicit_customer_message");
-      assert.equal((await consent.recordFromInbound(opts, { database })).recorded,false,
+      assert.equal((await consent.recordFromInbound(opts, { database,config })).recorded,false,
         "same Meta message must not refresh permission");
+
+      // A genuinely new CRM lead may reuse this same-treatment customer opt-in;
+      // an unrelated treatment can never inherit Pelvis-specific permission.
+      await client.query("INSERT INTO leads(id,contact_id) VALUES(4,1),(5,1)");
+      const same = await consent.inheritForNewLead({
+        contactId:1, leadId:4,inboundText:"我想再了解骨盆调理"
+      }, {database:client,config});
+      assert.equal(same.inherited,true);
+      assert.equal((await client.query("SELECT marketing_consent,treatment_interest FROM leads WHERE id=4")).rows[0].marketing_consent,"opted_in");
+      const different = await consent.inheritForNewLead({
+        contactId:1,leadId:5,inboundText:"我对9D 逆龄抗衰有兴趣"
+      },{database:client,config});
+      assert.equal(different.inherited,false);
+      assert.equal((await client.query("SELECT marketing_consent FROM leads WHERE id=5")).rows[0].marketing_consent,"unknown");
 
       // Exercise the real opt-out SQL as well, rather than mocking it.
       const policy = require("../src/services/whatsappPolicyService");
