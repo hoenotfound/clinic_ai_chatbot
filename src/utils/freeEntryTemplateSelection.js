@@ -11,6 +11,10 @@ const { findMentionedPromotionPackages } = require("./activePromotion");
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
 const SUPPORTED_LANGUAGES = new Set(["auto", "zh_CN", "en_US", "ms"]);
 const ALLOWED_MEDIA_TYPES = new Set(["IMAGE", "VIDEO"]);
+// Cache verified bytes only while their R2 object ETag remains the same.
+// This cache is an optimization; missing ETags always trigger a fresh probe.
+const verifiedVideoEtags = new Map();
+const VIDEO_PROOF_CACHE_MS = 30 * 60 * 1000;
 
 function validMediaUrl(value) {
   if (!value) return true;
@@ -236,6 +240,7 @@ function materializeTemplateMediaSpec(spec) {
 async function validateApprovedMedia(template, spec, {
   env = process.env, mediaStore = mediaStorage, fetchImpl = fetch,
   promos = promoImagesRepo, validateImage = templateMedia.prepareImage,
+  verifyVideo = templateMedia.verifyVideoBuffer,
   config = clinicConfig, now = Date.now(),
 } = {}) {
   if (!template || !spec) return false;
@@ -278,10 +283,12 @@ async function validateApprovedMedia(template, spec, {
   const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
     format === "IMAGE" ? ["image/jpeg", 5*1024*1024] : null;
   if (!expected) return !spec.mediaKey && !spec.mediaUrl;
-  // H.264/AAC codecs cannot be proven by a HEAD response. Require the
-  // clinic to explicitly verify its pre-encoded MP4 rather than silently
-  // send an unknown HEVC file as a promotional template.
-  if (format === "VIDEO" && spec.videoCodecVerified !== true) return false;
+  // An editable checkbox is not codec proof. VIDEO is permitted only for
+  // clinic-owned R2 objects whose exact bytes can be verified by ffprobe.
+  // Remote VIDEO URLs are intentionally unsupported until they have a
+  // server-side verified immutable media record.
+  if (format === "VIDEO" && (spec.videoCodecVerified !== true ||
+      !spec.mediaKey || spec.mediaUrl)) return false;
   const [expectedMime, maxBytes] = expected;
   let info;
   try {
@@ -291,13 +298,13 @@ async function validateApprovedMedia(template, spec, {
       if (format === "VIDEO" && !extension.endsWith(".mp4")) return false;
       if (format === "IMAGE" && !/\.(?:jpe?g|png)$/.test(extension)) return false;
       info = await mediaStore.getSharedFollowUpMediaInfo(spec.mediaKey);
-      if (spec.mediaSourceId?.startsWith("promo:")) {
-        // Origin metadata is signed by R2's own object HEAD response, not by
-        // browser-supplied fields. Retired/changed promos fail closed.
-        const imageId = String(spec.mediaSourceId.slice("promo:".length));
-        if (String(info?.metadata?.["clinic-promo-image-id"] || "") !== imageId)
-          return false;
-      }
+      // Enforce provenance from the R2 object itself. Removing mediaSourceId
+      // from a saved rule MUST NOT turn an expired promotion into generic media.
+      const storedPromoId = String(info?.metadata?.["clinic-promo-image-id"] || "");
+      if (storedPromoId && (!/^[1-9]\\d*$/.test(storedPromoId) ||
+          spec.mediaSourceId !== "promo:" + storedPromoId)) return false;
+      if (spec.mediaSourceId?.startsWith("promo:") &&
+          storedPromoId !== spec.mediaSourceId.slice("promo:".length)) return false;
     } else if (spec.mediaUrl) {
       const url = new URL(spec.mediaUrl);
       const allowed = String(env.WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS || "")
@@ -320,7 +327,20 @@ async function validateApprovedMedia(template, spec, {
         info.bytes > maxBytes) return false;
     if (format === "IMAGE")
       return ["image/jpeg","image/png"].includes(info.mimeType);
-    return info.mimeType === expectedMime;
+    if (info.mimeType !== expectedMime || !spec.mediaKey) return false;
+    // The saved videoCodecVerified flag is merely a UI hint: trust only the
+    // actual R2 bytes checked by the server, never direct config JSON edits.
+    const proofKey = info.etag
+      ? [spec.mediaKey, info.etag, info.bytes].join(":") : null;
+    if (proofKey && verifiedVideoEtags.get(proofKey) > Date.now()) return true;
+    if (typeof mediaStore.downloadMedia !== "function") return false;
+    const bytes = await mediaStore.downloadMedia(spec.mediaKey, { maxBytes: maxBytes });
+    await verifyVideo(bytes);
+    if (proofKey) {
+      if (verifiedVideoEtags.size >= 96) verifiedVideoEtags.clear();
+      verifiedVideoEtags.set(proofKey, Date.now() + VIDEO_PROOF_CACHE_MS);
+    }
+    return true;
   } catch { return false; }
 }
 
