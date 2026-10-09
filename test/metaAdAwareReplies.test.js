@@ -558,3 +558,48 @@ test("localized first intro preserves all configured details in both AI provider
   assert.match(prompt, /phone numbers, amounts, URLs, codes/);
   assert.match(prompt, /Never shorten, silently omit, change, or invent/);
 });
+
+test("Meta creative enriched while AI replies becomes available on a later local read", async () => {
+  const services = [{ name: "3D 小颜术" }, { name: "骨盆调理" }];
+  const aliases = [{ alias: "小颜术", officialService: "3D 小颜术" }];
+  let stored = {
+    source: "meta_ads",
+    ad_name: "小颜术 5",
+    headline: null,
+    body: null,
+  };
+  let reads = 0;
+  const repo = {
+    async getForContactCurrentLead() {
+      reads++;
+      return stored;
+    },
+  };
+  const readCreative = async () => resolveMetaAdCreativeService(
+    await loadMetaAdReplyContext(325, { repo, services, aliases }),
+    services,
+    aliases
+  );
+  assert.equal(await readCreative(), null, "ad name alone cannot unlock result photos");
+  stored = {
+    ...stored,
+    headline: "1次就能看到明显效果",
+    body: "我们顾客体验 #中医小颜术 手工调理",
+  };
+  assert.equal(await readCreative(), "3D 小颜术");
+  assert.equal(reads, 2);
+  stored = { ...stored, body: "骨盆调理和中医小颜术一起体验" };
+  assert.equal(await readCreative(), null, "ambiguous creative must never unlock one photo");
+});
+
+test("server refreshes local ad creative after accepted AI reply and before result-media decision", () => {
+  const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const sentAt = serverSource.indexOf("const sendOutcome = await sendTrackedText(");
+  const refreshAt = serverSource.indexOf("const refreshedMetaAdContext = await loadMetaAdReplyContext(", sentAt);
+  const mediaAt = serverSource.indexOf("const resultBundle = await resolveResultMediaForReply({", refreshAt);
+  assert.ok(sentAt >= 0, "AI text must be sent first");
+  assert.ok(refreshAt > sentAt, "refresh the saved ad only after sending the text reply");
+  assert.ok(mediaAt > refreshAt, "media decision must use the refreshed ad");
+  assert.match(serverSource.slice(refreshAt, mediaAt), /resultMediaCreativeService = null/);
+  assert.match(serverSource.slice(refreshAt, mediaAt), /resolveMetaAdCreativeService/);
+});
