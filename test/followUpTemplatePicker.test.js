@@ -28,7 +28,7 @@ test("IMAGE template attachments use bounded validation and private clinic R2 ob
     routes.indexOf('router.get("/automated-follow-up/template-media-preview"'),
     routes.indexOf('router.get("/automated-follow-up/free-entry-status"'),
   );
-  assert.match(preview, /mediaStorage\.isSharedFollowUpConfigKey\(key\)/);
+  assert.match(preview, /mediaStorage\.isReferencedClinicFollowUpMediaKey\(key, configRepo\.getConfig\(\)\)/);
   assert.match(preview, /mediaStorage\.createPresignedGetUrl\(/);
   assert.match(preview, /expiresSeconds: 5 \* 60/);
   assert.match(preview, /private, no-store/);
