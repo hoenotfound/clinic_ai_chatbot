@@ -254,8 +254,8 @@ test("server verifies creative Meta context before it can drive result media", (
     /ai\.getReply\(history, \{[\s\S]*metaAdContext/
   );
   assert.match(
-    serverSource.slice(resultAt, resultAt + 700),
-    /metaAdCreativeService,/
+    serverSource.slice(resultAt, resultAt + 900),
+    /metaAdCreativeService: resultMediaCreativeService,/
   );
   assert.doesNotMatch(
     serverSource.slice(loadAt, replyAt),
