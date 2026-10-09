@@ -20,11 +20,20 @@ const REASON_LABELS = {
   human_review: "Human review requested",
 };
 const CHANNEL_LABELS = { whatsapp: "WhatsApp", facebook: "Messenger", instagram: "Instagram" };
+const MEDIA_LABELS = { video: "Video", image: "Image", text: "Text", attachment: "Attachment" };
 const SELECT_CLASS = "min-h-10 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-2 text-xs font-medium text-[var(--color-text)]";
 
 function labelForReason(row) {
   if (row.event_id?.startsWith("message:")) {
-    if (row.state === "pending") return "The stored delivery status is pending. Check provider receipts before retrying.";
+    if (row.state === "pending") {
+      if (row.provider_evidence === "accepted") {
+        return "Provider accepted this send; delivery receipt still pending. Do not retry without checking status.";
+      }
+      if (row.provider_evidence === "provider_id") {
+        return "Provider message ID recorded, but acceptance timestamp is unavailable. Verify status before retrying.";
+      }
+      return "Send has no stored provider acceptance evidence. Investigate the outbound claim before retrying.";
+    }
     if (row.state === "skipped") return "Message claim was cancelled before delivery.";
     if (row.state === "sent") return "Provider status: " + String(row.raw_status || "sent") + ".";
     return row.detail || "Check this message in Inbox and verify its provider status before retrying.";
@@ -70,11 +79,19 @@ export default function FollowUpActivity({ active }) {
   }, [active, filters, refresh]);
 
   function changeFilter(key, value) {
+    setResult(null);
     setFilters((current) => ({ ...current, [key]: value, page: 1 }));
   }
 
-  const rows = result?.items || [];
-  const totals = result?.summary || {};
+  function refreshActivity() {
+    setResult(null);
+    setRefresh((x) => x + 1);
+  }
+
+  const displayedResult = active && !loading && !error ? result : null;
+  const rows = displayedResult?.items || [];
+  const totals = displayedResult?.summary || {};
+  const diagnostics = displayedResult?.diagnostics || [];
   const stats = [
     ["sent", "Sent / accepted"],
     ["pending", "Unconfirmed"],
@@ -93,7 +110,7 @@ export default function FollowUpActivity({ active }) {
             across WhatsApp, Messenger and Instagram. Extended templates are shown separately below.
           </p>
         </div>
-        <button type="button" onClick={() => setRefresh((x) => x + 1)} disabled={loading}
+        <button type="button" onClick={refreshActivity} disabled={loading}
           className="min-h-10 rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50">
           {loading ? "Refreshing…" : "Refresh activity"}
         </button>
@@ -103,7 +120,7 @@ export default function FollowUpActivity({ active }) {
           <button type="button" key={key} onClick={() => changeFilter("state", filters.state === key ? "all" : key)}
             aria-pressed={filters.state === key}
             className={`min-h-16 rounded-lg border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${filters.state === key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-[var(--color-bg)]"}`}>
-            <p className="text-lg font-bold">{result ? Number(totals[key] || 0) : "—"}</p>
+            <p className="text-lg font-bold">{displayedResult ? Number(totals[key] || 0) : "—"}</p>
             <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{title}</p>
           </button>
         ))}
@@ -144,16 +161,16 @@ export default function FollowUpActivity({ active }) {
       {error && (
         <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-300 bg-red-50 p-3 text-xs text-red-800">
           <p>{error}</p>
-          <button type="button" onClick={() => setRefresh((x) => x + 1)}
+          <button type="button" onClick={refreshActivity}
             className="min-h-9 rounded-lg border border-red-300 px-3 font-semibold">Try again</button>
         </div>
       )}
       {loading && <p role="status" className="mt-4 text-xs text-[var(--color-text-muted)]">Loading recorded activity…</p>}
-      {!loading && !error && result && (
+      {displayedResult && (
         <div className="mt-4" aria-label="Follow-up activity events">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-bold">Recent events</h3>
-            <p className="text-xs text-[var(--color-text-muted)]">{result.total || 0} matching recorded events</p>
+            <p className="text-xs text-[var(--color-text-muted)]">{displayedResult.total || 0} matching recorded events</p>
           </div>
           {rows.length === 0 ? (
             <p role="status" className="mt-3 rounded-lg border border-dashed border-[var(--color-border)] p-4 text-xs text-[var(--color-text-muted)]">
@@ -169,6 +186,7 @@ export default function FollowUpActivity({ active }) {
                       <p className="text-xs font-bold">
                         {row.type === "pricing" ? "Pricing reminder" : `Follow-up ${row.step || "?"}`}
                         {" · "}{CHANNEL_LABELS[row.channel] || row.channel}
+                        {row.media_type ? " · " + (MEDIA_LABELS[row.media_type] || "Attachment") : ""}
                       </p>
                       <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                         Contact #{row.contact_id} · {localTime(row.occurred_at)}
@@ -187,20 +205,63 @@ export default function FollowUpActivity({ active }) {
               ))}
             </div>
           )}
-          {Number(result.total || 0) > 500 && (
+          {Number(displayedResult.total || 0) > 500 && (
             <p className="mt-3 text-xs text-[var(--color-text-muted)]">
               Showing at most the latest 500 matching records. Narrow the period or filters to investigate older events.
             </p>
           )}
-          {((result.page || 1) > 1 || result.hasMore) && (
+          {((displayedResult.page || 1) > 1 || displayedResult.hasMore) && (
             <div className="mt-4 flex items-center justify-between gap-3">
               <button type="button" disabled={loading || filters.page <= 1}
-                onClick={() => setFilters((old) => ({ ...old, page: Math.max(1, old.page - 1) }))}
+                onClick={() => { setResult(null); setFilters((old) => ({ ...old, page: Math.max(1, old.page - 1) })); }}
                 className="min-h-10 rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-40">Previous</button>
-              <p className="text-xs text-[var(--color-text-muted)]">Page {result.page}</p>
-              <button type="button" disabled={loading || !result.hasMore || filters.page >= 20}
-                onClick={() => setFilters((old) => ({ ...old, page: old.page + 1 }))}
+              <p className="text-xs text-[var(--color-text-muted)]">Page {displayedResult.page}</p>
+              <button type="button" disabled={loading || !displayedResult.hasMore || filters.page >= 20}
+                onClick={() => { setResult(null); setFilters((old) => ({ ...old, page: old.page + 1 })); }}
                 className="min-h-10 rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-40">Next</button>
+            </div>
+          )}
+        </div>
+      )}
+      {displayedResult && filters.type !== "pricing" && (
+        <div className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4"
+          aria-label="Potential missed FU3 diagnostics">
+          <h3 className="text-sm font-bold">Possible missing Follow-up 3 — review only</h3>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            Latest unanswered conversations whose reply window has expired with no stored FU3 or terminal AI skip.
+            These are diagnostic gaps, NOT confirmed scheduling skips. Staff takeover, bookings, opt-outs,
+            spacing, quiet hours or other eligibility rules may explain them. Only the current saved FU3
+            configuration is used; changes since an old conversation may affect the interpretation.
+          </p>
+          {diagnostics.length === 0 ? (
+            <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+              No matching expired-window gaps found, or FU3 monitoring is not enabled in current saved settings.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {diagnostics.map((item) => (
+                <div key={item.contact_id} className="min-w-0 rounded-lg border border-[var(--color-border)] bg-white p-3 text-xs">
+                  <p className="font-semibold">Contact #{item.contact_id} · {CHANNEL_LABELS[item.channel] || item.channel}</p>
+                  <p className="mt-1 text-[var(--color-text-muted)]">
+                    Last customer reply: {localTime(item.inbound_at)} · No recorded FU3 in that cycle
+                  </p>
+                  {item.possible_quiet_overlap && (
+                    <p className="mt-1 text-amber-800">
+                      Nominal FU3 time overlaps today's configured quiet hours. Adaptive rescheduling,
+                      spacing and historical settings mean this does not establish the actual reason.
+                    </p>
+                  )}
+                  <Link to={`/inbox?contact=${encodeURIComponent(item.contact_id)}`}
+                    className="mt-2 inline-flex min-h-9 items-center rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-primary)]">
+                    Inspect conversation
+                  </Link>
+                </div>
+              ))}
+              {diagnostics.length === 15 && (
+                <p className="text-[11px] text-[var(--color-text-muted)]">
+                  Showing at most 15 recent diagnostic gaps. Narrow the period or channel to investigate others.
+                </p>
+              )}
             </div>
           )}
         </div>
