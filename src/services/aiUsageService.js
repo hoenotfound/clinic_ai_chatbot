@@ -163,7 +163,10 @@ async function generateGeminiContent(
   const model = String(request?.model || "unknown");
   const startedAt = clock();
   const prefixHash = promptPrefixFingerprint(request);
-  const attribution = { contactId, leadId };
+  const attribution = {
+    ...(contactId != null ? { contactId } : {}),
+    ...(leadId != null ? { leadId } : {}),
+  };
   // The abort signal belongs to the SDK client, not the wire-format prompt.
   // The provider can still charge for requests already received by its servers.
   const effectiveRequest = signal
@@ -255,8 +258,8 @@ async function createGeminiInteraction(
         failureKind: null,
         latencyMs: Math.max(0, clock() - startedAt),
         ...usageFromInteraction(interaction),
-        contactId,
-        leadId,
+        ...(contactId != null ? { contactId } : {}),
+        ...(leadId != null ? { leadId } : {}),
         ...(promptPrefixFingerprint(request) ? { promptPrefixHash: promptPrefixFingerprint(request) } : {}),
       },
       { database, repository }
@@ -269,7 +272,8 @@ async function createGeminiInteraction(
         purpose,
         latencyMs: Math.max(0, clock() - startedAt),
         error,
-      }), contactId, leadId },
+      }), ...(contactId != null ? { contactId } : {}),
+        ...(leadId != null ? { leadId } : {}) },
       { database, repository }
     );
     throw error;
