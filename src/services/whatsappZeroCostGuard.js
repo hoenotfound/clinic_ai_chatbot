@@ -44,6 +44,12 @@ const VERIFIED_WINDOW_SQL = `
           AND earlier.created_at>=first_reply.created_at
           AND earlier.created_at<$2::timestamptz
           AND earlier.id IS DISTINCT FROM $4::integer
+          -- A prior unresolved message can be set aside only by an audited
+          -- operator who checked Meta Billing Hub for that exact send.
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_free_only_reconciliations audit
+            WHERE audit.message_id=earlier.id AND audit.verified_billing_hub=true
+          )
           AND (earlier.whatsapp_message_id IS NULL
             OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
             OR priced.billable IS DISTINCT FROM false
@@ -57,6 +63,10 @@ const VERIFIED_WINDOW_SQL = `
         WHERE attempt.contact_id=c.id
           AND attempt.first_reply_message_id=first_reply.id
           AND attempt.id IS DISTINCT FROM $5::bigint
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_free_only_reconciliations audit
+            WHERE audit.attempt_id=attempt.id AND audit.verified_billing_hub=true
+          )
           AND attempt.status IN ('sending','unknown')
       )
   ) AS eligible
@@ -154,7 +164,8 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
             ["sent","delivered","read"].includes(priced.delivery_status)) {
           await client.query(
             `UPDATE whatsapp_free_only_send_gate SET status='idle',
-               reservation_id=NULL,wamid=NULL,recipient=NULL,updated_at=now()
+               reservation_id=NULL,wamid=NULL,recipient=NULL,
+               message_id=NULL,attempt_id=NULL,updated_at=now()
              WHERE phone_number_id=$1`,[account]);
         } else {
           rejected=deny("zero_cost_previous_send_unreconciled",
@@ -232,8 +243,9 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
       reservationId=crypto.randomUUID();
       await client.query(
         `UPDATE whatsapp_free_only_send_gate
-         SET status='reserved',reservation_id=$2,wamid=NULL,recipient=$3,updated_at=now()
-         WHERE phone_number_id=$1`,[account,reservationId,recipient]);
+         SET status='reserved',reservation_id=$2,wamid=NULL,recipient=$3,
+             message_id=$4,attempt_id=$5,updated_at=now()
+         WHERE phone_number_id=$1`,[account,reservationId,recipient,currentMessageId,currentAttemptId]);
     }
     await client.query("COMMIT");
     transaction=false;
@@ -280,7 +292,8 @@ async function complete(reservationId,result, database=pool) {
     } else if (definitelyRejected(result)) {
       await database.query(
         `UPDATE whatsapp_free_only_send_gate SET status='idle',
-           reservation_id=NULL,wamid=NULL,recipient=NULL,updated_at=now()
+           reservation_id=NULL,wamid=NULL,recipient=NULL,
+           message_id=NULL,attempt_id=NULL,updated_at=now()
          WHERE phone_number_id=$1 AND reservation_id=$2`,
         [account,reservationId]);
     } else {
