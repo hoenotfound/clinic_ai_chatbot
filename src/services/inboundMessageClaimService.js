@@ -4,6 +4,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const freeEntryReferralsRepo = require("../db/whatsappFreeEntryReferralsRepo");
 const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
+const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
@@ -149,7 +150,10 @@ function createInboundMessageClaimService({
     // timestamp/provider ID and scope atomically with contact+CRM permission.
     // Existing 24-hour replies must continue if consent storage is unavailable;
     // in that case extended promotional templates stay blocked (fail closed).
-    if (channel === "whatsapp" && incoming?.mediaType == null && lead?.id) {
+    if (channel === "whatsapp" && incoming?.mediaType == null && lead?.id &&
+        explicitPromotionConsent(incoming?.text, {
+          businessName: config.clinicName || config.businessName,
+        })) {
       try {
         await inboundConsent.recordFromInbound({
           contactId: contact.id,
