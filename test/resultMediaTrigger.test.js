@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
+  isEarlyContextualAdEnquiry,
   normalizeResultMediaTriggerMode,
   rotateAfter,
   resolveResultMediaForReply,
@@ -501,4 +502,81 @@ test("verified contextual ad enquiry respects existing duplicate protection and 
   }));
   assert.equal(decision, null);
   assert.equal(checked, 1);
+});
+
+test("early contextual enquiry after greeting or language choice uses verified Meta proof", async () => {
+  for (const priorCustomerTexts of [["Hi"], ["你好"], ["English please"], ["Hi", "English"]]) {
+    const selected = await resolveResultMediaForReply(base({
+      isFirstMessage: false,
+      priorCustomerTexts,
+      customerText: "Hello! Can I get more info on this?",
+      serviceQuery: false,
+      serviceQuerySource: null,
+      treatment: null,
+      priceQuery: false,
+      metaAdCreativeService: "3D 小颜术",
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+    }));
+    assert.equal(selected?.service, "3D 小颜术", priorCustomerTexts.join(","));
+    assert.equal(selected?.serviceQuerySource, "meta_ad");
+  }
+});
+
+test("contextual Meta fallback is bounded to early nonsubstantive customer turns", async () => {
+  for (const priorCustomerTexts of [
+    ["How much?"],
+    ["Tell me more about 骨盆"],
+    ["Hi", "I want 9D"],
+    ["Hi", "Thanks", "Hi"],
+    ["I'm not interested"],
+  ]) {
+    const checked = [];
+    const result = await resolveResultMediaForReply(base({
+      isFirstMessage: false,
+      priorCustomerTexts,
+      customerText: "Hello! Can I get more info on this?",
+      serviceQuery: false,
+      serviceQuerySource: null,
+      treatment: null,
+      priceQuery: false,
+      metaAdCreativeService: "3D 小颜术",
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      wasMediaRecentlySent: async () => { checked.push(true); return false; },
+    }));
+    assert.equal(result, null, JSON.stringify(priorCustomerTexts));
+    assert.equal(checked.length, 0, "no media history or provider calls for unrelated conversations");
+  }
+  assert.equal(isEarlyContextualAdEnquiry({ customerText: "Hi", priorCustomerTexts: ["Hi"] }), false);
+  assert.equal(isEarlyContextualAdEnquiry({ customerText: "Can I get more info on this?", priorCustomerTexts: ["Hi"] }), true);
+});
+
+test("second-turn contextual enquiry preserves safety, verified-service matching, and duplicate cooldown", async () => {
+  const common = {
+    isFirstMessage: false,
+    priorCustomerTexts: ["Hi"],
+    customerText: "Can I get more info on this?",
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: false,
+    metaAdCreativeService: "3D 小颜术",
+    treatment: "3D 小颜术",
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+  };
+  const mismatch = await resolveResultMediaForReply(base({
+    ...common,
+    treatment: "骨盆调理",
+  }));
+  assert.equal(mismatch, null);
+  const unsafe = await resolveResultMediaForReply(base({ ...common, needsAttention: true }));
+  assert.equal(unsafe, null);
+  const duplicate = await resolveResultMediaForReply(base({
+    ...common,
+    wasMediaRecentlySent: async () => true,
+  }));
+  assert.equal(duplicate, null);
+  const noCreative = await resolveResultMediaForReply(base({
+    ...common,
+    metaAdCreativeService: null,
+  }));
+  assert.equal(noCreative, null);
 });
