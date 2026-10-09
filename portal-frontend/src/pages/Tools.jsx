@@ -3002,6 +3002,7 @@ function FollowUpTool({
               <div>
                 <p className="text-xs font-bold">Approved WhatsApp marketing templates</p>
                 <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">Read directly from this clinic's Meta WABA. Image and video headers can be attached under each scheduled rule below.</p>
+                <p className="mt-1 text-[11px] text-amber-800">Saving a changed extended template or attachment starts a fresh activation period for future eligible leads. Existing lead cohorts are not backfilled.</p>
               </div>
               <button type="button" onClick={() => refreshTemplateCatalog(true)} disabled={templateCatalogLoading}
                 className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">
