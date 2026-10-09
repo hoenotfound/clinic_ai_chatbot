@@ -88,11 +88,15 @@ function createInboundMessageClaimService({
       const source = incoming?.buttonPayload
         ? "customer_quick_reply"
         : "customer_message";
+      const originalStopAt = channel === "whatsapp" ?
+        (incoming?.timestamp && Number.isFinite(Number(incoming.timestamp))
+          ? new Date(Math.min(Date.now(), Number(incoming.timestamp) * 1000)).toISOString()
+          : savedInbound.created_at || null) : null;
       try {
         if (optOutScope === "marketing") {
-          await policy.recordMarketingOptOut(contact.id, source);
+          await policy.recordMarketingOptOut(contact.id, source, originalStopAt);
         } else {
-          await policy.recordOptOut(contact.id, source);
+          await policy.recordOptOut(contact.id, source, originalStopAt);
         }
       } catch (err) {
         // Do not complete an unpersisted STOP. The recovery worker must retry
@@ -174,7 +178,7 @@ function createInboundMessageClaimService({
     // treatments, ambiguous enquiries, global STOP or marketing opt-outs.
     if (channel === "whatsapp" && leadOutcome?.created === true && lead?.id) {
       try {
-        await inboundConsent.inheritForNewLead({
+        await inboundConsent.inheritForNewLead?.({
           contactId: contact.id,
           leadId: lead.id,
           inboundText: incoming.text,
