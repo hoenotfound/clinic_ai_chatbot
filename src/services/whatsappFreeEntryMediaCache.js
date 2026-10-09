@@ -6,12 +6,13 @@ const TTL_MS = 60 * 60 * 1000;
 const MAX_ENTRIES = 32;
 const cache = new Map();
 
-function key(id) {
+function key(id, phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || "") {
   const number = Number(id);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
+  // Cache IDs are phone-scoped; never reuse Meta IDs after an account switch.
+  return Number.isSafeInteger(number) && number > 0 ? String(phoneId) + ":" + number : null;
 }
-function get(id, mimeType, now = Date.now()) {
-  const k = key(id);
+function get(id, mimeType, now = Date.now(), phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || "") {
+  const k = key(id, phoneId);
   const item = k === null ? null : cache.get(k);
   if (!item) return null;
   if (item.expiresAt <= now || item.mimeType !== mimeType) {
@@ -20,8 +21,8 @@ function get(id, mimeType, now = Date.now()) {
   }
   return item.mediaId;
 }
-function put(id, mimeType, mediaId, now = Date.now()) {
-  const k = key(id);
+function put(id, mimeType, mediaId, now = Date.now(), phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || "") {
+  const k = key(id, phoneId);
   if (k === null || !["image/jpeg","image/png"].includes(mimeType) ||
       !/^\d+$/.test(String(mediaId || ""))) return false;
   cache.delete(k);
@@ -29,8 +30,8 @@ function put(id, mimeType, mediaId, now = Date.now()) {
   while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value);
   return true;
 }
-function forget(id) {
-  const k = key(id);
+function forget(id, phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || "") {
+  const k = key(id, phoneId);
   if (k !== null) cache.delete(k);
 }
 function clear() { cache.clear(); }
