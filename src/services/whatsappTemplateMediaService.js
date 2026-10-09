@@ -244,9 +244,10 @@ async function resolveReusableMedia(selectionId, expectedFormat, {
     throw mediaError("The promotion graphic is unavailable or private.", "reusable_media_unavailable");
   }
   const buffer = await validateImage(Buffer.from(record.data, "base64"), record.mime_type);
+  const safeExtension = record.mime_type === "image/png" ? ".png" : ".jpg";
   return { buffer, mimeType: record.mime_type,
     mediaKey: null, mediaUrl: "/promo-images/" + option.imageId,
-    filename: option.filename, mediaSelectionId: option.id };
+    filename: "promotion-" + option.imageId + safeExtension, mediaSelectionId: option.id };
 }
 
 module.exports = {
