@@ -78,6 +78,7 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     serviceName: matching?.serviceName || null,
     identifiedTreatment: customerInterest || adInterest ||
       (sameLeadJourney ? candidate.treatment_interest : null) || null,
+    recentInboundMessages: candidate.recent_inbound_messages || [],
     slotHours,
   };
 }
