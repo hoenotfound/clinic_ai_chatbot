@@ -193,8 +193,18 @@ async function validateApprovedMedia(template, spec, {
   const format = template.header?.format || "TEXT";
   if (spec.autoPromoImageId) {
     if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
-    try { return Boolean(await prepareAutoPromotionMedia(spec, { promos, validateImage })); }
-    catch { return false; }
+    try {
+      if (typeof promos.getPublicImageMetadata === "function") {
+        // Never assume a cached provider image remains public; check the
+        // purpose/MIME and encoded size without fetching its full base64 body.
+        const metadata = await promos.getPublicImageMetadata(spec.autoPromoImageId);
+        const encoded = Number(metadata?.encoded_length);
+        return ["image/jpeg","image/png"].includes(metadata?.mime_type) &&
+          Number.isSafeInteger(encoded) && encoded > 0 &&
+          encoded <= Math.ceil(5 * 1024 * 1024 * 4 / 3) + 8;
+      }
+      return Boolean(await prepareAutoPromotionMedia(spec, { promos, validateImage }));
+    } catch { return false; }
   }
   const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
     format === "IMAGE" ? ["image/jpeg", 5*1024*1024] : null;
