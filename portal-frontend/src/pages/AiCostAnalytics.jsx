@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../api";
+import { api } from "../api";
 
 const CATEGORY = {
   customer_reply: "Customer replies",
