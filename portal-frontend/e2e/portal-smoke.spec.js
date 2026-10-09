@@ -1120,7 +1120,10 @@ test("Pricing catalog previews service packages, localized media and saved remin
   await page.getByRole("tab", { name: "Pricing" }).click();
   const readiness = page.getByRole("region", { name: "Pricing promotion readiness" });
   await expect(readiness).toContainText("Pricing promotion readiness");
-  await expect(readiness.getByLabel("Pricing readiness summary")).toContainText("1/1");
+  const summary = readiness.getByLabel("Pricing readiness summary");
+  await expect(summary).toContainText("Media configured for English (includes fallback)");
+  await expect(summary).toContainText("Media configured for all 3 languages (includes fallback)");
+  await expect(summary).toContainText("1/1");
   await expect(readiness).toContainText("Catalog entries needing attention");
   await expect(readiness).toContainText("Per-contact eligibility still applies");
   await expect(readiness.getByRole("link", { name: "Edit in Settings" })).toHaveAttribute("href", "/settings?tab=promotions");
@@ -1249,15 +1252,99 @@ test("Pricing catalog detects Chinese A/B graphic collisions despite distinct de
   await page.goto("/tools");
   await page.getByRole("tab", { name: "Pricing" }).click();
   const readiness = page.getByRole("region", { name: "Pricing promotion readiness" });
-  await expect(readiness.getByLabel("Pricing readiness summary")).toContainText("0/1");
+  const summary = readiness.getByLabel("Pricing readiness summary");
+  await expect(summary).toContainText("Media configured for English (includes fallback)");
+  await expect(summary).toContainText("1/1");
+  await expect(summary).toContainText("Media configured for all 3 languages (includes fallback)");
+  await expect(summary).toContainText("0/1");
   await readiness.getByRole("button", { name: "Review promotion catalog (1)" }).click();
   const catalog = readiness.getByRole("region", { name: "Promotion catalog previews" });
   await expect(catalog).toContainText("Package A and B share the same image for 中文");
   await expect(catalog).not.toContainText("Package A and B share the same image for English");
   const previews = catalog.getByRole("group", { name: "Pricing catalog language preview" });
   await previews.getByRole("button", { name: "中文" }).click();
+  await expect(summary).toContainText("Media configured for 中文 (includes fallback)");
+  await expect(summary).toContainText("0/1");
   await expect(catalog.getByLabel("Package Package A")).toContainText("中文 A");
   await expect(catalog.getByLabel("Package Package B")).toContainText("中文 B");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Pricing catalog distinguishes Chinese-only configured media from missing English and BM", async ({ page }) => {
+  await page.route("https://cdn.example.test/**", (route) => route.fulfill({
+    status: 200, contentType: "image/png",
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+iCK8AAAAASUVORK5CYII=", "base64"),
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "3D 小颜术" }],
+      promotions: [{
+        name: "Chinese only", linkedService: "3D 小颜术",
+        packages: [{
+          name: "Main package", imageUrl: "", caption: "",
+          mediaTranslations: {
+            zh: { imageUrl: "https://cdn.example.test/face-zh.png", caption: "中文价格介绍" },
+          },
+        }],
+      }],
+      automatedFollowUp: { enabled: true, message: "First", pricingReminder: { enabled: true } },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  const readiness = page.getByRole("region", { name: "Pricing promotion readiness" });
+  const summary = readiness.getByLabel("Pricing readiness summary");
+  await expect(summary).toContainText("Media configured for English (includes fallback)");
+  await expect(summary).toContainText("0/1");
+  await expect(summary).toContainText("Media configured for all 3 languages (includes fallback)");
+  await expect(summary).toContainText("0/1");
+  await readiness.getByRole("button", { name: "Review promotion catalog (1)" }).click();
+  const catalog = readiness.getByRole("region", { name: "Promotion catalog previews" });
+  const packageCard = catalog.getByLabel("Package Main package");
+  await expect(packageCard).toContainText("English: Missing media");
+  await expect(packageCard).toContainText("BM: Missing media");
+  await expect(packageCard).toContainText("中文: Localized");
+  await catalog.getByRole("group", { name: "Pricing catalog language preview" })
+    .getByRole("button", { name: "中文" }).click();
+  await expect(summary).toContainText("Media configured for 中文 (includes fallback)");
+  await expect(summary).toContainText("1/1");
+  await expect(summary).toContainText("Media configured for all 3 languages (includes fallback)");
+  await expect(summary).toContainText("0/1");
+  await expect(catalog).toContainText("Media configured for 中文");
+  await expect(packageCard).toContainText("中文价格介绍");
+  await expect(packageCard.getByRole("img", { name: "Pricing graphic for Main package" }))
+    .toHaveAttribute("src", "https://cdn.example.test/face-zh.png");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Pricing catalog warns on failed image previews without claiming the configured media is verified", async ({ page }) => {
+  await page.route("https://cdn.example.test/**", (route) => route.fulfill({
+    status: 404, contentType: "text/plain", body: "Missing image",
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理" }],
+      promotions: [{
+        name: "Broken graphic", linkedService: "骨盆调理",
+        imageUrl: "https://cdn.example.test/broken.jpg", caption: "Pricing details",
+      }],
+      automatedFollowUp: { enabled: true, message: "First", pricingReminder: { enabled: true } },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  const readiness = page.getByRole("region", { name: "Pricing promotion readiness" });
+  const summary = readiness.getByLabel("Pricing readiness summary");
+  await expect(summary).toContainText("Media configured for English (includes fallback)");
+  await expect(summary).toContainText("1/1");
+  await readiness.getByRole("button", { name: "Review promotion catalog (1)" }).click();
+  const catalog = readiness.getByRole("region", { name: "Promotion catalog previews" });
+  await expect(catalog.getByRole("status")).toContainText("Image preview failed");
+  await expect(catalog).toContainText("URL availability and delivery not verified");
+  await expect(catalog).toContainText("Catalog media complete across all languages");
+  await expect(summary).toContainText("1/1");
   await expectNoHorizontalPageOverflow(page);
 });
 
