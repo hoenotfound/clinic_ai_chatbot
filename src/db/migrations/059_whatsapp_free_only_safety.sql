@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_free_only_send_gate (
   reservation_id TEXT,
   wamid TEXT,
   recipient TEXT,
+  message_id INTEGER,
+  attempt_id BIGINT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (status <> 'idle' OR reservation_id IS NULL)
 );
@@ -43,6 +45,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_free_only_reconciliations (
   reservation_id TEXT NOT NULL,
   prior_status TEXT NOT NULL,
   wamid TEXT,
+  message_id INTEGER,
+  attempt_id BIGINT,
   actor TEXT NOT NULL,
   reason TEXT NOT NULL,
   verified_billing_hub BOOLEAN NOT NULL,
