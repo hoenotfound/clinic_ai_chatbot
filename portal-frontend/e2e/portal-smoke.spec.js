@@ -1195,7 +1195,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
       reusableMedia: [
         { id: "promo:1", label: "Package A image", format: "IMAGE", imageId: 1, serviceName: "骨盆调理" },
         { id: "promo:2", label: "Wrong treatment image", format: "IMAGE", imageId: 2, serviceName: "3D 小颜术" },
-        { id: "video:test", label: "Pelvis feedback", format: "VIDEO", serviceName: "骨盆调理",
+        { id: "video:aaaaaaaaaaaaaaaaaaaaaaaa", label: "Pelvis feedback", format: "VIDEO", serviceName: "骨盆调理",
           mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4" },
       ],
     },
@@ -1213,7 +1213,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   const rule = page.getByLabel("Approved marketing template for rule 1");
   await rule.selectOption("clinic_video_feedback");
   await expect(page.getByText("Video attachment · required")).toBeVisible();
-  await page.getByLabel("Extended template media library 1").selectOption("video:test");
+  await page.getByLabel("Extended template media library 1").selectOption("video:aaaaaaaaaaaaaaaaaaaaaaaa");
   await expect(page.getByText("Attached: pelvis.mp4")).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved.length).toBe(1);
@@ -1221,11 +1221,13 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     templateName: "clinic_video_feedback",
     mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4",
     mediaUrl: "",
-    mediaSourceId: "video:test",
+    mediaSourceId: "video:aaaaaaaaaaaaaaaaaaaaaaaa",
     videoCodecVerified: true,
   });
   await expect(page.getByLabel("Template rule configuration readiness 1"))
     .toContainText("Template/media fields: Complete");
+  await expect(page.getByLabel("Template rule configuration readiness 1"))
+    .toContainText("marketing consent");
 
   await rule.selectOption("clinic_image_offer");
   await expect(page.getByText("Image attachment · required")).toBeVisible();
