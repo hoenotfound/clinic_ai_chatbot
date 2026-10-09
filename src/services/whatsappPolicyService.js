@@ -396,7 +396,7 @@ async function recordOptIn(contactId, source) {
   return result.rows[0] || null;
 }
 
-async function checkTemplateAllowed(contact, { category = null } = {}) {
+async function checkTemplateAllowed(contact, { category = null, treatmentInterest = null } = {}) {
   if ((contact?.channel || "whatsapp") !== "whatsapp") {
     return policyError(
       "wrong_channel",
@@ -444,6 +444,8 @@ async function checkTemplateAllowed(contact, { category = null } = {}) {
   if (String(category || "").trim().toUpperCase() === "MARKETING") {
     // A general WhatsApp service opt-in does not permit promotional templates.
     // Require the current CRM lead AND a durable consent audit event.
+    const intendedService = typeof treatmentInterest === "string" &&
+      treatmentInterest.trim() ? treatmentInterest.trim() : null;
     const consent = await pool.query(
       `SELECT l.marketing_consent,
          EXISTS (
@@ -451,24 +453,34 @@ async function checkTemplateAllowed(contact, { category = null } = {}) {
            WHERE e.contact_id=$1
              AND e.created_at >= COALESCE($2::timestamptz, '-infinity'::timestamptz)
              AND (
-               e.lead_id=l.id
-               OR (
-                 -- Inherited consent must be the exact currently active
-                 -- customer-message opt-in, never a stale or staff-only entry.
+               (
+                 -- Actual customer-message permission is treatment-scoped.
+                 -- The SAME-LEAD case must also match the treatment, not just
+                 -- the inherited-lead case. Missing service is not carte blanche.
                  e.message_id IS NOT NULL
                  AND e.consent_category='MARKETING'
                  AND e.consent_scope='treatment_followups_and_related_offers'
                  AND e.consented_at=$2::timestamptz
-                 AND l.treatment_interest IS NOT NULL
-                 AND (e.consent_service IS NULL OR
-                   LOWER(BTRIM(e.consent_service))=LOWER(BTRIM(l.treatment_interest)))
+                 AND NULLIF(BTRIM(e.consent_service),'') IS NOT NULL
+                 AND NULLIF(BTRIM(l.treatment_interest),'') IS NOT NULL
+                 AND LOWER(BTRIM(e.consent_service))=LOWER(BTRIM(l.treatment_interest))
+                 AND ($3::text IS NULL OR
+                   LOWER(BTRIM(e.consent_service))=LOWER(BTRIM($3::text)))
+               )
+               OR (
+                 -- Staff-verified marketing permission is explicitly recorded
+                 -- for the current lead. It is not silently inherited.
+                 e.message_id IS NULL
+                 AND e.lead_id=l.id
+                 AND NULLIF(BTRIM(e.source),'') IS NOT NULL
+                 AND e.consent_scope IS NULL
                )
              )
          ) AS has_evidence
        FROM leads l
        WHERE l.contact_id=$1
        ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1`,
-      [contactId, state.whatsapp_opt_in_at]
+      [contactId, state.whatsapp_opt_in_at, intendedService]
     );
     const current = consent.rows[0];
     if (current?.marketing_consent !== "opted_in" || current.has_evidence !== true) {
