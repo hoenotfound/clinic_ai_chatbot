@@ -72,6 +72,35 @@ test("automated sends verify R2 origin metadata as well as promotion validity", 
   }), false);
 });
 
+test("copied Package A promotion media cannot be sent without an explicit A choice", async () => {
+  const withPackages = {
+    ...config,
+    promotions: [{
+      name: "Pelvis offer", linkedService: "骨盆调理",
+      validFrom: "2026-10-01", validUntil: "2026-10-31",
+      packages: [
+        { name: "Package A", imageUrl: "/promo-images/55" },
+        { name: "Package B", imageUrl: "/promo-images/56" },
+      ],
+    }],
+  };
+  const spec = { ...promoSpec, mediaSourceId: "promo:55" };
+  const mediaStore = {
+    isSharedFollowUpConfigKey: () => true,
+    getSharedFollowUpMediaInfo: async () => ({
+      bytes: 1000, mimeType: "image/jpeg",
+      metadata: { "clinic-promo-image-id": "55" },
+    }),
+  };
+  const validate = (messages) => validateApprovedMedia(imageTemplate, {
+    ...spec, recentInboundMessages: messages,
+  }, { config: withPackages, now: at("2026-10-09"), mediaStore });
+  assert.equal(await validate(["我要 Package A"]), true);
+  assert.equal(await validate(["我要 Package B"]), false);
+  assert.equal(await validate(["Package A or B?"]), false);
+  assert.equal(await validate(["想知道骨盆调理"]), false);
+});
+
 test("pelvic/face templates cannot reuse media intended for another treatment", () => {
   const spec = {
     templateName: "ns_fu3_pelvis_feedback",
