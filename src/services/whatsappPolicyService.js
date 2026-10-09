@@ -47,7 +47,15 @@ function normalizeText(value) {
 function classifyOptOutText(value) {
   const text = normalizeText(value);
   if (!text) return null;
-  if (MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
+  // Free-form opt-outs often contain politeness, punctuation or explanatory
+  // clauses. Restrict these to a clear refusal AND a promotional subject.
+  // An ordinary enquiry mentioning "offers" must never be classified as STOP.
+  const refusePromotion =
+    /(?:stop|don't|do not|no more|unsubscribe|opt out|remove me|not interested in|avoid sending)\b.{0,100}\b(?:promo(?:tion)?s?|offers?|marketing|discounts?|deals?|ads?)\b/i.test(text) ||
+    /(?:不要|别|不想|不需要|停止|取消|不用|无需).{0,45}(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣|宣传|宣傳)/.test(text) ||
+    /(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣).{0,28}(?:不要|别发|別發|停止|取消|不用|不需要|不想)/.test(text) ||
+    /(?:jangan|tak nak|tak mahu|tidak mahu|berhenti|hentikan|tidak ingin).{0,90}(?:promosi|tawaran|iklan|pemasaran)/i.test(text);
+  if (refusePromotion || MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
     return "marketing";
   }
   if (GLOBAL_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
