@@ -970,7 +970,7 @@ test("Sequence timeline navigates existing editors without changing schedule or 
             serviceOverrides: [{
               serviceName: "骨盆调理",
               message: "Pelvic reminder.",
-              translations: translations("Pelvic reminder."),
+              translations: { en: "Pelvic reminder.", ms: "", zh: "" },
             }],
           },
           {
@@ -995,27 +995,48 @@ test("Sequence timeline navigates existing editors without changing schedule or 
   const second = timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" });
   const third = timeline.getByRole("button", { name: "Edit Follow-up 3 from sequence overview" });
   await expect(first).toHaveAttribute("aria-current", "step");
+  await expect(first).toContainText("Default translations: 3/3 configured");
+  await expect(second).toContainText("Default translations: 3/3 configured");
+  await expect(second).toContainText("Service translations: 1/3 configured");
   await expect(third).toContainText("before the 24-hour reply window closes");
+  await page.getByText("Why might a step not send?").click();
+  await expect(page.getByText(/A customer reply stops the remaining steps in the current sequence/)).toBeVisible();
   await expect(page.getByRole("region", { name: "Pricing reminder dependency" }))
     .toContainText("5 minutes after the provider accepts Follow-up 3");
 
-  await third.click();
-  const thirdEditor = page.locator("#follow-up-step-3");
+  // Keyboard activation must transfer focus into the editor, not merely scroll.
+  await third.focus();
+  await third.press("Enter");
+  const thirdEditor = page.getByRole("region", { name: "Follow-up 3 editor" });
   const thirdMessage = thirdEditor.getByPlaceholder("Write the next follow-up message.");
+  await expect(thirdEditor).toBeFocused();
   await expect(thirdMessage).toBeVisible();
   await expect(third).toHaveAttribute("aria-current", "step");
+  await expect.poll(() => thirdEditor.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const scrollArea = element.closest("main")?.getBoundingClientRect();
+    return rect.top >= (scrollArea?.top ?? 0) - 4 &&
+      rect.top < (scrollArea?.bottom ?? window.innerHeight) - 30;
+  })).toBe(true);
   await thirdMessage.fill("Updated third testimonial.");
+  await expect(third).toContainText("Default translations: 0/3 configured");
 
   await second.click();
-  await expect(page.locator("#follow-up-step-2").getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+  const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+  await expect(secondEditor).toBeFocused();
   await expect(second).toHaveAttribute("aria-current", "step");
 
-  await first.click();
-  await expect(page.locator("#follow-up-step-1")).toBeVisible();
+  await first.focus();
+  await first.press("Enter");
+  const firstEditor = page.getByRole("region", { name: "Follow-up 1 editor" });
+  await expect(firstEditor).toBeVisible();
+  await expect(firstEditor).toBeFocused();
   await expect(first).toHaveAttribute("aria-current", "step");
   await expect(thirdMessage).not.toBeVisible();
 
   await third.click();
+  await expect(thirdEditor).toBeFocused();
   await expect(thirdMessage).toHaveValue("Updated third testimonial.");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
 
