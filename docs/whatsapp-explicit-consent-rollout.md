@@ -10,7 +10,7 @@ It never updates historic contacts retroactively. Ordinary messages keep the exi
 - The client Tools `automatedFollowUp.freeEntry` switch and Render `WHATSAPP_FEP_FOLLOWUPS_ENABLED=true` are both required. Current Neutro Sense Tools configuration is missing this section.
 - Require a NEW incoming Click-to-WhatsApp referral record, first business reply within 24 hours, and Meta's `free_entry_point`, `billable=false` delivery evidence. Never infer a free period from CRM's ad source alone.
 - Default to 72 hours until this exact account verifies an after-72-hours nonbillable callback. Only then set `WHATSAPP_FEP_7DAY_VERIFIED=true`. A seven-day maximum is not a guarantee that a given outgoing message is free.
-- Use approved MARKETING templates. The current automated worker supports static no-variable templates, so an approved template containing `{{1}}` or an IMAGE header needs a separately-reviewed deterministic variable/media integration or a distinct approved static template.
+- Use approved MARKETING templates. The worker now supports static templates and three specially constrained named templates: `ns_fu1_service_checkin` (one treatment-name `{{1}}` variable), `ns_fu_pricing_graphic` (approved promotion image + matching `{{1}}`), and `ns_fu_meridian_gift` (only an active promotion explicitly offering free one-hour meridian massage, with matching image and `{{1}}`). Other arbitrary variable templates remain blocked.
 - Keep five-hour message spacing, quiet hours, opt-out, human takeover, appointment and staff intervention safety rules. Monitor the attempts, skip reasons, pricing evidence and actual Meta delivery callbacks.
 - Verify the WhatsApp account's billing/payment configuration before sending messages which might become billable.
 
