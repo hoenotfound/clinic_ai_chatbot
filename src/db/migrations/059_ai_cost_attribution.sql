@@ -4,6 +4,7 @@ ALTER TABLE ai_usage_events
   ADD COLUMN IF NOT EXISTS contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS estimated_cost_usd NUMERIC(16,10),
+  ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT DEFAULT 0,
   ADD COLUMN IF NOT EXISTS pricing_status TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_ai_usage_events_contact_day
