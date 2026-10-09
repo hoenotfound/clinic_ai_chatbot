@@ -163,7 +163,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
       <p className="text-xs font-bold">{format === "VIDEO" ? "Video attachment" : "Image attachment"} · required for this approved template</p>
       <label className="block text-xs font-semibold">
         Choose from existing clinic {format === "VIDEO" ? "videos" : "pricing images"}
-        <select aria-label={\`Extended template media library \${index + 1}\`} value=""
+        <select aria-label={`Extended template media library ${index + 1}`} value=""
           disabled={busy} onChange={(event) => chooseExisting(event.target.value)}
           className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2">
           <option value="">Choose saved {format === "VIDEO" ? "video" : "image"}</option>
@@ -172,7 +172,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
       </label>
       <label className="block text-xs font-semibold">
         Or upload a new {format === "VIDEO" ? "H.264/AAC MP4" : "JPG/PNG"}
-        <input type="file" aria-label={\`Extended template \${format.toLowerCase()} attachment \${index + 1}\`}
+        <input type="file" aria-label={`Extended template ${format.toLowerCase()} attachment ${index + 1}`}
           accept={format === "VIDEO" ? ".mp4,video/mp4" : "image/jpeg,image/png"}
           disabled={busy}
           className="mt-1 block w-full min-w-0 text-xs"
@@ -204,7 +204,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
       )}
       <details className="text-xs text-[var(--color-text-muted)]">
         <summary className="cursor-pointer">Advanced: trusted HTTPS media URL</summary>
-        <input type="url" aria-label={\`Extended template media URL \${index + 1}\`}
+        <input type="url" aria-label={`Extended template media URL ${index + 1}`}
           value={rule.mediaUrl || ""} placeholder="https://approved-media-host.example/asset"
           onChange={(event) => onChange({ mediaUrl: event.target.value, mediaKey: "" })}
           className="mt-2 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs"/>
