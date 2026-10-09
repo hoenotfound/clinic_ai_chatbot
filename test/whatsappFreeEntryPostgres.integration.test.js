@@ -245,6 +245,11 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       await zeroCostGuard.complete(resumed.reservationId,
         {success:false,providerStatus:400},guardDb);
 
+      // An ID from another lead must not exempt the current conversation.
+      const invalid = await zeroCostGuard.reserve("60129876543",
+        {database:guardDb,context:{currentMessageId:19}});
+      assert.equal(invalid.code,"zero_cost_invalid_send_context");
+
       // A Render crash after reserve cannot silently unlock a send.
       // Stale "reserved" becomes "unknown", not "idle", after 15 minutes.
       const crashed=await zeroCostGuard.reserve("60121234567",{
@@ -272,10 +277,6 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         "newly classified unknown send still requires an investigation grace period"
       );
 
-      // An ID from another lead must not exempt the current conversation.
-      const invalid = await zeroCostGuard.reserve("60129876543",
-        {database:guardDb,context:{currentMessageId:19}});
-      assert.equal(invalid.code,"zero_cost_invalid_send_context");
       await client.query("DELETE FROM whatsapp_free_entry_followup_attempts WHERE id=$1",[attemptId]);
       await client.query("DELETE FROM whatsapp_free_entry_followup_attempts WHERE id=$1",[secondClaim.rows[0].id]);
       await client.query("DELETE FROM messages WHERE id IN (19,20)");
