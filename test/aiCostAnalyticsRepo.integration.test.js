@@ -37,7 +37,7 @@ test("AI costs aggregate correctly in PostgreSQL and never leak unassigned conta
       lead_id INTEGER
     );
   `);
-  await db.query(`CREATE TABLE leads (id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL); INSERT INTO leads VALUES (101,1),(102,2);`);
+  await db.query(`CREATE TABLE leads (id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL); INSERT INTO leads VALUES (99,1),(101,1),(102,2);`);
   await db.query(`
     INSERT INTO contacts VALUES
       (1,'whatsapp',now()),
@@ -46,22 +46,26 @@ test("AI costs aggregate correctly in PostgreSQL and never leak unassigned conta
       (1,1,now(),'success','gemini','customer_reply','gemini-3.8-flash',0.0060,10000,0,false,'0123456789abcdef',101),
       (2,1,now(),'failed','gemini','customer_reply','gemini-3.8-flash',NULL,0,0,NULL,NULL,101),
       (3,2,now(),'success','claude','customer_reply','claude-sonnet-5',0.0120,1200,0,NULL,NULL,102),
-      (4,NULL,now(),'success','gemini','follow_up_generation','gemini-3.8-flash',0.0020,3500,0,false,'0123456789abcdef',NULL);
+      (4,NULL,now(),'success','gemini','follow_up_generation','gemini-3.8-flash',0.0020,3500,0,false,'0123456789abcdef',NULL),
+      (5,1,now(),'success','gemini','customer_reply','gemini-3.8-flash',0.0040,8000,0,false,'0123456789abcdef',99);
   `);
-  const restricted = await getAiCostAnalytics({ database: db, accessibleContactIds: [1], fxRate: "4" });
-  assert.equal(restricted.daily.at(-1).calls, 2);
+  const restricted = await getAiCostAnalytics({ database: db, accessibleContactIds: [1], accessibleLeadIds: [101], fxRate: "4" });
+  assert.equal(restricted.daily.at(-1).calls, 3);
   assert.equal(restricted.daily.at(-1).newLeads, 1);
   assert.equal(restricted.daily.at(-1).unpricedCalls, 1);
-  assert.equal(restricted.daily.at(-1).estimatedUsd, 0.006);
+  assert.equal(restricted.daily.at(-1).estimatedUsd, 0.010);
+  assert.equal(restricted.daily.at(-1).usdPerActiveLead, 0.006);
+  assert.equal(restricted.leadSummary.pricedLeads, 1);
+  assert.equal(restricted.leadSummary.attributedUsd, 0.006);
   assert.deepEqual(restricted.byContact.map((x) => x.contactId), [1]);
   assert.equal(restricted.byCategory.length, 1);
-  assert.equal(restricted.byLead[0].leadId, 101);
+  assert.deepEqual(restricted.byLead.map((row) => row.leadId), [101]);
   const all = await getAiCostAnalytics({ database: db, accessibleContactIds: null });
-  assert.equal(all.daily.at(-1).calls, 4);
+  assert.equal(all.daily.at(-1).calls, 5);
   assert.equal(all.daily.at(-1).unattributedCalls, 1);
   assert.equal(all.byContact.length, 2);
   assert.equal(all.daily.at(-1).newLeads, 2);
-  const empty = await getAiCostAnalytics({ database: db, accessibleContactIds: [] });
+  const empty = await getAiCostAnalytics({ database: db, accessibleContactIds: [], accessibleLeadIds: [] });
   assert.equal(empty.daily.at(-1).calls, 0);
   assert.equal(empty.byContact.length, 0);
   assert.equal(empty.byLead.length, 0);
