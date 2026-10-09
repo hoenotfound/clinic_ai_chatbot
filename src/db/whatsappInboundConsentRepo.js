@@ -34,11 +34,13 @@ async function recordFromInbound({
     const message = (await client.query(
       `SELECT id, role, content, whatsapp_message_id,
               COALESCE(source_created_at, created_at) AS sent_at,
-              media_mime_type
+              media_mime_type, is_forwarded
          FROM messages WHERE id=$1 AND contact_id=$2`,
       [messageId, contactId]
     )).rows[0];
-    const explicit = message?.role === "user" && !message.media_mime_type
+    const explicit = message?.role === "user" &&
+      Boolean(String(message.whatsapp_message_id || "").trim()) &&
+      !message.media_mime_type && message.is_forwarded !== true
       ? explicitPromotionConsent(message.content, { businessName })
       : null;
     if (!explicit) {
