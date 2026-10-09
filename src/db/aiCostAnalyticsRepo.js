@@ -6,19 +6,22 @@ const { pool } = require("./db");
 async function getAiCostAnalytics({
   days = 7,
   accessibleContactIds = null,
+  accessibleLeadIds = null,
   database = pool,
   fxRate = process.env.AI_USD_MYR_RATE,
 } = {}) {
   const safeDays = Math.min(30, Math.max(1, Number.isInteger(Number(days)) ? Number(days) : 7));
   const scope = accessibleContactIds === null ? null :
     (Array.isArray(accessibleContactIds) ? accessibleContactIds.filter(Number.isSafeInteger) : []);
-  const params = [safeDays, scope];
+  const leadScope = accessibleLeadIds === null ? null :
+    (Array.isArray(accessibleLeadIds) ? accessibleLeadIds.filter(Number.isSafeInteger) : []);
+  const params = [safeDays, scope, leadScope];
   const dateRange = String.raw`(now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - ($1::int - 1)`;
   const events = String.raw`FROM ai_usage_events e
       WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
         AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))`;
 
-  const [dailyResult, categoryResult, leadResult, cacheResult, journeyResult] = await Promise.all([
+  const [dailyResult, categoryResult, leadResult, cacheResult, journeyResult, leadSummaryResult] = await Promise.all([
     database.query(
       `WITH calendar AS (
         SELECT generate_series(${dateRange},
@@ -29,7 +32,15 @@ async function getAiCostAnalytics({
           COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NOT NULL)::int AS priced_calls,
           COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls,
           COUNT(*) FILTER (WHERE e.contact_id IS NULL)::int AS unattributed_calls,
-          COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd
+          COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd,
+          COUNT(DISTINCT e.lead_id) FILTER (
+            WHERE e.estimated_cost_usd IS NOT NULL
+              AND ($3::int[] IS NULL OR e.lead_id = ANY($3::int[]))
+          )::int AS priced_active_leads,
+          COALESCE(SUM(e.estimated_cost_usd) FILTER (
+            WHERE e.lead_id IS NOT NULL
+              AND ($3::int[] IS NULL OR e.lead_id = ANY($3::int[]))
+          ), 0)::numeric AS attributed_usd
         ${events} GROUP BY 1
       ), new_contacts AS (
         SELECT (c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date AS day,
@@ -44,6 +55,8 @@ async function getAiCostAnalytics({
         COALESCE(daily_usage.unpriced_calls,0)::int AS unpriced_calls,
         COALESCE(daily_usage.unattributed_calls,0)::int AS unattributed_calls,
         COALESCE(daily_usage.usd,0)::numeric AS usd,
+        COALESCE(daily_usage.priced_active_leads,0)::int AS priced_active_leads,
+        COALESCE(daily_usage.attributed_usd,0)::numeric AS attributed_usd,
         COALESCE(new_contacts.new_leads,0)::int AS new_leads
       FROM calendar LEFT JOIN daily_usage USING(day)
       LEFT JOIN new_contacts USING(day) ORDER BY calendar.day`,
@@ -93,7 +106,20 @@ async function getAiCostAnalytics({
       JOIN leads l ON l.id=e.lead_id AND l.contact_id=e.contact_id
       WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
         AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))
+        AND ($3::int[] IS NULL OR e.lead_id = ANY($3::int[]))
       GROUP BY e.lead_id,e.contact_id ORDER BY usd DESC LIMIT 30`,
+      params
+    ),
+    database.query(
+      `SELECT
+        COUNT(DISTINCT e.lead_id) FILTER (WHERE e.estimated_cost_usd IS NOT NULL)::int AS priced_leads,
+        COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS attributed_usd,
+        COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls
+      FROM ai_usage_events e
+      JOIN leads l ON l.id = e.lead_id AND l.contact_id = e.contact_id
+      WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
+        AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))
+        AND ($3::int[] IS NULL OR e.lead_id = ANY($3::int[]))`,
       params
     ),
   ]);
@@ -110,7 +136,11 @@ async function getAiCostAnalytics({
     newLeads: Number(row.new_leads),
     estimatedUsd: Number(row.usd),
     estimatedMyr: usdToMyr == null ? null : Number(row.usd) * usdToMyr,
-    usdPerNewLead: Number(row.new_leads) ? Number(row.usd) / Number(row.new_leads) : null,
+    pricedActiveLeads: Number(row.priced_active_leads),
+    attributedUsd: Number(row.attributed_usd),
+    attributedMyr: usdToMyr == null ? null : Number(row.attributed_usd) * usdToMyr,
+    usdPerActiveLead: Number(row.priced_active_leads)
+      ? Number(row.attributed_usd) / Number(row.priced_active_leads) : null,
   }));
   return {
     days: safeDays,
@@ -118,8 +148,15 @@ async function getAiCostAnalytics({
     currency: usdToMyr ? "MYR" : "USD",
     usdToMyr,
     historicalAttributionNote:
-      "Only events recorded after the attribution rollout have contact IDs and USD cost estimates; earlier events remain unpriced or unattributed.",
+      "Historical Gemini events are estimated from recorded tokens without inferring contact or lead identity. Unknown usage remains unpriced.",
     daily,
+    leadSummary: {
+      pricedLeads: Number(leadSummaryResult.rows[0]?.priced_leads || 0),
+      attributedUsd: Number(leadSummaryResult.rows[0]?.attributed_usd || 0),
+      attributedMyr: usdToMyr == null ? null
+        : Number(leadSummaryResult.rows[0]?.attributed_usd || 0) * usdToMyr,
+      unpricedCalls: Number(leadSummaryResult.rows[0]?.unpriced_calls || 0),
+    },
     byCategory: categoryResult.rows.map((row) => ({
       provider: row.provider, purpose: row.purpose, calls: Number(row.calls),
       unpricedCalls: Number(row.unpriced_calls),
