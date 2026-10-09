@@ -285,6 +285,7 @@ export default function Tools() {
   const [commentForm, setCommentForm] = useState(DEFAULT_COMMENT_AUTOMATION);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [freeOnlyImpactConfirmed, setFreeOnlyImpactConfirmed] = useState(false);
   const [scoringSaving, setScoringSaving] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentChannelStatus, setCommentChannelStatus] = useState(null);
@@ -380,6 +381,7 @@ export default function Tools() {
     if (activeTool === "followUp") {
       const saved = followUpFormFromSettings(config?.automatedFollowUp);
       setForm(saved);
+      setFreeOnlyImpactConfirmed(false);
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
       setReviewTranslations(false);
@@ -783,6 +785,12 @@ export default function Tools() {
   }
 
   async function handleSave() {
+    if (form.whatsappFreeOnly?.enabled === true &&
+        config?.automatedFollowUp?.whatsappFreeOnly?.enabled !== true &&
+        !freeOnlyImpactConfirmed) {
+      showToast("Confirm the loss of new WhatsApp AI replies before enabling strict free-only mode.", "error");
+      return;
+    }
     const validationError = followUpValidationError();
     if (validationError) {
       showToast(validationError, "error");
@@ -867,7 +875,7 @@ export default function Tools() {
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
-          whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true },
+          whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true, acknowledgeImpact: freeOnlyImpactConfirmed },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -2557,6 +2565,15 @@ function FollowUpTool({
               Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
               A billable callback after activation trips the account-wide stop until you investigate and deliberately reset this switch.
             </p>
+            {form.whatsappFreeOnly?.enabled === true &&
+              config?.automatedFollowUp?.whatsappFreeOnly?.enabled !== true ? (
+              <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
+                <input type="checkbox" checked={freeOnlyImpactConfirmed}
+                  onChange={event => setFreeOnlyImpactConfirmed(event.target.checked)}/>
+                I understand new WhatsApp enquiries, including ad leads, may receive no AI reply;
+                enabling strict mode does not establish a guaranteed RM0 Meta billing limit.
+              </label>
+            ) : null}
           </Card>
 
           <Card>
