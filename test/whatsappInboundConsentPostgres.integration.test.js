@@ -17,8 +17,11 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
         CREATE TABLE contacts (
           id integer PRIMARY KEY, channel text, whatsapp_opt_in_at timestamptz,
           whatsapp_opt_in_source text, whatsapp_opt_out_at timestamptz,
-          whatsapp_marketing_opt_out_at timestamptz,
-          whatsapp_marketing_opt_out_source text, updated_at timestamptz DEFAULT now()
+          whatsapp_opt_out_source text, whatsapp_marketing_opt_out_at timestamptz,
+          whatsapp_marketing_opt_out_source text,
+          social_opt_out_at timestamptz, social_opt_out_source text,
+          social_marketing_opt_out_at timestamptz, social_marketing_opt_out_source text,
+          updated_at timestamptz DEFAULT now()
         );
         CREATE TABLE leads (
           id integer PRIMARY KEY, contact_id integer REFERENCES contacts(id),
