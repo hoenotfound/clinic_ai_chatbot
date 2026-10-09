@@ -117,9 +117,41 @@ async function storeInboundClaim({
   storedMessageId,
   channel,
   incoming,
+  optOutScope = null,
 }, database = pool) {
   const payload = serializeIncoming(incoming);
   const sourceCreatedAt = whatsappMessageSourceCreatedAt(channel, incoming);
+  const stopScope = channel === "whatsapp" && ["marketing","all"].includes(optOutScope)
+    ? optOutScope : null;
+  // Keep the original eight-parameter statement for ordinary inbound messages.
+  // The STOP-only CTEs add consent-table dependencies only to STOP webhooks.
+  const stopCtes = stopScope ? `, enforced_whatsapp_stop AS (
+       -- Apply STOP in the very same statement as the durable inbound. If
+       -- Neon cannot store the opt-out, it cannot ACK the webhook claim as
+       -- successfully saved; no marketing worker sees a stale opt-in.
+       UPDATE contacts
+       SET whatsapp_opt_out_at = CASE WHEN $9::text = 'all'
+             THEN COALESCE($6::timestamptz,now()) ELSE whatsapp_opt_out_at END,
+           whatsapp_opt_out_source = CASE WHEN $9::text = 'all'
+             THEN 'customer_message' ELSE whatsapp_opt_out_source END,
+           whatsapp_opt_in_at = CASE WHEN $9::text = 'all'
+             THEN NULL ELSE whatsapp_opt_in_at END,
+           whatsapp_opt_in_source = CASE WHEN $9::text = 'all'
+             THEN NULL ELSE whatsapp_opt_in_source END,
+           whatsapp_marketing_opt_out_at = COALESCE($6::timestamptz,now()),
+           whatsapp_marketing_opt_out_source = 'customer_message',
+           updated_at = now()
+       WHERE id=$1 AND $4::text='whatsapp'
+         AND $9::text IN ('all','marketing')
+         AND (whatsapp_opt_in_at IS NULL OR
+              whatsapp_opt_in_at <= COALESCE($6::timestamptz,now()))
+         AND EXISTS(SELECT 1 FROM inserted_message)
+       RETURNING id
+     ), synchronized_stop_leads AS (
+       UPDATE leads SET marketing_consent='opted_out',updated_at=now()
+       WHERE contact_id IN (SELECT id FROM enforced_whatsapp_stop)
+       RETURNING id
+     )` : "";
   const result = await database.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
@@ -139,7 +171,7 @@ async function storeInboundClaim({
        SELECT id, contact_id, $4, $5::jsonb
        FROM inserted_message
        RETURNING ${JOB_COLUMNS}
-     )
+     )${stopCtes}
      SELECT
        row_to_json(m.*) AS saved_inbound,
        row_to_json(j.*) AS processing_job,
@@ -160,6 +192,7 @@ async function storeInboundClaim({
       sourceCreatedAt,
       incoming?.replyToProviderMessageId || null,
       incoming?.isForwarded === true,
+      ...(stopScope ? [stopScope] : []),
     ]
   );
 

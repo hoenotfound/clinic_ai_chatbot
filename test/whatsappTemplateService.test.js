@@ -586,5 +586,21 @@ test("template transport passes the template category into the final policy chec
   assert.deepEqual(receivedOptions, { category: "MARKETING" });
   assert.equal(result.success, false);
   assert.equal(result.policyCode, "marketing_opted_out");
+
+  const scoped = await templateService.sendApprovedTemplate(
+    { id: 7, channel: "whatsapp", whatsapp_number: "60123456789" },
+    {
+      templateName: "ns_fu_pricing_graphic",
+      languageCode: "zh_CN",
+      templateCategory: "MARKETING",
+      treatmentInterest: "骨盆调理",
+      fetchImpl: async () => assert.fail("provider must not be called"),
+    }
+  );
+  assert.deepEqual(receivedOptions, {
+    category: "MARKETING", treatmentInterest: "骨盆调理",
+  });
+  assert.equal(scoped.success, false);
+  assert.equal(scoped.policyCode, "marketing_opted_out");
 });
 

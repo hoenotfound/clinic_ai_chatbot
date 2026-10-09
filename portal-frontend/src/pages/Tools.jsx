@@ -2530,8 +2530,9 @@ function FollowUpTool({
               <div>
                 <h3 className="text-sm font-semibold">WhatsApp ad leads: extended free-entry follow-ups</h3>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                  Up to 7 days for qualifying Click-to-WhatsApp conversations. Only use an approved, static MARKETING template.
-                  Sends are blocked without Meta free-entry billing evidence and recorded marketing consent.
+                  Up to 7 days for verified Click-to-WhatsApp conversations. Use approved MARKETING templates;
+                  supported service and promotion templates fill treatment names and clinic image headers automatically.
+                  Sends require recorded promotional consent and Meta free-entry billing evidence.
                 </p>
               </div>
               <Switch
@@ -2685,9 +2686,11 @@ function FollowUpTool({
                 <div>
                   <p className="text-xs font-semibold">Treatment-specific approved templates</p>
                   <p className="text-[11px] text-[var(--color-text-muted)]">
-                    Optional overrides for individual days and treatments (including 3D + 9D).
-                    Use an HTTPS media URL for an approved IMAGE/VIDEO header template.
-                    Private R2 keys are not directly supported.
+                    Configure a different approved template per day for all treatments, or override a specific treatment.
+                    For ns_fu1_service_checkin, the treatment name is filled automatically. For ns_fu_pricing_graphic
+                    and ns_fu_meridian_gift, leave media fields blank: the active matching clinic promotion image
+                    and approved template variable are selected automatically. Other IMAGE/VIDEO templates may
+                    use trusted HTTPS URLs or existing shared R2 media keys.
                   </p>
                 </div>
                 <button type="button" aria-label="Add treatment follow-up template"
@@ -2699,7 +2702,7 @@ function FollowUpTool({
                       templateRules: [
                         ...(current.freeEntry?.templateRules || []),
                         { slotHours: current.freeEntry?.slotsHours?.[0] || 26,
-                          serviceName: services?.[0]?.name || "",
+                          serviceName: "*",
                           templateName: "", mediaUrl: "", mediaKey: "", videoCodecVerified: false }
                       ],
                     },
@@ -2729,6 +2732,7 @@ function FollowUpTool({
                         }
                       }))}>
                       <option value="">Select treatment</option>
+                      <option value="*">All treatments (day-specific default)</option>
                       {(services || []).map((service) =>
                         <option key={service.name} value={service.name}>{service.name}</option>)}
                     </select>
@@ -2789,6 +2793,9 @@ function FollowUpTool({
               ))}
             </div>
             <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+              Template names are never repeated within a verified period (maximum three sends). If pelvic Package A/B
+              is unclear, the pricing-image template is skipped instead of guessing. An offer without the advertised
+              free 1-hour meridian massage cannot use ns_fu_meridian_gift.
               Times are measured from the first qualifying business reply. The server kill switch
               WHATSAPP_FEP_FOLLOWUPS_ENABLED must also be true. No paid fallback is used.
               Unknown eligibility, closed windows, quiet hours, replies, bookings and opt-outs stop or skip sends.

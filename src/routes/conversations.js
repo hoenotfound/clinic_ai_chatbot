@@ -25,6 +25,7 @@ const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
+const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
 const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
@@ -1272,8 +1273,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (["IMAGE", "VIDEO"].includes(mediaFormat) && !req.file && !mediaSelectionId) {
       return res.status(400).json({ error: `Choose an ${mediaFormat.toLowerCase()} to send this template.` });
     }
+    let selectedClinicMedia = null;
     try {
-      whatsappTemplateMedia.validateTemplateMediaChoice(
+      selectedClinicMedia = whatsappTemplateMedia.validateTemplateMediaChoice(
         resolved.template.name, languageCode, mediaSelectionId, values
       );
     } catch (error) {
@@ -1303,6 +1305,33 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       });
     }
 
+    // Derive the treatment only from configured clinic assets or the exact
+    // approved service-label variable. Browser text cannot assert its own
+    // broader Marketing permission.
+    let templateTreatmentInterest = null;
+    if (resolved.template.category === "MARKETING" && mediaSelectionId) {
+      // Restricted media templates are already verified against the current
+      // clinic config above. Reuse that trusted selection instead of making
+      // a second lookup, or relying on a browser-supplied treatment.
+      templateTreatmentInterest = selectedClinicMedia?.serviceName || null;
+    }
+    if (resolved.template.category === "MARKETING" &&
+        resolved.template.name === "ns_fu1_service_checkin") {
+      const suppliedLabel = String(values?.body?.[0] || "").trim();
+      const matches = (clinicConfig.services || []).filter((service) =>
+        whatsappTemplateMedia.expectedMediaValue({
+          serviceName: service.name,
+        }, languageCode) === suppliedLabel
+      );
+      if (matches.length !== 1) {
+        return res.status(400).json({
+          error: "This service follow-up must use one configured treatment name.",
+          code: "template_treatment_unverified",
+        });
+      }
+      templateTreatmentInterest = matches[0].name;
+    }
+
     const marketingConsentConfirmed =
       resolved.template.category !== "MARKETING" ||
       (req.body?.marketingConsentConfirmed === true || req.body?.marketingConsentConfirmed === "true");
@@ -1318,6 +1347,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     try {
       templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
         category: resolved.template.category,
+        treatmentInterest: templateTreatmentInterest,
       });
 
       if (
@@ -1340,6 +1370,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
           await whatsappPolicy.recordMarketingOptIn(contact.id);
           templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
             category: resolved.template.category,
+            treatmentInterest: templateTreatmentInterest,
           });
         }
       }
@@ -1511,6 +1542,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       components: metadata.components,
       expectedOptInAt: metadata.consentOptInAt,
       templateCategory: metadata.category,
+      treatmentInterest: templateTreatmentInterest,
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";

@@ -15,6 +15,25 @@ test("detects common WhatsApp opt-out requests in supported chat languages", () 
     "jangan mesej saya",
     "tak nak whatsapp",
     "Stop promotions",
+    "不要再发优惠",
+    "停止推广消息",
+    "jangan hantar promosi",
+    "tak nak promosi",
+    "Please stop sending me promotions",
+    "Don't send me offers",
+    "Stop marketing messages",
+    "Unsubscribe from marketing",
+    "我不想再收到优惠消息",
+    "saya tak nak promosi",
+    "Please stop sending me promotions, thanks",
+    "Can you please stop all these promotional offers?",
+    "Please unsubscribe me from marketing updates, thank you.",
+    "I don't want any more offers",
+    "不要再给我发优惠了",
+    "优惠信息不要再发给我了，谢谢",
+    "请不要再发优惠活动给我，谢谢",
+    "Saya tak nak terima promosi lagi, terima kasih",
+    "Jangan hantar promosi lagi ya",
     "Stop promo",
     "Unsubscribe from promos",
     "Unsubcribe from Promos",
@@ -33,6 +52,10 @@ test("does not treat normal customer messages as opt-out requests", () => {
     "stop by at 3pm can?",
     "jangan risau",
     "可以联系我吗",
+    "Any offers for 3D treatment?",
+    "Do you still have promotions?",
+    "我想了解优惠配套",
+    "Does the promotion stop today?",
   ];
 
   for (const text of normalMessages) {
@@ -344,4 +367,41 @@ test("Messenger and Instagram marketing opt-outs block pricing even after a late
       social_opt_out_at:new Date("2026-10-08T07:00:00Z")},
       now,{purpose:"marketing"}).allowed,false);
   }
+});
+
+test("multilingual STOP promotions only revokes marketing, not service replies", () => {
+  for (const text of ["Stop promotions","不要再发优惠","停止推广消息","jangan hantar promosi","tak nak promosi"]) {
+    assert.equal(policy.classifyOptOutText(text), "marketing", text);
+  }
+  assert.equal(policy.classifyOptOutText("Neutro Sense TCM 有优惠可以 WhatsApp 发给我"), null);
+});
+
+test("MARKETING templates require verified CRM consent and a real consent event; UTILITY does not", async (t) => {
+  const original=pool.query;
+  t.after(()=>{pool.query=original;});
+  const queries=[];
+  let leadConsent="unknown", hasEvidence=false;
+  pool.query=async (sql) => {
+    queries.push(sql);
+    if (sql.includes("FROM leads l")) return {rows:[{
+      marketing_consent:leadConsent,has_evidence:hasEvidence,
+    }]};
+    return {rows:[{
+      id:42,channel:"whatsapp",whatsapp_number:"60123456789",
+      whatsapp_opt_in_at:new Date("2026-10-09T01:00:00Z"),
+      whatsapp_opt_in_source:"customer message",
+      whatsapp_opt_out_at:null,whatsapp_marketing_opt_out_at:null,
+    }]};
+  };
+  const contact={id:42,channel:"whatsapp"};
+  assert.equal((await policy.checkTemplateAllowed(contact,{category:"UTILITY"})).allowed,true);
+  assert.equal(queries.length,1);
+  const missing=await policy.checkTemplateAllowed(contact,{category:"MARKETING"});
+  assert.equal(missing.allowed,false);
+  assert.equal(missing.code,"marketing_consent_unverified");
+  leadConsent="opted_in";
+  assert.equal((await policy.checkTemplateAllowed(contact,{category:"MARKETING"})).allowed,false,
+    "CRM checkbox alone is not verification");
+  hasEvidence=true;
+  assert.equal((await policy.checkTemplateAllowed(contact,{category:"MARKETING"})).allowed,true);
 });

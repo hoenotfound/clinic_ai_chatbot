@@ -28,6 +28,13 @@ const GLOBAL_OPT_OUT_PATTERNS = [
 const MARKETING_OPT_OUT_PATTERNS = [
   /^stop (?:promos?|promotions?)$/i,
   /^unsub(?:scribe|cribe) from (?:promos?|promotions?)$/i,
+  /^(?:please\s+)?(?:stop|don't|do not)\s+(?:(?:sending?|send)\s+(?:me\s+)?)?(?:any\s+)?(?:marketing|promotional|promotions?|promos?|offers?)(?:\s+(?:messages?|updates?|notifications?))?$/i,
+  /^(?:please\s+)?(?:unsubscribe|opt out)\s+(?:me\s+)?(?:from\s+)?(?:marketing|promotions?|offers?)$/i,
+  /^(?:我)?(?:不想再|不想|不要再|不要|别再|别)(?:收(?:到)?|接收|发|发送|通知)(?:我)?(?:任何)?(?:优惠|優惠|促销|促銷|营销|營銷|推广|推廣)(?:的)?(?:信息|消息|通知)?(?:了)?$/,
+  /^(?:saya\s+)?(?:tak\s+mahu|tak\s+nak|tidak\s+mahu)\s+(?:terima\s+)?(?:promosi|tawaran)$/i,
+  /^(?:不要|别|請不要|请不要)(?:再)?(?:发|發|发送|發送|通知)(?:我)?(?:优惠|優惠|促销|促銷|推广|推廣)(?:了)?$/,
+  /^(?:停止|取消)(?:优惠|優惠|促销|促銷|推广|推廣)(?:通知|消息)?$/,
+  /^(?:jangan (?:hantar|kirim|mesej) (?:saya )?(?:promosi|tawaran)|tak nak (?:promosi|tawaran))$/i,
 ];
 
 function normalizeText(value) {
@@ -40,7 +47,15 @@ function normalizeText(value) {
 function classifyOptOutText(value) {
   const text = normalizeText(value);
   if (!text) return null;
-  if (MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
+  // Free-form opt-outs often contain politeness, punctuation or explanatory
+  // clauses. Restrict these to a clear refusal AND a promotional subject.
+  // An ordinary enquiry mentioning "offers" must never be classified as STOP.
+  const refusePromotion =
+    /(?:stop|don't|do not|no more|unsubscribe|opt out|remove me|not interested in|avoid sending)\b.{0,100}\b(?:promo(?:tion)?s?|offers?|marketing|discounts?|deals?|ads?)\b/i.test(text) ||
+    /(?:不要|别|不想|不需要|停止|取消|不用|无需).{0,45}(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣|宣传|宣傳)/.test(text) ||
+    /(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣).{0,28}(?:不要|别发|別發|停止|取消|不用|不需要|不想)/.test(text) ||
+    /(?:jangan|tak nak|tak mahu|tidak mahu|berhenti|hentikan|tidak ingin).{0,90}(?:promosi|tawaran|iklan|pemasaran)/i.test(text);
+  if (refusePromotion || MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
     return "marketing";
   }
   if (GLOBAL_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
@@ -291,12 +306,13 @@ async function checkFreeformAllowed(
   });
 }
 
-async function recordOptOut(contactId, source = "customer_message") {
+async function recordOptOut(contactId, source = "customer_message", messageAt = null) {
   const result = await pool.query(
-    `UPDATE contacts
-     SET whatsapp_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_opt_out_at END,
+    `WITH changed AS (
+       UPDATE contacts
+     SET whatsapp_opt_out_at = CASE WHEN channel = 'whatsapp' THEN COALESCE($3::timestamptz, now()) ELSE whatsapp_opt_out_at END,
          whatsapp_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_opt_out_source END,
-         whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
+         whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN COALESCE($3::timestamptz, now()) ELSE whatsapp_marketing_opt_out_at END,
          whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
          whatsapp_opt_in_at = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_opt_in_at END,
          whatsapp_opt_in_source = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_opt_in_source END,
@@ -306,23 +322,40 @@ async function recordOptOut(contactId, source = "customer_message") {
          social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
      WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
-     RETURNING *`,
-    [contactId, source]
+       AND ($3::timestamptz IS NULL OR channel <> 'whatsapp'
+            OR whatsapp_opt_in_at IS NULL OR whatsapp_opt_in_at <= $3::timestamptz)
+     RETURNING *
+     ), synced_leads AS (
+       UPDATE leads SET marketing_consent='opted_out', updated_at=now()
+       WHERE contact_id IN (SELECT id FROM changed WHERE channel='whatsapp')
+       RETURNING id
+     )
+     SELECT * FROM changed`,
+    [contactId, source, messageAt]
   );
   return result.rows[0] || null;
 }
 
-async function recordMarketingOptOut(contactId, source = "customer_message") {
+async function recordMarketingOptOut(contactId, source = "customer_message", messageAt = null) {
   const result = await pool.query(
-    `UPDATE contacts
-     SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
+    `WITH changed AS (
+       UPDATE contacts
+     SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN COALESCE($3::timestamptz, now()) ELSE whatsapp_marketing_opt_out_at END,
          whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
          social_marketing_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN now() ELSE social_marketing_opt_out_at END,
          social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
      WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
-     RETURNING *`,
-    [contactId, source]
+       AND ($3::timestamptz IS NULL OR channel <> 'whatsapp'
+            OR whatsapp_opt_in_at IS NULL OR whatsapp_opt_in_at <= $3::timestamptz)
+     RETURNING *
+     ), synced_leads AS (
+       UPDATE leads SET marketing_consent='opted_out', updated_at=now()
+       WHERE contact_id IN (SELECT id FROM changed WHERE channel='whatsapp')
+       RETURNING id
+     )
+     SELECT * FROM changed`,
+    [contactId, source, messageAt]
   );
   return result.rows[0] || null;
 }
@@ -363,7 +396,7 @@ async function recordOptIn(contactId, source) {
   return result.rows[0] || null;
 }
 
-async function checkTemplateAllowed(contact, { category = null } = {}) {
+async function checkTemplateAllowed(contact, { category = null, treatmentInterest = null } = {}) {
   if ((contact?.channel || "whatsapp") !== "whatsapp") {
     return policyError(
       "wrong_channel",
@@ -406,6 +439,57 @@ async function checkTemplateAllowed(contact, { category = null } = {}) {
       "WhatsApp marketing template blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
       { state }
     );
+  }
+
+  if (String(category || "").trim().toUpperCase() === "MARKETING") {
+    // A general WhatsApp service opt-in does not permit promotional templates.
+    // Require the current CRM lead AND a durable consent audit event.
+    const intendedService = typeof treatmentInterest === "string" &&
+      treatmentInterest.trim() ? treatmentInterest.trim() : null;
+    const consent = await pool.query(
+      `SELECT l.marketing_consent,
+         EXISTS (
+           SELECT 1 FROM whatsapp_marketing_consent_events e
+           WHERE e.contact_id=$1
+             AND e.created_at >= COALESCE($2::timestamptz, '-infinity'::timestamptz)
+             AND (
+               (
+                 -- Actual customer-message permission is treatment-scoped.
+                 -- The SAME-LEAD case must also match the treatment, not just
+                 -- the inherited-lead case. Missing service is not carte blanche.
+                 e.message_id IS NOT NULL
+                 AND e.consent_category='MARKETING'
+                 AND e.consent_scope='treatment_followups_and_related_offers'
+                 AND e.consented_at=$2::timestamptz
+                 AND NULLIF(BTRIM(e.consent_service),'') IS NOT NULL
+                 AND NULLIF(BTRIM(l.treatment_interest),'') IS NOT NULL
+                 AND LOWER(BTRIM(e.consent_service))=LOWER(BTRIM(l.treatment_interest))
+                 AND ($3::text IS NULL OR
+                   LOWER(BTRIM(e.consent_service))=LOWER(BTRIM($3::text)))
+               )
+               OR (
+                 -- Staff-verified marketing permission is explicitly recorded
+                 -- for the current lead. It is not silently inherited.
+                 e.message_id IS NULL
+                 AND e.lead_id=l.id
+                 AND NULLIF(BTRIM(e.source),'') IS NOT NULL
+                 AND e.consent_scope IS NULL
+               )
+             )
+         ) AS has_evidence
+       FROM leads l
+       WHERE l.contact_id=$1
+       ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1`,
+      [contactId, state.whatsapp_opt_in_at, intendedService]
+    );
+    const current = consent.rows[0];
+    if (current?.marketing_consent !== "opted_in" || current.has_evidence !== true) {
+      return policyError(
+        "marketing_consent_unverified",
+        "WhatsApp promotional templates require a verified Marketing consent event for the current lead. Record the customer's explicit permission and its source first.",
+        { state }
+      );
+    }
   }
 
   return { allowed: true, code: null, message: null, state };

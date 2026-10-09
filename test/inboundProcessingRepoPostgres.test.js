@@ -25,7 +25,21 @@ test(
       await client.query(`SET search_path TO ${schemaName}`);
       await client.query(`
         CREATE TABLE contacts (
-          id SERIAL PRIMARY KEY
+          id SERIAL PRIMARY KEY,
+          channel text DEFAULT 'whatsapp',
+          whatsapp_opt_in_at timestamptz,
+          whatsapp_opt_in_source text,
+          whatsapp_opt_out_at timestamptz,
+          whatsapp_opt_out_source text,
+          whatsapp_marketing_opt_out_at timestamptz,
+          whatsapp_marketing_opt_out_source text,
+          updated_at timestamptz DEFAULT now()
+        );
+        CREATE TABLE leads (
+          id SERIAL PRIMARY KEY,
+          contact_id integer REFERENCES contacts(id),
+          marketing_consent text DEFAULT 'unknown',
+          updated_at timestamptz DEFAULT now()
         );
         CREATE TABLE messages (
           id SERIAL PRIMARY KEY,
@@ -90,6 +104,35 @@ test(
           (SELECT COUNT(*)::int FROM inbound_processing_jobs) AS jobs
       `);
       assert.deepEqual(counts.rows[0], { messages: 1, jobs: 1 });
+
+      // A real STOP webhook must update consent AND CRM status atomically.
+      // A duplicate STOP must not revoke a newer legitimate opt-in.
+      await client.query(
+        "UPDATE contacts SET whatsapp_opt_in_at=now()-interval '2 hours',whatsapp_opt_in_source='verified' WHERE id=$1",
+        [contactId]
+      );
+      await client.query(
+        "INSERT INTO leads(contact_id,marketing_consent) VALUES($1,'opted_in')",
+        [contactId]
+      );
+      const stopIncoming = {
+        ...incoming, id:"wamid-durable-marketing-stop",text:"Stop promotions",
+        timestamp:Math.floor(Date.now()/1000),
+      };
+      const stop = await inboundProcessingRepo.storeInboundClaim({
+        contactId,content:stopIncoming.text,storedMessageId:stopIncoming.id,
+        channel:"whatsapp",incoming:stopIncoming,optOutScope:"marketing",
+      },client);
+      assert.ok(stop?.savedInbound?.id);
+      const stopped = (await client.query(
+        "SELECT whatsapp_marketing_opt_out_at FROM contacts WHERE id=$1",
+        [contactId]
+      )).rows[0];
+      assert.ok(stopped.whatsapp_marketing_opt_out_at);
+      assert.equal((await client.query(
+        "SELECT marketing_consent FROM leads WHERE contact_id=$1",
+        [contactId])).rows[0].marketing_consent,"opted_out");
+      await inboundProcessingRepo.markCompletedByMessageId(stop.savedInbound.id,client);
 
       await inboundProcessingRepo.markPrepared(
         first.savedInbound.id,

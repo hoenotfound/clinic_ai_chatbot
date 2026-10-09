@@ -3,6 +3,8 @@ const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const freeEntryReferralsRepo = require("../db/whatsappFreeEntryReferralsRepo");
+const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
+const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
@@ -44,6 +46,7 @@ function createInboundMessageClaimService({
   attribution = leadAttributionService,
   processing = inboundProcessingRepo,
   freeEntryReferrals = freeEntryReferralsRepo,
+  inboundConsent = whatsappInboundConsentRepo,
   events = realtimeEvents,
   policy = whatsappPolicy,
   reengagement = leadReengagementAlertService,
@@ -85,16 +88,21 @@ function createInboundMessageClaimService({
       const source = incoming?.buttonPayload
         ? "customer_quick_reply"
         : "customer_message";
+      const originalStopAt = channel === "whatsapp" ?
+        (incoming?.timestamp && Number.isFinite(Number(incoming.timestamp))
+          ? new Date(Math.min(Date.now(), Number(incoming.timestamp) * 1000)).toISOString()
+          : savedInbound.created_at || null) : null;
       try {
         if (optOutScope === "marketing") {
-          await policy.recordMarketingOptOut(contact.id, source);
+          await policy.recordMarketingOptOut(contact.id, source, originalStopAt);
         } else {
-          await policy.recordOptOut(contact.id, source);
+          await policy.recordOptOut(contact.id, source, originalStopAt);
         }
       } catch (err) {
-        // Even when the consent-state write has a transient failure, fail
-        // closed for this turn and never continue into an outbound AI reply.
+        // Do not complete an unpersisted STOP. The recovery worker must retry
+        // until it is recorded or explicitly surfaced for staff review.
         console.error(`Failed to record ${channel} opt-out for contact ${contact.id}:`, err);
+        throw err;
       }
 
       try {
@@ -139,6 +147,49 @@ function createInboundMessageClaimService({
       lead = leadOutcome?.lead || null;
     } catch (err) {
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
+    }
+
+    // Capture only customer-authored, explicit promotional permission. This is
+    // NOT inferred from a CTWA ad click, ad greeting, or simple price enquiry.
+    // The repository reads the saved inbound message again and writes its
+    // timestamp/provider ID and scope atomically with contact+CRM permission.
+    // Existing 24-hour replies must continue if consent storage is unavailable;
+    // in that case extended promotional templates stay blocked (fail closed).
+    if (channel === "whatsapp" && incoming?.mediaType == null && lead?.id &&
+        explicitPromotionConsent(incoming?.text, {
+          businessName: config.clinicName || config.businessName,
+        })) {
+      try {
+        await inboundConsent.recordFromInbound({
+          contactId: contact.id,
+          messageId: savedInbound.id,
+          leadId: lead.id,
+          businessName: config.clinicName || config.businessName,
+          isClickToWhatsApp: incoming.attribution?.source === "meta_ads" &&
+            String(incoming.attribution?.sourceType || "").toLowerCase() === "ad",
+        });
+      } catch (err) {
+        console.error(`Could not persist explicit WhatsApp consent for inbound message ${savedInbound.id}:`, err);
+      }
+    }
+
+    // When a customer returns for the SAME treatment, an earlier explicit
+    // consent can apply to the new CRM journey. Do not copy across unrelated
+    // treatments, ambiguous enquiries, global STOP or marketing opt-outs.
+    if (channel === "whatsapp" && leadOutcome?.created === true && lead?.id) {
+      try {
+        await inboundConsent.inheritForNewLead?.({
+          contactId: contact.id,
+          leadId: lead.id,
+          inboundText: incoming.text,
+          adName: incoming.attribution?.adName || incoming.attribution?.headline,
+          referralTreatment: incoming.attribution?.treatmentInterest || null,
+        });
+      } catch (err) {
+        // A failed inheritance leaves the CRM at 'unknown' and the sending
+        // policy fails closed. It must never delay the ordinary 24-hour reply.
+        console.error("Could not verify inherited WhatsApp marketing consent:", err);
+      }
     }
 
     // Telegram re-engagement is operationally useful but never part of the
@@ -315,6 +366,7 @@ function createInboundMessageClaimService({
       storedMessageId: storedInboundId,
       channel,
       incoming,
+      optOutScope: channel === "whatsapp" ? customerOptOutScope(incoming) : null,
     });
 
     // A resolved message_edit job is complete only after the normal customer
@@ -363,7 +415,13 @@ function createInboundMessageClaimService({
     // Opt-outs never enter the outbound-processing lease; they are completed
     // directly by prepareStoredInbound with no automated response.
     if (customerOptOutScope(incoming)) {
-      return prepareStoredInbound(durableClaim);
+      try {
+        return await prepareStoredInbound(durableClaim);
+      } catch (err) {
+        await processing.markFailed(durableClaim.processingJob?.id, err).catch((markErr) =>
+          console.error("Failed to mark STOP persistence for recovery:", markErr));
+        throw err;
+      }
     }
 
     let processingJob = durableClaim.processingJob;

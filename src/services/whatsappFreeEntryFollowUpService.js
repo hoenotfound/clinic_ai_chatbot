@@ -4,12 +4,15 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const clinicConfig = require("../config/clinicConfig");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const whatsappTemplates = require("./whatsappTemplateService");
+const whatsapp = require("./whatsappService");
+const promoImagesRepo = require("../db/promoImagesRepo");
+const mediaCache = require("./whatsappFreeEntryMediaCache");
 const messagesRepo = require("../db/messagesRepo");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
-const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateApprovedMedia, validateTemplateRules, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
+const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateApprovedMedia, validateTemplateRules, enrichAutomatedTemplateSpec, prepareAutoPromotionMedia, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
 const {
   freeEntryEnabled,
   eligibleFreeEntryTime,
@@ -309,7 +312,10 @@ async function finish(attemptId, status, values = {}) {
 async function processCandidate(candidate, active, template, now = new Date(), explicitSpec = null) {
   const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
-  const spec = explicitSpec || selectTemplateSpec(candidate, slotHours, active);
+  const spec = explicitSpec || enrichAutomatedTemplateSpec(
+    selectTemplateSpec(candidate, slotHours, active), template
+  );
+  if (!spec) return "unsupported_or_ambiguous_template_media";
   if (candidate.used_template_names?.includes(spec.templateName)) return "template_already_used";
   if (!await validateApprovedMedia(template, spec)) return "media_validation_failed";
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
@@ -321,17 +327,51 @@ async function processCandidate(candidate, active, template, now = new Date(), e
   let message = null;
   let acceptedWamid = null;
   try {
-    // This is a fixed, already approved MARKETING template. No AI-authored
-    // content or arbitrary variable substitution is permitted in automation.
-    const built = buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates);
+    // Every value comes from a configured service/active clinic promotion;
+    // never from AI-generated text or arbitrary customer-supplied URLs.
+    // Upload image assets to Meta using the already validated public-config
+    // clinic image bytes. No server-side video compression is performed.
+    let uploadedImageId = null;
+    let uploadedImageMime = null;
+    if (spec.autoPromoImageId) {
+      const metadata = await promoImagesRepo.getPublicImageMetadata(spec.autoPromoImageId);
+      if (!["image/jpeg","image/png"].includes(metadata?.mime_type)) {
+        await finish(attemptId, "cancelled", { error: "Configured promotion image is no longer public" });
+        return "media_unavailable";
+      }
+      uploadedImageMime = metadata.mime_type;
+      uploadedImageId = mediaCache.get(spec.autoPromoImageId, uploadedImageMime);
+      if (!uploadedImageId) {
+        const prepared = await prepareAutoPromotionMedia(spec);
+        if (!prepared || prepared.mimeType !== uploadedImageMime) {
+          await finish(attemptId, "cancelled", { error: "Configured promotion image no longer available or valid" });
+          return "media_unavailable";
+        }
+        uploadedImageId = await whatsapp.uploadMedia(
+          prepared.buffer, prepared.mimeType, prepared.filename
+        );
+        if (!uploadedImageId) {
+          await finish(attemptId, "cancelled", { error: "Meta refused the promotion image upload" });
+          return "media_upload_failed";
+        }
+        mediaCache.put(spec.autoPromoImageId, uploadedImageMime, uploadedImageId);
+      }
+    }
+    const built = buildStaticMarketingTemplate(
+      template, materializeTemplateMediaSpec(spec), whatsappTemplates,
+      { mediaId: uploadedImageId }
+    );
     if (!built) {
       await finish(attemptId, "cancelled", { error: "Unapproved or invalid media/template pairing" });
       return "invalid_template";
     }
     const metadata = {
       name: template.name, language: template.language, category: "MARKETING",
-      components: built.components, values: { header: [], body: [] },
-      sourceService: spec.serviceName, mediaKey: spec.mediaKey || null, mediaUrl: spec.mediaKey ? null : spec.mediaUrl || null,
+      components: built.components, values: built.values,
+      sourceService: spec.identifiedTreatment || spec.serviceName,
+      mediaKey: spec.mediaKey || null,
+      mediaUrl: spec.autoPromoImageId ? "/promo-images/" + spec.autoPromoImageId :
+        spec.mediaKey ? null : spec.mediaUrl || null,
       templateSignature: whatsappTemplates.templateSignature(template),
       automatedFreeEntry: true, slotHours,
       marketingConsentConfirmed: true,
@@ -340,11 +380,12 @@ async function processCandidate(candidate, active, template, now = new Date(), e
     message = await messagesRepo.saveMessage(
       candidate.contact_id, "assistant", built.preview,
       null, null,
-      spec.mediaKey ? null : (spec.mediaUrl || null),
-      null, template.header?.format === "VIDEO" ? "video/mp4" :
+      spec.autoPromoImageId ? "/promo-images/" + spec.autoPromoImageId :
+        spec.mediaKey ? null : (spec.mediaUrl || null),
+      null, uploadedImageMime || (template.header?.format === "VIDEO" ? "video/mp4" :
         template.header?.format === "IMAGE" ?
           (String(spec.mediaKey || spec.mediaUrl || "").toLowerCase().includes(".png") ?
-            "image/png" : "image/jpeg") : null,
+            "image/png" : "image/jpeg") : null),
       { mediaKey: spec.mediaKey || null, whatsappTemplate: metadata,
         isAutomatedFollowUp: true,
         initialDeliveryStatus: "unknown",
@@ -378,12 +419,17 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       }) ||
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
       !(() => {
-        const current = selectTemplateSpec(fresh, slotHours, liveActive);
+        const selected = selectTemplateSpec(fresh, slotHours, liveActive);
+        const current = selected && enrichAutomatedTemplateSpec(
+          { ...selected, language: template.language }, template
+        );
         return current && current.templateName === spec.templateName &&
           current.mediaKey === spec.mediaKey &&
           current.mediaUrl === spec.mediaUrl &&
           current.serviceName === spec.serviceName &&
-          (current.language === spec.language ||
+          current.autoPromoImageId === spec.autoPromoImageId &&
+          current.bodyValue === spec.bodyValue &&
+          (selected.language === spec.language ||
             spec.language === liveActive.fallbackLanguage);
       })()) {
       await messagesRepo.setDeliveryStatusById(message.id, "cancelled", "No longer eligible");
@@ -391,7 +437,8 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       return "cancelled";
     }
     const readyToSend = buildStaticMarketingTemplate(
-      template, materializeTemplateMediaSpec(spec), whatsappTemplates
+      template, materializeTemplateMediaSpec(spec), whatsappTemplates,
+      { mediaId: uploadedImageId }
     );
     if (!readyToSend || !await validateApprovedMedia(template, spec)) {
       await messagesRepo.setDeliveryStatusById(message.id, "cancelled",
@@ -405,6 +452,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         whatsapp_number: candidate.whatsapp_number },
       { templateName: template.name, languageCode: template.language,
         templateCategory: "MARKETING", components: readyToSend.components,
+        treatmentInterest: spec.identifiedTreatment || null,
         expectedOptInAt: fresh.whatsapp_opt_in_at }
     );
     if (response?.wamid) {
@@ -425,6 +473,9 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       return "accepted";
     }
     const status = response?.unknown ? "unknown" : "failed";
+    // An explicit Meta rejection can indicate an invalid/expired media ID.
+    // Force a fresh upload next time; never retry this ambiguous slot.
+    if (spec.autoPromoImageId && status === "failed") mediaCache.forget(spec.autoPromoImageId);
     await messagesRepo.setDeliveryStatusById(
       message.id, status, response?.error || "Template delivery not confirmed"
     );
@@ -479,7 +530,9 @@ async function run({ now = new Date() } = {}) {
       );
       const template = matches(preferred?.language) ||
         matches(active.fallbackLanguage);
-      const spec = template ? { ...preferred, language: template.language } : preferred;
+      const spec = template && preferred
+        ? enrichAutomatedTemplateSpec({ ...preferred, language: template.language }, template)
+        : null;
       if (template && candidate.used_template_names?.includes(template.name)) {
         result.skipped++;
         await freeEntryReport.recordSkip(candidate.contact_id,
@@ -487,7 +540,9 @@ async function run({ now = new Date() } = {}) {
           .catch(() => {});
         continue;
       }
-      if (!template || !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates) ||
+      if (!template || !spec ||
+          !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates,
+            { allowUnuploadedMedia: true }) ||
           !await validateApprovedMedia(template, spec)) {
         result.skipped++;
         const reason = template ? "unsupported_or_unavailable_media" : "approved_language_variant_missing";

@@ -460,6 +460,7 @@ async function sendApprovedTemplate(
     components = undefined,
     expectedOptInAt = null,
     templateCategory = null,
+    treatmentInterest = null,
     fetchImpl = global.fetch,
     timeoutMs = DEFAULT_META_REQUEST_TIMEOUT_MS,
   } = {}
@@ -478,6 +479,7 @@ async function sendApprovedTemplate(
   try {
     policy = await whatsappPolicy.checkTemplateAllowed(contact, {
       category: templateCategory,
+      ...(treatmentInterest ? { treatmentInterest } : {}),
     });
   } catch (err) {
     console.error("Failed to verify WhatsApp template policy state:", err);
