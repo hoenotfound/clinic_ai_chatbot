@@ -76,6 +76,40 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
       assert.equal((await consent.recordFromInbound(opts, { database,config })).recorded,false,
         "same Meta message must not refresh permission");
 
+      // The final provider policy must enforce actual consent scope, even
+      // while the customer stays on the SAME CRM lead.
+      await client.query("UPDATE leads SET treatment_interest='骨盆调理' WHERE id=2");
+      const policy = require("../src/services/whatsappPolicyService");
+      const { pool } = require("../src/db/db");
+      const originalQuery = pool.query;
+      pool.query = client.query.bind(client);
+      const contact = {id:1,channel:"whatsapp"};
+      try {
+        assert.equal((await policy.checkTemplateAllowed(contact, {
+          category:"MARKETING",treatmentInterest:"骨盆调理"
+        })).allowed,true,"consented Pelvis promotions are allowed");
+        const wrongTemplate = await policy.checkTemplateAllowed(contact, {
+          category:"MARKETING",treatmentInterest:"9D 逆龄抗衰"
+        });
+        assert.equal(wrongTemplate.allowed,false,"a 9D template cannot reuse Pelvis consent");
+        assert.equal(wrongTemplate.code,"marketing_consent_unverified");
+        await client.query("UPDATE leads SET treatment_interest='9D 逆龄抗衰' WHERE id=2");
+        assert.equal((await policy.checkTemplateAllowed(contact, {
+          category:"MARKETING"
+        })).allowed,false,"changing interest on the same lead invalidates scoped Pelvis opt-in");
+        await client.query("UPDATE leads SET treatment_interest='骨盆调理' WHERE id=2");
+        await client.query("UPDATE whatsapp_marketing_consent_events SET consent_service=NULL WHERE message_id=3");
+        assert.equal((await policy.checkTemplateAllowed(contact, {
+          category:"MARKETING"
+        })).allowed,false,"unknown treatment consent must not become blanket authorization");
+        await client.query("UPDATE whatsapp_marketing_consent_events SET consent_service='骨盆调理' WHERE message_id=3");
+        assert.equal((await policy.checkTemplateAllowed(contact,{
+          category:"UTILITY"
+        })).allowed,true,"service templates are unaffected by the Marketing scope check");
+      } finally {
+        pool.query = originalQuery;
+      }
+
       // A genuinely new CRM lead may reuse this same-treatment customer opt-in;
       // an unrelated treatment can never inherit Pelvis-specific permission.
       await client.query("INSERT INTO leads(id,contact_id) VALUES(4,1),(5,1)");
@@ -91,9 +125,6 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
       assert.equal((await client.query("SELECT marketing_consent FROM leads WHERE id=5")).rows[0].marketing_consent,"unknown");
 
       // Exercise the real opt-out SQL as well, rather than mocking it.
-      const policy = require("../src/services/whatsappPolicyService");
-      const { pool } = require("../src/db/db");
-      const originalQuery = pool.query;
       pool.query = client.query.bind(client);
       try {
         await policy.recordMarketingOptOut(1, "customer_message");
