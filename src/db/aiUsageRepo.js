@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { estimateAiUsage } = require("../services/aiCostEstimator");
 
 function safeCount(value) {
   const parsed = Number(value);
@@ -23,6 +24,10 @@ async function recordAiUsage(event, database = pool) {
   ]);
   const responseDisposition = acceptedDispositions.has(event?.responseDisposition)
     ? event.responseDisposition : null;
+  const cost = estimateAiUsage(event);
+  const validId = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
+  const contactId = validId(event?.contactId);
+  const leadId = validId(event?.leadId);
   const latencyMs = event?.latencyMs == null
     ? null
     : Math.max(0, Math.min(3_600_000, Math.round(Number(event.latencyMs) || 0)));
@@ -42,8 +47,12 @@ async function recordAiUsage(event, database = pool) {
        latency_ms,
        cache_metadata_present,
        prompt_prefix_hash,
-       response_disposition
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+       response_disposition,
+       contact_id,
+       lead_id,
+       estimated_cost_usd,
+       pricing_status
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
     [
       provider,
       model,
@@ -59,6 +68,10 @@ async function recordAiUsage(event, database = pool) {
       cacheMetadataPresent,
       promptPrefixHash,
       responseDisposition,
+      contactId,
+      leadId,
+      cost.costUsd,
+      cost.pricingStatus,
     ]
   );
 }
