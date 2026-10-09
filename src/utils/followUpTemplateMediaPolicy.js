@@ -90,6 +90,13 @@ function invalidConfiguredMediaRule(rules, config, now = Date.now()) {
     if (!allowedForTreatment(rule.templateName, rule.serviceName)) {
       return { index, reason: "This template does not match the selected treatment." };
     }
+    // Meta templates using an MP4 header will be skipped by the send guard
+    // without H.264/AAC verification. Reject that state while activation is
+    // enabled rather than silently scheduling an unsendable message.
+    if ((/\.mp4$/i.test(mediaKey) || /\.mp4(?:\?|#|$)/i.test(mediaUrl)) &&
+        rule.videoCodecVerified !== true) {
+      return { index, reason: "Verify the selected H.264/AAC MP4 before enabling this follow-up." };
+    }
     const option = sourceId
       ? options.find((entry) => entry.id === sourceId)
       : options.find((entry) => entry.mediaKey === mediaKey);
