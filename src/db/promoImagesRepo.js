@@ -43,6 +43,17 @@ async function getImage(id) {
  * Public legacy image route access is deliberately restricted to ordinary
  * marketing/follow-up graphics. Result media is never returned here.
  */
+// Light metadata check used by WhatsApp template-media reuse. This checks
+// purpose on EVERY send without transferring large base64 image bodies.
+async function getPublicImageMetadata(id) {
+  const result = await pool.query(
+    `SELECT id, mime_type, length(data) AS encoded_length
+       FROM promo_images WHERE id=$1 AND purpose=$2`,
+    [id, IMAGE_PURPOSES.PUBLIC_CONFIG]
+  );
+  return result.rows[0] || null;
+}
+
 async function getPublicImage(id) {
   const result = await pool.query(
     `SELECT mime_type, data, purpose
@@ -107,6 +118,7 @@ module.exports = {
   deleteImage,
   getImage,
   getPublicImage,
+  getPublicImageMetadata,
   markResultMedia,
   pruneUnreferenced,
   saveImage,
