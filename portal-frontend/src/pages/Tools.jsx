@@ -1018,6 +1018,7 @@ export default function Tools() {
             freeOnlyImpactConfirmed={freeOnlyImpactConfirmed}
             setFreeOnlyImpactConfirmed={setFreeOnlyImpactConfirmed}
             savedEnabled={savedEnabled}
+            savedFreeEntryEnabled={config?.automatedFollowUp?.freeEntry?.enabled === true}
             hasUnsavedChanges={hasUnsavedChanges}
             translationsNeedRefresh={translationsNeedRefresh}
             translationReadyCount={translationReadyCount}
@@ -1829,6 +1830,7 @@ function FollowUpTool({
   freeOnlyImpactConfirmed,
   setFreeOnlyImpactConfirmed,
   savedEnabled,
+  savedFreeEntryEnabled,
   hasUnsavedChanges,
   translationsNeedRefresh,
   translationReadyCount,
@@ -2033,7 +2035,7 @@ function FollowUpTool({
           <div>
             <span className="text-[var(--color-text-muted)]">Extended WhatsApp templates: </span>
             <span className="font-semibold">
-              {form.freeEntry?.enabled !== (config?.automatedFollowUp?.freeEntry?.enabled === true)
+              {form.freeEntry?.enabled !== savedFreeEntryEnabled
                 ? "Pending save"
                 : form.freeEntry?.enabled ? "On in Tools" : "Off"}
             </span>
