@@ -3,6 +3,7 @@
 const { pool } = require("./db");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
+const clinicConfig = require("../config/clinicConfig");
 
 /**
  * Records the actual customer message, not the suggested message displayed
@@ -15,7 +16,7 @@ const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
  */
 async function recordFromInbound({
   contactId, messageId, leadId, businessName, isClickToWhatsApp = false,
-}, { database = pool } = {}) {
+}, { database = pool, config = clinicConfig } = {}) {
   if (![contactId, messageId, leadId].every((value) =>
     Number.isSafeInteger(Number(value)) && Number(value) > 0) ||
     !String(businessName || "").trim()) return { recorded: false, reason: "invalid_input" };
@@ -90,7 +91,7 @@ async function recordFromInbound({
       [contactId,leadId,source,messageId,message.whatsapp_message_id,
         message.content,businessName,explicit.scope,explicit.category,
         sentAt.toISOString(),explicit.method,
-        inferConfiguredServiceFromText(message.content) || null]
+        inferConfiguredServiceFromText(message.content, config) || null]
     );
     if (inserted.rowCount !== 1) {
       await client.query("ROLLBACK");
@@ -128,13 +129,13 @@ async function recordFromInbound({
  */
 async function inheritForNewLead({
   contactId, leadId, inboundText, adName = null, referralTreatment = null,
-}, { database = pool } = {}) {
+}, { database = pool, config = clinicConfig } = {}) {
   if (![contactId, leadId].every((v) => Number.isSafeInteger(Number(v)) && Number(v)>0)) {
     return { inherited:false,reason:"invalid_input" };
   }
-  const service = inferConfiguredServiceFromText(inboundText) ||
-    inferConfiguredServiceFromText(referralTreatment) ||
-    inferConfiguredServiceFromText(adName);
+  const service = inferConfiguredServiceFromText(inboundText, config) ||
+    inferConfiguredServiceFromText(referralTreatment, config) ||
+    inferConfiguredServiceFromText(adName, config);
   if (!service) return { inherited:false,reason:"unknown_treatment" };
   const result = await database.query(
     `WITH current_permission AS (
