@@ -29,6 +29,29 @@ Use a conservative 72-hour ceiling with a one-hour buffer (last send before hour
 
 **First-reply exception and limitations:** Strict mode permits the one Meta-qualified first text reply for a genuine CTWA ad referral while its initial 24-hour service window is still open. It does **not** send initial images, templates or voice as bootstrap messages, nor permit direct/organic/unverified/expired referrals. The first reply's actual free billing is still confirmed **after** Meta accepts/delivers it. If Meta rejects it or unexpectedly marks it billable, later strict-mode sends remain blocked. This is risk-managed sending based on Meta's first-reply rules, not a contractual zero-charge guarantee. Subsequent text replies and approved templates must wait for Meta confirmation; they can be briefly delayed.
 
+### Temporary strict-policy deferrals do not consume follow-up slots
+
+The scheduler runs a read-only billing preflight before claiming a slot. If
+another WhatsApp request wins the account-wide reservation in the short gap
+between preflight and the final Meta send, the strict provider guard rejects
+the template **before Meta is called**. The worker first persists the outgoing
+message as `cancelled`, then marks the attempt as
+`FREE_ONLY_POLICY_DEFERRED_NO_PROVIDER_SEND`.
+
+A subsequent sweep may reuse that slot **only** when all of the following
+remain true: the attempt is `cancelled` with that exact reason, its WAMID is
+NULL, and its saved outgoing message is `cancelled` with no WhatsApp provider
+ID. The claim is atomically reactivated under the existing per-conversation
+Postgres advisory lock and unique slot constraint. Its prior cancelled Inbox
+message remains available as an audit record.
+
+Meta-accepted, unknown, failed, manually cancelled, opt-out/consent-denied,
+and any potentially delivered sends are never retried through this exception.
+Ordinary schedule deadlines, clinic consent, quiet hours, verified free-entry
+evidence and all preflight/provider safeguards continue to apply. A temporary
+block can still lead to a missed reminder if these legitimate constraints
+cannot be satisfied before the free-entry period expires.
+
 ### Durable delivery and recovery
 
 All DA Chatbot WhatsApp Cloud API sends use one serialized, account-scoped reservation. Follow-up workers pass their saved message and claim IDs, which must match the recipient and claim; their *own* pending record is excluded without ignoring another worker's pending message. A known 4xx refusal releases the slot; provider acceptance is not proof of free billing. A timeout or unknown result stays blocked. A `reserved` state older than 15 minutes may be classified `unknown` by the next guard check, but it is **never automatically released**.
