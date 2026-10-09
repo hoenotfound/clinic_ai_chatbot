@@ -297,7 +297,7 @@ export default function WhatsAppTemplateModal({
     mediaFile.size > 0 && mediaFile.size <= maxMediaBytes &&
     (mediaFormat === "IMAGE"
       ? ["image/jpeg", "image/png"].includes(mediaFile.type)
-      : /\\.mp4$/i.test(mediaFile.name)));
+      : /\.mp4$/i.test(mediaFile.name)));
   const canSend =
     catalog?.eligibility?.allowed === true &&
     mediaFileValid &&
