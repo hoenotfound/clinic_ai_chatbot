@@ -1,4 +1,4 @@
-const { recordClaudeUsage } = require("./claudeUsageTelemetry");
+const { trackClaudeRequest } = require("./claudeUsageTelemetry");
 const { createAnthropicClient } = require("./anthropicClient");
 const { GoogleGenAI } = require("@google/genai");
 const { generateGeminiContent } = require("./aiUsageService");
@@ -199,24 +199,22 @@ async function translateBatchWithGemini(messages) {
 
 async function translateWithClaude(message) {
   const anthropic = createAnthropicClient();
-  const response = await anthropic.messages.create({
+  const response = await trackClaudeRequest(() => anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 1400,
     messages: [{ role: "user", content: buildPrompt(message) }],
-  });
-  recordClaudeUsage(response, { purpose: "follow_up_translation", model: CLAUDE_MODEL });
+  }), { purpose: "follow_up_translation", model: CLAUDE_MODEL });
   const textBlock = response.content.find((block) => block.type === "text");
   return parseTranslations(textBlock?.text);
 }
 
 async function translateBatchWithClaude(messages) {
   const anthropic = createAnthropicClient();
-  const response = await anthropic.messages.create({
+  const response = await trackClaudeRequest(() => anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 8192,
     messages: [{ role: "user", content: buildBatchPrompt(messages) }],
-  });
-  recordClaudeUsage(response, { purpose: "follow_up_translation_batch", model: CLAUDE_MODEL });
+  }), { purpose: "follow_up_translation_batch", model: CLAUDE_MODEL });
   const textBlock = response.content.find((block) => block.type === "text");
   return parseTranslationBatch(textBlock?.text, messages.length);
 }
