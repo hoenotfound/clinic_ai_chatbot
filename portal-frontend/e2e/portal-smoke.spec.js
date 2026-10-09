@@ -55,9 +55,11 @@ async function mockPortalApi(
     businessConfig = null,
     onConfigUpdate = null,
     followUpStatus = null,
+    followUpStatusFailures = 0,
   } = {}
 ) {
   let authenticated = loggedIn;
+  let remainingFollowUpStatusFailures = followUpStatusFailures;
   let advancedConfig = {
     businessName: "Test Clinic",
     clinicName: "Test Clinic",
@@ -459,7 +461,16 @@ async function mockPortalApi(
       });
     }
 
-    if (path === "/api/config/automated-follow-up/free-entry-status" && followUpStatus !== null) {
+    if (path === "/api/config/automated-follow-up/free-entry-status" &&
+        (followUpStatus !== null || remainingFollowUpStatusFailures > 0)) {
+      if (remainingFollowUpStatusFailures > 0) {
+        remainingFollowUpStatusFailures -= 1;
+        return route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "WhatsApp status temporarily unavailable." }),
+        });
+      }
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -993,6 +1004,81 @@ test("Critical WhatsApp billing alarms remain visible outside collapsed diagnost
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("All WhatsApp sends are blocked");
+});
+
+test("Saving pricing changes opens invalid Follow-up 2 and keeps the unsaved edit", async ({ page }) => {
+  let requests = 0;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "Checking in with you.",
+        additionalSteps: [{ delayMinutes: 1, message: "Another reminder." }],
+        pricingReminder: { enabled: false },
+      },
+    },
+    onConfigUpdate: () => { requests += 1; },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Follow-up 2 needs a delay between 5 minutes and 23 hours.");
+  await expect(page.locator("#follow-up-step-2").getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+  expect(requests).toBe(0);
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("Saving an invalid extended template redirects to WhatsApp templates", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [],
+      automatedFollowUp: {
+        enabled: false,
+        delayMinutes: 120,
+        message: "Checking in with you.",
+        freeEntry: { enabled: true, templateName: "", slotsHours: [26, 50] },
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Enter an approved WhatsApp MARKETING template name");
+  await expect(page.getByLabel("Free-entry template name")).toBeVisible();
+});
+
+test("Failed WhatsApp status check shows a visible warning and supports retry", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    followUpStatusFailures: 1,
+    followUpStatus: {
+      enabledOnServer: false,
+      enabledInTools: false,
+      freeOnlyEnabled: false,
+      freeOnlyGate: { status: "idle" },
+      sevenDayVerified: false,
+      billingSafety: { since_switch: 0 },
+    },
+  });
+  await page.goto("/tools");
+  const warning = page.getByRole("alert").filter({ hasText: "WhatsApp eligibility and billing status could not be verified" });
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText("Do not assume extended templates are active or free.");
+  await warning.getByRole("button", { name: "Retry check" }).click();
+  await expect(warning).not.toBeVisible();
+  await expect(page.getByRole("region", { name: "Follow-up activation overview" })).toContainText("Template server:");
 });
 
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
