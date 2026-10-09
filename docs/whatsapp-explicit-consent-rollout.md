@@ -15,3 +15,11 @@ It never updates historic contacts retroactively. Ordinary messages keep the exi
 - Verify the WhatsApp account's billing/payment configuration before sending messages which might become billable.
 
 There is no automatic activation, no historic consent backfill, and no live customer messaging in this PR.
+
+## Resilience and consent-scope rules (PR 284)
+
+- New WhatsApp STOP messages revoke contact and current-lead marketing permission **in the same PostgreSQL statement that durably stores the inbound webhook**. Normal enquiries retain the original lightweight persistence statement. If PostgreSQL rejects the STOP write, the inbound claim fails and Meta can retry; a failed later opt-out write remains a recoverable processing job instead of silently completing.
+- STOP detection supports natural, polite Chinese, English and Malay refusals; ordinary price/promotions enquiries are not opt-outs. Message timestamps are checked so delayed processing of an older STOP cannot override a more recent valid opt-in.
+- An actual customer-sent, business-named promotional opt-in stores its **specific treatment** (`consent_service`) when identifiable. When a customer starts a new CRM journey, the chatbot only carries forward a still-active, matching scoped opt-in: the customer must still have the same active consent record, must not have opted out, and the new treatment must be identifiable. An unrelated or uncertain service never automatically inherits permission; staff-only confirmations without a message-backed scope never auto-inherit.
+- Extended automated image templates reuse a Meta media ID for up to one hour on the **same WhatsApp phone-number ID**. The worker still checks the source promo's current `public_config` purpose, MIME and encoded size before each use; reuse never allows private/result-media files. Cache misses upload an existing validated clinic image without a new R2 object, and explicit send failures invalidate the cached ID.
+- Cache entries are bounded to 32 per-process items, not persisted across restarts, and expire automatically. Meta still owns final acceptance/delivery; a positive send response is not a billing-free guarantee.
