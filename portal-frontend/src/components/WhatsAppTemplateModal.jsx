@@ -134,6 +134,7 @@ export default function WhatsAppTemplateModal({
   const [loadError, setLoadError] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const [values, setValues] = useState({ header: [], body: [] });
+  const [mediaFile, setMediaFile] = useState(null);
   const [optInSource, setOptInSource] = useState("");
   const [optInConfirmed, setOptInConfirmed] = useState(false);
   const [marketingOptInConfirmed, setMarketingOptInConfirmed] = useState(false);
@@ -166,11 +167,13 @@ export default function WhatsAppTemplateModal({
         if (!currentTemplate) {
           setSelectedKey(key);
           setValues(emptyValuesFor(nextTemplate));
+          setMediaFile(null);
           setMarketingConsentConfirmed(false);
         }
       } else {
         setSelectedKey("");
         setValues({ header: [], body: [] });
+        setMediaFile(null);
         setMarketingConsentConfirmed(false);
       }
     } catch (err) {
@@ -184,6 +187,7 @@ export default function WhatsAppTemplateModal({
     setCatalog(null);
     setSelectedKey("");
     setValues({ header: [], body: [] });
+    setMediaFile(null);
     setOptInSource("");
     setOptInConfirmed(false);
     setMarketingOptInConfirmed(false);
@@ -216,6 +220,7 @@ export default function WhatsAppTemplateModal({
   function chooseTemplate(template) {
     setSelectedKey(`${template.name}::${template.language}`);
     setValues(emptyValuesFor(template));
+    setMediaFile(null);
     setMarketingConsentConfirmed(false);
     setActionError("");
   }
@@ -271,7 +276,7 @@ export default function WhatsAppTemplateModal({
           selected.category === "MARKETING"
             ? marketingConsentConfirmed
             : false,
-      });
+      }, mediaFile);
       onSent?.(result);
       onClose();
     } catch (err) {
@@ -285,8 +290,17 @@ export default function WhatsAppTemplateModal({
   const allValuesFilled = (selected?.variableFields || []).every((field) =>
     Boolean(values[field.component]?.[field.index - 1]?.trim())
   );
+  const mediaFormat = selected?.header?.format;
+  const needsMedia = mediaFormat === "IMAGE" || mediaFormat === "VIDEO";
+  const maxMediaBytes = mediaFormat === "IMAGE" ? 5 * 1024 * 1024 : 16 * 1024 * 1024;
+  const mediaFileValid = !needsMedia || (mediaFile != null &&
+    mediaFile.size > 0 && mediaFile.size <= maxMediaBytes &&
+    (mediaFormat === "IMAGE"
+      ? ["image/jpeg", "image/png"].includes(mediaFile.type)
+      : /\\.mp4$/i.test(mediaFile.name)));
   const canSend =
     catalog?.eligibility?.allowed === true &&
+    mediaFileValid &&
     !marketingReconsentNeeded &&
     selected?.sendable === true &&
     allValuesFilled &&
@@ -443,6 +457,35 @@ export default function WhatsAppTemplateModal({
                     </span>
                   </div>
 
+                  {needsMedia && (
+                    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      <label className="block text-[11px] font-semibold">
+                        {mediaFormat === "IMAGE" ? "Select a template image" : "Select a template video"}
+                        <input
+                          key={selectedKey}
+                          type="file"
+                          accept={mediaFormat === "IMAGE" ? "image/jpeg,image/png" : "video/mp4,.mp4"}
+                          onChange={(event) => {
+                            setMediaFile(event.target.files?.[0] || null);
+                            setActionError("");
+                          }}
+                          className="mt-2 block w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--color-primary-light)] file:px-3 file:py-2 file:font-semibold file:text-[var(--color-primary)]"
+                        />
+                      </label>
+                      {mediaFile && (
+                        <p className={`mt-2 break-all text-[11px] ${mediaFileValid ? "text-[var(--color-text-muted)]" : "text-red-700"}`}>
+                          {mediaFile.name} · {(mediaFile.size / (1024 * 1024)).toFixed(2)} MB
+                          {!mediaFileValid && ` — ${mediaFormat === "IMAGE" ? "JPEG/PNG, max 5MB" : "MP4, max 16MB"} required`}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                        {mediaFormat === "VIDEO"
+                          ? "Use H.264 MP4 with AAC audio, under 16MB. The server checks codecs but does not compress videos."
+                          : "Use JPEG or PNG, under 5MB. The file is uploaded privately to WhatsApp."}
+                      </p>
+                    </div>
+                  )}
+
                   {(selected.variableFields || []).map((field) => (
                     <label key={`${field.component}-${field.index}`} className="block">
                       <span className="text-[11px] font-semibold">{field.label}</span>
@@ -461,6 +504,11 @@ export default function WhatsAppTemplateModal({
                       Preview
                     </p>
                     <div className="mt-1.5 whitespace-pre-wrap rounded-xl bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6">
+                      {needsMedia && (
+                        <p className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">
+                          {mediaFormat === "IMAGE" ? "📷 Image" : "🎬 Video"}: {mediaFile?.name || "Choose a file above"}
+                        </p>
+                      )}
                       {preview || "No text preview available."}
                     </div>
                     {(selected.buttons || []).length > 0 && (
