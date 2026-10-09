@@ -9,6 +9,7 @@ const images = require("../src/db/promoImagesRepo");
 const templateMedia = require("../src/services/whatsappTemplateMediaService");
 const messages = require("../src/db/messagesRepo");
 const events = require("../src/utils/realtimeEvents");
+const mediaCache = require("../src/services/whatsappFreeEntryMediaCache");
 
 test("extended follow-up builds and sends only approved treatment-matched image + variable without a live API call", async (t) => {
   const keys = ["WHATSAPP_FEP_FOLLOWUPS_ENABLED", "AUTOMATED_REPLIES_ENABLED"];
@@ -20,10 +21,12 @@ test("extended follow-up builds and sends only approved treatment-matched image 
       else process.env[k] = savedEnv[k];
     }
   });
+  mediaCache.clear();
   const original = {
     query: pool.query, connect: pool.connect, auto: clinicConfig.automatedFollowUp,
     services: clinicConfig.services, promotions: clinicConfig.promotions,
     upload: whatsapp.uploadMedia, fetchImage: images.getPublicImage,
+    fetchMetadata: images.getPublicImageMetadata,
     prepare: templateMedia.prepareImage, send: templates.sendApprovedTemplate,
     save: messages.saveMessage, setId: messages.setWhatsappMessageId,
     publish: events.publish,
@@ -36,6 +39,8 @@ test("extended follow-up builds and sends only approved treatment-matched image 
     clinicConfig.promotions = original.promotions;
     whatsapp.uploadMedia = original.upload;
     images.getPublicImage = original.fetchImage;
+    images.getPublicImageMetadata = original.fetchMetadata;
+    mediaCache.clear();
     templateMedia.prepareImage = original.prepare;
     templates.sendApprovedTemplate = original.send;
     messages.saveMessage = original.save;
@@ -78,16 +83,24 @@ test("extended follow-up builds and sends only approved treatment-matched image 
     ],
   });
   const dbCalls = [], providerCalls = [], savedMessages = [];
+  let fullImageReads = 0;
+  const secondCandidate = { ...candidate, contact_id: 18,
+    whatsapp_number:"60123456788",first_reply_message_id:45 };
   pool.query = async (sql, params = []) => {
     dbCalls.push({ sql, params });
-    if (sql.includes("FROM contacts c")) return { rows: [candidate] };
+    if (sql.includes("FROM contacts c")) return { rows: [params[1] === 18 ? secondCandidate : candidate] };
     if (sql.includes("INSERT INTO whatsapp_free_entry_followup_attempts")) {
       return { rows: [{ id: 123 }], rowCount: 1 };
     }
     return { rows: [], rowCount: 1 };
   };
   pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
+  images.getPublicImageMetadata = async(id)=>{
+    assert.equal(id,32);
+    return {id, mime_type:"image/png", encoded_length:100};
+  };
   images.getPublicImage = async (id) => {
+    fullImageReads++;
     assert.equal(id, 32);
     return { mime_type: "image/png", data: Buffer.from("safe-image").toString("base64") };
   };
@@ -130,4 +143,10 @@ test("extended follow-up builds and sends only approved treatment-matched image 
   assert.equal(savedTemplate.components[0].parameters[0].image.id,"123456789");
   assert.ok(dbCalls.some(row=>row.sql.includes("pg_advisory_xact_lock")));
   assert.ok(dbCalls.some(row=>row.sql.includes("UPDATE whatsapp_free_entry_followup_attempts")));
+  assert.equal(fullImageReads,1,"first image is fetched only for the first Meta upload");
+  assert.equal(await worker.processCandidate(secondCandidate,active,template,new Date()),"accepted");
+  assert.deepEqual(providerCalls.map(item=>item.type),["upload","send","send"],
+    "second contact uses the already uploaded media ID");
+  assert.equal(fullImageReads,1,"second contact only checks public image metadata");
+  assert.equal(savedMessages.length,2);
 });
