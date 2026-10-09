@@ -301,7 +301,7 @@ async function validateApprovedMedia(template, spec, {
       // Enforce provenance from the R2 object itself. Removing mediaSourceId
       // from a saved rule MUST NOT turn an expired promotion into generic media.
       const storedPromoId = String(info?.metadata?.["clinic-promo-image-id"] || "");
-      if (storedPromoId && (!/^[1-9]\\d*$/.test(storedPromoId) ||
+      if (storedPromoId && (!/^[1-9]\d*$/.test(storedPromoId) ||
           spec.mediaSourceId !== "promo:" + storedPromoId)) return false;
       if (spec.mediaSourceId?.startsWith("promo:") &&
           storedPromoId !== spec.mediaSourceId.slice("promo:".length)) return false;
