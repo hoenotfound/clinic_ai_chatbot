@@ -2665,6 +2665,13 @@ function FollowUpTool({
                     {" · "}Outbound reservation: {freeEntryStatus.freeOnlyGate?.status || "idle"}
                     {" · "}Pending billing alerts: {freeEntryStatus.billingAlerts?.pending ?? "unknown"}
                   </p>
+                  {freeEntryStatus.strictSevenDayBlocked === true ? (
+                    <p className="mt-2 text-xs font-semibold text-amber-700">
+                      Seven-day strict sending is not yet supported by recorded post-72h Meta nonbillable evidence.
+                      Days 4–7 will be deferred BEFORE a template slot is claimed, avoiding paid sends or failed follow-up attempts.
+                      Do not send a customer a potentially chargeable template just to test eligibility.
+                    </p>
+                  ) : null}
                   {freeEntryStatus.freeOnlyGate?.status && freeEntryStatus.freeOnlyGate.status !== "idle" ? (
                     <p className="mt-1 text-xs font-semibold text-amber-700">
                       A previous WhatsApp send is awaiting billing verification. Further strict-mode sends are blocked until Meta confirms free pricing. An unknown send requires manual reconciliation, not an automatic retry. A reserved send cannot be manually released; after 15 minutes without confirmation it changes to unknown and still requires review.
