@@ -1206,6 +1206,7 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
 
 router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, async (req, res) => {
   let mediaKey = null;
+  let mediaKeyIsShared = false;
   let cleanupUnsubmittedMedia = true;
   try {
     const contactId = parsePositiveInt(req.params.contactId);
@@ -1270,6 +1271,16 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     }
     if (["IMAGE", "VIDEO"].includes(mediaFormat) && !req.file && !mediaSelectionId) {
       return res.status(400).json({ error: `Choose an ${mediaFormat.toLowerCase()} to send this template.` });
+    }
+    try {
+      whatsappTemplateMedia.validateTemplateMediaChoice(
+        resolved.template.name, languageCode, mediaSelectionId, values
+      );
+    } catch (error) {
+      return res.status(400).json({
+        code: error.code || "template_media_mismatch",
+        error: error.message,
+      });
     }
     let built = whatsappTemplate.buildTemplateComponents(
       resolved.template, values, { allowMissingMedia: true }
@@ -1383,6 +1394,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
         mediaMimeType = reused.mimeType;
         mediaFilename = reused.filename;
         mediaKey = reused.mediaKey;
+        mediaKeyIsShared = Boolean(mediaKey && mediaStorage.isSharedFollowUpConfigKey(mediaKey));
         mediaUrl = reused.mediaUrl;
       } else if (mediaFormat === "IMAGE") {
         mediaMimeType = String(req.file.mimetype || "").toLowerCase();
@@ -1421,10 +1433,14 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       if (!mediaSelectionId) {
         mediaFilename = safeInboxFilename(req.file.originalname,
           mediaFormat === "IMAGE" ? "template-image.jpg" : "template-video.mp4");
-        // A manual upload gets one private per-contact R2 copy for history/retry.
-        // Existing clinic media is referenced by its shared object or promo ID
-        // without creating another permanent object per recipient.
-        mediaKey = await mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId: contact.id });
+        // Identical uploads reuse the clinic's private, content-addressed
+        // shared object. Legacy unisolated buckets fall back to per-contact
+        // storage. Shared assets are retained by message-reference pruning.
+        const stored = await mediaStorage.uploadReusableTemplateMedia(
+          buffer, mediaMimeType, { contactId: contact.id }
+        );
+        mediaKey = stored.key;
+        mediaKeyIsShared = stored.shared;
       }
       const metaId = await whatsapp.uploadMedia(buffer, mediaMimeType, mediaFilename);
       buffer = null;
@@ -1531,7 +1547,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     res.status(500).json({ error: "Something went wrong sending this WhatsApp template." });
   } finally {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
-    if (mediaKey && cleanupUnsubmittedMedia && !req.body?.mediaSelectionId) {
+    if (mediaKey && cleanupUnsubmittedMedia && !mediaKeyIsShared && !req.body?.mediaSelectionId) {
       await mediaStorage.deleteMedia(mediaKey).catch((err) => {
         console.warn("Could not clean up unsent template media:", err);
       });
@@ -1711,6 +1727,19 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
       const retryFormat = currentTemplate.template.header?.format || "TEXT";
       const retryMediaSelectionId = message.whatsapp_template.mediaSelectionId || null;
+      try {
+        whatsappTemplateMedia.validateTemplateMediaChoice(
+          currentTemplate.template.name,
+          currentTemplate.template.language,
+          retryMediaSelectionId,
+          message.whatsapp_template.values || {}
+        );
+      } catch (error) {
+        return res.status(409).json({
+          code: error.code || "template_media_mismatch",
+          error: error.message || "The selected clinic media is no longer eligible.",
+        });
+      }
       if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
         if (retryMediaSelectionId) {
           const selected = whatsappTemplateMedia.listReusableMedia()
