@@ -603,3 +603,16 @@ test("server refreshes local ad creative after accepted AI reply and before resu
   assert.match(serverSource.slice(refreshAt, mediaAt), /resultMediaCreativeService = null/);
   assert.match(serverSource.slice(refreshAt, mediaAt), /resolveMetaAdCreativeService/);
 });
+
+
+test("contextual media guard checks untruncated persisted history after sending AI text", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const sendAt = source.indexOf("const sendOutcome = await sendTrackedText(");
+  const historyAt = source.indexOf("verifiedPriorCustomerTexts = await messagesRepo.getPriorCustomerTextsForAdEnquiry(", sendAt);
+  const creativeAt = source.indexOf("const refreshedMetaAdContext = await loadMetaAdReplyContext(", historyAt);
+  const resolveAt = source.indexOf("const resultBundle = await resolveResultMediaForReply({", creativeAt);
+  assert.ok(sendAt >= 0 && historyAt > sendAt && creativeAt > historyAt && resolveAt > creativeAt);
+  assert.match(source.slice(historyAt, resolveAt), /resultMediaCreativeService = null/);
+  assert.match(source.slice(resolveAt, resolveAt + 400), /priorCustomerTexts: verifiedPriorCustomerTexts/);
+  assert.doesNotMatch(source, /customerMessages\.slice\(0, -1\)\.map/);
+});
