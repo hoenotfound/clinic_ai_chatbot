@@ -886,6 +886,34 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Automated follow-up sections preserve draft settings while switching tabs", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  await page.goto("/tools");
+
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "Sequence at a glance" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).not.toBeVisible();
+
+  await page.getByRole("switch", { name: "Follow-up quiet hours" }).click();
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequence at a glance" })).not.toBeVisible();
+
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();
+  await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Activity" }).click();
+  await expect(page.getByRole("heading", { name: "Extended WhatsApp follow-up activity" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Sequence" }).click();
+  await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
   let savedPayload = null;
   await mockPortalApi(page, {
