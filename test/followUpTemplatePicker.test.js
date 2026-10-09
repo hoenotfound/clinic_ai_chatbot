@@ -34,6 +34,25 @@ test("IMAGE template attachments use bounded validation and private clinic R2 ob
   assert.match(preview, /private, no-store/);
 });
 
+test("Reusable videos require server-side validation, not an unverified checkbox", () => {
+  const routes = file("src/routes/config.js");
+  const video = routes.slice(
+    routes.indexOf('router.post("/automated-follow-up/template-library-video"'),
+    routes.indexOf('router.get("/automated-follow-up/template-media-preview"'),
+  );
+  assert.match(video, /whatsappTemplateMedia\.resolveReusableMedia\(selectionId, "VIDEO"/);
+  assert.match(video, /videoCodecVerified: true/);
+  assert.match(video, /getMediaIsolationStatus\(\)\.prefix/);
+  const picker = file("portal-frontend/src/components/FollowUpTemplatePicker.jsx");
+  assert.match(picker, /api\.verifyFollowUpTemplateVideo\(item\.id\)/);
+  assert.match(picker, /videoCodecVerified: true/);
+  assert.match(picker, /Template approval by language/);
+  assert.match(picker, /Template\/media fields:/);
+  const tools = file("portal-frontend/src/pages/Tools.jsx");
+  assert.match(tools, /mediaSourceId: String\(rule\.mediaSourceId \|\| ""\)/);
+  assert.match(tools, /mediaSourceId: String\(rule\.mediaSourceId\)\.trim\(\)/);
+});
+
 test("Front-end template picker supports approved IMAGE and VIDEO attachments without changing send payload", () => {
   const editor = file("portal-frontend/src/pages/Tools.jsx");
   const picker = file("portal-frontend/src/components/FollowUpTemplatePicker.jsx");
