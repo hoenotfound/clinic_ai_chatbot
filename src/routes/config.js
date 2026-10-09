@@ -400,6 +400,13 @@ function isAutomatedFollowUpConfig(value) {
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
     (value.freeEntry !== undefined && !isFreeEntryFollowUpConfig(value.freeEntry)) ||
+    (value.whatsappFreeOnly !== undefined &&
+      (!isPlainObject(value.whatsappFreeOnly) ||
+       typeof value.whatsappFreeOnly.enabled !== "boolean" ||
+       (value.whatsappFreeOnly.activatedAt !== null &&
+        value.whatsappFreeOnly.activatedAt !== undefined &&
+        (typeof value.whatsappFreeOnly.activatedAt !== "string" ||
+         Number.isNaN(Date.parse(value.whatsappFreeOnly.activatedAt)))))) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
         typeof value.pricingReminder.enabled !== "boolean" ||
@@ -655,6 +662,20 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       : null,
   };
 
+  const requestedFreeOnly = requested.whatsappFreeOnly ?? current?.whatsappFreeOnly ?? { enabled: false };
+  if (!isPlainObject(requestedFreeOnly) || typeof requestedFreeOnly.enabled !== "boolean") return null;
+  const freeOnlyEnabled = requestedFreeOnly.enabled === true;
+  // Re-saving unrelated Tools settings cannot reset the billing alarm.
+  const sameFreeOnlyRun = freeOnlyEnabled && current?.whatsappFreeOnly?.enabled === true &&
+    typeof current.whatsappFreeOnly.activatedAt === "string" &&
+    Number.isFinite(Date.parse(current.whatsappFreeOnly.activatedAt));
+  const whatsappFreeOnly = {
+    enabled: freeOnlyEnabled,
+    activatedAt: freeOnlyEnabled
+      ? sameFreeOnlyRun ? current.whatsappFreeOnly.activatedAt : new Date().toISOString()
+      : null,
+  };
+
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
@@ -745,6 +766,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     ...firstStep,
     additionalSteps,
     freeEntry,
+    whatsappFreeOnly,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
       socialActivatedAt: socialActivation,
       requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
