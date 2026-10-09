@@ -479,7 +479,19 @@ async function mockPortalApi(
       return route.fulfill({
         status: 201, contentType: "application/json",
         body: JSON.stringify({
-          key: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg", format: "IMAGE",
+          key: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
+          format: "IMAGE", mediaSourceId: "promo:1", previewUrl: "https://example.test/pricing.jpg",
+        }),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-library-video" && method === "POST") {
+      const { selectionId } = request.postDataJSON();
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/pelvis.mp4",
+          videoCodecVerified: true, format: "VIDEO",
+          mediaSourceId: selectionId, previewUrl: "https://example.test/verified-video.mp4",
         }),
       });
     }
@@ -1149,24 +1161,28 @@ test("Failed WhatsApp status check shows a visible warning and supports retry", 
 
 test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2 attachment", async ({ page }) => {
   const saved = [];
+  const persisted = {
+    services: [
+      { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+      { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+    ],
+    automatedFollowUp: {
+      enabled: false, delayMinutes: 10, triggerMode: "all",
+      message: "Following up", imageUrl: "",
+      translations: { en: "Following up", ms: "Following up", zh: "Following up" },
+    },
+  };
   const template = (name, format, text, language = "zh_CN") => ({
     name, language, status: "APPROVED", category: "MARKETING",
     header: { format }, body: { text }, variableFields: [], sendable: true, buttons: [],
   });
   await mockPortalApi(page, {
-    businessConfig: {
-      services: [
-        { name: "骨盆调理", description: "", duration: "", priceRange: "" },
-        { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
-      ],
-      automatedFollowUp: {
-        enabled: false, delayMinutes: 10, triggerMode: "all",
-        message: "Following up", imageUrl: "",
-        translations: { en: "Following up", ms: "Following up", zh: "Following up" },
-      },
-    },
+    businessConfig: persisted,
     loggedIn: true,
-    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
+    onConfigUpdate: (payload) => {
+      saved.push(payload.automatedFollowUp);
+      Object.assign(persisted, payload);
+    },
     templateCatalog: {
       templates: [
         template("clinic_text_reminder", "TEXT", "We can answer your questions."),
@@ -1205,8 +1221,11 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     templateName: "clinic_video_feedback",
     mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4",
     mediaUrl: "",
-    videoCodecVerified: false,
+    mediaSourceId: "video:test",
+    videoCodecVerified: true,
   });
+  await expect(page.getByLabel("Template rule configuration readiness 1"))
+    .toContainText("Template/media fields: Complete");
 
   await rule.selectOption("clinic_image_offer");
   await expect(page.getByText("Image attachment · required")).toBeVisible();
@@ -1222,6 +1241,11 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     mediaUrl: "",
     mediaSourceId: "promo:1",
   });
+  await page.reload();
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click({ force: true });
+  // Loading and resaving the image must preserve the original promotional image ID.
   await expectNoHorizontalPageOverflow(page);
 });
 
