@@ -34,3 +34,21 @@ CREATE TABLE IF NOT EXISTS whatsapp_free_only_billing_alerts (
 CREATE INDEX IF NOT EXISTS idx_whatsapp_free_only_billing_unsent
   ON whatsapp_free_only_billing_alerts(observed_at)
   WHERE sent_at IS NULL;
+
+-- An operator can release an ambiguous slot only after explicitly reviewing
+-- the WhatsApp conversation and Meta Billing Hub. Keep immutable audit trails.
+CREATE TABLE IF NOT EXISTS whatsapp_free_only_reconciliations (
+  id BIGSERIAL PRIMARY KEY,
+  phone_number_id TEXT NOT NULL,
+  reservation_id TEXT NOT NULL,
+  prior_status TEXT NOT NULL,
+  wamid TEXT,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  verified_billing_hub BOOLEAN NOT NULL,
+  provider_pricing_type TEXT,
+  provider_billable BOOLEAN,
+  reconciled_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_free_only_reconciliations_account
+  ON whatsapp_free_only_reconciliations(phone_number_id, reconciled_at DESC);
