@@ -28,6 +28,9 @@ const GLOBAL_OPT_OUT_PATTERNS = [
 const MARKETING_OPT_OUT_PATTERNS = [
   /^stop (?:promos?|promotions?)$/i,
   /^unsub(?:scribe|cribe) from (?:promos?|promotions?)$/i,
+  /^(?:不要|别|請不要|请不要)(?:再)?(?:发|發|发送|發送|通知)(?:我)?(?:优惠|優惠|促销|促銷|推广|推廣)(?:了)?$/,
+  /^(?:停止|取消)(?:优惠|優惠|促销|促銷|推广|推廣)(?:通知|消息)?$/,
+  /^(?:jangan (?:hantar|kirim|mesej) (?:saya )?(?:promosi|tawaran)|tak nak (?:promosi|tawaran))$/i,
 ];
 
 function normalizeText(value) {
@@ -293,7 +296,8 @@ async function checkFreeformAllowed(
 
 async function recordOptOut(contactId, source = "customer_message") {
   const result = await pool.query(
-    `UPDATE contacts
+    `WITH changed AS (
+       UPDATE contacts
      SET whatsapp_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_opt_out_at END,
          whatsapp_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_opt_out_source END,
          whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
@@ -306,7 +310,13 @@ async function recordOptOut(contactId, source = "customer_message") {
          social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
      WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
-     RETURNING *`,
+     RETURNING *
+     ), synced_leads AS (
+       UPDATE leads SET marketing_consent='opted_out', updated_at=now()
+       WHERE contact_id IN (SELECT id FROM changed WHERE channel='whatsapp')
+       RETURNING id
+     )
+     SELECT * FROM changed`,
     [contactId, source]
   );
   return result.rows[0] || null;
@@ -314,14 +324,21 @@ async function recordOptOut(contactId, source = "customer_message") {
 
 async function recordMarketingOptOut(contactId, source = "customer_message") {
   const result = await pool.query(
-    `UPDATE contacts
+    `WITH changed AS (
+       UPDATE contacts
      SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
          whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
          social_marketing_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN now() ELSE social_marketing_opt_out_at END,
          social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
      WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
-     RETURNING *`,
+     RETURNING *
+     ), synced_leads AS (
+       UPDATE leads SET marketing_consent='opted_out', updated_at=now()
+       WHERE contact_id IN (SELECT id FROM changed WHERE channel='whatsapp')
+       RETURNING id
+     )
+     SELECT * FROM changed`,
     [contactId, source]
   );
   return result.rows[0] || null;
