@@ -365,3 +365,39 @@ test("model service-query flag cannot trigger results for admin-only messages", 
     assert.equal(attempted, false);
   }
 });
+
+test("Click-to-WhatsApp default enquiry resolves a single proof image from creative, never from ad name", async () => {
+  const configured = [{ ...resultMedia[0], triggerMode: "service_enquiry" }];
+  const services = [{ name: treatment }, { name: "骨盆调理" }];
+  const meta = normalizeMetaAdReplyContext({
+    source: "meta_ads",
+    ad_name: "小颜术 5",
+    headline: "1次就能看到明显效果",
+    body: "#中医小颜术 到底有什么帮助？做完中医小颜术...",
+  }, { services, aliases: [{ alias: "小颜术", officialService: treatment }] });
+  const creative = resolveMetaAdCreativeService(meta, services, [
+    { alias: "小颜术", officialService: treatment },
+  ]);
+  assert.equal(creative, treatment);
+  const select = (metaAdCreativeService) => resolveResultMediaForReply({
+    isFirstMessage: true,
+    customerText: "Hello! Can I get more info on this?",
+    metaAdCreativeService,
+    serviceQuery: false,
+    serviceQuerySource: null,
+    treatment: null,
+    priceQuery: false,
+    packageQuery: false,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: configured,
+    contactId: 325,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+  assert.equal((await select(creative))?.items?.length, 1);
+  assert.equal(await select(null), null);
+});
