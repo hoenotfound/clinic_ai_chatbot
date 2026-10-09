@@ -788,7 +788,7 @@ export default function Tools() {
     if (form.whatsappFreeOnly?.enabled === true &&
         config?.automatedFollowUp?.whatsappFreeOnly?.enabled !== true &&
         !freeOnlyImpactConfirmed) {
-      showToast("Confirm the loss of new WhatsApp AI replies before enabling strict free-only mode.", "error");
+      showToast("Confirm that ordinary/direct enquiries can be blocked and Meta billing is never absolutely guaranteed.", "error");
       return;
     }
     const validationError = followUpValidationError();
@@ -2593,7 +2593,7 @@ function FollowUpTool({
             </div>
             <p className="mt-2 text-[11px] leading-5 text-amber-700">
               {form.whatsappFreeOnly?.enabled
-                ? "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. Initial replies to new ad leads cannot start a free-entry window while this is active. This is not a Meta billing cap or an absolute RM0 guarantee."
+                ? "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
                 : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
               Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
               A billable callback after activation trips the account-wide stop until you investigate and deliberately reset this switch.
@@ -2603,7 +2603,7 @@ function FollowUpTool({
               <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
                 <input type="checkbox" checked={freeOnlyImpactConfirmed}
                   onChange={event => setFreeOnlyImpactConfirmed(event.target.checked)}/>
-                I understand new WhatsApp enquiries, including ad leads, may receive no AI reply;
+                I understand verified ad enquiries may receive one qualifying first text reply, but organic/direct leads and unverified or late ad enquiries will be blocked;
                 enabling strict mode does not establish a guaranteed RM0 Meta billing limit.
               </label>
             ) : null}
@@ -2708,8 +2708,8 @@ function FollowUpTool({
                     Meta callback records are not a spending statement. Reconcile with
                     {" "}<a className="underline" target="_blank" rel="noreferrer"
                       href="https://business.facebook.com/billing_hub/">WhatsApp Billing Hub</a>.
-                    Strict mode cannot guarantee zero Meta charges or send the first reply to a new ad lead.
-                    For initial ad replies, turn strict mode off only if the business knowingly accepts billing risk.
+                    Strict mode allows one qualified CTWA first text reply within 24 hours, then blocks further sends until Meta confirms free billing. It cannot absolutely guarantee zero Meta charges.
+                    Unverified ad referrals, stale CTWA enquiries and organic leads stay blocked; Meta billing must be reconciled independently.
                   </p>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
