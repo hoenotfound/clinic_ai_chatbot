@@ -8,7 +8,7 @@ const input = { contactId: 9, leadId: 7, messageId: 15, businessName: "Neutro Se
 function database({
   messageText = wording, role = "user", media = null, provider = "wamid.15",
   existingOptIn = null, globalOptOut = null, marketingOptOut = null,
-  leadExists = true, inserted = true,
+  leadExists = true, inserted = true, forwarded = false,
 } = {}) {
   const calls = [];
   const client = {
@@ -22,6 +22,7 @@ function database({
         return { rows: [{
           id: 15, role, content: messageText, whatsapp_message_id: provider,
           sent_at: new Date("2026-10-09T01:00:00Z"), media_mime_type: media,
+          is_forwarded: forwarded,
         }] };
       }
       if (/SELECT id FROM leads WHERE id=\$1/.test(sql))
@@ -58,6 +59,8 @@ test("does not create permission from enquiries, synthetic media, or absent lead
     {messageText:"你好！我想了解你们骨盆的疗程"},
     {messageText:wording,media:"image/jpeg"},
     {messageText:wording,role:"assistant"},
+    {messageText:wording,provider:null},
+    {messageText:wording,forwarded:true},
     {messageText:wording,leadExists:false},
   ]) {
     const { calls, driver } = database(opts);
