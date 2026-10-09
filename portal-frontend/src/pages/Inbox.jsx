@@ -457,7 +457,7 @@ export default function Inbox() {
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
   const [visibleConversationIds, setVisibleConversationIds] = useState(null);
-  const [keepNewlyOpenedUnreadThread, setKeepNewlyOpenedUnreadThread] = useState(false);
+  const [keepExplicitlyOpenedThread, setKeepNewlyOpenedUnreadThread] = useState(false);
   const [acquisitionContext, setAcquisitionContext] = useState(null);
   const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
@@ -941,9 +941,9 @@ export default function Inbox() {
 
   async function handleSelectConversation(contactId) {
     const conversation = conversations?.find((item) => item.contact_id === contactId);
-    // Opening an unread conversation removes it from the Unread filter.
-    // Keep its thread open rather than instantly replacing it with the empty state.
-    setKeepNewlyOpenedUnreadThread(Boolean(conversation?.is_unread));
+    // Updating a conversation can move it out of the current filter.
+    // Keep its explicitly opened thread visible until staff change filters.
+    setKeepExplicitlyOpenedThread(true);
     setSelectedId(contactId);
     setSearchParams({ contact: String(contactId) }, { replace: true });
     setMobileThreadOpen(true);
@@ -1331,7 +1331,7 @@ export default function Inbox() {
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
   const selectedContactIsFilteredOut =
     selectedContact && visibleConversationIds !== null &&
-    !keepNewlyOpenedUnreadThread &&
+    !keepExplicitlyOpenedThread &&
     !visibleConversationIds.includes(selectedContact.contact_id);
 
   return (
