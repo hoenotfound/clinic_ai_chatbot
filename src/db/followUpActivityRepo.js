@@ -27,9 +27,9 @@ function parseActivityFilters(query = {}) {
 const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'message:' || m.id::text AS event_id, m.created_at AS occurred_at,
     m.contact_id, c.channel,
-    CASE WHEN m.pricing_reminder_anchor_id IS NOT NULL OR m.automated_follow_up_step = 4
+    CASE WHEN m.pricing_reminder_anchor_id IS NOT NULL OR (parent.id IS NULL AND m.automated_follow_up_step = 4)
       THEN 'pricing' ELSE 'sequence' END AS type,
-    m.automated_follow_up_step AS step,
+    COALESCE(parent.automated_follow_up_step, m.automated_follow_up_step) AS step,
     CASE
       WHEN m.delivery_status IN ('sent', 'delivered', 'read') THEN 'sent'
       WHEN m.delivery_status = 'failed' THEN 'failed'
@@ -54,19 +54,28 @@ const ACTIVITY_SQL = `WITH activity AS (
         OR NULLIF(m.media_url, '') IS NOT NULL THEN 'image'
       WHEN m.media_key IS NOT NULL THEN 'attachment'
       ELSE 'text'
-    END AS media_type
+    END AS media_type,
+    CASE WHEN parent.id IS NOT NULL THEN 'media_companion' ELSE 'follow_up' END AS message_part,
+    parent.id AS parent_message_id
   FROM messages m
   JOIN contacts c ON c.id = m.contact_id
+  LEFT JOIN messages parent
+    ON parent.id = m.automated_follow_up_parent_message_id
+    AND parent.contact_id = m.contact_id
+    AND parent.is_automated_follow_up = true
+    AND parent.automated_follow_up_for_message_id IS NOT NULL
+    AND parent.automated_follow_up_step BETWEEN 1 AND 3
   WHERE m.is_automated_follow_up = true
     AND (m.automated_follow_up_for_message_id IS NOT NULL
-      OR m.pricing_reminder_anchor_id IS NOT NULL)
+      OR m.pricing_reminder_anchor_id IS NOT NULL
+      OR (parent.id IS NOT NULL AND c.channel IN ('facebook', 'instagram')))
     AND m.automated_follow_up_step BETWEEN 1 AND 4
     AND m.created_at >= now() - $1::integer * interval '1 day'
   UNION ALL
   SELECT 'pricing_decision:' || p.id::text, p.created_at, p.contact_id, c.channel,
     'pricing', 4,
     CASE WHEN p.reason = 'delivery_review' THEN 'attention' ELSE 'skipped' END,
-    LEFT(p.reason, 240), p.reason, NULL::text, NULL::text
+    LEFT(p.reason, 240), p.reason, NULL::text, NULL::text, NULL::text, NULL::integer
   FROM pricing_reminder_decisions p
   JOIN contacts c ON c.id = p.contact_id
   WHERE p.created_at >= now() - $1::integer * interval '1 day'
@@ -74,7 +83,7 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'sequence_decision:' || d.id::text, d.created_at, d.contact_id, c.channel,
     'sequence', d.follow_up_step,
     CASE WHEN d.action = 'human_review' THEN 'attention' ELSE 'skipped' END,
-    LEFT(COALESCE(d.reason, d.action), 240), d.action, NULL::text, NULL::text
+    LEFT(COALESCE(d.reason, d.action), 240), d.action, NULL::text, NULL::text, NULL::text, NULL::integer
   FROM follow_up_ai_decisions d
   JOIN contacts c ON c.id = d.contact_id
   WHERE d.created_at >= now() - $1::integer * interval '1 day'
@@ -96,7 +105,7 @@ SELECT
   ) FROM scoped) AS summary,
   (SELECT COUNT(*)::integer FROM visible) AS total,
   COALESCE((SELECT jsonb_agg(to_jsonb(paged) ORDER BY paged.occurred_at DESC, paged.event_id DESC) FROM (
-    SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status, provider_evidence, media_type
+    SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status, provider_evidence, media_type, message_part, parent_message_id
     FROM visible
     ORDER BY occurred_at DESC, event_id DESC
     LIMIT $5::integer OFFSET $6::integer
