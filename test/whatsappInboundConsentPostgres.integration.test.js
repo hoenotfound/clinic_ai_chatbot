@@ -69,8 +69,25 @@ test("Postgres inbound consent evidence is atomic and rejects duplicate/older me
       assert.equal((await consent.recordFromInbound(opts, { database })).recorded,false,
         "same Meta message must not refresh permission");
 
-      await client.query("UPDATE contacts SET whatsapp_opt_out_at=now() WHERE id=1");
-      await client.query("UPDATE leads SET marketing_consent='opted_out' WHERE id=2");
+      // Exercise the real opt-out SQL as well, rather than mocking it.
+      const policy = require("../src/services/whatsappPolicyService");
+      const { pool } = require("../src/db/db");
+      const originalQuery = pool.query;
+      pool.query = client.query.bind(client);
+      try {
+        await policy.recordMarketingOptOut(1, "customer_message");
+        const stopped = (await client.query(
+          "SELECT whatsapp_marketing_opt_out_at FROM contacts WHERE id=1")).rows[0];
+        assert.ok(stopped.whatsapp_marketing_opt_out_at);
+        assert.equal((await client.query(
+          "SELECT marketing_consent FROM leads WHERE id=2")).rows[0].marketing_consent, "opted_out");
+
+        await policy.recordOptOut(1, "customer_message");
+        assert.ok((await client.query(
+          "SELECT whatsapp_opt_out_at FROM contacts WHERE id=1")).rows[0].whatsapp_opt_out_at);
+      } finally {
+        pool.query = originalQuery;
+      }
       assert.equal((await consent.recordFromInbound(opts, { database })).recorded,false,
         "replayed old message must not undo global STOP");
       assert.equal((await client.query(
