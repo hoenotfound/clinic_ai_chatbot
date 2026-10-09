@@ -82,7 +82,8 @@ export function ApprovedFollowUpTemplatePicker({
             <p className="mt-2 text-[11px] text-amber-800">Preview uses the approved template placeholders. Any supported treatment variable is filled by the existing worker; no AI-generated text is sent.</p>}
           {!supportedForAutomation(selected) &&
             <p role="alert" className="mt-2 text-xs text-red-700">This version is not supported for automated marketing follow-ups.</p>}
-          <div className="mt-2 space-y-1 border-t border-[var(--color-border)] pt-2" aria-label="Template language readiness">
+          <div className="mt-2 space-y-1 border-t border-[var(--color-border)] pt-2" aria-label="Template approval by language">
+            <p className="text-[11px] font-semibold">Template approval by language · not sending eligibility</p>
             {["zh_CN", "en_US", "ms"].map((locale) => {
               const variant = chosenVariants.find((v) => v.language === locale);
               const ready = variant && supportedForAutomation(variant) &&
@@ -90,7 +91,7 @@ export function ApprovedFollowUpTemplatePicker({
                   supportedFormats.length === 1 && (variant.header?.format || "TEXT") === format);
               return (
                 <p key={locale} className={`text-[11px] ${ready ? "text-emerald-700" : "text-amber-800"}`}>
-                  {locale}: {ready ? `Approved · ${variant.header?.format || "TEXT"} header` :
+                  {locale}: {ready ? `Template approved · ${variant.header?.format || "TEXT"} header` :
                     variant ? "Blocked: unsupported or different header type" : "Missing: worker may use the configured fallback language"}
                 </p>
               );
@@ -110,7 +111,7 @@ export function ApprovedFollowUpTemplatePicker({
   );
 }
 
-export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, onChange }) {
+export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, language = "auto", freeEntryStatus, onChange }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState("");
@@ -127,6 +128,45 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
     ? api.followUpTemplateMediaPreviewUrl(rule.mediaKey)
     : rule.mediaUrl && /^https:\/\//i.test(rule.mediaUrl) ? rule.mediaUrl : "";
   const attached = Boolean(rule.mediaKey || rule.mediaUrl);
+  const variants = (catalog?.templates || []).filter((item) => item.name === rule.templateName);
+  const selectedLanguages = language === "auto" ? ["zh_CN", "en_US", "ms"] : [language];
+  const languageProblems = selectedLanguages.filter((code) => {
+    const v = variants.find((item) => item.language === code);
+    return v && (!supportedForAutomation(v) || (v.header?.format || "TEXT") !== format);
+  });
+  const mediaBlocked = needsAttachment && (
+    !attached || !rule.serviceName || rule.serviceName === "*" ||
+    (format === "VIDEO" && rule.videoCodecVerified !== true)
+  );
+  const serverEnabled = freeEntryStatus?.enabledOnServer === true;
+  const serverBlocked = freeEntryStatus?.strictSevenDayBlocked === true ||
+    (freeEntryStatus?.freeOnlyEnabled === true &&
+      Number(freeEntryStatus?.billingSafety?.since_switch || 0) > 0);
+  const configReady = Boolean(template && supportedForAutomation(template) &&
+    !mediaBlocked && !languageProblems.length && !serverBlocked);
+
+  const readinessNote = (
+    <div className="space-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs"
+      aria-label={`Template rule configuration readiness ${index + 1}`}>
+      <p className="font-semibold">Template/media configuration: {configReady ? "Checks passed" : "Not ready"}</p>
+      {mediaBlocked && <p className="text-amber-800">
+        {format === "VIDEO" && attached && !rule.videoCodecVerified
+          ? "Blocked: video codec not verified. Verify the clinic video or upload a supported MP4."
+          : "Blocked: select the matching treatment and required attachment."}
+      </p>}
+      {languageProblems.length > 0 && <p className="text-amber-800">
+        Incompatible language headers: {languageProblems.join(", ")}. The worker skips mismatched versions.
+      </p>}
+      {!freeEntryStatus && <p className="text-amber-800">Server/billing eligibility not checked; do not assume this rule can send.</p>}
+      {freeEntryStatus && (!serverEnabled || serverBlocked) &&
+        <p className="text-amber-800">The server or billing safety checks currently block some extended sends.</p>}
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        This is configuration readiness only, not permission to send. Every lead still needs eligible free-entry
+        timing, documented marketing consent, active approved template, and the server's strict zero-cost gate.
+        Availability and free billing are never guaranteed by this preview.
+      </p>
+    </div>
+  );
 
   async function chooseExisting(value) {
     if (!value) return;
@@ -136,8 +176,15 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
     setError("");
     setPendingPreviewUrl("");
     try {
-      if (item.mediaKey) {
-        onChange({ mediaKey: item.mediaKey, mediaUrl: "", mediaSourceId: item.id.startsWith("video:") ? item.id : "", videoCodecVerified: false });
+      if (item.mediaKey && format === "VIDEO") {
+        const verified = await api.verifyFollowUpTemplateVideo(item.id);
+        if (!verified?.key || verified.videoCodecVerified !== true)
+          throw new Error("The existing video could not be verified as H.264/AAC.");
+        setPendingPreviewUrl(verified.previewUrl || "");
+        onChange({ mediaKey: verified.key, mediaUrl: "",
+          mediaSourceId: verified.mediaSourceId || item.id, videoCodecVerified: true });
+      } else if (item.mediaKey) {
+        onChange({ mediaKey: item.mediaKey, mediaUrl: "", mediaSourceId: "", videoCodecVerified: false });
       } else if (item.imageId && format === "IMAGE") {
         const saved = await api.importFollowUpTemplateImage(item.id);
         if (!saved?.key) throw new Error("The selected image could not be attached.");
@@ -172,9 +219,15 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
     finally { setBusy(false); }
   }
 
-  if (!template) return <p className="text-xs text-[var(--color-text-muted)]">Select an approved template to choose its attachment.</p>;
+  if (!template) return (
+    <div className="space-y-2">
+      <p className="text-xs text-[var(--color-text-muted)]">Select an approved template to choose its attachment.</p>
+      {readinessNote}
+    </div>
+  );
   if (automaticImage || !needsAttachment) return (
     <div className="space-y-2 text-xs text-[var(--color-text-muted)]">
+      {readinessNote}
       <p>{automaticImage
         ? "The worker selects the matching active promotion image. Do not attach a manual image."
         : "This TEXT template does not need a media attachment."}</p>
@@ -190,6 +243,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
   );
   return (
     <div className="space-y-3 rounded-lg border border-[var(--color-border)] p-3 sm:col-span-2">
+      {readinessNote}
       <p className="text-xs font-bold">{format === "VIDEO" ? "Video attachment" : "Image attachment"} · required for this approved template</p>
       {(!rule.serviceName || rule.serviceName === "*") &&
         <p role="alert" className="text-xs text-amber-800">
@@ -239,7 +293,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, on
         <label className="flex items-start gap-2 text-xs">
           <input type="checkbox" checked={rule.videoCodecVerified === true}
             onChange={(event) => onChange({ videoCodecVerified: event.target.checked })} />
-          I verified this video is H.264 with AAC audio, not HEVC. Uploaded MP4s are checked server-side.
+          I verified this video is H.264 with AAC audio, not HEVC. Uploaded and reused clinic MP4s are checked server-side.
         </label>
       )}
       <details className="text-xs text-[var(--color-text-muted)]">
