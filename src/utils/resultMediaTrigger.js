@@ -110,20 +110,18 @@ function rotateAfter(items, lastImageUrl) {
   return [...items.slice(start), ...items.slice(0, start)];
 }
 
-// The second (or third) customer turn can still refer to a verified Meta ad
-// when earlier turns were strictly greetings or language-selection messages.
-// Never revive an old ad after a substantive customer topic or price request.
+// The repository returns the FIRST three earlier inbound customer texts.
+// Three or more prior customer turns, even if the AI snapshot only shows a
+// greeting, must never activate old creative. Unverified history fails closed.
 function isEarlyContextualAdEnquiry({
   customerText,
-  isFirstMessage = false,
-  priorCustomerTexts = [],
+  priorCustomerTexts = null,
 } = {}) {
-  if (!isContextualAdServiceEnquiry(customerText)) return false;
-  if (isFirstMessage === true) return true;
-  return Array.isArray(priorCustomerTexts) &&
-    priorCustomerTexts.length > 0 &&
-    priorCustomerTexts.length <= 2 &&
-    priorCustomerTexts.every((text) => isGreetingOrLanguageOnly(text));
+  if (!isContextualAdServiceEnquiry(customerText) ||
+      !Array.isArray(priorCustomerTexts) || priorCustomerTexts.length > 2) {
+    return false;
+  }
+  return priorCustomerTexts.every((text) => isGreetingOrLanguageOnly(text));
 }
 
 async function resolveResultMediaForReply({
@@ -131,8 +129,7 @@ async function resolveResultMediaForReply({
   serviceQuerySource,
   metaAdCreativeService = null,
   customerText = null,
-  isFirstMessage = false,
-  priorCustomerTexts = [],
+  priorCustomerTexts = null,
   onSkip = null,
   priceQuery,
   packageQuery,
@@ -152,13 +149,13 @@ async function resolveResultMediaForReply({
   // A contextual Click-to-WhatsApp question can follow a greeting or language
   // preference. Never apply this exception after a substantive customer turn,
   // and never use an ad name or an AI model guess as verification.
+  const contextualAdText = isContextualAdServiceEnquiry(customerText);
   const contextualAdEnquiry = isEarlyContextualAdEnquiry({
     customerText,
-    isFirstMessage,
     priorCustomerTexts,
   });
   const skip = (reason) => {
-    if (contextualAdEnquiry && typeof onSkip === "function") onSkip(reason);
+    if (contextualAdText && typeof onSkip === "function") onSkip(reason);
     return null;
   };
   if (
@@ -169,6 +166,12 @@ async function resolveResultMediaForReply({
     textSendSucceeded !== true
   ) {
     return skip("unsafe_or_unsent_ai_reply");
+  }
+
+  // Even a model-provided service flag cannot revive old ad creative for a
+  // generic "tell me more" enquiry in an established conversation.
+  if (contextualAdText && !contextualAdEnquiry) {
+    return skip("contextual_ad_history_unverified_or_not_early");
   }
 
   const effectiveTreatment = treatment || (contextualAdEnquiry ? metaAdCreativeService : null);
