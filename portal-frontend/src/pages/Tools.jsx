@@ -2064,9 +2064,12 @@ function FollowUpTool({
 
   useEffect(() => {
     if (jumpStepIndex === null || followUpTab !== "sequence") return;
-    // Wait for the selected step's accordion to render before scrolling.
-    document.getElementById(`follow-up-step-${jumpStepIndex + 1}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // The existing editor is mounted after the accordion changes. Move keyboard
+    // focus as well as scroll position so it is usable without a pointer.
+    const editor = document.getElementById(`follow-up-step-${jumpStepIndex + 1}`);
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView({ behavior: "smooth", block: "start" });
     setJumpStepIndex(null);
   }, [jumpStepIndex, followUpTab, expandedStepIndex]);
 
@@ -2254,6 +2257,15 @@ function FollowUpTool({
                   const readyLanguages = FOLLOW_UP_LANGUAGES.filter(({ key }) =>
                     String(step.translations?.[key] || "").trim()
                   ).length;
+                  const overrides = step.serviceOverrides || [];
+                  const readyTargetedLanguages = overrides.reduce(
+                    (count, override) => count + FOLLOW_UP_LANGUAGES.filter(
+                      ({ key }) => String(override.translations?.[key] || "").trim()
+                    ).length,
+                    0
+                  );
+                  const defaultLanguageLabel = step.messageMode === "ai"
+                    ? "Fallback translations" : "Default translations";
                   return (
                     <li key={index} className="relative pl-9">
                       {index < allSteps.length - 1 && (
@@ -2282,7 +2294,10 @@ function FollowUpTool({
                         </span>
                         <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">
                           {step.messageMode === "ai" ? "AI message with fallback" : "Standard message"} · {index === 0 && translationsNeedRefresh
-                            ? "Languages will refresh when saved" : `${readyLanguages}/3 languages configured`}
+                            ? `${defaultLanguageLabel} refresh on save` : `${defaultLanguageLabel}: ${readyLanguages}/3 configured`}
+                          {overrides.length > 0 && (
+                            <> · Service translations: {readyTargetedLanguages}/{overrides.length * FOLLOW_UP_LANGUAGES.length} configured</>
+                          )}
                         </span>
                         <StepSummaryChips step={step} />
                       </button>
@@ -2313,8 +2328,9 @@ function FollowUpTool({
                 <details className="mt-1.5">
                   <summary className="cursor-pointer font-semibold text-[var(--color-primary)]">Why might a step not send?</summary>
                   <p className="mt-1">
-                    Customer replies can restart the sequence. Bookings, human takeover, opt-outs, unconfirmed earlier sends,
-                    closed reply windows or insufficient safe spacing can stop a step. The scheduler makes the final decision.
+                    A customer reply stops the remaining steps in the current sequence. A later eligible AI or staff reply can start a new sequence.
+                    Bookings, human takeover, opt-outs, unconfirmed earlier sends, closed reply windows or insufficient safe spacing
+                    can also stop a step. The scheduler makes the final decision.
                   </p>
                 </details>
               </div>
@@ -2426,7 +2442,7 @@ function FollowUpTool({
             </div>
           </Card>
 
-          <Card id="follow-up-step-1">
+          <Card id="follow-up-step-1" ariaLabel="Follow-up 1 editor">
             <SectionHeading
               number="2"
               title="Follow-up 1"
@@ -2578,6 +2594,9 @@ function FollowUpTool({
                     <div
                       key={index}
                       id={`follow-up-step-${index + 2}`}
+                      role="region"
+                      aria-label={`Follow-up ${index + 2} editor`}
+                      tabIndex={-1}
                       className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]"
                     >
                       <div className="flex items-start gap-3 p-4">
@@ -4145,8 +4164,8 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
   );
 }
 
-function Card({ children, id }) {
-  return <section id={id} className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">{children}</section>;
+function Card({ children, id, ariaLabel }) {
+  return <section id={id} aria-label={ariaLabel} tabIndex={id ? -1 : undefined} className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">{children}</section>;
 }
 
 function SectionHeading({ number, title, description }) {
