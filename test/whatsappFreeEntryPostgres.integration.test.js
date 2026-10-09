@@ -134,6 +134,25 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         SET pricing_type='free_entry_point'
         WHERE wamid='wamid.fep.day4'
       `);
+      // A second CTWA ad might open a NEW 72h window before the observed
+      // message. Its free pricing must not be confused with a 7-day old FEP.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,content,created_at,whatsapp_message_id,delivery_status)
+        VALUES
+          (194,6,'user','Another ad click',now()-interval '12 hours','wamid.inbound.new','delivered'),
+          (195,6,'assistant','Another first reply',now()-interval '11 hours','wamid.opened.new','delivered');
+        INSERT INTO whatsapp_free_entry_referrals
+          (origin_message_id,contact_id,ctwa_clid,source_type)
+        VALUES(194,6,'independent-second-ad','ad');
+        INSERT INTO whatsapp_free_entry_pricing_evidence
+          (wamid,pricing_type,billable,delivery_status)
+        VALUES('wamid.opened.new','free_entry_point',false,'delivered');
+      `);
+      assert.equal(await zeroCostGuard.authorizedCeilingHours({database:guardDb}),72,
+        "new ad re-entry never proves the original CTWA window extends to seven days");
+      await client.query("DELETE FROM whatsapp_free_entry_pricing_evidence WHERE wamid='wamid.opened.new'");
+      await client.query("DELETE FROM whatsapp_free_entry_referrals WHERE origin_message_id=194");
+      await client.query("DELETE FROM messages WHERE id IN (194,195)");
       assert.equal(await zeroCostGuard.authorizedCeilingHours({database:guardDb}),168,
         "independent day-4 Meta free-entry callback verifies seven-day account eligibility");
       assert.equal((await worker.alignedSettings({sevenDayVerified:true},guardDb)).sevenDayVerified,true,
