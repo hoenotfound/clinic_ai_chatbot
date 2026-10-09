@@ -169,6 +169,25 @@ function createInboundMessageClaimService({
       }
     }
 
+    // When a customer returns for the SAME treatment, an earlier explicit
+    // consent can apply to the new CRM journey. Do not copy across unrelated
+    // treatments, ambiguous enquiries, global STOP or marketing opt-outs.
+    if (channel === "whatsapp" && leadOutcome?.created === true && lead?.id) {
+      try {
+        await inboundConsent.inheritForNewLead({
+          contactId: contact.id,
+          leadId: lead.id,
+          inboundText: incoming.text,
+          adName: incoming.attribution?.adName || incoming.attribution?.headline,
+          referralTreatment: incoming.attribution?.treatmentInterest || null,
+        });
+      } catch (err) {
+        // A failed inheritance leaves the CRM at 'unknown' and the sending
+        // policy fails closed. It must never delay the ordinary 24-hour reply.
+        console.error("Could not verify inherited WhatsApp marketing consent:", err);
+      }
+    }
+
     // Telegram re-engagement is operationally useful but never part of the
     // customer-reply critical path. The stable current-message event key makes
     // this safe to repeat during inbound recovery after a Render restart.
