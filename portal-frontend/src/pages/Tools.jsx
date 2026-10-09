@@ -2010,6 +2010,8 @@ function FollowUpTool({
     previewStepIndex,
     Math.max(0, allSteps.length - 1)
   );
+  // The preview picker must not change which sequence editor is open.
+  const editingStepIndex = expandedStepIndex === null ? 0 : expandedStepIndex + 1;
   const previewStep = allSteps[safePreviewIndex] || allSteps[0];
   const previewOverride =
     (previewStep?.serviceOverrides || []).find(
@@ -2253,7 +2255,8 @@ function FollowUpTool({
               </div>
               <ol aria-label="Follow-up sequence timeline" className="mt-4 space-y-2">
                 {allSteps.map((step, index) => {
-                  const selected = safePreviewIndex === index;
+                  const selected = editingStepIndex === index;
+                  const previewingDifferentStep = safePreviewIndex === index && !selected;
                   const readyLanguages = FOLLOW_UP_LANGUAGES.filter(({ key }) =>
                     String(step.translations?.[key] || "").trim()
                   ).length;
@@ -2287,7 +2290,9 @@ function FollowUpTool({
                       >
                         <span className="flex flex-wrap items-center justify-between gap-2">
                           <span className="text-sm font-semibold">Follow-up {index + 1}</span>
-                          <span className="text-[11px] font-semibold text-[var(--color-primary)]">Edit step</span>
+                          <span className="text-[11px] font-semibold text-[var(--color-primary)]">
+                            {selected ? "Editing" : "Edit step"}
+                          </span>
                         </span>
                         <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">
                           {sequenceTargetSummary(step)}
@@ -2300,6 +2305,11 @@ function FollowUpTool({
                           )}
                         </span>
                         <StepSummaryChips step={step} />
+                        {previewingDifferentStep && (
+                          <span className="mt-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">
+                            Previewing only — select Edit step to open the editor
+                          </span>
+                        )}
                       </button>
                     </li>
                   );
@@ -2309,7 +2319,12 @@ function FollowUpTool({
                 <section aria-label="Pricing reminder dependency" className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold">Optional pricing reminder</p>
-                    <button type="button" onClick={() => setFollowUpTab("pricing")}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFollowUpTab("pricing");
+                        document.getElementById("follow-up-tab-pricing")?.focus();
+                      }}
                       className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline">
                       View pricing settings
                     </button>
