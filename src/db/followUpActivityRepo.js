@@ -134,9 +134,16 @@ async function listActivity(query = {}, allowedContactIds = null, queryFn = (sql
 // window whose configured Follow-up 3 has no message or terminal decision.
 // This is NOT a recorded skip: staff takeover, customer opt-out, booking,
 // scheduling limits or quiet hours may explain the gap. Never insert events.
-const MISSING_FINAL_STEP_SQL = `SELECT c.id AS contact_id, c.channel,
+const MISSING_FINAL_STEP_SQL = `WITH candidate_contacts AS (
+    SELECT DISTINCT contact_id
+    FROM messages
+    WHERE role = 'user'
+      AND created_at >= now() - $1::integer * interval '1 day'
+  )
+  SELECT c.id AS contact_id, c.channel,
     inbound.created_at AS inbound_at, anchor.created_at AS anchor_at
-  FROM contacts c
+  FROM candidate_contacts recent
+  JOIN contacts c ON c.id = recent.contact_id
   JOIN LATERAL (
     SELECT id, created_at FROM messages
     WHERE contact_id = c.id AND role = 'user'
