@@ -76,37 +76,49 @@ test("a new 3D ad cannot accidentally inherit a previous pelvic treatment", () =
 
 test("R2 media and public HTTPS header validation fail closed on MIME and size",async()=>{
   const format=(kind)=>({header:{format:kind}});
+  const scoped=(media)=>({serviceName:"骨盆调理",identifiedTreatment:"骨盆调理",...media});
   const store={
     isSharedFollowUpConfigKey:(key)=>key.startsWith("messages/follow-up-config/"),
     getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"image/jpeg"}),
   };
   assert.equal(await validateApprovedMedia(format("IMAGE"),
-    {mediaKey:"messages/follow-up-config/p.jpg"}, {mediaStore:store}),true);
+    scoped({mediaKey:"messages/follow-up-config/p.jpg"}), {mediaStore:store}),true);
   assert.equal(await validateApprovedMedia(format("VIDEO"),
-    {mediaKey:"messages/follow-up-config/p.jpg"}, {mediaStore:store}),false);
+    scoped({mediaKey:"messages/follow-up-config/p.jpg"}), {mediaStore:store}),false);
   assert.equal(await validateApprovedMedia(format("IMAGE"),
-    {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:store}),false);
+    scoped({mediaKey:"messages/follow-up-config/p.mp4"}), {mediaStore:store}),false);
   assert.equal(await validateApprovedMedia(format("VIDEO"),
-    {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:{
+    scoped({mediaKey:"messages/follow-up-config/p.mp4"}), {mediaStore:{
       ...store,getSharedFollowUpMediaInfo:async()=>({bytes:19*1024*1024,mimeType:"video/mp4"}),
     }}),false);
   assert.equal(await validateApprovedMedia(format("VIDEO"),
-    {mediaKey:"messages/follow-up-config/p.mp4"}, {mediaStore:{
+    scoped({mediaKey:"messages/follow-up-config/p.mp4"}), {mediaStore:{
       ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
     }}),false, "unverified video codec must fail closed");
   assert.equal(await validateApprovedMedia(format("VIDEO"),
-    {mediaKey:"messages/follow-up-config/p.mp4",videoCodecVerified:true}, {mediaStore:{
+    scoped({mediaKey:"messages/follow-up-config/p.mp4",videoCodecVerified:true}), {mediaStore:{
       ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
-    }}),true);
+      downloadMedia:async()=>Buffer.from("video-test-bytes"),
+    },verifyVideo:async(bytes)=>assert.equal(bytes.toString(),"video-test-bytes")}),true);
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    scoped({mediaKey:"messages/follow-up-config/p.mp4",videoCodecVerified:true}), {mediaStore:{
+      ...store,getSharedFollowUpMediaInfo:async()=>({bytes:4*1024*1024,mimeType:"video/mp4"}),
+      downloadMedia:async()=>Buffer.from("malformed-video"),
+    },verifyVideo:async()=>{throw new Error("Video is HEVC.");}}),false,
+    "A manually persisted verified flag cannot bypass the server codec probe");
+  assert.equal(await validateApprovedMedia(format("VIDEO"),
+    scoped({mediaUrl:"https://cdn.example.com/test.mp4",videoCodecVerified:true}),{
+      env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:"cdn.example.com"},
+    }),false, "Remote VIDEO URLs cannot bypass immutable R2 verification");
   const remote="https://cdn.example.com/image.jpg";
   const fetchStub=async (_url,opts)=>{
     assert.equal(opts.method,"HEAD");
     assert.equal(opts.redirect,"error");
     return {ok:true,headers:new Map([["content-type","image/jpeg"],["content-length","4000"]])};
   };
-  assert.equal(await validateApprovedMedia(format("IMAGE"),{mediaUrl:remote},
+  assert.equal(await validateApprovedMedia(format("IMAGE"),scoped({mediaUrl:remote}),
     {fetchImpl:fetchStub,env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:""}}),false);
-  assert.equal(await validateApprovedMedia(format("IMAGE"),{mediaUrl:remote},
+  assert.equal(await validateApprovedMedia(format("IMAGE"),scoped({mediaUrl:remote}),
     {fetchImpl:fetchStub,env:{WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS:"cdn.example.com"}}),true);
 });
 

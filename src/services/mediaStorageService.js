@@ -293,16 +293,19 @@ async function getSharedFollowUpMediaInfo(key) {
   return {
     bytes: Number(head.ContentLength),
     mimeType: String(head.ContentType || "").split(";")[0].trim().toLowerCase(),
+    metadata: head.Metadata || {},
+    etag: String(head.ETag || "").replaceAll('"', ""),
   };
 }
 
-async function putObject(key, buffer, mimeType) {
+async function putObject(key, buffer, mimeType, metadata = {}) {
   await sendR2(
     new PutObjectCommand({
       Bucket: getBucketName(),
       Key: key,
       Body: buffer,
       ContentType: mimeType || "application/octet-stream",
+      ...(Object.keys(metadata).length ? { Metadata: metadata } : {}),
     })
   );
 }
@@ -315,7 +318,7 @@ async function putObject(key, buffer, mimeType) {
 async function uploadMedia(
   buffer,
   mimeType,
-  { contactId = "misc", env = process.env } = {}
+  { contactId = "misc", env = process.env, metadata = {} } = {}
 ) {
   const key = buildMediaObjectKey({
     kind: "messages",
@@ -325,7 +328,7 @@ async function uploadMedia(
     id: `${crypto.randomUUID()}${jpegFrameEncoding(buffer) === "non-progressive" ? "-baseline" : ""}`,
   });
   try {
-    await putObject(key, buffer, mimeType);
+    await putObject(key, buffer, mimeType, metadata);
     return key;
   } catch (err) {
     if (isR2RequestTimeoutError(err)) {
@@ -635,6 +638,29 @@ function isSharedFollowUpConfigKey(key, env = process.env) {
   ) || normalized.startsWith("messages/follow-up-config/");
 }
 
+/** Staff preview must have an exact saved reference from this clinic.
+ * Legacy messages/follow-up-config keys have no tenant namespace in a shared
+ * bucket; a prefix match alone is never proof of ownership. */
+function isReferencedClinicFollowUpMediaKey(key, config, env = process.env) {
+  const isolation = getMediaIsolationStatus(env);
+  // The new template preview never grants R2 access from an unnamespaced
+  // legacy prefix, even if someone writes that string into clinic settings.
+  // Existing ordinary follow-up playback uses its separate legacy route.
+  if (!isolation.prefix ||
+      !String(key).startsWith(`${isolation.prefix}/messages/follow-up-config/`) ||
+      !isSharedFollowUpConfigKey(key, env) ||
+      !config || typeof config !== "object") return false;
+  const followUp = config.automatedFollowUp || {};
+  const steps = [followUp, ...(Array.isArray(followUp.additionalSteps) ? followUp.additionalSteps : [])];
+  for (const step of steps) {
+    if (step.videoKey === key) return true;
+    if (Array.isArray(step.serviceOverrides) && step.serviceOverrides.some((entry) => entry.videoKey === key))
+      return true;
+  }
+  return Array.isArray(followUp.freeEntry?.templateRules) &&
+    followUp.freeEntry.templateRules.some((rule) => rule.mediaKey === key);
+}
+
 /**
  * Deletes all customer media known at purge time. Exact keys are deleted first.
  * Namespaced prefix cleanup then catches temporary/unreferenced objects. Legacy
@@ -934,6 +960,7 @@ module.exports = {
   isOwnedCustomerMediaPrefix,
   isOwnedStoredMediaKey,
   isSharedFollowUpConfigKey,
+  isReferencedClinicFollowUpMediaKey,
   isStaleTemporaryObject,
   pruneStaleTemporaryMedia,
   pruneStaleFollowUpConfigVideos,

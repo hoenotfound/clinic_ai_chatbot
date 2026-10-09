@@ -5,11 +5,16 @@ const mediaStorage = require("../services/mediaStorageService");
 const clinicConfig = require("../config/clinicConfig");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const templateMedia = require("../services/whatsappTemplateMediaService");
+const { isSafeTemplateMediaContext } = require("./followUpTemplateMediaPolicy");
 const { findMentionedPromotionPackages } = require("./activePromotion");
 
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
 const SUPPORTED_LANGUAGES = new Set(["auto", "zh_CN", "en_US", "ms"]);
 const ALLOWED_MEDIA_TYPES = new Set(["IMAGE", "VIDEO"]);
+// Cache verified bytes only while their R2 object ETag remains the same.
+// This cache is an optimization; missing ETags always trigger a fresh probe.
+const verifiedVideoEtags = new Map();
+const VIDEO_PROOF_CACHE_MS = 30 * 60 * 1000;
 
 function validMediaUrl(value) {
   if (!value) return true;
@@ -35,6 +40,12 @@ function templateRuleValid(rule, slots, services) {
     /^[a-z0-9_]+$/.test(templateName) &&
     validMediaUrl(rule.mediaUrl || "") &&
     !(rule.mediaKey && rule.mediaUrl) &&
+    (!rule.mediaSourceId || (
+      typeof rule.mediaSourceId === "string" &&
+      rule.mediaSourceId.length <= 100 &&
+      /^(?:promo:[1-9]\d*|video:[a-f0-9]{24})$/.test(rule.mediaSourceId) &&
+      Boolean(rule.mediaKey) && !rule.mediaUrl
+    )) &&
     (!rule.mediaKey ||
       (mediaStorage.isSharedFollowUpConfigKey(rule.mediaKey) &&
         /\.(?:mp4|jpe?g|png)$/i.test(rule.mediaKey)));
@@ -79,6 +90,7 @@ function selectTemplateSpec(candidate, slotHours, settings) {
     language: locale,
     mediaUrl: matching?.mediaUrl || "",
     mediaKey: matching?.mediaKey || "",
+    mediaSourceId: matching?.mediaSourceId || "",
     videoCodecVerified: matching?.videoCodecVerified === true,
     serviceName: matching?.serviceName || null,
     identifiedTreatment: customerInterest || adInterest ||
@@ -228,8 +240,30 @@ function materializeTemplateMediaSpec(spec) {
 async function validateApprovedMedia(template, spec, {
   env = process.env, mediaStore = mediaStorage, fetchImpl = fetch,
   promos = promoImagesRepo, validateImage = templateMedia.prepareImage,
+  verifyVideo = templateMedia.verifyVideoBuffer,
+  config = clinicConfig, now = Date.now(),
 } = {}) {
   if (!template || !spec) return false;
+  if (!isSafeTemplateMediaContext(spec, template, { config, now })) return false;
+  if (spec.mediaSourceId?.startsWith("promo:")) {
+    const origin = templateMedia.listReusableMedia({ config, now })
+      .find((item) => item.id === spec.mediaSourceId);
+    if (!origin) return false;
+    if (origin.packageName) {
+      // A static pelvic Package A graphic is never safe for an ambiguous B
+      // enquiry. Preserve the existing strict customer-choice detection used
+      // by automatically selected active promotion images.
+      if (normalizeServiceText(spec.identifiedTreatment) !== normalizeServiceText("骨盆调理")) return false;
+      const active = (config.promotions || []).filter((promotion) =>
+        normalizeServiceText(promotion.linkedService) === normalizeServiceText("骨盆调理") &&
+        templateMedia.currentlyValid(promotion, now, config.timezone || config.timeZone)
+      );
+      if (active.length !== 1) return false;
+      const choice = chosenPelvisPackage(spec.recentInboundMessages || [], active[0].packages || []);
+      if (!choice || normalizeServiceText(origin.packageName) !== normalizeServiceText("Package " + choice))
+        return false;
+    }
+  }
   const format = template.header?.format || "TEXT";
   if (spec.autoPromoImageId) {
     if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
@@ -249,10 +283,12 @@ async function validateApprovedMedia(template, spec, {
   const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
     format === "IMAGE" ? ["image/jpeg", 5*1024*1024] : null;
   if (!expected) return !spec.mediaKey && !spec.mediaUrl;
-  // H.264/AAC codecs cannot be proven by a HEAD response. Require the
-  // clinic to explicitly verify its pre-encoded MP4 rather than silently
-  // send an unknown HEVC file as a promotional template.
-  if (format === "VIDEO" && spec.videoCodecVerified !== true) return false;
+  // An editable checkbox is not codec proof. VIDEO is permitted only for
+  // clinic-owned R2 objects whose exact bytes can be verified by ffprobe.
+  // Remote VIDEO URLs are intentionally unsupported until they have a
+  // server-side verified immutable media record.
+  if (format === "VIDEO" && (spec.videoCodecVerified !== true ||
+      !spec.mediaKey || spec.mediaUrl)) return false;
   const [expectedMime, maxBytes] = expected;
   let info;
   try {
@@ -262,6 +298,13 @@ async function validateApprovedMedia(template, spec, {
       if (format === "VIDEO" && !extension.endsWith(".mp4")) return false;
       if (format === "IMAGE" && !/\.(?:jpe?g|png)$/.test(extension)) return false;
       info = await mediaStore.getSharedFollowUpMediaInfo(spec.mediaKey);
+      // Enforce provenance from the R2 object itself. Removing mediaSourceId
+      // from a saved rule MUST NOT turn an expired promotion into generic media.
+      const storedPromoId = String(info?.metadata?.["clinic-promo-image-id"] || "");
+      if (storedPromoId && (!/^[1-9]\d*$/.test(storedPromoId) ||
+          spec.mediaSourceId !== "promo:" + storedPromoId)) return false;
+      if (spec.mediaSourceId?.startsWith("promo:") &&
+          storedPromoId !== spec.mediaSourceId.slice("promo:".length)) return false;
     } else if (spec.mediaUrl) {
       const url = new URL(spec.mediaUrl);
       const allowed = String(env.WHATSAPP_FEP_MEDIA_ALLOWED_HOSTS || "")
@@ -284,7 +327,20 @@ async function validateApprovedMedia(template, spec, {
         info.bytes > maxBytes) return false;
     if (format === "IMAGE")
       return ["image/jpeg","image/png"].includes(info.mimeType);
-    return info.mimeType === expectedMime;
+    if (info.mimeType !== expectedMime || !spec.mediaKey) return false;
+    // The saved videoCodecVerified flag is merely a UI hint: trust only the
+    // actual R2 bytes checked by the server, never direct config JSON edits.
+    const proofKey = info.etag
+      ? [spec.mediaKey, info.etag, info.bytes].join(":") : null;
+    if (proofKey && verifiedVideoEtags.get(proofKey) > Date.now()) return true;
+    if (typeof mediaStore.downloadMedia !== "function") return false;
+    const bytes = await mediaStore.downloadMedia(spec.mediaKey, { maxBytes: maxBytes });
+    await verifyVideo(bytes);
+    if (proofKey) {
+      if (verifiedVideoEtags.size >= 96) verifiedVideoEtags.clear();
+      verifiedVideoEtags.set(proofKey, Date.now() + VIDEO_PROOF_CACHE_MS);
+    }
+    return true;
   } catch { return false; }
 }
 

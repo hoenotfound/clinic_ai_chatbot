@@ -56,6 +56,7 @@ async function mockPortalApi(
     onConfigUpdate = null,
     followUpStatus = null,
     followUpStatusFailures = 0,
+    templateCatalog = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -458,6 +459,45 @@ async function mockPortalApi(
         status: 200,
         contentType: "video/mp4",
         body: "fake-mp4-preview",
+      });
+    }
+
+    if (path === "/api/config/automated-follow-up/template-catalog" && templateCatalog) {
+      return route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify(templateCatalog),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-media-image" && method === "POST") {
+      return route.fulfill({
+        status: 201, contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/uploaded-image.jpg", format: "IMAGE",
+        }),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-library-image" && method === "POST") {
+      return route.fulfill({
+        status: 201, contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
+          format: "IMAGE", mediaSourceId: "promo:1", previewUrl: "https://example.test/pricing.jpg",
+        }),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-library-video" && method === "POST") {
+      const { selectionId } = request.postDataJSON();
+      return route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/pelvis.mp4",
+          videoCodecVerified: true, format: "VIDEO",
+          mediaSourceId: selectionId, previewUrl: "https://example.test/verified-video.mp4",
+        }),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-media-preview") {
+      return route.fulfill({
+        status: 200, contentType: "image/jpeg", body: "mock-preview",
       });
     }
 
@@ -1117,6 +1157,204 @@ test("Failed WhatsApp status check shows a visible warning and supports retry", 
   await warning.getByRole("button", { name: "Retry check" }).click();
   await expect(warning).not.toBeVisible();
   await expect(page.getByRole("region", { name: "Follow-up activation overview" })).toContainText("Template server:");
+});
+
+test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2 attachment", async ({ page }) => {
+  const saved = [];
+  const persisted = {
+    services: [
+      { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+      { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+    ],
+    automatedFollowUp: {
+      enabled: false, delayMinutes: 10, triggerMode: "all",
+      message: "Following up", imageUrl: "",
+      translations: { en: "Following up", ms: "Following up", zh: "Following up" },
+    },
+  };
+  const template = (name, format, text, language = "zh_CN") => ({
+    name, language, status: "APPROVED", category: "MARKETING",
+    header: { format }, body: { text }, variableFields: [], sendable: true, buttons: [],
+  });
+  await mockPortalApi(page, {
+    businessConfig: persisted,
+    loggedIn: true,
+    onConfigUpdate: (payload) => {
+      saved.push(payload.automatedFollowUp);
+      Object.assign(persisted, payload);
+    },
+    templateCatalog: {
+      templates: [
+        template("clinic_text_reminder", "TEXT", "We can answer your questions."),
+        template("clinic_image_offer", "IMAGE", "See our approved offer image."),
+        template("clinic_video_feedback", "VIDEO", "Hear from another customer."),
+        template("clinic_video_feedback", "VIDEO", "Customer story", "en_US"),
+        { ...template("clinic_utility_notice", "TEXT", "Your appointment."), category: "UTILITY" },
+        { ...template("clinic_unapproved", "TEXT", "Do not send"), status: "REJECTED", sendable: false },
+      ],
+      reusableMedia: [
+        { id: "promo:1", label: "Package A image", format: "IMAGE", imageId: 1, serviceName: "骨盆调理" },
+        { id: "promo:2", label: "Wrong treatment image", format: "IMAGE", imageId: 2, serviceName: "3D 小颜术" },
+        { id: "video:aaaaaaaaaaaaaaaaaaaaaaaa", label: "Pelvis feedback", format: "VIDEO", serviceName: "骨盆调理",
+          mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4" },
+      ],
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByLabel("Free-entry template name")).toBeVisible();
+  await page.getByLabel("Free-entry template name").selectOption("clinic_text_reminder");
+  await expect(page.locator("#free-entry-default-template option", { hasText: "clinic_utility_notice" })).toHaveCount(0);
+  await expect(page.locator("#free-entry-default-template option", { hasText: "clinic_unapproved" })).toHaveCount(0);
+  await expect(page.getByLabel("Approved template preview").first()).toContainText("We can answer your questions.");
+
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
+  const rule = page.getByLabel("Approved marketing template for rule 1");
+  await rule.selectOption("clinic_video_feedback");
+  await expect(page.getByText("Video attachment · required")).toBeVisible();
+  await page.getByLabel("Extended template media library 1").selectOption("video:aaaaaaaaaaaaaaaaaaaaaaaa");
+  await expect(page.getByText("Attached: pelvis.mp4")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules[0]).toMatchObject({
+    templateName: "clinic_video_feedback",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4",
+    mediaUrl: "",
+    mediaSourceId: "video:aaaaaaaaaaaaaaaaaaaaaaaa",
+    videoCodecVerified: true,
+  });
+  await expect(page.getByLabel("Template rule configuration readiness 1"))
+    .toContainText("Template/media fields: Complete");
+  await expect(page.getByLabel("Template rule configuration readiness 1"))
+    .toContainText("marketing consent");
+
+  await rule.selectOption("clinic_image_offer");
+  await expect(page.getByText("Image attachment · required")).toBeVisible();
+  await expect(page.getByText("Attached: pelvis.mp4")).toHaveCount(0);
+  await expect(page.getByLabel("Extended template media library 1").locator('option[value="promo:2"]')).toHaveCount(0);
+  await page.getByLabel("Extended template media library 1").selectOption("promo:1");
+  await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(2);
+  expect(saved[1].freeEntry.templateRules[0]).toMatchObject({
+    templateName: "clinic_image_offer",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
+    mediaUrl: "",
+    mediaSourceId: "promo:1",
+  });
+  await page.reload();
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
+  await expect(page.getByLabel("Extended template treatment 1")).toHaveValue("骨盆调理");
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("switch", { name: "Conditional pricing reminder" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(3);
+  expect(saved[2].freeEntry.templateRules[0]).toMatchObject({
+    mediaSourceId: "promo:1",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
+  });
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("WhatsApp template picker uploads new JPG or video and preserves selected media until saved", async ({ page }) => {
+  const saved = [];
+  const templates = ["IMAGE", "VIDEO"].map((format) => ({
+    name: format === "VIDEO" ? "clinic_media_video" : "clinic_media_image",
+    language: "zh_CN", status: "APPROVED", category: "MARKETING",
+    header: { format }, body: { text: "Approved media text" }, variableFields: [], sendable: true,
+  }));
+  await mockPortalApi(page, {
+    businessConfig: {
+      services: [
+        { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+        { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+      ],
+      automatedFollowUp: {
+        enabled: false, delayMinutes: 10, triggerMode: "all",
+        message: "Following up", imageUrl: "",
+        translations: { en: "Following up", ms: "Following up", zh: "Following up" },
+      },
+    },
+    loggedIn: true,
+    templateCatalog: { templates, reusableMedia: [] },
+    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
+  await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_media_image");
+  await page.getByLabel("Extended template image attachment 1").setInputFiles({
+    name: "promo.jpg", mimeType: "image/jpeg", buffer: Buffer.from("fake-jpeg"),
+  });
+  await expect(page.getByText("Attached: uploaded-image.jpg")).toBeVisible();
+  await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_media_video");
+  await page.getByLabel("Extended template video attachment 1").setInputFiles({
+    name: "feedback.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4"),
+  });
+  await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
+  await expect(page.getByLabel("Video codec status 1"))
+    .toContainText("server rechecks the exact R2 video");
+  await expect(page.getByLabel("Extended template media URL 1")).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: /I verified this video is H.264/ })).toHaveCount(0);
+  await page.getByLabel("Extended template video attachment 1").setInputFiles({
+    name: "feedback-safe.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4"),
+  });
+  await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules[0]).toMatchObject({
+    templateName: "clinic_media_video",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/follow-up.mp4",
+    videoCodecVerified: true,
+  });
+});
+
+test("Delayed treatment image upload cannot attach to a changed rule", async ({ page }) => {
+  const catalog = {
+    templates: [{
+      name: "clinic_image_offer", language: "zh_CN", status: "APPROVED",
+      category: "MARKETING", header: { format: "IMAGE" }, body: { text: "An offer" },
+      variableFields: [], sendable: true,
+    }],
+    reusableMedia: [],
+  };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [
+        { name: "骨盆调理", description: "", duration: "", priceRange: "" },
+        { name: "3D 小颜术", description: "", duration: "", priceRange: "" },
+      ],
+    },
+    templateCatalog: catalog,
+  });
+  let delayedRequest = null;
+  await page.route("**/api/config/automated-follow-up/template-media-image",
+    (route) => { delayedRequest = route; });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
+  await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_image_offer");
+  await page.getByLabel("Extended template image attachment 1").setInputFiles({
+    name: "pelvic-image.jpg", mimeType: "image/jpeg", buffer: Buffer.from("fake-jpeg"),
+  });
+  await expect.poll(() => Boolean(delayedRequest)).toBe(true);
+  await page.getByLabel("Extended template treatment 1").selectOption("3D 小颜术");
+  await delayedRequest.fulfill({
+    status: 201, contentType: "application/json",
+    body: JSON.stringify({
+      key: "clients/test-clinic/messages/follow-up-config/pelvic-image.jpg",
+      format: "IMAGE", previewUrl: "https://example.test/pelvic-image.jpg",
+    }),
+  });
+  await expect(page.getByLabel("Extended template treatment 1")).toHaveValue("3D 小颜术");
+  await expect(page.getByText("Attached: pelvic-image.jpg")).toHaveCount(0);
+  await expect(page.getByLabel("Template rule configuration readiness 1")).toContainText("Incomplete");
 });
 
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
