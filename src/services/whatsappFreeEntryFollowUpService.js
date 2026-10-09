@@ -4,6 +4,7 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("../db/conversationLock");
 const clinicConfig = require("../config/clinicConfig");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const whatsappTemplates = require("./whatsappTemplateService");
+const zeroCostGuard = require("./whatsappZeroCostGuard");
 const whatsapp = require("./whatsappService");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaCache = require("./whatsappFreeEntryMediaCache");
@@ -232,6 +233,16 @@ function settings(env = process.env) {
     templateName, language, fallbackLanguage, slots, templateRules, sevenDayVerified };
 }
 
+// The worker and the final provider-send guard MUST agree on the ceiling.
+// When free-only mode is on, the seven-day flag alone cannot consume slots
+// beyond 72h. Fail closed when pricing evidence is unavailable, before any
+// attempt is claimed or a template is uploaded to Meta.
+async function alignedSettings(active, database = pool) {
+  if (!active || !zeroCostGuard.enabled()) return active;
+  const ceiling = await zeroCostGuard.authorizedCeilingHours({ database });
+  return { ...active, sevenDayVerified: ceiling === 168 };
+}
+
 function selectedSlot(candidate, slots, now = new Date()) {
   const reply = new Date(candidate.first_reply_at).getTime();
   const clock = new Date(now).getTime();
@@ -258,18 +269,20 @@ function selectedSlot(candidate, slots, now = new Date()) {
 async function listCandidates(active, database = pool, contactId = null, {
   excludeMessageId = null, currentAttemptId = null, offset = 0,
 } = {}) {
+  const effective = await alignedSettings(active, database);
   const query = await database.query(candidateSql,
-    [active.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, active.slots,
-      excludeMessageId, currentAttemptId, offset, active.sevenDayVerified ? 168 : 72]);
+    [effective.activatedAt, contactId, contactId ? 1 : MAX_BATCH_SIZE, effective.slots,
+      excludeMessageId, currentAttemptId, offset, effective.sevenDayVerified ? 168 : 72]);
   return query.rows;
 }
 
-async function claim(candidate, slotHours, active, database = pool) {
+async function claim(candidate, slotHours, requested, database = pool) {
   const client = await database.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
       [CONVERSATION_LOCK_NAMESPACE, candidate.contact_id]);
+    const active = await alignedSettings(requested, client);
     const fresh = (await listCandidates(active, client, candidate.contact_id))[0];
     if (!fresh || fresh.first_reply_message_id !== candidate.first_reply_message_id ||
         !active.slots.includes(slotHours) ||
@@ -316,7 +329,8 @@ async function finish(attemptId, status, values = {}) {
   );
 }
 
-async function processCandidate(candidate, active, template, now = new Date(), explicitSpec = null) {
+async function processCandidate(candidate, requested, template, now = new Date(), explicitSpec = null) {
+  const active = await alignedSettings(requested);
   const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
   const spec = explicitSpec || enrichAutomatedTemplateSpec(
@@ -405,7 +419,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
 
     // Recheck after writes and immediately before the provider call. If Meta's
     // approval or the lead's state changed, keep the claim terminal.
-    const liveActive = settings();
+    const liveActive = await alignedSettings(settings());
     const fresh = liveActive &&
       (await listCandidates(liveActive, pool, candidate.contact_id, {
         excludeMessageId: message.id, currentAttemptId: attemptId,
@@ -513,10 +527,11 @@ async function processCandidate(candidate, active, template, now = new Date(), e
 
 async function run({ now = new Date() } = {}) {
   if (running) return { skipped: true };
-  const active = settings();
-  if (!active) return { disabled: true };
+  const configured = settings();
+  if (!configured) return { disabled: true };
   running = true;
   try {
+    const active = await alignedSettings(configured);
     const result = { candidates: 0, accepted: 0, skipped: 0 };
     const catalog = await whatsappTemplates.listApprovedTemplates();
     if (!catalog.success) return { disabled: true, reason: "template_catalog_unavailable" };
@@ -581,4 +596,4 @@ function start() {
   return () => { clearInterval(timer); timer = null; };
 }
 
-module.exports = { settings, selectedSlot, listCandidates, claim, processCandidate, run, start };
+module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start };
