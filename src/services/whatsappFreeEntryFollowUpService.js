@@ -453,7 +453,9 @@ async function processCandidate(candidate, active, template, now = new Date(), e
       { templateName: template.name, languageCode: template.language,
         templateCategory: "MARKETING", components: readyToSend.components,
         treatmentInterest: spec.identifiedTreatment || null,
-        expectedOptInAt: fresh.whatsapp_opt_in_at }
+        expectedOptInAt: fresh.whatsapp_opt_in_at,
+        currentMessageId: message.id,
+        currentFollowUpAttemptId: attemptId }
     );
     if (response?.wamid) {
       acceptedWamid = response.wamid;
