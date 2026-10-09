@@ -24,7 +24,8 @@ const SELECT_CLASS = "min-h-10 w-full min-w-0 rounded-lg border border-[var(--co
 
 function labelForReason(row) {
   if (row.event_id?.startsWith("message:")) {
-    if (row.state === "pending") return "Provider acceptance or delivery has not been confirmed.";
+    if (row.state === "pending") return "The stored delivery status is pending. Check provider receipts before retrying.";
+    if (row.state === "skipped") return "Message claim was cancelled before delivery.";
     if (row.state === "sent") return "Provider status: " + String(row.raw_status || "sent") + ".";
     return row.detail || "Check this message in Inbox and verify its provider status before retrying.";
   }
@@ -185,6 +186,11 @@ export default function FollowUpActivity({ active }) {
                 </article>
               ))}
             </div>
+          )}
+          {Number(result.total || 0) > 500 && (
+            <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+              Showing at most the latest 500 matching records. Narrow the period or filters to investigate older events.
+            </p>
           )}
           {((result.page || 1) > 1 || result.hasMore) && (
             <div className="mt-4 flex items-center justify-between gap-3">
