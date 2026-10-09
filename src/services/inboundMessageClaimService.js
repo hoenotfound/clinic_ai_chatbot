@@ -3,6 +3,7 @@ const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const freeEntryReferralsRepo = require("../db/whatsappFreeEntryReferralsRepo");
+const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
@@ -44,6 +45,7 @@ function createInboundMessageClaimService({
   attribution = leadAttributionService,
   processing = inboundProcessingRepo,
   freeEntryReferrals = freeEntryReferralsRepo,
+  inboundConsent = whatsappInboundConsentRepo,
   events = realtimeEvents,
   policy = whatsappPolicy,
   reengagement = leadReengagementAlertService,
@@ -139,6 +141,27 @@ function createInboundMessageClaimService({
       lead = leadOutcome?.lead || null;
     } catch (err) {
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
+    }
+
+    // Capture only customer-authored, explicit promotional permission. This is
+    // NOT inferred from a CTWA ad click, ad greeting, or simple price enquiry.
+    // The repository reads the saved inbound message again and writes its
+    // timestamp/provider ID and scope atomically with contact+CRM permission.
+    // Existing 24-hour replies must continue if consent storage is unavailable;
+    // in that case extended promotional templates stay blocked (fail closed).
+    if (channel === "whatsapp" && incoming?.mediaType == null && lead?.id) {
+      try {
+        await inboundConsent.recordFromInbound({
+          contactId: contact.id,
+          messageId: savedInbound.id,
+          leadId: lead.id,
+          businessName: config.clinicName || config.businessName,
+          isClickToWhatsApp: incoming.attribution?.source === "meta_ads" &&
+            String(incoming.attribution?.sourceType || "").toLowerCase() === "ad",
+        });
+      } catch (err) {
+        console.error(`Could not persist explicit WhatsApp consent for inbound message ${savedInbound.id}:`, err);
+      }
     }
 
     // Telegram re-engagement is operationally useful but never part of the
