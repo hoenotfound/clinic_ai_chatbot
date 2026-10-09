@@ -256,6 +256,13 @@ export const api = {
     request(`/advanced-config/restore/${snapshotId}`, { method: "POST" }),
   getCommentAutomationStatus: () => request("/config/comment-automation/status"),
   getFreeEntryStatus: () => request("/config/automated-follow-up/free-entry-status"),
+  getFollowUpActivity: (filters = {}) => {
+    const params = new URLSearchParams();
+    for (const key of ["days", "channel", "type", "state", "page"]) {
+      if (filters[key] != null) params.set(key, String(filters[key]));
+    }
+    return request(`/follow-up-activity?${params.toString()}`);
+  },
   getFollowUpTemplateCatalog: ({ refresh = false } = {}) =>
     request(`/config/automated-follow-up/template-catalog${refresh ? "?refresh=true" : ""}`),
   followUpTemplateMediaPreviewUrl: (key) =>
