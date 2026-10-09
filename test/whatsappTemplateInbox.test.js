@@ -55,7 +55,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(service, /\[format\.toLowerCase\(\)\]: \{ id:/);
   assert.match(route, /handleTemplateMediaUpload/);
   assert.match(route, /ensureWhatsAppCompatible: true/);
-  assert.match(route, /mediaStorage\.uploadMedia\(buffer, mediaMimeType/);
+  assert.match(route, /mediaStorage\.uploadReusableTemplateMedia\(/);
   assert.match(route, /whatsapp\.uploadMedia\(buffer, mediaMimeType/);
   assert.match(route, /mediaKey,/);
   assert.match(route, /mediaStorage\.downloadMedia\(message\.media_key/);
