@@ -2595,6 +2595,16 @@ function FollowUpTool({
                     {" · "}Safe billing ceiling: {freeEntryStatus.periodMaxHours || 72}h
                     {freeEntryStatus.sevenDayVerified ? " (7-day rollout verified)" : " (extended rollout unverified)"}
                   </p>
+                  <div className={`mt-2 rounded-lg border p-2 text-[11px] ${Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
+                    ? "border-red-300 bg-red-50 text-red-700"
+                    : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    Free-only safeguard: {freeEntryStatus.freeOnlyEnabled ? "ON" : "OFF"}
+                    {" · "}Account-wide billable Meta callbacks: {freeEntryStatus.billingSafety?.total_billable ?? "unknown"}
+                    {" · "}Since free-only enabled: {freeEntryStatus.billingSafety?.since_switch ?? "unknown"}
+                    {Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
+                      ? " · BILLING ALARM: all WhatsApp sends are blocked until investigated and the switch is reset."
+                      : ""}
+                  </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
                       ["Ad leads", freeEntryStatus.leads?.ad_leads || 0],
