@@ -114,8 +114,8 @@ function chosenPelvisPackage(messages = [], packages = []) {
     const message = String(entry || "").normalize("NFKC");
     // Shorthand comparisons such as "Package A or B" mention both packages,
     // even though the second one does not repeat the word "Package".
-    if (/(?:\\bA\\b.{0,20}\\bB\\b|\\bB\\b.{0,20}\\bA\\b)/iu.test(message) &&
-        /(?:package|pakej|配套|套餐|还是|或者|或是|比较|\\bor\\b|\\bvs\\b)/iu.test(message)) {
+    if (/(?:\bA\b.{0,20}\bB\b|\bB\b.{0,20}\bA\b)/iu.test(message) &&
+        /(?:package|pakej|配套|套餐|还是|或者|或是|比较|\bor\b|\bvs\b)/iu.test(message)) {
       return null;
     }
     for (const match of findMentionedPromotionPackages(options, message)) {
