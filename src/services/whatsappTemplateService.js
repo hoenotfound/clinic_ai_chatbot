@@ -601,6 +601,7 @@ async function sendApprovedTemplate(contact,opts={}) {
     () => sendApprovedTemplateUnchecked(contact,opts), {
       currentMessageId: opts.currentMessageId,
       currentFollowUpAttemptId: opts.currentFollowUpAttemptId,
+      messageKind: "template",
     });
 }
 
