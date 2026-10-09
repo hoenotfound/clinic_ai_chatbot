@@ -1197,7 +1197,10 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
              GROUP BY reason ORDER BY MAX(last_at) DESC LIMIT 8`,[freeOnlyAccount]),
           db.query(`SELECT COUNT(*) FILTER (WHERE sent_at IS NULL)::integer AS pending,
              COUNT(*)::integer AS total
-             FROM whatsapp_free_only_billing_alerts WHERE phone_number_id=$1`,[freeOnlyAccount]),
+             FROM whatsapp_free_only_billing_alerts WHERE phone_number_id=$1
+               AND observed_at >= $2::timestamptz`,
+            [freeOnlyAccount,freeOnly.enabled === true && freeOnly.activatedAt
+              ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]),
           db.query(require("../services/whatsappZeroCostGuard").SEVEN_DAY_PROOF_SQL),
         ])
       : [{rows:[]},{rows:[]},{rows:[]},{rows:[]}];
@@ -1208,6 +1211,7 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
       freeOnlyGate: gate.rows[0] || { status: "idle" },
       recentBlocks: blocked.rows,
       billingAlerts: queuedAlerts.rows[0] || { pending: 0,total: 0 },
+      telegramBillingAlertsEnabled: telegramAlertService.isTelegramEnabled(),
       verifiedPost72h: sevenDayEvidence.rows[0]?.verified === true,
       strictCeilingHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" &&
         sevenDayEvidence.rows[0]?.verified === true ? 168 : 72,
