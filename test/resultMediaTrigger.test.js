@@ -439,3 +439,66 @@ test("result rotation recognizes a language-specific image as the same configure
     [items[1], items[0]]
   );
 });
+
+test("Agnes-style first Click-to-WhatsApp enquiry sends configured 3D proof with verified creative even without model flags", async () => {
+  const sent = await resolveResultMediaForReply(base({
+    customerText: "Hello! Can I get more info on this?",
+    serviceQuery: false,
+    serviceQuerySource: null,
+    treatment: null,
+    priceQuery: false,
+    isFirstMessage: true,
+    metaAdCreativeService: "3D 小颜术",
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+  }));
+  assert.equal(sent?.service, "3D 小颜术");
+  assert.equal(sent?.serviceQuerySource, "meta_ad");
+  assert.deepEqual(sent?.items, [resultMedia[0].items[0]]);
+});
+
+test("generic enquiries fail closed without a single matching, verified Meta creative", async () => {
+  const skipped = [];
+  const changes = [
+    { metaAdCreativeService: null, treatment: "3D 小颜术" },
+    { metaAdCreativeService: "骨盆调理", treatment: "3D 小颜术" },
+    { metaAdCreativeService: null, treatment: null },
+    { isFirstMessage: false, metaAdCreativeService: "3D 小颜术" },
+    { resultMedia: [{ ...resultMedia[0], triggerMode: "price_only" }] },
+    { resultMedia: [{ ...resultMedia[0], enabled: false }] },
+    { flagged: true },
+    { needsAttention: true },
+    { textSendSucceeded: false },
+  ];
+  for (const change of changes) {
+    const decision = await resolveResultMediaForReply(base({
+      customerText: "Hello! Can I get more info on this?",
+      serviceQuery: false,
+      serviceQuerySource: null,
+      priceQuery: false,
+      isFirstMessage: true,
+      metaAdCreativeService: "3D 小颜术",
+      resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+      onSkip: (reason) => skipped.push(reason),
+      ...change,
+    }));
+    assert.equal(decision, null, JSON.stringify(change));
+  }
+  assert.ok(skipped.includes("meta_creative_not_verified_or_conflicts_with_ai"));
+  assert.ok(skipped.includes("unsafe_or_unsent_ai_reply"));
+});
+
+test("verified contextual ad enquiry respects existing duplicate protection and image language", async () => {
+  let checked = 0;
+  const decision = await resolveResultMediaForReply(base({
+    customerText: "Hello! Can I get more info on this?",
+    isFirstMessage: true,
+    serviceQuery: false,
+    treatment: "3D 小颜术",
+    priceQuery: false,
+    metaAdCreativeService: "3D 小颜术",
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+    wasMediaRecentlySent: async () => { checked += 1; return true; },
+  }));
+  assert.equal(decision, null);
+  assert.equal(checked, 1);
+});
