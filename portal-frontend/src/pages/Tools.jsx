@@ -186,6 +186,7 @@ function normalizeFollowUpSettings(value = {}) {
         templateName: String(rule.templateName || ""),
         mediaUrl: String(rule.mediaUrl || ""),
         mediaKey: String(rule.mediaKey || ""),
+        mediaSourceId: String(rule.mediaSourceId || ""),
         videoCodecVerified: rule.videoCodecVerified === true,
       })) : [],
       slotsHours: Array.isArray(value?.freeEntry?.slotsHours)
@@ -883,6 +884,8 @@ export default function Tools() {
               templateName: rule.templateName.trim(),
               mediaUrl: (rule.mediaUrl || "").trim(),
               mediaKey: (rule.mediaKey || "").trim(),
+              ...((rule.mediaSourceId || "").trim()
+                ? { mediaSourceId: String(rule.mediaSourceId).trim() } : {}),
               videoCodecVerified: rule.videoCodecVerified === true,
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
