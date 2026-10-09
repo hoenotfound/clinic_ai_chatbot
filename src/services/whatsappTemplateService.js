@@ -598,7 +598,10 @@ async function sendApprovedTemplateUnchecked(
 // An approved template uses exactly the same account-wide billing reservation.
 async function sendApprovedTemplate(contact,opts={}) {
   return whatsappZeroCostGuard.perform(contact?.whatsapp_number,
-    () => sendApprovedTemplateUnchecked(contact,opts));
+    () => sendApprovedTemplateUnchecked(contact,opts), {
+      currentMessageId: opts.currentMessageId,
+      currentFollowUpAttemptId: opts.currentFollowUpAttemptId,
+    });
 }
 
 module.exports = {
