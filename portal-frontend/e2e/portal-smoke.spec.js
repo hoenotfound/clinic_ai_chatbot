@@ -1522,7 +1522,7 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
   await expect(activity).toContainText("Earlier pricing delivery is unconfirmed");
   await expect(activity).toContainText("Provider accepted this send; delivery receipt still pending");
   await expect(page.getByRole("region", { name: "Potential missed FU3 diagnostics" }))
-    .toContainText("Nominal FU3 time overlaps today's configured quiet hours");
+    .toContainText("Nominal FU3 time overlaps the currently configured quiet hours");
   await expect(page.getByRole("link", { name: "Inspect conversation" }))
     .toHaveAttribute("href", "/inbox?contact=106");
   await expect(activity.getByRole("link", { name: "Open conversation" }).first())
