@@ -53,7 +53,10 @@ async function recordAiUsage(event, database = pool) {
        estimated_cost_usd,
        pricing_status,
        cache_write_tokens
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+       COALESCE($16, (SELECT l.id FROM leads l WHERE l.contact_id = $15
+         ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC LIMIT 1)),
+       $17,$18,$19)`,
     [
       provider,
       model,
