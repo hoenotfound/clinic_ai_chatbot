@@ -884,9 +884,9 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
     // Reject invalid media associations before saving. The live worker
     // independently repeats these checks and also verifies R2 HEAD metadata.
     const proposedClinic = { ...currentConfig, ...updates, automatedFollowUp: prepared };
-    const invalidMedia = invalidConfiguredMediaRule(
-      prepared.freeEntry?.templateRules || [], proposedClinic
-    );
+    const invalidMedia = prepared.freeEntry?.enabled === true
+      ? invalidConfiguredMediaRule(prepared.freeEntry?.templateRules || [], proposedClinic)
+      : null;
     if (invalidMedia) {
       return {
         ok: false, status: 400, invalidKeys: ["automatedFollowUp"],
