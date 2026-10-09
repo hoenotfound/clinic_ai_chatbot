@@ -56,15 +56,17 @@ async function reconcile({ actor, reservationId, reason, confirmedBillingHub }, 
 
     await client.query(
       `INSERT INTO whatsapp_free_only_reconciliations
-       (phone_number_id,reservation_id,prior_status,wamid,actor,reason,
-        verified_billing_hub,provider_pricing_type,provider_billable)
-       VALUES($1,$2,$3,$4,$5,$6,true,$7,$8)`,
+       (phone_number_id,reservation_id,prior_status,wamid,message_id,attempt_id,
+        actor,reason,verified_billing_hub,provider_pricing_type,provider_billable)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10)`,
       [account,gate.reservation_id,gate.status,gate.wamid||null,
+        gate.message_id||null,gate.attempt_id||null,
         String(actor).slice(0,160),reason.trim(),
         priced?.pricing_type||null,priced?.billable??null]);
     await client.query(
       `UPDATE whatsapp_free_only_send_gate SET status='idle',
-         reservation_id=NULL,wamid=NULL,recipient=NULL,updated_at=now()
+         reservation_id=NULL,wamid=NULL,recipient=NULL,
+         message_id=NULL,attempt_id=NULL,updated_at=now()
        WHERE phone_number_id=$1 AND reservation_id=$2`,[account,reservationId]);
     await client.query("COMMIT");
     return {
