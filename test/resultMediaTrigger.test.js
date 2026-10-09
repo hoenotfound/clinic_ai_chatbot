@@ -626,3 +626,29 @@ test("established conversations cannot revive old creative when the AI snapshot 
   assert.equal(isEarlyContextualAdEnquiry({ customerText: "Tell me more", priorCustomerTexts: ["Hi","English"] }), true);
   assert.equal(isEarlyContextualAdEnquiry({ customerText: "Tell me more", priorCustomerTexts: ["Hi","English","Hi"] }), false);
 });
+
+
+test("non-ad service interest in an established conversation keeps the existing confirmed-treatment path", async () => {
+  const sent = await resolveResultMediaForReply(base({
+    customerText: "I'm interested",
+    priorCustomerTexts: null,
+    serviceQuery: true,
+    serviceQuerySource: "conversation",
+    priceQuery: false,
+    treatment: "3D 小颜术",
+    metaAdCreativeService: null,
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+  }));
+  assert.equal(sent?.service, "3D 小颜术");
+  assert.equal(sent?.serviceQuerySource, "conversation");
+  const rejected = await resolveResultMediaForReply(base({
+    customerText: "Hello! Can I get more info on this?",
+    priorCustomerTexts: null,
+    serviceQuery: true,
+    serviceQuerySource: "conversation",
+    priceQuery: false,
+    treatment: "3D 小颜术",
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+  }));
+  assert.equal(rejected, null, "vague CTWA text does not independently establish service interest");
+});
