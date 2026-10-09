@@ -1092,22 +1092,28 @@ test("Saving an invalid extended template redirects to WhatsApp templates", asyn
 });
 
 test("Failed WhatsApp status check shows a visible warning and supports retry", async ({ page }) => {
-  await mockPortalApi(page, {
-    loggedIn: true,
-    followUpStatusFailures: 1,
-    followUpStatus: {
-      enabledOnServer: false,
-      enabledInTools: false,
-      freeOnlyEnabled: false,
-      freeOnlyGate: { status: "idle" },
-      sevenDayVerified: false,
-      billingSafety: { since_switch: 0 },
-    },
-  });
+  await mockPortalApi(page, { loggedIn: true });
+  // React's development StrictMode may request status more than once on mount.
+  // Keep every initial request failing until the test explicitly allows a retry.
+  let allowRecovery = false;
+  await page.route("**/api/config/automated-follow-up/free-entry-status", (route) =>
+    route.fulfill({
+      status: allowRecovery ? 200 : 503,
+      contentType: "application/json",
+      body: JSON.stringify(allowRecovery
+        ? {
+            enabledOnServer: false, enabledInTools: false,
+            freeOnlyEnabled: false, freeOnlyGate: { status: "idle" },
+            sevenDayVerified: false, billingSafety: { since_switch: 0 },
+          }
+        : { error: "WhatsApp status temporarily unavailable." }),
+    })
+  );
   await page.goto("/tools");
   const warning = page.getByRole("alert").filter({ hasText: "WhatsApp eligibility and billing status could not be verified" });
   await expect(warning).toBeVisible();
   await expect(warning).toContainText("Do not assume extended templates are active or free.");
+  allowRecovery = true;
   await warning.getByRole("button", { name: "Retry check" }).click();
   await expect(warning).not.toBeVisible();
   await expect(page.getByRole("region", { name: "Follow-up activation overview" })).toContainText("Template server:");
