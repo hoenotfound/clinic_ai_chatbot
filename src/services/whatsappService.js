@@ -167,9 +167,7 @@ function replyContext(options = {}) {
  *   Never throws — callers, e.g. the AI auto-reply flow, already have their own
  *   fallback logic around this.
  */
-async function sendMessage(to, text, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendMessageUnchecked(to, text, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -219,9 +217,7 @@ async function sendMessage(to, text, options = {}) {
  *   accepted the send request (never throws — a failed promo image should never
  *   take down the actual text reply around it)
  */
-async function sendImage(to, imageUrl, caption, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendImageUnchecked(to, imageUrl, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -328,9 +324,7 @@ async function uploadMedia(buffer, mimeType, filename = "upload", options = {}) 
  * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if
  *   Meta accepted the send request
  */
-async function sendImageById(to, mediaId, caption, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendImageByIdUnchecked(to, mediaId, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -372,9 +366,7 @@ async function sendImageById(to, mediaId, caption, options = {}) {
   }
 }
 
-async function sendVideoById(to, mediaId, caption, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendVideoByIdUnchecked(to, mediaId, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -416,9 +408,7 @@ async function sendVideoById(to, mediaId, caption, options = {}) {
   }
 }
 
-async function sendDocumentById(to, mediaId, filename, caption, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendDocumentByIdUnchecked(to, mediaId, filename, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -465,9 +455,7 @@ async function sendDocumentById(to, mediaId, filename, caption, options = {}) {
   }
 }
 
-async function sendStickerById(to, mediaId, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendStickerByIdUnchecked(to, mediaId, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -520,9 +508,7 @@ async function sendStickerById(to, mediaId, options = {}) {
  *   outcome (delivered vs. failed, and why) arrives later via the status-update
  *   webhook (see parseStatusUpdates), matched back to this send by wamid.
  */
-async function sendVoiceById(to, mediaId, options = {}) {
-  const zeroCostCheck = await whatsappZeroCostGuard.authorize(to);
-  if (!zeroCostCheck.allowed) return whatsappZeroCostGuard.blockedResult(zeroCostCheck);
+async function sendVoiceByIdUnchecked(to, mediaId, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -865,6 +851,31 @@ function parseStatusUpdates(body) {
     return [];
   }
 }
+
+
+ // The reservation lives across all Meta requests; a different worker cannot
+ // send until a confirmed nonbillable pricing callback releases the account.
+ async function sendMessage(to,text,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options));
+ }
+ async function sendImage(to,url,caption,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options));
+ }
+ async function sendImageById(to,id,caption,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options));
+ }
+ async function sendVideoById(to,id,caption,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options));
+ }
+ async function sendDocumentById(to,id,filename,caption,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options));
+ }
+ async function sendStickerById(to,id,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options));
+ }
+ async function sendVoiceById(to,id,options={}) {
+   return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options));
+ }
 
 module.exports = {
   DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS,
