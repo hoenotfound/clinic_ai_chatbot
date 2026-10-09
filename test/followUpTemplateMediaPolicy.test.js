@@ -108,7 +108,7 @@ test("pelvic/face templates cannot reuse media intended for another treatment", 
   const spec = {
     templateName: "ns_fu3_pelvis_feedback",
     serviceName: "骨盆调理", identifiedTreatment: "骨盆调理",
-    mediaKey: video, mediaSourceId: "",
+    mediaKey: video, mediaSourceId: "", videoCodecVerified: true,
   };
   const template = { name: "ns_fu3_pelvis_feedback", header: { format: "VIDEO" } };
   assert.equal(policy.isSafeTemplateMediaContext(spec, template, {
@@ -119,6 +119,24 @@ test("pelvic/face templates cannot reuse media intended for another treatment", 
     ...spec, serviceName: "*",
   }, template, { config }), false);
   assert.equal(policy.allowedForTreatment("ns_fu3_pelvis_feedback", "3D 小颜术"), false);
+});
+
+test("an unverified reused or remote MP4 is blocked before extended WhatsApp activation", () => {
+  const common = {
+    templateName: "ns_fu3_face_feedback",
+    serviceName: "3D 小颜术",
+    mediaKey: video,
+    mediaUrl: "",
+    videoCodecVerified: false,
+  };
+  assert.match(policy.invalidConfiguredMediaRule([common], config)?.reason || "",
+    /verify.*H\.264\/AAC MP4/i);
+  assert.equal(policy.invalidConfiguredMediaRule([
+    { ...common, mediaKey: "", mediaUrl: "https://approved.example.test/video.mp4" },
+  ], config)?.reason?.includes("Verify"), true);
+  assert.equal(policy.invalidConfiguredMediaRule([
+    { ...common, videoCodecVerified: true },
+  ], config), null);
 });
 
 test("legacy R2 preview requires an exact clinic reference, not just a shared prefix", () => {
