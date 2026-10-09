@@ -137,6 +137,23 @@ test("Desktop never displays an out-of-filter conversation thread", async ({ pag
   await expect(page.getByRole("region", { name: "No conversation selected" })).toHaveCount(0);
 });
 
+test("Opening an unread chat keeps its thread visible as it gets marked read", async ({ page }) => {
+  await mockInbox(page, [
+    conversation(101, "Previously Read"),
+    conversation(102, "Unread Lead", { is_unread: true }),
+  ]);
+  await page.goto("/inbox");
+  const { inbox } = await openFilters(page);
+  await inbox.getByRole("combobox", { name: "Status" }).selectOption("unread");
+  const unreadRow = inbox.getByRole("button").filter({ hasText: "Unread Lead" });
+  await expect(unreadRow).toBeVisible();
+  await unreadRow.click();
+
+  await expect(page.locator('section[aria-label="Conversation with Unread Lead"]')).toBeVisible();
+  await expect(inbox.getByText("Unread Lead", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "No conversation selected" })).toHaveCount(0);
+});
+
 test("An open chat moves to Expired when its reply window closes without new messages", async ({ page }) => {
   const startedAt = new Date();
   await page.clock.install({ time: startedAt });
