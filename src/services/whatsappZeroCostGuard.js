@@ -83,6 +83,40 @@ const VERIFIED_WINDOW_SQL = `
 
 // Do NOT interpret an environment flag as seven-day billing proof on its own.
 // A post-72h, nonbillable, qualified follow-up from THIS clinic is required.
+// Meta permits the FIRST reply to a genuine Click-to-WhatsApp ad entry
+// without charging it, provided it is sent within 24 hours. This creates the
+// free-entry window; Meta's nonbillable pricing receipt is then mandatory
+// before any subsequent strict-mode send.
+//
+// It must be exactly the first text reply, with a saved outgoing message tied
+// to this verified recipient and an actual provider-authored inbound referral.
+// An ad name, stale attribution or a link to wa.me is never sufficient.
+const CTWA_FIRST_REPLY_SQL = `
+  SELECT EXISTS (
+    SELECT 1
+    FROM whatsapp_free_entry_referrals entry
+    JOIN messages inbound ON inbound.id=entry.origin_message_id
+      AND inbound.contact_id=entry.contact_id AND inbound.role='user'
+      AND inbound.whatsapp_message_id IS NOT NULL
+    JOIN contacts c ON c.id=entry.contact_id AND c.channel='whatsapp'
+    JOIN messages current_send ON current_send.id=$3::integer
+      AND current_send.contact_id=c.id AND current_send.role='assistant'
+      AND current_send.whatsapp_message_id IS NULL
+    WHERE entry.source_type='ad'
+      AND (NULLIF(BTRIM(entry.ctwa_clid),'') IS NOT NULL
+           OR NULLIF(BTRIM(entry.meta_ad_id),'') IS NOT NULL)
+      AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2::text
+      AND inbound.created_at <= $1::timestamptz
+      AND inbound.created_at > $1::timestamptz - interval '23 hours 58 minutes'
+      AND NOT EXISTS (
+        SELECT 1 FROM messages earlier
+        WHERE earlier.contact_id=c.id AND earlier.role='assistant'
+          AND (earlier.created_at, earlier.id) >= (inbound.created_at, inbound.id)
+          AND earlier.id<>current_send.id
+      )
+  ) AS eligible_first_reply
+`;
+
 const SEVEN_DAY_PROOF_SQL = `
   SELECT EXISTS (
     SELECT 1 FROM whatsapp_free_entry_followup_attempts a
@@ -258,8 +292,21 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
         [ceiling,clock.toISOString(),recipient,currentMessageId,currentAttemptId,
           context.messageKind === "template" ? "template" : "freeform"])).rows[0];
       if (eligible?.eligible!==true) {
-        rejected=deny("zero_cost_unverified_free_entry",
-          "WhatsApp free-only blocked: no fully proven, active Meta free-entry period. New ad leads cannot receive a first reply in strict mode.");
+        // The ONLY exception to preexisting FEP pricing proof: one first
+        // free-form text reply that opens the entry point for a verified ad.
+        // It cannot be used by templates, media, direct/organic enquiries,
+        // or sends that lack their own saved outbound message ID.
+        let initialEligible=false;
+        if (context.messageKind === "first_reply_text" &&
+            currentMessageId != null && currentAttemptId == null) {
+          const first=(await client.query(CTWA_FIRST_REPLY_SQL,
+            [clock.toISOString(),recipient,currentMessageId])).rows[0];
+          initialEligible=first?.eligible_first_reply===true;
+        }
+        if (!initialEligible) {
+          rejected=deny("zero_cost_unverified_free_entry",
+            "WhatsApp free-only blocked: no verified free-entry period or qualifying first reply from a real Click-to-WhatsApp ad. Unverified templates, media and organic leads remain blocked.");
+        }
       }
     }
 
@@ -351,5 +398,5 @@ async function perform(to, operation, context = {}) {
 
 module.exports = {
   blockedResult,configuredAccount,enabled,settings,reserve,complete,perform,
-  VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,
+  VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
