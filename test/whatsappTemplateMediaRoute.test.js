@@ -8,6 +8,7 @@ const mediaStorage = require("../src/services/mediaStorageService");
 const whatsapp = require("../src/services/whatsappService");
 const templateService = require("../src/services/whatsappTemplateService");
 const templateMedia = require("../src/services/whatsappTemplateMediaService");
+const clinicConfig = require("../src/config/clinicConfig");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const conversationStore = require("../src/utils/conversationStore");
 const alertRepo = require("../src/db/telegramImmediateAlertRepo");
@@ -25,7 +26,7 @@ function patch(t, object, name, replacement) {
   t.after(() => { object[name] = previous; });
 }
 
-async function harness(t, { format = "IMAGE", marketingAllowed = true } = {}) {
+async function harness(t, { format = "IMAGE", marketingAllowed = true, templateName = "clinic_test" } = {}) {
   const events = { r2Uploads: 0, metaUploads: 0, metaSends: 0, saved: [], deleted: 0 };
   const contact = {
     id: 7, contact_id: 7, channel: "whatsapp", whatsapp_number: "60111234567",
@@ -33,7 +34,7 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true } = {}) {
   };
   const optInAt = "2026-10-09T00:00:00.000Z";
   const rawTemplate = {
-    name: "clinic_test", language: "en_US", status: "APPROVED", category: "MARKETING",
+    name: templateName, language: "en_US", status: "APPROVED", category: "MARKETING",
     components: [
       { type: "HEADER", format },
       { type: "BODY", text: "Hello, this is our offer." },
@@ -71,7 +72,7 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true } = {}) {
   });
   patch(t, templateService, "sendApprovedTemplate", async (_contact, args) => {
     events.metaSends++;
-    assert.equal(args.templateName, "clinic_test");
+    assert.equal(args.templateName, templateName);
     const part = args.components.find((component) => component.type === "header");
     assert.equal(part.parameters[0].type, format.toLowerCase());
     assert.equal(part.parameters[0][format.toLowerCase()].id, "1234567");
@@ -279,5 +280,62 @@ test("Inbox rejects forged shared media IDs without sending a template", async (
   assert.equal(result.status, 400);
   assert.equal(h.events.r2Uploads, 0);
   assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.metaSends, 0);
+});
+
+
+test("meridian-gift template rejects pelvis Package B and mismatched package text before Meta upload", async (t) => {
+  const h = await harness(t, { templateName: "ns_fu_meridian_gift" });
+  patch(t, clinicConfig, "promotions", [
+    { name: "Pelvis", linkedService: "骨盆调理", imageUrl: "",
+      validUntil: "2026-10-31",
+      packages: [{ name: "Package B", imageUrl: "/promo-images/31" }] },
+    { name: "9D", linkedService: "9D 逆龄抗衰", imageUrl: "/promo-images/21",
+      validUntil: "2026-10-31",
+      followUpMessage: "Free 全身通十二经络按摩 - 1 小时" },
+  ]);
+  const badMedia = await h.post(JSON.stringify({
+    templateName: "ns_fu_meridian_gift", languageCode: "en_US",
+    marketingConsentConfirmed: true, values: { body: ["Pelvis Care Package B"] },
+    mediaSelectionId: "promo:31",
+  }));
+  assert.equal(badMedia.status, 400);
+  assert.equal(badMedia.body.code, "template_media_mismatch");
+  const badVariable = await h.post(JSON.stringify({
+    templateName: "ns_fu_meridian_gift", languageCode: "en_US",
+    marketingConsentConfirmed: true, values: { body: ["Pelvis Care Package B"] },
+    mediaSelectionId: "promo:21",
+  }));
+  assert.equal(badVariable.status, 400);
+  assert.equal(badVariable.body.code, "template_package_mismatch");
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.r2Uploads, 0);
+
+  patch(t, templateMedia, "resolveReusableMedia", async () => ({
+    buffer: png, mimeType: "image/png", filename: "nine-d.png",
+    mediaKey: null, mediaUrl: "/promo-images/21", mediaSelectionId: "promo:21",
+  }));
+  const permitted = await h.post(JSON.stringify({
+    templateName: "ns_fu_meridian_gift", languageCode: "en_US",
+    marketingConsentConfirmed: true, values: { body: ["9D Anti-Ageing"] },
+    mediaSelectionId: "promo:21",
+  }));
+  assert.equal(permitted.status, 201, JSON.stringify(permitted.body));
+  assert.equal(h.events.r2Uploads, 0);
+  assert.equal(h.events.metaSends, 1);
+});
+
+test("targeted promo template cannot bypass matching rules through multipart upload", async (t) => {
+  const h = await harness(t, { templateName: "ns_fu_meridian_gift" });
+  const form = new FormData();
+  form.append("templateName", "ns_fu_meridian_gift");
+  form.append("languageCode", "en_US");
+  form.append("marketingConsentConfirmed", "true");
+  form.append("media", new Blob([png], { type: "image/png" }), "not-configured.png");
+  const result = await h.post(form);
+  assert.equal(result.status, 400);
+  assert.equal(result.body.code, "template_media_mismatch");
+  assert.equal(h.events.r2Uploads, 0);
   assert.equal(h.events.metaSends, 0);
 });
