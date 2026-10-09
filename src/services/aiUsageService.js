@@ -156,11 +156,14 @@ async function generateGeminiContent(
     clock = () => Date.now(),
     signal = null,
     validateResponse = null,
+    contactId = null,
+    leadId = null,
   } = {}
 ) {
   const model = String(request?.model || "unknown");
   const startedAt = clock();
   const prefixHash = promptPrefixFingerprint(request);
+  const attribution = { contactId, leadId };
   // The abort signal belongs to the SDK client, not the wire-format prompt.
   // The provider can still charge for requests already received by its servers.
   const effectiveRequest = signal
@@ -183,6 +186,7 @@ async function generateGeminiContent(
           error: failure,
         }),
         responseDisposition: timedOut ? "aborted_without_usage" : "provider_error",
+        ...attribution,
       },
       { database, repository }
     );
@@ -212,6 +216,7 @@ async function generateGeminiContent(
       responseDisposition: disposition,
       latencyMs: Math.max(0, clock() - startedAt),
       ...usageFromResponse(response),
+      ...attribution,
       ...(prefixHash ? { promptPrefixHash: prefixHash } : {}),
     },
     { database, repository }
@@ -230,6 +235,8 @@ async function createGeminiInteraction(
   request,
   {
     purpose = "customer_reply",
+    contactId = null,
+    leadId = null,
     database = pool,
     repository = aiUsageRepo,
     clock = () => Date.now(),
@@ -248,6 +255,8 @@ async function createGeminiInteraction(
         failureKind: null,
         latencyMs: Math.max(0, clock() - startedAt),
         ...usageFromInteraction(interaction),
+        contactId,
+        leadId,
         ...(promptPrefixFingerprint(request) ? { promptPrefixHash: promptPrefixFingerprint(request) } : {}),
       },
       { database, repository }
@@ -255,12 +264,12 @@ async function createGeminiInteraction(
     return interaction;
   } catch (error) {
     queueUsage(
-      failedUsageEvent({
+      { ...failedUsageEvent({
         model,
         purpose,
         latencyMs: Math.max(0, clock() - startedAt),
         error,
-      }),
+      }), contactId, leadId },
       { database, repository }
     );
     throw error;
