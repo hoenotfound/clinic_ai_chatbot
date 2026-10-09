@@ -452,6 +452,7 @@ async function processCandidate(candidate, active, template, now = new Date(), e
         whatsapp_number: candidate.whatsapp_number },
       { templateName: template.name, languageCode: template.language,
         templateCategory: "MARKETING", components: readyToSend.components,
+        treatmentInterest: spec.identifiedTreatment || null,
         expectedOptInAt: fresh.whatsapp_opt_in_at }
     );
     if (response?.wamid) {
