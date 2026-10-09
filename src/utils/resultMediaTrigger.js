@@ -168,9 +168,13 @@ async function resolveResultMediaForReply({
     return skip("unsafe_or_unsent_ai_reply");
   }
 
-  // Even a model-provided service flag cannot revive old ad creative for a
-  // generic "tell me more" enquiry in an established conversation.
-  if (contextualAdText && !contextualAdEnquiry) {
+  // Old Meta-ad intent cannot bypass full-history verification. Preserve
+  // ordinary non-ad conversations where the AI has separately confirmed the
+  // treatment and the current customer turn explicitly expresses interest.
+  // Generic CTWA defaults ("more info on this") still lack independent service
+  // evidence and cannot unlock media through a model-only conversation flag.
+  if (contextualAdText && !contextualAdEnquiry &&
+      (serviceQuerySource === "meta_ad" || !hasCustomerServiceEnquiry(customerText))) {
     return skip("contextual_ad_history_unverified_or_not_early");
   }
 
