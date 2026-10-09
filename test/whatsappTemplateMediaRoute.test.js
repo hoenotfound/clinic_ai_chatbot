@@ -93,6 +93,14 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true } = {}) {
   t.after(() => server.close());
   return {
     events,
+    template,
+    retry: async (messageId = 42) => {
+      const response = await fetch(
+        "http://127.0.0.1:" + server.address().port + "/api/conversations/7/messages/" + messageId + "/retry",
+        { method: "POST" }
+      );
+      return { status: response.status, body: await response.json() };
+    },
     post: async (body) => {
       const response = await fetch(
         "http://127.0.0.1:" + server.address().port + "/api/conversations/7/whatsapp-templates/send",
@@ -196,4 +204,78 @@ test("Inbox uses existing R2 video directly and checks codec before sending new 
   assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
   assert.equal(h.events.r2Uploads, 1);
   assert.equal(h.events.metaSends, 2);
+});
+
+test("Meta media upload failure deletes the orphan R2 upload without recording or sending a message", async (t) => {
+  const h = await harness(t);
+  patch(t, whatsapp, "uploadMedia", async () => null);
+  const form = new FormData();
+  form.append("templateName", "clinic_test");
+  form.append("languageCode", "en_US");
+  form.append("marketingConsentConfirmed", "true");
+  form.append("media", new Blob([png], { type: "image/png" }), "offer.png");
+  const response = await h.post(form);
+  assert.equal(response.status, 502);
+  assert.equal(h.events.r2Uploads, 1);
+  assert.equal(h.events.deleted, 1);
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.saved.length, 0);
+});
+
+test("Inbox retries an image template using its saved private R2 key", async (t) => {
+  const h = await harness(t);
+  const originalMediaKey = "messages/7/template-media.png";
+  const savedRow = {
+    id: 42, contact_id: 7, role: "assistant", delivery_status: "failed",
+    sent_by_username: "staff", is_automated_follow_up: false,
+    is_scheduled_message: false, media_key: originalMediaKey,
+    media_mime_type: "image/png", media_filename: "offer.png",
+    whatsapp_template: {
+      name: "clinic_test", language: "en_US", category: "MARKETING",
+      values: { header: [], body: [] }, mediaFormat: "IMAGE",
+      mediaFilename: "offer.png", marketingConsentConfirmed: true,
+      consentOptInAt: "2026-10-09T00:00:00.000Z",
+      templateSignature: templateService.templateSignature(h.template),
+    },
+  };
+  patch(t, messagesRepo, "acquireMessageRetryLock", async () => async () => {});
+  patch(t, messagesRepo, "getMessageForRetry", async () => savedRow);
+  patch(t, messagesRepo, "setDeliveryStatusById", async (id, status) => ({ id, delivery_status: status }));
+  patch(t, mediaStorage, "downloadMedia", async (key) => {
+    assert.equal(key, originalMediaKey);
+    return png;
+  });
+  const result = await h.retry();
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.accepted, true);
+  assert.equal(h.events.metaUploads, 1);
+  assert.equal(h.events.metaSends, 1);
+  assert.equal(h.events.r2Uploads, 0);
+});
+
+test("Inbox blocks retries after WhatsApp marketing consent is withdrawn", async (t) => {
+  const h = await harness(t, { marketingAllowed: false });
+  patch(t, messagesRepo, "acquireMessageRetryLock", async () => async () => {});
+  patch(t, messagesRepo, "getMessageForRetry", async () => ({
+    id: 42, contact_id: 7, role: "assistant", delivery_status: "failed",
+    sent_by_username: "staff",
+    whatsapp_template: { name: "clinic_test", language: "en_US", mediaFormat: "IMAGE" },
+  }));
+  const result = await h.retry();
+  assert.equal(result.status, 403);
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.metaSends, 0);
+});
+
+test("Inbox rejects forged shared media IDs without sending a template", async (t) => {
+  const h = await harness(t);
+  const result = await h.post(JSON.stringify({
+    templateName: "clinic_test", languageCode: "en_US",
+    marketingConsentConfirmed: true, values: {},
+    mediaSelectionId: "video:invalid-tenant-video",
+  }));
+  assert.equal(result.status, 400);
+  assert.equal(h.events.r2Uploads, 0);
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.metaSends, 0);
 });
