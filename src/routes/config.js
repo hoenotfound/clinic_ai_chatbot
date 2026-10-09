@@ -1182,10 +1182,31 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
       [freeOnly.enabled === true && freeOnly.activatedAt
         ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]
     );
+    const freeOnlyAccount = String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+    const db = require("../db/db").pool;
+    const [gate, blocked, queuedAlerts, sevenDayEvidence] = freeOnlyAccount
+      ? await Promise.all([
+          db.query(`SELECT status,updated_at,wamid IS NOT NULL AS has_message_id
+             FROM whatsapp_free_only_send_gate WHERE phone_number_id=$1`,[freeOnlyAccount]),
+          db.query(`SELECT reason,SUM(count)::integer AS blocked_count,MAX(last_at) AS last_blocked_at
+             FROM whatsapp_free_only_block_events WHERE phone_number_id=$1
+             GROUP BY reason ORDER BY MAX(last_at) DESC LIMIT 8`,[freeOnlyAccount]),
+          db.query(`SELECT COUNT(*) FILTER (WHERE sent_at IS NULL)::integer AS pending,
+             COUNT(*)::integer AS total
+             FROM whatsapp_free_only_billing_alerts WHERE phone_number_id=$1`,[freeOnlyAccount]),
+          db.query(require("../services/whatsappZeroCostGuard").SEVEN_DAY_PROOF_SQL),
+        ])
+      : [{rows:[]},{rows:[]},{rows:[]},{rows:[]}];
     return res.json({
       ...report,
       freeOnlyEnabled: freeOnly.enabled === true,
       billingSafety: billing.rows[0],
+      freeOnlyGate: gate.rows[0] || { status: "idle" },
+      recentBlocks: blocked.rows,
+      billingAlerts: queuedAlerts.rows[0] || { pending: 0,total: 0 },
+      verifiedPost72h: sevenDayEvidence.rows[0]?.verified === true,
+      strictCeilingHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" &&
+        sevenDayEvidence.rows[0]?.verified === true ? 168 : 72,
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
       periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
