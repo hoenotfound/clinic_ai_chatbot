@@ -444,8 +444,22 @@ async function checkTemplateAllowed(contact, { category = null } = {}) {
       `SELECT l.marketing_consent,
          EXISTS (
            SELECT 1 FROM whatsapp_marketing_consent_events e
-           WHERE e.contact_id=$1 AND e.lead_id=l.id
+           WHERE e.contact_id=$1
              AND e.created_at >= COALESCE($2::timestamptz, '-infinity'::timestamptz)
+             AND (
+               e.lead_id=l.id
+               OR (
+                 -- Inherited consent must be the exact currently active
+                 -- customer-message opt-in, never a stale or staff-only entry.
+                 e.message_id IS NOT NULL
+                 AND e.consent_category='MARKETING'
+                 AND e.consent_scope='treatment_followups_and_related_offers'
+                 AND e.consented_at=$2::timestamptz
+                 AND l.treatment_interest IS NOT NULL
+                 AND (e.consent_service IS NULL OR
+                   LOWER(BTRIM(e.consent_service))=LOWER(BTRIM(l.treatment_interest)))
+               )
+             )
          ) AS has_evidence
        FROM leads l
        WHERE l.contact_id=$1
