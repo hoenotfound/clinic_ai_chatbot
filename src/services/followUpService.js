@@ -732,13 +732,14 @@ async function markContacted(contactId) {
   }
 }
 
-async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours) {
+async function sendSocialImageCompanion(contact, contactId, parentMessageId, imageUrl, quietHours) {
   if (quietHoursStatus(new Date(), quietHours).active) return;
 
   let imageMessage;
   try {
     imageMessage = await followUpRepo.saveSocialImageCompanion({
       contactId,
+      parentMessageId,
       imageUrl,
     });
   } catch (err) {
@@ -827,6 +828,7 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours
 async function sendSocialVideoCompanion(
   contact,
   contactId,
+  parentMessageId,
   sourceVideoKey,
   filename,
   quietHours
@@ -840,6 +842,7 @@ async function sendSocialVideoCompanion(
   try {
     videoMessage = await followUpRepo.saveSocialVideoCompanion({
       contactId,
+      parentMessageId,
       mediaKey: sourceVideoKey,
       mediaMimeType: "video/mp4",
     });
@@ -1471,6 +1474,7 @@ async function sendCandidate(candidate) {
     await sendSocialVideoCompanion(
       contact,
       candidate.contact_id,
+      saved.id,
       effectiveVideoKey,
       effectiveVideoFilename,
       settings.quietHours
@@ -1479,6 +1483,7 @@ async function sendCandidate(candidate) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
+      saved.id,
       effectiveImageUrl,
       settings.quietHours
     );
