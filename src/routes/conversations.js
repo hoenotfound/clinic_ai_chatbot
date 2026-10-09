@@ -24,6 +24,7 @@ const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
+const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
 const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
@@ -1094,6 +1095,7 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
 
     res.json({
       templates: catalog.templates,
+      reusableMedia: whatsappTemplateMedia.publicMediaOptions(),
       eligibility: {
         allowed: eligibility.allowed === true,
         code: eligibility.code || null,
@@ -1259,10 +1261,14 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       catch { return res.status(400).json({ error: "Template variable values must be valid JSON." }); }
     }
     const mediaFormat = resolved.template.header?.format || "TEXT";
-    if (!["IMAGE", "VIDEO"].includes(mediaFormat) && req.file) {
+    const mediaSelectionId = String(req.body?.mediaSelectionId || "").trim();
+    if (req.file && mediaSelectionId) {
+      return res.status(400).json({ error: "Choose either a new file or an existing clinic media item, not both." });
+    }
+    if (!["IMAGE", "VIDEO"].includes(mediaFormat) && (req.file || mediaSelectionId)) {
       return res.status(400).json({ error: "The selected template does not accept a media attachment." });
     }
-    if (["IMAGE", "VIDEO"].includes(mediaFormat) && !req.file) {
+    if (["IMAGE", "VIDEO"].includes(mediaFormat) && !req.file && !mediaSelectionId) {
       return res.status(400).json({ error: `Choose an ${mediaFormat.toLowerCase()} to send this template.` });
     }
     let built = whatsappTemplate.buildTemplateComponents(
@@ -1360,20 +1366,39 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
 
     let mediaMimeType = null;
     let mediaFilename = null;
-    if (req.file) {
+    let mediaUrl = null;
+    if (req.file || mediaSelectionId) {
       let buffer;
-      if (mediaFormat === "IMAGE") {
+      if (mediaSelectionId) {
+        let reused;
+        try {
+          reused = await whatsappTemplateMedia.resolveReusableMedia(mediaSelectionId, mediaFormat);
+        } catch (error) {
+          return res.status(400).json({
+            code: error.code || "reusable_media_unavailable",
+            error: error.message || "The selected clinic media is unavailable.",
+          });
+        }
+        buffer = reused.buffer;
+        mediaMimeType = reused.mimeType;
+        mediaFilename = reused.filename;
+        mediaKey = reused.mediaKey;
+        mediaUrl = reused.mediaUrl;
+      } else if (mediaFormat === "IMAGE") {
         mediaMimeType = String(req.file.mimetype || "").toLowerCase();
         if (!WHATSAPP_IMAGE_MIME_TYPES.has(mediaMimeType) ||
             req.file.size > WHATSAPP_IMAGE_MAX_BYTES || req.file.size <= 0) {
           return res.status(400).json({ error: "Choose a JPEG or PNG image no larger than 5MB." });
         }
-        buffer = await fs.readFile(req.file.path);
-        const jpeg = buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-        const png = buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-        if ((mediaMimeType === "image/jpeg" && !jpeg) ||
-            (mediaMimeType === "image/png" && !png)) {
-          return res.status(400).json({ error: "The image contents do not match the selected JPEG or PNG format." });
+        try {
+          buffer = await whatsappTemplateMedia.prepareImage(
+            await fs.readFile(req.file.path), mediaMimeType
+          );
+        } catch (error) {
+          return res.status(400).json({
+            code: error.code || "invalid_template_image",
+            error: error.message || "The image is invalid or too large.",
+          });
         }
       } else {
         if (!isAllowedInboxVideo(req.file) || req.file.size <= 0) {
@@ -1393,12 +1418,14 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
         }
         mediaMimeType = "video/mp4";
       }
-      mediaFilename = safeInboxFilename(req.file.originalname,
-        mediaFormat === "IMAGE" ? "template-image.jpg" : "template-video.mp4");
-      // Keep a durable private R2 copy for the Inbox history and future
-      // retries, then upload the same bytes directly to Meta. No public URL,
-      // transcoding or duplicate permanent R2 copy is required.
-      mediaKey = await mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId: contact.id });
+      if (!mediaSelectionId) {
+        mediaFilename = safeInboxFilename(req.file.originalname,
+          mediaFormat === "IMAGE" ? "template-image.jpg" : "template-video.mp4");
+        // A manual upload gets one private per-contact R2 copy for history/retry.
+        // Existing clinic media is referenced by its shared object or promo ID
+        // without creating another permanent object per recipient.
+        mediaKey = await mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId: contact.id });
+      }
       const metaId = await whatsapp.uploadMedia(buffer, mediaMimeType, mediaFilename);
       buffer = null;
       if (!metaId) {
@@ -1418,7 +1445,8 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       category: resolved.template.category,
       components: built.components,
       values: built.values,
-      ...(mediaKey ? { mediaFormat, mediaFilename } : {}),
+      ...(mediaMimeType ? { mediaFormat, mediaFilename } : {}),
+      ...(mediaSelectionId ? { mediaSelectionId } : {}),
       templateSignature: whatsappTemplate.templateSignature(resolved.template),
       marketingConsentConfirmed:
         resolved.template.category === "MARKETING"
@@ -1442,7 +1470,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
           preview,
           null,
           req.session.username,
-          null,
+          mediaUrl,
           mediaMimeType ? { mimeType: mediaMimeType } : null,
           {
             mediaKey,
@@ -1503,7 +1531,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     res.status(500).json({ error: "Something went wrong sending this WhatsApp template." });
   } finally {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
-    if (mediaKey && cleanupUnsubmittedMedia) {
+    if (mediaKey && cleanupUnsubmittedMedia && !req.body?.mediaSelectionId) {
       await mediaStorage.deleteMedia(mediaKey).catch((err) => {
         console.warn("Could not clean up unsent template media:", err);
       });
