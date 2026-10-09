@@ -2667,11 +2667,11 @@ function FollowUpTool({
                   </p>
                   {freeEntryStatus.freeOnlyGate?.status && freeEntryStatus.freeOnlyGate.status !== "idle" ? (
                     <p className="mt-1 text-xs font-semibold text-amber-700">
-                      A previous WhatsApp send is awaiting billing verification. Further strict-mode sends are blocked until Meta confirms free pricing. An unknown send requires manual reconciliation, not an automatic retry.
+                      A previous WhatsApp send is awaiting billing verification. Further strict-mode sends are blocked until Meta confirms free pricing. An unknown send requires manual reconciliation, not an automatic retry. A reserved send cannot be manually released; after 15 minutes without confirmation it changes to unknown and still requires review.
                     </p>
                   ) : null}
                   {isAdmin && freeEntryStatus.freeOnlyEnabled &&
-                    ["reserved", "awaiting_pricing", "unknown"].includes(freeEntryStatus.freeOnlyGate?.status) &&
+                    ["awaiting_pricing", "unknown"].includes(freeEntryStatus.freeOnlyGate?.status) &&
                     Number(freeEntryStatus.billingSafety?.since_switch || 0) === 0 ? (
                     <div className="mt-3 rounded-xl border border-amber-300 p-3 space-y-2">
                       <p className="text-xs font-semibold">Admin-only: manually reconcile a stuck send</p>
