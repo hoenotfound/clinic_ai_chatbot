@@ -1,101 +1,136 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
+const test=require("node:test");
+const assert=require("node:assert/strict");
+const fs=require("node:fs");
+const path=require("node:path");
+const guard=require("../src/services/whatsappZeroCostGuard");
+const clinicConfig=require("../src/config/clinicConfig");
 
-const guard = require("../src/services/whatsappZeroCostGuard");
-const clinicConfig = require("../src/config/clinicConfig");
-
-function mode(t, enabled = true) {
-  const previous = clinicConfig.automatedFollowUp;
-  clinicConfig.automatedFollowUp = {
-    ...(previous || {}),
-    whatsappFreeOnly: {
-      enabled,
-      activatedAt: enabled ? "2026-10-09T00:00:00.000Z" : null,
-    },
+function mode(t,enabled=true){
+  const previous=clinicConfig.automatedFollowUp;
+  const oldAccount=process.env.WHATSAPP_PHONE_NUMBER_ID;
+  clinicConfig.automatedFollowUp={
+    ...(previous||{}),
+    whatsappFreeOnly:{enabled,activatedAt:enabled?"2026-10-09T00:00:00.000Z":null}
   };
-  t.after(() => { clinicConfig.automatedFollowUp = previous; });
+  process.env.WHATSAPP_PHONE_NUMBER_ID="123456789";
+  t.after(()=>{clinicConfig.automatedFollowUp=previous;
+    if(oldAccount===undefined)delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID=oldAccount;});
 }
 
-function fakeDatabase({ billed = false, eligible = false, crash = false } = {}) {
-  const calls = [];
-  return {
-    calls,
-    async query(sql, params) {
-      calls.push({ sql, params });
-      if (crash) throw new Error("Postgres not reachable");
-      if (sql.includes("AS tripped")) return { rows: [{ tripped: billed }] };
-      if (sql.includes("AS eligible")) return { rows: [{ eligible }] };
-      throw new Error("Unexpected query");
-    },
+function mockedDatabase({eligible=true,billed=false,sevenDays=false}={}){
+  const calls=[];
+  const state={status:"idle",reservation_id:null,wamid:null,recipient:null};
+  const priced=new Map();
+  const query=async(sql,params=[])=>{
+    calls.push({sql,params});
+    if(sql==="BEGIN" || sql==="COMMIT" || sql==="ROLLBACK")return {rows:[]};
+    if(sql.includes("INSERT INTO whatsapp_free_only_send_gate"))return {rows:[]};
+    if(sql.includes("FROM whatsapp_free_only_send_gate") && sql.includes("FOR UPDATE"))return {rows:[{...state}]};
+    if(sql.includes("FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1"))
+      return {rows:priced.has(params[0])?[priced.get(params[0])]:[]};
+    if(sql.includes("AS tripped"))return {rows:[{tripped:billed}]};
+    if(sql.includes("AS verified"))return {rows:[{verified:sevenDays}]};
+    if(sql.includes("AS eligible"))return {rows:[{eligible}]};
+    if(sql.includes("UPDATE whatsapp_free_only_send_gate")){
+      if(sql.includes("status='reserved'"))Object.assign(state,{status:"reserved",reservation_id:params[1],wamid:null,recipient:params[2]});
+      if(sql.includes("status='awaiting_pricing'"))Object.assign(state,{status:"awaiting_pricing",wamid:params[2]});
+      if(sql.includes("status='idle'"))Object.assign(state,{status:"idle",reservation_id:null,wamid:null,recipient:null});
+      if(sql.includes("status='unknown'"))state.status="unknown";
+      return {rows:[]};
+    }
+    if(sql.includes("INSERT INTO whatsapp_free_only_block_events"))return {rows:[]};
+    throw new Error("Unexpected SQL: "+sql);
   };
+  return {calls,state,priced,query,connect:async()=>({query,release(){}})};
 }
 
-test("free-only mode OFF leaves existing WhatsApp sending behaviour unchanged", async (t) => {
-  mode(t, false);
-  const db = fakeDatabase({ crash: true });
-  assert.deepEqual(await guard.authorize("+60 11-3053 5053", { database: db }), { allowed: true });
-  assert.equal(db.calls.length, 0);
+test("when switch is off, sends are not changed and do not touch Neon",async t=>{
+  mode(t,false);
+  const db=mockedDatabase();
+  const check=await guard.reserve("601130535053",{database:db});
+  assert.deepEqual(check,{allowed:true,reservationId:null});
+  assert.equal(db.calls.length,0);
 });
 
-test("free-only mode blocks direct WhatsApp, open service windows and unverified ad clicks", async (t) => {
+test("strict mode fails closed without a priced session",async t=>{
   mode(t);
-  const db = fakeDatabase();
-  const result = await guard.authorize("+60 11-3053 5053", { database: db });
-  assert.equal(result.allowed, false);
-  assert.equal(result.code, "zero_cost_unverified_free_entry");
-  assert.equal(db.calls.length, 2);
+  const db=mockedDatabase({eligible:false});
+  const check=await guard.reserve("601130535053",{database:db});
+  assert.equal(check.allowed,false);
+  assert.equal(check.code,"zero_cost_unverified_free_entry");
+  assert.equal(db.state.status,"idle");
 });
 
-test("free-only mode permits only a verified and fully reconciled free-entry session", async (t) => {
+test("one account reserves a slot, second send is blocked until Meta confirms nonbillable",async t=>{
   mode(t);
-  const db = fakeDatabase({ eligible: true });
-  const result = await guard.authorize("601130535053", {
-    database: db, now: new Date("2026-10-09T06:30:00.000Z"),
-  });
-  assert.deepEqual(result, { allowed: true });
-  assert.deepEqual(db.calls[1].params, [72, "2026-10-09T06:30:00.000Z", "601130535053"]);
+  const db=mockedDatabase();
+  const first=await guard.reserve("601130535053",{database:db});
+  assert.ok(first.reservationId);
+  assert.equal(db.state.status,"reserved");
+  const second=await guard.reserve("601130535054",{database:db});
+  assert.equal(second.code,"zero_cost_previous_send_unreconciled");
+  await guard.complete(first.reservationId,{success:true,wamid:"wamid.test"},db);
+  assert.equal(db.state.status,"awaiting_pricing");
+  assert.equal((await guard.reserve("601130535053",{database:db})).allowed,false);
+  db.priced.set("wamid.test",{pricing_type:"free_entry_point",billable:false,delivery_status:"delivered"});
+  const third=await guard.reserve("601130535053",{database:db});
+  assert.equal(third.allowed,true);
+  assert.notEqual(third.reservationId,first.reservationId);
 });
 
-test("any billable Meta callback since activation trips the entire account stop", async (t) => {
+test("a Meta timeout or ambiguous network error is permanently held for review",async t=>{
   mode(t);
-  const db = fakeDatabase({ billed: true, eligible: true });
-  const result = await guard.authorize("601130535053", { database: db });
-  assert.equal(result.code, "zero_cost_billing_alarm");
-  assert.equal(db.calls.length, 1);
+  const db=mockedDatabase();
+  const first=await guard.reserve("601130535053",{database:db});
+  await guard.complete(first.reservationId,{success:false,ambiguous:true},db);
+  assert.equal(db.state.status,"unknown");
+  assert.equal((await guard.reserve("601130535053",{database:db})).allowed,false);
 });
 
-test("missing account evidence fails closed during database outages", async (t) => {
+test("definitively rejected 4xx provider request releases reservation",async t=>{
   mode(t);
-  const original = console.error;
-  console.error = () => {};
-  t.after(() => { console.error = original; });
-  const result = await guard.authorize("601130535053", { database: fakeDatabase({ crash: true }) });
-  assert.equal(result.code, "zero_cost_database_unavailable");
-  assert.equal(guard.blockedResult(result).retryable, false);
+  const db=mockedDatabase();
+  const first=await guard.reserve("601130535053",{database:db});
+  await guard.complete(first.reservationId,{success:false,providerStatus:400},db);
+  assert.equal(db.state.status,"idle");
+  const retry=await guard.reserve("601130535053",{database:db});
+  assert.equal(retry.allowed,true);
 });
 
-test("strict query requires Meta free-entry pricing for every previously accepted outbound message", () => {
-  assert.match(guard.VERIFIED_WINDOW_SQL, /start_bill\.pricing_type='free_entry_point'/);
-  assert.match(guard.VERIFIED_WINDOW_SQL, /start_bill\.billable=false/);
-  assert.match(guard.VERIFIED_WINDOW_SQL, /prior\.not\.real|priced\.wamid IS NULL/);
-  assert.match(guard.VERIFIED_WINDOW_SQL, /attempt\.status IN \('sending','failed','unknown'\)/);
-  assert.match(guard.VERIFIED_WINDOW_SQL, /\$1::integer - 1/);
+test("confirmed billable callback trips the whole account even for verified ad leads",async t=>{
+  mode(t);
+  const db=mockedDatabase({billed:true,eligible:true});
+  const check=await guard.reserve("601130535053",{database:db});
+  assert.equal(check.code,"zero_cost_billing_alarm");
+  assert.equal(db.state.status,"idle");
 });
 
-test("all raw Cloud API message senders and template sender use central guard", () => {
-  const raw = fs.readFileSync(path.join(__dirname,"../src/services/whatsappService.js"),"utf8");
-  const templates = fs.readFileSync(path.join(__dirname,"../src/services/whatsappTemplateService.js"),"utf8");
-  assert.equal((raw.match(/whatsappZeroCostGuard\.authorize\(to\)/g) || []).length, 7);
-  assert.match(templates, /whatsappZeroCostGuard\.authorize\(contact\?\.whatsapp_number\)/);
+test("71h default; 167h only with verified seven-day account evidence",async t=>{
+  mode(t);
+  const db=mockedDatabase({sevenDays:false});
+  process.env.WHATSAPP_FEP_7DAY_VERIFIED="true";
+  t.after(()=>delete process.env.WHATSAPP_FEP_7DAY_VERIFIED);
+  await guard.reserve("601130535053",{database:db});
+  const eligibility=db.calls.find(x=>x.sql.includes("AS eligible"));
+  assert.equal(eligibility.params[0],72);
+  assert.match(guard.SEVEN_DAY_PROOF_SQL,/a\.slot_hours>=73/);
+  assert.match(guard.VERIFIED_WINDOW_SQL,/\$1::integer - 1/);
 });
 
-test("Tools setting survives normalization, saving and backend validation", () => {
-  const tools = fs.readFileSync(path.join(__dirname,"../portal-frontend/src/pages/Tools.jsx"),"utf8");
-  const config = fs.readFileSync(path.join(__dirname,"../src/routes/config.js"),"utf8");
-  assert.match(tools, /Block potentially paid WhatsApp sends/);
-  assert.match(tools, /whatsappFreeOnly: \{ enabled: form\.whatsappFreeOnly\?\.enabled === true \}/);
-  assert.match(config, /requested\.whatsappFreeOnly \?\? current\?\.whatsappFreeOnly/);
-  assert.match(config, /sameFreeOnlyRun/);
+test("every WhatsApp Cloud API outgoing path is guarded, including templates",()=>{
+  const raw=fs.readFileSync(path.join(__dirname,"../src/services/whatsappService.js"),"utf8");
+  const templ=fs.readFileSync(path.join(__dirname,"../src/services/whatsappTemplateService.js"),"utf8");
+  assert.equal((raw.match(/whatsappZeroCostGuard\.perform\(to/g)||[]).length,7);
+  assert.match(templ,/whatsappZeroCostGuard\.perform\(contact\?\.whatsapp_number/);
+});
+
+test("strict switch requires acknowledged impact and reports blocked/billing status",()=>{
+  const tools=fs.readFileSync(path.join(__dirname,"../portal-frontend/src/pages/Tools.jsx"),"utf8");
+  const config=fs.readFileSync(path.join(__dirname,"../src/routes/config.js"),"utf8");
+  assert.match(tools,/Block potentially paid WhatsApp sends/);
+  assert.match(tools,/freeOnlyImpactConfirmed/);
+  assert.match(tools,/billingAlerts/);
+  assert.match(config,/acknowledgeImpact !== true/);
+  assert.match(config,/freeOnlyGate:/);
 });
