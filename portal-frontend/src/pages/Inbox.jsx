@@ -456,6 +456,7 @@ export default function Inbox() {
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
+  const [visibleConversationIds, setVisibleConversationIds] = useState(null);
   const [acquisitionContext, setAcquisitionContext] = useState(null);
   const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
@@ -1324,6 +1325,9 @@ export default function Inbox() {
   }
 
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
+  const selectedContactIsFilteredOut =
+    selectedContact && visibleConversationIds !== null &&
+    !visibleConversationIds.includes(selectedContact.contact_id);
 
   return (
     <div className="flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
@@ -1331,12 +1335,27 @@ export default function Inbox() {
         conversations={conversations}
         selectedId={selectedId}
         onSelect={handleSelectConversation}
+        onVisibleConversationsChange={setVisibleConversationIds}
         mobileThreadOpen={mobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         customerPlural={ui.customerPlural}
       />
+      {selectedContactIsFilteredOut ? (
+        <section
+          className="hidden min-w-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center lg:flex"
+          aria-label="No conversation selected"
+        >
+          <ChatOutlineIcon className="h-9 w-9 text-[var(--color-text-muted)]" />
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">
+            Select a conversation from the filtered list
+          </h2>
+          <p className="max-w-sm text-xs text-[var(--color-text-muted)]">
+            The previously open conversation does not match your current Inbox filters.
+          </p>
+        </section>
+      ) : (
       <ThreadView
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
@@ -1374,6 +1393,7 @@ export default function Inbox() {
         onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
       />
+      )}
       <ContactDetailsDrawer
         open={contactDetailsOpen}
         contact={selectedContact}
@@ -1419,6 +1439,7 @@ function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onVisibleConversationsChange,
   mobileThreadOpen,
   currentUsername,
   canViewAllLeads,
@@ -1468,11 +1489,6 @@ function ConversationList({
     [statusCounts]
   );
 
-  const replyWindowCounts = useMemo(() => {
-    const open = conversationList.filter((item) => hasOpenReplyWindow(item, replyWindowNow)).length;
-    return { open, expired: conversationList.length - open };
-  }, [conversationList, replyWindowNow]);
-
   useEffect(() => {
     if (
       (!canViewAllLeads && filters.assignment !== "all") ||
@@ -1482,7 +1498,8 @@ function ConversationList({
     }
   }, [canViewAllLeads, filters.assignment, showUnassignedAssignment]);
 
-  const filteredConversations = useMemo(() => {
+  // Build the counts from all other active filters, excluding Reply window itself.
+  const conversationsMatchingOtherFilters = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     return conversationList.filter((conversation) => {
       if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
@@ -1491,10 +1508,6 @@ function ConversationList({
       if (filters.status === "attention" && !conversation.needs_attention) return false;
       if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
       if (filters.control !== "all" && conversation.mode !== filters.control) return false;
-      if (
-        filters.replyWindow !== "all" &&
-        hasOpenReplyWindow(conversation, replyWindowNow) !== (filters.replyWindow === "open")
-      ) return false;
       if (
         canViewAllLeads &&
         !matchesLeadAssignment(conversation, filters.assignment, currentUsername)
@@ -1513,7 +1526,27 @@ function ConversationList({
         .toLowerCase();
       return searchableText.includes(query);
     });
-  }, [conversationList, filters, currentUsername, canViewAllLeads, replyWindowNow]);
+  }, [conversationList, filters, currentUsername, canViewAllLeads]);
+
+  const replyWindowCounts = useMemo(() => {
+    const open = conversationsMatchingOtherFilters.filter((item) =>
+      hasOpenReplyWindow(item, replyWindowNow)
+    ).length;
+    return { open, expired: conversationsMatchingOtherFilters.length - open };
+  }, [conversationsMatchingOtherFilters, replyWindowNow]);
+
+  const filteredConversations = useMemo(() => {
+    if (filters.replyWindow === "all") return conversationsMatchingOtherFilters;
+    const wantOpen = filters.replyWindow === "open";
+    return conversationsMatchingOtherFilters.filter(
+      (conversation) => hasOpenReplyWindow(conversation, replyWindowNow) === wantOpen
+    );
+  }, [conversationsMatchingOtherFilters, filters.replyWindow, replyWindowNow]);
+
+  useEffect(() => {
+    if (conversations === null) return;
+    onVisibleConversationsChange(filteredConversations.map((item) => item.contact_id));
+  }, [conversations, filteredConversations, onVisibleConversationsChange]);
 
   const activeFilterCount =
     (filters.status !== "all" ? 1 : 0) +
@@ -1715,7 +1748,7 @@ function ConversationList({
                   ]}
                 />
                 <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                  Includes staff-only Human Agent windows. Chats without a customer message count as expired.
+                  Counts respect other filters. Staff-only Human Agent windows count as open; sending restrictions still apply.
                 </p>
               </div>
             </div>
@@ -1816,6 +1849,14 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
+                    {messagingPolicyStatus(conversation, replyWindowNow).humanAgentAllowed && (
+                      <span
+                        title="Only a staff-written reply is permitted. AI replies and automatic follow-ups are not allowed."
+                        className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                      >
+                        Staff only
+                      </span>
+                    )}
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Needs follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
                   </div>
