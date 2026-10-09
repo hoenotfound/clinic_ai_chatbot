@@ -51,8 +51,9 @@ async function recordAiUsage(event, database = pool) {
        contact_id,
        lead_id,
        estimated_cost_usd,
-       pricing_status
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+       pricing_status,
+       cache_write_tokens
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
     [
       provider,
       model,
@@ -72,6 +73,7 @@ async function recordAiUsage(event, database = pool) {
       leadId,
       cost.costUsd,
       cost.pricingStatus,
+      safeCount(event?.cacheWriteTokens),
     ]
   );
 }
