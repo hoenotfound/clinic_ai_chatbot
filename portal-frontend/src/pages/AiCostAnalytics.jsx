@@ -135,14 +135,14 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
               </div>
             </section>
             <section className="rounded-xl border border-[var(--color-border)] bg-white p-3.5 sm:p-4">
-              <h2 className="mb-3 font-display text-sm font-bold">Most expensive contacts</h2>
-              <p className="mb-3 text-xs text-[var(--color-text-muted)]">Costs for known contacts only; not a lifetime total before this release.</p>
-              {(payload.byContact || []).length === 0 && <p className="text-xs">No attributed AI calls yet.</p>}
+              <h2 className="mb-3 font-display text-sm font-bold">Most expensive lead journeys</h2>
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">Costs for identified CRM leads only. Costs from before this release cannot be reconstructed.</p>
+              {(payload.byLead || []).length === 0 && <p className="text-xs">No attributed AI calls yet.</p>}
               <div className="max-h-80 space-y-2 overflow-auto">
-                {(payload.byContact || []).map((row) => (
-                  <div key={row.contactId} className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] pb-2 text-xs">
-                    <div><p className="font-semibold">Contact #{row.contactId}</p>
-                      <p className="text-[var(--color-text-muted)]">{row.channel} · {row.calls} calls · {row.unpricedCalls} unpriced</p></div>
+                {(payload.byLead || []).map((row) => (
+                  <div key={row.leadId} className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] pb-2 text-xs">
+                    <div><p className="font-semibold">Lead #{row.leadId}</p>
+                      <p className="text-[var(--color-text-muted)]">Contact #{row.contactId} · {row.calls} calls · {row.unpricedCalls} unpriced</p></div>
                     <span className="font-semibold">{value(row.estimatedUsd, row.estimatedMyr)}</span>
                   </div>
                 ))}
