@@ -85,11 +85,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ source, confirmed, ...(marketingConsentConfirmed ? { marketingConsentConfirmed: true } : {}) }),
     }),
-  sendWhatsAppTemplate: (contactId, payload) =>
-    request(`/conversations/${contactId}/whatsapp-templates/send`, {
+  sendWhatsAppTemplate: async (contactId, payload, mediaFile = null) => {
+    if (!mediaFile) {
+      return request(`/conversations/${contactId}/whatsapp-templates/send`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    }
+    const form = new FormData();
+    form.append("templateName", payload.templateName);
+    form.append("languageCode", payload.languageCode);
+    form.append("values", JSON.stringify(payload.values || {}));
+    form.append("marketingConsentConfirmed", String(payload.marketingConsentConfirmed === true));
+    form.append("media", mediaFile);
+    const res = await fetch(`${BASE}/conversations/${contactId}/whatsapp-templates/send`, {
       method: "POST",
-      body: JSON.stringify(payload),
-    }),
+      credentials: "include",
+      body: form,
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const error = new Error(data.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      error.code = data.code || null;
+      error.policyBlocked = data.policyBlocked === true;
+      throw error;
+    }
+    return res.json();
+  },
   retryMessage: (contactId, messageId) =>
     request(`/conversations/${contactId}/messages/${messageId}/retry`, { method: "POST" }),
   forwardMessage: (contactId, messageId, targetContactIds, requestId = null) =>
