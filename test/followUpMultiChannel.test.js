@@ -193,6 +193,7 @@ test("Instagram image follow-up records text first and sends the graphic as a se
   assert.equal(claimed.mediaUrl, null);
   assert.deepEqual(companionInput, {
     contactId: 102,
+    parentMessageId: 511,
     imageUrl: "https://example.com/follow-up.jpg",
   });
   assert.equal(sends.length, 2);
@@ -299,6 +300,7 @@ test("Instagram service image overrides the general attachment and stays retry-s
 
   assert.deepEqual(companionInput, {
     contactId: 106,
+    parentMessageId: 551,
     imageUrl: "https://example.com/pelvic.jpg",
   });
   assert.equal(sends.length, 2);
@@ -345,6 +347,7 @@ test("Instagram sends a service video after the accepted follow-up text", async 
   followUpRepo.saveSocialVideoCompanion = async (input) => {
     assert.deepEqual(input, {
       contactId: 105,
+      parentMessageId: 541,
       mediaKey: "clients/neutro/messages/follow-up-config/pelvis.mp4",
       mediaMimeType: "video/mp4",
     });
