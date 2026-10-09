@@ -121,6 +121,15 @@ function chosenPelvisPackage(messages = [], packages = []) {
     for (const match of findMentionedPromotionPackages(options, message)) {
       mentioned.add(normalizeServiceText(match.name));
     }
+    // Clinic package titles often append duration after a separator, e.g.
+    // "尊享护理配套｜2小时30分钟". A distinctive configured title prefix may
+    // be used without requiring the customer to repeat the whole title.
+    for (const option of options) {
+      const prefix = String(option.title || "").split(/[｜|—–]/)[0].trim();
+      if (prefix.length >= 6 && message.includes(prefix)) {
+        mentioned.add(normalizeServiceText(option.name));
+      }
+    }
     if (mentioned.size > 1) return null;
   }
   if (mentioned.size !== 1) return null;
