@@ -306,13 +306,13 @@ async function checkFreeformAllowed(
   });
 }
 
-async function recordOptOut(contactId, source = "customer_message") {
+async function recordOptOut(contactId, source = "customer_message", messageAt = null) {
   const result = await pool.query(
     `WITH changed AS (
        UPDATE contacts
-     SET whatsapp_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_opt_out_at END,
+     SET whatsapp_opt_out_at = CASE WHEN channel = 'whatsapp' THEN COALESCE($3::timestamptz, now()) ELSE whatsapp_opt_out_at END,
          whatsapp_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_opt_out_source END,
-         whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
+         whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN COALESCE($3::timestamptz, now()) ELSE whatsapp_marketing_opt_out_at END,
          whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
          whatsapp_opt_in_at = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_opt_in_at END,
          whatsapp_opt_in_source = CASE WHEN channel = 'whatsapp' THEN NULL ELSE whatsapp_opt_in_source END,
@@ -322,6 +322,8 @@ async function recordOptOut(contactId, source = "customer_message") {
          social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
      WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
+       AND ($3::timestamptz IS NULL OR channel <> 'whatsapp'
+            OR whatsapp_opt_in_at IS NULL OR whatsapp_opt_in_at <= $3::timestamptz)
      RETURNING *
      ), synced_leads AS (
        UPDATE leads SET marketing_consent='opted_out', updated_at=now()
@@ -329,21 +331,23 @@ async function recordOptOut(contactId, source = "customer_message") {
        RETURNING id
      )
      SELECT * FROM changed`,
-    [contactId, source]
+    [contactId, source, messageAt]
   );
   return result.rows[0] || null;
 }
 
-async function recordMarketingOptOut(contactId, source = "customer_message") {
+async function recordMarketingOptOut(contactId, source = "customer_message", messageAt = null) {
   const result = await pool.query(
     `WITH changed AS (
        UPDATE contacts
-     SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN now() ELSE whatsapp_marketing_opt_out_at END,
+     SET whatsapp_marketing_opt_out_at = CASE WHEN channel = 'whatsapp' THEN COALESCE($3::timestamptz, now()) ELSE whatsapp_marketing_opt_out_at END,
          whatsapp_marketing_opt_out_source = CASE WHEN channel = 'whatsapp' THEN $2 ELSE whatsapp_marketing_opt_out_source END,
          social_marketing_opt_out_at = CASE WHEN channel IN ('facebook','instagram') THEN now() ELSE social_marketing_opt_out_at END,
          social_marketing_opt_out_source = CASE WHEN channel IN ('facebook','instagram') THEN $2 ELSE social_marketing_opt_out_source END,
          updated_at = now()
      WHERE id = $1 AND channel IN ('whatsapp','facebook','instagram')
+       AND ($3::timestamptz IS NULL OR channel <> 'whatsapp'
+            OR whatsapp_opt_in_at IS NULL OR whatsapp_opt_in_at <= $3::timestamptz)
      RETURNING *
      ), synced_leads AS (
        UPDATE leads SET marketing_consent='opted_out', updated_at=now()
@@ -351,7 +355,7 @@ async function recordMarketingOptOut(contactId, source = "customer_message") {
        RETURNING id
      )
      SELECT * FROM changed`,
-    [contactId, source]
+    [contactId, source, messageAt]
   );
   return result.rows[0] || null;
 }
