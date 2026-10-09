@@ -257,6 +257,42 @@ async function updateInboundMessage(messageId, contactId, content, mediaBase64, 
  * Recent history used internally by the AI. This stays array-based so the AI
  * path is independent from portal pagination.
  */
+/**
+ * Read up to five EARLIEST conversation messages before this inbound message.
+ * Five is an established-conversation sentinel, including assistant/staff
+ * replies. Even one earlier customer "Hi" followed by many bot follow-ups
+ * cannot resurrect an old ad as a fresh enquiry. Within that small window,
+ * return at most two earlier customer greeting/language messages for checking.
+ * This does not depend on the truncated AI context and never loads media.
+ * Missing/failed database evidence must fail closed for optional result media.
+ */
+async function getPriorCustomerTextsForAdEnquiry(
+  contactId,
+  inboundMessageId,
+  query = pool.query.bind(pool)
+) {
+  const contact = Number(contactId);
+  const inbound = Number(inboundMessageId);
+  if (!Number.isSafeInteger(contact) || contact < 1 ||
+      !Number.isSafeInteger(inbound) || inbound < 1) {
+    throw new TypeError("Valid contact and inbound message IDs are required.");
+  }
+  const result = await query(
+    `SELECT role, content FROM messages
+      WHERE contact_id = $1 AND id < $2
+      ORDER BY id ASC
+      LIMIT 5`,
+    [contact, inbound]
+  );
+  // A fifth prior message means this is an established conversation, even if
+  // earlier user messages are fewer than three. Return null, never a shortened
+  // subset that could be mistaken for complete history.
+  if (result.rows.length >= 5) return null;
+  const priorCustomers = result.rows.filter((row) => row.role === "user");
+  if (result.rows.length > 0 && priorCustomers.length === 0) return null;
+  return priorCustomers.map((row) => String(row.content || ""));
+}
+
 async function getMessagesForContact(contactId, limit = 50, includeMedia = true) {
   const safeLimit = clampPageSize(limit);
   const mediaColumn = includeMedia
@@ -1642,6 +1678,7 @@ module.exports = {
   saveInboundMessageIfNew,
   updateInboundMessage,
   getMessagesForContact,
+  getPriorCustomerTextsForAdEnquiry,
   wasPromoRecentlySent,
   wasPromoRecentlySentWithExecutor,
   wasMediaRecentlySent,

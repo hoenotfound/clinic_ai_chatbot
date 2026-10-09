@@ -1052,3 +1052,65 @@ test("Inbox message pages include only active reaction metadata", async (t) => {
   const page = await messagesRepo.getMessagePageForContact(7, { limit: 50 });
   assert.deepEqual(page.rows[0].reactions, [{ emoji: "👍" }]);
 });
+
+
+test("contextual-ad history checks the earliest persisted full conversation, not the AI window", async () => {
+  const scenarios = [
+    { rows: [], texts: [] },
+    { rows: [{ role: "user", content: "Hi" }], texts: ["Hi"] },
+    { rows: [
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "Welcome to Neutro Sense" },
+      { role: "user", content: "English please" },
+      { role: "assistant", content: "How can I help?" },
+    ], texts: ["Hi", "English please"] },
+    { rows: [
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: "Welcome" },
+      { role: "assistant", content: "Automated follow-up 1" },
+      { role: "assistant", content: "Automated follow-up 2" },
+      { role: "assistant", content: "Automated follow-up 3" },
+    ], texts: null },
+    { rows: [
+      { role: "user", content: "Hi" },
+      { role: "user", content: "English" },
+      { role: "user", content: "Hello" },
+    ], texts: ["Hi", "English", "Hello"] },
+    { rows: [{ role: "assistant", content: "Orphaned bot-only contact" }], texts: null },
+  ];
+
+  for (const { rows, texts } of scenarios) {
+    let queries = 0;
+    const actual = await messagesRepo.getPriorCustomerTextsForAdEnquiry(
+      325, 1052, async (sql, params) => {
+        queries++;
+        assert.match(sql, /SELECT role, content FROM messages/);
+        assert.match(sql, /contact_id = \$1 AND id < \$2/);
+        assert.match(sql, /ORDER BY id ASC/);
+        assert.match(sql, /LIMIT 5/);
+        assert.doesNotMatch(sql, /OFFSET|media_key|created_at/);
+        assert.deepEqual(params, [325, 1052]);
+        return { rows };
+      }
+    );
+    assert.deepEqual(actual, texts);
+    assert.equal(queries, 1);
+  }
+});
+
+test("contextual-ad history lookup rejects invalid IDs and propagates database failures", async () => {
+  await assert.rejects(
+    messagesRepo.getPriorCustomerTextsForAdEnquiry(0, 1052, async () => ({ rows: [] })),
+    TypeError
+  );
+  await assert.rejects(
+    messagesRepo.getPriorCustomerTextsForAdEnquiry(325, NaN, async () => ({ rows: [] })),
+    TypeError
+  );
+  await assert.rejects(
+    messagesRepo.getPriorCustomerTextsForAdEnquiry(325, 1052, async () => {
+      throw new Error("Neon unavailable");
+    }),
+    /Neon unavailable/
+  );
+});
