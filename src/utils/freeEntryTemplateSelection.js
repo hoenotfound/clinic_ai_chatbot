@@ -240,6 +240,25 @@ async function validateApprovedMedia(template, spec, {
 } = {}) {
   if (!template || !spec) return false;
   if (!isSafeTemplateMediaContext(spec, template, { config, now })) return false;
+  if (spec.mediaSourceId?.startsWith("promo:")) {
+    const origin = templateMedia.listReusableMedia({ config, now })
+      .find((item) => item.id === spec.mediaSourceId);
+    if (!origin) return false;
+    if (origin.packageName) {
+      // A static pelvic Package A graphic is never safe for an ambiguous B
+      // enquiry. Preserve the existing strict customer-choice detection used
+      // by automatically selected active promotion images.
+      if (normalizeServiceText(spec.identifiedTreatment) !== normalizeServiceText("骨盆调理")) return false;
+      const active = (config.promotions || []).filter((promotion) =>
+        normalizeServiceText(promotion.linkedService) === normalizeServiceText("骨盆调理") &&
+        templateMedia.currentlyValid(promotion, now, config.timezone || config.timeZone)
+      );
+      if (active.length !== 1) return false;
+      const choice = chosenPelvisPackage(spec.recentInboundMessages || [], active[0].packages || []);
+      if (!choice || normalizeServiceText(origin.packageName) !== normalizeServiceText("Package " + choice))
+        return false;
+    }
+  }
   const format = template.header?.format || "TEXT";
   if (spec.autoPromoImageId) {
     if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
