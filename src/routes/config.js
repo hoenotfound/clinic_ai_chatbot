@@ -1207,6 +1207,7 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
     );
     const freeOnlyAccount = String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
     const db = require("../db/db").pool;
+    const zeroCostGuard = require("../services/whatsappZeroCostGuard");
     const [gate, blocked, queuedAlerts, sevenDayEvidence] = freeOnlyAccount
       ? await Promise.all([
           db.query(`SELECT status,updated_at,reservation_id,wamid IS NOT NULL AS has_message_id
@@ -1232,8 +1233,12 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
       billingAlerts: queuedAlerts.rows[0] || { pending: 0,total: 0 },
       telegramBillingAlertsEnabled: telegramAlertService.isTelegramEnabled(),
       verifiedPost72h: sevenDayEvidence.rows[0]?.verified === true,
-      strictCeilingHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" &&
-        sevenDayEvidence.rows[0]?.verified === true ? 168 : 72,
+      strictCeilingHours: freeOnly.enabled === true
+        ? await zeroCostGuard.authorizedCeilingHours({ database: db })
+        : process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
+      strictSevenDayBlocked: freeOnly.enabled === true &&
+        process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" &&
+        sevenDayEvidence.rows[0]?.verified !== true,
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
       periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
