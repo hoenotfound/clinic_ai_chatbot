@@ -856,25 +856,25 @@ function parseStatusUpdates(body) {
  // The reservation lives across all Meta requests; a different worker cannot
  // send until a confirmed nonbillable pricing callback releases the account.
  async function sendMessage(to,text,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), { currentMessageId: options.currentMessageId });
  }
  async function sendImage(to,url,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), { currentMessageId: options.currentMessageId });
  }
  async function sendImageById(to,id,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options), { currentMessageId: options.currentMessageId });
  }
  async function sendVideoById(to,id,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options), { currentMessageId: options.currentMessageId });
  }
  async function sendDocumentById(to,id,filename,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options), { currentMessageId: options.currentMessageId });
  }
  async function sendStickerById(to,id,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options), { currentMessageId: options.currentMessageId });
  }
  async function sendVoiceById(to,id,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options));
+   return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options), { currentMessageId: options.currentMessageId });
  }
 
 module.exports = {
