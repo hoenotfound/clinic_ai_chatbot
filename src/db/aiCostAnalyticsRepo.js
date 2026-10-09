@@ -13,15 +13,15 @@ async function getAiCostAnalytics({
   const scope = accessibleContactIds === null ? null :
     (Array.isArray(accessibleContactIds) ? accessibleContactIds.filter(Number.isSafeInteger) : []);
   const params = [safeDays, scope];
-  const dateRange = String.raw\`(now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - ($1::int - 1)\`;
-  const events = String.raw\`FROM ai_usage_events e
-      WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= \${dateRange}
-        AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))\`;
+  const dateRange = String.raw`(now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date - ($1::int - 1)`;
+  const events = String.raw`FROM ai_usage_events e
+      WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
+        AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))`;
 
   const [dailyResult, categoryResult, leadResult, cacheResult] = await Promise.all([
     database.query(
-      \`WITH calendar AS (
-        SELECT generate_series(\${dateRange},
+      `WITH calendar AS (
+        SELECT generate_series(${dateRange},
           (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date, interval '1 day')::date AS day
       ), daily_usage AS (
         SELECT (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date AS day,
@@ -30,12 +30,12 @@ async function getAiCostAnalytics({
           COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls,
           COUNT(*) FILTER (WHERE e.contact_id IS NULL)::int AS unattributed_calls,
           COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd
-        \${events} GROUP BY 1
+        ${events} GROUP BY 1
       ), new_contacts AS (
         SELECT (c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date AS day,
           COUNT(*)::int AS new_leads
         FROM contacts c
-        WHERE (c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= \${dateRange}
+        WHERE (c.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
           AND ($2::int[] IS NULL OR c.id = ANY($2::int[]))
         GROUP BY 1
       )
@@ -46,29 +46,29 @@ async function getAiCostAnalytics({
         COALESCE(daily_usage.usd,0)::numeric AS usd,
         COALESCE(new_contacts.new_leads,0)::int AS new_leads
       FROM calendar LEFT JOIN daily_usage USING(day)
-      LEFT JOIN new_contacts USING(day) ORDER BY calendar.day\`,
+      LEFT JOIN new_contacts USING(day) ORDER BY calendar.day`,
       params
     ),
     database.query(
-      \`SELECT e.provider, e.purpose, COUNT(*)::int AS calls,
+      `SELECT e.provider, e.purpose, COUNT(*)::int AS calls,
         COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls,
         COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd,
         COALESCE(SUM(e.prompt_tokens),0)::bigint AS prompt_tokens,
         COALESCE(SUM(e.cached_tokens),0)::bigint AS cached_tokens
-      \${events} GROUP BY e.provider,e.purpose ORDER BY usd DESC\`,
+      ${events} GROUP BY e.provider,e.purpose ORDER BY usd DESC`,
       params
     ),
     database.query(
-      \`SELECT e.contact_id, c.channel, COUNT(*)::int AS calls,
+      `SELECT e.contact_id, c.channel, COUNT(*)::int AS calls,
         COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd,
         COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls
-      \${events}
+      ${events}
       JOIN contacts c ON c.id=e.contact_id
-      GROUP BY e.contact_id,c.channel ORDER BY usd DESC LIMIT 30\`,
+      GROUP BY e.contact_id,c.channel ORDER BY usd DESC LIMIT 30`,
       params
     ),
     database.query(
-      \`SELECT e.model, e.purpose,
+      `SELECT e.model, e.purpose,
         COUNT(*) FILTER(WHERE e.status='success')::int AS successful_calls,
         COUNT(*) FILTER(WHERE e.status='success' AND e.prompt_tokens < 4096)::int AS below_4096,
         COUNT(*) FILTER(WHERE e.status='success' AND e.prompt_tokens >= 4096)::int AS at_least_4096,
@@ -76,9 +76,9 @@ async function getAiCostAnalytics({
         COUNT(*) FILTER(WHERE e.status='success' AND e.cache_metadata_present IS FALSE)::int AS cache_metadata_missing,
         COUNT(DISTINCT e.prompt_prefix_hash)::int AS distinct_prefixes,
         COALESCE(ROUND(AVG(e.prompt_tokens) FILTER(WHERE e.status='success')),0)::int AS mean_prompt_tokens
-      \${events}
+      ${events}
       AND e.provider = 'gemini' AND e.purpose IN ('customer_reply','follow_up_generation')
-      GROUP BY e.model,e.purpose ORDER BY e.purpose,e.model\`,
+      GROUP BY e.model,e.purpose ORDER BY e.purpose,e.model`,
       params
     ),
   ]);
