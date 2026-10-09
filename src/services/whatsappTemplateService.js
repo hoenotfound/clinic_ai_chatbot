@@ -225,7 +225,7 @@ function buildTemplateComponents(template, values, { media = null, allowMissingM
   const format = template?.header?.format;
   if (format === "IMAGE" || format === "VIDEO") {
     if (!media && !allowMissingMedia) {
-      return { valid: false, error: `Choose a ${format.toLowerCase()} for this template.` };
+      return { valid: false, error: `Choose ${format === "IMAGE" ? "an image" : "a video"} for this template.` };
     }
     if (media) {
       // Only server-uploaded Meta media IDs are permitted. Never accept arbitrary
