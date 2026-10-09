@@ -134,6 +134,8 @@ export default function WhatsAppTemplateModal({
   const [loadError, setLoadError] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const [values, setValues] = useState({ header: [], body: [] });
+  const [mediaFile, setMediaFile] = useState(null);
+  const [mediaSelectionId, setMediaSelectionId] = useState("");
   const [optInSource, setOptInSource] = useState("");
   const [optInConfirmed, setOptInConfirmed] = useState(false);
   const [marketingOptInConfirmed, setMarketingOptInConfirmed] = useState(false);
@@ -166,11 +168,15 @@ export default function WhatsAppTemplateModal({
         if (!currentTemplate) {
           setSelectedKey(key);
           setValues(emptyValuesFor(nextTemplate));
+          setMediaFile(null);
+          setMediaSelectionId("");
           setMarketingConsentConfirmed(false);
         }
       } else {
         setSelectedKey("");
         setValues({ header: [], body: [] });
+        setMediaFile(null);
+    setMediaSelectionId("");
         setMarketingConsentConfirmed(false);
       }
     } catch (err) {
@@ -184,6 +190,8 @@ export default function WhatsAppTemplateModal({
     setCatalog(null);
     setSelectedKey("");
     setValues({ header: [], body: [] });
+    setMediaFile(null);
+    setMediaSelectionId("");
     setOptInSource("");
     setOptInConfirmed(false);
     setMarketingOptInConfirmed(false);
@@ -216,6 +224,8 @@ export default function WhatsAppTemplateModal({
   function chooseTemplate(template) {
     setSelectedKey(`${template.name}::${template.language}`);
     setValues(emptyValuesFor(template));
+    setMediaFile(null);
+        setMediaSelectionId("");
     setMarketingConsentConfirmed(false);
     setActionError("");
   }
@@ -271,7 +281,8 @@ export default function WhatsAppTemplateModal({
           selected.category === "MARKETING"
             ? marketingConsentConfirmed
             : false,
-      });
+        ...(mediaSelectionId && !mediaFile ? { mediaSelectionId } : {}),
+      }, mediaFile);
       onSent?.(result);
       onClose();
     } catch (err) {
@@ -285,8 +296,29 @@ export default function WhatsAppTemplateModal({
   const allValuesFilled = (selected?.variableFields || []).every((field) =>
     Boolean(values[field.component]?.[field.index - 1]?.trim())
   );
+  const mediaFormat = selected?.header?.format;
+  const needsMedia = mediaFormat === "IMAGE" || mediaFormat === "VIDEO";
+  const maxMediaBytes = mediaFormat === "IMAGE" ? 5 * 1024 * 1024 : 16 * 1024 * 1024;
+  const isTargetedFollowUpMedia = [
+    "ns_fu2_pelvis_video", "ns_fu3_pelvis_feedback", "ns_fu3_face_feedback",
+    "ns_fu_pricing_graphic", "ns_fu_meridian_gift",
+  ].includes(selected?.name);
+  const eligibleClinicMedia = (catalog?.reusableMedia || []).filter(
+    (item) => item.format === mediaFormat && (
+      !isTargetedFollowUpMedia || item.compatibleTemplates?.includes(selected?.name)
+    )
+  );
+  const mediaFileValid = !needsMedia || (
+    mediaSelectionId
+      ? eligibleClinicMedia.some((item) => item.id === mediaSelectionId)
+      : !isTargetedFollowUpMedia && mediaFile != null &&
+    mediaFile.size > 0 && mediaFile.size <= maxMediaBytes &&
+    (mediaFormat === "IMAGE"
+      ? ["image/jpeg", "image/png"].includes(mediaFile.type)
+      : /\.mp4$/i.test(mediaFile.name)));
   const canSend =
     catalog?.eligibility?.allowed === true &&
+    mediaFileValid &&
     !marketingReconsentNeeded &&
     selected?.sendable === true &&
     allValuesFilled &&
@@ -443,12 +475,73 @@ export default function WhatsAppTemplateModal({
                     </span>
                   </div>
 
+                  {needsMedia && (
+                    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                      {eligibleClinicMedia.length > 0 && (
+                        <label className="mb-3 block text-[11px] font-semibold">
+                          Reuse existing clinic media
+                          <select
+                            value={mediaSelectionId}
+                            onChange={(event) => {
+                              const option = eligibleClinicMedia.find((item) => item.id === event.target.value);
+                              setMediaSelectionId(event.target.value);
+                              setMediaFile(null);
+                              if (option && ["ns_fu_pricing_graphic", "ns_fu_meridian_gift"].includes(selected.name)) {
+                                const suggested = option.suggestedValues?.[selected.language] || "";
+                                setValues((current) => ({
+                                  ...current, body: [suggested, ...(current.body || []).slice(1)],
+                                }));
+                              }
+                              setActionError("");
+                            }}
+                            className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs"
+                          >
+                            <option value="">{isTargetedFollowUpMedia ? "Choose the matching clinic media" : "Upload a new file instead"}</option>
+                            {eligibleClinicMedia.map((item) => (
+                                <option key={item.id} value={item.id}>{item.label}</option>
+                              ))}
+                          </select>
+                        </label>
+                      )}
+                      {!mediaSelectionId && !isTargetedFollowUpMedia && <label className="block text-[11px] font-semibold">
+                        {mediaFormat === "IMAGE" ? "Select a template image" : "Select a template video"}
+                        <input
+                          key={selectedKey}
+                          type="file"
+                          accept={mediaFormat === "IMAGE" ? "image/jpeg,image/png" : "video/mp4,.mp4"}
+                          onChange={(event) => {
+                            setMediaFile(event.target.files?.[0] || null);
+                            setMediaSelectionId("");
+                            setActionError("");
+                          }}
+                          className="mt-2 block w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--color-primary-light)] file:px-3 file:py-2 file:font-semibold file:text-[var(--color-primary)]"
+                        />
+                      </label>}
+                      {isTargetedFollowUpMedia && eligibleClinicMedia.length === 0 && (
+                        <p className="text-xs text-amber-800">No eligible clinic media is configured for this template. Check the service, active promotion and media settings first.</p>
+                      )}
+                      {mediaFile && !mediaSelectionId && (
+                        <p className={`mt-2 break-all text-[11px] ${mediaFileValid ? "text-[var(--color-text-muted)]" : "text-red-700"}`}>
+                          {mediaFile.name} · {(mediaFile.size / (1024 * 1024)).toFixed(2)} MB
+                          {!mediaFileValid && ` — ${mediaFormat === "IMAGE" ? "JPEG/PNG, max 5MB" : "MP4, max 16MB"} required`}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                        {mediaFormat === "VIDEO"
+                          ? "Use H.264 MP4 with AAC audio, under 16MB. The server checks codecs but does not compress videos."
+                          : "Use JPEG or PNG, under 5MB. The file is uploaded privately to WhatsApp."}
+                      </p>
+                    </div>
+                  )}
+
                   {(selected.variableFields || []).map((field) => (
                     <label key={`${field.component}-${field.index}`} className="block">
                       <span className="text-[11px] font-semibold">{field.label}</span>
                       <input
                         value={values[field.component]?.[field.index - 1] || ""}
                         onChange={(event) => updateVariable(field, event.target.value)}
+                        readOnly={field.component === "body" && field.index === 1 &&
+                          ["ns_fu_pricing_graphic", "ns_fu_meridian_gift"].includes(selected.name) && Boolean(mediaSelectionId)}
                         maxLength={1024}
                         placeholder={field.example ? `Example: ${field.example}` : "Enter value"}
                         className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
@@ -461,6 +554,11 @@ export default function WhatsAppTemplateModal({
                       Preview
                     </p>
                     <div className="mt-1.5 whitespace-pre-wrap rounded-xl bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6">
+                      {needsMedia && (
+                        <p className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">
+                          {mediaFormat === "IMAGE" ? "📷 Image" : "🎬 Video"}: {mediaSelectionId ? (catalog?.reusableMedia || []).find((item) => item.id === mediaSelectionId)?.label : mediaFile?.name || "Choose a file above"}
+                        </p>
+                      )}
                       {preview || "No text preview available."}
                     </div>
                     {(selected.buttons || []).length > 0 && (

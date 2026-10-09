@@ -75,8 +75,8 @@ function normalizeTemplate(raw) {
   const buttons = normalizeButtons(buttonsComponent);
   const unsupportedReasons = [];
 
-  if (header && headerFormat !== "TEXT") {
-    unsupportedReasons.push("Media-header templates are not supported from Inbox yet.");
+  if (header && !["TEXT", "IMAGE", "VIDEO"].includes(headerFormat)) {
+    unsupportedReasons.push(`${headerFormat} template headers are not supported from Inbox.`);
   }
   if (hasNamedVariables(headerText) || hasNamedVariables(bodyText)) {
     unsupportedReasons.push("Named template variables are not supported from Inbox yet.");
@@ -217,11 +217,29 @@ async function fetchWithTimeout(fetchImpl, url, options = {}, timeoutMs = DEFAUL
   }
 }
 
-function buildTemplateComponents(template, values) {
+function buildTemplateComponents(template, values, { media = null, allowMissingMedia = false } = {}) {
   const validation = validateTemplateValues(template, values);
   if (!validation.valid) return validation;
 
   const components = [];
+  const format = template?.header?.format;
+  if (format === "IMAGE" || format === "VIDEO") {
+    if (!media && !allowMissingMedia) {
+      return { valid: false, error: `Choose ${format === "IMAGE" ? "an image" : "a video"} for this template.` };
+    }
+    if (media) {
+      // Only server-uploaded Meta media IDs are permitted. Never accept arbitrary
+      // media URLs or caller-supplied IDs from an Inbox request.
+      if (!/^\d+$/.test(String(media.id || ""))) {
+        return { valid: false, error: "The WhatsApp media upload did not return a valid media ID." };
+      }
+      components.push({ type: "header", parameters: [
+        { type: format.toLowerCase(), [format.toLowerCase()]: { id: String(media.id) } },
+      ] });
+    }
+  } else if (media) {
+    return { valid: false, error: "This text template cannot include an attachment." };
+  }
   for (const component of ["header", "body"]) {
     const parameters = validation.values[component].map((value) => ({
       type: "text",
@@ -265,6 +283,8 @@ function replaceVariables(text, values) {
 function renderTemplatePreview(template, values = {}) {
   const normalized = normalizeValues(values);
   const parts = [];
+  if (template?.header?.format === "IMAGE") parts.push("📷 [Template image]");
+  if (template?.header?.format === "VIDEO") parts.push("🎬 [Template video]");
   if (template?.header?.text) {
     parts.push(replaceVariables(template.header.text, normalized.header));
   }

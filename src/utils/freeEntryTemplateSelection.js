@@ -162,7 +162,11 @@ function buildStaticMarketingTemplate(template, spec, templatesService) {
       )) return null;
 
   const compatibilityTemplate = { ...template, sendable: true, unsupportedReason: null };
-  const built = templatesService.buildTemplateComponents(compatibilityTemplate, {});
+  const built = templatesService.buildTemplateComponents(compatibilityTemplate, {}, {
+    // Auto follow-ups use a validated signed R2 URL header below instead of
+    // the manual Inbox's server-uploaded Meta media ID.
+    allowMissingMedia: needsMedia,
+  });
   if (!built.valid) return null;
 
   const components = built.components.slice();

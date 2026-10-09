@@ -65,7 +65,7 @@ test("loads only approved WhatsApp templates and exposes positional text variabl
   ]);
 });
 
-test("marks media headers, authentication templates and dynamic URL buttons unsupported", () => {
+test("supports image and video headers while rejecting other unsupported template formats", () => {
   const media = templateService.normalizeTemplate({
     name: "photo_template",
     language: "en_US",
@@ -76,8 +76,35 @@ test("marks media headers, authentication templates and dynamic URL buttons unsu
       { type: "BODY", text: "Look at this" },
     ],
   });
-  assert.equal(media.sendable, false);
-  assert.match(media.unsupportedReason, /Media-header/);
+  assert.equal(media.sendable, true);
+  assert.equal(media.header.format, "IMAGE");
+  assert.equal(media.unsupportedReason, null);
+
+  const video = templateService.normalizeTemplate({
+    name: "video_template",
+    language: "en_US",
+    status: "APPROVED",
+    category: "MARKETING",
+    components: [
+      { type: "HEADER", format: "VIDEO" },
+      { type: "BODY", text: "Video {{1}}" },
+    ],
+  });
+  assert.equal(video.sendable, true);
+  assert.equal(video.header.format, "VIDEO");
+
+  const document = templateService.normalizeTemplate({
+    name: "unsupported_document",
+    language: "en_US",
+    status: "APPROVED",
+    category: "UTILITY",
+    components: [
+      { type: "HEADER", format: "DOCUMENT" },
+      { type: "BODY", text: "Document" },
+    ],
+  });
+  assert.equal(document.sendable, false);
+  assert.match(document.unsupportedReason, /DOCUMENT/);
 
   const auth = templateService.normalizeTemplate({
     name: "otp",
@@ -158,6 +185,87 @@ test("builds template send components and a staff preview from the same values",
     templateService.renderTemplatePreview(template, built.values),
     "Follow-up for Alex\n\nHi Alex, are you still interested in Body assessment?\n\nReply STOP if you no longer want updates."
   );
+});
+
+
+test("image template requires server-uploaded Meta media ID and preserves body variables", () => {
+  const template = templateService.normalizeTemplate({
+    id: "tpl-media-image",
+    name: "ns_fu_pricing_graphic",
+    language: "zh_CN",
+    status: "APPROVED",
+    category: "MARKETING",
+    components: [
+      { type: "HEADER", format: "IMAGE" },
+      { type: "BODY", text: "Price for {{1}}" },
+    ],
+  });
+  const missing = templateService.buildTemplateComponents(template, { body: ["Package A"] });
+  assert.equal(missing.valid, false);
+  assert.match(missing.error, /Choose an image/);
+
+  const preflight = templateService.buildTemplateComponents(
+    template, { body: ["Package A"] }, { allowMissingMedia: true }
+  );
+  assert.equal(preflight.valid, true);
+  assert.deepEqual(preflight.components, [{ type: "body", parameters: [
+    { type: "text", text: "Package A" },
+  ] }]);
+
+  for (const id of ["", "https://example.test/private.jpg", "123;delete"]) {
+    const forged = templateService.buildTemplateComponents(template,
+      { body: ["Package A"] }, { media: { id } });
+    assert.equal(forged.valid, false);
+  }
+
+  const built = templateService.buildTemplateComponents(
+    template, { body: ["Package A"] }, { media: { id: "123456789" } }
+  );
+  assert.equal(built.valid, true);
+  assert.deepEqual(built.components[0], {
+    type: "header",
+    parameters: [{ type: "image", image: { id: "123456789" } }],
+  });
+  assert.deepEqual(built.components[1], { type: "body", parameters: [
+    { type: "text", text: "Package A" },
+  ] });
+  assert.match(templateService.renderTemplatePreview(template, built.values), /Template image/);
+});
+
+test("video header can be attached, but text templates reject attachments", () => {
+  const video = templateService.normalizeTemplate({
+    id: "tpl-media-video",
+    name: "ns_fu3_face_feedback",
+    language: "en_US",
+    status: "APPROVED",
+    category: "MARKETING",
+    components: [{ type: "HEADER", format: "VIDEO" }, { type: "BODY", text: "Feedback" }],
+  });
+  const built = templateService.buildTemplateComponents(video, {}, { media: { id: 9001 } });
+  assert.equal(built.valid, true);
+  assert.deepEqual(built.components, [{
+    type: "header",
+    parameters: [{ type: "video", video: { id: "9001" } }],
+  }]);
+  assert.match(templateService.renderTemplatePreview(video, {}), /Template video/);
+
+  const textTemplate = templateService.normalizeTemplate({
+    name: "text", language: "en_US", status: "APPROVED", category: "UTILITY",
+    components: [{ type: "BODY", text: "hello" }],
+  });
+  assert.equal(templateService.buildTemplateComponents(textTemplate,
+    {}, { media: { id: "111" } }).valid, false);
+});
+
+test("media header changes affect saved template signatures used for retry", () => {
+  const make = (format) => templateService.normalizeTemplate({
+    id: "t1", name: "offer", language: "en_US", status: "APPROVED",
+    category: "MARKETING", components: [
+      { type: "HEADER", format }, { type: "BODY", text: "offer" },
+    ],
+  });
+  assert.notEqual(templateService.templateSignature(make("IMAGE")),
+    templateService.templateSignature(make("VIDEO")));
 });
 
 test("rejects missing template variable values", () => {

@@ -343,6 +343,43 @@ async function uploadMedia(
   }
 }
 
+/** Reuse identical staff-uploaded template attachments within one isolated clinic.
+ * Hash-based keys prevent one permanent R2 copy per recipient. The existing
+ * follow-up-media reference sweeper retains keys while any message references
+ * them and deletes abandoned, unreferenced assets after the grace period.
+ *
+ * Legacy shared-bucket deployments without CLIENT_SLUG fall back to
+ * per-contact uploads instead of risking cross-tenant key sharing.
+ */
+function reusableTemplateMediaKey(buffer, mimeType, env = process.env) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length ||
+      !["image/jpeg", "image/png", "video/mp4"].includes(mimeType)) {
+    throw new TypeError("Reusable template media must be validated JPEG, PNG or MP4 bytes.");
+  }
+  const isolation = getMediaIsolationStatus(env);
+  if (!isolation.prefix) return null;
+  const digest = crypto.createHash("sha256").update(buffer).digest("hex");
+  return `${followUpConfigVideoPrefix(env)}templates/${digest}.${extensionForMimeType(mimeType)}`;
+}
+
+async function uploadReusableTemplateMedia(buffer, mimeType, { contactId = "misc", env = process.env } = {}) {
+  const key = reusableTemplateMediaKey(buffer, mimeType, env);
+  if (!key) return { key: await uploadMedia(buffer, mimeType, { contactId, env }), shared: false };
+  try {
+    await sendR2(new PutObjectCommand({
+      Bucket: getBucketName(), Key: key, Body: buffer,
+      ContentType: mimeType, IfNoneMatch: "*",
+    }));
+  } catch (error) {
+    // Conditional create is idempotent for concurrent sends of identical
+    // media. Never treat connection/timeout errors as a successful upload.
+    if (error?.$metadata?.httpStatusCode !== 412 &&
+        !["PreconditionFailed", "ConditionalRequestConflict"].includes(error?.name)) throw error;
+    if (error?.$metadata?.httpStatusCode === 409) throw error;
+  }
+  return { key, shared: true };
+}
+
 /**
  * Creates a second, disposable copy for Meta to fetch. We intentionally do
  * not make the permanent customer-media object public or expose its key. The
@@ -881,6 +918,8 @@ module.exports = {
   sendR2,
   isR2RequestTimeoutError,
   uploadMedia,
+  reusableTemplateMediaKey,
+  uploadReusableTemplateMedia,
   uploadTemporaryMedia,
   copyStoredMediaToMessage,
   copyStoredMediaToTemporary,
