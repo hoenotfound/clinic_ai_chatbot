@@ -114,7 +114,9 @@ test("71h default; 167h only with verified seven-day account evidence",async t=>
   await guard.reserve("601130535053",{database:db});
   const eligibility=db.calls.find(x=>x.sql.includes("AS eligible"));
   assert.equal(eligibility.params[0],72);
-  assert.match(guard.SEVEN_DAY_PROOF_SQL,/a\.slot_hours>=73/);
+  assert.match(guard.SEVEN_DAY_PROOF_SQL,/observed\.created_at>=opened\.created_at\+interval '72 hours'/);
+  assert.match(guard.SEVEN_DAY_PROOF_SQL,/activation\.pricing_type='free_entry_point'/);
+  assert.match(guard.SEVEN_DAY_PROOF_SQL,/priced\.billable=false/);
   assert.match(guard.VERIFIED_WINDOW_SQL,/\$1::integer - 1/);
 });
 
