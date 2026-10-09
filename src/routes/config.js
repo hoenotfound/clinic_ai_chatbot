@@ -639,6 +639,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     templateName: rule.templateName.trim(),
     mediaUrl: (rule.mediaUrl || "").trim(),
     mediaKey: (rule.mediaKey || "").trim(),
+    mediaSourceId: (rule.mediaSourceId || "").trim(),
     videoCodecVerified: rule.videoCodecVerified === true,
   }));
   const freeEntryLanguage = requestedFreeEntry.language.trim() || "zh_CN";
@@ -1209,6 +1210,10 @@ router.get("/automated-follow-up/template-catalog", async (req, res) => {
     mediaKey: item.format === "VIDEO" ? item.mediaKey : null,
     imageId: item.format === "IMAGE" ? item.imageId : null,
     serviceName: item.serviceName || null,
+    compatibleTemplates: catalog.templates.filter((template) =>
+      template.category === "MARKETING" &&
+      whatsappTemplateMedia.isTemplateCompatible(template.name, item)
+    ).map((template) => template.name).filter((name, i, all) => all.indexOf(name) === i),
   }));
   // Previously saved R2 attachments must remain selectable even when they
   // no longer appear in current promotional or standard follow-up media.
@@ -1221,6 +1226,7 @@ router.get("/automated-follow-up/template-catalog", async (req, res) => {
     shared.push({
       id: "configured:" + crypto.createHash("sha256").update(key).digest("hex").slice(0, 24),
       label: "Previously attached template media", mediaKey: key,
+      serviceName: rule.serviceName || null,
       format: /\.mp4$/i.test(key) ? "VIDEO" : "IMAGE",
     });
   }
@@ -1238,7 +1244,8 @@ router.post("/automated-follow-up/template-media-image", handleImageUpload, asyn
   try {
     const buffer = await whatsappTemplateMedia.prepareImage(req.file.buffer, req.file.mimetype);
     const key = await mediaStorage.uploadMedia(buffer, req.file.mimetype, { contactId: "follow-up-config" });
-    return res.status(201).json({ key, filename: req.file.originalname, format: "IMAGE" });
+    const previewUrl = mediaStorage.createPresignedGetUrl(key, { expiresSeconds: 5 * 60 });
+    return res.status(201).json({ key, previewUrl, filename: req.file.originalname, format: "IMAGE" });
   } catch (err) {
     if (err.code === "invalid_template_media") return res.status(400).json({ error: err.message });
     console.error("Template image upload failed:", err);
@@ -1263,8 +1270,15 @@ router.post("/automated-follow-up/template-library-image", async (req, res) => {
     const buffer = await whatsappTemplateMedia.prepareImage(
       Buffer.from(image.data, "base64"), image.mime_type
     );
-    const key = await mediaStorage.uploadMedia(buffer, image.mime_type, { contactId: "follow-up-config" });
-    return res.status(201).json({ key, filename: option.filename, format: "IMAGE" });
+    const key = await mediaStorage.uploadMedia(buffer, image.mime_type, {
+      contactId: "follow-up-config",
+      metadata: { "clinic-promo-image-id": String(option.imageId) },
+    });
+    const previewUrl = mediaStorage.createPresignedGetUrl(key, { expiresSeconds: 5 * 60 });
+    return res.status(201).json({
+      key, previewUrl, filename: option.filename, format: "IMAGE",
+      mediaSourceId: option.id,
+    });
   } catch (err) {
     if (err.code === "invalid_template_media") return res.status(400).json({ error: err.message });
     console.error("Template library image selection failed:", err);
@@ -1274,7 +1288,8 @@ router.post("/automated-follow-up/template-library-image", async (req, res) => {
 
 router.get("/automated-follow-up/template-media-preview", (req, res) => {
   const key = String(req.query.key || "").trim();
-  if (!key || key.length > 1024 || !mediaStorage.isSharedFollowUpConfigKey(key) ||
+  if (!key || key.length > 1024 ||
+      !mediaStorage.isReferencedClinicFollowUpMediaKey(key, configRepo.getConfig()) ||
       !/\.(?:jpe?g|png|mp4)$/i.test(key)) return res.status(404).send("Not found");
   if (!mediaStorage.isStorageConfigured()) return res.status(503).send("Clinic media storage is not configured.");
   try {
@@ -1523,6 +1538,7 @@ router.post(
       return res.status(201).json({
         key,
         filename,
+        previewUrl: mediaStorage.createPresignedGetUrl(key, { expiresSeconds: 5 * 60 }),
         compressed: prepared.compressed,
         transcoded: prepared.transcoded === true,
         originalBytes: prepared.originalBytes,
