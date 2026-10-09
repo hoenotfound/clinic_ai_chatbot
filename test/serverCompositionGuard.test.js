@@ -146,9 +146,12 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
     serverSource.slice(promoResolveAt, resultResolveAt),
     /automaticPromoMediaSent \+= 1/
   );
+  // The result-media block may do an optional local Meta attribution refresh
+  // before the media selection, so this guard is no longer necessarily within
+  // the final 500 characters preceding resolveResultMediaForReply.
   assert.match(
-    serverSource.slice(resultResolveAt - 500, resultResolveAt),
-    /automaticPromoMediaSent <= 1/
+    serverSource.slice(promoResolveAt, resultResolveAt),
+    /if \(automaticPromoMediaSent <= 1\)/
   );
 
   const promoCall = serverSource.slice(promoResolveAt, resultResolveAt);
@@ -158,7 +161,7 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
   assert.match(promoCall, /language: mediaLanguage/);
   assert.match(resultCall, /serviceQuery,/);
   assert.match(resultCall, /serviceQuerySource,/);
-  assert.match(resultCall, /metaAdCreativeService,/);
+  assert.match(resultCall, /metaAdCreativeService: resultMediaCreativeService,/);
   assert.match(resultCall, /priceQuery,/);
   assert.match(resultCall, /packageQuery,/);
   assert.match(resultCall, /language: mediaLanguage/);

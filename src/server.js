@@ -27,7 +27,11 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
-const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
+const {
+  resolveResultMediaForReply,
+  isEarlyContextualAdEnquiry,
+} = require("./utils/resultMediaTrigger");
+const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -1207,11 +1211,62 @@ async function processIncomingMessage(
       let pendingResultSend = null;
       let pendingResultError = null;
       try {
+        // A Meta ad may be enriched while the AI composes/sends its text reply.
+        // Refresh the local Neon attribution only AFTER the text was accepted,
+        // so this optional evidence read never delays the customer's answer.
+        // If the second read fails or creative remains ambiguous, fail closed
+        // rather than relying on an earlier stale/ad-name-only service hint.
+        let resultMediaCreativeService = metaAdCreativeService;
+        let verifiedPriorCustomerTexts = null;
+        if (sendOutcome.sendResult.success && isContextualAdServiceEnquiry(text)) {
+          try {
+            // Query earliest persisted conversation messages, NOT the AI
+            // snapshot. A fifth prior message is an ineligible sentinel,
+            // including automated and staff replies.
+            verifiedPriorCustomerTexts = await messagesRepo.getPriorCustomerTextsForAdEnquiry(
+              contact.id,
+              savedInbound.id
+            );
+          } catch (historyErr) {
+            console.warn(
+              `[Result media] inbound-history verification failed for contact ${contact.id}; skipping contextual ad media:`,
+              historyErr
+            );
+          }
+
+          if (isEarlyContextualAdEnquiry({
+            customerText: text,
+            priorCustomerTexts: verifiedPriorCustomerTexts,
+          })) {
+            try {
+              const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
+                services: clinicConfig.services,
+                aliases: clinicConfig.serviceAliases,
+              });
+              resultMediaCreativeService = resolveMetaAdCreativeService(
+                refreshedMetaAdContext,
+                clinicConfig.services,
+                clinicConfig.serviceAliases
+              );
+            } catch (refreshErr) {
+              resultMediaCreativeService = null;
+              console.warn(
+                `[Result media] local Meta attribution refresh failed for contact ${contact.id}; skipping unverified ad media:`,
+                refreshErr
+              );
+            }
+          } else {
+            resultMediaCreativeService = null;
+          }
+        }
+
         const resultBundle = await resolveResultMediaForReply({
           serviceQuery,
           serviceQuerySource,
-          metaAdCreativeService,
+          metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
+          priorCustomerTexts: verifiedPriorCustomerTexts,
+          onSkip: (reason) => console.info(`[Result media] skipped for contact ${contact.id}: ${reason}`),
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
