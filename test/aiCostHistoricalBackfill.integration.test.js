@@ -8,7 +8,7 @@ const { estimateAiUsage } = require("../src/services/aiCostEstimator");
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 function ident(value) { return '"' + String(value).replaceAll('"', '""') + '"'; }
 
-test("migration 059 fills historical Gemini daily costs but never guesses lead attribution", {
+test("migration 060 fills historical Gemini daily costs but never guesses lead attribution", {
   skip: !TEST_DATABASE_URL,
 }, async (t) => {
   const db = new Client({ connectionString: TEST_DATABASE_URL, ssl: false });
@@ -43,7 +43,7 @@ test("migration 059 fills historical Gemini daily costs but never guesses lead a
       (4,'2026-10-06T12:00:00Z','claude','claude-sonnet-5',10000,200,0,0),
       (5,'2027-01-10T12:00:00Z','gemini','gemini-3.8-flash',10000,200,100,4000);
   `);
-  const sql = fs.readFileSync(path.join(__dirname, "../src/db/migrations/059_ai_cost_attribution.sql"), "utf8");
+  const sql = fs.readFileSync(path.join(__dirname, "../src/db/migrations/060_ai_cost_attribution.sql"), "utf8");
   await db.query(sql);
   const rows = (await db.query("SELECT * FROM ai_usage_events ORDER BY id")).rows;
   const expected2026 = estimateAiUsage({
