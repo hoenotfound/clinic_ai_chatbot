@@ -95,9 +95,10 @@ function createInboundMessageClaimService({
           await policy.recordOptOut(contact.id, source);
         }
       } catch (err) {
-        // Even when the consent-state write has a transient failure, fail
-        // closed for this turn and never continue into an outbound AI reply.
+        // Do not complete an unpersisted STOP. The recovery worker must retry
+        // until it is recorded or explicitly surfaced for staff review.
         console.error(`Failed to record ${channel} opt-out for contact ${contact.id}:`, err);
+        throw err;
       }
 
       try {
@@ -342,6 +343,7 @@ function createInboundMessageClaimService({
       storedMessageId: storedInboundId,
       channel,
       incoming,
+      optOutScope: channel === "whatsapp" ? customerOptOutScope(incoming) : null,
     });
 
     // A resolved message_edit job is complete only after the normal customer
@@ -390,7 +392,13 @@ function createInboundMessageClaimService({
     // Opt-outs never enter the outbound-processing lease; they are completed
     // directly by prepareStoredInbound with no automated response.
     if (customerOptOutScope(incoming)) {
-      return prepareStoredInbound(durableClaim);
+      try {
+        return await prepareStoredInbound(durableClaim);
+      } catch (err) {
+        await processing.markFailed(durableClaim.processingJob?.id, err).catch((markErr) =>
+          console.error("Failed to mark STOP persistence for recovery:", markErr));
+        throw err;
+      }
     }
 
     let processingJob = durableClaim.processingJob;
