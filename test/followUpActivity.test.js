@@ -19,6 +19,9 @@ test("activity filters are restricted and pagination is bounded", () => {
   assert.match(repo.ACTIVITY_SQL, /pricing_reminder_decisions/);
   assert.match(repo.ACTIVITY_SQL, /follow_up_ai_decisions/);
   assert.match(repo.ACTIVITY_SQL, /pricing_reminder_anchor_id IS NOT NULL/);
+  assert.match(repo.ACTIVITY_SQL, /automated_follow_up_parent_message_id/);
+  assert.match(repo.ACTIVITY_SQL, /parent\.contact_id = m\.contact_id/);
+  assert.match(repo.ACTIVITY_SQL, /parent\.automated_follow_up_for_message_id IS NOT NULL/);
   assert.match(repo.ACTIVITY_SQL, /ANY\(\$7::integer\[\]\)/);
   assert.match(repo.ACTIVITY_SQL, /LIMIT \$5::integer OFFSET \$6::integer/);
 });
@@ -113,6 +116,7 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
         delivery_status TEXT, delivery_error TEXT, is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
         whatsapp_message_id TEXT, whatsapp_accepted_at TIMESTAMPTZ, social_accepted_at TIMESTAMPTZ,
         media_mime_type TEXT, media_key TEXT, media_url TEXT,
+        automated_follow_up_parent_message_id INTEGER,
         automated_follow_up_for_message_id INTEGER,
         pricing_reminder_anchor_id INTEGER, automated_follow_up_step INTEGER NOT NULL DEFAULT 1
       );
@@ -125,17 +129,29 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
         follow_up_step INTEGER, created_at TIMESTAMPTZ DEFAULT now(),
         action TEXT, reason TEXT
       );
-      INSERT INTO contacts(id,channel) VALUES (1,'whatsapp'), (2,'facebook');
+      INSERT INTO contacts(id,channel) VALUES (1,'whatsapp'), (2,'facebook'), (3,'instagram');
       INSERT INTO messages(id,contact_id,delivery_status,is_automated_follow_up,automated_follow_up_for_message_id,automated_follow_up_step)
       VALUES (20,1,'sent',true,10,1),
              (21,1,'failed',true,10,2),
              (23,2,'cancelled',true,11,1),
              (99,1,'sent',false,10,1),
-             (100,2,'sent',true,NULL,1);
+             (100,2,'sent',true,NULL,1),
+             (24,2,'sent',true,13,3),
+             (26,3,'sent',true,14,2);
       INSERT INTO messages(id,contact_id,delivery_status,is_automated_follow_up,pricing_reminder_anchor_id,automated_follow_up_step)
       VALUES (22,2,'pending',true,12,4);
       INSERT INTO pricing_reminder_decisions(id,contact_id,reason)
       VALUES (11,2,'missing_promotion');
+      -- The social follow-up text was delivered but the separate testimonial
+      -- video or image failed. Both events need independent activity rows.
+      INSERT INTO messages(
+        id, contact_id, delivery_status, is_automated_follow_up,
+        automated_follow_up_parent_message_id, media_mime_type, media_key, media_url
+      ) VALUES
+        (25,2,'failed',true,24,'video/mp4','follow-up/testimonial.mp4',NULL),
+        (27,3,'failed',true,26,'image/jpeg',NULL,'https://example.test/image.jpg'),
+        -- A legacy, unlinked companion must not be attributed by proximity.
+        (28,3,'failed',true,NULL,'video/mp4','follow-up/legacy.mp4',NULL);
       UPDATE messages SET whatsapp_message_id = 'wamid.provider123',
         whatsapp_accepted_at = now(), media_mime_type = 'video/mp4',
         media_key = 'follow-up/testimonial.mp4' WHERE id = 20;
@@ -146,8 +162,8 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
     `);
     const execute = (sql, params) => client.query(sql, params);
     const result = await repo.listActivity({ channel: "all", type: "all" }, null, execute);
-    assert.equal(result.total, 6);
-    assert.deepEqual(result.summary, { sent: 1, pending: 1, failed: 1, skipped: 2, attention: 1 });
+    assert.equal(result.total, 10);
+    assert.deepEqual(result.summary, { sent: 3, pending: 1, failed: 3, skipped: 2, attention: 1 });
     assert.deepEqual(result.items.find((x) => x.event_id === "message:20") &&
       [result.items.find((x) => x.event_id === "message:20").media_type,
        result.items.find((x) => x.event_id === "message:20").provider_evidence],
@@ -156,14 +172,30 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
       [result.items.find((x) => x.event_id === "message:22").media_type,
        result.items.find((x) => x.event_id === "message:22").provider_evidence],
       ["image", "accepted"]);
+    const video = result.items.find((x) => x.event_id === "message:25");
+    assert.deepEqual([video.channel, video.step, video.type, video.state, video.media_type,
+      video.message_part, video.parent_message_id],
+    ["facebook", 3, "sequence", "failed", "video", "media_companion", 24]);
+    const image = result.items.find((x) => x.event_id === "message:27");
+    assert.deepEqual([image.channel, image.step, image.type, image.state, image.media_type,
+      image.message_part, image.parent_message_id],
+    ["instagram", 2, "sequence", "failed", "image", "media_companion", 26]);
+    assert.equal(result.items.find((x) => x.event_id === "message:24").state, "sent");
+    assert.equal(result.items.find((x) => x.event_id === "message:26").state, "sent");
+    assert.equal(result.items.some((x) => x.event_id === "message:28"), false);
     assert.equal(result.items.some((x) => x.event_id === "message:99"), false);
     assert.equal(result.items.some((x) => x.event_id === "message:100"), false);
     const failed = await repo.listActivity({ state: "failed" }, [1], execute);
     assert.equal(failed.total, 1);
     assert.equal(failed.items[0].event_id, "message:21");
     const facebook = await repo.listActivity({ channel: "facebook" }, [2], execute);
-    assert.equal(facebook.total, 3);
+    assert.equal(facebook.total, 5);
     assert.equal(facebook.summary.skipped, 2);
+    assert.equal(facebook.summary.failed, 1);
+    const instagramFailed = await repo.listActivity({ channel: "instagram", state: "failed" }, [3], execute);
+    assert.equal(instagramFailed.total, 1);
+    assert.equal(instagramFailed.items[0].step, 2);
+    assert.equal(instagramFailed.items[0].message_part, "media_companion");
     assert.equal(facebook.summary.pending, 1);
   } finally {
     await client.query("SET search_path TO public");
