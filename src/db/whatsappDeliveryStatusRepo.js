@@ -98,6 +98,18 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
            END,
            updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus]);
   }
+  // Persist charge alerts independently of the short-lived delivery-status
+  // queue. Repeated webhook callbacks cannot create duplicate alerts.
+  for (const item of withPricing) {
+    if (item.pricingBillable !== true) continue;
+    const account = String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+    if (!account) continue;
+    await query(
+      `INSERT INTO whatsapp_free_only_billing_alerts (wamid,phone_number_id)
+       VALUES($1,$2) ON CONFLICT(wamid) DO NOTHING`,
+      [item.wamid,account]
+    );
+  }
   return result.rows;
 }
 
