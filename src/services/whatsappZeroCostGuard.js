@@ -145,6 +145,7 @@ const SEVEN_DAY_PROOF_SQL = `
       AND observed.role='assistant' AND observed.whatsapp_message_id IS NOT NULL
       AND observed.created_at>=opened.created_at+interval '72 hours'
       AND observed.created_at<opened.created_at+interval '168 hours'
+      AND observed.created_at<=now()
     JOIN whatsapp_free_entry_pricing_evidence priced
       ON priced.wamid=observed.whatsapp_message_id
       AND priced.pricing_type='free_entry_point'
