@@ -183,12 +183,13 @@ function materializeTemplateMediaSpec(spec) {
  */
 async function validateApprovedMedia(template, spec, {
   env = process.env, mediaStore = mediaStorage, fetchImpl = fetch,
+  promos = promoImagesRepo, validateImage = templateMedia.prepareImage,
 } = {}) {
   if (!template || !spec) return false;
   const format = template.header?.format || "TEXT";
   if (spec.autoPromoImageId) {
     if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
-    try { return Boolean(await prepareAutoPromotionMedia(spec)); }
+    try { return Boolean(await prepareAutoPromotionMedia(spec, { promos, validateImage })); }
     catch { return false; }
   }
   const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
