@@ -3078,9 +3078,9 @@ function FollowUpTool({
             <div className="mt-3 space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold">Treatment-specific approved templates</p>
+                  <p className="text-xs font-semibold">Day-specific approved templates & image/video attachments</p>
                   <p className="text-[11px] text-[var(--color-text-muted)]">
-                    Configure a different approved template per day for all treatments, or override a specific treatment.
+                    Choose a slot and All treatments for a day-specific template, or select one treatment to override it.
                     For ns_fu1_service_checkin, the treatment name is filled automatically. For ns_fu_pricing_graphic
                     and ns_fu_meridian_gift, leave media fields blank: the active matching clinic promotion image
                     and approved template variable are selected automatically. For other IMAGE/VIDEO templates,
@@ -3101,7 +3101,7 @@ function FollowUpTool({
                           templateName: "", mediaUrl: "", mediaKey: "", videoCodecVerified: false }
                       ],
                     },
-                  }))}>Add rule</button>
+                  }))}>Add template + media</button>
               </div>
               {(form.freeEntry?.templateRules || []).map((rule, index) => (
                 <div key={index} className="grid gap-2 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
