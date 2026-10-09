@@ -51,7 +51,10 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
   const currency = payload?.currency || "USD";
   const value = (usd, myr) => money(currency === "MYR" ? myr : usd, currency);
   const total = currency === "MYR" ? totals.myr : totals.usd;
-  const perLead = totals.leads ? total / totals.leads : null;
+  const leadSummary = payload?.leadSummary || {};
+  const perLead = leadSummary.pricedLeads
+    ? (currency === "MYR" ? leadSummary.attributedMyr : leadSummary.attributedUsd) / leadSummary.pricedLeads
+    : null;
   const pricedCount = totals.priced + totals.unpriced;
 
   return (
@@ -65,7 +68,7 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
             <h1 className="font-display text-xl font-bold">AI Costs</h1>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--color-text-muted)]">
               Model-based estimates, not provider invoices. Dates use Malaysia time. Historical
-              usage before attribution was enabled cannot be linked to individual leads.
+              Gemini calls before attribution are estimated from saved tokens, but cannot be assigned to individual leads.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -89,8 +92,8 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
           <section aria-label="AI cost totals" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               ["Estimated AI cost", value(totals.usd, totals.myr)],
-              ["Cost / new contact", perLead === null ? "No new leads" : money(perLead, currency)],
-              ["New contacts", totals.leads.toLocaleString()],
+              ["Avg. / attributed lead", perLead === null ? "No priced leads" : money(perLead, currency)],
+              ["Leads with priced AI usage", (leadSummary.pricedLeads || 0).toLocaleString()],
               ["Unpriced AI calls", totals.unpriced.toLocaleString()],
             ].map(([label, content]) => (
               <div key={label} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white p-3.5">
@@ -101,19 +104,23 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
           </section>
           <p className="text-xs text-[var(--color-text-muted)]">
             {pricedCount} provider calls recorded in this period. {totals.missing} lack contact attribution.
-            Unknown/unpriced usage is not included in estimated cost, and must not be treated as free.
+            The average uses only priced calls linked to permitted CRM leads, not all costs
+            divided by newly arriving contacts. Unpriced calls are excluded and could increase actual spending.
           </p>
           <section className="rounded-xl border border-[var(--color-border)] bg-white p-3.5 sm:p-4">
-            <h2 className="mb-3 font-display text-sm font-bold">Daily cost per new contact</h2>
-            <div className="overflow-x-auto"><table className="w-full min-w-[510px] text-left text-xs">
+            <h2 className="mb-3 font-display text-sm font-bold">Daily AI spending and cost per active lead</h2>
+            <div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-xs">
               <thead className="border-b border-[var(--color-border)] text-[var(--color-text-muted)]">
-                <tr><th className="py-2">Date (MYT)</th><th>New leads</th><th>AI calls</th><th>Est. cost</th><th>Cost/new lead</th></tr>
+                <tr><th className="py-2">Date (MYT)</th><th>New contacts</th><th>Priced leads</th><th>AI calls</th><th>Total est. cost</th><th>Avg. / priced lead</th></tr>
               </thead><tbody>{daily.map((row) => {
                 const amount = currency === "MYR" ? row.estimatedMyr : row.estimatedUsd;
                 return <tr key={row.day} className="border-b border-[var(--color-border)] last:border-0">
-                  <td className="py-2.5">{row.day}</td><td>{row.newLeads}</td><td>{row.calls}</td>
+                  <td className="py-2.5">{row.day}</td><td>{row.newLeads}</td>
+                  <td>{row.pricedActiveLeads}</td><td>{row.calls}</td>
                   <td>{money(amount, currency)}</td>
-                  <td>{row.newLeads ? money(amount / row.newLeads, currency) : "—"}</td>
+                  <td>{row.pricedActiveLeads
+                    ? money((currency === "MYR" ? row.attributedMyr : row.attributedUsd) / row.pricedActiveLeads, currency)
+                    : "—"}</td>
                 </tr>;
               })}</tbody>
             </table></div>
@@ -136,7 +143,7 @@ export default function AiCostAnalytics({ onSwitchToCrm }) {
             </section>
             <section className="rounded-xl border border-[var(--color-border)] bg-white p-3.5 sm:p-4">
               <h2 className="mb-3 font-display text-sm font-bold">Most expensive lead journeys</h2>
-              <p className="mb-3 text-xs text-[var(--color-text-muted)]">Costs for identified CRM leads only. Costs from before this release cannot be reconstructed.</p>
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">Costs for identified CRM leads in the selected period. Older unlinked usage cannot be attributed to a lead.</p>
               {(payload.byLead || []).length === 0 && <p className="text-xs">No attributed AI calls yet.</p>}
               <div className="max-h-80 space-y-2 overflow-auto">
                 {(payload.byLead || []).map((row) => (
