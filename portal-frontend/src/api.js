@@ -256,6 +256,24 @@ export const api = {
     request(`/advanced-config/restore/${snapshotId}`, { method: "POST" }),
   getCommentAutomationStatus: () => request("/config/comment-automation/status"),
   getFreeEntryStatus: () => request("/config/automated-follow-up/free-entry-status"),
+  getFollowUpTemplateCatalog: ({ refresh = false } = {}) =>
+    request(`/config/automated-follow-up/template-catalog${refresh ? "?refresh=true" : ""}`),
+  followUpTemplateMediaPreviewUrl: (key) =>
+    `${BASE}/config/automated-follow-up/template-media-preview?key=${encodeURIComponent(key)}`,
+  uploadFollowUpTemplateImage: async (file) => {
+    const body = new FormData();
+    body.append("image", file);
+    const res = await fetch(`${BASE}/config/automated-follow-up/template-media-image`, {
+      method: "POST", credentials: "include", body,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+    return data;
+  },
+  importFollowUpTemplateImage: (selectionId) =>
+    request("/config/automated-follow-up/template-library-image", {
+      method: "POST", body: JSON.stringify({ selectionId }),
+    }),
   reconcileWhatsAppFreeOnly: (payload) => request("/config/automated-follow-up/free-only-reconcile", { method: "POST", body: JSON.stringify(payload) }),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
   recoverUnassignedLeads: () =>
