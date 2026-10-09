@@ -946,6 +946,129 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Sequence timeline navigates existing editors without changing schedule or losing drafts", async ({ page }) => {
+  let savedPayload = null;
+  const translations = (message) => ({
+    en: message, ms: `BM: ${message}`, zh: `中文：${message}`,
+  });
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", description: "" }],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        timingMode: "after_reply",
+        message: "First reminder.",
+        translations: translations("First reminder."),
+        additionalSteps: [
+          {
+            delayMinutes: 480,
+            timingMode: "after_reply",
+            message: "Second reminder.",
+            translations: translations("Second reminder."),
+            serviceOverrides: [{
+              serviceName: "骨盆调理",
+              message: "Pelvic reminder.",
+              translations: translations("Pelvic reminder."),
+            }],
+          },
+          {
+            delayMinutes: 1200,
+            timingMode: "before_window_expiry",
+            beforeWindowExpiryMinutes: 240,
+            message: "Third testimonial.",
+            translations: translations("Third testimonial."),
+          },
+        ],
+        pricingReminder: { enabled: true, requirePricingInterest: false },
+        freeEntry: { enabled: false },
+      },
+    },
+    onConfigUpdate: (payload) => { savedPayload = payload; },
+  });
+  await page.goto("/tools");
+
+  const timeline = page.getByRole("list", { name: "Follow-up sequence timeline" });
+  await expect(timeline.getByRole("listitem")).toHaveCount(3);
+  const first = timeline.getByRole("button", { name: "Edit Follow-up 1 from sequence overview" });
+  const second = timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" });
+  const third = timeline.getByRole("button", { name: "Edit Follow-up 3 from sequence overview" });
+  await expect(first).toHaveAttribute("aria-current", "step");
+  await expect(third).toContainText("before the 24-hour reply window closes");
+  await expect(page.getByRole("region", { name: "Pricing reminder dependency" }))
+    .toContainText("5 minutes after the provider accepts Follow-up 3");
+
+  await third.click();
+  const thirdEditor = page.locator("#follow-up-step-3");
+  const thirdMessage = thirdEditor.getByPlaceholder("Write the next follow-up message.");
+  await expect(thirdMessage).toBeVisible();
+  await expect(third).toHaveAttribute("aria-current", "step");
+  await thirdMessage.fill("Updated third testimonial.");
+
+  await second.click();
+  await expect(page.locator("#follow-up-step-2").getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+  await expect(second).toHaveAttribute("aria-current", "step");
+
+  await first.click();
+  await expect(page.locator("#follow-up-step-1")).toBeVisible();
+  await expect(first).toHaveAttribute("aria-current", "step");
+
+  await third.click();
+  await expect(thirdMessage).toHaveValue("Updated third testimonial.");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("tab", { name: "Sequence" }).click();
+  await expect(thirdMessage).toHaveValue("Updated third testimonial.");
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+  expect(savedPayload.automatedFollowUp.additionalSteps[0].delayMinutes).toBe(480);
+  expect(savedPayload.automatedFollowUp.additionalSteps[1]).toMatchObject({
+    timingMode: "before_window_expiry",
+    beforeWindowExpiryMinutes: 240,
+    delayMinutes: 1200,
+    message: "Updated third testimonial.",
+  });
+  expect(savedPayload.automatedFollowUp.pricingReminder.enabled).toBe(true);
+  expect(savedPayload.automatedFollowUp.freeEntry.enabled).toBe(false);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Pricing reminder explains the missing third follow-up without disabling existing controls", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "First reminder.",
+        additionalSteps: [{ delayMinutes: 480, message: "Second reminder." }],
+        pricingReminder: {
+          enabled: true, requirePricingInterest: false, sendBothPelvicPackages: true,
+          enableSocialChannels: true,
+        },
+      },
+    },
+  });
+  await page.goto("/tools");
+  await expect(page.getByRole("list", { name: "Follow-up sequence timeline" }).getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByRole("region", { name: "Pricing reminder dependency" }))
+    .toContainText("cannot send without Follow-up 3");
+
+  await page.getByRole("button", { name: "View pricing settings" }).click();
+  await expect(page.getByRole("tab", { name: "Pricing" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("status").filter({ hasText: "Pricing is configured but cannot run without Follow-up 3" }))
+    .toBeVisible();
+  await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("switch", { name: "Include Messenger and Instagram pricing reminders" }))
+    .toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("switch", { name: "Send both pelvic package graphics" }))
+    .toHaveAttribute("aria-checked", "true");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Automated follow-up sections preserve draft settings while switching tabs", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true });
   await page.goto("/tools");
