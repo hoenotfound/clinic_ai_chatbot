@@ -91,52 +91,133 @@ function promoIdFromUrl(url) {
   return match ? Number(match[1]) : null;
 }
 
-function currentlyValid(promo, now) {
+function clinicLocalDate(now, timezone = "Asia/Kuala_Lumpur") {
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date(now));
+  } catch {
+    // Never fall back to UTC when a clinic has invalid timezone settings.
+    parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date(now));
+  }
+  const item = (type) => parts.find((part) => part.type === type)?.value;
+  return `${item("year")}-${item("month")}-${item("day")}`;
+}
+
+function currentlyValid(promo, now, timezone = "Asia/Kuala_Lumpur") {
   const start = String(promo?.validFrom || "");
   const end = String(promo?.validUntil || "");
-  const today = new Date(now).toISOString().slice(0, 10);
+  const today = clinicLocalDate(now, timezone);
   return (!start || today >= start.slice(0, 10)) &&
     (!end || today <= end.slice(0, 10));
+}
+
+const SERVICE_LABELS = {
+  "骨盆调理": { zh_CN: "骨盆调理", en_US: "Pelvis Care", ms: "Penjagaan Pelvis" },
+  "3D 小颜术": { zh_CN: "3D 小颜术", en_US: "3D Face Sculpting", ms: "Rawatan Wajah 3D" },
+  "9D 逆龄抗衰": { zh_CN: "9D 逆龄抗衰", en_US: "9D Anti-Ageing", ms: "Rawatan Anti-Penuaan 9D" },
+  "3D + 9D 组合": { zh_CN: "3D + 9D 组合", en_US: "3D + 9D Combination", ms: "Gabungan 3D + 9D" },
+};
+const RESTRICTED_TEMPLATE_NAMES = new Set([
+  "ns_fu2_pelvis_video", "ns_fu3_pelvis_feedback", "ns_fu3_face_feedback",
+  "ns_fu_pricing_graphic", "ns_fu_meridian_gift",
+]);
+
+function freeMeridianGiftPromised(promo) {
+  const promotionText = [promo?.followUpMessage, promo?.caption].filter(Boolean).join("\n");
+  return /(?:免费|\bfree\b|complimentary|percuma)/i.test(promotionText) &&
+    /(?:经络|meridian)/i.test(promotionText) &&
+    /(?:1\s*(?:小时|hour|jam)|一小时)/i.test(promotionText);
+}
+
+function expectedMediaValue(option, language = "zh_CN") {
+  const service = SERVICE_LABELS[option.serviceName]?.[language] || option.serviceName || option.promotionName || "";
+  if (!option.packageName) return service;
+  const packageName = /^package\s*[ab]$/i.test(option.packageName)
+    ? language === "ms" ? `Pakej ${option.packageName.slice(-1).toUpperCase()}` : `Package ${option.packageName.slice(-1).toUpperCase()}`
+    : option.packageName;
+  return language === "ms" ? `${packageName} ${service}` : `${service} ${packageName}`;
+}
+
+function isTemplateCompatible(templateName, option) {
+  if (!RESTRICTED_TEMPLATE_NAMES.has(templateName)) return true;
+  if (templateName === "ns_fu_pricing_graphic") return option.format === "IMAGE";
+  if (templateName === "ns_fu_meridian_gift") return option.format === "IMAGE" && option.freeMeridianGift === true;
+  if (templateName === "ns_fu2_pelvis_video") return option.format === "VIDEO" && option.stepNumber === 2 && option.serviceName === "骨盆调理";
+  if (templateName === "ns_fu3_pelvis_feedback") return option.format === "VIDEO" && option.stepNumber === 3 && option.serviceName === "骨盆调理";
+  if (templateName === "ns_fu3_face_feedback") return option.format === "VIDEO" && option.stepNumber === 3 &&
+    ["3D 小颜术", "9D 逆龄抗衰", "3D + 9D 组合"].includes(option.serviceName);
+  return false;
+}
+
+function validateTemplateMediaChoice(templateName, language, selectionId, values, {
+  config = clinicConfig, now = Date.now(),
+} = {}) {
+  if (!RESTRICTED_TEMPLATE_NAMES.has(templateName)) return null;
+  const option = listReusableMedia({ config, now }).find((item) => item.id === selectionId);
+  if (!option || !isTemplateCompatible(templateName, option)) {
+    throw mediaError("This approved follow-up template requires the matching configured clinic media. Choose a compatible asset from the clinic media list.", "template_media_mismatch");
+  }
+  if (["ns_fu_pricing_graphic", "ns_fu_meridian_gift"].includes(templateName)) {
+    const expected = expectedMediaValue(option, language);
+    const supplied = String(values?.body?.[0] || "").trim();
+    if (!expected || supplied !== expected) {
+      throw mediaError(`The package name must match the selected promotion image: ${expected}.`, "template_package_mismatch");
+    }
+  }
+  return option;
 }
 
 function listReusableMedia({ config = clinicConfig, now = Date.now() } = {}) {
   const result = [];
   const seen = new Set();
-  function addVideo(key, label, filename) {
+  function addVideo(key, label, filename, stepNumber, serviceName = null) {
     if (!key || !mediaStorage.isSharedFollowUpConfigKey(key) || !/\.mp4$/i.test(key)) return;
     const id = "video:" + crypto.createHash("sha256").update(key).digest("hex").slice(0, 24);
     if (seen.has(id)) return;
     seen.add(id);
-    result.push({ id, label, format: "VIDEO", filename: filename || "follow-up.mp4", mediaKey: key });
+    result.push({ id, label, format: "VIDEO", filename: filename || "follow-up.mp4", mediaKey: key, stepNumber, serviceName });
   }
   const followUp = config?.automatedFollowUp || {};
   const steps = [followUp, ...(followUp.additionalSteps || [])];
   for (const [index, step] of steps.entries()) {
-    addVideo(step?.videoKey, "Follow-up " + (index + 1) + " — General", step?.videoFilename);
+    addVideo(step?.videoKey, "Follow-up " + (index + 1) + " — General", step?.videoFilename, index + 1);
     for (const override of step?.serviceOverrides || []) {
-      addVideo(override?.videoKey, "Follow-up " + (index + 1) + " — " + (override.serviceName || "Treatment"), override?.videoFilename);
+      addVideo(override?.videoKey, "Follow-up " + (index + 1) + " — " + (override.serviceName || "Treatment"), override?.videoFilename, index + 1, override.serviceName);
     }
   }
+  const timezone = config?.timezone || config?.timeZone || "Asia/Kuala_Lumpur";
   for (const promo of config?.promotions || []) {
-    if (!currentlyValid(promo, now)) continue;
-    function addImage(url, label) {
+    if (!currentlyValid(promo, now, timezone)) continue;
+    function addImage(url, label, packageName = null) {
       const idValue = promoIdFromUrl(url);
       if (!idValue) return;
       const id = "promo:" + idValue;
       if (seen.has(id)) return;
       seen.add(id);
-      result.push({ id, label, format: "IMAGE", imageId: idValue, filename: "promotion-" + idValue + ".jpg" });
+      result.push({ id, label, format: "IMAGE", imageId: idValue, filename: "promotion-" + idValue + ".jpg",
+        promotionName: promo.name, serviceName: promo.linkedService, packageName,
+        freeMeridianGift: freeMeridianGiftPromised(promo) && !packageName });
     }
     addImage(promo.imageUrl, promo.name || "Promotion");
     for (const pkg of promo.packages || []) {
-      addImage(pkg.followUpImageUrl || pkg.imageUrl, (promo.name || "Promotion") + " — " + (pkg.name || pkg.title || "Package"));
+      addImage(pkg.followUpImageUrl || pkg.imageUrl, (promo.name || "Promotion") + " — " + (pkg.name || pkg.title || "Package"), pkg.name || pkg.title);
     }
   }
   return result;
 }
 
 function publicMediaOptions(options = listReusableMedia()) {
-  return options.map(({ id, label, format }) => ({ id, label, format }));
+  return options.map((option) => ({
+    id: option.id, label: option.label, format: option.format,
+    compatibleTemplates: [...RESTRICTED_TEMPLATE_NAMES].filter((name) => isTemplateCompatible(name, option)),
+    suggestedValues: Object.fromEntries(
+      ["zh_CN", "en_US", "ms"].map((language) => [language, expectedMediaValue(option, language)])
+    ),
+  }));
 }
 
 async function resolveReusableMedia(selectionId, expectedFormat, {
@@ -170,6 +251,7 @@ async function resolveReusableMedia(selectionId, expectedFormat, {
 
 module.exports = {
   MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, prepareImage, verifyVideoBuffer,
-  promoIdFromUrl, currentlyValid, listReusableMedia, publicMediaOptions,
-  resolveReusableMedia,
+  promoIdFromUrl, clinicLocalDate, currentlyValid, freeMeridianGiftPromised,
+  isTemplateCompatible, validateTemplateMediaChoice, expectedMediaValue,
+  listReusableMedia, publicMediaOptions, resolveReusableMedia,
 };
