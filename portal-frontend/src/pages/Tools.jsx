@@ -7,6 +7,7 @@ import { ToastContainer, useToasts } from "../components/Toast";
 import LeadDistribution from "./LeadDistribution";
 import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../components/FollowUpTemplatePicker";
 import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
+import FollowUpActivity from "../components/FollowUpActivity";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -2205,7 +2206,7 @@ function FollowUpTool({
           { key: "sequence", label: "Sequence" },
           { key: "pricing", label: "Pricing" },
           { key: "whatsapp", label: "WhatsApp templates" },
-          { key: "activity", label: "WhatsApp activity" },
+          { key: "activity", label: "Activity" },
         ].map(({ key, label }) => (
           <button
             type="button"
@@ -3333,13 +3334,14 @@ function FollowUpTool({
           </Card>
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
+            <FollowUpActivity active={followUpTab === "activity"} />
             <Card>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-base font-bold">Extended WhatsApp template activity</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Shows extended WhatsApp templates only: eligibility, attempts and billing evidence.
-                    For regular 24-hour follow-ups and pricing reminders, review the conversation in Inbox.
+                    Extended WhatsApp template eligibility, attempts and billing evidence.
+                    Regular follow-ups and pricing decisions appear in the recorded activity above.
                   </p>
                 </div>
                 <button type="button" onClick={refreshFreeEntryStatus} disabled={freeEntryStatusLoading}

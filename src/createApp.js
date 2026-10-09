@@ -35,6 +35,7 @@ const { verifyTokenMatches } = require("./utils/webhookVerification");
 const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
+const followUpActivityRoutes = require("./routes/followUpActivity");
 const advancedConfigRoutes = require("./routes/advancedConfig");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
@@ -315,6 +316,7 @@ function createApp({
   app.use("/api/auth", authRoutes);
   app.use("/api/conversations", requireAuth, conversationsRoutes);
   app.use("/api/config", requireAuth, configRoutes);
+  app.use("/api/follow-up-activity", requireAuth, followUpActivityRoutes);
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);
   app.use("/api/pipeline", requireAuth, pipelineRoutes);
