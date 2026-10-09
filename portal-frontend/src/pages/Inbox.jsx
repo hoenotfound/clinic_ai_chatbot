@@ -76,6 +76,34 @@ const STATUS_FILTERS = [
   { key: "attention", label: "Needs attention" },
 ];
 
+// Use one matching rule for the Inbox list and all contextual filter counts.
+function matchesInboxFilters(conversation, filters, { exclude = null, now, canViewAllLeads, currentUsername }) {
+  if (exclude !== "status") {
+    if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
+    if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
+    if (filters.status === "unread" && !conversation.is_unread) return false;
+    if (filters.status === "attention" && !conversation.needs_attention) return false;
+  }
+  if (exclude !== "channel" && filters.channel !== "all" &&
+      (conversation.channel || "whatsapp") !== filters.channel) return false;
+  if (exclude !== "control" && filters.control !== "all" &&
+      conversation.mode !== filters.control) return false;
+  if (exclude !== "assignment" && canViewAllLeads &&
+      !matchesLeadAssignment(conversation, filters.assignment, currentUsername)) return false;
+  if (exclude !== "replyWindow" && filters.replyWindow !== "all" &&
+      hasOpenReplyWindow(conversation, now) !== (filters.replyWindow === "open")) return false;
+  if (exclude === "query") return true;
+  const query = filters.query.trim().toLowerCase();
+  if (!query) return true;
+  return [
+    displayName(conversation),
+    conversation.whatsapp_number,
+    conversation.last_message,
+    conversation.lead_owner_display_name,
+    conversation.lead_owner_username,
+  ].filter(Boolean).join(" ").toLowerCase().includes(query);
+}
+
 function displayDeliveryError(value, mediaMimeType = "") {
   const raw = String(value || "").trim();
   const prefix = "partial_caption_sent|";
@@ -1477,25 +1505,6 @@ function ConversationList({
     }),
     [conversationList, currentUsername, showUnassignedAssignment]
   );
-  const statusCounts = useMemo(
-    () => ({
-      all: conversationList.length,
-      unreplied: conversationList.filter(isConversationUnreplied).length,
-      "follow-up": conversationList.filter((item) => item.needs_follow_up).length,
-      unread: conversationList.filter((item) => item.is_unread).length,
-      attention: conversationList.filter((item) => item.needs_attention).length,
-    }),
-    [conversationList]
-  );
-  const statusOptions = useMemo(
-    () =>
-      STATUS_FILTERS.map((filter) => [
-        filter.key,
-        `${filter.label} (${statusCounts[filter.key]})`,
-      ]),
-    [statusCounts]
-  );
-
   useEffect(() => {
     if (
       (!canViewAllLeads && filters.assignment !== "all") ||
@@ -1505,50 +1514,38 @@ function ConversationList({
     }
   }, [canViewAllLeads, filters.assignment, showUnassignedAssignment]);
 
-  // Build the counts from all other active filters, excluding Reply window itself.
-  const conversationsMatchingOtherFilters = useMemo(() => {
-    const query = filters.query.trim().toLowerCase();
-    return conversationList.filter((conversation) => {
-      if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
-      if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
-      if (filters.status === "unread" && !conversation.is_unread) return false;
-      if (filters.status === "attention" && !conversation.needs_attention) return false;
-      if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
-      if (filters.control !== "all" && conversation.mode !== filters.control) return false;
-      if (
-        canViewAllLeads &&
-        !matchesLeadAssignment(conversation, filters.assignment, currentUsername)
-      ) return false;
-      if (!query) return true;
-
-      const searchableText = [
-        displayName(conversation),
-        conversation.whatsapp_number,
-        conversation.last_message,
-        conversation.lead_owner_display_name,
-        conversation.lead_owner_username,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return searchableText.includes(query);
-    });
-  }, [conversationList, filters, currentUsername, canViewAllLeads]);
-
-  const replyWindowCounts = useMemo(() => {
-    const open = conversationsMatchingOtherFilters.filter((item) =>
-      hasOpenReplyWindow(item, replyWindowNow)
-    ).length;
-    return { open, expired: conversationsMatchingOtherFilters.length - open };
-  }, [conversationsMatchingOtherFilters, replyWindowNow]);
-
-  const filteredConversations = useMemo(() => {
-    if (filters.replyWindow === "all") return conversationsMatchingOtherFilters;
-    const wantOpen = filters.replyWindow === "open";
-    return conversationsMatchingOtherFilters.filter(
-      (conversation) => hasOpenReplyWindow(conversation, replyWindowNow) === wantOpen
+  // Each count excludes only its own filter, while honoring the rest.
+  // This keeps Status and Reply window counts consistent after other selections.
+  const contextualFilterMatches = useMemo(() => {
+    const context = { now: replyWindowNow, canViewAllLeads, currentUsername };
+    const matching = (exclude) => conversationList.filter((item) =>
+      matchesInboxFilters(item, filters, { ...context, exclude })
     );
-  }, [conversationsMatchingOtherFilters, filters.replyWindow, replyWindowNow]);
+    const statusBase = matching("status");
+    const replyBase = matching("replyWindow");
+    const statusCounts = {
+      all: statusBase.length,
+      unreplied: statusBase.filter(isConversationUnreplied).length,
+      "follow-up": statusBase.filter((item) => item.needs_follow_up).length,
+      unread: statusBase.filter((item) => item.is_unread).length,
+      attention: statusBase.filter((item) => item.needs_attention).length,
+    };
+    const open = replyBase.filter((item) => hasOpenReplyWindow(item, replyWindowNow)).length;
+    return {
+      filtered: matching(null),
+      statusCounts,
+      replyWindowCounts: { open, expired: replyBase.length - open },
+    };
+  }, [conversationList, filters, replyWindowNow, canViewAllLeads, currentUsername]);
+
+  const { filtered: filteredConversations, statusCounts, replyWindowCounts } = contextualFilterMatches;
+  const statusOptions = useMemo(() =>
+    STATUS_FILTERS.map((filter) => [
+      filter.key,
+      `${filter.key === "follow-up" ? "Follow-up" : filter.key === "attention" ? "Attention" : filter.label} (${statusCounts[filter.key]})`,
+    ]),
+    [statusCounts]
+  );
 
   useEffect(() => {
     if (conversations === null) return;
@@ -1591,7 +1588,7 @@ function ConversationList({
     if (filters.replyWindow !== "all") {
       active.push({
         key: "replyWindow",
-        label: filters.replyWindow === "open" ? "Reply window · Not expired" : "Reply window · Expired",
+        label: filters.replyWindow === "open" ? "Reply · Open" : "Reply · Expired",
       });
     }
     return active;
@@ -1645,7 +1642,7 @@ function ConversationList({
               onChange={(event) => updateFilter("query", event.target.value)}
               placeholder="Search conversations"
               aria-label="Search by name, number, message, or assignee"
-              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
+              className="w-full min-h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-base sm:text-sm lg:text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
             />
             {filters.query && (
               <button
@@ -1664,7 +1661,7 @@ function ConversationList({
             onClick={() => setFiltersOpen((current) => !current)}
             aria-expanded={filtersOpen}
             aria-controls="inbox-filter-panel"
-            className={`inline-flex h-[38px] shrink-0 items-center gap-1.5 rounded-xl border px-3 text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+            className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
               filtersOpen || activeFilterCount > 0
                 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                 : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/35 hover:text-[var(--color-text)]"
@@ -1685,7 +1682,7 @@ function ConversationList({
         {filtersOpen && (
           <div
             id="inbox-filter-panel"
-            className="mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/70 p-3"
+            className="mt-2 max-h-[min(52dvh,380px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/70 p-2.5 sm:p-3 lg:max-h-none"
             aria-label="Inbox filters"
           >
             {activeFilterCount > 0 && (
@@ -1693,7 +1690,7 @@ function ConversationList({
                 <button
                   type="button"
                   onClick={clearAppliedFilters}
-                  className="rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)] hover:bg-white"
+                  className="min-h-9 rounded-lg px-2 py-1 text-xs font-semibold text-[var(--color-primary)] hover:bg-white"
                 >
                   Clear filters
                 </button>
@@ -1718,6 +1715,26 @@ function ConversationList({
                   ["instagram", "Instagram"],
                 ]}
               />
+              <div className="col-span-2">
+                {canViewAllLeads ? (
+                  <FilterSelect
+                    label="Lead owner"
+                    value={filters.assignment}
+                    onChange={(value) => updateFilter("assignment", value)}
+                    options={assignmentOptions}
+                  />
+                ) : (
+                  <div className="min-w-0">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                      Lead owner
+                    </span>
+                    <div className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-2.5 text-sm text-[var(--color-text-muted)]">
+                      <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">My assigned leads</span>
+                    </div>
+                  </div>
+                )}
+              </div>
               <FilterSelect
                 label="Handled by"
                 value={filters.control}
@@ -1728,51 +1745,29 @@ function ConversationList({
                   ["human", "Staff"],
                 ]}
               />
-              {canViewAllLeads ? (
-                <FilterSelect
-                  label="Lead owner"
-                  value={filters.assignment}
-                  onChange={(value) => updateFilter("assignment", value)}
-                  options={assignmentOptions}
-                />
-              ) : (
-                <div className="min-w-0 rounded-lg border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]/60 px-2.5 py-2">
-                  <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                    Lead owner
-                  </span>
-                  <span className="mt-1 inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-primary)]">
-                    <UserIcon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">My assigned leads</span>
-                  </span>
-                </div>
-              )}
-              <div className="col-span-2">
-                <FilterSelect
-                  label="Reply window"
-                  value={filters.replyWindow}
-                  onChange={(value) => updateFilter("replyWindow", value)}
-                  options={[
-                    ["all", "All"],
-                    ["open", `Not expired (${replyWindowCounts.open})`],
-                    ["expired", `Expired (${replyWindowCounts.expired})`],
-                  ]}
-                />
-                <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                  Counts respect other filters. Staff-only Human Agent windows count as open; sending restrictions still apply.
-                </p>
-              </div>
+              <FilterSelect
+                label="Reply window"
+                value={filters.replyWindow}
+                onChange={(value) => updateFilter("replyWindow", value)}
+                options={[
+                  ["all", "All"],
+                  ["open", `Open (${replyWindowCounts.open})`],
+                  ["expired", `Expired (${replyWindowCounts.expired})`],
+                ]}
+                hint="Reply window is based on the last incoming customer message. Open can include staff-only Human Agent conversations; an open window does not override consent or sending restrictions."
+              />
             </div>
           </div>
         )}
 
         {activeFilterChips.length > 0 && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label="Active Inbox filters">
+          <div className="mt-2 flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-1" aria-label="Active Inbox filters">
             {activeFilterChips.map((filter) => (
               <button
                 key={filter.key}
                 type="button"
                 onClick={() => updateFilter(filter.key, "all")}
-                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white"
+                className="inline-flex min-h-9 max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-xs font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white"
                 title={`Remove ${filter.label} filter`}
               >
                 <span className="truncate">{filter.label}</span>
@@ -1880,18 +1875,18 @@ function ConversationList({
   );
 }
 
-function FilterSelect({ label, value, onChange, options }) {
+function FilterSelect({ label, value, onChange, options, hint }) {
   return (
     <label className="block min-w-0">
       <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
         {label}
       </span>
-      <span className="relative block">
+      <span className="relative block" title={hint || undefined}>
         <select
           aria-label={label}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white py-2 pl-2.5 pr-7 text-[11px] font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+          className="min-h-11 w-full min-w-0 appearance-none rounded-lg border border-[var(--color-border)] bg-white py-2 pl-2.5 pr-6 text-base font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:text-sm lg:text-xs"
         >
           {options.map(([optionValue, optionLabel]) => (
             <option key={optionValue} value={optionValue}>{optionLabel}</option>
