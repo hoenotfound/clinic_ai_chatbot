@@ -457,6 +457,7 @@ export default function Inbox() {
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
   const [visibleConversationIds, setVisibleConversationIds] = useState(null);
+  const [keepNewlyOpenedUnreadThread, setKeepNewlyOpenedUnreadThread] = useState(false);
   const [acquisitionContext, setAcquisitionContext] = useState(null);
   const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
@@ -939,10 +940,13 @@ export default function Inbox() {
   }
 
   async function handleSelectConversation(contactId) {
+    const conversation = conversations?.find((item) => item.contact_id === contactId);
+    // Opening an unread conversation removes it from the Unread filter.
+    // Keep its thread open rather than instantly replacing it with the empty state.
+    setKeepNewlyOpenedUnreadThread(Boolean(conversation?.is_unread));
     setSelectedId(contactId);
     setSearchParams({ contact: String(contactId) }, { replace: true });
     setMobileThreadOpen(true);
-    const conversation = conversations?.find((item) => item.contact_id === contactId);
     if (!conversation?.is_unread) return;
 
     updateConversationLocally(contactId, { is_unread: false });
@@ -1327,6 +1331,7 @@ export default function Inbox() {
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
   const selectedContactIsFilteredOut =
     selectedContact && visibleConversationIds !== null &&
+    !keepNewlyOpenedUnreadThread &&
     !visibleConversationIds.includes(selectedContact.contact_id);
 
   return (
@@ -1336,6 +1341,7 @@ export default function Inbox() {
         selectedId={selectedId}
         onSelect={handleSelectConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
+        onExplicitFilterChange={() => setKeepNewlyOpenedUnreadThread(false)}
         mobileThreadOpen={mobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
@@ -1440,6 +1446,7 @@ function ConversationList({
   selectedId,
   onSelect,
   onVisibleConversationsChange,
+  onExplicitFilterChange,
   mobileThreadOpen,
   currentUsername,
   canViewAllLeads,
@@ -1591,10 +1598,12 @@ function ConversationList({
   }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control, filters.replyWindow, filters.status]);
 
   function updateFilter(key, value) {
+    onExplicitFilterChange();
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
   function clearAppliedFilters() {
+    onExplicitFilterChange();
     setFilters((current) => ({
       ...current,
       status: "all",
@@ -1606,6 +1615,7 @@ function ConversationList({
   }
 
   function clearFilters() {
+    onExplicitFilterChange();
     setFilters({ status: "all", channel: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
   }
 
