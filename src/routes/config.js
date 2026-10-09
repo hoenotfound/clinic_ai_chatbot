@@ -665,6 +665,10 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const requestedFreeOnly = requested.whatsappFreeOnly ?? current?.whatsappFreeOnly ?? { enabled: false };
   if (!isPlainObject(requestedFreeOnly) || typeof requestedFreeOnly.enabled !== "boolean") return null;
   const freeOnlyEnabled = requestedFreeOnly.enabled === true;
+  // Turning this on silences new ad leads and may interrupt patient support.
+  // Require deliberate confirmation at the API layer, not only a UI warning.
+  if (freeOnlyEnabled && current?.whatsappFreeOnly?.enabled !== true &&
+      requested.whatsappFreeOnly?.acknowledgeImpact !== true) return null;
   // Re-saving unrelated Tools settings cannot reset the billing alarm.
   const sameFreeOnlyRun = freeOnlyEnabled && current?.whatsappFreeOnly?.enabled === true &&
     typeof current.whatsappFreeOnly.activatedAt === "string" &&
