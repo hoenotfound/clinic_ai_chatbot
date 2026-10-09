@@ -56,6 +56,7 @@ async function mockPortalApi(
     onConfigUpdate = null,
     followUpStatus = null,
     followUpStatusFailures = 0,
+    templateCatalog = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -458,6 +459,33 @@ async function mockPortalApi(
         status: 200,
         contentType: "video/mp4",
         body: "fake-mp4-preview",
+      });
+    }
+
+    if (path === "/api/config/automated-follow-up/template-catalog" && templateCatalog) {
+      return route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify(templateCatalog),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-media-image" && method === "POST") {
+      return route.fulfill({
+        status: 201, contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/uploaded-image.jpg", format: "IMAGE",
+        }),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-library-image" && method === "POST") {
+      return route.fulfill({
+        status: 201, contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg", format: "IMAGE",
+        }),
+      });
+    }
+    if (path === "/api/config/automated-follow-up/template-media-preview") {
+      return route.fulfill({
+        status: 200, contentType: "image/jpeg", body: "mock-preview",
       });
     }
 
@@ -1111,6 +1139,94 @@ test("Failed WhatsApp status check shows a visible warning and supports retry", 
   await warning.getByRole("button", { name: "Retry check" }).click();
   await expect(warning).not.toBeVisible();
   await expect(page.getByRole("region", { name: "Follow-up activation overview" })).toContainText("Template server:");
+});
+
+test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2 attachment", async ({ page }) => {
+  const saved = [];
+  const template = (name, format, text, language = "zh_CN") => ({
+    name, language, status: "APPROVED", category: "MARKETING",
+    header: { format }, body: { text }, variableFields: [], sendable: true, buttons: [],
+  });
+  await mockPortalApi(page, {
+    loggedIn: true,
+    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
+    templateCatalog: {
+      templates: [
+        template("clinic_text_reminder", "TEXT", "We can answer your questions."),
+        template("clinic_image_offer", "IMAGE", "See our approved offer image."),
+        template("clinic_video_feedback", "VIDEO", "Hear from another customer."),
+        template("clinic_video_feedback", "VIDEO", "Customer story", "en_US"),
+        { ...template("clinic_utility_notice", "TEXT", "Your appointment."), category: "UTILITY" },
+        { ...template("clinic_unapproved", "TEXT", "Do not send"), status: "REJECTED", sendable: false },
+      ],
+      reusableMedia: [
+        { id: "promo:1", label: "Package A image", format: "IMAGE", imageId: 1 },
+        { id: "video:test", label: "Pelvis feedback", format: "VIDEO",
+          mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4" },
+      ],
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(page.getByLabel("Free-entry template name")).toBeVisible();
+  await page.getByLabel("Free-entry template name").selectOption("clinic_text_reminder");
+  await expect(page.getByLabel("Approved template preview").first()).toContainText("We can answer your questions.");
+
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  const rule = page.getByLabel("Approved marketing template for rule 1");
+  await rule.selectOption("clinic_video_feedback");
+  await expect(page.getByText("Video attachment · required")).toBeVisible();
+  await page.getByLabel("Extended template media library 1").selectOption("video:test");
+  await expect(page.getByText("Attached: pelvis.mp4")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules[0]).toMatchObject({
+    templateName: "clinic_video_feedback",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/pelvis.mp4",
+    mediaUrl: "",
+    videoCodecVerified: false,
+  });
+
+  await rule.selectOption("clinic_image_offer");
+  await expect(page.getByText("Image attachment · required")).toBeVisible();
+  await expect(page.getByText("Attached: pelvis.mp4")).toHaveCount(0);
+  await page.getByLabel("Extended template media library 1").selectOption("promo:1");
+  await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(2);
+  expect(saved[1].freeEntry.templateRules[0]).toMatchObject({
+    templateName: "clinic_image_offer",
+    mediaKey: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
+    mediaUrl: "",
+  });
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("WhatsApp template picker uploads new JPG or video and preserves selected media until saved", async ({ page }) => {
+  const templates = ["IMAGE", "VIDEO"].map((format) => ({
+    name: format === "VIDEO" ? "clinic_media_video" : "clinic_media_image",
+    language: "zh_CN", status: "APPROVED", category: "MARKETING",
+    header: { format }, body: { text: "Approved media text" }, variableFields: [], sendable: true,
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    templateCatalog: { templates, reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_media_image");
+  await page.getByLabel("Extended template image attachment 1").setInputFiles({
+    name: "promo.jpg", mimeType: "image/jpeg", buffer: Buffer.from("fake-jpeg"),
+  });
+  await expect(page.getByText("Attached: uploaded-image.jpg")).toBeVisible();
+  await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_media_video");
+  await page.getByLabel("Extended template video attachment 1").setInputFiles({
+    name: "feedback.mp4", mimeType: "video/mp4", buffer: Buffer.from("fake-mp4"),
+  });
+  await expect(page.getByText("Attached: follow-up.mp4")).toBeVisible();
+  await expect(page.getByText(/Uploaded MP4s are checked server-side/)).toBeVisible();
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
 });
 
 test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
