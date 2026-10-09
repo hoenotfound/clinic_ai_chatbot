@@ -1,3 +1,4 @@
+const { trackClaudeRequest } = require("./claudeUsageTelemetry");
 const { createAnthropicClient } = require("./anthropicClient");
 const { GoogleGenAI } = require("@google/genai");
 const clinicConfig = require("../config/clinicConfig");
@@ -398,7 +399,7 @@ async function scoreWithGemini(input) {
                 thinkingConfig: { thinkingLevel: "minimal" },
               },
             },
-            { purpose: "lead_scoring" }
+            { purpose: "lead_scoring", contactId: input.lead?.contact_id, leadId: input.lead?.lead_id || input.lead?.id }
           );
           return parseLeadScore(response.text, input.messages);
         } catch (error) {
@@ -438,7 +439,7 @@ async function scoreWithGemini(input) {
 
 async function scoreWithClaude(input) {
   const anthropic = createAnthropicClient();
-  const response = await anthropic.messages.create({
+  const response = await trackClaudeRequest(() => anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 700,
     messages: [{ role: "user", content: buildLeadScorePrompt(input) }],
@@ -448,6 +449,11 @@ async function scoreWithClaude(input) {
       input_schema: SCORE_JSON_SCHEMA,
     }],
     tool_choice: { type: "tool", name: "record_lead_score" },
+  }), {
+    purpose: "lead_scoring",
+    model: CLAUDE_MODEL,
+    contactId: input.lead?.contact_id,
+    leadId: input.lead?.lead_id || input.lead?.id,
   });
   const scoreBlock = response.content.find(
     (block) => block.type === "tool_use" && block.name === "record_lead_score"

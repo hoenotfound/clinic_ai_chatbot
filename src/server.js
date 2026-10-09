@@ -548,7 +548,7 @@ async function processIncomingMessage(
       const media = await channelMessaging.downloadIncomingMedia(incoming);
       const [transcript, mp3] = media
         ? await Promise.all([
-            transcribeAudio(media.buffer, media.mimeType),
+            transcribeAudio(media.buffer, media.mimeType, { contactId: contact.id }),
             convertToMp3(media.buffer),
           ])
         : [null, null];
@@ -928,6 +928,7 @@ async function processIncomingMessage(
       }
 
       const rawAiReply = await ai.getReply(history, {
+        contactId: contact.id,
         isFirstMessage,
         generateFirstIntro,
         channel,

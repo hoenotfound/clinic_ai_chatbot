@@ -14,6 +14,8 @@ function normalizeOptions(optionsOrFirstMessage = false) {
       metaAdContext: null,
       followUpContext: null,
       conversationContext: null,
+      contactId: null,
+      leadId: null,
     };
   }
   return {
@@ -26,6 +28,8 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
     conversationContext: optionsOrFirstMessage?.conversationContext || null,
+    contactId: optionsOrFirstMessage?.contactId || null,
+    leadId: optionsOrFirstMessage?.leadId || null,
   };
 }
 

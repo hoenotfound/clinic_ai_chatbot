@@ -1107,6 +1107,8 @@ async function sendCandidate(candidate) {
             serviceName: promotionPackageSelection.serviceName,
             packages: promotionPackageSelection.packages,
             channel: candidate.channel || "whatsapp",
+            contactId: candidate.contact_id,
+            leadId: aiContext.lead?.id || null,
           });
 
         if (selectedPackageName) {
@@ -1163,6 +1165,8 @@ async function sendCandidate(candidate) {
             appointmentStatus: aiContext.lead?.appointment_status,
             instruction: step.aiInstruction,
             channel: candidate.channel || "whatsapp",
+            contactId: candidate.contact_id,
+            leadId: aiContext.lead?.id || null,
           });
 
           if (aiDecision.action !== "send") {

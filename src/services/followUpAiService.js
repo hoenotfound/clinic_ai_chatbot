@@ -366,6 +366,8 @@ async function selectPromotionPackageForFollowUp({
   serviceName,
   packages,
   channel = "whatsapp",
+  contactId = null,
+  leadId = null,
   env = process.env,
 } = {}) {
   const allowedPackages = (Array.isArray(packages) ? packages : [])
@@ -412,6 +414,8 @@ async function selectPromotionPackageForFollowUp({
     {
       surface: "follow_up",
       channel,
+      contactId,
+      leadId,
       followUpContext: {
         packageSelection: {
           serviceName: cleanContent(serviceName),
@@ -445,6 +449,8 @@ async function generatePersonalizedFollowUp({
   appointmentStatus = null,
   instruction = "",
   channel = "whatsapp",
+  contactId = null,
+  leadId = null,
   env = process.env,
 } = {}) {
   const trimmed = trimConversation(conversation, {
@@ -471,6 +477,8 @@ async function generatePersonalizedFollowUp({
       {
         surface: "follow_up",
         channel,
+        contactId,
+        leadId,
         followUpContext: {
           stepNumber: Number(stepNumber) || 1,
           treatmentInterest: cleanContent(treatmentInterest),
