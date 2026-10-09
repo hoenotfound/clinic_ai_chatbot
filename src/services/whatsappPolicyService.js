@@ -28,10 +28,10 @@ const GLOBAL_OPT_OUT_PATTERNS = [
 const MARKETING_OPT_OUT_PATTERNS = [
   /^stop (?:promos?|promotions?)$/i,
   /^unsub(?:scribe|cribe) from (?:promos?|promotions?)$/i,
-  /^(?:please\\s+)?(?:stop|don't|do not)\\s+(?:(?:sending?|send)\\s+(?:me\\s+)?)?(?:any\\s+)?(?:marketing|promotional|promotions?|promos?|offers?)(?:\\s+(?:messages?|updates?|notifications?))?$/i,
-  /^(?:please\\s+)?(?:unsubscribe|opt out)\\s+(?:me\\s+)?(?:from\\s+)?(?:marketing|promotions?|offers?)$/i,
+  /^(?:please\s+)?(?:stop|don't|do not)\s+(?:(?:sending?|send)\s+(?:me\s+)?)?(?:any\s+)?(?:marketing|promotional|promotions?|promos?|offers?)(?:\s+(?:messages?|updates?|notifications?))?$/i,
+  /^(?:please\s+)?(?:unsubscribe|opt out)\s+(?:me\s+)?(?:from\s+)?(?:marketing|promotions?|offers?)$/i,
   /^(?:我)?(?:不想再|不想|不要再|不要|别再|别)(?:收(?:到)?|接收|发|发送|通知)(?:我)?(?:任何)?(?:优惠|優惠|促销|促銷|营销|營銷|推广|推廣)(?:的)?(?:信息|消息|通知)?(?:了)?$/,
-  /^(?:saya\\s+)?(?:tak\\s+mahu|tak\\s+nak|tidak\\s+mahu)\\s+(?:terima\\s+)?(?:promosi|tawaran)$/i,
+  /^(?:saya\s+)?(?:tak\s+mahu|tak\s+nak|tidak\s+mahu)\s+(?:terima\s+)?(?:promosi|tawaran)$/i,
   /^(?:不要|别|請不要|请不要)(?:再)?(?:发|發|发送|發送|通知)(?:我)?(?:优惠|優惠|促销|促銷|推广|推廣)(?:了)?$/,
   /^(?:停止|取消)(?:优惠|優惠|促销|促銷|推广|推廣)(?:通知|消息)?$/,
   /^(?:jangan (?:hantar|kirim|mesej) (?:saya )?(?:promosi|tawaran)|tak nak (?:promosi|tawaran))$/i,
