@@ -164,3 +164,92 @@ test("normal non-template image retries retain the original Base64 compatibility
   assert.equal(result.media_key, undefined);
   assert.equal(result.media_base64, Buffer.from("old-image").toString("base64"));
 });
+
+
+test("promotion expiry respects Malaysia-local midnight rather than UTC", () => {
+  const offer = { validFrom: "2026-10-01", validUntil: "2026-10-31" };
+  assert.equal(media.clinicLocalDate("2026-10-31T15:59:59.000Z"), "2026-10-31");
+  assert.equal(media.clinicLocalDate("2026-10-31T16:00:00.000Z"), "2026-11-01");
+  assert.equal(media.currentlyValid(offer, "2026-10-31T15:59:59.000Z"), true);
+  assert.equal(media.currentlyValid(offer, "2026-10-31T16:00:00.000Z"), false);
+  assert.equal(media.currentlyValid(offer, "2026-09-30T15:59:59.000Z"), false);
+  assert.equal(media.currentlyValid(offer, "2026-09-30T16:00:00.000Z"), true);
+  assert.equal(media.clinicLocalDate("2026-10-31T16:00:00.000Z", "Invalid/Timezone"),
+    "2026-11-01", "bad timezone must not silently shift expiration to UTC");
+});
+
+test("only 9D and 3D+9D current promotions qualify for free meridian gift templates", () => {
+  const promotions = [
+    { name: "Pelvis", linkedService: "骨盆调理", validUntil: "2026-10-31",
+      packages: [
+        { name: "Package A", imageUrl: "/promo-images/30",
+          caption: "包括经络穴位按摩" },
+        { name: "Package B", imageUrl: "/promo-images/31",
+          caption: "Female care" },
+      ],
+    },
+    { name: "3D", linkedService: "3D 小颜术", validUntil: "2026-10-31",
+      followUpMessage: "本月另外再送 全身通淋巴按摩 1 小时",
+      imageUrl: "/promo-images/32" },
+    { name: "9D", linkedService: "9D 逆龄抗衰", validUntil: "2026-10-31",
+      followUpMessage: "Free 全身通十二经络按摩 - 1 小时",
+      imageUrl: "/promo-images/21" },
+    { name: "Combo", linkedService: "3D + 9D 组合", validUntil: "2026-10-31",
+      followUpMessage: "额外免费送你 1 小时经络穴位按摩",
+      imageUrl: "/promo-images/22" },
+  ];
+  const config = { promotions, automatedFollowUp: { additionalSteps: [] } };
+  const now = Date.parse("2026-10-09T00:00:00Z");
+  const items = media.listReusableMedia({ config, now });
+  const eligible = items.filter((item) => media.isTemplateCompatible("ns_fu_meridian_gift", item));
+  assert.deepEqual(eligible.map((item) => item.imageId).sort(), [21, 22]);
+  const combo = items.find((item) => item.imageId === 22);
+  const packageB = items.find((item) => item.imageId === 31);
+  assert.equal(media.expectedMediaValue(combo, "en_US"), "3D + 9D Combination");
+  assert.equal(media.expectedMediaValue(combo, "ms"), "Gabungan 3D + 9D");
+  assert.equal(media.expectedMediaValue(packageB, "ms"), "Pakej B Penjagaan Pelvis");
+  assert.throws(() => media.validateTemplateMediaChoice("ns_fu_meridian_gift", "zh_CN",
+    packageB.id, { body: ["骨盆调理 Package B"] }, { config, now }), /requires the matching/);
+  assert.throws(() => media.validateTemplateMediaChoice("ns_fu_meridian_gift", "zh_CN",
+    combo.id, { body: ["骨盆调理 Package B"] }, { config, now }), /package name must match/);
+  assert.equal(media.validateTemplateMediaChoice("ns_fu_meridian_gift", "en_US",
+    combo.id, { body: ["3D + 9D Combination"] }, { config, now }).imageId, 22);
+  assert.throws(() => media.validateTemplateMediaChoice("ns_fu_pricing_graphic", "en_US",
+    packageB.id, { body: ["Pelvis Care Package A"] }, { config, now }), /package name must match/);
+  assert.throws(() => media.validateTemplateMediaChoice("ns_fu_meridian_gift", "zh_CN",
+    "", { body: [] }, { config, now }), /requires the matching/);
+  assert.equal(media.listReusableMedia({ config, now: Date.parse("2026-10-31T16:00:00Z") })
+    .length, 0, "expired offers must disappear at Malaysia midnight");
+});
+
+test("service-specific video headers select only configured matching follow-up stage and service", () => {
+  const config = { automatedFollowUp: { additionalSteps: [
+    { serviceOverrides: [{ serviceName: "骨盆调理",
+      videoKey: "messages/follow-up-config/pain.mp4" }] },
+    { serviceOverrides: [
+      { serviceName: "骨盆调理", videoKey: "messages/follow-up-config/pelvis.mp4" },
+      { serviceName: "3D 小颜术", videoKey: "messages/follow-up-config/face.mp4" },
+    ] },
+  ] } };
+  const choices = media.listReusableMedia({ config });
+  const pelvis2 = choices.find((item) => item.stepNumber === 2);
+  const pelvis3 = choices.find((item) => item.stepNumber === 3 && item.serviceName === "骨盆调理");
+  const face3 = choices.find((item) => item.serviceName === "3D 小颜术");
+  assert.equal(media.isTemplateCompatible("ns_fu2_pelvis_video", pelvis2), true);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis2), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis3), true);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", pelvis3), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", face3), true);
+});
+
+test("the reusable-media selector exposes compatibility without leaking private R2 keys", () => {
+  const options = media.publicMediaOptions(media.listReusableMedia({
+    config: { automatedFollowUp: { additionalSteps: [
+      { serviceOverrides: [{serviceName:"骨盆调理",
+        videoKey:"messages/follow-up-config/video.mp4"}] },
+    ] } },
+  }));
+  assert.equal(options.length, 1);
+  assert.equal(options[0].compatibleTemplates.includes("ns_fu2_pelvis_video"), true);
+  assert.equal(Object.hasOwn(options[0], "mediaKey"), false);
+});
