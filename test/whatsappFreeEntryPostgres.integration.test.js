@@ -138,7 +138,9 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
 
       await client.query(`
         UPDATE messages SET whatsapp_message_id='wamid.strict.current',
-          delivery_status='delivered' WHERE id=19;
+          delivery_status='delivered' WHERE id=19
+      `);
+      await client.query(`
         UPDATE whatsapp_free_entry_followup_attempts
           SET wamid='wamid.strict.current',status='accepted'
           WHERE id=$1
