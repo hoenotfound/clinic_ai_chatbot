@@ -1311,13 +1311,16 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (resolved.template.category === "MARKETING" && mediaSelectionId) {
       const matches = whatsappTemplateMedia.listReusableMedia()
         .filter((item) => item.id === mediaSelectionId);
-      if (matches.length !== 1 || !matches[0].serviceName) {
+      if (matches.length !== 1) {
         return res.status(400).json({
-          error: "Select a clinic media item linked to an identifiable treatment.",
+          error: "The selected clinic media item is not available.",
           code: "template_treatment_unverified",
         });
       }
-      templateTreatmentInterest = matches[0].serviceName;
+      // Generic shared testimonial media may not be treatment-specific.
+      // Restricted promotion/media templates are still verified against
+      // their exact configured service by validateTemplateMediaChoice().
+      templateTreatmentInterest = matches[0].serviceName || null;
     }
     if (resolved.template.category === "MARKETING" &&
         resolved.template.name === "ns_fu1_service_checkin") {
