@@ -1543,6 +1543,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       expectedOptInAt: metadata.consentOptInAt,
       templateCategory: metadata.category,
       treatmentInterest: templateTreatmentInterest,
+      currentMessageId: saved.id,
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";
