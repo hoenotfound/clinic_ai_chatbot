@@ -290,13 +290,13 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, la
         </div>
       )}
       {format === "VIDEO" && (
-        <label className="flex items-start gap-2 text-xs">
-          <input type="checkbox" checked={rule.videoCodecVerified === true}
-            onChange={(event) => onChange({ videoCodecVerified: event.target.checked })} />
-          I verified this video is H.264 with AAC audio, not HEVC. Uploaded and reused clinic MP4s are checked server-side.
-        </label>
+        <p className="text-xs text-[var(--color-text-muted)]" aria-label={`Video codec status ${index + 1}`}>
+          {rule.videoCodecVerified
+            ? "MP4 validated on selection. The server rechecks the exact R2 video before each send."
+            : "Video not verified. Choose an existing clinic video or upload an H.264/AAC MP4; manual verification is not accepted."}
+        </p>
       )}
-      <details className="text-xs text-[var(--color-text-muted)]">
+      {format === "IMAGE" && <details className="text-xs text-[var(--color-text-muted)]">
         <summary className="cursor-pointer">Advanced: trusted HTTPS media URL</summary>
         <input type="url" aria-label={`Extended template media URL ${index + 1}`}
           value={rule.mediaUrl || ""} disabled={!rule.serviceName || rule.serviceName === "*"}
@@ -307,7 +307,7 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, la
           }}
           className="mt-2 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs"/>
         <p className="mt-1">Only pre-approved HTTPS hosts configured on the server are permitted. Unknown hosts are blocked at send time.</p>
-      </details>
+      </details>}
       {!attached && <p className="text-xs text-amber-800">Attach an approved {format.toLowerCase()} before enabling this rule. The existing worker skips unsupported or missing media.</p>}
     </div>
   );
