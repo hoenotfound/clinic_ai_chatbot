@@ -37,6 +37,9 @@ function isSafeTemplateMediaContext(spec, template, {
   const templateName = String(template.name || spec.templateName || "");
   const sourceId = String(spec.mediaSourceId || "");
   const media = String(spec.mediaKey || "").trim();
+  const isolation = mediaStore.getMediaIsolationStatus();
+  if (media && isolation.prefix &&
+      !media.startsWith(`${isolation.prefix}/messages/follow-up-config/`)) return false;
   const treatment = spec.identifiedTreatment;
   const configuredRule = spec.serviceName;
 
