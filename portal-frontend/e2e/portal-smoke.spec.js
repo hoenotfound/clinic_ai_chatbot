@@ -946,6 +946,171 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Sequence timeline navigates existing editors without changing schedule or losing drafts", async ({ page }) => {
+  let savedPayload = null;
+  const translations = (message) => ({
+    en: message, ms: `BM: ${message}`, zh: `中文：${message}`,
+  });
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", description: "" }],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        timingMode: "after_reply",
+        message: "First reminder.",
+        translations: translations("First reminder."),
+        additionalSteps: [
+          {
+            delayMinutes: 480,
+            timingMode: "after_reply",
+            message: "Second reminder.",
+            translations: translations("Second reminder."),
+            serviceOverrides: [{
+              serviceName: "骨盆调理",
+              message: "Pelvic reminder.",
+              translations: { en: "Pelvic reminder.", ms: "", zh: "" },
+            }],
+          },
+          {
+            delayMinutes: 1200,
+            timingMode: "before_window_expiry",
+            beforeWindowExpiryMinutes: 240,
+            message: "Third testimonial.",
+            translations: translations("Third testimonial."),
+          },
+        ],
+        pricingReminder: { enabled: true, requirePricingInterest: false },
+        freeEntry: { enabled: false },
+      },
+    },
+    onConfigUpdate: (payload) => { savedPayload = payload; },
+  });
+  await page.goto("/tools");
+
+  const timeline = page.getByRole("list", { name: "Follow-up sequence timeline" });
+  await expect(timeline.getByRole("listitem")).toHaveCount(3);
+  const first = timeline.getByRole("button", { name: "Edit Follow-up 1 from sequence overview" });
+  const second = timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" });
+  const third = timeline.getByRole("button", { name: "Edit Follow-up 3 from sequence overview" });
+  await expect(first).toHaveAttribute("aria-current", "step");
+  await expect(first).toContainText("Default translations: 3/3 configured");
+  await expect(second).toContainText("Default translations: 3/3 configured");
+  await expect(second).toContainText("Service translations: 1/3 configured");
+  await expect(third).toContainText("before the 24-hour reply window closes");
+  await page.getByText("Why might a step not send?").click();
+  await expect(page.getByText(/A customer reply stops the remaining steps in the current sequence/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Pricing reminder dependency" }))
+    .toContainText("5 minutes after the provider accepts Follow-up 3");
+
+  // Keyboard activation must transfer focus into the editor, not merely scroll.
+  await third.focus();
+  await third.press("Enter");
+  const thirdEditor = page.getByRole("region", { name: "Follow-up 3 editor" });
+  const thirdMessage = thirdEditor.getByPlaceholder("Write the next follow-up message.");
+  await expect(thirdEditor).toBeFocused();
+  await expect(thirdMessage).toBeVisible();
+  await expect(third).toHaveAttribute("aria-current", "step");
+  await expect.poll(() => thirdEditor.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const scrollArea = element.closest("main")?.getBoundingClientRect();
+    return rect.top >= (scrollArea?.top ?? 0) - 4 &&
+      rect.top < (scrollArea?.bottom ?? window.innerHeight) - 30;
+  })).toBe(true);
+  await thirdMessage.fill("Updated third testimonial.");
+  await expect(third).toContainText("Default translations: 0/3 configured");
+
+  await second.click();
+  const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+  await expect(secondEditor).toBeFocused();
+  await expect(second).toHaveAttribute("aria-current", "step");
+
+  // Using the independent preview picker must not imply another editor is open.
+  if ((page.viewportSize()?.width || 0) < 1280) {
+    const previewToggle = page.getByRole("button", { name: "Toggle follow-up preview" });
+    if (await previewToggle.getAttribute("aria-expanded") === "false") {
+      await previewToggle.click();
+    }
+  }
+  await page.getByRole("button", { name: "Preview Follow-up 3" }).click();
+  await expect(second).toHaveAttribute("aria-current", "step");
+  await expect(second).toContainText("Editing");
+  await expect(third).not.toHaveAttribute("aria-current", "step");
+  await expect(third).toContainText("Previewing only");
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message.")).toBeVisible();
+
+  await first.focus();
+  await first.press("Enter");
+  const firstEditor = page.getByRole("region", { name: "Follow-up 1 editor" });
+  await expect(firstEditor).toBeVisible();
+  await expect(firstEditor).toBeFocused();
+  await expect(first).toHaveAttribute("aria-current", "step");
+  await expect(thirdMessage).not.toBeVisible();
+
+  await third.click();
+  await expect(thirdEditor).toBeFocused();
+  await expect(thirdMessage).toHaveValue("Updated third testimonial.");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Pricing" }).click();
+  await page.getByRole("tab", { name: "Sequence" }).click();
+  await expect(thirdMessage).toHaveValue("Updated third testimonial.");
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+  expect(savedPayload.automatedFollowUp.additionalSteps[0].delayMinutes).toBe(480);
+  expect(savedPayload.automatedFollowUp.additionalSteps[1]).toMatchObject({
+    timingMode: "before_window_expiry",
+    beforeWindowExpiryMinutes: 240,
+    delayMinutes: 1200,
+    message: "Updated third testimonial.",
+  });
+  expect(savedPayload.automatedFollowUp.pricingReminder.enabled).toBe(true);
+  expect(savedPayload.automatedFollowUp.freeEntry.enabled).toBe(false);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Pricing reminder explains the missing third follow-up without disabling existing controls", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "First reminder.",
+        additionalSteps: [{ delayMinutes: 480, message: "Second reminder." }],
+        pricingReminder: {
+          enabled: true, requirePricingInterest: false, sendBothPelvicPackages: true,
+          enableSocialChannels: true,
+        },
+      },
+    },
+  });
+  await page.goto("/tools");
+  await expect(page.getByRole("list", { name: "Follow-up sequence timeline" }).getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByRole("region", { name: "Pricing reminder dependency" }))
+    .toContainText("cannot send without Follow-up 3");
+
+  const pricingShortcut = page.getByRole("button", { name: "View pricing settings" });
+  await pricingShortcut.focus();
+  await pricingShortcut.press("Enter");
+  const pricingTab = page.getByRole("tab", { name: "Pricing" });
+  await expect(pricingTab).toHaveAttribute("aria-selected", "true");
+  await expect(pricingTab).toBeFocused();
+  await expect(page.getByRole("region", { name: "Pricing reminder dependency" })).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Pricing is configured but cannot run without Follow-up 3" }))
+    .toBeVisible();
+  await expect(page.getByRole("switch", { name: "Conditional pricing reminder" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("switch", { name: "Include Messenger and Instagram pricing reminders" }))
+    .toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("switch", { name: "Send both pelvic package graphics" }))
+    .toHaveAttribute("aria-checked", "true");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Automated follow-up sections preserve draft settings while switching tabs", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true });
   await page.goto("/tools");
