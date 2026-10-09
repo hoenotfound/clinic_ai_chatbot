@@ -123,7 +123,7 @@ test("pelvic/face templates cannot reuse media intended for another treatment", 
 
 test("an unverified reused or remote MP4 is blocked before extended WhatsApp activation", () => {
   const common = {
-    templateName: "ns_fu3_face_feedback",
+    templateName: "ns_custom_video",
     serviceName: "3D 小颜术",
     mediaKey: video,
     mediaUrl: "",
