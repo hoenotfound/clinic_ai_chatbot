@@ -2,6 +2,9 @@ const { detectConversationLanguage } = require("./chatLanguage");
 const { isIP } = require("node:net");
 const { normalizeServiceText, inferConfiguredServiceFromText } = require("./serviceInterest");
 const mediaStorage = require("../services/mediaStorageService");
+const clinicConfig = require("../config/clinicConfig");
+const promoImagesRepo = require("../db/promoImagesRepo");
+const templateMedia = require("../services/whatsappTemplateMediaService");
 
 const LANGUAGE_MAP = Object.freeze({ zh: "zh_CN", en: "en_US", ms: "ms" });
 const SUPPORTED_LANGUAGES = new Set(["auto", "zh_CN", "en_US", "ms"]);
@@ -79,6 +82,83 @@ function selectTemplateSpec(candidate, slotHours, settings) {
   };
 }
 
+
+const AUTO_IMAGE_TEMPLATES = new Set(["ns_fu_pricing_graphic", "ns_fu_meridian_gift"]);
+const AUTO_VARIABLE_TEMPLATES = new Set(["ns_fu1_service_checkin", ...AUTO_IMAGE_TEMPLATES]);
+
+function exactConfiguredService(value, config = clinicConfig) {
+  const normalized = normalizeServiceText(value);
+  if (!normalized) return null;
+  return (config.services || []).find((item) =>
+    normalizeServiceText(item?.name) === normalized)?.name || null;
+}
+
+function chosenPelvisPackage(messages = []) {
+  // A single, explicit package choice only. "Package A or B" is ambiguous.
+  const combined = (messages || []).slice(0, 8).join(" ").normalize("NFKC");
+  const a = /(?:package|pakej|配套|套餐)\s*[aAＡ]/i.test(combined);
+  const b = /(?:package|pakej|配套|套餐)\s*[bBＢ]/i.test(combined);
+  return a !== b ? (a ? "A" : "B") : null;
+}
+
+/**
+ * Values and images are derived solely from a configured service, an active
+ * promotion and a fresh approved template definition; never AI-authored.
+ * If multiple packages/assets are possible, skip rather than guessing.
+ */
+function enrichAutomatedTemplateSpec(spec, template, {
+  config = clinicConfig, now = Date.now(),
+} = {}) {
+  if (!spec || !template || template.name !== spec.templateName) return null;
+  if (!AUTO_VARIABLE_TEMPLATES.has(template.name)) return { ...spec, bodyValue: null };
+  if (spec.mediaKey || spec.mediaUrl) return null; // auto templates cannot override the approved promotion asset
+  const service = exactConfiguredService(spec.identifiedTreatment, config);
+  if (!service) return null;
+  if (template.name === "ns_fu1_service_checkin") {
+    return { ...spec, bodyValue: templateMedia.expectedMediaValue({ serviceName: service }, template.language) };
+  }
+
+  const options = templateMedia.listReusableMedia({ config, now }).filter((item) =>
+    item.format === "IMAGE" &&
+    normalizeServiceText(item.serviceName) === normalizeServiceText(service) &&
+    templateMedia.isTemplateCompatible(template.name, item)
+  );
+  let matching = options;
+  if (normalizeServiceText(service) === normalizeServiceText("骨盆调理")) {
+    const choice = chosenPelvisPackage(spec.recentInboundMessages || []);
+    matching = choice
+      ? options.filter((item) => String(item.packageName || "").toUpperCase() === "PACKAGE " + choice)
+      : [];
+  }
+  if (matching.length !== 1 || !matching[0].imageId) return null;
+  const option = matching[0];
+  const bodyValue = templateMedia.expectedMediaValue(option, template.language);
+  if (!bodyValue) return null;
+  return {
+    ...spec, bodyValue, autoPromoImageId: option.imageId,
+    autoPromoSelectionId: option.id, autoPromoMimeType: null,
+  };
+}
+
+async function prepareAutoPromotionMedia(spec, {
+  promos = promoImagesRepo, validateImage = templateMedia.prepareImage,
+} = {}) {
+  if (!Number.isSafeInteger(spec?.autoPromoImageId) || spec.autoPromoImageId <= 0 ||
+      spec?.mediaKey || spec?.mediaUrl) return null;
+  const record = await promos.getPublicImage(spec.autoPromoImageId);
+  if (!record || !["image/jpeg", "image/png"].includes(record.mime_type) ||
+      typeof record.data !== "string") return null;
+  // Check encoded size before allocating the decoded body.
+  if (record.data.length > Math.ceil(5 * 1024 * 1024 * 4 / 3) + 8) return null;
+  const buffer = await validateImage(Buffer.from(record.data, "base64"), record.mime_type);
+  if (!buffer || buffer.length <= 0 || buffer.length > 5 * 1024 * 1024) return null;
+  return {
+    buffer, mimeType: record.mime_type,
+    filename: "follow-up-promotion-" + spec.autoPromoImageId +
+      (record.mime_type === "image/png" ? ".png" : ".jpg"),
+  };
+}
+
 /**
  * Approved media-header templates must have a media URL specified explicitly.
  * This builder deliberately does not change Inbox's existing template rules.
@@ -105,6 +185,11 @@ async function validateApprovedMedia(template, spec, {
 } = {}) {
   if (!template || !spec) return false;
   const format = template.header?.format || "TEXT";
+  if (spec.autoPromoImageId) {
+    if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
+    try { return Boolean(await prepareAutoPromotionMedia(spec)); }
+    catch { return false; }
+  }
   const expected = format === "VIDEO" ? ["video/mp4", 16*1024*1024] :
     format === "IMAGE" ? ["image/jpeg", 5*1024*1024] : null;
   if (!expected) return !spec.mediaKey && !spec.mediaUrl;
@@ -147,41 +232,60 @@ async function validateApprovedMedia(template, spec, {
   } catch { return false; }
 }
 
-function buildStaticMarketingTemplate(template, spec, templatesService) {
+function buildStaticMarketingTemplate(template, spec, templatesService, {
+  mediaId = null, allowUnuploadedMedia = false,
+} = {}) {
   if (!template || template.category !== "MARKETING" ||
       template.status !== "APPROVED" ||
-      !Array.isArray(template.variableFields) || template.variableFields.length ||
+      !Array.isArray(template.variableFields) ||
       !template.body?.text || !spec || !validMediaUrl(spec.mediaUrl)) return null;
 
   const format = template.header?.format || "TEXT";
   const needsMedia = ALLOWED_MEDIA_TYPES.has(format);
-  if (needsMedia !== Boolean(spec.mediaUrl) || 
+  const autoImage = Boolean(spec.autoPromoImageId);
+  const linked = Boolean(spec.mediaUrl);
+  const values = { header: [], body: [] };
+  if (template.variableFields.length) {
+    if (!AUTO_VARIABLE_TEMPLATES.has(template.name) ||
+        template.variableFields.length !== 1 ||
+        template.variableFields[0].component !== "body" ||
+        template.variableFields[0].index !== 1 ||
+        !template.body.text.includes("{{1}}") ||
+        typeof spec.bodyValue !== "string" ||
+        !spec.bodyValue.trim() || spec.bodyValue.length > 160) return null;
+    values.body = [spec.bodyValue.trim()];
+  } else if (AUTO_VARIABLE_TEMPLATES.has(template.name) || spec.bodyValue) {
+    // A named automated template whose approved variable signature changes
+    // must fail closed instead of sending the wrong treatment in its copy.
+    return null;
+  }
+  if (autoImage && (format !== "IMAGE" || linked || spec.mediaKey)) return null;
+  if (needsMedia !== (autoImage || linked) ||
       (!needsMedia && format !== "TEXT") ||
       (template.buttons || []).some((button) =>
-        !["QUICK_REPLY", "PHONE_NUMBER", "URL"].includes(button.type)
-      )) return null;
+        !["QUICK_REPLY", "PHONE_NUMBER", "URL"].includes(button.type))) return null;
+  if (mediaId && (!autoImage || !/^\d+$/.test(String(mediaId)))) return null;
+  if (autoImage && !mediaId && !allowUnuploadedMedia) return null;
 
   const compatibilityTemplate = { ...template, sendable: true, unsupportedReason: null };
-  const built = templatesService.buildTemplateComponents(compatibilityTemplate, {}, {
-    // Auto follow-ups use a validated signed R2 URL header below instead of
-    // the manual Inbox's server-uploaded Meta media ID.
+  const built = templatesService.buildTemplateComponents(compatibilityTemplate, values, {
     allowMissingMedia: needsMedia,
   });
   if (!built.valid) return null;
 
   const components = built.components.slice();
-  if (needsMedia) {
+  if (needsMedia && (linked || mediaId)) {
     components.unshift({
       type: "header",
       parameters: [{
         type: format.toLowerCase(),
-        [format.toLowerCase()]: { link: spec.mediaUrl },
+        [format.toLowerCase()]: mediaId ? { id: String(mediaId) } : { link: spec.mediaUrl },
       }],
     });
   }
-  const preview = templatesService.renderTemplatePreview(compatibilityTemplate, {});
+  const preview = templatesService.renderTemplatePreview(compatibilityTemplate, values);
   if (!preview) return null;
-  return { components, preview };
+  return { components, preview, values };
 }
 
 module.exports = {
@@ -193,4 +297,7 @@ module.exports = {
   materializeTemplateMediaSpec,
   buildStaticMarketingTemplate,
   validateApprovedMedia,
+  enrichAutomatedTemplateSpec,
+  prepareAutoPromotionMedia,
+  chosenPelvisPackage,
 };
