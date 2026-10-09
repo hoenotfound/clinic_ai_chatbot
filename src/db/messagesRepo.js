@@ -662,11 +662,13 @@ async function getMessageForRetry(contactId, messageId) {
   const mimeType = String(row.media_mime_type || "").toLowerCase();
   if (
     key &&
-    mimeType &&
-    !mimeType.startsWith("image/") &&
-    !mimeType.startsWith("audio/")
+    ((row.whatsapp_template?.mediaFormat === "IMAGE" ||
+      row.whatsapp_template?.mediaFormat === "VIDEO") ||
+      (mimeType && !mimeType.startsWith("image/") && !mimeType.startsWith("audio/")))
   ) {
-    // Videos and documents are resent from their durable R2 object. Keeping
+    // All media-header templates retry from their durable R2 key, including
+    // images. Ordinary non-template image/voice retries still use base64.
+    // Videos and documents are also resent from their durable R2 object. Keeping
     // the key avoids a large base64 round-trip and is required by the stored
     // document resend path.
     row.media_base64 = null;
