@@ -14,6 +14,7 @@ import LeadAssignmentBadge, {
 import { getBusinessTerminology } from "../utils/businessTerminology";
 import {
   messagingPolicyStatus,
+  hasOpenReplyWindow,
   policyFailureExplanation,
 } from "../utils/whatsappPolicy";
 import {
@@ -1429,9 +1430,17 @@ function ConversationList({
     channel: "all",
     control: "all",
     assignment: "all",
+    replyWindow: "all",
     query: "",
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [replyWindowNow, setReplyWindowNow] = useState(() => Date.now());
+
+  // A conversation can expire without any new messages or server events.
+  useEffect(() => {
+    const timer = setInterval(() => setReplyWindowNow(Date.now()), 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
   const assignmentOptions = useMemo(
@@ -1459,6 +1468,11 @@ function ConversationList({
     [statusCounts]
   );
 
+  const replyWindowCounts = useMemo(() => {
+    const open = conversationList.filter((item) => hasOpenReplyWindow(item, replyWindowNow)).length;
+    return { open, expired: conversationList.length - open };
+  }, [conversationList, replyWindowNow]);
+
   useEffect(() => {
     if (
       (!canViewAllLeads && filters.assignment !== "all") ||
@@ -1478,6 +1492,10 @@ function ConversationList({
       if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
       if (filters.control !== "all" && conversation.mode !== filters.control) return false;
       if (
+        filters.replyWindow !== "all" &&
+        hasOpenReplyWindow(conversation, replyWindowNow) !== (filters.replyWindow === "open")
+      ) return false;
+      if (
         canViewAllLeads &&
         !matchesLeadAssignment(conversation, filters.assignment, currentUsername)
       ) return false;
@@ -1495,12 +1513,13 @@ function ConversationList({
         .toLowerCase();
       return searchableText.includes(query);
     });
-  }, [conversationList, filters, currentUsername, canViewAllLeads]);
+  }, [conversationList, filters, currentUsername, canViewAllLeads, replyWindowNow]);
 
   const activeFilterCount =
     (filters.status !== "all" ? 1 : 0) +
     (filters.channel !== "all" ? 1 : 0) +
     (filters.control !== "all" ? 1 : 0) +
+    (filters.replyWindow !== "all" ? 1 : 0) +
     (canViewAllLeads && filters.assignment !== "all" ? 1 : 0);
 
   const hasActiveFilters = activeFilterCount > 0 || !!filters.query.trim();
@@ -1529,8 +1548,14 @@ function ConversationList({
         label: filters.control === "human" ? "Handled by · Staff" : "Handled by · AI",
       });
     }
+    if (filters.replyWindow !== "all") {
+      active.push({
+        key: "replyWindow",
+        label: filters.replyWindow === "open" ? "Reply window · Not expired" : "Reply window · Expired",
+      });
+    }
     return active;
-  }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control, filters.status]);
+  }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control, filters.replyWindow, filters.status]);
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -1543,11 +1568,12 @@ function ConversationList({
       channel: "all",
       control: "all",
       assignment: "all",
+      replyWindow: "all",
     }));
   }
 
   function clearFilters() {
-    setFilters({ status: "all", channel: "all", control: "all", assignment: "all", query: "" });
+    setFilters({ status: "all", channel: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
   }
 
   return (
@@ -1677,6 +1703,21 @@ function ConversationList({
                   </span>
                 </div>
               )}
+              <div className="col-span-2">
+                <FilterSelect
+                  label="Reply window"
+                  value={filters.replyWindow}
+                  onChange={(value) => updateFilter("replyWindow", value)}
+                  options={[
+                    ["all", "All"],
+                    ["open", `Not expired (${replyWindowCounts.open})`],
+                    ["expired", `Expired (${replyWindowCounts.expired})`],
+                  ]}
+                />
+                <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                  Includes staff-only Human Agent windows. Chats without a customer message count as expired.
+                </p>
+              </div>
             </div>
           </div>
         )}
