@@ -236,9 +236,10 @@ function materializeTemplateMediaSpec(spec) {
 async function validateApprovedMedia(template, spec, {
   env = process.env, mediaStore = mediaStorage, fetchImpl = fetch,
   promos = promoImagesRepo, validateImage = templateMedia.prepareImage,
+  config = clinicConfig, now = Date.now(),
 } = {}) {
   if (!template || !spec) return false;
-  if (!isSafeTemplateMediaContext(spec, template, { config: clinicConfig })) return false;
+  if (!isSafeTemplateMediaContext(spec, template, { config, now })) return false;
   const format = template.header?.format || "TEXT";
   if (spec.autoPromoImageId) {
     if (format !== "IMAGE" || spec.mediaKey || spec.mediaUrl) return false;
