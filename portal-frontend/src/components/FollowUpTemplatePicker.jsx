@@ -7,7 +7,8 @@ const AUTOMATIC_VARIABLE_TEMPLATES = new Set([
 ]);
 
 function supportedForAutomation(template) {
-  if (template.category !== "MARKETING" || template.sendable !== true || !template.body?.text) return false;
+  if (template.status !== "APPROVED" || template.category !== "MARKETING" ||
+      template.sendable !== true || !template.body?.text) return false;
   if (!["TEXT", "IMAGE", "VIDEO"].includes(template.header?.format || "TEXT")) return false;
   const fields = template.variableFields || [];
   return !fields.length || (
