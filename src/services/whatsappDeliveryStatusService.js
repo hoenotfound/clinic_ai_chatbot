@@ -1,4 +1,5 @@
 const messagesRepo = require("../db/messagesRepo");
+const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
@@ -91,7 +92,14 @@ function createWhatsAppDeliveryStatusService({
   }
 
   async function storeDeliveryStatusUpdates(updates) {
-    return repo.storeBatch(updates);
+    const stored = await repo.storeBatch(updates);
+    // Never delay a webhook or drop persisted pricing evidence if Telegram
+    // is unavailable. Durable alerts will be retried by recovery.
+    if (updates?.some((update) => update?.pricingBillable === true)) {
+      Promise.resolve().then(() => billingAlerts.flush()).catch((err) =>
+        logger.error("[WhatsApp free-only] Billing-alert attempt failed:", err));
+    }
+    return stored;
   }
 
   function publishContactSafely(contactId) {
@@ -321,6 +329,11 @@ function createWhatsAppDeliveryStatusService({
       }
       const exhaustedCount = await surfaceExhaustedJobs();
       const unmatchedCount = await surfaceUnmatchedCompletedFailures();
+      try {
+        await billingAlerts.flush();
+      } catch (err) {
+        logger.error("[WhatsApp free-only] Billing alert recovery failed:", err);
+      }
       await maybePruneCompleted();
       return { workCount: claimed.length + exhaustedCount + unmatchedCount };
     } catch (err) {
