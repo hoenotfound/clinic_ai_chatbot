@@ -466,6 +466,73 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     assert.equal((await list()).length,0,
       "another worker does not select the claimed lead");
 
+    // A temporary strict billing race can reject a template BEFORE the Meta
+    // API call, after the worker has already claimed its one-shot slot.
+    // Retrying is safe ONLY for the explicit deferral marker + a cancelled
+    // saved message with no provider ID (and no attempt WAMID).
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status)
+      VALUES(30,1,'assistant','Temporarily blocked by another send',now(),'cancelled')
+    `);
+    await client.query(`
+      UPDATE whatsapp_free_entry_followup_attempts
+      SET status='cancelled',message_id=30,wamid=NULL,error=$2
+      WHERE id=$1
+    `,[claimedId,worker.SAFE_POLICY_DEFERRAL]);
+    const retryable=await list();
+    assert.equal(retryable.length,1,
+      "a definitely-unsent strict policy deferral is visible again");
+    assert.equal(retryable[0].claimed_slots.includes(50),false,
+      "safe deferred slot is not treated as used");
+    const retryId=await worker.claim(eligible[0],50,settings,fakePool);
+    assert.equal(String(retryId),String(claimedId),
+      "retry reclaims the SAME unique slot, never inserts a second attempt");
+    const recycled=await client.query(
+      "SELECT status,message_id,wamid,error FROM whatsapp_free_entry_followup_attempts WHERE id=$1",
+      [claimedId]
+    );
+    assert.equal(recycled.rows[0].status,"sending");
+    assert.equal(recycled.rows[0].message_id,null);
+    assert.equal(recycled.rows[0].wamid,null);
+    assert.equal(recycled.rows[0].error,null);
+    assert.equal((await list()).length,0,
+      "concurrent workers cannot pick the just-reclaimed slot");
+
+    // Consent/opt-out policy cancellations, accepted provider attempts,
+    // failed sends and ambiguous sends must never become retryable.
+    await client.query(`
+      UPDATE whatsapp_free_entry_followup_attempts
+      SET status='cancelled',message_id=30,error='whatsapp_marketing_opt_out'
+      WHERE id=$1
+    `,[claimedId]);
+    assert.equal((await list()).length,0,
+      "marketing opt-out does not acquire a hidden retry path");
+    await client.query(`
+      UPDATE whatsapp_free_entry_followup_attempts
+      SET status='cancelled',error=$2
+      WHERE id=$1
+    `,[claimedId,worker.SAFE_POLICY_DEFERRAL]);
+    await client.query("UPDATE messages SET delivery_status='unknown' WHERE id=30");
+    assert.equal((await list()).length,0,
+      "unknown message delivery cannot satisfy the safe deferral predicate");
+    await client.query("UPDATE messages SET delivery_status='cancelled',whatsapp_message_id='wamid.unexpected' WHERE id=30");
+    assert.equal((await list()).length,0,
+      "any provider message ID prevents retry regardless of deferral marker");
+    await client.query("UPDATE messages SET whatsapp_message_id=NULL WHERE id=30");
+    await client.query(`
+      UPDATE whatsapp_free_entry_followup_attempts
+      SET status='unknown',error='outbound timed out'
+      WHERE id=$1
+    `,[claimedId]);
+    assert.equal((await list()).length,0,
+      "an ambiguous provider send is never automatically retried");
+    await client.query(`
+      UPDATE whatsapp_free_entry_followup_attempts
+      SET status='sending',message_id=NULL,error=NULL
+      WHERE id=$1
+    `,[claimedId]);
+    await client.query("DELETE FROM messages WHERE id=30");
+
     await client.query(`UPDATE whatsapp_free_entry_followup_attempts
       SET status='accepted', wamid='wamid.slot', updated_at=now() WHERE id=$1`,[claimedId]);
     assert.equal((await list()).length,0,
