@@ -133,6 +133,13 @@ const candidateSql = `
         ON prior_billing.wamid = prior.wamid
       WHERE prior.first_reply_message_id = first_reply.id
         AND prior.id IS DISTINCT FROM $6::bigint
+        -- Reconciliation never retries the original claimed slot. It only
+        -- permits later eligible slots to advance after manual review.
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_free_only_reconciliations audit
+          WHERE audit.attempt_id=prior.id
+            AND audit.verified_billing_hub=true
+        )
         AND (
           prior.status IN ('sending', 'failed', 'unknown')
           OR (
