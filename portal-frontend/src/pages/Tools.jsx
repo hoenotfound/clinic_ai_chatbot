@@ -1013,6 +1013,9 @@ export default function Tools() {
           <FollowUpTool
             form={form}
             setForm={setForm}
+            freeOnlyAlreadyEnabled={config?.automatedFollowUp?.whatsappFreeOnly?.enabled === true}
+            freeOnlyImpactConfirmed={freeOnlyImpactConfirmed}
+            setFreeOnlyImpactConfirmed={setFreeOnlyImpactConfirmed}
             savedEnabled={savedEnabled}
             hasUnsavedChanges={hasUnsavedChanges}
             translationsNeedRefresh={translationsNeedRefresh}
@@ -1819,6 +1822,9 @@ function ServiceOverridesEditor({
 function FollowUpTool({
   form,
   setForm,
+  freeOnlyAlreadyEnabled,
+  freeOnlyImpactConfirmed,
+  setFreeOnlyImpactConfirmed,
   savedEnabled,
   hasUnsavedChanges,
   translationsNeedRefresh,
@@ -2566,7 +2572,7 @@ function FollowUpTool({
               A billable callback after activation trips the account-wide stop until you investigate and deliberately reset this switch.
             </p>
             {form.whatsappFreeOnly?.enabled === true &&
-              config?.automatedFollowUp?.whatsappFreeOnly?.enabled !== true ? (
+              !freeOnlyAlreadyEnabled ? (
               <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
                 <input type="checkbox" checked={freeOnlyImpactConfirmed}
                   onChange={event => setFreeOnlyImpactConfirmed(event.target.checked)}/>
