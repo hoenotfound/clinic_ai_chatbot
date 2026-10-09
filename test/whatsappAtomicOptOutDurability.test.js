@@ -45,6 +45,7 @@ test("ordinary enquiries and non-WhatsApp messages cannot opt out contacts throu
       storedMessageId:"wamid.generic",optOutScope:channel==="facebook"?"all":null,
       incoming:{text:"I want treatment"},
     },database);
-    assert.equal(calls[0].params[8],null);
+    assert.equal(calls[0].params.length,8);
+    assert.doesNotMatch(calls[0].sql,/enforced_whatsapp_stop/);
   }
 });
