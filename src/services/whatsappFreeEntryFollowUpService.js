@@ -342,6 +342,16 @@ async function processCandidate(candidate, requested, template, now = new Date()
   const quiet = quietHoursStatus(now, clinicConfig.automatedFollowUp?.quietHours);
   if (quiet.active) return "quiet_hours";
 
+  // Never claim/consume a follow-up slot to discover that the provider-send
+  // guard is going to reject it. If another send is pending or the strict
+  // 7-day billing evidence is absent, leave this slot eligible for a later
+  // sweep. Final reserve() still locks and rechecks right before calling Meta.
+  const preflight = await zeroCostGuard.preflightTemplate(candidate.whatsapp_number, { now });
+  if (!preflight.allowed) {
+    console.warn("[WhatsApp FEP] deferred before claim:", preflight.code);
+    return "billing_preflight_deferred";
+  }
+
   const attemptId = await claim(candidate, slotHours, active);
   if (!attemptId) return "already_claimed_or_ineligible";
 
@@ -494,6 +504,18 @@ async function processCandidate(candidate, requested, template, now = new Date()
         reason: "free_entry_template_accepted"
       });
       return "accepted";
+    }
+    // Provider-policy blocks are not a failed send attempt. They cannot
+    // generate WhatsApp charges, and must not poison eligibility for later
+    // slots as though a provider request had actually been attempted.
+    if (response?.policyBlocked===true && !response?.wamid) {
+      await messagesRepo.setDeliveryStatusById(
+        message.id,"cancelled",response.error||"Strict billing policy blocked send"
+      );
+      await finish(attemptId,"cancelled",{
+        messageId:message.id,error:response.error||"Strict billing policy blocked send"
+      });
+      return "policy_deferred";
     }
     const status = response?.unknown ? "unknown" : "failed";
     // An explicit Meta rejection can indicate an invalid/expired media ID.
