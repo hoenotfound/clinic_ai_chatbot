@@ -1210,6 +1210,8 @@ async function processIncomingMessage(
           serviceQuerySource,
           metaAdCreativeService,
           customerText: text,
+          isFirstMessage,
+          onSkip: (reason) => console.info(`[Result media] skipped for contact ${contact.id}: ${reason}`),
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
