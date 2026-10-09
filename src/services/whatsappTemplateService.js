@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const whatsappPolicy = require("./whatsappPolicyService");
+const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 
 const GRAPH_API_VERSION = "v26.0";
 const TEMPLATE_CACHE_TTL_MS = 60 * 1000;
@@ -452,7 +453,7 @@ async function resolveApprovedTemplate(
   };
 }
 
-async function sendApprovedTemplate(
+async function sendApprovedTemplateUnchecked(
   contact,
   {
     templateName,
@@ -552,6 +553,8 @@ async function sendApprovedTemplate(
         wamid: null,
         policyBlocked: false,
         error: "WhatsApp did not accept this approved template.",
+        providerStatus: res.status,
+        providerRejected: res.status >= 400 && res.status < 500,
       };
     }
 
@@ -590,6 +593,16 @@ async function sendApprovedTemplate(
           : "WhatsApp template delivery could not be started.",
     };
   }
+}
+
+// An approved template uses exactly the same account-wide billing reservation.
+async function sendApprovedTemplate(contact,opts={}) {
+  return whatsappZeroCostGuard.perform(contact?.whatsapp_number,
+    () => sendApprovedTemplateUnchecked(contact,opts), {
+      currentMessageId: opts.currentMessageId,
+      currentFollowUpAttemptId: opts.currentFollowUpAttemptId,
+      messageKind: "template",
+    });
 }
 
 module.exports = {
