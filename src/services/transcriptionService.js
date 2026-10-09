@@ -291,7 +291,7 @@ async function runTranscription(
                 model,
                 input: [interactionAudioInput],
               },
-              { purpose: "voice_transcription", contactId }
+              { purpose: "voice_transcription", ...(contactId != null ? { contactId } : {}) }
             );
           } catch (err) {
             throw markDeterministicTranscriptionMediaError(err);
