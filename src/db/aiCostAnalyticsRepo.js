@@ -62,8 +62,10 @@ async function getAiCostAnalytics({
       `SELECT e.contact_id, c.channel, COUNT(*)::int AS calls,
         COALESCE(SUM(e.estimated_cost_usd),0)::numeric AS usd,
         COUNT(*) FILTER (WHERE e.estimated_cost_usd IS NULL)::int AS unpriced_calls
-      ${events}
+      FROM ai_usage_events e
       JOIN contacts c ON c.id=e.contact_id
+      WHERE (e.created_at AT TIME ZONE 'Asia/Kuala_Lumpur')::date >= ${dateRange}
+        AND ($2::int[] IS NULL OR e.contact_id = ANY($2::int[]))
       GROUP BY e.contact_id,c.channel ORDER BY usd DESC LIMIT 30`,
       params
     ),
