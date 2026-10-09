@@ -1950,13 +1950,14 @@ function FollowUpTool({
     }
   }, [followUpTab, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
 
-  function updateTemplateRule(index, patch, expectedTemplateName = null) {
+  function updateTemplateRule(index, patch, expectedRule = null, expectedLanguage = null) {
     setForm((current) => ({
       ...current,
       freeEntry: {
         ...current.freeEntry,
         templateRules: (current.freeEntry?.templateRules || []).map((rule, i) =>
-          i === index && (expectedTemplateName === null || rule.templateName === expectedTemplateName)
+          i === index && (expectedRule === null || rule === expectedRule) &&
+          (expectedLanguage === null || current.freeEntry.language === expectedLanguage)
             ? { ...rule, ...patch } : rule),
       },
     }));
@@ -3166,7 +3167,7 @@ function FollowUpTool({
                       catalog={templateCatalog}
                       language={form.freeEntry?.language || "auto"}
                       freeEntryStatus={freeEntryStatus}
-                      onChange={(patch) => updateTemplateRule(index, patch, rule.templateName)}
+                      onChange={(patch) => updateTemplateRule(index, patch, rule, form.freeEntry?.language || "auto")}
                     />
                   </div>
                   <button type="button" className="text-left text-xs text-red-600"
