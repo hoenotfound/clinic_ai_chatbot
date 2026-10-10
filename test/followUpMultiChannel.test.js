@@ -149,6 +149,68 @@ test("Facebook Messenger follow-up uses the scoped recipient and records an acce
   assert.deepEqual(contacted, { contactId: 101, actor: "Automated follow-up" });
 });
 
+
+for (const mediaType of ["image", "video"]) {
+  test(`missing social ${mediaType} parent raises delivery attention without sending an unattached message`, async () => {
+    const parentMessageId = 665;
+    const contactId = 66;
+    const warnings = [];
+    const attention = [];
+    let mediaSends = 0;
+    let saveInput = null;
+    const originalWarn = console.warn;
+    if (mediaType === "image") {
+      enableTool({ imageUrl: "https://example.test/offer.jpg" });
+    } else {
+      enableTool();
+      clinicConfig.services = [{ name: "Pelvic Care" }];
+      clinicConfig.serviceAliases = [];
+      clinicConfig.promotions = [];
+      clinicConfig.automatedFollowUp.serviceOverrides = [{
+        serviceName: "Pelvic Care",
+        message: "Pelvic Care testimonial",
+        translations: { en: "Pelvic Care testimonial", ms: "Pelvic Care testimonial", zh: "骨盆视频" },
+        videoKey: "clients/neutro/messages/follow-up-config/pelvis.mp4",
+        videoFilename: "pelvis.mp4",
+      }];
+    }
+    followUpRepo.findCandidates = async () => [{
+      contact_id: contactId, channel: "instagram", whatsapp_number: "+instagram:66",
+      channel_user_id: "igsid-66", trigger_message_id: 664,
+      ...(mediaType === "video" ? { treatment_interest: "Pelvic Care" } : {}),
+      recent_inbound_messages: ["Hello"],
+    }];
+    followUpRepo.saveIfStillEligible = async (input) => ({
+      id: parentMessageId, contact_id: contactId, content: input.content, delivery_status: null,
+    });
+    followUpRepo.saveSocialImageCompanion = async (input) => { saveInput = input; return null; };
+    followUpRepo.saveSocialVideoCompanion = async (input) => { saveInput = input; return null; };
+    channelMessaging.sendText = async () => ({
+      success: true, wamid: null, externalMessageId: "ig-text-665",
+    });
+    channelMessaging.sendImageByUrl = async () => { mediaSends++; return { success: true }; };
+    channelMessaging.sendVideoByStoredKey = async () => { mediaSends++; return { success: true }; };
+    messagesRepo.setDeliveryStatusById = async (id, status, error) =>
+      ({ id, contact_id: contactId, delivery_status: status, delivery_error: error });
+    contactsRepo.setDeliveryAttention = async (id, message) => attention.push({ id, message });
+    console.warn = (message) => warnings.push(message);
+    try {
+      await runAutomatedFollowUps();
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(saveInput?.contactId, contactId);
+    assert.equal(saveInput?.parentMessageId, parentMessageId);
+    assert.equal(mediaSends, 0, "no provider send should occur without a saved companion");
+    assert.equal(attention.length, 1);
+    assert.equal(attention[0].id, contactId);
+    assert.match(attention[0].message, /parent follow-up record was unavailable/);
+    assert.match(attention[0].message, /check inbox before attempting a manual resend/i);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /parent follow-up 665 unavailable for contact 66/);
+  });
+}
+
 test("Instagram image follow-up records text first and sends the graphic as a separate retry-safe message", async () => {
   enableTool({ imageUrl: "https://example.com/follow-up.jpg" });
   let claimed = null;
