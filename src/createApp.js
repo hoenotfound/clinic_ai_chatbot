@@ -36,6 +36,7 @@ const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
 const followUpActivityRoutes = require("./routes/followUpActivity");
+const followUpHealthRoutes = require("./routes/followUpHealth");
 const advancedConfigRoutes = require("./routes/advancedConfig");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
@@ -317,6 +318,7 @@ function createApp({
   app.use("/api/conversations", requireAuth, conversationsRoutes);
   app.use("/api/config", requireAuth, configRoutes);
   app.use("/api/follow-up-activity", requireAuth, followUpActivityRoutes);
+  app.use("/api/follow-up-health", requireAuth, followUpHealthRoutes);
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);
   app.use("/api/pipeline", requireAuth, pipelineRoutes);
