@@ -192,7 +192,10 @@ async function shouldSendImmediateAlert(
         AND waiting_message.contact_id = c.id
         AND waiting_message.role = 'user'
        WHERE c.id = $1
-         AND (c.mode = 'human' OR c.needs_attention = true)
+         AND (c.mode = 'human' OR (
+           c.needs_attention = true
+           AND COALESCE(c.attention_reason, '') NOT LIKE 'AI review requested:%'
+         ))
          AND NOT EXISTS (
            SELECT 1
            FROM messages outbound
