@@ -49,6 +49,8 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(notified,1);
     let permission = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(permission.rows[0].allowed,true);
+    assert.equal(await contacts.canSendAutomaticReviewMedia(1), true,
+      "informational review permits independently eligible pictures");
 
     const next = await contacts.setAiReviewAttention(1,11,"Recent HIFU?","clinical");
     assert.equal(next.mode,"ai");
@@ -57,6 +59,8 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(notified,2);
     permission = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(permission.rows[0].allowed,false);
+    assert.equal(await contacts.canSendAutomaticReviewMedia(1), false,
+      "clinical review blocks every automatic picture");
 
     // A higher-priority alert may override the contact tooltip while the
     // review rows remain. A staff-assist reply must not hide those rows.
@@ -72,6 +76,8 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query("UPDATE contacts SET mode='human',needs_attention=false,attention_reason=NULL WHERE id=1");
     const humanGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(humanGate.rows[0].allowed, false);
+    assert.equal(await contacts.canSendAutomaticReviewMedia(1), false,
+      "staff-owned conversations must never send automatic pictures");
     await client.query("UPDATE contacts SET mode='ai',needs_attention=true,attention_reason='AI review requested: pending' WHERE id=1");
 
     const pending = await client.query("SELECT inbound_message_id, category FROM ai_review_items WHERE status='pending' ORDER BY inbound_message_id");
@@ -107,6 +113,8 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
 
     const resolvedContact = await contacts.dismissAttentionAndReviews(1);
     assert.equal(resolvedContact.needs_attention,false);
+    assert.equal(await contacts.canSendAutomaticReviewMedia(1), true,
+      "staff dismissal restores eligible media once all clinical reviews resolve");
     const resolved = await client.query("SELECT count(*)::int AS n FROM ai_review_items WHERE status='resolved'");
     assert.equal(resolved.rows[0].n,2);
     await contacts.setAiReviewAttention(1,12,"Parking policy?","information");
