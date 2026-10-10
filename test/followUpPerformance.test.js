@@ -45,7 +45,9 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     assert.equal(steps.FU2.replied_observed,1);
     assert.equal(steps.FU2.appointments_observed,1);
     assert.equal(steps.FU2.won_observed,1);
-    assert.equal(steps.Pricing.visits_observed,1);\n    assert.equal(steps["Extended WA template"].sent,1);\n    assert.equal(steps["Extended WA template"].replied_matured,1);
+    assert.equal(steps.Pricing.visits_observed,1);
+    assert.equal(steps["Extended WA template"].sent,1);
+    assert.equal(steps["Extended WA template"].replied_matured,1);
     const media=Object.fromEntries(all.breakdown.filter(x=>x.dimension==="media").map(x=>[x.label,x]));
     assert.equal(media.Video.sent,1);
     assert.equal(media["Text / no accepted media"].sent,4);
