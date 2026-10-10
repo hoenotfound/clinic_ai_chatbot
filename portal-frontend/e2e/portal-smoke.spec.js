@@ -1562,10 +1562,33 @@ test("Phase 8 shows descriptive comparisons only for mature sufficiently sized g
   await page.getByRole("tab", { name: "Performance" }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("Enough mature reply data");
-  await expect(intelligence).toContainText("Highest observed reply rate: FU1");
+  await expect(intelligence).toContainText("FU1: 30%");
+  await expect(intelligence).toContainText("FU2: 25%");
+  await expect(intelligence).not.toContainText("Highest observed reply rate");
   await expect(intelligence).toContainText("30%");
   await expect(intelligence).toContainText("These associations do not establish causality");
   await expectNoHorizontalPageOverflow(page);
+});
+
+test("Phase 8 includes text-only sends and suppresses incomplete treatment comparisons", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 80, contacts: 50, reply_matured: 80, replied_matured: 20, milestone_matured: 80 },
+    breakdown: [
+      { dimension: "media", label: "Text / no accepted media", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "media", label: "Video", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "service", label: "Unspecified (not recorded)", sent: 20, reply_matured: 20, replied_matured: 5 },
+      { dimension: "service", label: "3D", sent: 30, reply_matured: 30, replied_matured: 8 },
+      { dimension: "service", label: "9D", sent: 30, reply_matured: 30, replied_matured: 7 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("Text / no accepted media: 25%");
+  await expect(intelligence).toContainText("Treatment comparison unavailable");
+  await expect(intelligence).toContainText("Treatment comparisons are withheld");
+  await expect(intelligence).not.toContainText("3D: 26.7%");
+  await expect(intelligence).not.toContainText("Highest observed reply rate");
 });
 
 test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
