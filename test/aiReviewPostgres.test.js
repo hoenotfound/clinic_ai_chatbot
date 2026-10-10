@@ -47,6 +47,13 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(first.needs_attention,true);
     await contacts.setAiReviewAttention(1,10,"Duplicate retry","information");
     assert.equal(notified,1);
+    const reviewAlert = {
+      contact_id: 1, alert_type: "ai_review", event_key: "ai-review:1:10",
+    };
+    assert.equal(
+      await telegram.shouldSendImmediateAlert(reviewAlert, client.query.bind(client)),
+      true, "review alert is valid while AI owns the open question"
+    );
     let permission = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(permission.rows[0].allowed,true);
     assert.equal(await contacts.canSendAutomaticReviewMedia(1), true,
@@ -76,6 +83,10 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query("UPDATE contacts SET mode='human',needs_attention=false,attention_reason=NULL WHERE id=1");
     const humanGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(humanGate.rows[0].allowed, false);
+    assert.equal(
+      await telegram.shouldSendImmediateAlert(reviewAlert, client.query.bind(client)),
+      false, "staff takeover invalidates queued AI Active alerts"
+    );
     assert.equal(await contacts.canSendAutomaticReviewMedia(1), false,
       "staff-owned conversations must never send automatic pictures");
     await client.query("UPDATE contacts SET mode='ai',needs_attention=true,attention_reason='AI review requested: pending' WHERE id=1");
@@ -110,6 +121,10 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(permissionAfterTakeover.rows[0].allowed, false);
     // Re-resolving is a no-op; a second review must never be cleared.
     assert.equal(await contacts.resolveAiReviewItem(1, reviewToResolve.rows[0].id), null);
+    assert.equal(
+      await telegram.shouldSendImmediateAlert(reviewAlert, client.query.bind(client)),
+      false, "resolving the question cancels its queued review alert"
+    );
 
     const resolvedContact = await contacts.dismissAttentionAndReviews(1);
     assert.equal(resolvedContact.needs_attention,false);
