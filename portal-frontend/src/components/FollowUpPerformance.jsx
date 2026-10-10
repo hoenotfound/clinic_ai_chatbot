@@ -49,7 +49,7 @@ function Breakdown({ rows, title, note, dimension }) {
       <div className="mt-3 overflow-x-auto">
         <table className="min-w-[620px] w-full text-left text-xs">
           <thead><tr className="border-b border-[var(--color-border)]">
-            {["Group", "Accepted", "Reply · 72h", "Appointment · 7d", "Won · 7d", "Avg reply"].map(s =>
+            {["Group", "Accepted", "Reply · 72h", "Appointment · 7d", "Visit · 7d", "Won · 7d", "Avg reply · mature"].map(s =>
               <th key={s} className="px-2 py-2 font-semibold whitespace-nowrap">{s}</th>)}
           </tr></thead>
           <tbody>{ordered.slice(0, dimension === "hour" ? 24 : 30).map((v) =>
@@ -61,6 +61,9 @@ function Breakdown({ rows, title, note, dimension }) {
               </td>
               <td className="px-2 py-2 tabular-nums">{pct(v.appointments_matured, v.milestone_matured)}
                 <span className="block text-[10px] text-[var(--color-text-muted)]">{ratio(v.appointments_matured, v.milestone_matured)}</span>
+              </td>
+              <td className="px-2 py-2 tabular-nums">{pct(v.visits_matured, v.milestone_matured)}
+                <span className="block text-[10px] text-[var(--color-text-muted)]">{ratio(v.visits_matured, v.milestone_matured)}</span>
               </td>
               <td className="px-2 py-2 tabular-nums">{pct(v.won_matured, v.milestone_matured)}
                 <span className="block text-[10px] text-[var(--color-text-muted)]">{ratio(v.won_matured, v.milestone_matured)}</span>
@@ -129,12 +132,14 @@ export default function FollowUpPerformance({ active }) {
         {state.error && <p role="alert" className="mt-4 text-xs text-red-700">{state.error}</p>}
         {data && (
           <>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
               {metric(data.summary.sent, "Accepted follow-ups", `${data.summary.contacts} distinct contacts`)}
               {metric(pct(data.summary.replied_matured, data.summary.reply_matured), "72-hour reply rate",
                 ratio(data.summary.replied_matured, data.summary.reply_matured) + " mature sends")}
               {metric(pct(data.summary.appointments_matured, data.summary.milestone_matured), "7-day appointment rate",
                 ratio(data.summary.appointments_matured, data.summary.milestone_matured) + " mature sends")}
+              {metric(pct(data.summary.visits_matured, data.summary.milestone_matured), "7-day visit rate",
+                ratio(data.summary.visits_matured, data.summary.milestone_matured) + " mature sends")}
               {metric(pct(data.summary.won_matured, data.summary.milestone_matured), "7-day won rate",
                 ratio(data.summary.won_matured, data.summary.milestone_matured) + " mature sends")}
               {metric(data.summary.replied_observed, "Replies observed", "Includes early, incomplete observation windows")}
@@ -143,7 +148,7 @@ export default function FollowUpPerformance({ active }) {
               <strong>How attribution works:</strong> One accepted follow-up or pricing message counts as one touch.
               Separately sent media is not counted again. Each subsequent reply or pipeline stage change
               is assigned to the most recent eligible follow-up, ending at the next touch. Reply rates use only
-              sends at least 72 hours old; appointment and won rates use sends at least 7 days old.
+              sends at least 72 hours old; appointment, visit and won rates use sends at least 7 days old. Average reply time uses mature sends only.
               Pipeline changes are staff-recorded milestones, not guaranteed appointments or sales.
               A dash means there is not yet a mature sample. New leads and newer follow-ups can affect outcomes.
             </div>
