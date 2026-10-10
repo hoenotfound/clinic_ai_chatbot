@@ -381,6 +381,14 @@ async function listConversations() {
       c.attention_reason,
       (SELECT COUNT(*)::integer FROM ai_review_items r
        WHERE r.contact_id = c.id AND r.status = 'pending') AS pending_review_count,
+      (SELECT STRING_AGG('[#' || recent.inbound_message_id::text || '] ' ||
+         LEFT(recent.summary, 200), E'\\n' ORDER BY recent.created_at, recent.id)
+       FROM (
+         SELECT r.id, r.inbound_message_id, r.summary, r.created_at
+         FROM ai_review_items r
+         WHERE r.contact_id = c.id AND r.status = 'pending'
+         ORDER BY r.created_at DESC, r.id DESC LIMIT 10
+       ) recent) AS pending_review_summaries,
       c.is_unread,
       c.needs_follow_up,
       c.whatsapp_opt_in_at,
