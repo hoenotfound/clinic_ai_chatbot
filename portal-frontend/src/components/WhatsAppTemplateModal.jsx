@@ -274,7 +274,7 @@ export default function WhatsAppTemplateModal({
 
   async function sendTemplate() {
     if (!selected || !catalog?.eligibility?.allowed || !billingAcknowledged ||
-        !catalog?.billingAdvisory?.reviewToken) return;
+        !catalog?.billingAdvisory?.reviewTokens?.[selectedKey]) return;
     setSending(true);
     setActionError("");
     try {
@@ -287,7 +287,7 @@ export default function WhatsAppTemplateModal({
             ? marketingConsentConfirmed
             : false,
         billingAcknowledged: true,
-        billingReviewToken: catalog?.billingAdvisory?.reviewToken,
+        billingReviewToken: catalog?.billingAdvisory?.reviewTokens?.[selectedKey],
         ...(mediaSelectionId && !mediaFile ? { mediaSelectionId } : {}),
       }, mediaFile);
       onSent?.(result);
@@ -344,7 +344,7 @@ export default function WhatsAppTemplateModal({
     allValuesFilled &&
     (selected?.category !== "MARKETING" || marketingConsentConfirmed) &&
     billingAcknowledged &&
-    Boolean(catalog?.billingAdvisory?.reviewToken) &&
+    Boolean(catalog?.billingAdvisory?.reviewTokens?.[selectedKey]) &&
     !sending;
 
   return (
