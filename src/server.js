@@ -27,7 +27,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
-const { categorizeAiReview, canSendReactiveMedia } = require("./utils/aiReviewPolicy");
+const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
@@ -1053,6 +1053,22 @@ async function processIncomingMessage(
     if (!finalSendContact) return { wasFirstMessage, keywordReason };
     contact = finalSendContact;
 
+    // Optional automatic pictures need a fresh clinical-review and ownership
+    // check at the provider's final pre-send boundary. A new clinical review,
+    // human takeover, staff reply or cancellation must stop delayed media.
+    const allowOptionalMediaSend = async () => {
+      if (canSendAutomatedReply && canSendAutomatedReply() !== true) return false;
+      const liveOwner = await getAiOwnedContact(contact, {
+        channel,
+        from,
+        reason: "optional automated picture",
+        inboundMessageId: savedInbound.id,
+      });
+      return liveOwner
+        ? contactsRepo.canSendAutomaticReviewMedia(liveOwner.id)
+        : false;
+    };
+
     // Run this after the final ownership read, as close as possible to the
     // tracked provider send. A native/inbox staff action marks its cancellation state
     // synchronously before any DB work, so a slow echo transaction also blocks
@@ -1129,7 +1145,7 @@ async function processIncomingMessage(
         flagged,
         bookingReady,
         keywordReason,
-        needsAttention: !canSendReactiveMedia(contact),
+        needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
         textSendSucceeded: sendOutcome.sendResult.success,
         promotions: clinicConfig.promotions,
         language: mediaLanguage,
@@ -1146,7 +1162,7 @@ async function processIncomingMessage(
           });
           // Re-check ownership and attention before every package so a staff
           // takeover between Package A and B stops the remaining automation.
-          if (!promoContact || !canSendReactiveMedia(promoContact)) {
+          if (!promoContact || !(await contactsRepo.canSendAutomaticReviewMedia(promoContact.id))) {
             return { wasFirstMessage, keywordReason };
           }
           contact = promoContact;
@@ -1175,9 +1191,7 @@ async function processIncomingMessage(
             promoPackage.imageUrl,
             promoPackage.caption,
             {
-              ...(guardedPromo
-                ? { preSendCheck: canSendAutomatedReply }
-                : {}),
+              preSendCheck: allowOptionalMediaSend,
               ...(promoProviderRecorder
                 ? { onProviderMessageId: promoProviderRecorder }
                 : {}),
@@ -1292,7 +1306,7 @@ async function processIncomingMessage(
           flagged,
           bookingReady,
           keywordReason,
-          needsAttention: !canSendReactiveMedia(contact),
+          needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
           textSendSucceeded: sendOutcome.sendResult.success,
           resultMedia: clinicConfig.resultMedia,
           language: mediaLanguage,
@@ -1312,7 +1326,7 @@ async function processIncomingMessage(
               reason: `automatic result media for ${resultBundle.service || "service"}`,
               inboundMessageId: savedInbound.id,
             });
-            if (!resultContact || !canSendReactiveMedia(resultContact)) {
+            if (!resultContact || !(await contactsRepo.canSendAutomaticReviewMedia(resultContact.id))) {
               return { wasFirstMessage, keywordReason };
             }
             contact = resultContact;
@@ -1342,9 +1356,7 @@ async function processIncomingMessage(
               resultItem.imageUrl,
               resultItem.caption,
               {
-                ...(guardedResult
-                  ? { preSendCheck: canSendAutomatedReply }
-                  : {}),
+                preSendCheck: allowOptionalMediaSend,
                 ...(resultProviderRecorder
                   ? { onProviderMessageId: resultProviderRecorder }
                   : {}),
