@@ -87,7 +87,8 @@ export default function FollowUpHealth({ active }) {
               [data.failedCount, "Failed"],
               [data.attentionCount, "Needs review"],
               [data.stalePendingCount, "Pending over 20 min"],
-              [data.dueNowCount ?? 0, "Due-now candidates (snapshot)"],
+              [data.dueNowCount ?? 0, "Worker due-now candidates"],
+              [data.dueNowPolicyReviewCount ?? 0, "Due-now policy warnings"],
             ].map(([number,label])=>(
               <div key={label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
                 <p className="text-xl font-bold">{number}</p>
@@ -124,6 +125,29 @@ export default function FollowUpHealth({ active }) {
               </div>)}
             </div>
           }
+          <h3 className="mt-5 text-sm font-bold">Currently open missing-media attention</h3>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            These are current contact flags regardless of the selected history period, not dated delivery events.
+            The original missing-attachment time was not recorded; a contact’s update time cannot reliably establish it.
+            These flags do not increase historical event, failure or review counts.
+          </p>
+          <p className="mt-2 text-xs font-semibold">Open flags: {data.currentMediaAlertCount ?? 0}</p>
+          {(data.currentMediaAlerts || []).length === 0
+            ? <p className="mt-1 text-xs text-[var(--color-text-muted)]">No open missing-media flags.</p>
+            : <div className="mt-2 space-y-2">
+              {data.currentMediaAlerts.map((alert) => (
+                <div key={alert.contact_id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
+                  <p className="font-semibold">{CHANNELS[alert.channel] || alert.channel} · Contact #{alert.contact_id} · Open attachment issue</p>
+                  <p className="mt-1 break-words text-[var(--color-text-muted)]">{alert.detail}</p>
+                  {alert.current_service && <p className="mt-1 text-[var(--color-text-muted)]">Current lead interest (not historical): {alert.current_service}</p>}
+                  <Link to={`/inbox?contact=${encodeURIComponent(alert.contact_id)}`}
+                    className="mt-2 inline-flex min-h-9 items-center rounded border px-3 text-[var(--color-primary)]">
+                    Review in Inbox
+                  </Link>
+                </div>
+              ))}
+            </div>
+          }
           <h3 className="mt-5 text-sm font-bold">Upcoming follow-up review queue</h3>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
             Estimates from the latest conversation and current saved sequence, not confirmed scheduled sends.
@@ -136,17 +160,22 @@ export default function FollowUpHealth({ active }) {
           </p> : <div className="mt-2 space-y-2">
             {data.upcoming.map(v=><div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] p-3 text-xs"
               key={v.contact_id}>
-              <div><p className="font-semibold">{CHANNELS[v.channel] || v.channel} · FU{v.step} · Contact #{v.contact_id}{v.service?" · "+v.service:""}</p>
+              <div><p className="font-semibold">{CHANNELS[v.channel] || v.channel} · FU{v.step} · Contact #{v.contact_id}{v.service?" · Current interest: "+v.service:""}</p>
                 <p className="mt-1 text-[var(--color-text-muted)]">Estimated earliest: {formatTime(v.estimated_at)} · Reply window ends {formatTime(v.window_expires_at)}</p>
+                {(v.policy_flags || []).length > 0 && <p className="mt-1 font-semibold text-amber-700">
+                  Policy review required: {v.policy_flags.map((flag) => flag === "human_takeover" ? "human takeover" : flag === "marketing_opt_out" ? "marketing opt-out" : flag).join(", ")}.
+                  This candidate is not permission to send.
+                </p>}
               </div>
               <Link to={`/inbox?contact=${encodeURIComponent(v.contact_id)}`} className="inline-flex min-h-9 items-center rounded border px-3 text-[var(--color-primary)]">Inspect</Link>
             </div>)}
           </div>}
           <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
-            Historical counters count recorded events and persisted missing-media attention flags, not unique customers or provider bills.
-            Media companions count separately. Due-now candidates are a current, non-billable database snapshot,
-            not historical due opportunities or permission to send. Some deferrals leave no persisted decision.
-            This dashboard never attempts a send.
+            Historical counters count recorded events, not unique customers or provider bills.
+            Only service names stored on events are shown historically; otherwise the service is marked unrecorded.
+            Media companions count separately. Worker due-now candidates are a current snapshot before live send policy,
+            not historical due opportunities or permission to send. Policy warnings are a subset of that snapshot.
+            Some deferrals leave no persisted decision. This dashboard never attempts a send.
           </p>
         </>
       )}
