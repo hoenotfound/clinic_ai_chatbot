@@ -25,6 +25,7 @@ const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
+const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
 const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
@@ -1095,9 +1096,19 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
       });
     }
 
+    // Inform staff of possible Meta charges separately from customer opt-in.
+    // Never imply that a CTWA click or past free callback guarantees free sends.
+    let billingAdvisory = { evidence: "unknown" };
+    try {
+      billingAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
+    } catch (error) {
+      console.warn("WhatsApp template billing evidence could not be checked:", error?.message);
+    }
+
     res.json({
       templates: catalog.templates,
       reusableMedia: whatsappTemplateMedia.publicMediaOptions(),
+      billingAdvisory,
       eligibility: {
         allowed: eligibility.allowed === true,
         code: eligibility.code || null,
