@@ -1292,7 +1292,7 @@ async function processIncomingMessage(
           flagged,
           bookingReady,
           keywordReason,
-          needsAttention: contact.needs_attention,
+          needsAttention: !canSendReactiveMedia(contact),
           textSendSucceeded: sendOutcome.sendResult.success,
           resultMedia: clinicConfig.resultMedia,
           language: mediaLanguage,
