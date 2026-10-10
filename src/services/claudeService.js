@@ -43,6 +43,7 @@ function buildConversationOutputSchema() {
       priceQuery: { type: "boolean" },
       packageQuery: { type: "boolean" },
       promotionOption: nullableString(),
+      reviewType: { enum: ["information", "clinical", null] },
       treatment: nullableString(),
       branch: nullableString(),
       appointmentPreference: nullableString(),
