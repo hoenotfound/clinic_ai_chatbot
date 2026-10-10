@@ -158,22 +158,29 @@ test("multiple reviews remain individually durable until explicit Inbox dismissa
 });
 
 test("administrative reviews may resume safe follow-ups, but clinical/unknown reviews cannot", () => {
-  const { categorizeAiReview, followUpAttentionAllowedSql, canSendReactiveMedia } =
+  const { categorizeAiReview, followUpAttentionAllowedSql } =
     require("../src/utils/aiReviewPolicy");
   assert.equal(categorizeAiReview("Can I pay by card?", "information"), "information");
   assert.equal(categorizeAiReview("How much is HIFU?", "information"), "information");
+  for (const question of [
+    "Harga 9D kalau saya mengandung?",
+    "Harga rawatan untuk ibu mengandung?",
+    "Berapa harga 3D kalau masih menyusukan bayi?",
+    "Harga promosi ni sesuai untuk ibu hamil?",
+    "9D harga untuk orang selepas bersalin?",
+    "9D 价格，懷孕可以做嗎？",
+    "做3D多少錢，我正在哺乳",
+    "9D價錢，孕婦適合嗎？",
+    "醫生說我有副作用，價格多少？",
+    "剛剛術後可以做嗎？價格？",
+  ]) {
+    assert.equal(categorizeAiReview(question, "information"), "clinical", question);
+  }
+
   assert.equal(categorizeAiReview("刚刚做了 HIFU，适合3D吗？", "information"), "clinical");
   assert.equal(categorizeAiReview("Is 3D safe for pregnant patients?", "information"), "clinical");
   assert.equal(categorizeAiReview("Can I park there?", null), "clinical");
   assert.equal(categorizeAiReview("Can I park there?", "information"), "information");
-  assert.equal(canSendReactiveMedia({
-    mode: "ai", needs_attention: true,
-    attention_reason: "AI review requested: [#88] HIFU question",
-  }), true);
-  assert.equal(canSendReactiveMedia({
-    mode: "human", needs_attention: true,
-    attention_reason: "AI review requested: [#88] HIFU question",
-  }), false);
   assert.match(followUpAttentionAllowedSql("c"), /review.category <> 'information'/);
   assert.match(followUpAttentionAllowedSql("c"), /review.status = 'pending'/);
   assert.match(followUpAttentionAllowedSql("c"), /c.mode = 'ai'/);
@@ -211,5 +218,11 @@ test("staff-waiting reminders exclude AI-only reviews, which have their own accu
   assert.match(telegram, /no Return to AI action is needed/);
   assert.match(telegram, /type === "ai_review"/);
   assert.match(telegram, /sendAiReviewAlert/);
-  assert.match(source("src/server.js"), /needsAttention: !canSendReactiveMedia\(contact\)/);
+  const server = source("src/server.js");
+  assert.match(server, /contactsRepo\.canSendAutomaticReviewMedia\(contact\.id\)/);
+  assert.match(server, /preSendCheck: allowOptionalMediaSend/);
+  const repo = source("src/db/contactsRepo.js");
+  assert.match(repo, /async function canSendAutomaticReviewMedia/);
+  assert.match(repo, /r\.category <> 'information'/);
+  assert.match(repo, /r\.status = 'pending'/);
 });
