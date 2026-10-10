@@ -48,7 +48,34 @@ function Breakdown({ rows, title, note, dimension }) {
     <section className="rounded-xl border border-[var(--color-border)] bg-white p-4">
       <h3 className="text-sm font-bold">{title}</h3>
       <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">{note}</p>
-      <div className="mt-3 overflow-x-auto">
+      <div className="mt-3 space-y-2 sm:hidden" aria-label={`${title} mobile results`}>
+        {(showAll ? ordered : ordered.slice(0, dimension === "hour" ? 24 : 30)).map(v => (
+          <div key={v.label} className="rounded-lg border border-[var(--color-border)] p-3">
+            <div className="flex items-start justify-between gap-2">
+              <h4 className="min-w-0 break-words text-xs font-bold">{dimension === "hour" ? formatHour(v.label) : v.label}</h4>
+              <span className="shrink-0 text-xs font-semibold tabular-nums">{v.sent} sent</span>
+            </div>
+            <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              {[
+                ["Reply · 72h", v.replied_matured, v.reply_matured],
+                ["Appointment · 7d", v.appointments_matured, v.milestone_matured],
+                ["Visit · 7d", v.visits_matured, v.milestone_matured],
+                ["Won · 7d", v.won_matured, v.milestone_matured],
+              ].map(([label, count, denominator]) => (
+                <div key={label}>
+                  <dt className="text-[var(--color-text-muted)]">{label}</dt>
+                  <dd className="font-semibold tabular-nums">{pct(count, denominator)}</dd>
+                  <dd className="text-[11px] text-[var(--color-text-muted)]">{ratio(count, denominator)}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+              Avg first reply (mature): {v.avg_reply_hours == null ? "—" : `${v.avg_reply_hours}h`}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 hidden overflow-x-auto sm:block">
         <table className="min-w-[620px] w-full text-left text-xs">
           <thead><tr className="border-b border-[var(--color-border)]">
             {["Group", "Accepted", "Reply · 72h", "Appointment · 7d", "Visit · 7d", "Won · 7d", "Avg reply · mature"].map(s =>
