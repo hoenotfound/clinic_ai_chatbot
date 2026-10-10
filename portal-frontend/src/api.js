@@ -256,6 +256,7 @@ export const api = {
     request(`/advanced-config/restore/${snapshotId}`, { method: "POST" }),
   getCommentAutomationStatus: () => request("/config/comment-automation/status"),
   getFreeEntryStatus: () => request("/config/automated-follow-up/free-entry-status"),
+  getFollowUpPerformance: (filters = {}) => request(`/follow-up-performance?${new URLSearchParams({ days: String(filters.days ?? 30), channel: filters.channel ?? "all" })}`),
   getFollowUpHealth: (filters = {}) => request(`/follow-up-health?${new URLSearchParams({ days: String(filters.days ?? 7), channel: filters.channel ?? "all" })}`),
   getFollowUpActivity: (filters = {}) => {
     const params = new URLSearchParams();
