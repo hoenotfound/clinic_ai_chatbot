@@ -140,6 +140,7 @@ export default function WhatsAppTemplateModal({
   const [optInConfirmed, setOptInConfirmed] = useState(false);
   const [marketingOptInConfirmed, setMarketingOptInConfirmed] = useState(false);
   const [marketingConsentConfirmed, setMarketingConsentConfirmed] = useState(false);
+  const [billingAcknowledged, setBillingAcknowledged] = useState(false);
   const [recordingOptIn, setRecordingOptIn] = useState(false);
   const [sending, setSending] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -150,6 +151,7 @@ export default function WhatsAppTemplateModal({
     if (!contactId) return;
     setLoading(true);
     setLoadError("");
+    setBillingAcknowledged(false);
     try {
       const data = await api.listWhatsAppTemplates(contactId, { force });
       setCatalog(data);
@@ -196,6 +198,7 @@ export default function WhatsAppTemplateModal({
     setOptInConfirmed(false);
     setMarketingOptInConfirmed(false);
     setMarketingConsentConfirmed(false);
+    setBillingAcknowledged(false);
     setActionError("");
     loadCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,6 +230,7 @@ export default function WhatsAppTemplateModal({
     setMediaFile(null);
         setMediaSelectionId("");
     setMarketingConsentConfirmed(false);
+    setBillingAcknowledged(false);
     setActionError("");
   }
 
@@ -269,7 +273,7 @@ export default function WhatsAppTemplateModal({
   }
 
   async function sendTemplate() {
-    if (!selected || !catalog?.eligibility?.allowed) return;
+    if (!selected || !catalog?.eligibility?.allowed || !billingAcknowledged) return;
     setSending(true);
     setActionError("");
     try {
@@ -323,6 +327,7 @@ export default function WhatsAppTemplateModal({
     selected?.sendable === true &&
     allValuesFilled &&
     (selected?.category !== "MARKETING" || marketingConsentConfirmed) &&
+    billingAcknowledged &&
     !sending;
 
   return (
@@ -573,6 +578,31 @@ export default function WhatsAppTemplateModal({
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-amber-900">
+                    <p className="text-xs font-bold">Meta billing — this template may cost money</p>
+                    <p className="mt-1.5 text-[11px] leading-5">
+                      {catalog?.billingAdvisory?.evidence === "no_ctwa_referral"
+                        ? "No qualifying Click-to-WhatsApp ad referral is recorded for this contact. Templates outside the 24-hour reply window may be billed at regular rates."
+                        : catalog?.billingAdvisory?.evidence === "ctwa_unverified_or_expired"
+                          ? "An ad referral exists, but no recent confirmed free-entry billing period was found. This template may be billed."
+                          : catalog?.billingAdvisory?.evidence === "recent_free_entry_evidence"
+                            ? "A recent free-entry billing receipt was found. It does not guarantee that this template will be free; Meta determines the charge after delivery."
+                            : "Free-entry billing evidence could not be checked. Assume this template may be billed."}
+                    </p>
+                    <p className="mt-1 text-[10px] leading-4">
+                      Customer opt-in permits messaging but never guarantees free billing.
+                    </p>
+                    <label className="mt-3 flex items-start gap-2 text-[11px] font-semibold leading-4">
+                      <input
+                        type="checkbox"
+                        checked={billingAcknowledged}
+                        onChange={(event) => setBillingAcknowledged(event.target.checked)}
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                      />
+                      <span>I understand Meta may charge for this manual template send.</span>
+                    </label>
                   </div>
 
                   {selected.category === "MARKETING" && (
