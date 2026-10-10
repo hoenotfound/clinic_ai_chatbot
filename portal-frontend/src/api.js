@@ -14,6 +14,9 @@ async function request(path, options = {}) {
     error.code = body.code || null;
     error.policyBlocked = body.policyBlocked === true;
     error.diagnosticStatus = body.diagnosticStatus || null;
+    // A changed WhatsApp billing review must reach the template picker without
+    // destroying the selected media, template variables, or user draft.
+    error.billingAdvisory = body.billingAdvisory || null;
     throw error;
   }
 
