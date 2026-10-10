@@ -47,6 +47,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
         whatsapp_opt_out_at timestamptz,whatsapp_marketing_opt_out_at timestamptz,
         social_opt_out_at timestamptz,social_marketing_opt_out_at timestamptz,
         attention_reason text, updated_at timestamptz default now());
+      CREATE TABLE ai_review_items (contact_id integer, status text, category text);
       CREATE TABLE messages(
         id integer primary key, contact_id integer,role text, created_at timestamptz default now(),
         delivery_status text,delivery_error text,whatsapp_message_id text,
@@ -126,13 +127,12 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
     assert.equal(queue.upcoming[0].contact_id,1);
     assert.equal(queue.dueNowCount,1);
     assert.equal(queue.dueNowPolicyReviewCount,0);
-    // The worker's candidate query does not filter human mode or opt-outs.
-    // Monitoring must expose these as warnings rather than hide candidates.
+    // Genuine staff takeovers must not appear as eligible follow-up candidates.
     await client.query("UPDATE contacts SET mode='human', social_marketing_opt_out_at=now() WHERE id=1");
     const policyQueue = await health.getUpcomingReviewQueue({channel:"facebook"},[1],cfg,execute);
-    assert.equal(policyQueue.dueNowCount,1);
-    assert.equal(policyQueue.dueNowPolicyReviewCount,1);
-    assert.deepEqual(policyQueue.upcoming[0].policy_flags,["human_takeover","marketing_opt_out"]);
+    assert.equal(policyQueue.dueNowCount,0);
+    assert.equal(policyQueue.dueNowPolicyReviewCount,0);
+    assert.deepEqual(policyQueue.upcoming,[]);
 
     // A nominally due FU3 at 23h40 after inbound is past the worker's
     // 23h35 pricing cutoff even though the reply window is still open.

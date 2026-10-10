@@ -982,15 +982,33 @@ router.patch("/:contactId/attention", async (req, res) => {
       return res.status(400).json({ error: "needsAttention (boolean) is required." });
     }
 
-    const updated = await contactsRepo.setAttention(
-      contact.id,
-      needsAttention,
-      needsAttention ? reason || "Flagged by staff." : null
-    );
+    const updated = needsAttention
+      ? await contactsRepo.setAttention(contact.id, true, reason || "Flagged by staff.")
+      : await contactsRepo.dismissAttentionAndReviews(contact.id);
     res.json(updated);
   } catch (err) {
     console.error("Failed to update attention flag:", err);
     res.status(500).json({ error: "Something went wrong updating this conversation." });
+  }
+});
+
+router.patch("/:contactId/reviews/:reviewId/resolve", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    const reviewId = parsePositiveInt(req.params.reviewId);
+    if (!contactId || !reviewId) {
+      return res.status(400).json({ error: "Invalid contact or review ID." });
+    }
+    const allowed = await canAccessContact(req.user, contactId);
+    if (!allowed) return res.status(403).json({ error: "You cannot manage this conversation." });
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    const updated = await contactsRepo.resolveAiReviewItem(contactId, reviewId);
+    if (!updated) return res.status(409).json({ error: "This question is already resolved or unavailable." });
+    return res.json(updated);
+  } catch (err) {
+    console.error("Failed to resolve AI review question:", err);
+    return res.status(500).json({ error: "Could not resolve this question." });
   }
 });
 

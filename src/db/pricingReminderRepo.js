@@ -1,3 +1,4 @@
+const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const MINUTES_AFTER_TESTIMONIAL = 5;
@@ -123,7 +124,7 @@ WITH eligible AS (
  WHERE c.channel = ANY($5::text[])
    AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
      OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL))
-   AND c.needs_attention = false
+   AND ${followUpAttentionAllowedSql("c")}
    AND COALESCE(c.mode,'ai') <> 'human'
    AND ((c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
            AND c.whatsapp_marketing_opt_out_at IS NULL)
@@ -214,7 +215,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
        AND c.channel=$13::text
         AND ((c.channel='whatsapp' AND c.whatsapp_number=$14::text)
           OR (c.channel IN ('facebook','instagram') AND c.channel_user_id=$14::text))
-       AND c.needs_attention=false
+       AND ${followUpAttentionAllowedSql("c")}
          AND COALESCE(c.mode,'ai') <> 'human'
          AND ((c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
            AND c.whatsapp_marketing_opt_out_at IS NULL)
@@ -269,7 +270,7 @@ async function isClaimStillEligible({
        WHERE m.id=$1 AND m.contact_id=$2 AND m.pricing_reminder_anchor_id=$3
          AND m.pricing_reminder_package_key=$9
          AND m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL
-         AND c.needs_attention=false
+         AND ${followUpAttentionAllowedSql("c")}
          AND COALESCE(c.mode,'ai') <> 'human'
          AND ((c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
            AND c.whatsapp_marketing_opt_out_at IS NULL)

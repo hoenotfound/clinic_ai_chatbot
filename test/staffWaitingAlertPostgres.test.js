@@ -23,7 +23,8 @@ test(
         CREATE TABLE contacts (
           id INTEGER PRIMARY KEY,
           mode TEXT NOT NULL DEFAULT 'ai',
-          needs_attention BOOLEAN NOT NULL DEFAULT false
+          needs_attention BOOLEAN NOT NULL DEFAULT false,
+          attention_reason TEXT
         );
 
         CREATE TABLE messages (

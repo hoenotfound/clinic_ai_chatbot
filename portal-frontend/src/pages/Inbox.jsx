@@ -952,11 +952,36 @@ export default function Inbox() {
   async function handleDismissAttention() {
     if (selectedId == null) return;
     const contactId = selectedId;
+    const conversation = conversations?.find((item) => Number(item.contact_id) === Number(contactId));
+    const unresolved = Number(conversation?.pending_review_count) || 0;
+    if (unresolved > 1 && !window.confirm(`Dismiss all ${unresolved} pending review questions? This marks every question resolved.`)) {
+      return;
+    }
+    setActionPending(true);
     try {
       await api.setAttention(contactId, false);
       await refreshConversations();
     } catch (err) {
       console.error("Failed to dismiss attention flag:", err);
+      showToast("Couldn't dismiss attention. Please try again.", "error");
+    } finally {
+      if (selectedIdRef.current === contactId) setActionPending(false);
+    }
+  }
+
+  async function handleResolveReview(reviewId) {
+    if (selectedId == null || !Number.isSafeInteger(Number(reviewId))) return;
+    const contactId = selectedId;
+    setActionPending(true);
+    try {
+      await api.resolveAiReview(contactId, reviewId);
+      await refreshConversations();
+    } catch (err) {
+      console.error("Failed to resolve review question:", err);
+      showToast("Couldn't mark this question resolved. Please try again.", "error");
+      await refreshConversations();
+    } finally {
+      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
@@ -1413,6 +1438,7 @@ export default function Inbox() {
         onTakeOver={handleTakeOver}
         onReturnToAi={handleReturnToAi}
         onDismissAttention={handleDismissAttention}
+        onResolveReview={handleResolveReview}
         onToggleFollowUp={handleToggleFollowUp}
         onToggleUnread={handleToggleUnread}
         onRetryMessage={handleRetryMessage}
@@ -2071,6 +2097,7 @@ function ThreadView({
   onTakeOver,
   onReturnToAi,
   onDismissAttention,
+  onResolveReview,
   onToggleFollowUp,
   onToggleUnread,
   onRetryMessage,
@@ -3076,7 +3103,10 @@ function ThreadView({
                 {contact.needs_attention && (
                   <ConversationActionItem
                     icon={AlertIcon}
-                    label="Dismiss attention"
+                    label={Number(contact.pending_review_count) > 1
+                      ? `Dismiss all ${contact.pending_review_count} questions`
+                      : "Dismiss attention"}
+                    disabled={conversationStatePending}
                     tone="danger"
                     onClick={() => {
                       setActionsOpen(false);
@@ -3103,14 +3133,45 @@ function ThreadView({
             title={attentionExpanded ? "Collapse attention reason" : "Show full attention reason"}
           >
             <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="shrink-0 text-[11px] font-semibold">Needs attention</span>
-            <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-normal" : "truncate"}`}>
-              {contact.attention_reason || "Flagged for staff review."}
+            <span className="shrink-0 text-[11px] font-semibold">
+              Needs attention{Number(contact.pending_review_count) > 1 ? ` (${contact.pending_review_count} questions)` : ""}
+            </span>
+            <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-pre-line" : "truncate"}`}>
+              {Number(contact.pending_review_count) > 0 && contact.pending_review_summaries
+                ? [contact.attention_reason?.startsWith("AI review requested:")
+                    ? "AI review requested:"
+                    : (contact.attention_reason || "Flagged for staff review."),
+                   "Pending questions:",
+                   contact.pending_review_summaries].join("\n")
+                : (contact.attention_reason || "Flagged for staff review.")}
             </span>
             <ChevronDownIcon
               className={`mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform ${attentionExpanded ? "rotate-180" : ""}`}
             />
           </button>
+        )}
+        {contact.needs_attention && attentionExpanded &&
+          Array.isArray(contact.pending_review_items) && contact.pending_review_items.length > 0 && (
+          <div className="max-h-64 space-y-2 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:px-5"
+            aria-label="Unresolved questions for staff">
+            {contact.pending_review_items.map((review) => (
+              <div key={review.id} className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2">
+                <p className="min-w-0 flex-1 break-words text-xs leading-5 text-[var(--color-text)]">
+                  <span className="font-semibold">Question #{review.messageId}: </span>
+                  {review.summary}
+                </p>
+                <button type="button" disabled={actionPending || conversationStatePending}
+                  onClick={() => onResolveReview(review.id)}
+                  className="min-h-9 shrink-0 rounded-lg border border-[var(--color-border)] px-2 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50"
+                  aria-label={`Mark question ${review.messageId} resolved`}>Resolve</button>
+              </div>
+            ))}
+            {Number(contact.pending_review_count) > contact.pending_review_items.length && (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Showing the latest {contact.pending_review_items.length} of {contact.pending_review_count} questions.
+              </p>
+            )}
+          </div>
         )}
         {messagingPolicy.applies && !quietReplyAvailable && (
           <div className="border-t border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-900 sm:px-5">

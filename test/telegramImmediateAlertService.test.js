@@ -624,3 +624,61 @@ test("immediate retry schedule is bounded and adaptive", () => {
   assert.equal(retryDelayMsForAttempt(99), 900_000);
   assert.equal(delayUntilNextImmediateAlert({ nextDueAt: null }), null);
 });
+
+test("AI review uses a separate, uncapped event type and cannot consume urgent human cooldown", async () => {
+  const queued = [];
+  const service = createTelegramImmediateAlertService({
+    env: enabledEnv,
+    getContext: async () => context,
+    repository: {
+      async queueAlert(input) {
+        queued.push(input);
+        return { id: 100 + queued.length };
+      },
+    },
+    wakeQueue() {},
+  });
+  const review = await service.sendAiReviewAlert({
+    contactId: 12, messageId: 44, reason: "AI review requested: [#44] Payment terms?",
+  });
+  const urgent = await service.sendHumanInterventionAlert({
+    contactId: 12, messageId: 45, reason: "Urgent safety message requires human attention.",
+  });
+  assert.equal(review.status, "queued");
+  assert.equal(urgent.status, "queued");
+  assert.equal(queued[0].type, "ai_review");
+  assert.equal(queued[0].eventKey, "ai-review:12:44");
+  assert.equal(queued[0].cooldownMinutes, 0);
+  assert.equal(queued[1].type, "human_intervention");
+  assert.equal(queued[1].cooldownMinutes, HUMAN_ALERT_COOLDOWN_MINUTES);
+  assert.match(queued[0].messageText, /Staff Question to Review.*AI Active/);
+  assert.match(queued[1].messageText, /Human Intervention Required/);
+});
+
+test("review alerts are cancelled when the original question is no longer pending", async () => {
+  const alert = { id: 8, contact_id: 12, alert_type: "ai_review", event_key: "ai-review:12:44" };
+  let capturedSql = "";
+  const pending = await shouldSendImmediateAlert(alert, async (sql, params) => {
+    capturedSql = sql;
+    assert.deepEqual(params, [12, 44]);
+    return { rows: [{ pending: true }] };
+  });
+  assert.equal(pending, true);
+  assert.match(capturedSql, /r.status = 'pending'/);
+  assert.match(capturedSql, /c.mode = 'ai'/);
+  // A review can remain pending after staff takeover, but its queued
+  // "AI Active" Telegram notification must fail the send-time gate.
+  const staffTakenOver = await shouldSendImmediateAlert(alert, async (sql) => {
+    assert.match(sql, /c.mode = 'ai'/);
+    return { rows: [{ pending: false }] };
+  });
+  assert.equal(staffTakenOver, false);
+  assert.match(capturedSql, /FOR SHARE OF c/);
+  const resolved = await shouldSendImmediateAlert(alert, async () => ({
+    rows: [{ pending: false }],
+  }));
+  assert.equal(resolved, false);
+  assert.equal(await shouldSendImmediateAlert({
+    ...alert, event_key: "ai-review:13:44",
+  }, async () => { throw new Error("Invalid ID must not hit database"); }), false);
+});

@@ -6,7 +6,7 @@ const {
   stripInternalOutcomeMarkers,
 } = require("./attentionTriggers");
 
-const VALID_OUTCOMES = new Set(["normal", "needs_human", "booking_ready"]);
+const VALID_OUTCOMES = new Set(["normal", "review_required", "needs_human", "booking_ready"]);
 const VALID_SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
 const VALID_PROJECT_NEXT_STEPS = new Set(["site_visit", "quotation_discussion"]);
 const MAX_METADATA_LENGTH = 240;
@@ -170,7 +170,7 @@ function containsInternalAiScaffolding(value) {
     /json\s+construction\s*:/i.test(text)
     || /structured\s+output\s*[-:：]?/i.test(text)
     || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
-    || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|needs_human|booking_ready)\b/im.test(text)
+    || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|review_required|needs_human|booking_ready)\b/im.test(text)
     || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
   );
 }
@@ -225,6 +225,7 @@ function parseStructuredReply(raw) {
   const priceQuery = parsed.priceQuery === true;
   const packageQuery = parsed.packageQuery === true;
   const promotionOption = cleanOptionalText(parsed.promotionOption);
+  const reviewType = parsed.reviewType === "information" ? "information" : "clinical";
 
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
@@ -240,6 +241,7 @@ function parseStructuredReply(raw) {
     return {
       text: reply,
       flagged: false,
+      reviewRequired: false,
       bookingReady: false,
       serviceQuery: false,
       serviceQuerySource: null,
@@ -336,7 +338,9 @@ function parseStructuredReply(raw) {
 
   return {
     text: reply,
-    flagged: outcome === "needs_human",
+    flagged: outcome === "needs_human" || outcome === "review_required",
+    reviewRequired: outcome === "review_required",
+    reviewType: outcome === "review_required" ? reviewType : null,
     bookingReady: outcome === "booking_ready",
     serviceQuery,
     serviceQuerySource: serviceQuery ? serviceQuerySource : null,
@@ -379,6 +383,8 @@ function parseAiReplyResult(raw) {
   const bookingReady = allowLegacyBookingReady && legacy.bookingReady;
   return {
     ...legacy,
+    reviewRequired: false,
+    reviewType: null,
     bookingReady,
     serviceQuery: false,
     serviceQuerySource: null,

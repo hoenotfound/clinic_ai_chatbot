@@ -165,8 +165,22 @@ async function persistStaffEchoIfNew(
              THEN takeover_at
              ELSE NULL
            END,
-           needs_attention = false,
-           attention_reason = NULL,
+           needs_attention = EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = contacts.id AND r.status = 'pending'
+           ),
+           attention_reason = CASE
+             WHEN EXISTS (
+               SELECT 1 FROM ai_review_items r
+               WHERE r.contact_id = contacts.id AND r.status = 'pending'
+             ) THEN 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                 LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM ai_review_items r
+               WHERE r.contact_id = contacts.id AND r.status = 'pending'
+             ), '')
+             ELSE NULL
+           END,
            is_unread = false,
            updated_at = now()
        WHERE id = $2

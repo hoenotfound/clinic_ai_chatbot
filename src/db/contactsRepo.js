@@ -296,6 +296,37 @@ async function getContactById(id) {
   return result.rows[0] || null;
 }
 
+// Fail closed for optional automatic images. An unresolved clinical question
+// must block sales/result graphics even when another workflow has cleared the
+// contact-level attention flag. Staff takeover always blocks auto media.
+async function canSendAutomaticReviewMedia(id) {
+  try {
+    const result = await pool.query(
+      `SELECT (
+         c.mode = 'ai'
+         AND (
+           c.needs_attention = false OR (
+             c.needs_attention = true
+             AND c.attention_reason LIKE 'AI review requested:%'
+           )
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id
+             AND r.status = 'pending'
+             AND r.category <> 'information'
+         )
+       ) AS allowed
+       FROM contacts c WHERE c.id = $1`,
+      [id]
+    );
+    return result.rows[0]?.allowed === true;
+  } catch (err) {
+    console.error(`Unable to verify automatic media review safety for contact ${id}:`, err);
+    return false;
+  }
+}
+
 async function updateContactName(id, name) {
   const result = await pool.query(
     "UPDATE contacts SET name = $1, updated_at = now() WHERE id = $2 RETURNING *",
@@ -379,6 +410,26 @@ async function listConversations() {
       c.takeover_at,
       c.needs_attention,
       c.attention_reason,
+      (SELECT COUNT(*)::integer FROM ai_review_items r
+       WHERE r.contact_id = c.id AND r.status = 'pending') AS pending_review_count,
+      (SELECT STRING_AGG('[#' || recent.inbound_message_id::text || '] ' ||
+         LEFT(recent.summary, 200), CHR(10) ORDER BY recent.created_at, recent.id)
+       FROM (
+         SELECT r.id, r.inbound_message_id, r.summary, r.created_at
+         FROM ai_review_items r
+         WHERE r.contact_id = c.id AND r.status = 'pending'
+         ORDER BY r.created_at DESC, r.id DESC LIMIT 10
+       ) recent) AS pending_review_summaries,
+      (SELECT COALESCE(JSONB_AGG(JSONB_BUILD_OBJECT(
+             'id', recent.id, 'messageId', recent.inbound_message_id,
+             'summary', recent.summary, 'category', recent.category)
+           ORDER BY recent.created_at, recent.id), '[]'::jsonb)
+       FROM (
+         SELECT r.id, r.inbound_message_id, r.summary, r.category, r.created_at
+         FROM ai_review_items r
+         WHERE r.contact_id = c.id AND r.status = 'pending'
+         ORDER BY r.created_at DESC, r.id DESC LIMIT 25
+       ) recent) AS pending_review_items,
       c.is_unread,
       c.needs_follow_up,
       c.whatsapp_opt_in_at,
@@ -491,7 +542,24 @@ async function takeOver(id, staffUsername) {
      ), takeover AS (
        UPDATE contacts c
        SET mode = 'human', takeover_by = $1, takeover_at = now(),
-           needs_attention = false, attention_reason = NULL, is_unread = false,
+           needs_attention = EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = c.id AND r.status = 'pending'
+           ) OR COALESCE(c.attention_reason LIKE 'AI review requested:%', false),
+           attention_reason = CASE
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason
+             WHEN EXISTS (
+               SELECT 1 FROM ai_review_items r
+               WHERE r.contact_id = c.id AND r.status = 'pending'
+             ) THEN 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                 LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM ai_review_items r
+               WHERE r.contact_id = c.id AND r.status = 'pending'
+             ), '')
+             ELSE NULL
+           END,
+           is_unread = false,
            updated_at = now()
        FROM current_contact
        WHERE c.id = current_contact.id
@@ -512,10 +580,30 @@ async function takeOver(id, staffUsername) {
 
 async function returnToAi(id) {
   const result = await pool.query(
-    `UPDATE contacts
-     SET mode = 'ai', takeover_by = NULL, takeover_at = NULL, updated_at = now()
-     WHERE id = $1
-     RETURNING *`,
+    `UPDATE contacts c
+     SET mode = 'ai', takeover_by = NULL, takeover_at = NULL,
+         needs_attention = c.needs_attention OR EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ),
+         attention_reason = CASE
+           WHEN EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = c.id AND r.status = 'pending'
+           ) AND (
+             c.attention_reason IS NULL
+             OR c.attention_reason LIKE 'AI review requested:%'
+           ) THEN 'AI review requested: ' || COALESCE((
+             SELECT RIGHT(STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+               r.summary, CHR(10) ORDER BY r.created_at, r.id), 1600)
+             FROM ai_review_items r
+             WHERE r.contact_id = c.id AND r.status = 'pending'
+           ), '')
+           ELSE c.attention_reason
+         END,
+         updated_at = now()
+     WHERE c.id = $1
+     RETURNING c.*`,
     [id]
   );
   const updated = result.rows[0] || null;
@@ -530,8 +618,25 @@ async function clearStaffAssistStateIfUnchanged(contact) {
 
   const result = await pool.query(
     `UPDATE contacts
-     SET needs_attention = false,
-         attention_reason = NULL,
+     SET needs_attention = EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ) OR (needs_attention AND attention_reason LIKE 'AI review requested:%'),
+         attention_reason = CASE
+           WHEN EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = contacts.id AND r.status = 'pending'
+           ) THEN CASE
+             WHEN attention_reason LIKE 'AI review requested:%' THEN attention_reason
+             ELSE 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                        LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM ai_review_items r
+               WHERE r.contact_id = contacts.id AND r.status = 'pending'
+             ), '')
+           END
+           ELSE NULL
+         END,
          is_unread = false,
          updated_at = now()
      WHERE id = $1
@@ -597,6 +702,143 @@ async function setAttention(
   return updated;
 }
 
+// Every unresolved question gets one durable row keyed by its inbound message.
+// Keep the contact AI-owned. Concurrent duplicate webhook jobs cannot create
+// duplicate questions or trigger another staff alert.
+async function setAiReviewAttention(id, inboundMessageId, summary, category = "clinical") {
+  if (!Number.isSafeInteger(Number(inboundMessageId)) || Number(inboundMessageId) < 1) {
+    throw new Error("AI review requires the original inbound message ID.");
+  }
+  const safeSummary = String(summary || "Unanswered customer question").trim().slice(0, 350);
+  const safeCategory = category === "information" ? "information" : "clinical";
+  const result = await pool.query(
+    `WITH eligible AS MATERIALIZED (
+       SELECT c.id FROM contacts c
+       WHERE c.id = $1 AND c.mode = 'ai'
+       FOR UPDATE
+     ), inserted AS (
+       INSERT INTO ai_review_items (contact_id, inbound_message_id, summary, category)
+       SELECT eligible.id, m.id, $3, $4
+       FROM eligible
+       JOIN messages m ON m.contact_id = eligible.id
+         AND m.id = $2 AND m.role = 'user'
+       ON CONFLICT (contact_id, inbound_message_id) DO NOTHING
+       RETURNING id, contact_id, inbound_message_id
+     ), updated AS (
+       UPDATE contacts c SET
+         needs_attention = true,
+         attention_reason = CASE
+           WHEN c.needs_attention = true
+             AND c.attention_reason NOT LIKE 'AI review requested:%'
+           THEN c.attention_reason
+           WHEN c.attention_reason LIKE 'AI review requested:%'
+           THEN 'AI review requested: ' ||
+             RIGHT(COALESCE(SUBSTRING(c.attention_reason FROM
+                 CHAR_LENGTH('AI review requested: ') + 1), '') ||
+               CHR(10) || '[#' || $2::text || '] ' || $3, 1600)
+           ELSE 'AI review requested: [#' || $2::text || '] ' || $3
+         END,
+         updated_at = now()
+       FROM inserted
+       WHERE c.id = inserted.contact_id
+       RETURNING c.*
+     )
+     SELECT updated.*, inserted.id AS ai_review_id,
+            inserted.inbound_message_id AS attention_message_id
+     FROM updated JOIN inserted ON inserted.contact_id = updated.id`,
+    [id, Number(inboundMessageId), safeSummary, safeCategory]
+  );
+  const updated = result.rows[0] || null;
+  if (!updated) return getContactById(id);
+  publishContactChange(updated.id);
+  notifyTelegram(
+    telegramImmediateAlerts.sendAiReviewAlert({
+      contactId: updated.id,
+      messageId: updated.attention_message_id,
+      reason: `AI review requested: [#${inboundMessageId}] ${safeSummary}`,
+    }),
+    "AI review",
+    updated.id
+  );
+  notifyWebPush(updated.id, "human_intervention");
+  return updated;
+}
+
+// Explicit Inbox dismissal resolves all pending question records and their
+// Attention indicator as one serialized operation. Future incoming questions
+// can create fresh reviews; no other staff send implicitly clears them.
+async function dismissAttentionAndReviews(id) {
+  const result = await pool.query(
+    `WITH locked AS MATERIALIZED (
+       SELECT id FROM contacts WHERE id = $1 FOR UPDATE
+     ), resolved AS (
+       UPDATE ai_review_items r
+       SET status = 'resolved', resolved_at = now()
+       FROM locked WHERE r.contact_id = locked.id AND r.status = 'pending'
+       RETURNING r.id
+     ), cleared AS (
+       UPDATE contacts c
+       SET needs_attention = false, attention_reason = NULL, updated_at = now()
+       FROM locked WHERE c.id = locked.id
+       RETURNING c.*
+     )
+     SELECT cleared.* FROM cleared`,
+    [id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
+// Resolve one review only. The contact row lock serializes staff dismissal
+// with new review inserts, and the remaining count excludes the just-resolved
+// item because data-modifying CTEs share one statement snapshot.
+async function resolveAiReviewItem(contactId, reviewId) {
+  const result = await pool.query(
+    `WITH locked AS MATERIALIZED (
+       SELECT id FROM contacts WHERE id = $1 FOR UPDATE
+     ), resolved AS (
+       UPDATE ai_review_items r
+       SET status = 'resolved', resolved_at = now()
+       FROM locked
+       WHERE r.contact_id = locked.id AND r.id = $2 AND r.status = 'pending'
+       RETURNING r.id
+     ), remaining AS MATERIALIZED (
+       SELECT r.id, r.inbound_message_id, r.summary, r.created_at
+       FROM ai_review_items r, locked
+       WHERE r.contact_id = locked.id AND r.status = 'pending'
+         AND r.id <> $2
+     ), updated AS (
+       UPDATE contacts c
+       SET needs_attention = CASE
+             WHEN EXISTS (SELECT 1 FROM remaining) THEN true
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN false
+             ELSE c.needs_attention
+           END,
+           attention_reason = CASE
+             WHEN c.attention_reason LIKE 'AI review requested:%'
+               AND EXISTS (SELECT 1 FROM remaining)
+             THEN 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                       LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM remaining r
+             ), '')
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN NULL
+             ELSE c.attention_reason
+           END,
+           updated_at = now()
+       FROM locked
+       WHERE c.id = locked.id AND EXISTS (SELECT 1 FROM resolved)
+       RETURNING c.*
+     )
+     SELECT * FROM updated`,
+    [contactId, reviewId]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 // Delivery problems should not replace a more important reason that already
 // needs staff attention, such as an urgent keyword or an AI handoff. Repeated
 // delivery failures may update the existing delivery reason with newer detail.
@@ -613,7 +855,20 @@ async function setTemporaryAiAttention(id) {
 async function clearTemporaryAiAttention(id) {
   const result = await pool.query(
     `UPDATE contacts
-     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     SET needs_attention = EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ),
+         attention_reason = CASE WHEN EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ) THEN 'AI review requested: ' || COALESCE((
+           SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+             LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+           FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ), '') ELSE NULL END,
+         updated_at = now()
      WHERE id = $1
        AND mode = 'ai'
        AND needs_attention = true
@@ -662,7 +917,20 @@ async function setDeliveryAttention(id, reason) {
 async function clearDeliveryAttentionIfNoFailedMessages(id) {
   const result = await pool.query(
     `UPDATE contacts c
-     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     SET needs_attention = EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ),
+         attention_reason = CASE WHEN EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ) THEN 'AI review requested: ' || COALESCE((
+           SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+             LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+           FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ), '') ELSE NULL END,
+         updated_at = now()
      WHERE c.id = $1
        AND c.needs_attention = true
        AND (
@@ -713,6 +981,7 @@ module.exports = {
   getOrCreateContact,
   getOrCreateChannelContact,
   getContactById,
+  canSendAutomaticReviewMedia,
   updateContactName,
   listConversations,
   listContacts,
@@ -724,6 +993,9 @@ module.exports = {
   returnToAi,
   clearStaffAssistStateIfUnchanged,
   setAttention,
+  setAiReviewAttention,
+  dismissAttentionAndReviews,
+  resolveAiReviewItem,
   setTemporaryAiAttention,
   clearTemporaryAiAttention,
   setDeliveryAttention,

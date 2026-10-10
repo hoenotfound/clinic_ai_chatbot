@@ -34,7 +34,7 @@ function buildConversationOutputSchema() {
       reply: { type: "string" },
       outcome: {
         type: "string",
-        enum: ["normal", "needs_human", "booking_ready"],
+        enum: ["normal", "review_required", "needs_human", "booking_ready"],
       },
       serviceQuery: { type: "boolean" },
       serviceQuerySource: {
@@ -43,6 +43,7 @@ function buildConversationOutputSchema() {
       priceQuery: { type: "boolean" },
       packageQuery: { type: "boolean" },
       promotionOption: nullableString(),
+      reviewType: { enum: ["information", "clinical", null] },
       treatment: nullableString(),
       branch: nullableString(),
       appointmentPreference: nullableString(),

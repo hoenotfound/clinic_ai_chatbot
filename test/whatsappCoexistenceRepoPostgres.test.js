@@ -29,6 +29,15 @@ test(
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
+        CREATE TABLE ai_review_items (
+          id BIGSERIAL PRIMARY KEY,
+          contact_id INTEGER REFERENCES contacts(id),
+          inbound_message_id INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending',
+          summary TEXT,
+          created_at TIMESTAMPTZ DEFAULT now()
+        );
+
         CREATE TABLE messages (
           id SERIAL PRIMARY KEY,
           contact_id INTEGER NOT NULL REFERENCES contacts(id),
