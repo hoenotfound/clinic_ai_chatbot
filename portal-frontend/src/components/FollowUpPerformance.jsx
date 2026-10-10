@@ -54,7 +54,7 @@ function Breakdown({ rows, title, note, dimension }) {
               <h4 className="min-w-0 break-words text-xs font-bold">{dimension === "hour" ? formatHour(v.label) : v.label}</h4>
               <span className="shrink-0 text-xs font-semibold tabular-nums">{v.sent} sent</span>
             </div>
-            <dl className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+            <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
               {[
                 ["Reply · 72h", v.replied_matured, v.reply_matured],
                 ["Appointment · 7d", v.appointments_matured, v.milestone_matured],
@@ -64,7 +64,7 @@ function Breakdown({ rows, title, note, dimension }) {
                 <div key={label}>
                   <dt className="text-[var(--color-text-muted)]">{label}</dt>
                   <dd className="font-semibold tabular-nums">{pct(count, denominator)}</dd>
-                  <dd className="text-[10px] text-[var(--color-text-muted)]">{ratio(count, denominator)}</dd>
+                  <dd className="text-[11px] text-[var(--color-text-muted)]">{ratio(count, denominator)}</dd>
                 </div>
               ))}
             </dl>
