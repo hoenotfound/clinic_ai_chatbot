@@ -960,6 +960,9 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   await dialog.getByLabel(
     "I confirm this customer's consent covers WhatsApp marketing."
   ).check();
+  await expect(dialog.getByText("Meta billing — this template may cost money")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Send template" })).toBeDisabled();
+  await dialog.getByLabel("I understand Meta may charge for this manual template send.").check();
   await dialog.getByRole("button", { name: "Send template" }).click();
 
   await expect(page.getByText(/Hi Alex, just following up on your enquiry/)).toBeVisible();
