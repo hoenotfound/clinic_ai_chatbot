@@ -11,6 +11,7 @@ const DIMENSIONS = [
 ];
 const excluded = (row) => row.label === "Unspecified (not recorded)" || row.label === "Other / unknown media";
 export const MAX_MISSING_SERVICE_SHARE = 0.2;
+export const MAX_UNKNOWN_MEDIA_SHARE = 0.2;
 const percent = (part, whole) => whole ? Math.round((1000 * part) / whole) / 10 : 0;
 
 export function buildFollowUpIntelligence(report) {
@@ -44,12 +45,17 @@ export function buildFollowUpIntelligence(report) {
   const byMedia = rows.filter(row => row.dimension === "media");
   const unknown = byMedia.filter(row => row.label === "Other / unknown media").reduce((n, row) => n + Number(row.sent || 0), 0);
   if (unknown) notes.push(`Media type is unknown for ${unknown} of ${total} sends; verify stored media metadata.`);
+  const unknownShare = total ? unknown / total : 0;
+  if (unknownShare > MAX_UNKNOWN_MEDIA_SHARE) {
+    notes.push(`Media comparisons are withheld because ${percent(unknown, total)}% of accepted sends have unknown media metadata (maximum allowed: 20%).`);
+  }
 
   // Never claim a winning variant or optimize cadence based on observational rankings.
   const enoughOverall = mature >= MIN_MATURE_SENDS && replied >= MIN_REPLIES;
   const insights = DIMENSIONS.map(([dimension, title]) => {
     const groups = rows.filter(row => row.dimension === dimension && !excluded(row));
     const qualifying = enoughOverall && !(dimension === "service" && missingShare > MAX_MISSING_SERVICE_SHARE)
+      && !(dimension === "media" && unknownShare > MAX_UNKNOWN_MEDIA_SHARE)
       ? groups.filter(row => Number(row.reply_matured || 0) >= MIN_MATURE_SENDS &&
           Number(row.replied_matured || 0) >= MIN_REPLIES)
       : [];
@@ -63,6 +69,8 @@ export function buildFollowUpIntelligence(report) {
       })).sort((a, b) => a.label.localeCompare(b.label)),
       note: dimension === "service" && missingShare > MAX_MISSING_SERVICE_SHARE
         ? "Treatment comparison unavailable: more than 20% of sends lack treatment attribution."
+        : dimension === "media" && unknownShare > MAX_UNKNOWN_MEDIA_SHARE
+          ? "Media comparison unavailable: more than 20% of sends have unknown media metadata."
         : qualifying.length < 2
           ? "Not enough groups with mature responses to make a useful comparison."
           : "Rates are descriptive, not a ranking or proof of improvement; group sizes, customer mix and treatment interest may differ.",
