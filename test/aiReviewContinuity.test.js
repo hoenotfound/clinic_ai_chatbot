@@ -151,7 +151,7 @@ test("duplicate inbound review does not alert again or overwrite existing attent
 test("multiple reviews remain individually durable until explicit Inbox dismissal", () => {
   const repo = source("src/db/contactsRepo.js");
   const routes = source("src/routes/conversations.js");
-  assert.match(repo, /UNIQUE \(contact_id, inbound_message_id\)/);
+  assert.match(source("src/db/migrations/064_ai_review_items.sql"), /UNIQUE \(contact_id, inbound_message_id\)/);
   assert.match(repo, /RIGHT\(COALESCE\(SUBSTRING\(c.attention_reason/);
   assert.match(repo, /UPDATE ai_review_items r\s+SET status = 'resolved'/);
   assert.match(routes, /contactsRepo.dismissAttentionAndReviews/);
