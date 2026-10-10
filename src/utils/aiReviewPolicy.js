@@ -1,0 +1,48 @@
+const { checkKeywordTriggers } = require("./attentionTriggers");
+
+const ADMINISTRATIVE_QUESTION = /\b(price|cost|fee|charges?|rate|promotion|offer|package|promo|discount|hours?|opening|closing|location|address|branch|parking|deposit|payment|credit card|debit card|cash|e-?wallet|walk-?in|receipt|invoice|appointment slot)\b|(?:价格|价钱|多少钱|收费|费用|优惠|配套|营业时间|营业|地址|地点|停车|付款|付钱|押金|定金|收据|发票|分行|预约时间|几点|几时)|\b(harga|berapa|bayaran|alamat|waktu|cawangan|parkir|promosi|diskaun|deposit|tunai|kad)\b/iu;
+const CLINICAL_QUESTION = /\b(pregnan|breastfeed|postpartum|c.section|surgery|surgical|procedure|hifu|filler|botox|suitab|safe to|pain|symptom|bleed|infection|medicine|medication|diagnos|uterus|incontinen|prolapse|allerg|wound|side effect|contraindicat)\b|(?:怀孕|孕期|哺乳|产后|剖腹|手术|医药|药物|安全|适合|疼痛|流血|出血|尿失禁|子宫|过敏|副作用|诊断|宫颈|医生|中医师|整骨风险)|\b(hamil|menyusu|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan)\b/iu;
+
+// Never trust an unsupported/unclear category as permission for unsolicited
+// sales automation. Allow informational follow-ups only for clear admin queries.
+function categorizeAiReview(customerText, proposedCategory) {
+  if (proposedCategory !== "information") return "clinical";
+  const text = String(customerText || "");
+  if (!ADMINISTRATIVE_QUESTION.test(text) ||
+      CLINICAL_QUESTION.test(text) ||
+      checkKeywordTriggers(text)) return "clinical";
+  return "information";
+}
+
+function isAiReviewOnlyAttention(contact) {
+  return contact?.mode === "ai" &&
+    contact?.needs_attention === true &&
+    String(contact?.attention_reason || "").startsWith("AI review requested:");
+}
+
+function canSendReactiveMedia(contact) {
+  return contact?.needs_attention !== true || isAiReviewOnlyAttention(contact);
+}
+
+// Other follow-up constraints (windows, opt-outs, genuine staff takeovers,
+// delivery receipts) remain unchanged; only the attention gate is narrowed.
+function followUpAttentionAllowedSql(alias = "c") {
+  if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error("Invalid SQL contact alias");
+  return `(${alias}.needs_attention = false OR (
+    ${alias}.mode = 'ai'
+    AND ${alias}.attention_reason LIKE 'AI review requested:%'
+    AND NOT EXISTS (
+      SELECT 1 FROM ai_review_items review
+      WHERE review.contact_id = ${alias}.id
+        AND review.status = 'pending'
+        AND review.category <> 'information'
+    )
+  ))`;
+}
+
+module.exports = {
+  categorizeAiReview,
+  isAiReviewOnlyAttention,
+  canSendReactiveMedia,
+  followUpAttentionAllowedSql,
+};
