@@ -296,6 +296,37 @@ async function getContactById(id) {
   return result.rows[0] || null;
 }
 
+// Fail closed for optional automatic images. An unresolved clinical question
+// must block sales/result graphics even when another workflow has cleared the
+// contact-level attention flag. Staff takeover always blocks auto media.
+async function canSendAutomaticReviewMedia(id) {
+  try {
+    const result = await pool.query(
+      `SELECT (
+         c.mode = 'ai'
+         AND (
+           c.needs_attention = false OR (
+             c.needs_attention = true
+             AND c.attention_reason LIKE 'AI review requested:%'
+           )
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id
+             AND r.status = 'pending'
+             AND r.category <> 'information'
+         )
+       ) AS allowed
+       FROM contacts c WHERE c.id = $1`,
+      [id]
+    );
+    return result.rows[0]?.allowed === true;
+  } catch (err) {
+    console.error(`Unable to verify automatic media review safety for contact ${id}:`, err);
+    return false;
+  }
+}
+
 async function updateContactName(id, name) {
   const result = await pool.query(
     "UPDATE contacts SET name = $1, updated_at = now() WHERE id = $2 RETURNING *",
@@ -950,6 +981,7 @@ module.exports = {
   getOrCreateContact,
   getOrCreateChannelContact,
   getContactById,
+  canSendAutomaticReviewMedia,
   updateContactName,
   listConversations,
   listContacts,
