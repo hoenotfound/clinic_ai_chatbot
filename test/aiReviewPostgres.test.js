@@ -24,6 +24,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query(`SET search_path TO ${schema}`);
     await client.query(`
       CREATE TABLE contacts (id integer primary key, mode text default 'ai', takeover_by text, takeover_at timestamptz,
+        is_unread boolean default false,
         needs_attention boolean default false, attention_reason text,
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
@@ -56,6 +57,22 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(notified,2);
     permission = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(permission.rows[0].allowed,false);
+
+    // A higher-priority alert may override the contact tooltip while the
+    // review rows remain. A staff-assist reply must not hide those rows.
+    await client.query("UPDATE contacts SET attention_reason='Delivery failed', needs_attention=true WHERE id=1");
+    const prior = (await client.query("SELECT * FROM contacts WHERE id=1")).rows[0];
+    const afterAssist = await contacts.clearStaffAssistStateIfUnchanged(prior);
+    assert.equal(afterAssist.needs_attention, true);
+    assert.match(afterAssist.attention_reason, /AI review requested/);
+    assert.match(afterAssist.attention_reason, /#10/);
+    assert.match(afterAssist.attention_reason, /#11/);
+    // A Human takeover must never reenable automated marketing even if the
+    // general Attention flag is manually cleared.
+    await client.query("UPDATE contacts SET mode='human',needs_attention=false,attention_reason=NULL WHERE id=1");
+    const humanGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(humanGate.rows[0].allowed, false);
+    await client.query("UPDATE contacts SET mode='ai',needs_attention=true,attention_reason='AI review requested: pending' WHERE id=1");
 
     const pending = await client.query("SELECT inbound_message_id, category FROM ai_review_items WHERE status='pending' ORDER BY inbound_message_id");
     assert.deepEqual(pending.rows, [
