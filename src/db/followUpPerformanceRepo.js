@@ -12,7 +12,9 @@ const MILESTONE_DAYS = 7;
 const PERFORMANCE_SQL = `WITH eligible AS (
   SELECT m.id, m.contact_id, c.channel, m.created_at AS sent_at,
     CASE WHEN m.pricing_reminder_anchor_id IS NOT NULL THEN 'Pricing'
-      ELSE 'FU' || m.automated_follow_up_step::text END AS step,
+      WHEN m.automated_follow_up_for_message_id IS NOT NULL
+        THEN 'FU' || m.automated_follow_up_step::text
+      ELSE 'Extended WA template' END AS step,
     COALESCE(NULLIF(BTRIM(m.automated_follow_up_target_service), ''), 'Unspecified (not recorded)') AS service,
     CASE
       WHEN LOWER(COALESCE(m.media_mime_type, '')) LIKE 'video/%'
@@ -38,10 +40,14 @@ const PERFORMANCE_SQL = `WITH eligible AS (
   JOIN contacts c ON c.id=m.contact_id
   WHERE m.role='assistant' AND m.is_automated_follow_up=true
     AND m.delivery_status IN ('sent','delivered','read')
-    AND (m.automated_follow_up_for_message_id IS NOT NULL
-      OR m.pricing_reminder_anchor_id IS NOT NULL)
-    AND (m.automated_follow_up_for_message_id IS NULL
-      OR m.automated_follow_up_step BETWEEN 1 AND 3)
+    AND (
+      (m.automated_follow_up_for_message_id IS NOT NULL
+        AND m.automated_follow_up_step BETWEEN 1 AND 3)
+      OR m.pricing_reminder_anchor_id IS NOT NULL
+      OR EXISTS (SELECT 1 FROM whatsapp_free_entry_followup_attempts fep
+        WHERE fep.message_id=m.id AND fep.contact_id=m.contact_id
+          AND fep.status='accepted')
+    )
     AND m.created_at >= now() - $1::integer * interval '1 day'
     AND ($2::text='all' OR c.channel=$2)
     AND ($3::integer[] IS NULL OR m.contact_id=ANY($3::integer[]))
