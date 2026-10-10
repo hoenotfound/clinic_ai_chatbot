@@ -39,7 +39,8 @@ function Breakdown({ rows, title, note, dimension }) {
   const ordered = [...rows].sort((a, b) => dimension === "hour"
     ? Number(a.label) - Number(b.label)
     : dimension === "step"
-      ? (a.label === "Pricing" ? 4 : Number(a.label.slice(2))) - (b.label === "Pricing" ? 4 : Number(b.label.slice(2)))
+      ? (["FU1","FU2","FU3","Pricing","Extended WA template"].indexOf(a.label)
+        - ["FU1","FU2","FU3","Pricing","Extended WA template"].indexOf(b.label))
       : b.sent - a.sent || a.label.localeCompare(b.label));
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-white p-4">
