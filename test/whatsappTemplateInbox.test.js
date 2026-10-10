@@ -28,16 +28,11 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /templateCategory/);
   assert.match(route, /whatsappTemplate: metadata/);
   assert.match(route, /if \(message\.whatsapp_template\)/);
-  assert.match(route, /currentTemplate\.template\.category === "MARKETING"/);
-  assert.match(route, /message\.whatsapp_template\.marketingConsentConfirmed !== true/);
   assert.match(route, /consentOptInAt/);
-  assert.match(route, /marketing_consent_reconfirmation_required/);
   assert.match(route, /expectedOptInAt/);
   assert.match(route, /forceRefresh/);
   assert.match(route, /resolveApprovedTemplate[\s\S]*\{ force: true \}/);
   assert.match(route, /templateSignature/);
-  assert.match(route, /template_definition_changed/);
-  assert.match(route, /rebuiltTemplate\.components/);
   assert.match(route, /sendResult\.unknown === true/);
   assert.match(route, /initialDeliveryStatus: "unknown"/);
   assert.match(route, /publish: false/);
@@ -58,7 +53,6 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /mediaStorage\.uploadReusableTemplateMedia\(/);
   assert.match(route, /whatsapp\.uploadMedia\(buffer, mediaMimeType/);
   assert.match(route, /mediaKey,/);
-  assert.match(route, /mediaStorage\.downloadMedia\(message\.media_key/);
   assert.match(api, /form\.append\("media", mediaFile\)/);
   assert.match(modal, /type="file"/);
   assert.match(modal, /mediaFileValid/);
@@ -93,6 +87,13 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(modal, /I understand Meta may charge for this manual template send/);
   assert.match(inbox, /initialTemplate=\{whatsappTemplatePrefill\}/);
   assert.match(route, /template_retry_requires_billing_review/);
+  // Template retries must stop before provider upload; non-template retries still use policy gating.
+  assert.match(route, /if \(message\.whatsapp_template\) \{/);
+  assert.doesNotMatch(route, /const rebuiltTemplate =/);
+  assert.doesNotMatch(route, /const retryFormat =/);
+  assert.match(route, /const retryPurpose =/);
+  assert.match(route, /sendStoredMessage\(activeContact, message/);
+  assert.match(route, /Check WhatsApp delivery before reviewing a new template send/);
   assert.match(inbox, /Review & send new template/);
   assert.doesNotMatch(inbox, /You can retry it from the message/);
   assert.match(modal, /initialTemplateKey/);
