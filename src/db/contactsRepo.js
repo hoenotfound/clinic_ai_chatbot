@@ -824,7 +824,20 @@ async function setTemporaryAiAttention(id) {
 async function clearTemporaryAiAttention(id) {
   const result = await pool.query(
     `UPDATE contacts
-     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     SET needs_attention = EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ),
+         attention_reason = CASE WHEN EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ) THEN 'AI review requested: ' || COALESCE((
+           SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+             LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+           FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ), '') ELSE NULL END,
+         updated_at = now()
      WHERE id = $1
        AND mode = 'ai'
        AND needs_attention = true
@@ -873,7 +886,20 @@ async function setDeliveryAttention(id, reason) {
 async function clearDeliveryAttentionIfNoFailedMessages(id) {
   const result = await pool.query(
     `UPDATE contacts c
-     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     SET needs_attention = EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ),
+         attention_reason = CASE WHEN EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ) THEN 'AI review requested: ' || COALESCE((
+           SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+             LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+           FROM ai_review_items r
+           WHERE r.contact_id = c.id AND r.status = 'pending'
+         ), '') ELSE NULL END,
+         updated_at = now()
      WHERE c.id = $1
        AND c.needs_attention = true
        AND (
