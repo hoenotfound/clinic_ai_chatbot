@@ -79,6 +79,12 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(modal, /marketingReconsentNeeded/);
   assert.match(modal, /opted out of WhatsApp marketing/);
   assert.match(modal, /loadCatalog\(true\)/);
+  assert.match(route, /billingAdvisory/);
+  assert.match(route, /getTemplateBillingAdvisory/);
+  assert.match(modal, /billingAcknowledged/);
+  assert.match(modal, /Meta billing.*this template may cost money/);
+  assert.match(modal, /I understand Meta may charge for this manual template send/);
+
 });
 
 test("WhatsApp template and marketing consent state use forward migrations instead of editing baseline schema", () => {
