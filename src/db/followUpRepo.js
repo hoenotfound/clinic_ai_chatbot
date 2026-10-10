@@ -1,3 +1,4 @@
+const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -238,7 +239,7 @@ async function findCandidates({
          LIMIT 1
        ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
-         AND c.needs_attention = false
+         AND ${followUpAttentionAllowedSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -424,7 +425,7 @@ async function getNextCandidateDueAt({
          LIMIT 1
        ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
-         AND c.needs_attention = false
+         AND ${followUpAttentionAllowedSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -652,7 +653,7 @@ async function saveIfStillEligible({
        LIMIT 1
      ) latest_lead ON true
      WHERE c.id = $1
-       AND c.needs_attention = false
+       AND ${followUpAttentionAllowedSql("c")}
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
@@ -926,7 +927,7 @@ async function recordAiDecisionIfStillEligible({
        LEFT JOIN previous_follow_up ON true
        LEFT JOIN latest_lead ON true
        WHERE c.id = $1
-         AND c.needs_attention = false
+         AND ${followUpAttentionAllowedSql("c")}
          AND anchor.id = $2
          AND anchor.delivery_status IS DISTINCT FROM 'failed'
          AND (
@@ -1071,7 +1072,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
          ORDER BY l.created_at DESC, l.id DESC
          LIMIT 1
        ) latest_lead ON true
-       WHERE c.needs_attention = false
+       WHERE ${followUpAttentionAllowedSql("c")}
          AND NOT EXISTS (
            SELECT 1
            FROM follow_up_ai_decisions decision
