@@ -273,7 +273,8 @@ export default function WhatsAppTemplateModal({
   }
 
   async function sendTemplate() {
-    if (!selected || !catalog?.eligibility?.allowed || !billingAcknowledged) return;
+    if (!selected || !catalog?.eligibility?.allowed || !billingAcknowledged ||
+        !catalog?.billingAdvisory?.reviewToken) return;
     setSending(true);
     setActionError("");
     try {
@@ -285,13 +286,28 @@ export default function WhatsAppTemplateModal({
           selected.category === "MARKETING"
             ? marketingConsentConfirmed
             : false,
+        billingAcknowledged: true,
+        billingReviewToken: catalog?.billingAdvisory?.reviewToken,
         ...(mediaSelectionId && !mediaFile ? { mediaSelectionId } : {}),
       }, mediaFile);
       onSent?.(result);
       onClose();
     } catch (err) {
+      if (err.code?.startsWith("billing_")) {
+        // Keep the selected template and upload intact; staff must review the
+        // changed/expired server evidence and explicitly check the box again.
+        setBillingAcknowledged(false);
+        if (err.billingAdvisory) {
+          setCatalog((current) => current
+            ? { ...current, billingAdvisory: err.billingAdvisory }
+            : current);
+        } else {
+          await loadCatalog();
+        }
+      } else if (err.policyBlocked) {
+        await loadCatalog();
+      }
       setActionError(err.message || "Couldn't send this WhatsApp template.");
-      if (err.policyBlocked) await loadCatalog();
     } finally {
       setSending(false);
     }
@@ -328,6 +344,7 @@ export default function WhatsAppTemplateModal({
     allValuesFilled &&
     (selected?.category !== "MARKETING" || marketingConsentConfirmed) &&
     billingAcknowledged &&
+    Boolean(catalog?.billingAdvisory?.reviewToken) &&
     !sending;
 
   return (
@@ -583,7 +600,9 @@ export default function WhatsAppTemplateModal({
                   <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-amber-900">
                     <p className="text-xs font-bold">Meta billing — this template may cost money</p>
                     <p className="mt-1.5 text-[11px] leading-5">
-                      {catalog?.billingAdvisory?.evidence === "no_ctwa_referral"
+                      {catalog?.billingAdvisory?.evidence === "recent_billable_message"
+                        ? "Meta has already classified a recent message in this conversation as billable. Another template may also incur a charge."
+                        : catalog?.billingAdvisory?.evidence === "no_ctwa_referral"
                         ? "No qualifying Click-to-WhatsApp ad referral is recorded for this contact. Templates outside the 24-hour reply window may be billed at regular rates."
                         : catalog?.billingAdvisory?.evidence === "ctwa_unverified_or_expired"
                           ? "An ad referral exists, but no recent confirmed free-entry billing period was found. This template may be billed."
