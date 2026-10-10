@@ -352,7 +352,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
-        billingAdvisory: { evidence: "no_ctwa_referral", reviewToken: "test-review-token", reviewedAt: new Date().toISOString() },
+        billingAdvisory: { evidence: "no_ctwa_referral", reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
