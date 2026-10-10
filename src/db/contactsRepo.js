@@ -530,8 +530,8 @@ async function clearStaffAssistStateIfUnchanged(contact) {
 
   const result = await pool.query(
     `UPDATE contacts
-     SET needs_attention = false,
-         attention_reason = NULL,
+     SET needs_attention = CASE WHEN attention_reason LIKE 'AI review requested:%' THEN needs_attention ELSE false END,
+         attention_reason = CASE WHEN attention_reason LIKE 'AI review requested:%' THEN attention_reason ELSE NULL END,
          is_unread = false,
          updated_at = now()
      WHERE id = $1
@@ -595,6 +595,42 @@ async function setAttention(
     }
   }
   return updated;
+}
+
+// Flag an unanswered issue while keeping AI ownership intact. Do not replace an
+// existing safety/booking/delivery alert or generate repeat notifications when a
+// customer asks further questions. Review is dismissed explicitly in the Inbox.
+async function setAiReviewAttention(id, reason = "Staff should verify the latest unanswered question.") {
+  const result = await pool.query(
+    `UPDATE contacts c
+     SET needs_attention = true,
+         attention_reason = $2,
+         updated_at = now()
+     WHERE c.id = $1 AND c.mode = 'ai' AND c.needs_attention = false
+     RETURNING c.*,
+       (SELECT m.id FROM messages m
+        WHERE m.contact_id = c.id AND m.role = 'user'
+        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
+    [id, `AI review requested: ${reason}`]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) {
+    publishContactChange(updated.id);
+    notifyTelegram(
+      telegramImmediateAlerts.sendHumanInterventionAlert({
+        contactId: updated.id,
+        messageId: updated.attention_message_id,
+        reason: updated.attention_reason,
+      }),
+      "AI review",
+      updated.id
+    );
+    notifyWebPush(updated.id, "human_intervention");
+    return updated;
+  }
+  // If attention already exists, preserve its higher-priority reason. If staff
+  // took ownership during generation, the caller's final guard will block AI.
+  return getContactById(id);
 }
 
 // Delivery problems should not replace a more important reason that already
@@ -724,6 +760,7 @@ module.exports = {
   returnToAi,
   clearStaffAssistStateIfUnchanged,
   setAttention,
+  setAiReviewAttention,
   setTemporaryAiAttention,
   clearTemporaryAiAttention,
   setDeliveryAttention,
