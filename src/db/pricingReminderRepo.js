@@ -38,10 +38,11 @@ WITH eligible AS (
        'media_url', media.media_url, 'content', media.content,
        'delivery_status', media.delivery_status, 'whatsapp_message_id', media.whatsapp_message_id,
        'social_accepted_at', media.social_accepted_at,
-       -- Older social replies can have a NULL status despite Meta accepting
+       -- Older social replies can have a NULL/pending status despite Meta accepting
        -- both the separate caption and image. Require both provider receipts.
        'social_provider_id_count', CASE
-         WHEN c.channel IN ('facebook','instagram') AND media.delivery_status IS NULL
+         WHEN c.channel IN ('facebook','instagram') AND
+           (media.delivery_status IS NULL OR media.delivery_status = 'pending')
          THEN (SELECT COUNT(DISTINCT s.provider_message_id)::integer
            FROM social_provider_message_ids s
            WHERE s.message_id = media.id AND s.contact_id = c.id
@@ -49,7 +50,8 @@ WITH eligible AS (
              AND s.provider_message_id LIKE (c.channel || ':%'))
          ELSE 0 END,
        'social_final_id_recorded', CASE
-         WHEN c.channel IN ('facebook','instagram') AND media.delivery_status IS NULL
+         WHEN c.channel IN ('facebook','instagram') AND
+           (media.delivery_status IS NULL OR media.delivery_status = 'pending')
          THEN EXISTS (
            SELECT 1 FROM social_provider_message_ids s
            WHERE s.message_id = media.id AND s.contact_id = c.id
