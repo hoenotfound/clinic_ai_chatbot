@@ -493,7 +493,9 @@ async function takeOver(id, staffUsername) {
      ), takeover AS (
        UPDATE contacts c
        SET mode = 'human', takeover_by = $1, takeover_at = now(),
-           needs_attention = false, attention_reason = NULL, is_unread = false,
+           needs_attention = CASE WHEN c.attention_reason LIKE 'AI review requested:%' THEN true ELSE false END,
+           attention_reason = CASE WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason ELSE NULL END,
+           is_unread = false,
            updated_at = now()
        FROM current_contact
        WHERE c.id = current_contact.id
