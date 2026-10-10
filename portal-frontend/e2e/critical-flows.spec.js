@@ -352,6 +352,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
+        billingAdvisory: { evidence: "no_ctwa_referral", reviewToken: "test-review-token", reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
@@ -977,6 +978,8 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
     languageCode: "en_US",
     values: { header: [], body: ["Alex"] },
     marketingConsentConfirmed: true,
+    billingAcknowledged: true,
+    billingReviewToken: "test-review-token",
   });
   expectNoUnexpectedApi(apiState);
 });
