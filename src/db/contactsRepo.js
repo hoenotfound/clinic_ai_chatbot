@@ -379,6 +379,8 @@ async function listConversations() {
       c.takeover_at,
       c.needs_attention,
       c.attention_reason,
+      (SELECT COUNT(*)::integer FROM ai_review_items r
+       WHERE r.contact_id = c.id AND r.status = 'pending') AS pending_review_count,
       c.is_unread,
       c.needs_follow_up,
       c.whatsapp_opt_in_at,
@@ -597,40 +599,92 @@ async function setAttention(
   return updated;
 }
 
-// Flag an unanswered issue while keeping AI ownership intact. Do not replace an
-// existing safety/booking/delivery alert or generate repeat notifications when a
-// customer asks further questions. Review is dismissed explicitly in the Inbox.
-async function setAiReviewAttention(id, reason = "Staff should verify the latest unanswered question.") {
+// Every unresolved question gets one durable row keyed by its inbound message.
+// Keep the contact AI-owned. Concurrent duplicate webhook jobs cannot create
+// duplicate questions or trigger another staff alert.
+async function setAiReviewAttention(id, inboundMessageId, summary, category = "clinical") {
+  if (!Number.isSafeInteger(Number(inboundMessageId)) || Number(inboundMessageId) < 1) {
+    throw new Error("AI review requires the original inbound message ID.");
+  }
+  const safeSummary = String(summary || "Unanswered customer question").trim().slice(0, 350);
+  const safeCategory = category === "information" ? "information" : "clinical";
   const result = await pool.query(
-    `UPDATE contacts c
-     SET needs_attention = true,
-         attention_reason = $2,
+    `WITH eligible AS MATERIALIZED (
+       SELECT c.id FROM contacts c
+       WHERE c.id = $1 AND c.mode = 'ai'
+       FOR UPDATE
+     ), inserted AS (
+       INSERT INTO ai_review_items (contact_id, inbound_message_id, summary, category)
+       SELECT eligible.id, m.id, $3, $4
+       FROM eligible
+       JOIN messages m ON m.contact_id = eligible.id
+         AND m.id = $2 AND m.role = 'user'
+       ON CONFLICT (contact_id, inbound_message_id) DO NOTHING
+       RETURNING id, contact_id, inbound_message_id
+     ), updated AS (
+       UPDATE contacts c SET
+         needs_attention = true,
+         attention_reason = CASE
+           WHEN c.needs_attention = true
+             AND c.attention_reason NOT LIKE 'AI review requested:%'
+           THEN c.attention_reason
+           WHEN c.attention_reason LIKE 'AI review requested:%'
+           THEN 'AI review requested: ' ||
+             RIGHT(COALESCE(SUBSTRING(c.attention_reason FROM
+                 CHAR_LENGTH('AI review requested: ') + 1), '') ||
+               E'\\n' || '[#' || $2::text || '] ' || $3, 1600)
+           ELSE 'AI review requested: [#' || $2::text || '] ' || $3
+         END,
          updated_at = now()
-     WHERE c.id = $1 AND c.mode = 'ai' AND c.needs_attention = false
-     RETURNING c.*,
-       (SELECT m.id FROM messages m
-        WHERE m.contact_id = c.id AND m.role = 'user'
-        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
-    [id, `AI review requested: ${reason}`]
+       FROM inserted
+       WHERE c.id = inserted.contact_id
+       RETURNING c.*
+     )
+     SELECT updated.*, inserted.id AS ai_review_id,
+            inserted.inbound_message_id AS attention_message_id
+     FROM updated JOIN inserted ON inserted.contact_id = updated.id`,
+    [id, Number(inboundMessageId), safeSummary, safeCategory]
   );
   const updated = result.rows[0] || null;
-  if (updated) {
-    publishContactChange(updated.id);
-    notifyTelegram(
-      telegramImmediateAlerts.sendHumanInterventionAlert({
-        contactId: updated.id,
-        messageId: updated.attention_message_id,
-        reason: updated.attention_reason,
-      }),
-      "AI review",
-      updated.id
-    );
-    notifyWebPush(updated.id, "human_intervention");
-    return updated;
-  }
-  // If attention already exists, preserve its higher-priority reason. If staff
-  // took ownership during generation, the caller's final guard will block AI.
-  return getContactById(id);
+  if (!updated) return getContactById(id);
+  publishContactChange(updated.id);
+  notifyTelegram(
+    telegramImmediateAlerts.sendHumanInterventionAlert({
+      contactId: updated.id,
+      messageId: updated.attention_message_id,
+      reason: `AI review requested: [#${inboundMessageId}] ${safeSummary}`,
+    }),
+    "AI review",
+    updated.id
+  );
+  notifyWebPush(updated.id, "human_intervention");
+  return updated;
+}
+
+// Explicit Inbox dismissal resolves all pending question records and their
+// Attention indicator as one serialized operation. Future incoming questions
+// can create fresh reviews; no other staff send implicitly clears them.
+async function dismissAttentionAndReviews(id) {
+  const result = await pool.query(
+    `WITH locked AS MATERIALIZED (
+       SELECT id FROM contacts WHERE id = $1 FOR UPDATE
+     ), resolved AS (
+       UPDATE ai_review_items r
+       SET status = 'resolved', resolved_at = now()
+       FROM locked WHERE r.contact_id = locked.id AND r.status = 'pending'
+       RETURNING r.id
+     ), cleared AS (
+       UPDATE contacts c
+       SET needs_attention = false, attention_reason = NULL, updated_at = now()
+       FROM locked WHERE c.id = locked.id
+       RETURNING c.*
+     )
+     SELECT cleared.* FROM cleared`,
+    [id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
 }
 
 // Delivery problems should not replace a more important reason that already
@@ -761,6 +815,7 @@ module.exports = {
   clearStaffAssistStateIfUnchanged,
   setAttention,
   setAiReviewAttention,
+  dismissAttentionAndReviews,
   setTemporaryAiAttention,
   clearTemporaryAiAttention,
   setDeliveryAttention,
