@@ -62,6 +62,20 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
       {inbound_message_id:10,category:"information"},
       {inbound_message_id:11,category:"clinical"},
     ]);
+    // Staff takeover can clear the visible alert without resolving the
+    // individual question records. Returning to AI must restore those reviews,
+    // and a pending clinical question must still block unsolicited follow-ups.
+    await client.query("UPDATE contacts SET mode='human', needs_attention=false, attention_reason=NULL WHERE id=1");
+    let permissionAfterTakeover = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(permissionAfterTakeover.rows[0].allowed,false);
+    const returnedToAi = await contacts.returnToAi(1);
+    assert.equal(returnedToAi.mode,"ai");
+    assert.equal(returnedToAi.needs_attention,true);
+    assert.ok(returnedToAi.attention_reason.includes("#10"));
+    assert.ok(returnedToAi.attention_reason.includes("#11"));
+    permissionAfterTakeover = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(permissionAfterTakeover.rows[0].allowed,false);
+
     const resolvedContact = await contacts.dismissAttentionAndReviews(1);
     assert.equal(resolvedContact.needs_attention,false);
     const resolved = await client.query("SELECT count(*)::int AS n FROM ai_review_items WHERE status='resolved'");
