@@ -16,7 +16,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
   const client = new Client({ connectionString: process.env.TEST_DATABASE_URL, ssl: false });
   const schema = `ai_review_${process.pid}_${Date.now()}`;
   const oldQuery = pool.query;
-  const oldTelegram = telegram.sendHumanInterventionAlert;
+  const oldTelegram = telegram.sendAiReviewAlert;
   const oldPush = push.sendContactAlertBestEffort;
   await client.connect();
   try {
@@ -38,7 +38,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     `);
     let notified = 0;
     pool.query = (...args) => client.query(...args);
-    telegram.sendHumanInterventionAlert = async () => { notified++; return {status:"queued"}; };
+    telegram.sendAiReviewAlert = async () => { notified++; return {status:"queued"}; };
     push.sendContactAlertBestEffort = () => {};
 
     const first = await contacts.setAiReviewAttention(1,10,"Card payment?","information");
@@ -76,6 +76,18 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     permissionAfterTakeover = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(permissionAfterTakeover.rows[0].allowed,false);
 
+    const reviewToResolve = await client.query(
+      "SELECT id FROM ai_review_items WHERE inbound_message_id=10"
+    );
+    const individuallyResolved = await contacts.resolveAiReviewItem(1, reviewToResolve.rows[0].id);
+    assert.equal(individuallyResolved.needs_attention, true);
+    assert.ok(!individuallyResolved.attention_reason.includes("#10"));
+    assert.ok(individuallyResolved.attention_reason.includes("#11"));
+    permissionAfterTakeover = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(permissionAfterTakeover.rows[0].allowed, false);
+    // Re-resolving is a no-op; a second review must never be cleared.
+    assert.equal(await contacts.resolveAiReviewItem(1, reviewToResolve.rows[0].id), null);
+
     const resolvedContact = await contacts.dismissAttentionAndReviews(1);
     assert.equal(resolvedContact.needs_attention,false);
     const resolved = await client.query("SELECT count(*)::int AS n FROM ai_review_items WHERE status='resolved'");
@@ -86,7 +98,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(current.rows[0].n,1);
   } finally {
     pool.query = oldQuery;
-    telegram.sendHumanInterventionAlert = oldTelegram;
+    telegram.sendAiReviewAlert = oldTelegram;
     push.sendContactAlertBestEffort = oldPush;
     await client.query("SET search_path TO public").catch(() => {});
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
