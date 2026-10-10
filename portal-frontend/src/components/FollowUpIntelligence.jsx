@@ -24,7 +24,9 @@ export default function FollowUpIntelligence({ report }) {
         </div>
       )}
       {intelligence.total > 0 && (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <>
+        <p className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs font-semibold leading-5">Comparison rates are observational only, not reliable winners or recommendations to change follow-up timing or messages. Customer mix and sample variation can explain differences.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {intelligence.insights.map(insight => (
             <div key={insight.dimension} className="rounded-lg border border-[var(--color-border)] p-3">
               <h4 className="text-xs font-semibold">{insight.title}</h4>
@@ -41,6 +43,7 @@ export default function FollowUpIntelligence({ report }) {
             </div>
           ))}
         </div>
+        </>
       )}
       <p className="mt-4 text-xs leading-5 text-[var(--color-text-muted)]">
         Minimum per comparison group: {MIN_MATURE_SENDS} complete 72-hour sends and {MIN_REPLIES} first replies.
