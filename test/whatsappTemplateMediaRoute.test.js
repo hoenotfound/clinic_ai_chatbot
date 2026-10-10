@@ -52,6 +52,9 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true, templateN
   patch(t, billingAdvisory, "validateBillingAcknowledgment", async () => ({
     allowed: true, evidence: "no_ctwa_referral", reviewedAt: new Date().toISOString(),
   }));
+  patch(t, billingAdvisory, "claimBillingReviewOnce", async () => ({
+    claimed: true, tokenHash: "a".repeat(64),
+  }));
   patch(t, alertRepo, "withContactAlertLock", async (_contactId, work) => work());
   patch(t, conversationStore, "appendMessageForContact",
     async (_contactId, role, preview, _wamid, _username, mediaUrl, mediaAttachment, options) => {
@@ -167,6 +170,38 @@ test("Inbox rechecks billing before send and refuses changed evidence without pe
   assert.equal(h.events.saved.length, 0);
 });
 
+
+test("Inbox prevents a used billing token from creating a second template message", async (t) => {
+  const h = await harness(t);
+  let claims = 0;
+  patch(t, billingAdvisory, "claimBillingReviewOnce", async () =>
+    ++claims === 1
+      ? { claimed: true, tokenHash: "b".repeat(64) }
+      : { claimed: false, code: "billing_review_already_used" }
+  );
+  patch(t, billingAdvisory, "getTemplateBillingAdvisory", async () => ({
+    evidence: "no_ctwa_referral",
+    reviewTokens: { "clinic_test::en_US": "new-token" },
+  }));
+  const makeBody = () => {
+    const form = new FormData();
+    form.append("templateName", "clinic_test");
+    form.append("languageCode", "en_US");
+    form.append("marketingConsentConfirmed", "true");
+    form.append("media", new Blob([png], { type: "image/png" }), "offer.png");
+    return form;
+  };
+  const first = await h.post(makeBody());
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  assert.equal(h.events.metaSends, 1);
+  const duplicate = await h.post(makeBody());
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.body.code, "billing_review_already_used");
+  assert.equal(h.events.metaSends, 1);
+  assert.equal(h.events.saved.length, 1);
+  assert.equal(h.events.saved[0].whatsapp_template.billingReviewClaimHash,"b".repeat(64));
+});
+
 test("Inbox multipart image flow persists one R2 object then sends a Meta media header", async (t) => {
   const h = await harness(t);
   const form = new FormData();
@@ -280,7 +315,7 @@ test("Meta upload failure leaves shared content-addressed media for safe referen
   assert.equal(h.events.saved.length, 0);
 });
 
-test("Inbox retries an image template using its saved private R2 key", async (t) => {
+test("Inbox rejects image-template Retry and requires a fresh billing review", async (t) => {
   const h = await harness(t);
   const originalMediaKey = "messages/7/template-media.png";
   const savedRow = {
@@ -304,10 +339,10 @@ test("Inbox retries an image template using its saved private R2 key", async (t)
     return png;
   });
   const result = await h.retry();
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.accepted, true);
-  assert.equal(h.events.metaUploads, 1);
-  assert.equal(h.events.metaSends, 1);
+  assert.equal(result.status, 409, JSON.stringify(result.body));
+  assert.equal(result.body.code, "template_retry_requires_billing_review");
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.metaSends, 0);
   assert.equal(h.events.r2Uploads, 0);
 });
 
