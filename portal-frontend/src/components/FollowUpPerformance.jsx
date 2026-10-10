@@ -30,6 +30,7 @@ function metric(v, title, subtitle) {
   );
 }
 function Breakdown({ rows, title, note, dimension }) {
+  const [showAll, setShowAll] = useState(false);
   if (!rows.length) return (
     <section className="rounded-xl border border-[var(--color-border)] p-4">
       <h3 className="text-sm font-bold">{title}</h3>
@@ -52,7 +53,7 @@ function Breakdown({ rows, title, note, dimension }) {
             {["Group", "Accepted", "Reply · 72h", "Appointment · 7d", "Visit · 7d", "Won · 7d", "Avg reply · mature"].map(s =>
               <th key={s} className="px-2 py-2 font-semibold whitespace-nowrap">{s}</th>)}
           </tr></thead>
-          <tbody>{ordered.slice(0, dimension === "hour" ? 24 : 30).map((v) =>
+          <tbody>{(showAll ? ordered : ordered.slice(0, dimension === "hour" ? 24 : 30)).map((v) =>
             <tr key={v.label} className="border-b border-[var(--color-border)]">
               <td className="px-2 py-2 font-semibold">{dimension === "hour" ? formatHour(v.label) : v.label}</td>
               <td className="px-2 py-2 tabular-nums">{v.sent}</td>
@@ -73,6 +74,7 @@ function Breakdown({ rows, title, note, dimension }) {
           </tbody>
         </table>
       </div>
+      {ordered.length > 30 && dimension !== "hour" && <button type="button" className="mt-3 rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-semibold" onClick={() => setShowAll(value => !value)}>{showAll ? "Show fewer groups" : `Show all ${ordered.length} groups`}</button>}
     </section>
   );
 }
@@ -133,7 +135,7 @@ export default function FollowUpPerformance({ active }) {
         {data && (
           <>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-              {metric(data.summary.sent, "Accepted follow-ups", `${data.summary.contacts} distinct contacts`)}
+              {metric(data.summary.sent, "Accepted follow-ups", `${data.summary.contacts} distinct contacts · ${data.summary.reply_matured} reply-mature · ${data.summary.milestone_matured} milestone-mature`)}
               {metric(pct(data.summary.replied_matured, data.summary.reply_matured), "72-hour reply rate",
                 ratio(data.summary.replied_matured, data.summary.reply_matured) + " mature sends")}
               {metric(pct(data.summary.appointments_matured, data.summary.milestone_matured), "7-day appointment rate",
@@ -142,15 +144,15 @@ export default function FollowUpPerformance({ active }) {
                 ratio(data.summary.visits_matured, data.summary.milestone_matured) + " mature sends")}
               {metric(pct(data.summary.won_matured, data.summary.milestone_matured), "7-day won rate",
                 ratio(data.summary.won_matured, data.summary.milestone_matured) + " mature sends")}
-              {metric(data.summary.replied_observed, "Replies observed", "Includes early, incomplete observation windows")}
+              {metric(data.summary.replied_observed, "Follow-ups with a first reply", "First customer response within 72 hours, including immature sends")}
             </div>
             <div className="mt-4 rounded-lg border border-[var(--color-border)] p-3 text-xs leading-5 text-[var(--color-text-muted)]">
               <strong>How attribution works:</strong> One accepted follow-up or pricing message counts as one touch.
-              Separately sent media is not counted again. Each subsequent reply or pipeline stage change
+              Separately sent media is not counted again. The first customer reply, or each pipeline stage change
               is assigned to the most recent eligible follow-up, ending at the next touch. Reply rates use only
               sends at least 72 hours old; appointment, visit and won rates use sends at least 7 days old. Average reply time uses mature sends only.
-              Pipeline changes are staff-recorded milestones, not guaranteed appointments or sales.
-              A dash means there is not yet a mature sample. New leads and newer follow-ups can affect outcomes.
+              Later stages count as reaching earlier stages. Pipeline changes are staff-recorded milestones, not guaranteed appointments or sales.
+              The selected period is based on send dates, not outcome dates. A dash means there is not yet a mature sample. New leads and newer follow-ups can affect outcomes.
             </div>
           </>
         )}
