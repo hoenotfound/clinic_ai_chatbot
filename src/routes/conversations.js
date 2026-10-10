@@ -1102,6 +1102,7 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
     try {
       billingAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id, {
         staffUsername: req.session?.username,
+        templates: catalog.templates,
       });
     } catch (error) {
       console.warn("WhatsApp template billing evidence could not be checked:", error?.message);
@@ -1539,6 +1540,35 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     }
     if (!billingReview.allowed) return rejectBilling(billingReview);
 
+    // Consume the template/language-specific review before writing a message
+    // or contacting Meta. Replaying the same acknowledged request, including
+    // after a crash or timeout, can never authorize a second template send.
+    let billingClaim;
+    try {
+      billingClaim = await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
+        contact.id, req.session?.username, billingReviewBody
+      );
+    } catch (error) {
+      console.warn("WhatsApp billing claim failed:", error?.message);
+      return res.status(503).json({
+        code: "billing_claim_unavailable",
+        error: "Could not safely reserve this one-time billing confirmation. No template was sent.",
+      });
+    }
+    if (!billingClaim.claimed) {
+      // Return a fresh review rather than encouraging a retry of the same
+      // possibly-delivered WhatsApp message.
+      const nextAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id, {
+        staffUsername: req.session?.username,
+        templates: [resolved.template].map((t) => ({ ...t, sendable: true })),
+      });
+      return res.status(409).json({
+        code: billingClaim.code || "billing_review_already_used",
+        error: "This billing confirmation has already been used or expired. Check the conversation for delivery before sending another template.",
+        billingAdvisory: nextAdvisory,
+      });
+    }
+
     const metadata = {
       name: resolved.template.name,
       language: resolved.template.language,
@@ -1551,6 +1581,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       billingAcknowledged: true,
       billingEvidenceAtSend: billingReview.evidence,
       billingReviewedAt: billingReview.reviewedAt,
+      billingReviewClaimHash: billingClaim.tokenHash,
       marketingConsentConfirmed:
         resolved.template.category === "MARKETING"
           ? true
@@ -1581,7 +1612,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
             whatsappTemplate: metadata,
             initialDeliveryStatus: "unknown",
             initialDeliveryError:
-              "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
+              "Template send started, but delivery has not been confirmed. Check WhatsApp delivery before reviewing a new template send.",
             publish: false,
           }
         );
@@ -1693,240 +1724,44 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
+    if (message.whatsapp_template) {
+      // Retrying a saved template could incur a NEW Meta charge, or duplicate
+      // an earlier unknown delivery. Require a fresh template-specific signed
+      // billing review in the normal Inbox picker, not the generic Retry API.
+      return res.status(409).json({
+        code: "template_retry_requires_billing_review",
+        error: "WhatsApp templates cannot be retried directly. Check whether Meta already delivered this message, then use Send WhatsApp template to review billing and consent again.",
+      });
+    }
+
     const isManualStaffRetry =
       Boolean(message.sent_by_username) &&
       message.is_automated_follow_up !== true &&
       message.is_scheduled_message !== true;
-    let performRetrySend = null;
+    const retryPurpose =
+      message.is_automated_follow_up === true
+        ? "marketing"
+        : message.sent_by_username &&
+            message.is_scheduled_message !== true
+          ? whatsappPolicy.manualStaffPurpose(contact)
+          : "service";
+    if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
-    if (message.whatsapp_template) {
-      if ((contact.channel || "whatsapp") !== "whatsapp") {
-        return res.status(409).json({
-          error: "Saved WhatsApp templates can only be retried on WhatsApp contacts.",
-        });
-      }
-
-      let templatePolicy;
-      try {
-        templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact);
-      } catch (err) {
-        console.error("Failed to verify WhatsApp template retry policy:", err);
-        return res.status(503).json({
-          error: "WhatsApp template policy could not be verified. Please try again shortly.",
-          code: "policy_state_unavailable",
-          policyBlocked: true,
-        });
-      }
-      if (!templatePolicy.allowed) {
-        return res.status(403).json({
-          error: templatePolicy.message,
-          code: templatePolicy.code,
-          policyBlocked: true,
-        });
-      }
-
-      const currentTemplate = await whatsappTemplate.resolveApprovedTemplate(
-        message.whatsapp_template.name,
-        message.whatsapp_template.language,
-        { force: true }
-      );
-      if (!currentTemplate.success) {
-        return res.status(409).json({
-          error:
-            currentTemplate.code === "template_not_available"
-              ? "This WhatsApp template is no longer approved or available. Choose another approved template instead."
-              : currentTemplate.error,
-          code: currentTemplate.code,
-        });
-      }
-
-      try {
-        templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
-          category: currentTemplate.template.category,
-        });
-      } catch (err) {
-        console.error("Failed to verify category-specific WhatsApp template retry policy:", err);
-        return res.status(503).json({
-          error: "WhatsApp template policy could not be verified. Please try again shortly.",
-          code: "policy_state_unavailable",
-          policyBlocked: true,
-        });
-      }
-      if (!templatePolicy.allowed) {
-        return res.status(403).json({
-          error:
-            templatePolicy.code === "marketing_opted_out"
-              ? "This customer opted out of WhatsApp marketing. Record a new explicit opt-in that covers marketing and send the template again from the picker."
-              : templatePolicy.message,
-          code: templatePolicy.code,
-          policyBlocked: true,
-        });
-      }
-
-      const savedTemplateSignature = String(
-        message.whatsapp_template.templateSignature || ""
-      );
-      const currentTemplateSignature = whatsappTemplate.templateSignature(
-        currentTemplate.template
-      );
-      if (
-        !savedTemplateSignature ||
-        savedTemplateSignature !== currentTemplateSignature
-      ) {
-        return res.status(409).json({
-          error:
-            "This WhatsApp template changed since the failed send. Open the template picker, review the current approved version, and send it again.",
-          code: "template_definition_changed",
-        });
-      }
-
-      const rebuiltTemplate = whatsappTemplate.buildTemplateComponents(
-        currentTemplate.template,
-        message.whatsapp_template.values || {},
-        { allowMissingMedia: true }
-      );
-      if (!rebuiltTemplate.valid) {
-        return res.status(409).json({
-          error:
-            "The saved template values no longer fit the current approved template. Send it again from the template picker.",
-          code: "template_values_changed",
-        });
-      }
-
-      if (currentTemplate.template.category === "MARKETING") {
-        const savedConsentOptInAt = whatsappTemplate.policyTimestamp(
-          message.whatsapp_template.consentOptInAt
-        );
-        const currentConsentOptInAt = whatsappTemplate.policyTimestamp(
-          templatePolicy.state?.whatsapp_opt_in_at
-        );
-        if (
-          message.whatsapp_template.marketingConsentConfirmed !== true ||
-          !savedConsentOptInAt ||
-          !currentConsentOptInAt ||
-          savedConsentOptInAt !== currentConsentOptInAt
-        ) {
-          return res.status(409).json({
-            error:
-              "The customer's WhatsApp marketing consent has changed since this template was first attempted. Send it again from the template picker and reconfirm marketing consent.",
-            code: "marketing_consent_reconfirmation_required",
-          });
-        }
-      }
-
-      const retryFormat = currentTemplate.template.header?.format || "TEXT";
-      const retryMediaSelectionId = message.whatsapp_template.mediaSelectionId || null;
-      try {
-        whatsappTemplateMedia.validateTemplateMediaChoice(
-          currentTemplate.template.name,
-          currentTemplate.template.language,
-          retryMediaSelectionId,
-          message.whatsapp_template.values || {}
-        );
-      } catch (error) {
-        return res.status(409).json({
-          code: error.code || "template_media_mismatch",
-          error: error.message || "The selected clinic media is no longer eligible.",
-        });
-      }
-      if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
-        if (retryMediaSelectionId) {
-          const selected = whatsappTemplateMedia.listReusableMedia()
-            .find((item) => item.id === retryMediaSelectionId && item.format === retryFormat);
-          if (!selected || (selected.mediaKey && selected.mediaKey !== message.media_key) ||
-              (selected.imageId && message.media_url !== "/promo-images/" + selected.imageId)) {
-            return res.status(409).json({
-              code: "template_media_changed",
-              error: "The shared media or promotion changed. Choose the approved template and review the current asset before sending.",
-            });
-          }
-        } else {
-          const expectedMime = retryFormat === "VIDEO" ? "video/mp4" : null;
-          if (!message.media_key ||
-              !mediaStorage.isOwnedStoredMediaKey(message.media_key) ||
-              (expectedMime && message.media_mime_type !== expectedMime) ||
-              (retryFormat === "IMAGE" && !WHATSAPP_IMAGE_MIME_TYPES.has(message.media_mime_type))) {
-            return res.status(409).json({
-              code: "template_media_missing",
-              error: "The original template attachment is unavailable. Choose the approved template and attach the file again.",
-            });
-          }
-        }
-        if (message.whatsapp_template.mediaFormat !== retryFormat) {
-          return res.status(409).json({
-            code: "template_media_format_changed",
-            error: "The saved template media format is different. Review and send again from the template picker.",
-          });
-        }
-      }
-      performRetrySend = async (activeContact) => {
-        let components = rebuiltTemplate.components;
-        if (retryFormat === "IMAGE" || retryFormat === "VIDEO") {
-          let buffer;
-          let mimeType = message.media_mime_type;
-          let filename = message.whatsapp_template.mediaFilename || "template-media";
-          try {
-            if (retryMediaSelectionId) {
-              const reused = await whatsappTemplateMedia.resolveReusableMedia(
-                retryMediaSelectionId, retryFormat
-              );
-              buffer = reused.buffer;
-              mimeType = reused.mimeType;
-              filename = reused.filename;
-            } else {
-              buffer = await mediaStorage.downloadMedia(message.media_key, {
-                maxBytes: retryFormat === "IMAGE" ? WHATSAPP_IMAGE_MAX_BYTES : 16 * 1024 * 1024,
-              });
-            }
-          } catch (err) {
-            return { success: false, error: "The original template attachment could not be loaded or is no longer eligible." };
-          }
-          if (!buffer?.length) return { success: false, error: "The original template attachment is empty." };
-          const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
-          if (!mediaId) return { success: false, error: "WhatsApp could not re-upload the template attachment." };
-          const withMedia = whatsappTemplate.buildTemplateComponents(
-            currentTemplate.template, message.whatsapp_template.values || {}, { media: { id: mediaId } }
-          );
-          if (!withMedia.valid) return { success: false, error: withMedia.error };
-          components = withMedia.components;
-        }
-        return whatsappTemplate.sendApprovedTemplate(activeContact, {
-          templateName: message.whatsapp_template.name,
-          languageCode: message.whatsapp_template.language,
-          components,
-          expectedOptInAt:
-            currentTemplate.template.category === "MARKETING"
-              ? message.whatsapp_template.consentOptInAt
-              : null,
-          templateCategory: currentTemplate.template.category,
-        });
-      };
-    } else {
-      const retryPurpose =
-        message.is_automated_follow_up === true
-          ? "marketing"
-          : message.sent_by_username &&
-              message.is_scheduled_message !== true
-            ? whatsappPolicy.manualStaffPurpose(contact)
-            : "service";
-      if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
-
-      if (isKnownWhatsAppVideoCodecFailure(contact, message)) {
-        return res.status(409).json({
-          error:
-            "This saved video was rejected by WhatsApp because its codec is not supported. Please send a new MP4 exported as H.264 video with AAC audio and keep it under 16MB.",
-          code: "video_requires_compatible_reupload",
-        });
-      }
-
-      performRetrySend = (activeContact) =>
-        sendStoredMessage(activeContact, message, {
-          purpose: retryPurpose,
-          ...(isManualStaffRetry
-            ? { requireStaffMode: activeContact.mode === "human" }
-            : {}),
-        });
+    if (isKnownWhatsAppVideoCodecFailure(contact, message)) {
+      return res.status(409).json({
+        error:
+          "This saved video was rejected by WhatsApp because its codec is not supported. Please send a new MP4 exported as H.264 video with AAC audio and keep it under 16MB.",
+        code: "video_requires_compatible_reupload",
+      });
     }
+
+    const performRetrySend = (activeContact) =>
+      sendStoredMessage(activeContact, message, {
+        purpose: retryPurpose,
+        ...(isManualStaffRetry
+          ? { requireStaffMode: activeContact.mode === "human" }
+          : {}),
+      });
 
     let sendResult;
     let updated;

@@ -352,7 +352,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
-        billingAdvisory: { evidence: "no_ctwa_referral", reviewToken: "test-review-token", reviewedAt: new Date().toISOString() },
+        billingAdvisory: { evidence: "no_ctwa_referral", reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
@@ -981,6 +981,115 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
     billingAcknowledged: true,
     billingReviewToken: "test-review-token",
   });
+  expectNoUnexpectedApi(apiState);
+});
+
+test("failed WhatsApp template opens original review and refreshes every billing token after 409", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      whatsapp_opt_in_at: oldInbound,
+      whatsapp_opt_in_source: "Customer explicitly agreed",
+    })],
+    initialMessages: [...inboundMessages(), {
+      id: 27, contact_id: 101, role: "assistant",
+      content: "Previous follow-up attempt",
+      created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      sent_by_username: "sales-test",
+      delivery_status: "failed",
+      delivery_error: "Test provider failure",
+      whatsapp_template: {
+        name: "lead_follow_up", language: "en_US",
+        category: "MARKETING",
+      },
+    }],
+  });
+
+  let catalogFetches = 0;
+  let attemptedSends = 0;
+  const stubTemplates = [
+    {
+      id: "tpl-alt", name: "alternate_offer", language: "en_US",
+      status: "APPROVED", category: "MARKETING", header: null,
+      body: { text: "Different offer for {{1}}" }, footer: null,
+      buttons: [], variableFields: [
+        { component: "body", index: 1, label: "Body {{1}}", example: "Alex" },
+      ], sendable: true, unsupportedReason: null,
+    },
+    {
+      id: "tpl-original", name: "lead_follow_up", language: "en_US",
+      status: "APPROVED", category: "MARKETING", header: null,
+      body: { text: "Original follow-up for {{1}}" }, footer: null,
+      buttons: [], variableFields: [
+        { component: "body", index: 1, label: "Body {{1}}", example: "Alex" },
+      ], sendable: true, unsupportedReason: null,
+    },
+  ];
+
+  await page.route("**/api/conversations/101/whatsapp-templates", async (route) => {
+    catalogFetches += 1;
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        billingAdvisory: {
+          evidence: "recent_billable_message",
+          reviewedAt: new Date().toISOString(),
+          reviewTokens: {
+            "lead_follow_up::en_US": "original-token-" + catalogFetches,
+            "alternate_offer::en_US": "alternate-token-" + catalogFetches,
+          },
+        },
+        templates: stubTemplates,
+        reusableMedia: [],
+        eligibility: { allowed: true, code: null, message: null },
+      }),
+    });
+  });
+  await page.route("**/api/conversations/101/whatsapp-templates/send", async (route) => {
+    attemptedSends += 1;
+    await route.fulfill({
+      status: 409, contentType: "application/json",
+      body: JSON.stringify({
+        code: "billing_review_already_used",
+        error: "Review already used: check delivery before trying another send.",
+        billingAdvisory: {
+          evidence: "recent_billable_message",
+          reviewTokens: { "lead_follow_up::en_US": "partial-only-token" },
+        },
+      }),
+    });
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await page.getByRole("button", { name: "Review & send new template" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
+  await expect(dialog.getByRole("heading", { name: "lead_follow_up", exact: true })).toBeVisible();
+  await expect(dialog.getByText(/This is a NEW send, not a retry/)).toBeVisible();
+  await expect(dialog.getByLabel("Body {{1}}")).toHaveValue("");
+  await expect(dialog.getByRole("button", { name: "Send template" })).toBeDisabled();
+
+  await dialog.getByLabel("Body {{1}}").fill("Alex");
+  await dialog.getByLabel("I confirm this customer's consent covers WhatsApp marketing.").check();
+  await dialog.getByLabel("I understand Meta may charge for this manual template send.").check();
+  await dialog.getByRole("button", { name: "Send template" }).click();
+
+  await expect(dialog.getByText(/Review already used/)).toBeVisible();
+  await expect(dialog.getByLabel("Body {{1}}")).toHaveValue("Alex");
+  await expect(dialog.getByLabel("I understand Meta may charge for this manual template send.")).not.toBeChecked();
+  await expect.poll(() => catalogFetches).toBeGreaterThanOrEqual(2);
+
+  await dialog.getByRole("button", { name: /alternate_offer/ }).click();
+  await expect(dialog.getByRole("heading", { name: "alternate_offer", exact: true })).toBeVisible();
+  await dialog.getByLabel("Body {{1}}").fill("Alex");
+  await dialog.getByLabel("I confirm this customer's consent covers WhatsApp marketing.").check();
+  await dialog.getByLabel("I understand Meta may charge for this manual template send.").check();
+  await expect(dialog.getByRole("button", { name: "Send template" })).toBeEnabled();
+  expect(attemptedSends).toBe(1);
   expectNoUnexpectedApi(apiState);
 });
 

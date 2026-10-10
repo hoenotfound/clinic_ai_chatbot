@@ -75,23 +75,28 @@ function secretForReview(env = process.env) {
 }
 
 function issueReviewToken(contactId, staffUsername, evidence, {
-  now = new Date(), env = process.env,
+  now = new Date(), env = process.env, templateName, languageCode,
 } = {}) {
   const secret = secretForReview(env);
   if (!VALID_EVIDENCE.has(evidence) || !Number.isSafeInteger(Number(contactId)) ||
       Number(contactId) <= 0 || !String(staffUsername || "").trim()) {
     throw new Error("Invalid billing review context.");
   }
+  if (!String(templateName || "").trim() || !String(languageCode || "").trim()) {
+    throw new Error("A billing review must identify the exact template and language.");
+  }
   const payload = Buffer.from(JSON.stringify({
-    v: 1, contactId: Number(contactId), staff: String(staffUsername),
+    v: 2, contactId: Number(contactId), staff: String(staffUsername),
     evidence, issuedAt: new Date(now).getTime(),
+    templateName: String(templateName), languageCode: String(languageCode),
+    nonce: crypto.randomUUID(),
   })).toString("base64url");
   const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
   return payload + "." + signature;
 }
 
 function verifyReviewToken(token, contactId, staffUsername, {
-  now = new Date(), env = process.env,
+  now = new Date(), env = process.env, templateName, languageCode,
 } = {}) {
   if (typeof token !== "string" || token.length > 2048 || token.length < 40) return null;
   const pieces = token.split(".");
@@ -104,8 +109,11 @@ function verifyReviewToken(token, contactId, staffUsername, {
   try {
     const review = JSON.parse(Buffer.from(pieces[0], "base64url").toString("utf8"));
     const age = new Date(now).getTime() - review.issuedAt;
-    if (review.v !== 1 || review.contactId !== Number(contactId) ||
+    if (review.v !== 2 || review.contactId !== Number(contactId) ||
         review.staff !== String(staffUsername || "") ||
+        review.templateName !== String(templateName || "") ||
+        review.languageCode !== String(languageCode || "") ||
+        typeof review.nonce !== "string" || review.nonce.length < 32 ||
         !VALID_EVIDENCE.has(review.evidence) ||
         !Number.isSafeInteger(review.issuedAt) || age < 0 || age > REVIEW_TTL_MS) return null;
     return review;
@@ -114,6 +122,7 @@ function verifyReviewToken(token, contactId, staffUsername, {
 
 async function getTemplateBillingAdvisory(contactId, {
   database = pool, now = new Date(), staffUsername = null, env = process.env,
+  templates = [],
 } = {}) {
   const id = Number(contactId);
   if (!Number.isSafeInteger(id) || id <= 0) return { evidence: "unknown" };
@@ -129,7 +138,17 @@ async function getTemplateBillingAdvisory(contactId, {
   return {
     evidence,
     reviewedAt: new Date(now).toISOString(),
-    reviewToken: issueReviewToken(id, staffUsername, evidence, { now, env }),
+    // Separate tokens for each approved template language. A token may never
+    // be reused for a different template, even via a forged direct API call.
+    reviewTokens: Object.fromEntries(templates
+      .filter((template) => template?.sendable === true &&
+        template.name && template.language)
+      .map((template) => [
+        template.name + "::" + template.language,
+        issueReviewToken(id, staffUsername, evidence, {
+          now, env, templateName: template.name, languageCode: template.language,
+        }),
+      ])),
   };
 }
 
@@ -143,10 +162,15 @@ async function validateBillingAcknowledgment(contactId, staffUsername, body, {
       error: "Review the possible Meta charge and confirm it before sending this template.",
     };
   }
+  const templateName = String(body?.templateName || "").trim();
+  const languageCode = String(body?.languageCode || "").trim();
   const original = verifyReviewToken(body?.billingReviewToken, contactId,
-    staffUsername, { now, env });
+    staffUsername, { now, env, templateName, languageCode });
   const current = await getTemplateBillingAdvisory(contactId, {
     database, now, env, staffUsername,
+    templates: templateName && languageCode ? [
+      { name: templateName, language: languageCode, sendable: true },
+    ] : [],
   });
   if (!original || original.evidence !== current.evidence) {
     return {
@@ -162,8 +186,39 @@ async function validateBillingAcknowledgment(contactId, staffUsername, body, {
   return { allowed: true, evidence: current.evidence, reviewedAt: current.reviewedAt };
 }
 
+// The INSERT claim is atomic on Neon/Postgres and survives process restarts.
+// NEVER release a claim if Meta outcome is unknown or a write partially fails.
+async function claimBillingReviewOnce(contactId, staffUsername, body, {
+  database = pool, now = new Date(), env = process.env,
+} = {}) {
+  const review = verifyReviewToken(body?.billingReviewToken, contactId,
+    staffUsername, {
+      now, env,
+      templateName: body?.templateName, languageCode: body?.languageCode,
+    });
+  if (!review || (body?.billingAcknowledged !== true &&
+      body?.billingAcknowledged !== "true")) {
+    return { claimed: false, code: "billing_review_expired" };
+  }
+  const tokenHash = crypto.createHash("sha256")
+    .update(body.billingReviewToken).digest("hex");
+  const result = await database.query(
+    `INSERT INTO whatsapp_manual_template_billing_claims
+     (token_hash,contact_id,staff_username,template_name,language_code)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (token_hash) DO NOTHING
+     RETURNING token_hash`,
+    [tokenHash, Number(contactId), String(staffUsername),
+      review.templateName, review.languageCode]
+  );
+  return result.rows?.length === 1
+    ? { claimed: true, tokenHash }
+    : { claimed: false, code: "billing_review_already_used" };
+}
+
 module.exports = {
   BILLING_ADVISORY_SQL, REVIEW_TTL_MS,
   describeEvidence, issueReviewToken, verifyReviewToken,
   getTemplateBillingAdvisory, validateBillingAcknowledgment,
+  claimBillingReviewOnce,
 };

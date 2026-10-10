@@ -5,11 +5,19 @@ const assert = require("node:assert/strict");
 const {
   BILLING_ADVISORY_SQL, REVIEW_TTL_MS, describeEvidence,
   getTemplateBillingAdvisory, issueReviewToken, verifyReviewToken,
-  validateBillingAcknowledgment,
+  validateBillingAcknowledgment, claimBillingReviewOnce,
 } = require("../src/services/whatsappTemplateBillingAdvisory");
 
 const env = { SESSION_SECRET: "test-only-long-and-random-enough-session-secret-12345" };
 const reviewedAt = new Date("2026-10-10T06:55:54.591Z");
+const selected = { name: "ns_fu3_face_feedback", language: "zh_CN", sendable: true };
+const scope = { templateName: selected.name, languageCode: selected.language };
+const reviewOptions = { templates: [selected] };
+function reviewBody(advisory) {
+  return { ...scope, billingAcknowledged: true,
+    billingReviewToken: advisory.reviewTokens[selected.name+"::"+selected.language] };
+}
+
 
 function fakeDatabase(rows) {
   let calls = 0;
@@ -40,14 +48,14 @@ test("prioritizes verified Meta charges over a prior free-entry receipt", () => 
 });
 
 test("signed billing reviews bind contact, staff, evidence, secret and expiration", () => {
-  const token = issueReviewToken(85, "admin", "no_ctwa_referral", {now: reviewedAt, env});
-  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env}).evidence,"no_ctwa_referral");
-  assert.equal(verifyReviewToken(token,86,"admin",{now:reviewedAt,env}),null);
-  assert.equal(verifyReviewToken(token,85,"other",{now:reviewedAt,env}),null);
-  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env:{SESSION_SECRET:"another-safe-but-different-long-secret-xyz"}}),null);
-  assert.equal(verifyReviewToken(token.slice(0,-3)+"xxx",85,"admin",{now:reviewedAt,env}),null);
-  assert.equal(verifyReviewToken(token,85,"admin",{now:new Date(reviewedAt.getTime()+REVIEW_TTL_MS+1),env}),null);
-  assert.equal(verifyReviewToken(token,85,"admin",{now:new Date(reviewedAt.getTime()-1000),env}),null);
+  const token = issueReviewToken(85, "admin", "no_ctwa_referral", {now: reviewedAt, env,...scope});
+  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env,...scope}).evidence,"no_ctwa_referral");
+  assert.equal(verifyReviewToken(token,86,"admin",{now:reviewedAt,env,...scope}),null);
+  assert.equal(verifyReviewToken(token,85,"other",{now:reviewedAt,env,...scope}),null);
+  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env:{SESSION_SECRET:"another-safe-but-different-long-secret-xyz"},...scope}),null);
+  assert.equal(verifyReviewToken(token.slice(0,-3)+"xxx",85,"admin",{now:reviewedAt,env,...scope}),null);
+  assert.equal(verifyReviewToken(token,85,"admin",{now:new Date(reviewedAt.getTime()+REVIEW_TTL_MS+1),env,...scope}),null);
+  assert.equal(verifyReviewToken(token,85,"admin",{now:new Date(reviewedAt.getTime()-1000),env,...scope}),null);
 });
 
 test("a manual send requires explicit server-side acknowledgment", async () => {
@@ -64,9 +72,9 @@ test("fresh valid acknowledgment passes, but new billable evidence forces reconf
     has_ctwa_referral: true,has_recent_verified_free_entry:true,
     has_recent_billable_message:billed,
   }));
-  const first = await getTemplateBillingAdvisory(85,{database,now:reviewedAt,staffUsername:"admin",env});
+  const first = await getTemplateBillingAdvisory(85,{database,now:reviewedAt,staffUsername:"admin",env,...reviewOptions});
   assert.equal(first.evidence,"recent_free_entry_evidence");
-  const body = {billingAcknowledged:true,billingReviewToken:first.reviewToken};
+  const body = reviewBody(first);
   let validation = await validateBillingAcknowledgment(85,"admin",body,{database,now:new Date(reviewedAt.getTime()+800),env});
   assert.equal(validation.allowed,true);
   assert.equal(validation.evidence,"recent_free_entry_evidence");
@@ -75,18 +83,15 @@ test("fresh valid acknowledgment passes, but new billable evidence forces reconf
   assert.equal(validation.allowed,false);
   assert.equal(validation.code,"billing_evidence_changed");
   assert.equal(validation.billingAdvisory.evidence,"recent_billable_message");
-  assert.ok(validation.billingAdvisory.reviewToken);
-  const renewed = await validateBillingAcknowledgment(85,"admin",{
-    billingAcknowledged:true,
-    billingReviewToken:validation.billingAdvisory.reviewToken,
-  },{database,now:new Date(reviewedAt.getTime()+1200),env});
+  assert.ok(validation.billingAdvisory.reviewTokens[selected.name+"::"+selected.language]);
+  const renewed = await validateBillingAcknowledgment(85,"admin",reviewBody(validation.billingAdvisory),{database,now:new Date(reviewedAt.getTime()+1200),env});
   assert.equal(renewed.allowed,true);
   assert.equal(renewed.evidence,"recent_billable_message");
 });
 
 test("expired/forged evidence tokens fail closed and return a fresh review", async () => {
   const db = fakeDatabase({has_ctwa_referral:false});
-  const a = await getTemplateBillingAdvisory(85,{database:db,now:reviewedAt,staffUsername:"admin",env});
+  const a = await getTemplateBillingAdvisory(85,{database:db,now:reviewedAt,staffUsername:"admin",env,...reviewOptions});
   for (const bad of ["tampered.token",undefined,""]) {
     const v = await validateBillingAcknowledgment(85,"admin",
       {billingAcknowledged:true,billingReviewToken:bad},
@@ -94,9 +99,7 @@ test("expired/forged evidence tokens fail closed and return a fresh review", asy
     assert.equal(v.allowed,false);
     assert.equal(v.code,"billing_review_expired");
   }
-  const old = await validateBillingAcknowledgment(85,"admin",{
-    billingAcknowledged:true,billingReviewToken:a.reviewToken,
-  },{database:db,now:new Date(reviewedAt.getTime()+REVIEW_TTL_MS+1),env});
+  const old = await validateBillingAcknowledgment(85,"admin",reviewBody(a),{database:db,now:new Date(reviewedAt.getTime()+REVIEW_TTL_MS+1),env});
   assert.equal(old.allowed,false);
   assert.equal(old.code,"billing_review_expired");
   assert.equal(old.billingAdvisory.evidence,"no_ctwa_referral");
@@ -104,12 +107,43 @@ test("expired/forged evidence tokens fail closed and return a fresh review", asy
 
 test("unavailable pricing evidence stays unknown with an explicit signed acknowledgment", async () => {
   const db = {query:async()=>{throw new Error("unavailable")} };
-  const a = await getTemplateBillingAdvisory(85,{database:db,now:reviewedAt,staffUsername:"admin",env});
+  const a = await getTemplateBillingAdvisory(85,{database:db,now:reviewedAt,staffUsername:"admin",env,...reviewOptions});
   assert.equal(a.evidence,"unknown");
-  assert.ok(a.reviewToken);
-  const val = await validateBillingAcknowledgment(85,"admin",{
-    billingAcknowledged:true,billingReviewToken:a.reviewToken,
-  },{database:db,now:reviewedAt,env});
+  assert.ok(a.reviewTokens[selected.name+"::"+selected.language]);
+  const val = await validateBillingAcknowledgment(85,"admin",reviewBody(a),{database:db,now:reviewedAt,env});
   assert.equal(val.allowed,true);
   assert.equal(val.evidence,"unknown");
+});
+
+
+test("a reviewed token cannot authorize another template, language, contact or staff", () => {
+  const token=issueReviewToken(85,"admin","no_ctwa_referral",{now:reviewedAt,env,...scope});
+  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env,
+    templateName:"ns_fu3_pelvis_feedback",languageCode:"zh_CN"}),null);
+  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env,
+    templateName:selected.name,languageCode:"en_US"}),null);
+  assert.equal(verifyReviewToken(token,85,"admin",{now:reviewedAt,env,...scope}).templateName,selected.name);
+  const second=issueReviewToken(85,"admin","no_ctwa_referral",{now:reviewedAt,env,...scope});
+  assert.notEqual(token,second,"different reviews must use different random nonce");
+});
+
+test("one-time billing claims allow one writer, reject replay, and keep template binding", async () => {
+  const rows=new Set();
+  const db={query:async (sql,args)=>{
+    assert.match(sql,/ON CONFLICT \(token_hash\) DO NOTHING/);
+    assert.deepEqual(args.slice(1),[85,"admin",selected.name,selected.language]);
+    if(rows.has(args[0]))return {rows:[]};
+    rows.add(args[0]);return {rows:[{token_hash:args[0]}]};
+  }};
+  const advisory={reviewTokens:{[selected.name+"::"+selected.language]:
+    issueReviewToken(85,"admin","no_ctwa_referral",{now:reviewedAt,env,...scope})}};
+  const body=reviewBody(advisory);
+  const first=await claimBillingReviewOnce(85,"admin",body,{now:reviewedAt,env,database:db});
+  assert.equal(first.claimed,true);
+  assert.match(first.tokenHash,/^[a-f0-9]{64}$/);
+  const replay=await claimBillingReviewOnce(85,"admin",body,{now:reviewedAt,env,database:db});
+  assert.deepEqual(replay,{claimed:false,code:"billing_review_already_used"});
+  assert.equal((await claimBillingReviewOnce(85,"admin",{...body,templateName:"wrong"},
+    {now:reviewedAt,env,database:db})).claimed,false);
+  assert.equal(rows.size,1);
 });
