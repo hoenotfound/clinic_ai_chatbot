@@ -1100,7 +1100,9 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
     // Never imply that a CTWA click or past free callback guarantees free sends.
     let billingAdvisory = { evidence: "unknown" };
     try {
-      billingAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
+      billingAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id, {
+        staffUsername: req.session?.username,
+      });
     } catch (error) {
       console.warn("WhatsApp template billing evidence could not be checked:", error?.message);
     }
@@ -1249,6 +1251,32 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
         policyBlocked: true,
       });
     }
+
+    // A short-lived, staff/contact-bound billing review is required even when
+    // consent is valid. Recheck on the server; browser booleans alone are not proof.
+    const billingReviewBody = req.body || {};
+    async function recheckManualBilling() {
+      return whatsappTemplateBillingAdvisory.validateBillingAcknowledgment(
+        contact.id, req.session?.username, billingReviewBody
+      );
+    }
+    function rejectBilling(result) {
+      return res.status(result.status || 409).json({
+        error: result.error, code: result.code,
+        ...(result.billingAdvisory ? { billingAdvisory: result.billingAdvisory } : {}),
+      });
+    }
+    let billingReview;
+    try {
+      billingReview = await recheckManualBilling();
+    } catch (err) {
+      console.warn("WhatsApp billing acknowledgment validation failed:", err?.message);
+      return res.status(503).json({
+        code: "billing_review_unavailable",
+        error: "Could not verify the Meta billing warning. Please retry in a moment.",
+      });
+    }
+    if (!billingReview.allowed) return rejectBilling(billingReview);
 
     const templateName = String(req.body?.templateName || "").trim();
     const languageCode = String(req.body?.languageCode || "").trim();
@@ -1498,6 +1526,19 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       }
     }
 
+    // Recheck immediately before creating the send record and submitting to
+    // Meta: media processing may be slow and pricing callbacks can arrive meanwhile.
+    try {
+      billingReview = await recheckManualBilling();
+    } catch (err) {
+      console.warn("WhatsApp billing recheck failed:", err?.message);
+      return res.status(503).json({
+        code: "billing_review_unavailable",
+        error: "Could not recheck the Meta billing warning. No template was sent.",
+      });
+    }
+    if (!billingReview.allowed) return rejectBilling(billingReview);
+
     const metadata = {
       name: resolved.template.name,
       language: resolved.template.language,
@@ -1507,6 +1548,9 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       ...(mediaMimeType ? { mediaFormat, mediaFilename } : {}),
       ...(mediaSelectionId ? { mediaSelectionId } : {}),
       templateSignature: whatsappTemplate.templateSignature(resolved.template),
+      billingAcknowledged: true,
+      billingEvidenceAtSend: billingReview.evidence,
+      billingReviewedAt: billingReview.reviewedAt,
       marketingConsentConfirmed:
         resolved.template.category === "MARKETING"
           ? true
