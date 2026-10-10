@@ -201,12 +201,15 @@ function buildImmediateAlertMessage({
   config = clinicConfig,
 }) {
   const isDelivery = type === "delivery_failure";
+  // Unconfirmed means no definitive provider outcome, NOT a rejected send.
+  const isUnconfirmedDelivery = isDelivery &&
+    /^Delivery unconfirmed:/i.test(String(reason || "").trim());
   const isBookingReady = type === "booking_ready";
   const conversion = getConversionProfile(config);
   const labels = getOperationalLabels(config);
   const platform = channelLabel(context.channel || "whatsapp");
   const title = isDelivery
-    ? `⚠️ ${platform} Delivery Failed`
+    ? `⚠️ ${platform} Delivery ${isUnconfirmedDelivery ? "Unconfirmed" : "Failed"}`
     : isBookingReady
       ? conversion.alertTitle
       : "🚨 Human Intervention Required";
@@ -257,8 +260,10 @@ function buildImmediateAlertMessage({
     );
   }
 
-  const action = isDelivery
-    ? `Action: Check the failed message in Inbox and retry or contact the ${labels.customerSingular} manually.`
+  const action = isUnconfirmedDelivery
+    ? "Action: Check the provider receipts and conversation in Inbox before considering a manual resend. Do not automatically retry an uncertain send."
+    : isDelivery
+      ? `Action: Check the failed message in Inbox and retry or contact the ${labels.customerSingular} manually.`
     : isBookingReady
       ? `Action: ${conversion.alertAction}`
       : "Action: Open the conversation and review/respond as soon as possible.";

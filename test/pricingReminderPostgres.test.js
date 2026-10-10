@@ -60,6 +60,12 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       CREATE TABLE outbound_message_evidence (
         message_id INTEGER REFERENCES messages(id), origin TEXT
       );
+      CREATE TABLE social_provider_message_ids (
+        provider_message_id TEXT PRIMARY KEY,
+        message_id INTEGER REFERENCES messages(id),
+        contact_id INTEGER REFERENCES contacts(id),
+        channel TEXT
+      );
       CREATE TABLE follow_up_ai_decisions (
         contact_id INTEGER, trigger_message_id INTEGER, action TEXT
       );
@@ -288,6 +294,22 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
                (302,3,'assistant','Final',now()-interval '12 minutes','sent',
                   'instagram:mid.302',now()-interval '8 minutes',true,301,3);
     `);
+    // Legacy social replies have NULL status, but the Send API left two
+    // distinct caption/image receipts. The candidate SQL must expose both.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,content,created_at,media_url,
+        whatsapp_message_id,social_accepted_at)
+      VALUES (203,2,'assistant','RM388',now()-interval '48 hours',
+                'https://old.example/promo-images/30','facebook:mid.image.203',
+                now()-interval '48 hours'),
+             (204,2,'assistant','RM288',now()-interval '48 hours',
+                'https://old.example/promo-images/31','facebook:mid.caption.204',
+                now()-interval '48 hours');
+      INSERT INTO social_provider_message_ids(provider_message_id,message_id,contact_id,channel)
+      VALUES ('facebook:mid.caption.203',203,2,'facebook'),
+             ('facebook:mid.image.203',203,2,'facebook'),
+             ('facebook:mid.caption.204',204,2,'facebook');
+    `);
     assert.equal((await pricingRepo.listEligible({activatedAt,triggerMode:"all"})).length,0,
       "Existing clinics must not gain social pricing candidates without opt-in");
     for (const [contactId, channel, recipientId, anchorId, inboundId, finalId] of [
@@ -299,6 +321,15 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       assert.ok(social, `Expected ${channel} reminder candidate`);
       assert.equal(social.channel, channel);
       assert.equal(social.channel_user_id, recipientId);
+      if (channel === "facebook") {
+        const complete = social.sent_media.find(m => m.media_url.endsWith("/30"));
+        const partial = social.sent_media.find(m => m.media_url.endsWith("/31"));
+        assert.equal(complete.social_provider_id_count, 2);
+        assert.equal(complete.social_final_id_recorded, true);
+        assert.ok(complete.social_accepted_at);
+        assert.equal(partial.social_provider_id_count, 1);
+        assert.equal(partial.social_final_id_recorded, true);
+      }
       const socialOffer = {
         caption:"Our 3D price",imageUrl:`https://example.com/social/${channel}`,
         packageName:"3D trial",serviceName:"3D 小颜术",

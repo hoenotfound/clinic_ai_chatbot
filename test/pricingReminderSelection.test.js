@@ -56,6 +56,110 @@ test("uncertain and failed media require staff review, never silent success", ()
   assert.equal(accepted.reason, "already_sent");
 });
 
+test("legacy Messenger/Instagram graphics need two accepted provider receipts", () => {
+  const acceptedAt = "2026-10-09T17:20:23.613Z";
+  for (const channel of ["facebook", "instagram"]) {
+    const media = {
+      media_url: "https://old-host.example/promo-images/32",
+      content: "RM488",
+      delivery_status: null,
+      social_accepted_at: acceptedAt,
+      whatsapp_message_id: channel + ":m_image",
+      social_provider_id_count: 2,
+      social_final_id_recorded: true,
+    };
+    const candidate = {
+      channel, treatment_interest: "3D 小颜术",
+      recent_customer_messages: ["3D price please"],
+      sent_media: [media],
+    };
+    assert.equal(evaluatePricingReminder({
+      promotions, candidate, services,
+    }).reason, "already_sent", channel);
+    assert.equal(evaluatePricingReminder({
+      promotions, candidate: {
+        ...candidate, sent_media: [{ ...media, delivery_status: "pending" }],
+      }, services,
+    }).reason, "already_sent", channel + " pending+two receipts");
+
+    // A separate caption may have reached Meta while the image failed or
+    // its receipt was never persisted. No automatic duplicate retry.
+    for (const changed of [
+      { social_provider_id_count: 1 },
+      { social_final_id_recorded: false },
+      { social_accepted_at: null },
+      { whatsapp_message_id: channel + ":m_caption" , social_final_id_recorded: false },
+      { whatsapp_message_id: "other:m_image" },
+      { delivery_status: "unknown" },
+      { delivery_status: "failed" },
+      { delivery_status: "pending", social_provider_id_count: 1 },
+    ]) {
+      const result = evaluatePricingReminder({
+        promotions, services, candidate: {
+          ...candidate, sent_media: [{ ...media, ...changed }],
+        },
+      });
+      assert.equal(result.reason, "delivery_review", JSON.stringify({channel,changed}));
+    }
+  }
+});
+
+test("social pending with no receipts is not accepted even with a provider ID", () => {
+  const result = evaluatePricingReminder({
+    promotions, services,
+    candidate: {
+      channel: "instagram", treatment_interest: "3D 小颜术",
+      recent_customer_messages: ["3D price please"],
+      sent_media: [{ media_url: "/promo-images/32", content: "RM488",
+        delivery_status: "pending", whatsapp_message_id: "instagram:m_caption" }],
+    },
+  });
+  assert.equal(result.reason, "delivery_review");
+});
+
+test("legacy accepted pelvic A/B graphics are already sent, not delivery failures", () => {
+  const receipt = (number) => ({
+    media_url: "https://old-host.example/promo-images/" + number,
+    content: "RM" + (number === 30 ? "388" : "288"),
+    delivery_status: null,
+    social_accepted_at: "2026-10-09T17:20:23.613Z",
+    whatsapp_message_id: "facebook:m_image_" + number,
+    social_provider_id_count: 2,
+    social_final_id_recorded: true,
+  });
+  const candidate = {
+    channel: "facebook", treatment_interest: "骨盆调理",
+    recent_customer_messages: ["价格？"],
+    sent_media: [receipt(30), receipt(31)],
+  };
+  const options = { promotions, services, candidate, sendBothPelvicPackages: true };
+  assert.equal(evaluatePricingReminder(options).reason, "already_sent");
+  assert.deepEqual(evaluatePricingReminder(options).offers, []);
+  assert.deepEqual(evaluatePricingReminder({
+    ...options, candidate: {...candidate, sent_media: [receipt(30)]},
+  }).offers.map((offer) => offer.packageName), ["Package B"]);
+  assert.equal(evaluatePricingReminder({
+    ...options, candidate: {...candidate,
+      sent_media: [receipt(30), {...receipt(31), social_provider_id_count: 1}]},
+  }).reason, "delivery_review");
+});
+
+test("WhatsApp NULL-status graphic is not inferred accepted from social receipts", () => {
+  const decision = evaluatePricingReminder({
+    promotions, services, candidate: {
+      channel: "whatsapp", treatment_interest: "3D 小颜术",
+      recent_customer_messages: ["3D price"],
+      sent_media: [{
+        media_url: "/promo-images/32", content: "RM488",
+        delivery_status: null, whatsapp_message_id: "facebook:m_image",
+        social_accepted_at: "2026-10-09T17:20:23Z",
+        social_provider_id_count: 2, social_final_id_recorded: true,
+      }],
+    },
+  });
+  assert.equal(decision.reason, "delivery_review");
+});
+
 test("the latest clear treatment mention overrides an older CRM interest", () => {
   const result = select({
     treatment_interest:"骨盆调理",
