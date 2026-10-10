@@ -54,7 +54,8 @@ test("AI review never changes ownership and uses the normal final AI send guard"
   assert.match(server, /if \(flagged && reviewRequired\)/);
   assert.match(server, /contactsRepo\.setAiReviewAttention\(/);
   assert.match(server, /finalSendContact = flagged && !reviewRequired/);
-  assert.match(repo, /AND c\.mode = 'ai' AND c\.needs_attention = false/);
+  assert.match(repo, /WHERE c.id = \$1 AND c.mode = 'ai'/);
+  assert.match(repo, /INSERT INTO ai_review_items/);
   assert.match(repo, /AI review requested:/);
 });
 
@@ -71,7 +72,8 @@ test("AI prompt chooses review_required for nonurgent unknowns and takeover for 
   assert.match(prompt, /"normal \| review_required \| needs_human \| booking_ready"/);
 });
 
-test("review-only escalation sets staff attention while contact mode stays AI", async (t) => {
+
+test("review-only question is persisted and notified exactly once without takeover", async (t) => {
   const { pool } = require("../src/db/db");
   const contactsRepo = require("../src/db/contactsRepo");
   const alerts = require("../src/services/telegramImmediateAlertService");
@@ -88,22 +90,25 @@ test("review-only escalation sets staff attention while contact mode stays AI", 
   let alertCount = 0;
   let pushCount = 0;
   pool.query = async (sql, params) => {
-    assert.match(sql, /AND c\.mode = 'ai' AND c\.needs_attention = false/);
-    assert.deepEqual(params, [37, "AI review requested: Staff should check the specific policy."]);
+    assert.match(sql, /INSERT INTO ai_review_items/);
+    assert.match(sql, /ON CONFLICT \(contact_id, inbound_message_id\) DO NOTHING/);
+    assert.match(sql, /AND c.mode = 'ai'/);
+    assert.deepEqual(params, [37, 88, "Can I pay with card?", "information"]);
     return { rows: [{
-      id: 37, mode: "ai", needs_attention: true,
-      attention_reason: params[1], attention_message_id: 88,
+      id: 37, mode: "ai", needs_attention: true, ai_review_id: 8,
+      attention_reason: "AI review requested: [#88] Can I pay with card?",
+      attention_message_id: 88,
     }] };
   };
   alerts.sendHumanInterventionAlert = async ({ contactId, messageId, reason }) => {
     assert.equal(contactId, 37);
     assert.equal(messageId, 88);
-    assert.match(reason, /AI review requested:/);
+    assert.match(reason, /#88.*pay with card/);
     alertCount += 1;
     return { status: "sent" };
   };
   pushes.sendContactAlertBestEffort = () => { pushCount += 1; };
-  const result = await contactsRepo.setAiReviewAttention(37, "Staff should check the specific policy.");
+  const result = await contactsRepo.setAiReviewAttention(37, 88, "Can I pay with card?", "information");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(result.mode, "ai");
   assert.equal(result.needs_attention, true);
@@ -111,7 +116,7 @@ test("review-only escalation sets staff attention while contact mode stays AI", 
   assert.equal(pushCount, 1);
 });
 
-test("additional questions preserve existing attention without sending duplicate review alerts", async (t) => {
+test("duplicate inbound review does not alert again or overwrite existing attention", async (t) => {
   const { pool } = require("../src/db/db");
   const contactsRepo = require("../src/db/contactsRepo");
   const alerts = require("../src/services/telegramImmediateAlertService");
@@ -121,25 +126,75 @@ test("additional questions preserve existing attention without sending duplicate
     pool.query = oldQuery;
     alerts.sendHumanInterventionAlert = oldAlert;
   });
-
   let count = 0;
   let alertsSent = 0;
   pool.query = async (sql) => {
     count += 1;
     if (count === 1) {
-      assert.match(sql, /c\.needs_attention = false/);
+      assert.match(sql, /ON CONFLICT \(contact_id, inbound_message_id\) DO NOTHING/);
       return { rows: [] };
     }
     assert.equal(sql, "SELECT * FROM contacts WHERE id = $1");
     return { rows: [{
       id: 37, mode: "ai", needs_attention: true,
-      attention_reason: "AI review requested: Existing issue remains unresolved.",
+      attention_reason: "AI review requested: [#88] Existing question.",
     }] };
   };
   alerts.sendHumanInterventionAlert = async () => { alertsSent += 1; };
-  const result = await contactsRepo.setAiReviewAttention(37, "Another question.");
+  const result = await contactsRepo.setAiReviewAttention(37, 88, "Existing question.");
   assert.equal(result.mode, "ai");
-  assert.equal(result.attention_reason, "AI review requested: Existing issue remains unresolved.");
+  assert.match(result.attention_reason, /Existing question/);
   assert.equal(alertsSent, 0);
   assert.equal(count, 2);
+});
+
+test("multiple reviews remain individually durable until explicit Inbox dismissal", () => {
+  const repo = source("src/db/contactsRepo.js");
+  const routes = source("src/routes/conversations.js");
+  assert.match(repo, /UNIQUE \(contact_id, inbound_message_id\)/);
+  assert.match(repo, /RIGHT\(COALESCE\(SUBSTRING\(c.attention_reason/);
+  assert.match(repo, /UPDATE ai_review_items r\s+SET status = 'resolved'/);
+  assert.match(routes, /contactsRepo.dismissAttentionAndReviews/);
+});
+
+test("administrative reviews may resume safe follow-ups, but clinical/unknown reviews cannot", () => {
+  const { categorizeAiReview, followUpAttentionAllowedSql, canSendReactiveMedia } =
+    require("../src/utils/aiReviewPolicy");
+  assert.equal(categorizeAiReview("Can I pay by card?", "information"), "information");
+  assert.equal(categorizeAiReview("刚刚做了 HIFU，适合3D吗？", "information"), "clinical");
+  assert.equal(categorizeAiReview("Is 3D safe for pregnant patients?", "information"), "clinical");
+  assert.equal(categorizeAiReview("Can I park there?", null), "clinical");
+  assert.equal(categorizeAiReview("Can I park there?", "information"), "information");
+  assert.equal(canSendReactiveMedia({
+    mode: "ai", needs_attention: true,
+    attention_reason: "AI review requested: [#88] HIFU question",
+  }), true);
+  assert.equal(canSendReactiveMedia({
+    mode: "human", needs_attention: true,
+    attention_reason: "AI review requested: [#88] HIFU question",
+  }), false);
+  assert.match(followUpAttentionAllowedSql("c"), /review.category <> 'information'/);
+  assert.match(followUpAttentionAllowedSql("c"), /review.status = 'pending'/);
+});
+
+test("every follow-up discovery and final claim uses the category-aware gate", () => {
+  const names = [
+    "src/db/followUpRepo.js",
+    "src/db/followUpAiLeaseRepo.js",
+    "src/db/pricingReminderRepo.js",
+    "src/db/followUpHealthScheduleRepo.js",
+  ];
+  for (const name of names) {
+    const code = source(name);
+    assert.match(code, /followUpAttentionAllowedSql/);
+    assert.doesNotMatch(code, /AND c\.needs_attention\s*=\s*false/);
+  }
+});
+
+test("staff-waiting reminders exclude AI-only reviews, which have their own accurate alert", () => {
+  const waiting = source("src/services/staffWaitingAlertService.js");
+  const telegram = source("src/services/telegramImmediateAlertService.js");
+  assert.match(waiting, /NOT LIKE 'AI review requested:%'/);
+  assert.match(telegram, /Staff Question to Review \(AI Active\)/);
+  assert.match(telegram, /no Return to AI action is needed/);
 });
