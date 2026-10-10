@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import FollowUpIntelligence from "./FollowUpIntelligence";
 
 const CHANNELS = { all: "All channels", whatsapp: "WhatsApp", facebook: "Messenger", instagram: "Instagram" };
 const SECTIONS = [
@@ -159,6 +160,7 @@ export default function FollowUpPerformance({ active }) {
       </div>
       {data && (
         <>
+          <FollowUpIntelligence report={data} />
           <section className="rounded-xl border border-[var(--color-border)] bg-white p-4">
             <h3 className="text-sm font-bold">Accepted follow-ups by day</h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">Malaysia local date; daily bars count accepted sends, not unique customers.</p>

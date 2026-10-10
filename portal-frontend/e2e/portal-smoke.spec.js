@@ -1527,6 +1527,137 @@ test("Phase 7 performance tab shows mature reply rates, preliminary conversions 
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Phase 8 never recommends optimizing with immature follow-up samples", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 8, contacts: 6, reply_matured: 3, replied_matured: 1, milestone_matured: 0 },
+    breakdown: [
+      { dimension: "service", label: "Unspecified (not recorded)", sent: 3, reply_matured: 1, replied_matured: 1 },
+      { dimension: "media", label: "Other / unknown media", sent: 2, reply_matured: 1, replied_matured: 1 },
+    ],
+    daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("Collecting evidence");
+  await expect(intelligence).toContainText("Reply comparisons are withheld");
+  await expect(intelligence).toContainText("Service attribution is missing");
+  await expect(intelligence).toContainText("Media type is unknown");
+  await expect(intelligence).not.toContainText("Highest observed reply rate");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Phase 8 shows descriptive comparisons only for mature sufficiently sized groups", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 80, contacts: 60, reply_matured: 80, replied_matured: 22, milestone_matured: 80 },
+    breakdown: [
+      { dimension: "step", label: "FU1", sent: 40, reply_matured: 40, replied_matured: 12 },
+      { dimension: "step", label: "FU2", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "service", label: "3D", sent: 45, reply_matured: 45, replied_matured: 12 },
+      { dimension: "service", label: "9D", sent: 35, reply_matured: 35, replied_matured: 10 },
+    ],
+    daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("Enough mature reply data");
+  await expect(intelligence).toContainText("FU1: 30%");
+  await expect(intelligence).toContainText("FU2: 25%");
+  await expect(intelligence).not.toContainText("Highest observed reply rate");
+  await expect(intelligence).toContainText("30%");
+  await expect(intelligence).toContainText("These associations do not establish causality");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Phase 8 includes text-only sends and suppresses incomplete treatment comparisons", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 80, contacts: 50, reply_matured: 80, replied_matured: 20, milestone_matured: 80 },
+    breakdown: [
+      { dimension: "media", label: "Text / no accepted media", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "media", label: "Video", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "service", label: "Unspecified (not recorded)", sent: 20, reply_matured: 20, replied_matured: 5 },
+      { dimension: "service", label: "3D", sent: 30, reply_matured: 30, replied_matured: 8 },
+      { dimension: "service", label: "9D", sent: 30, reply_matured: 30, replied_matured: 7 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("Text / no accepted media: 25%");
+  await expect(intelligence).toContainText("Treatment comparison unavailable");
+  await expect(intelligence).toContainText("Treatment comparisons are withheld");
+  await expect(intelligence).not.toContainText("3D: 26.7%");
+  await expect(intelligence).not.toContainText("Highest observed reply rate");
+});
+
+test("Phase 8 honours exact sample and service-missing boundaries", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 150, contacts: 90, reply_matured: 150, replied_matured: 20, milestone_matured: 150 },
+    breakdown: [
+      { dimension: "service", label: "Unspecified (not recorded)", sent: 30, reply_matured: 30, replied_matured: 0 },
+      { dimension: "service", label: "3D", sent: 60, reply_matured: 60, replied_matured: 10 },
+      { dimension: "service", label: "9D", sent: 60, reply_matured: 60, replied_matured: 10 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("3D: 16.7%");
+  await expect(intelligence).toContainText("9D: 16.7%");
+  await expect(intelligence).not.toContainText("Treatment comparison unavailable");
+});
+
+test("Phase 8 handles empty reports and only one qualifying group", async ({ page }) => {
+  let report = { summary: { sent: 0 }, breakdown: [], daily: [] };
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: () => report });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("No accepted follow-ups");
+  report = { summary: { sent: 30, reply_matured: 30, replied_matured: 5, milestone_matured: 30 },
+    breakdown: [{ dimension: "step", label: "FU1", sent: 30, reply_matured: 30, replied_matured: 5 }], daily: [] };
+  await page.getByRole("button", { name: "Refresh analytics" }).click();
+  await expect(intelligence).toContainText("Enough mature reply data");
+  await expect(intelligence).toContainText("Not enough groups");
+  await expect(intelligence).not.toContainText("FU1: 16.7%");
+  await expect(intelligence).toContainText("Comparison rates are observational only");
+});
+
+test("Phase 8 suppresses media comparisons when unknown media exceeds twenty percent", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 100, reply_matured: 100, replied_matured: 25, milestone_matured: 100 },
+    breakdown: [
+      { dimension: "media", label: "Other / unknown media", sent: 21, reply_matured: 21, replied_matured: 5 },
+      { dimension: "media", label: "Video", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "media", label: "Text / no accepted media", sent: 39, reply_matured: 39, replied_matured: 10 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("Media comparisons are withheld");
+  await expect(intelligence).toContainText("Media comparison unavailable");
+  await expect(intelligence).not.toContainText("Video: 25%");
+});
+
+test("Phase 8 permits media comparison at exactly twenty percent unknown metadata", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 100, reply_matured: 100, replied_matured: 25, milestone_matured: 100 },
+    breakdown: [
+      { dimension: "media", label: "Other / unknown media", sent: 20, reply_matured: 20, replied_matured: 5 },
+      { dimension: "media", label: "Video", sent: 40, reply_matured: 40, replied_matured: 10 },
+      { dimension: "media", label: "Text / no accepted media", sent: 40, reply_matured: 40, replied_matured: 10 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("Video: 25%");
+  await expect(intelligence).toContainText("Text / no accepted media: 25%");
+  await expect(intelligence).not.toContainText("Media comparison unavailable");
+});
+
 test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
   const data = { eventCount: 5, failedCount: 1, attentionCount: 1, stalePendingCount: 1,
     dueNowCount: 2, dueNowPolicyReviewCount: 1,
