@@ -1539,6 +1539,56 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Phase 5 shows separately failed Messenger video and Instagram image despite sent parent text", async ({ page }) => {
+  const events = [
+    { event_id: "message:700", occurred_at: "2026-10-09T10:00:00Z",
+      contact_id: 70, channel: "facebook", type: "sequence", step: 3,
+      state: "sent", raw_status: "sent", detail: "", media_type: "text", message_part: "follow_up" },
+    { event_id: "message:701", occurred_at: "2026-10-09T10:01:00Z",
+      contact_id: 70, channel: "facebook", type: "sequence", step: 3,
+      state: "failed", raw_status: "failed", detail: "Video rejected by provider",
+      media_type: "video", message_part: "media_companion", parent_message_id: 700 },
+    { event_id: "message:710", occurred_at: "2026-10-09T09:00:00Z",
+      contact_id: 71, channel: "instagram", type: "sequence", step: 2,
+      state: "sent", raw_status: "sent", detail: "", media_type: "text", message_part: "follow_up" },
+    { event_id: "message:711", occurred_at: "2026-10-09T09:01:00Z",
+      contact_id: 71, channel: "instagram", type: "sequence", step: 2,
+      state: "failed", raw_status: "failed", detail: "Image rejected by provider",
+      media_type: "image", message_part: "media_companion", parent_message_id: 710 },
+  ];
+  await mockPortalApi(page, { loggedIn: true, followUpActivity: (filters) => {
+    const scoped = events.filter((e) =>
+      (filters.channel === "all" || e.channel === filters.channel) &&
+      (filters.type === "all" || e.type === filters.type));
+    const visible = scoped.filter((e) => filters.state === "all" || e.state === filters.state);
+    return { items: visible, total: visible.length, page: 1, pageSize: 25,
+      hasMore: false, diagnostics: [],
+      summary: Object.fromEntries(["sent", "pending", "failed", "skipped", "attention"]
+        .map((state) => [state, scoped.filter((e) => e.state === state).length])),
+    };
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const activity = page.getByRole("region", { name: "Follow-up delivery activity" });
+  await expect(activity.getByRole("article")).toHaveCount(4);
+  await expect(activity).toContainText("Follow-up 3 · Separate media · Messenger · Video");
+  await expect(activity).toContainText("Follow-up 2 · Separate media · Instagram · Image");
+  await expect(activity).toContainText("Video rejected by provider");
+  await expect(activity).toContainText("Image rejected by provider");
+  await expect(activity).toContainText("its outcome does not prove the text's delivery status");
+  const totals = activity.getByLabel("Follow-up activity totals");
+  await expect(totals.getByRole("button", { name: "Sent / accepted" })).toContainText("2");
+  await expect(totals.getByRole("button", { name: "Failed" })).toContainText("2");
+  await activity.getByRole("button", { name: "Failed" }).click();
+  await expect(activity.getByRole("article")).toHaveCount(2);
+  await activity.getByRole("combobox", { name: "Activity channel" }).selectOption("facebook");
+  await expect(activity.getByRole("article")).toHaveCount(1);
+  await expect(activity).toContainText("Video rejected by provider");
+  await expect(activity.getByRole("link", { name: "Open conversation" }))
+    .toHaveAttribute("href", "/inbox?contact=70");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Follow-up Activity distinguishes provider ID and unconfirmed claims and clears stale totals during refetch", async ({ page }) => {
   const calls = [];
   await mockPortalApi(page, { loggedIn: true,

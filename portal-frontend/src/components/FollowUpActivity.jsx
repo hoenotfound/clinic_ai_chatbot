@@ -25,18 +25,22 @@ const SELECT_CLASS = "min-h-10 w-full min-w-0 rounded-lg border border-[var(--co
 
 function labelForReason(row) {
   if (row.event_id?.startsWith("message:")) {
+    const isCompanion = row.message_part === "media_companion";
+    const mediaContext = isCompanion
+      ? "This attachment was sent separately from follow-up text; its outcome does not prove the text's delivery status. "
+      : "";
     if (row.state === "pending") {
       if (row.provider_evidence === "accepted") {
-        return "Provider accepted this send; delivery receipt still pending. Do not retry without checking status.";
+        return mediaContext + "Provider accepted this send; delivery receipt still pending. Do not retry without checking status.";
       }
       if (row.provider_evidence === "provider_id") {
-        return "Provider message ID recorded, but acceptance timestamp is unavailable. Verify status before retrying.";
+        return mediaContext + "Provider message ID recorded, but acceptance timestamp is unavailable. Verify status before retrying.";
       }
-      return "Send has no stored provider acceptance evidence. Investigate the outbound claim before retrying.";
+      return mediaContext + "Send has no stored provider acceptance evidence. Investigate the outbound claim before retrying.";
     }
-    if (row.state === "skipped") return "Message claim was cancelled before delivery.";
-    if (row.state === "sent") return "Provider status: " + String(row.raw_status || "sent") + ".";
-    return row.detail || "Check this message in Inbox and verify its provider status before retrying.";
+    if (row.state === "skipped") return mediaContext + "Message claim was cancelled before delivery.";
+    if (row.state === "sent") return mediaContext + "Provider status: " + String(row.raw_status || "sent") + ".";
+    return mediaContext + (row.detail || "Check this message in Inbox and verify its provider status before retrying.");
   }
   return REASON_LABELS[row.detail] || String(row.detail || "No reason recorded").replaceAll("_", " ");
 }
@@ -106,8 +110,8 @@ export default function FollowUpActivity({ active }) {
         <div className="min-w-0">
           <h2 className="text-base font-bold">Follow-up delivery activity</h2>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-            Recorded Follow-up 1–3 messages, pricing reminders and terminal skip/review decisions
-            across WhatsApp, Messenger and Instagram. Extended templates are shown separately below.
+            Recorded Follow-up 1–3 messages, separately sent Messenger/Instagram media attachments,
+            pricing reminders and terminal skip/review decisions. Extended WhatsApp templates are shown separately below.
           </p>
         </div>
         <button type="button" onClick={refreshActivity} disabled={loading}
@@ -185,6 +189,7 @@ export default function FollowUpActivity({ active }) {
                     <div className="min-w-0">
                       <p className="text-xs font-bold">
                         {row.type === "pricing" ? "Pricing reminder" : `Follow-up ${row.step || "?"}`}
+                        {row.message_part === "media_companion" ? " · Separate media" : ""}
                         {" · "}{CHANNEL_LABELS[row.channel] || row.channel}
                         {row.media_type ? " · " + (MEDIA_LABELS[row.media_type] || "Attachment") : ""}
                       </p>
@@ -268,6 +273,8 @@ export default function FollowUpActivity({ active }) {
       )}
       <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
         Statuses reflect stored records at refresh time, not a live Meta bill or guaranteed delivery.
+        Separately sent social-media attachments count as individual events; a sent text does not prove its video/image succeeded.
+        Historical attachments recorded before parent-link tracking cannot be reliably matched retrospectively.
         “Sent / accepted” includes provider-delivered/read statuses; pending and unknown sends must be investigated
         before retry. Counters cover the chosen period, channel and message type, not just the displayed page.
       </p>

@@ -1152,7 +1152,7 @@ async function discardUnsentClaim({ messageId, contactId }) {
  * Meta messages. Companion image rows do not participate in sequence progress
  * because they have no trigger-message anchor.
  */
-async function saveSocialImageCompanion({ contactId, imageUrl }) {
+async function saveSocialImageCompanion({ contactId, parentMessageId, imageUrl }) {
   const result = await pool.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
@@ -1163,18 +1163,25 @@ async function saveSocialImageCompanion({ contactId, imageUrl }) {
        content,
        sent_by_username,
        media_url,
-       is_automated_follow_up
+       is_automated_follow_up,
+       automated_follow_up_parent_message_id
      )
-     SELECT $1, 'assistant', '', 'Follow-up automation', $2, true
-     FROM conversation_lock
+     SELECT $1, 'assistant', '', 'Follow-up automation', $3, true, parent.id
+     FROM conversation_lock, messages parent
+     WHERE parent.id = $2
+       AND parent.contact_id = $1
+       AND parent.is_automated_follow_up = true
+       AND parent.automated_follow_up_for_message_id IS NOT NULL
+       AND parent.automated_follow_up_step BETWEEN 1 AND 3
      RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
-    [contactId, imageUrl]
+    [contactId, parentMessageId, imageUrl]
   );
   return result.rows[0] || null;
 }
 
 async function saveSocialVideoCompanion({
   contactId,
+  parentMessageId,
   mediaKey,
   mediaMimeType = "video/mp4",
 }) {
@@ -1193,12 +1200,18 @@ async function saveSocialVideoCompanion({
        sent_by_username,
        media_key,
        media_mime_type,
-       is_automated_follow_up
+       is_automated_follow_up,
+       automated_follow_up_parent_message_id
      )
-     SELECT $1, 'assistant', '', 'Follow-up automation', $2, $3, true
-     FROM conversation_lock
+     SELECT $1, 'assistant', '', 'Follow-up automation', $3, $4, true, parent.id
+     FROM conversation_lock, messages parent
+     WHERE parent.id = $2
+       AND parent.contact_id = $1
+       AND parent.is_automated_follow_up = true
+       AND parent.automated_follow_up_for_message_id IS NOT NULL
+       AND parent.automated_follow_up_step BETWEEN 1 AND 3
      RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
-    [contactId, normalizedKey, mediaMimeType]
+    [contactId, parentMessageId, normalizedKey, mediaMimeType]
   );
   return result.rows[0] || null;
 }

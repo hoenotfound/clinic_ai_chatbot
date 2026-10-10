@@ -81,6 +81,7 @@ test("social follow-up graphics are stored as separate automated messages under 
 
   await followUpRepo.saveSocialImageCompanion({
     contactId: 9,
+    parentMessageId: 91,
     imageUrl: "https://example.com/follow-up.jpg",
   });
 
@@ -88,8 +89,9 @@ test("social follow-up graphics are stored as separate automated messages under 
   assert.match(capturedSql, /'assistant', '', 'Follow-up automation'/);
   assert.match(capturedSql, /media_url/);
   assert.match(capturedSql, /is_automated_follow_up/);
-  assert.doesNotMatch(capturedSql, /automated_follow_up_for_message_id/);
-  assert.deepEqual(capturedParams, [9, "https://example.com/follow-up.jpg"]);
+  assert.match(capturedSql, /automated_follow_up_parent_message_id/);
+  assert.match(capturedSql, /parent\.automated_follow_up_for_message_id IS NOT NULL/);
+  assert.deepEqual(capturedParams, [9, 91, "https://example.com/follow-up.jpg"]);
 });
 
 test("stale claim recovery is channel-neutral and never blindly resends", async () => {

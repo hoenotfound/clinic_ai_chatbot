@@ -732,13 +732,14 @@ async function markContacted(contactId) {
   }
 }
 
-async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours) {
+async function sendSocialImageCompanion(contact, contactId, parentMessageId, imageUrl, quietHours) {
   if (quietHoursStatus(new Date(), quietHours).active) return;
 
   let imageMessage;
   try {
     imageMessage = await followUpRepo.saveSocialImageCompanion({
       contactId,
+      parentMessageId,
       imageUrl,
     });
   } catch (err) {
@@ -753,7 +754,16 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours
     return;
   }
 
-  if (!imageMessage) return;
+  if (!imageMessage) {
+    console.warn(
+      `Social follow-up image companion not queued: parent follow-up ${parentMessageId} unavailable for contact ${contactId}.`
+    );
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      "Follow-up text was sent, but its optional image was not queued because the parent follow-up record was unavailable. Check Inbox before attempting a manual resend."
+    );
+    return;
+  }
   publishConversationChange(imageMessage, "message");
 
   let imageResult;
@@ -827,6 +837,7 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours
 async function sendSocialVideoCompanion(
   contact,
   contactId,
+  parentMessageId,
   sourceVideoKey,
   filename,
   quietHours
@@ -840,6 +851,7 @@ async function sendSocialVideoCompanion(
   try {
     videoMessage = await followUpRepo.saveSocialVideoCompanion({
       contactId,
+      parentMessageId,
       mediaKey: sourceVideoKey,
       mediaMimeType: "video/mp4",
     });
@@ -855,7 +867,16 @@ async function sendSocialVideoCompanion(
     return;
   }
 
-  if (!videoMessage) return;
+  if (!videoMessage) {
+    console.warn(
+      `Social follow-up video companion not queued: parent follow-up ${parentMessageId} unavailable for contact ${contactId}.`
+    );
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      "Follow-up text was sent, but its service video was not queued because the parent follow-up record was unavailable. Check Inbox before attempting a manual resend."
+    );
+    return;
+  }
 
   publishConversationChange(videoMessage, "message");
 
@@ -1471,6 +1492,7 @@ async function sendCandidate(candidate) {
     await sendSocialVideoCompanion(
       contact,
       candidate.contact_id,
+      saved.id,
       effectiveVideoKey,
       effectiveVideoFilename,
       settings.quietHours
@@ -1479,6 +1501,7 @@ async function sendCandidate(candidate) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
+      saved.id,
       effectiveImageUrl,
       settings.quietHours
     );
