@@ -47,6 +47,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
         whatsapp_opt_out_at timestamptz,whatsapp_marketing_opt_out_at timestamptz,
         social_opt_out_at timestamptz,social_marketing_opt_out_at timestamptz,
         attention_reason text, updated_at timestamptz default now());
+      CREATE TABLE ai_review_items (contact_id integer, status text, category text);
       CREATE TABLE messages(
         id integer primary key, contact_id integer,role text, created_at timestamptz default now(),
         delivery_status text,delivery_error text,whatsapp_message_id text,
