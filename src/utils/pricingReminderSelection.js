@@ -118,6 +118,7 @@ function evaluatePricingReminder({
     return { offer: null, offers: [], reason: "ambiguous_package" };
   }
 
+  const channel = norm(candidate.channel || "whatsapp");
   const previous = (Array.isArray(candidate.sent_media) ? candidate.sent_media : [])
     .filter((message) => norm(message.delivery_status) !== "cancelled" &&
       String(message.content || "").trim());
@@ -129,8 +130,21 @@ function evaluatePricingReminder({
     if (!matchingMedia.length) return true;
     const accepted = matchingMedia.some((message) => {
       const status = norm(message.delivery_status);
-      return ["sent", "delivered", "read"].includes(status) ||
-        (status === "pending" && Boolean(message.whatsapp_message_id));
+      if (["sent", "delivered", "read"].includes(status)) return true;
+      // Preserve the existing WhatsApp accepted-but-pending rule. A social
+      // caption-only provider ID must never count as a completed image send.
+      if (status === "pending") {
+        return channel === "whatsapp" && Boolean(message.whatsapp_message_id);
+      }
+      // Legacy Messenger/Instagram AI replies saved a NULL delivery_status.
+      // Meta sends the caption and image separately: require BOTH distinct
+      // accepted provider IDs, including the persisted final image ID.
+      // Unknown/failed statuses still require review, even with old aliases.
+      if (status || !["facebook", "instagram"].includes(channel)) return false;
+      return Number.isFinite(Date.parse(message.social_accepted_at)) &&
+        String(message.whatsapp_message_id || "").startsWith(channel + ":") &&
+        message.social_final_id_recorded === true &&
+        Number(message.social_provider_id_count) >= 2;
     });
     if (accepted) return false;
     needsReview = true;
