@@ -205,6 +205,8 @@ function buildImmediateAlertMessage({
   const isUnconfirmedDelivery = isDelivery &&
     /^Delivery unconfirmed:/i.test(String(reason || "").trim());
   const isBookingReady = type === "booking_ready";
+  const isAiReview = type === "human_intervention" &&
+    String(reason || "").startsWith("AI review requested:");
   const conversion = getConversionProfile(config);
   const labels = getOperationalLabels(config);
   const platform = channelLabel(context.channel || "whatsapp");
@@ -212,7 +214,9 @@ function buildImmediateAlertMessage({
     ? `⚠️ ${platform} Delivery ${isUnconfirmedDelivery ? "Unconfirmed" : "Failed"}`
     : isBookingReady
       ? conversion.alertTitle
-      : "🚨 Human Intervention Required";
+      : isAiReview
+        ? "🔎 Staff Question to Review (AI Active)"
+        : "🚨 Human Intervention Required";
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
     title,
@@ -266,7 +270,9 @@ function buildImmediateAlertMessage({
       ? `Action: Check the failed message in Inbox and retry or contact the ${labels.customerSingular} manually.`
     : isBookingReady
       ? `Action: ${conversion.alertAction}`
-      : "Action: Open the conversation and review/respond as soon as possible.";
+      : isAiReview
+        ? "Action: Review the specific unanswered question in Inbox. AI stays active for other questions; no Return to AI action is needed."
+        : "Action: Open the conversation and review/respond as soon as possible.";
   lines.push("", action);
 
   const inboxUrl = buildInboxUrl(context.contact_id, env);
