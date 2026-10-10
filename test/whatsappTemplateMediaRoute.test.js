@@ -10,6 +10,7 @@ const templateService = require("../src/services/whatsappTemplateService");
 const templateMedia = require("../src/services/whatsappTemplateMediaService");
 const clinicConfig = require("../src/config/clinicConfig");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
+const billingAdvisory = require("../src/services/whatsappTemplateBillingAdvisory");
 const conversationStore = require("../src/utils/conversationStore");
 const alertRepo = require("../src/db/telegramImmediateAlertRepo");
 const followUpVideo = require("../src/services/followUpVideoPreparationService");
@@ -46,6 +47,11 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true, templateN
     ? { allowed: true, state: { whatsapp_opt_in_at: optInAt } }
     : { allowed: false, code: "marketing_opted_out", message: "Marketing opted out" });
   patch(t, templateService, "resolveApprovedTemplate", async () => ({ success: true, template }));
+  // Existing media tests exercise the media path independently of billing.
+  // Separate tests below assert the new server-side billing rejection.
+  patch(t, billingAdvisory, "validateBillingAcknowledgment", async () => ({
+    allowed: true, evidence: "no_ctwa_referral", reviewedAt: new Date().toISOString(),
+  }));
   patch(t, alertRepo, "withContactAlertLock", async (_contactId, work) => work());
   patch(t, conversationStore, "appendMessageForContact",
     async (_contactId, role, preview, _wamid, _username, mediaUrl, mediaAttachment, options) => {
@@ -111,6 +117,55 @@ async function harness(t, { format = "IMAGE", marketingAllowed = true, templateN
     },
   };
 }
+
+test("Inbox rejects manual template sends lacking server-side billing acknowledgment before Meta upload", async (t) => {
+  const h = await harness(t);
+  patch(t, billingAdvisory, "validateBillingAcknowledgment", async (_id, _staff, body) => (
+    body.billingAcknowledged === true
+      ? { allowed: true, evidence: "no_ctwa_referral", reviewedAt: new Date().toISOString() }
+      : { allowed: false, status: 400, code: "billing_acknowledgment_required",
+          error: "Review possible Meta charges before sending." }
+  ));
+  const form = new FormData();
+  form.append("templateName", "clinic_test");
+  form.append("languageCode", "en_US");
+  form.append("marketingConsentConfirmed", "true");
+  form.append("media", new Blob([png], { type: "image/png" }), "offer.png");
+  const rejected = await h.post(form);
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.code, "billing_acknowledgment_required");
+  assert.equal(h.events.r2Uploads, 0);
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.saved.length, 0);
+});
+
+test("Inbox rechecks billing before send and refuses changed evidence without persisting an outbound message", async (t) => {
+  const h = await harness(t);
+  let checks = 0;
+  patch(t, billingAdvisory, "validateBillingAcknowledgment", async () => {
+    checks++;
+    if (checks === 1) return { allowed: true, evidence: "recent_free_entry_evidence",
+      reviewedAt: new Date().toISOString() };
+    return { allowed: false, status: 409, code: "billing_evidence_changed",
+      error: "Billing evidence changed", billingAdvisory: {
+        evidence: "recent_billable_message", reviewToken: "updated.signed.token",
+      } };
+  });
+  const form = new FormData();
+  form.append("templateName", "clinic_test");
+  form.append("languageCode", "en_US");
+  form.append("marketingConsentConfirmed", "true");
+  form.append("billingAcknowledged", "true");
+  form.append("media", new Blob([png], { type: "image/png" }), "offer.png");
+  const rejected = await h.post(form);
+  assert.equal(rejected.status, 409);
+  assert.equal(rejected.body.code, "billing_evidence_changed");
+  assert.equal(rejected.body.billingAdvisory.evidence, "recent_billable_message");
+  assert.equal(checks, 2);
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.saved.length, 0);
+});
 
 test("Inbox multipart image flow persists one R2 object then sends a Meta media header", async (t) => {
   const h = await harness(t);
