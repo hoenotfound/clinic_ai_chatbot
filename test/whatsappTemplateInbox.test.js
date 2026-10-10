@@ -79,6 +79,18 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(modal, /marketingReconsentNeeded/);
   assert.match(modal, /opted out of WhatsApp marketing/);
   assert.match(modal, /loadCatalog\(true\)/);
+  assert.match(route, /billingAdvisory/);
+  assert.match(route, /getTemplateBillingAdvisory/);
+  assert.match(route, /validateBillingAcknowledgment/);
+  assert.match(route, /billingEvidenceAtSend/);
+  assert.match(api, /billingReviewToken/);
+  assert.match(api, /billingAcknowledged/);
+  assert.match(modal, /billing_review_expired|billing_/);
+  assert.match(modal, /recent_billable_message/);
+  assert.match(modal, /billingReviewToken/);
+  assert.match(modal, /billingAcknowledged/);
+  assert.match(modal, /Meta billing.*this template may cost money/);
+  assert.match(modal, /I understand Meta may charge for this manual template send/);
 });
 
 test("WhatsApp template and marketing consent state use forward migrations instead of editing baseline schema", () => {
