@@ -1494,7 +1494,7 @@ test("Phase 7 performance tab shows mature reply rates, preliminary conversions 
   const calls=[];
   const performance={
     summary:{ sent:5,contacts:3,reply_matured:4,replied_matured:2,
-      replied_observed:3,milestone_matured:0,appointments_matured:0,
+      replied_observed:3,milestone_matured:0,appointments_matured:0,visits_matured:0,
       won_matured:0,avg_reply_hours:2.4 },
     breakdown:[
       {dimension:"step",label:"FU1",sent:3,reply_matured:2,replied_matured:1,
@@ -1516,6 +1516,8 @@ test("Phase 7 performance tab shows mature reply rates, preliminary conversions 
   await expect(view).toContainText("50.0%");
   await expect(view).toContainText("72-hour reply rate");
   await expect(view).toContainText("7-day appointment rate");
+  await expect(view).toContainText("7-day visit rate");
+  await expect(view).toContainText("Avg reply · mature");
   await expect(view).toContainText("No accepted follow-ups in this group.");
   await expect(view).toContainText("By accepted media");
   await expect(view).toContainText("Video");
