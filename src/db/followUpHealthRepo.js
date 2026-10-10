@@ -18,7 +18,7 @@ function parseHealthFilters(query = {}) {
 }
 
 const HEALTH_SQL = `WITH evidence AS (
-  SELECT m.id, m.contact_id, c.channel, m.created_at,
+  SELECT ('message:' || m.id::text) AS id, m.contact_id, c.channel, m.created_at,
     COALESCE(parent.automated_follow_up_step, m.automated_follow_up_step) AS step,
     CASE WHEN m.pricing_reminder_anchor_id IS NOT NULL THEN 'pricing'
       ELSE 'follow_up' END AS type,
@@ -46,6 +46,27 @@ const HEALTH_SQL = `WITH evidence AS (
     AND m.created_at >= now() - $1::integer * interval '1 day'
     AND ($2::text = 'all' OR c.channel = $2)
     AND ($3::integer[] IS NULL OR m.contact_id = ANY($3::integer[]))
+  UNION ALL
+  SELECT ('pricing_decision:' || d.id::text), d.contact_id, c.channel,
+    d.created_at, 4, 'pricing', 'decision',
+    CASE WHEN d.reason = 'delivery_review' THEN 'attention' ELSE 'skipped' END,
+    d.reason
+  FROM pricing_reminder_decisions d
+  JOIN contacts c ON c.id = d.contact_id
+  WHERE d.created_at >= now() - $1::integer * interval '1 day'
+    AND ($2::text = 'all' OR c.channel = $2)
+    AND ($3::integer[] IS NULL OR d.contact_id = ANY($3::integer[]))
+  UNION ALL
+  SELECT ('sequence_decision:' || d.id::text), d.contact_id, c.channel,
+    d.created_at, d.follow_up_step, 'follow_up', 'decision',
+    CASE WHEN d.action = 'human_review' THEN 'attention' ELSE 'skipped' END,
+    COALESCE(d.reason, d.action)
+  FROM follow_up_ai_decisions d
+  JOIN contacts c ON c.id = d.contact_id
+  WHERE d.action IN ('skip','human_review')
+    AND d.created_at >= now() - $1::integer * interval '1 day'
+    AND ($2::text = 'all' OR c.channel = $2)
+    AND ($3::integer[] IS NULL OR d.contact_id = ANY($3::integer[]))
 ), grouped AS (
   SELECT channel, type, part, step, status, COUNT(*)::integer AS count
   FROM evidence GROUP BY channel, type, part, step, status
