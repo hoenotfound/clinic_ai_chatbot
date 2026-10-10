@@ -60,7 +60,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
 
     // A higher-priority alert may override the contact tooltip while the
     // review rows remain. A staff-assist reply must not hide those rows.
-    await client.query("UPDATE contacts SET attention_reason='Delivery failed', needs_attention=true WHERE id=1");
+    await client.query("UPDATE contacts SET attention_reason='Delivery failed', needs_attention=true, updated_at=date_trunc('milliseconds', now()) WHERE id=1");
     const prior = (await client.query("SELECT * FROM contacts WHERE id=1")).rows[0];
     const afterAssist = await contacts.clearStaffAssistStateIfUnchanged(prior);
     assert.equal(afterAssist.needs_attention, true);
