@@ -40,7 +40,7 @@ function followUpAttentionAllowedSql(alias = "c") {
     WHERE review.contact_id = ${alias}.id
       AND review.status = 'pending'
       AND review.category <> 'information'
-  )))`;
+  ))`;
 }
 
 module.exports = {
