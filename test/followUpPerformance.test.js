@@ -38,9 +38,9 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     assert.equal(all.summary.replied_observed,4,"one attributed reply per contact/touch");
     assert.equal(all.summary.replied_matured,3);
     assert.equal(all.summary.reply_matured,4);
-    assert.equal(all.summary.appointments_observed,1);
-    assert.equal(all.summary.visits_observed,1);
-    assert.equal(all.summary.visits_matured,1);
+    assert.equal(all.summary.appointments_observed,2,"won stage also reaches appointment");
+    assert.equal(all.summary.visits_observed,2,"won stage also reaches visited");
+    assert.equal(all.summary.visits_matured,2);
     assert.equal(all.summary.avg_reply_hours,1.5, "Exclude immature replies from mature average");
     assert.equal(all.summary.won_observed,1);
     const steps=Object.fromEntries(all.breakdown.filter(x=>x.dimension==="step").map(x=>[x.label,x]));
