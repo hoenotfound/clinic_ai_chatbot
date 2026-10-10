@@ -3107,7 +3107,13 @@ function ThreadView({
               Needs attention{Number(contact.pending_review_count) > 1 ? ` (${contact.pending_review_count} questions)` : ""}
             </span>
             <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-pre-line" : "truncate"}`}>
-              {contact.attention_reason || "Flagged for staff review."}
+              {Number(contact.pending_review_count) > 0 && contact.pending_review_summaries
+                ? [contact.attention_reason?.startsWith("AI review requested:")
+                    ? "AI review requested:"
+                    : (contact.attention_reason || "Flagged for staff review."),
+                   "Pending questions:",
+                   contact.pending_review_summaries].join("\\n")
+                : (contact.attention_reason || "Flagged for staff review.")}
             </span>
             <ChevronDownIcon
               className={`mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform ${attentionExpanded ? "rotate-180" : ""}`}
