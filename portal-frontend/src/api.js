@@ -97,6 +97,8 @@ export const api = {
     form.append("languageCode", payload.languageCode);
     form.append("values", JSON.stringify(payload.values || {}));
     form.append("marketingConsentConfirmed", String(payload.marketingConsentConfirmed === true));
+    form.append("billingAcknowledged", String(payload.billingAcknowledged === true));
+    form.append("billingReviewToken", payload.billingReviewToken || "");
     form.append("media", mediaFile);
     const res = await fetch(`${BASE}/conversations/${contactId}/whatsapp-templates/send`, {
       method: "POST",
@@ -109,6 +111,7 @@ export const api = {
       error.status = res.status;
       error.code = data.code || null;
       error.policyBlocked = data.policyBlocked === true;
+      error.billingAdvisory = data.billingAdvisory || null;
       throw error;
     }
     return res.json();
