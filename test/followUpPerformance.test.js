@@ -68,8 +68,8 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     assert.equal(repeatReplies.summary.replied_observed,4,'multiple replies must count as one responsive follow-up');
     await client.query("INSERT INTO leads VALUES(6,3,now()-interval '15 days'); INSERT INTO lead_stage_history VALUES(6,3,now()-interval '9 days'); UPDATE messages SET delivery_status='sent' WHERE id=30");
     const directWon=await report.getFollowUpPerformance({days:30},null,q,profile);
-    assert.equal(directWon.summary.appointments_matured,2);
-    assert.equal(directWon.summary.visits_matured,2);
+    assert.equal(directWon.summary.appointments_matured,3,'appointment stage, existing won, and direct won each qualify');
+    assert.equal(directWon.summary.visits_matured,3,'existing won, visited, and direct won each qualify');
     assert.equal(directWon.summary.won_matured,2);
     const scoped=await report.getFollowUpPerformance({days:30},[1],q,profile);
     assert.equal(scoped.summary.sent,2);
