@@ -3103,8 +3103,10 @@ function ThreadView({
             title={attentionExpanded ? "Collapse attention reason" : "Show full attention reason"}
           >
             <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="shrink-0 text-[11px] font-semibold">Needs attention</span>
-            <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-normal" : "truncate"}`}>
+            <span className="shrink-0 text-[11px] font-semibold">
+              Needs attention{Number(contact.pending_review_count) > 1 ? ` (${contact.pending_review_count} questions)` : ""}
+            </span>
+            <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-pre-line" : "truncate"}`}>
               {contact.attention_reason || "Flagged for staff review."}
             </span>
             <ChevronDownIcon
