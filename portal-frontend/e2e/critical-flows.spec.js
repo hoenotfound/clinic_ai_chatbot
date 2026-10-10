@@ -352,6 +352,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
+        billingAdvisory: { evidence: "no_ctwa_referral", reviewToken: "test-review-token", reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
@@ -960,6 +961,9 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   await dialog.getByLabel(
     "I confirm this customer's consent covers WhatsApp marketing."
   ).check();
+  await expect(dialog.getByText("Meta billing — this template may cost money")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Send template" })).toBeDisabled();
+  await dialog.getByLabel("I understand Meta may charge for this manual template send.").check();
   await dialog.getByRole("button", { name: "Send template" }).click();
 
   await expect(page.getByText(/Hi Alex, just following up on your enquiry/)).toBeVisible();
@@ -974,6 +978,8 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
     languageCode: "en_US",
     values: { header: [], body: ["Alex"] },
     marketingConsentConfirmed: true,
+    billingAcknowledged: true,
+    billingReviewToken: "test-review-token",
   });
   expectNoUnexpectedApi(apiState);
 });
