@@ -382,7 +382,7 @@ async function listConversations() {
       (SELECT COUNT(*)::integer FROM ai_review_items r
        WHERE r.contact_id = c.id AND r.status = 'pending') AS pending_review_count,
       (SELECT STRING_AGG('[#' || recent.inbound_message_id::text || '] ' ||
-         LEFT(recent.summary, 200), E'\\n' ORDER BY recent.created_at, recent.id)
+         LEFT(recent.summary, 200), CHR(10) ORDER BY recent.created_at, recent.id)
        FROM (
          SELECT r.id, r.inbound_message_id, r.summary, r.created_at
          FROM ai_review_items r
@@ -539,7 +539,7 @@ async function returnToAi(id) {
              OR c.attention_reason LIKE 'AI review requested:%'
            ) THEN 'AI review requested: ' || COALESCE((
              SELECT RIGHT(STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
-               r.summary, E'\\n' ORDER BY r.created_at, r.id), 1600)
+               r.summary, CHR(10) ORDER BY r.created_at, r.id), 1600)
              FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
            ), '')
@@ -662,7 +662,7 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
            THEN 'AI review requested: ' ||
              RIGHT(COALESCE(SUBSTRING(c.attention_reason FROM
                  CHAR_LENGTH('AI review requested: ') + 1), '') ||
-               E'\\n' || '[#' || $2::text || '] ' || $3, 1600)
+               CHR(10) || '[#' || $2::text || '] ' || $3, 1600)
            ELSE 'AI review requested: [#' || $2::text || '] ' || $3
          END,
          updated_at = now()
