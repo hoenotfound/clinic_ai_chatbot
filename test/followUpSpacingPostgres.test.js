@@ -41,6 +41,8 @@ test(
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
+        CREATE TABLE ai_review_items (contact_id INTEGER, status TEXT, category TEXT);
+
         CREATE TABLE pipeline_stages (
           id INTEGER PRIMARY KEY,
           stage_type TEXT,
