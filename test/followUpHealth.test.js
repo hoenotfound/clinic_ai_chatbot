@@ -16,7 +16,7 @@ test("no authorized leads means no health or upcoming database access", async()=
   let calls=0;
   const execute=async()=>{calls++;return {rows:[]};};
   assert.equal((await health.getFollowUpHealth({},[],execute)).eventCount,0);
-  assert.deepEqual(await health.getUpcomingReviewQueue({channel:"all"},[],{enabled:true},execute),[]);
+  assert.deepEqual(await health.getUpcomingReviewQueue({channel:"all"},[],{enabled:true},execute),{upcoming:[],dueNowCount:0});
   assert.equal(calls,0);
 });
 
@@ -29,7 +29,7 @@ test("next-step estimates are limited to active reply windows and never treated 
       inbound_at:"2026-10-09T02:00:00Z"}],cfg,now);
   assert.equal(result.length,1);
   assert.equal(result[0].step,2);
-  assert.match(result[0].reason,/Estimate only/);
+  assert.match(result[0].reason,/Worker-derived estimate/);
 });
 
 test("PostgreSQL follow-up monitoring counts persisted evidence separately from companion media",{
