@@ -17,21 +17,26 @@ const PERFORMANCE_SQL = `WITH eligible AS (
       ELSE 'Extended WA template' END AS step,
     COALESCE(NULLIF(BTRIM(m.automated_follow_up_target_service), ''), 'Unspecified (not recorded)') AS service,
     CASE
-      WHEN LOWER(COALESCE(m.media_mime_type, '')) LIKE 'video/%'
-        OR LOWER(COALESCE(m.media_key, '')) ~ '[.](mp4|mov)($|[?])'
+      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'video/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(m.media_key,'')) ~ '[.](mp4|mov|webm|m4v)($|[?])'))
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
           AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
-          AND a.delivery_status IN ('sent','delivered','read')
-          AND (LOWER(COALESCE(a.media_mime_type,'')) LIKE 'video/%'
-            OR LOWER(COALESCE(a.media_key,'')) ~ '[.](mp4|mov)($|[?])'))
+          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'video/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(a.media_key,'')) ~ '[.](mp4|mov|webm|m4v)($|[?])'))))
       THEN 'Video'
-      WHEN NULLIF(m.media_url,'') IS NOT NULL
-        OR LOWER(COALESCE(m.media_mime_type, '')) LIKE 'image/%'
+      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'image/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(m.media_key,'')) ~ '[.](jpg|jpeg|png|gif|webp|heic)($|[?])'))
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
           AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
-          AND a.delivery_status IN ('sent','delivered','read')
-          AND (NULLIF(a.media_url,'') IS NOT NULL OR LOWER(COALESCE(a.media_mime_type,'')) LIKE 'image/%'))
+          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'image/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(a.media_key,'')) ~ '[.](jpg|jpeg|png|gif|webp|heic)($|[?])'))))
       THEN 'Image'
+      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'audio/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(m.media_key,'')) ~ '[.](mp3|ogg|wav|m4a|aac)($|[?])'))
+        OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
+          AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
+          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'audio/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(a.media_key,'')) ~ '[.](mp3|ogg|wav|m4a|aac)($|[?])'))))
+      THEN 'Audio'
+      WHEN (NULLIF(m.media_url,'') IS NOT NULL OR NULLIF(m.media_key,'') IS NOT NULL OR NULLIF(m.media_mime_type,'') IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
+          AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
+          AND a.delivery_status IN ('sent','delivered','read') AND ((NULLIF(a.media_url,'') IS NOT NULL OR NULLIF(a.media_key,'') IS NOT NULL OR NULLIF(a.media_mime_type,'') IS NOT NULL)))
+      THEN 'Other / unknown media'
       ELSE 'Text / no accepted media'
     END AS media,
     to_char(m.created_at AT TIME ZONE 'Asia/Kuala_Lumpur','YYYY-MM-DD') AS local_day,
@@ -77,8 +82,8 @@ const PERFORMANCE_SQL = `WITH eligible AS (
   ) lead ON true
   LEFT JOIN LATERAL (
     SELECT
-      MIN(h.created_at) FILTER (WHERE s.system_key=$4::text) AS appointment_at,
-      MIN(h.created_at) FILTER (WHERE s.system_key=$5::text) AS visit_at,
+      MIN(h.created_at) FILTER (WHERE s.system_key IN ($4::text,$5::text) OR s.stage_type='won') AS appointment_at,
+      MIN(h.created_at) FILTER (WHERE s.system_key=$5::text OR s.stage_type='won') AS visit_at,
       MIN(h.created_at) FILTER (WHERE s.stage_type='won') AS won_at
     FROM lead_stage_history h JOIN pipeline_stages s ON s.id=h.to_stage_id
     WHERE h.lead_id=lead.id
