@@ -70,7 +70,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(inbox, /Send WhatsApp template/);
   assert.match(inbox, /canReplyToLeads/);
   assert.match(inbox, /delivery_status === "unknown"/);
-  assert.match(inbox, /delivery could not be confirmed/);
+  assert.match(inbox, /delivery is unconfirmed/);
   assert.match(inbox, /whatsapp_template\.name/);
   assert.match(modal, /AI, scheduled messages and automated follow-ups do not use this template path/);
   assert.match(modal, /Do not use this to bypass an opt-out/);
