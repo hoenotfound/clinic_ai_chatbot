@@ -69,6 +69,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
       INSERT INTO leads(id,contact_id,treatment_interest) VALUES(1,1,'3D'),(2,2,'Pelvis');
       INSERT INTO messages(id,contact_id,role,is_automated_follow_up,automated_follow_up_for_message_id,automated_follow_up_step,delivery_status)
         VALUES(10,1,'assistant',true,8,3,'sent'),(20,2,'assistant',true,18,2,'pending');
+      UPDATE messages SET automated_follow_up_target_service='3D' WHERE id=10;
       INSERT INTO messages(id,contact_id,role,is_automated_follow_up,automated_follow_up_parent_message_id,delivery_status,delivery_error)
         VALUES(11,1,'assistant',true,10,'failed','Video rejected');
       UPDATE messages SET created_at=now()-interval '25 minutes' WHERE id=20;
@@ -81,6 +82,8 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
     const all=await health.getFollowUpHealth({days:7,channel:"all"},null,execute);
     assert.equal(all.eventCount,5);
     assert.ok(all.breakdown.some(v=>v.service==="3D"&&v.step===3&&v.status==="sent"));
+    assert.ok(all.breakdown.some(v=>v.service==="3D"&&v.part==="media"&&v.status==="failed"));
+    assert.ok(all.breakdown.some(v=>v.service==="Unspecified (not recorded)"&&v.part==="decision"));
     assert.equal(all.failedCount,1);
     assert.equal(all.attentionCount,1);
     assert.equal(all.breakdown.some(v=>v.part==="decision"&&v.status==="skipped"),true);
@@ -92,13 +95,23 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
     assert.equal(denied.alerts.length,2);
     const messenger=await health.getFollowUpHealth({days:7,channel:"facebook"},null,execute);
     assert.equal(messenger.eventCount,3);
-    await client.query(`INSERT INTO contacts(id,channel,channel_user_id,needs_attention,attention_reason)
+    // Editing a lead cannot retroactively relabel saved historical messages.
+    await client.query("UPDATE leads SET treatment_interest='9D' WHERE contact_id=1");
+    const afterEdit = await health.getFollowUpHealth({days:7,channel:"facebook"},null,execute);
+    assert.ok(afterEdit.breakdown.some(v=>v.service==="3D"&&v.status==="sent"));
+    assert.equal(afterEdit.breakdown.some(v=>v.service==="9D"),false);
+    await client.query(`INSERT INTO contacts(id,channel,channel_user_id,needs_attention,attention_reason,updated_at)
       VALUES(3,'instagram','ig3',true,
-      'Follow-up text was sent, but its optional image was not queued because the parent follow-up record was unavailable. Check Inbox before attempting a manual resend.')`);
+      'Follow-up text was sent, but its optional image was not queued because the parent follow-up record was unavailable. Check Inbox before attempting a manual resend.',
+      now() - interval '60 days')`);
     const missingMedia = await health.getFollowUpHealth({days:7,channel:"all"},[3],execute);
-    assert.equal(missingMedia.attentionCount,1);
-    assert.equal(missingMedia.eventCount,1);
-    assert.equal(missingMedia.alerts[0].part,"contact_alert");
+    assert.equal(missingMedia.attentionCount,0,"open flags must not inflate historical reviews");
+    assert.equal(missingMedia.eventCount,0,"open flags must not fabricate historical events");
+    assert.equal(missingMedia.alerts.length,0);
+    assert.equal(missingMedia.currentMediaAlertCount,1);
+    assert.equal(missingMedia.currentMediaAlerts.length,1);
+    assert.equal(missingMedia.currentMediaAlerts[0].contact_id,3);
+    assert.equal(missingMedia.currentMediaAlerts[0].created_at,undefined);
     // Future review queue is based on the newest message cycle only.
     await client.query(`
       INSERT INTO messages(id,contact_id,role,created_at) VALUES(30,1,'user',now()-interval '4 hours');
@@ -106,12 +119,13 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
       VALUES(31,1,'assistant',now()-interval '3 hours 59 minutes','bot','sent');
     `);
     const cfg={enabled:true,triggerMode:"all",activatedAt:"2026-10-01T00:00:00Z",
-      delayMinutes:120,additionalSteps:[],quietHours:{enabled:false,start:"00:00",end:"07:00"}};
+      delayMinutes:120,quietHours:{enabled:false,start:"00:00",end:"07:00"}};
     const queue=await health.getUpcomingReviewQueue({channel:"facebook"},[1],cfg,execute);
     assert.equal(queue.upcoming.length,1);
     assert.equal(queue.upcoming[0].step,1);
     assert.equal(queue.upcoming[0].contact_id,1);
     assert.equal(queue.dueNowCount,1);
+    assert.equal(queue.dueNowPolicyReviewCount,0);
   }finally{
     await client.query("SET search_path TO public");
     await client.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE");
