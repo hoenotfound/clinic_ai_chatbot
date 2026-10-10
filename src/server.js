@@ -893,6 +893,7 @@ async function processIncomingMessage(
     // replace immediate-care guidance with the generic processing-error reply.
     let aiReply;
     let flagged = false;
+    let reviewRequired = false;
     let bookingReady = false;
     let serviceQuery = false;
     let serviceQuerySource = null;
@@ -942,6 +943,7 @@ async function processIncomingMessage(
       ({
         text: aiReply,
         flagged,
+        reviewRequired,
         bookingReady,
         serviceQuery,
         serviceQuerySource,
@@ -952,8 +954,9 @@ async function processIncomingMessage(
 
       // Non-urgent deterministic handoff phrases remain a backstop if the model
       // misses the staff-handoff outcome.
-      if (keywordReason && !flagged) {
+      if (keywordReason && (!flagged || reviewRequired)) {
         flagged = true;
+        reviewRequired = false;
         bookingReady = false;
         aiReply = fallbackHandoffReply(
           text,
@@ -1004,17 +1007,27 @@ async function processIncomingMessage(
     if (!aiReplyContact) return { wasFirstMessage, keywordReason };
     contact = aiReplyContact;
 
-    if (flagged) {
-      // A handoff is an actual ownership transition, not only a red badge.
+    if (flagged && reviewRequired) {
+      // One unanswered question does not transfer the whole conversation.
+      // Keep the existing AI badge, but persist staff attention independently.
+      // If staff took over during generation, the final AI ownership guard
+      // below suppresses this late reply.
+      const reviewContact = await contactsRepo.setAiReviewAttention(
+        contact.id,
+        "Staff should verify the latest unanswered customer question."
+      );
+      if (!reviewContact || reviewContact.mode !== "ai") {
+        return { wasFirstMessage, keywordReason };
+      }
+      contact = reviewContact;
+    } else if (flagged) {
+      // Genuine takeover/safety events keep the existing strict staff pause.
       const pausedContact = await pauseAiForHumanHandoff(
         contact.id,
         keywordReason || "AI handed off this conversation."
       );
       if (!pausedContact) return { wasFirstMessage, keywordReason };
 
-      // Staff can claim the synthetic handoff immediately from the Inbox. Do a
-      // final ownership read right before the one allowed AI handoff message so
-      // a late model reply does not overwrite a staff member who already acted.
       const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
       if (!pendingHandoff) return { wasFirstMessage, keywordReason };
       contact = pendingHandoff;
@@ -1023,7 +1036,7 @@ async function processIncomingMessage(
     // The synthetic AI handoff is intentionally Staff mode, but the one
     // customer-facing handoff acknowledgement is still allowed while that
     // synthetic ownership remains unchanged. Normal replies require AI mode.
-    const finalSendContact = flagged
+    const finalSendContact = flagged && !reviewRequired
       ? await getPendingAiHandoffContact(contact.id)
       : await getAiOwnedContact(contact, {
           channel,
