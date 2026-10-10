@@ -131,16 +131,16 @@ function evaluatePricingReminder({
     const accepted = matchingMedia.some((message) => {
       const status = norm(message.delivery_status);
       if (["sent", "delivered", "read"].includes(status)) return true;
-      // Preserve the existing WhatsApp accepted-but-pending rule. A social
-      // caption-only provider ID must never count as a completed image send.
-      if (status === "pending") {
-        return channel === "whatsapp" && Boolean(message.whatsapp_message_id);
+      // Preserve WhatsApp's pending+WAMID rule. A social pending value by
+      // itself is NOT proof that its two separate Meta sends succeeded.
+      if (status === "pending" && channel === "whatsapp") {
+        return Boolean(message.whatsapp_message_id);
       }
-      // Legacy Messenger/Instagram AI replies saved a NULL delivery_status.
-      // Meta sends the caption and image separately: require BOTH distinct
-      // accepted provider IDs, including the persisted final image ID.
-      // Unknown/failed statuses still require review, even with old aliases.
-      if (status || !["facebook", "instagram"].includes(channel)) return false;
+      // Legacy Messenger/Instagram AI replies can save NULL or pending.
+      // Both require two provider receipts: caption and the final image ID.
+      // Failed/unknown statuses must always be reviewed, not silently accepted.
+      if ((status && status !== "pending") ||
+          !["facebook", "instagram"].includes(channel)) return false;
       return Number.isFinite(Date.parse(message.social_accepted_at)) &&
         String(message.whatsapp_message_id || "").startsWith(channel + ":") &&
         message.social_final_id_recorded === true &&
@@ -151,7 +151,7 @@ function evaluatePricingReminder({
     return false;
   });
   // If delivery of one graphic is uncertain, do not blindly continue the
-  // package set. Staff must check whether the missing media reached WhatsApp.
+  // package set. Staff must verify the channel receipt before resending.
   if (needsReview) return { offer: null, offers: [], reason: "delivery_review" };
   if (!offers.length) return { offer: null, offers: [], reason: "already_sent" };
 
