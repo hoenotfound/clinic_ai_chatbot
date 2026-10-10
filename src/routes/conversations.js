@@ -992,6 +992,24 @@ router.patch("/:contactId/attention", async (req, res) => {
   }
 });
 
+router.patch("/:contactId/reviews/:reviewId/resolve", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    const reviewId = parsePositiveInt(req.params.reviewId);
+    if (!contactId || !reviewId) {
+      return res.status(400).json({ error: "Invalid contact or review ID." });
+    }
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    const updated = await contactsRepo.resolveAiReviewItem(contactId, reviewId);
+    if (!updated) return res.status(409).json({ error: "This question is already resolved or unavailable." });
+    return res.json(updated);
+  } catch (err) {
+    console.error("Failed to resolve AI review question:", err);
+    return res.status(500).json({ error: "Could not resolve this question." });
+  }
+});
+
 router.patch("/:contactId/read-state", async (req, res) => {
   try {
     const contactId = parsePositiveInt(req.params.contactId);
