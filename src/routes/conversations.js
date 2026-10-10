@@ -1738,32 +1738,30 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       Boolean(message.sent_by_username) &&
       message.is_automated_follow_up !== true &&
       message.is_scheduled_message !== true;
-    let performRetrySend = null;
+    const retryPurpose =
+      message.is_automated_follow_up === true
+        ? "marketing"
+        : message.sent_by_username &&
+            message.is_scheduled_message !== true
+          ? whatsappPolicy.manualStaffPurpose(contact)
+          : "service";
+    if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
-      const retryPurpose =
-        message.is_automated_follow_up === true
-          ? "marketing"
-          : message.sent_by_username &&
-              message.is_scheduled_message !== true
-            ? whatsappPolicy.manualStaffPurpose(contact)
-            : "service";
-      if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
+    if (isKnownWhatsAppVideoCodecFailure(contact, message)) {
+      return res.status(409).json({
+        error:
+          "This saved video was rejected by WhatsApp because its codec is not supported. Please send a new MP4 exported as H.264 video with AAC audio and keep it under 16MB.",
+        code: "video_requires_compatible_reupload",
+      });
+    }
 
-      if (isKnownWhatsAppVideoCodecFailure(contact, message)) {
-        return res.status(409).json({
-          error:
-            "This saved video was rejected by WhatsApp because its codec is not supported. Please send a new MP4 exported as H.264 video with AAC audio and keep it under 16MB.",
-          code: "video_requires_compatible_reupload",
-        });
-      }
-
-      performRetrySend = (activeContact) =>
-        sendStoredMessage(activeContact, message, {
-          purpose: retryPurpose,
-          ...(isManualStaffRetry
-            ? { requireStaffMode: activeContact.mode === "human" }
-            : {}),
-        });
+    const performRetrySend = (activeContact) =>
+      sendStoredMessage(activeContact, message, {
+        purpose: retryPurpose,
+        ...(isManualStaffRetry
+          ? { requireStaffMode: activeContact.mode === "human" }
+          : {}),
+      });
 
     let sendResult;
     let updated;
