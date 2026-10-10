@@ -58,7 +58,7 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
 
   assert.match(prompt, /currently replying on Instagram/i);
   assert.match(prompt, /RETURN ONLY ONE VALID JSON OBJECT/i);
-  assert.match(prompt, /"outcome": "normal \| needs_human \| booking_ready"/i);
+  assert.match(prompt, /"outcome": "normal \| review_required \| needs_human \| booking_ready"/i);
   assert.match(prompt, /"priceQuery": false/i);
   assert.match(prompt, /"packageQuery": false/i);
   assert.match(prompt, /"promotionOption": null/i);
