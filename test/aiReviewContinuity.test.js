@@ -161,6 +161,7 @@ test("administrative reviews may resume safe follow-ups, but clinical/unknown re
   const { categorizeAiReview, followUpAttentionAllowedSql, canSendReactiveMedia } =
     require("../src/utils/aiReviewPolicy");
   assert.equal(categorizeAiReview("Can I pay by card?", "information"), "information");
+  assert.equal(categorizeAiReview("How much is HIFU?", "information"), "information");
   assert.equal(categorizeAiReview("刚刚做了 HIFU，适合3D吗？", "information"), "clinical");
   assert.equal(categorizeAiReview("Is 3D safe for pregnant patients?", "information"), "clinical");
   assert.equal(categorizeAiReview("Can I park there?", null), "clinical");
