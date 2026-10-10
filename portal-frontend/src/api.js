@@ -56,6 +56,8 @@ export const api = {
     }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
+  resolveAiReview: (contactId, reviewId) =>
+    request(`/conversations/${contactId}/reviews/${reviewId}/resolve`, { method: "PATCH" }),
   getConversationAttribution: (contactId) =>
     request(`/conversations/${contactId}/attribution`),
   getMessages: (
