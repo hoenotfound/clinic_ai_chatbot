@@ -34,14 +34,14 @@ test("Phase 6 HTTP endpoint enforces Tools permissions, assigned lead scope, inp
     throw new Error("Unexpected query");
   };
   try{
-    let res=await fetch(url);
+    let res=await fetch(url+"/api/follow-up-health");
     assert.equal(res.status,403);
     assert.equal(queries.length,0);
     user={...user,permissions:{manage_tools:true,view_all_leads:false,view_assigned_leads:true}};
-    res=await fetch(url+"?days=180");
+    res=await fetch(url+"/api/follow-up-health?days=180");
     assert.equal(res.status,400);
     assert.equal(queries.length,0);
-    res=await fetch(url+"?days=7&channel=facebook");
+    res=await fetch(url+"/api/follow-up-health?days=7&channel=facebook");
     assert.equal(res.status,200);
     const body=await res.json();
     assert.equal(body.failedCount,1);
@@ -53,7 +53,7 @@ test("Phase 6 HTTP endpoint enforces Tools permissions, assigned lead scope, inp
     assert.ok(queries.every(x=>/^\s*(SELECT|WITH)\b/i.test(x.sql)),"no write SQL");
     user={...user,permissions:{manage_tools:true,view_all_leads:false,view_assigned_leads:false}};
     const previous=queries.length;
-    res=await fetch(url);
+    res=await fetch(url+"/api/follow-up-health");
     assert.equal(res.status,200);
     assert.deepEqual((await res.json()).upcoming,[]);
     assert.equal(queries.length,previous);
