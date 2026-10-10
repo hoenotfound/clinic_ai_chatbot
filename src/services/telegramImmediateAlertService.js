@@ -88,6 +88,18 @@ function deliveryFailureEventKey(contactId) {
   return `delivery:${contactId}:event:${crypto.randomUUID()}`;
 }
 
+function aiReviewReference(alert) {
+  if (alert?.alert_type !== "ai_review") return null;
+  const match = /^ai-review:(\d+):(\d+)$/.exec(String(alert.event_key || ""));
+  if (!match) return null;
+  const contactId = Number(match[1]);
+  const inboundMessageId = Number(match[2]);
+  return Number.isSafeInteger(contactId) && contactId > 0 &&
+    Number.isSafeInteger(inboundMessageId) && inboundMessageId > 0 &&
+    Number(alert.contact_id) === contactId
+    ? { contactId, inboundMessageId } : null;
+}
+
 function staffWaitingReference(alert) {
   if (alert?.alert_type !== "staff_waiting") return null;
   const match = /^staff_waiting:(\d+):(\d+)$/.exec(String(alert.event_key || ""));
@@ -127,7 +139,7 @@ async function isLatestBookingReadyAlert(
 }
 
 function shouldWakeConversationSummary(alert) {
-  return ["human_intervention", "booking_ready", "staff_waiting"].includes(
+  return ["human_intervention", "booking_ready", "staff_waiting", "ai_review"].includes(
     String(alert?.alert_type || "")
   );
 }
@@ -150,6 +162,21 @@ async function shouldSendImmediateAlert(
 ) {
   if (alert?.alert_type === "booking_ready") {
     return isLatestBookingReadyAlert(alert, query);
+  }
+  if (alert?.alert_type === "ai_review") {
+    const reference = aiReviewReference(alert);
+    if (!reference) return false;
+    const result = await query(
+      `SELECT EXISTS (
+         SELECT 1 FROM ai_review_items r
+         JOIN contacts c ON c.id = r.contact_id
+         WHERE r.contact_id = $1 AND r.inbound_message_id = $2
+           AND r.status = 'pending'
+         FOR SHARE OF c
+       ) AS pending`,
+      [reference.contactId, reference.inboundMessageId]
+    );
+    return Boolean(result.rows[0]?.pending);
   }
   if (alert?.alert_type !== "staff_waiting") return true;
 
@@ -205,8 +232,7 @@ function buildImmediateAlertMessage({
   const isUnconfirmedDelivery = isDelivery &&
     /^Delivery unconfirmed:/i.test(String(reason || "").trim());
   const isBookingReady = type === "booking_ready";
-  const isAiReview = type === "human_intervention" &&
-    String(reason || "").startsWith("AI review requested:");
+  const isAiReview = type === "ai_review";
   const conversion = getConversionProfile(config);
   const labels = getOperationalLabels(config);
   const platform = channelLabel(context.channel || "whatsapp");
@@ -504,7 +530,13 @@ function createTelegramImmediateAlertService({
     let eventKey;
     let cooldownMinutes = 0;
 
-    if (type === "human_intervention") {
+    if (type === "ai_review") {
+      const numericMessageId = Number(messageId);
+      if (!Number.isSafeInteger(numericMessageId) || numericMessageId < 1) {
+        return { status: "skipped", reason: "missing-review-message-id" };
+      }
+      eventKey = `ai-review:${contactId}:${numericMessageId}`;
+    } else if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
       if (!eventKey) {
         eventKey = `human:${contactId}:event:${crypto.randomUUID()}`;
@@ -563,6 +595,9 @@ function createTelegramImmediateAlertService({
     sendHumanInterventionAlert(input) {
       return queue("human_intervention", input);
     },
+    sendAiReviewAlert(input) {
+      return queue("ai_review", input);
+    },
     sendDeliveryFailureAlert(input) {
       return queue("delivery_failure", input);
     },
@@ -594,12 +629,14 @@ module.exports = {
   publishImmediateTerminalState,
   shouldSendImmediateAlert,
   staffWaitingReference,
+  aiReviewReference,
   queuePreparedAlert: defaultService.queuePreparedAlert,
   retryDelayMsForAttempt,
   runImmediateAlertQueue,
   startTelegramImmediateAlertRecovery,
   wakeImmediateAlertQueue,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
+  sendAiReviewAlert: defaultService.sendAiReviewAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
   sendBookingReadyAlert: defaultService.sendBookingReadyAlert,
 };
