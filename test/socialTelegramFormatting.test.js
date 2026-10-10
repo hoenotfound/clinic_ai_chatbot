@@ -99,3 +99,27 @@ test("social delivery-failure alerts name the correct channel", () => {
   assert.match(facebook, /Facebook Lead \(Facebook Messenger: psid-123\)/);
   assert.doesNotMatch(facebook, /WhatsApp Delivery Failed/);
 });
+
+test("unconfirmed Messenger and Instagram delivery alerts do not imply Meta rejection", () => {
+  for (const channel of ["facebook", "instagram"]) {
+    const text = buildImmediateAlertMessage({
+      type: "delivery_failure",
+      context: {
+        contact_id: 329, name: "Sample Contact", channel,
+        channel_user_id: "psid-123",
+      },
+      reason: "Delivery unconfirmed: pricing graphic was previously attempted. Check its status before resending.",
+    });
+    assert.match(text, /Delivery Unconfirmed/);
+    assert.match(text, /Check the provider receipts and conversation/);
+    assert.match(text, /Do not automatically retry/);
+    assert.doesNotMatch(text, /Delivery Failed|Check the failed message/);
+  }
+  const rejected = buildImmediateAlertMessage({
+    type: "delivery_failure",
+    context: { contact_id: 329, channel: "facebook", channel_user_id: "psid-123" },
+    reason: "Delivery failed: Meta rejected the image.",
+  });
+  assert.match(rejected, /Delivery Failed/);
+  assert.doesNotMatch(rejected, /Delivery Unconfirmed/);
+});
