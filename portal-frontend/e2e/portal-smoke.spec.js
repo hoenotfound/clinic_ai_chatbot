@@ -60,6 +60,7 @@ async function mockPortalApi(
     followUpActivity = null,
     followUpActivityFailures = 0,
     followUpHealth = null,
+    followUpPerformance = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -503,6 +504,16 @@ async function mockPortalApi(
       return route.fulfill({
         status: 200, contentType: "image/jpeg", body: "mock-preview",
       });
+    }
+
+    if (path === "/api/follow-up-performance" && method === "GET") {
+      const filters = Object.fromEntries(url.searchParams.entries());
+      const data = typeof followUpPerformance === "function"
+        ? await followUpPerformance(filters)
+        : (followUpPerformance || { summary: { sent:0,contacts:0,reply_matured:0,
+          replied_matured:0,milestone_matured:0,appointments_matured:0,won_matured:0,
+          replied_observed:0 },breakdown:[],daily:[] });
+      return route.fulfill({ status:200,contentType:"application/json",body:JSON.stringify(data) });
     }
 
     if (path === "/api/follow-up-health" && method === "GET") {
@@ -1476,6 +1487,43 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await page.getByRole("tab", { name: "Sequence" }).click();
   await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Phase 7 performance tab shows mature reply rates, preliminary conversions and media breakdown", async ({ page }) => {
+  const calls=[];
+  const performance={
+    summary:{ sent:5,contacts:3,reply_matured:4,replied_matured:2,
+      replied_observed:3,milestone_matured:0,appointments_matured:0,visits_matured:0,
+      won_matured:0,avg_reply_hours:2.4 },
+    breakdown:[
+      {dimension:"step",label:"FU1",sent:3,reply_matured:2,replied_matured:1,
+        milestone_matured:0,appointments_matured:0,won_matured:0},
+      {dimension:"step",label:"FU3",sent:2,reply_matured:2,replied_matured:1,
+        milestone_matured:0,appointments_matured:0,won_matured:0},
+      {dimension:"media",label:"Video",sent:2,reply_matured:2,replied_matured:1,
+        milestone_matured:0,appointments_matured:0,won_matured:0},
+      {dimension:"service",label:"3D",sent:5,reply_matured:4,replied_matured:2,
+        milestone_matured:0,appointments_matured:0,won_matured:0},
+    ],
+    daily:[{dimension:"day",label:"2026-10-09",sent:5}],
+  };
+  await mockPortalApi(page,{loggedIn:true,followUpPerformance:(filters)=>{calls.push(filters);return performance;}});
+  await page.goto("/tools");
+  await page.getByRole("tab",{name:"Performance"}).click();
+  const view=page.getByRole("region",{name:"Follow-up performance analytics"});
+  await expect(view).toContainText("Follow-up performance");
+  await expect(view).toContainText("50.0%");
+  await expect(view).toContainText("72-hour reply rate");
+  await expect(view).toContainText("7-day appointment rate");
+  await expect(view).toContainText("7-day visit rate");
+  await expect(view).toContainText("Avg reply · mature");
+  await expect(view).toContainText("No accepted follow-ups in this group.");
+  await expect(view).toContainText("By accepted media");
+  await expect(view).toContainText("Video");
+  await expect(view).toContainText("not proof of incremental lift");
+  await view.getByRole("combobox",{name:"Performance channel"}).selectOption("instagram");
+  await expect.poll(()=>calls.at(-1)?.channel).toBe("instagram");
   await expectNoHorizontalPageOverflow(page);
 });
 

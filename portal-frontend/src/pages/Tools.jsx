@@ -9,6 +9,7 @@ import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../
 import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
 import FollowUpActivity from "../components/FollowUpActivity";
 import FollowUpHealth from "../components/FollowUpHealth";
+import FollowUpPerformance from "../components/FollowUpPerformance";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -2202,12 +2203,13 @@ function FollowUpTool({
         )}
       </section>
 
-      <nav role="tablist" aria-label="Follow-up sections" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <nav role="tablist" aria-label="Follow-up sections" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
           { key: "sequence", label: "Sequence" },
           { key: "pricing", label: "Pricing" },
           { key: "whatsapp", label: "WhatsApp templates" },
           { key: "activity", label: "Activity" },
+          { key: "performance", label: "Performance" },
         ].map(({ key, label }) => (
           <button
             type="button"
@@ -3333,6 +3335,9 @@ function FollowUpTool({
               Meta does not guarantee every template will be free, so confirm billing with actual callbacks.
             </p>
           </Card>
+          </div>
+          <div id="follow-up-panel-performance" role="tabpanel" aria-labelledby="follow-up-tab-performance" className={followUpTab === "performance" ? "space-y-5" : "hidden"}>
+            <FollowUpPerformance active={followUpTab === "performance"} />
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
             <FollowUpHealth active={followUpTab === "activity"} />
