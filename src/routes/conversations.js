@@ -1102,6 +1102,7 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
     try {
       billingAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id, {
         staffUsername: req.session?.username,
+        templates: catalog.templates,
       });
     } catch (error) {
       console.warn("WhatsApp template billing evidence could not be checked:", error?.message);
@@ -1539,6 +1540,35 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     }
     if (!billingReview.allowed) return rejectBilling(billingReview);
 
+    // Consume the template/language-specific review before writing a message
+    // or contacting Meta. Replaying the same acknowledged request, including
+    // after a crash or timeout, can never authorize a second template send.
+    let billingClaim;
+    try {
+      billingClaim = await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
+        contact.id, req.session?.username, billingReviewBody
+      );
+    } catch (error) {
+      console.warn("WhatsApp billing claim failed:", error?.message);
+      return res.status(503).json({
+        code: "billing_claim_unavailable",
+        error: "Could not safely reserve this one-time billing confirmation. No template was sent.",
+      });
+    }
+    if (!billingClaim.claimed) {
+      // Return a fresh review rather than encouraging a retry of the same
+      // possibly-delivered WhatsApp message.
+      const nextAdvisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id, {
+        staffUsername: req.session?.username,
+        templates: [resolved.template].map((t) => ({ ...t, sendable: true })),
+      });
+      return res.status(409).json({
+        code: billingClaim.code || "billing_review_already_used",
+        error: "This billing confirmation has already been used or expired. Check the conversation for delivery before sending another template.",
+        billingAdvisory: nextAdvisory,
+      });
+    }
+
     const metadata = {
       name: resolved.template.name,
       language: resolved.template.language,
@@ -1551,6 +1581,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       billingAcknowledged: true,
       billingEvidenceAtSend: billingReview.evidence,
       billingReviewedAt: billingReview.reviewedAt,
+      billingReviewClaimHash: billingClaim.tokenHash,
       marketingConsentConfirmed:
         resolved.template.category === "MARKETING"
           ? true
@@ -1690,6 +1721,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       return res.status(409).json({
         code: "extended_followup_retry_blocked",
         error: "Automatic free-entry templates cannot be retried from Inbox. Review delivery and billing evidence; if a new message is appropriate, choose an approved template and reconfirm the customer's marketing consent.",
+      });
+    }
+
+    if (message.whatsapp_template) {
+      // Retrying a saved template could incur a NEW Meta charge, or duplicate
+      // an earlier unknown delivery. Require a fresh template-specific signed
+      // billing review in the normal Inbox picker, not the generic Retry API.
+      return res.status(409).json({
+        code: "template_retry_requires_billing_review",
+        error: "WhatsApp templates cannot be retried directly. Check whether Meta already delivered this message, then use Send WhatsApp template to review billing and consent again.",
       });
     }
 
