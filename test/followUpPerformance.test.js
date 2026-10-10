@@ -20,8 +20,9 @@ test("no accessible contacts does not query database",async()=>{
 });
 
 test("Postgres Phase 7 attributes replies and milestones only to latest accepted touch",{
-  skip:!process.env.TEST_DATABASE_URL,
+  skip:!process.env.TEST_DATABASE_URL && !process.env.CI,
 },async()=>{
+  assert.ok(process.env.TEST_DATABASE_URL, "CI requires TEST_DATABASE_URL to run PostgreSQL attribution coverage");
   const client=new Client({connectionString:process.env.TEST_DATABASE_URL,ssl:false});
   const schema="fu_perf_"+process.pid+"_"+Date.now();
   await client.connect();
@@ -39,6 +40,8 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     assert.equal(all.summary.reply_matured,4);
     assert.equal(all.summary.appointments_observed,1);
     assert.equal(all.summary.visits_observed,1);
+    assert.equal(all.summary.visits_matured,1);
+    assert.equal(all.summary.avg_reply_hours,1.5, "Exclude immature replies from mature average");
     assert.equal(all.summary.won_observed,1);
     const steps=Object.fromEntries(all.breakdown.filter(x=>x.dimension==="step").map(x=>[x.label,x]));
     assert.equal(steps.FU1.replied_observed,1,"FU1 cannot claim FU2 reply");
@@ -46,12 +49,17 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     assert.equal(steps.FU2.appointments_observed,1);
     assert.equal(steps.FU2.won_observed,1);
     assert.equal(steps.Pricing.visits_observed,1);
+    assert.equal(steps.Pricing.visits_matured,1);
     assert.equal(steps["Extended WA template"].sent,1);
     assert.equal(steps["Extended WA template"].replied_matured,1);
     const media=Object.fromEntries(all.breakdown.filter(x=>x.dimension==="media").map(x=>[x.label,x]));
     assert.equal(media.Video.sent,1);
     assert.equal(media["Text / no accepted media"].sent,4);
     assert.equal(all.daily.reduce((sum,row)=>sum+row.sent,0),5);
+    // Media with a filename but no MIME type must classify correctly.
+    await client.query("UPDATE messages SET media_key='testimonials/proof.mp4?download=1' WHERE id=40");
+    const filenameMedia=await report.getFollowUpPerformance({days:30},null,q,profile);
+    assert.equal(filenameMedia.breakdown.find(x=>x.dimension==='media' && x.label==='Video').sent,2);
     const scoped=await report.getFollowUpPerformance({days:30},[1],q,profile);
     assert.equal(scoped.summary.sent,2);
     assert.equal(scoped.summary.replied_matured,1);
