@@ -54,7 +54,9 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
         automated_follow_up_parent_message_id integer,
         pricing_reminder_anchor_id integer,sent_by_username text
       );
-      CREATE TABLE follow_up_ai_decisions(contact_id integer,trigger_message_id integer,action text);
+      CREATE TABLE follow_up_ai_decisions(id integer,contact_id integer,trigger_message_id integer,
+        action text,follow_up_step integer,reason text,created_at timestamptz default now());
+      CREATE TABLE pricing_reminder_decisions(id integer,contact_id integer,created_at timestamptz default now(),reason text);
       CREATE TABLE outbound_message_evidence(message_id integer,origin text);
       INSERT INTO contacts(id,channel) VALUES(1,'facebook'),(2,'instagram');
       INSERT INTO messages(id,contact_id,role,is_automated_follow_up,automated_follow_up_for_message_id,automated_follow_up_step,delivery_status)
@@ -62,19 +64,25 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
       INSERT INTO messages(id,contact_id,role,is_automated_follow_up,automated_follow_up_parent_message_id,delivery_status,delivery_error)
         VALUES(11,1,'assistant',true,10,'failed','Video rejected');
       UPDATE messages SET created_at=now()-interval '25 minutes' WHERE id=20;
+      INSERT INTO follow_up_ai_decisions(id,contact_id,trigger_message_id,action,follow_up_step,reason)
+        VALUES (201,1,10,'skip',2,'customer booked');
+      INSERT INTO pricing_reminder_decisions(id,contact_id,reason)
+        VALUES (202,2,'delivery_review');
     `);
     const execute=(sql,params)=>client.query(sql,params);
     const all=await health.getFollowUpHealth({days:7,channel:"all"},null,execute);
-    assert.equal(all.eventCount,3);
+    assert.equal(all.eventCount,5);
     assert.equal(all.failedCount,1);
+    assert.equal(all.attentionCount,1);
+    assert.equal(all.breakdown.some(v=>v.part==="decision"&&v.status==="skipped"),true);
     assert.equal(all.stalePendingCount,1);
     assert.equal(all.alerts.length,2);
     assert.equal(all.breakdown.find(v=>v.part==="media").step,3);
     const denied=await health.getFollowUpHealth({days:7,channel:"all"},[2],execute);
-    assert.equal(denied.eventCount,1);
-    assert.equal(denied.alerts.length,1);
+    assert.equal(denied.eventCount,2);
+    assert.equal(denied.alerts.length,2);
     const messenger=await health.getFollowUpHealth({days:7,channel:"facebook"},null,execute);
-    assert.equal(messenger.eventCount,2);
+    assert.equal(messenger.eventCount,3);
     // Future review queue is based on the newest message cycle only.
     await client.query(`
       INSERT INTO messages(id,contact_id,role,created_at) VALUES(30,1,'user',now()-interval '4 hours');
