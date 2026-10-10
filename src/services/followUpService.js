@@ -754,7 +754,16 @@ async function sendSocialImageCompanion(contact, contactId, parentMessageId, ima
     return;
   }
 
-  if (!imageMessage) return;
+  if (!imageMessage) {
+    console.warn(
+      `Social follow-up image companion not queued: parent follow-up ${parentMessageId} unavailable for contact ${contactId}.`
+    );
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      "Follow-up text was sent, but its optional image was not queued because the parent follow-up record was unavailable. Check Inbox before attempting a manual resend."
+    );
+    return;
+  }
   publishConversationChange(imageMessage, "message");
 
   let imageResult;
@@ -858,7 +867,16 @@ async function sendSocialVideoCompanion(
     return;
   }
 
-  if (!videoMessage) return;
+  if (!videoMessage) {
+    console.warn(
+      `Social follow-up video companion not queued: parent follow-up ${parentMessageId} unavailable for contact ${contactId}.`
+    );
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      "Follow-up text was sent, but its service video was not queued because the parent follow-up record was unavailable. Check Inbox before attempting a manual resend."
+    );
+    return;
+  }
 
   publishConversationChange(videoMessage, "message");
 
