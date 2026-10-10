@@ -999,6 +999,8 @@ router.patch("/:contactId/reviews/:reviewId/resolve", async (req, res) => {
     if (!contactId || !reviewId) {
       return res.status(400).json({ error: "Invalid contact or review ID." });
     }
+    const allowed = await canAccessContact(req.user, contactId);
+    if (!allowed) return res.status(403).json({ error: "You cannot manage this conversation." });
     const contact = await contactsRepo.getContactById(contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     const updated = await contactsRepo.resolveAiReviewItem(contactId, reviewId);
