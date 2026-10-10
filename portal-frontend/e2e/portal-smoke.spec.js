@@ -1527,6 +1527,29 @@ test("Phase 7 performance tab shows mature reply rates, preliminary conversions 
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Follow-up mobile polish keeps tabs, performance cards, and Activity shortcuts usable at 320px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 35, contacts: 30, reply_matured: 32, replied_matured: 8,
+      milestone_matured: 0, appointments_matured: 0, visits_matured: 0, won_matured: 0 },
+    breakdown: [
+      { dimension: "step", label: "FU1", sent: 35, reply_matured: 32, replied_matured: 8,
+        milestone_matured: 0, appointments_matured: 0, visits_matured: 0, won_matured: 0 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  const tabbar = page.getByRole("tablist", { name: "Follow-up sections" });
+  await expect(tabbar.getByRole("tab")).toHaveCount(5);
+  await tabbar.getByRole("tab", { name: "Performance" }).click();
+  const report = page.getByRole("region", { name: "Follow-up performance analytics" });
+  await expect(report.getByLabel("By follow-up step mobile results")).toContainText("FU1");
+  await expect(report.getByLabel("By follow-up step mobile results")).toContainText("25.0%");
+  await tabbar.getByRole("tab", { name: "Activity" }).click();
+  const links = page.getByRole("navigation", { name: "Activity section shortcuts" });
+  await expect(links.getByRole("link")).toHaveCount(3);
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
   const data = { eventCount: 5, failedCount: 1, attentionCount: 1, stalePendingCount: 1,
     dueNowCount: 2, dueNowPolicyReviewCount: 1,
