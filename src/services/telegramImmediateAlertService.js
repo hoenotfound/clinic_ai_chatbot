@@ -172,6 +172,7 @@ async function shouldSendImmediateAlert(
          JOIN contacts c ON c.id = r.contact_id
          WHERE r.contact_id = $1 AND r.inbound_message_id = $2
            AND r.status = 'pending'
+           AND c.mode = 'ai'
          FOR SHARE OF c
        ) AS pending`,
       [reference.contactId, reference.inboundMessageId]
