@@ -7,10 +7,12 @@ function normalizeTimingSettings(config) {
   if (!automatedRepliesEnabled() || config?.enabled !== true ||
       !["all", "staff"].includes(config.triggerMode) ||
       !Number.isFinite(Date.parse(config.activatedAt)) ||
-      !Array.isArray(config.additionalSteps) || config.additionalSteps.length > 2) return null;
+      (config.additionalSteps !== undefined && !Array.isArray(config.additionalSteps)) ||
+      (Array.isArray(config.additionalSteps) && config.additionalSteps.length > 2)) return null;
+  const additionalSteps = config.additionalSteps ?? [];
   const quietHours = normalizeQuietHours(config.quietHours);
   if (!quietHours) return null;
-  const normalized = [config, ...config.additionalSteps].map((step) => {
+  const normalized = [config, ...additionalSteps].map((step) => {
     const mode = step.timingMode === "before_window_expiry" ? "before_window_expiry" : "after_reply";
     const offset = Number(step.beforeWindowExpiryMinutes ?? 120);
     const delay = mode === "before_window_expiry" ? 1440 - offset : Number(step.delayMinutes);
@@ -46,10 +48,14 @@ function buildScheduleSql(settings) {
       COALESCE(previous_at + ((($5::integer[])[next_step] - ($5::integer[])[next_step - 1]) * interval '1 minute'),
         anchor_at + (($5::integer[])[next_step] * interval '1 minute'))
     ) END`;
+  // The worker uses the CURRENT clock time for FU3's pricing reserve cutoff.
+  // GREATEST(current time, estimated due) enforces that cutoff for both overdue
+  // claims and future opportunities. A stale FU3 never appears "due now".
+  const finalStepCutoff = "GREATEST(due_at, now()) < inbound_at + interval '23 hours 35 minutes'";
   const guard = settings.pricingEnabled
     ? (settings.pricingSocial
-        ? "(channel NOT IN ('whatsapp','facebook','instagram') OR next_step <> 3 OR due_at < inbound_at + interval '23 hours 35 minutes')"
-        : "(channel <> 'whatsapp' OR next_step <> 3 OR due_at < inbound_at + interval '23 hours 35 minutes')")
+        ? `(channel NOT IN ('whatsapp','facebook','instagram') OR next_step <> 3 OR ${finalStepCutoff})`
+        : `(channel <> 'whatsapp' OR next_step <> 3 OR ${finalStepCutoff})`)
     : "TRUE";
   return `WITH recently_active AS (
     SELECT DISTINCT contact_id FROM messages
@@ -58,7 +64,16 @@ function buildScheduleSql(settings) {
     SELECT c.id AS contact_id, c.channel,
       inbound.created_at AS inbound_at, anchor.created_at AS anchor_at,
       COALESCE(progress.max_step, 0) + 1 AS next_step,
-      prev.created_at AS previous_at, lead.treatment_interest AS service
+      prev.created_at AS previous_at, lead.treatment_interest AS service,
+      ARRAY_REMOVE(ARRAY[
+        CASE WHEN COALESCE(c.mode,'ai') = 'human' THEN 'human_takeover' END,
+        CASE WHEN
+          (c.channel='whatsapp' AND (c.whatsapp_opt_out_at IS NOT NULL
+            OR c.whatsapp_marketing_opt_out_at IS NOT NULL))
+          OR (c.channel IN ('facebook','instagram') AND
+            (c.social_opt_out_at IS NOT NULL OR c.social_marketing_opt_out_at IS NOT NULL))
+          THEN 'marketing_opt_out' END
+      ]::text[], NULL) AS policy_flags
     FROM recently_active recent
     JOIN contacts c ON c.id = recent.contact_id
     JOIN LATERAL (
@@ -100,11 +115,11 @@ function buildScheduleSql(settings) {
     WHERE c.channel IN ('whatsapp','facebook','instagram')
       AND ($1::text = 'all' OR c.channel = $1)
       AND ($2::integer[] IS NULL OR c.id = ANY($2::integer[]))
-      AND c.needs_attention = false AND COALESCE(c.mode,'ai') <> 'human'
-      AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL
-        AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL)
-        OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL
-          AND c.social_opt_out_at IS NULL AND c.social_marketing_opt_out_at IS NULL))
+      AND c.needs_attention = false
+      -- Match worker candidate discovery. Human takeover/opt-outs are reported
+      -- as policy warnings, not silently excluded from worker-candidate totals.
+      AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
+        OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL))
       AND anchor.delivery_status IS DISTINCT FROM 'failed'
       AND anchor.created_at >= $4::timestamptz
       AND ($3::text = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -128,8 +143,10 @@ function buildScheduleSql(settings) {
       AND ${guard}
   )
   SELECT (SELECT COUNT(*)::integer FROM in_window WHERE due_at <= now()) AS due_now,
+    (SELECT COUNT(*)::integer FROM in_window
+      WHERE due_at <= now() AND cardinality(policy_flags) > 0) AS due_now_policy_review,
     COALESCE((SELECT jsonb_agg(to_jsonb(ordered) ORDER BY ordered.due_at, ordered.contact_id)
-      FROM (SELECT contact_id, channel, next_step, due_at, inbound_at, service
+      FROM (SELECT contact_id, channel, next_step, due_at, inbound_at, service, policy_flags
         FROM in_window ORDER BY due_at, contact_id LIMIT 80) ordered), '[]'::jsonb) AS upcoming`;
 }
 
@@ -145,6 +162,7 @@ function estimateUpcoming(rows, settings, now = new Date()) {
     return [{
       contact_id: row.contact_id, channel: row.channel, step: Number(row.next_step),
       service: row.service || null,
+      policy_flags: Array.isArray(row.policy_flags) ? row.policy_flags : [],
       estimated_at: new Date(earliestMs).toISOString(),
       window_expires_at: new Date(expiryMs).toISOString(),
       reason: "Worker-derived estimate; all live eligibility and platform policy checks still apply",
@@ -156,7 +174,7 @@ async function getUpcomingReviewQueue(filters, allowedContactIds, config,
   execute = (sql, params) => pool.query(sql, params), now = new Date()) {
   const settings = normalizeTimingSettings(config);
   if (!settings || (Array.isArray(allowedContactIds) && allowedContactIds.length === 0)) {
-    return { upcoming: [], dueNowCount: 0 };
+    return { upcoming: [], dueNowCount: 0, dueNowPolicyReviewCount: 0 };
   }
   const result = await execute(buildScheduleSql(settings), [
     filters.channel, allowedContactIds, settings.triggerMode, settings.activatedAt,
@@ -167,6 +185,7 @@ async function getUpcomingReviewQueue(filters, allowedContactIds, config,
   return {
     upcoming: estimateUpcoming(summary.upcoming || [], settings, now),
     dueNowCount: quiet.active ? 0 : Number(summary.due_now || 0),
+    dueNowPolicyReviewCount: quiet.active ? 0 : Number(summary.due_now_policy_review || 0),
   };
 }
 
