@@ -1481,6 +1481,11 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
 
 test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
   const data = { eventCount: 5, failedCount: 1, attentionCount: 1, stalePendingCount: 1,
+    dueNowCount: 2, dueNowPolicyReviewCount: 1,
+    currentMediaAlertCount: 1,
+    currentMediaAlerts: [{ contact_id: 46, channel: "instagram",
+      detail: "Follow-up text was sent, but its optional image was not queued",
+      current_service: "3D" }],
     breakdown: [
       { channel: "facebook", type: "follow_up", part: "message", step: 3, status: "sent", count: 1 },
       { channel: "facebook", type: "follow_up", part: "media", step: 3, status: "failed", count: 1 },
@@ -1488,7 +1493,8 @@ test("Phase 6 follow-up health reports failures and tentative next steps without
     alerts: [{ id: 21, channel: "facebook", contact_id: 44, type: "follow_up", step: 3,
       part: "media", status: "failed", created_at: "2026-10-09T10:00:00Z", detail: "Video rejected" }],
     upcoming: [{ contact_id: 45, channel: "instagram", step: 2,
-      estimated_at: "2026-10-10T11:00:00Z", window_expires_at: "2026-10-10T16:00:00Z" }],
+      estimated_at: "2026-10-10T11:00:00Z", window_expires_at: "2026-10-10T16:00:00Z",
+      policy_flags: ["human_takeover", "marketing_opt_out"] }],
   };
   await mockPortalApi(page, { loggedIn: true, followUpHealth: data });
   await page.goto("/tools");
@@ -1499,8 +1505,15 @@ test("Phase 6 follow-up health reports failures and tentative next steps without
   await expect(health).toContainText("FU3 media");
   await expect(health).toContainText("Upcoming follow-up review queue");
   await expect(health).toContainText("not confirmed scheduled sends");
-  await expect(health.getByRole("link", { name: "Review in Inbox" }))
+  await expect(health).toContainText("Due-now policy warnings");
+  await expect(health).toContainText("Currently open missing-media attention");
+  await expect(health).toContainText("Current lead interest (not historical): 3D");
+  await expect(health).toContainText("Policy review required: human takeover, marketing opt-out");
+  await expect(health).toContainText("This candidate is not permission to send");
+  await expect(health.getByRole("link", { name: "Review in Inbox" }).first())
     .toHaveAttribute("href", "/inbox?contact=44");
+  await expect(health.getByRole("link", { name: "Review in Inbox" }).nth(1))
+    .toHaveAttribute("href", "/inbox?contact=46");
   await health.getByRole("combobox", { name: "Health channel" }).selectOption("instagram");
   await expect(health).toContainText("Follow-up monitoring");
   await expectNoHorizontalPageOverflow(page);
