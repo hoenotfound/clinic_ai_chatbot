@@ -76,6 +76,11 @@ test("legacy Messenger/Instagram graphics need two accepted provider receipts", 
     assert.equal(evaluatePricingReminder({
       promotions, candidate, services,
     }).reason, "already_sent", channel);
+    assert.equal(evaluatePricingReminder({
+      promotions, candidate: {
+        ...candidate, sent_media: [{ ...media, delivery_status: "pending" }],
+      }, services,
+    }).reason, "already_sent", channel + " pending+two receipts");
 
     // A separate caption may have reached Meta while the image failed or
     // its receipt was never persisted. No automatic duplicate retry.
@@ -87,7 +92,7 @@ test("legacy Messenger/Instagram graphics need two accepted provider receipts", 
       { whatsapp_message_id: "other:m_image" },
       { delivery_status: "unknown" },
       { delivery_status: "failed" },
-      { delivery_status: "pending" },
+      { delivery_status: "pending", social_provider_id_count: 1 },
     ]) {
       const result = evaluatePricingReminder({
         promotions, services, candidate: {
@@ -97,6 +102,19 @@ test("legacy Messenger/Instagram graphics need two accepted provider receipts", 
       assert.equal(result.reason, "delivery_review", JSON.stringify({channel,changed}));
     }
   }
+});
+
+test("social pending with no receipts is not accepted even with a provider ID", () => {
+  const result = evaluatePricingReminder({
+    promotions, services,
+    candidate: {
+      channel: "instagram", treatment_interest: "3D 小颜术",
+      recent_customer_messages: ["3D price please"],
+      sent_media: [{ media_url: "/promo-images/32", content: "RM488",
+        delivery_status: "pending", whatsapp_message_id: "instagram:m_caption" }],
+    },
+  });
+  assert.equal(result.reason, "delivery_review");
 });
 
 test("legacy accepted pelvic A/B graphics are already sent, not delivery failures", () => {
