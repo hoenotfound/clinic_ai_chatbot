@@ -3112,7 +3112,7 @@ function ThreadView({
                     ? "AI review requested:"
                     : (contact.attention_reason || "Flagged for staff review."),
                    "Pending questions:",
-                   contact.pending_review_summaries].join("\\n")
+                   contact.pending_review_summaries].join("\n")
                 : (contact.attention_reason || "Flagged for staff review.")}
             </span>
             <ChevronDownIcon
