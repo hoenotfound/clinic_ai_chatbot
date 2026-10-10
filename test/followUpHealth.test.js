@@ -16,7 +16,7 @@ test("no authorized leads means no health or upcoming database access", async()=
   let calls=0;
   const execute=async()=>{calls++;return {rows:[]};};
   assert.equal((await health.getFollowUpHealth({},[],execute)).eventCount,0);
-  assert.deepEqual(await health.getUpcomingReviewQueue({channel:"all"},[],{enabled:true},execute),{upcoming:[],dueNowCount:0});
+  assert.deepEqual(await health.getUpcomingReviewQueue({channel:"all"},[],{enabled:true},execute),{upcoming:[],dueNowCount:0,dueNowPolicyReviewCount:0});
   assert.equal(calls,0);
 });
 
