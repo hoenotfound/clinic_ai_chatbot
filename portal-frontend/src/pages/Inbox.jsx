@@ -3183,6 +3183,7 @@ function ThreadView({
                 message={message}
                 onImageClick={setLightboxSrc}
                 onRetry={onRetryMessage}
+                onOpenWhatsAppTemplates={onOpenWhatsAppTemplates}
                 onReply={handleReply}
                 onForward={(selectedMessage) => setForwardingMessage(selectedMessage)}
                 onCopy={handleCopyMessage}
@@ -3721,6 +3722,7 @@ function MessageBubble({
   message,
   onImageClick,
   onRetry,
+  onOpenWhatsAppTemplates,
   onReply,
   onForward,
   onCopy,
@@ -4034,15 +4036,20 @@ function MessageBubble({
               {!policyFailureExplanationText && (
                 <button
                   type="button"
-                  onClick={() => onRetry?.(message.id)}
+                  onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.() : onRetry?.(message.id)}
                   disabled={message._retrying}
                   className="inline-flex min-h-10 touch-manipulation items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-3 py-1 text-[10px] font-semibold transition-colors active:bg-[var(--color-danger-light)] hover:bg-[var(--color-danger-light)] disabled:opacity-60"
                 >
                   {message._retrying && <Spinner className="h-2.5 w-2.5" />}
-                  {message._retrying ? "Retrying…" : "Retry"}
+                  {message.whatsapp_template ? "Review & send new template" : message._retrying ? "Retrying…" : "Retry"}
                 </button>
               )}
             </div>
+            {message.whatsapp_template && !policyFailureExplanationText && (
+              <p className="mt-1 text-[10px] leading-snug opacity-80">
+                A previous send may have reached the customer or incurred a charge. Check delivery before reviewing another template.
+              </p>
+            )}
             {message.delivery_error && (
               <p
                 className="mt-1 text-[10px] leading-snug opacity-80"
