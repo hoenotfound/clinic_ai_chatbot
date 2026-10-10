@@ -27,6 +27,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { categorizeAiReview, canSendReactiveMedia } = require("./utils/aiReviewPolicy");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
@@ -894,6 +895,7 @@ async function processIncomingMessage(
     let aiReply;
     let flagged = false;
     let reviewRequired = false;
+    let reviewType = null;
     let bookingReady = false;
     let serviceQuery = false;
     let serviceQuerySource = null;
@@ -944,6 +946,7 @@ async function processIncomingMessage(
         text: aiReply,
         flagged,
         reviewRequired,
+        reviewType,
         bookingReady,
         serviceQuery,
         serviceQuerySource,
@@ -957,6 +960,7 @@ async function processIncomingMessage(
       if (keywordReason && (!flagged || reviewRequired)) {
         flagged = true;
         reviewRequired = false;
+        reviewType = null;
         bookingReady = false;
         aiReply = fallbackHandoffReply(
           text,
@@ -1014,7 +1018,9 @@ async function processIncomingMessage(
       // below suppresses this late reply.
       const reviewContact = await contactsRepo.setAiReviewAttention(
         contact.id,
-        "Staff should verify the latest unanswered customer question."
+        savedInbound.id,
+        String(text || "Unanswered customer question").slice(0, 350),
+        categorizeAiReview(text, reviewType)
       );
       if (!reviewContact || reviewContact.mode !== "ai") {
         return { wasFirstMessage, keywordReason };
@@ -1123,7 +1129,7 @@ async function processIncomingMessage(
         flagged,
         bookingReady,
         keywordReason,
-        needsAttention: contact.needs_attention,
+        needsAttention: !canSendReactiveMedia(contact),
         textSendSucceeded: sendOutcome.sendResult.success,
         promotions: clinicConfig.promotions,
         language: mediaLanguage,
@@ -1140,7 +1146,7 @@ async function processIncomingMessage(
           });
           // Re-check ownership and attention before every package so a staff
           // takeover between Package A and B stops the remaining automation.
-          if (!promoContact || promoContact.needs_attention) {
+          if (!promoContact || !canSendReactiveMedia(promoContact)) {
             return { wasFirstMessage, keywordReason };
           }
           contact = promoContact;
@@ -1306,7 +1312,7 @@ async function processIncomingMessage(
               reason: `automatic result media for ${resultBundle.service || "service"}`,
               inboundMessageId: savedInbound.id,
             });
-            if (!resultContact || resultContact.needs_attention) {
+            if (!resultContact || !canSendReactiveMedia(resultContact)) {
               return { wasFirstMessage, keywordReason };
             }
             contact = resultContact;
