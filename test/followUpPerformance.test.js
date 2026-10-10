@@ -60,6 +60,17 @@ test("Postgres Phase 7 attributes replies and milestones only to latest accepted
     await client.query("UPDATE messages SET media_key='testimonials/proof.mp4?download=1' WHERE id=40");
     const filenameMedia=await report.getFollowUpPerformance({days:30},null,q,profile);
     assert.equal(filenameMedia.breakdown.find(x=>x.dimension==='media' && x.label==='Video').sent,2);
+    await client.query("UPDATE messages SET media_key=NULL,media_mime_type='application/pdf',media_url='https://example.com/file.pdf' WHERE id=40");
+    const documentReport=await report.getFollowUpPerformance({days:30},null,q,profile);
+    assert.equal(documentReport.breakdown.find(row=>row.dimension==='media'&&row.label==='Other / unknown media').sent,1);
+    await client.query("INSERT INTO messages(id,contact_id,role,created_at) VALUES(74,5,'user',now()-interval '9 days'+interval '4 hours')");
+    const repeatReplies=await report.getFollowUpPerformance({days:30},null,q,profile);
+    assert.equal(repeatReplies.summary.replied_observed,4,'multiple replies must count as one responsive follow-up');
+    await client.query("INSERT INTO leads VALUES(6,3,now()-interval '15 days'); INSERT INTO lead_stage_history VALUES(6,3,now()-interval '9 days'); UPDATE messages SET delivery_status='sent' WHERE id=30");
+    const directWon=await report.getFollowUpPerformance({days:30},null,q,profile);
+    assert.equal(directWon.summary.appointments_matured,2);
+    assert.equal(directWon.summary.visits_matured,2);
+    assert.equal(directWon.summary.won_matured,2);
     const scoped=await report.getFollowUpPerformance({days:30},[1],q,profile);
     assert.equal(scoped.summary.sent,2);
     assert.equal(scoped.summary.replied_matured,1);
