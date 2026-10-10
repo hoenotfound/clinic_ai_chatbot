@@ -61,8 +61,8 @@ test("AI review never changes ownership and uses the normal final AI send guard"
 
 test("staff assist does not silently dismiss unresolved AI review", () => {
   const repo = source("src/db/contactsRepo.js");
-  assert.match(repo, /CASE WHEN attention_reason LIKE 'AI review requested:%' THEN needs_attention ELSE false END/);
-  assert.match(repo, /CASE WHEN attention_reason LIKE 'AI review requested:%' THEN attention_reason ELSE NULL END/);
+  assert.match(repo, /FROM ai_review_items r/);
+  assert.match(repo, /WHERE r.contact_id = contacts.id AND r.status = 'pending'/);
 });
 
 test("AI prompt chooses review_required for nonurgent unknowns and takeover for actual human requests", () => {
@@ -79,11 +79,11 @@ test("review-only question is persisted and notified exactly once without takeov
   const alerts = require("../src/services/telegramImmediateAlertService");
   const pushes = require("../src/services/webPushNotificationService");
   const oldQuery = pool.query;
-  const oldAlert = alerts.sendHumanInterventionAlert;
+  const oldAlert = alerts.sendAiReviewAlert;
   const oldPush = pushes.sendContactAlertBestEffort;
   t.after(() => {
     pool.query = oldQuery;
-    alerts.sendHumanInterventionAlert = oldAlert;
+    alerts.sendAiReviewAlert = oldAlert;
     pushes.sendContactAlertBestEffort = oldPush;
   });
 
@@ -100,7 +100,7 @@ test("review-only question is persisted and notified exactly once without takeov
       attention_message_id: 88,
     }] };
   };
-  alerts.sendHumanInterventionAlert = async ({ contactId, messageId, reason }) => {
+  alerts.sendAiReviewAlert = async ({ contactId, messageId, reason }) => {
     assert.equal(contactId, 37);
     assert.equal(messageId, 88);
     assert.match(reason, /#88.*pay with card/);
@@ -121,10 +121,10 @@ test("duplicate inbound review does not alert again or overwrite existing attent
   const contactsRepo = require("../src/db/contactsRepo");
   const alerts = require("../src/services/telegramImmediateAlertService");
   const oldQuery = pool.query;
-  const oldAlert = alerts.sendHumanInterventionAlert;
+  const oldAlert = alerts.sendAiReviewAlert;
   t.after(() => {
     pool.query = oldQuery;
-    alerts.sendHumanInterventionAlert = oldAlert;
+    alerts.sendAiReviewAlert = oldAlert;
   });
   let count = 0;
   let alertsSent = 0;
@@ -140,7 +140,7 @@ test("duplicate inbound review does not alert again or overwrite existing attent
       attention_reason: "AI review requested: [#88] Existing question.",
     }] };
   };
-  alerts.sendHumanInterventionAlert = async () => { alertsSent += 1; };
+  alerts.sendAiReviewAlert = async () => { alertsSent += 1; };
   const result = await contactsRepo.setAiReviewAttention(37, 88, "Existing question.");
   assert.equal(result.mode, "ai");
   assert.match(result.attention_reason, /Existing question/);
@@ -176,6 +176,17 @@ test("administrative reviews may resume safe follow-ups, but clinical/unknown re
   }), false);
   assert.match(followUpAttentionAllowedSql("c"), /review.category <> 'information'/);
   assert.match(followUpAttentionAllowedSql("c"), /review.status = 'pending'/);
+  assert.match(followUpAttentionAllowedSql("c"), /c.mode = 'ai'/);
+  for (const question of [
+    "Price for 3D while pregnant?",
+    "Cost of 9D, is this suitable for me?",
+    "Can you tell me the price if I have bleeding?",
+    "How much after a diagnosis?",
+    "Is 3D safe during pregnancy?",
+  ]) {
+    assert.equal(categorizeAiReview(question, "information"), "clinical", question);
+  }
+  assert.equal(categorizeAiReview("How much is HIFU?", "information"), "information");
 });
 
 test("every follow-up discovery and final claim uses the category-aware gate", () => {
@@ -198,4 +209,7 @@ test("staff-waiting reminders exclude AI-only reviews, which have their own accu
   assert.match(waiting, /NOT LIKE 'AI review requested:%'/);
   assert.match(telegram, /Staff Question to Review \(AI Active\)/);
   assert.match(telegram, /no Return to AI action is needed/);
+  assert.match(telegram, /type === "ai_review"/);
+  assert.match(telegram, /sendAiReviewAlert/);
+  assert.match(source("src/server.js"), /needsAttention: !canSendReactiveMedia\(contact\)/);
 });
