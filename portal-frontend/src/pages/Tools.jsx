@@ -8,6 +8,7 @@ import LeadDistribution from "./LeadDistribution";
 import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../components/FollowUpTemplatePicker";
 import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
 import FollowUpActivity from "../components/FollowUpActivity";
+import FollowUpHealth from "../components/FollowUpHealth";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -3334,6 +3335,7 @@ function FollowUpTool({
           </Card>
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
+            <FollowUpHealth active={followUpTab === "activity"} />
             <FollowUpActivity active={followUpTab === "activity"} />
             <Card>
               <div className="flex flex-wrap items-start justify-between gap-3">
