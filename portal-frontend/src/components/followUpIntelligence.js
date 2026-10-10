@@ -9,7 +9,8 @@ const DIMENSIONS = [
   ["channel", "Messaging channel"],
   ["hour", "Sending hour (Malaysia time)"],
 ];
-const excluded = (row) => row.label === "Unspecified (not recorded)" || row.label === "Other / unknown media" || row.label === "Text / no accepted media";
+const excluded = (row) => row.label === "Unspecified (not recorded)" || row.label === "Other / unknown media";
+export const MAX_MISSING_SERVICE_SHARE = 0.2;
 const percent = (part, whole) => whole ? Math.round((1000 * part) / whole) / 10 : 0;
 
 export function buildFollowUpIntelligence(report) {
@@ -36,6 +37,10 @@ export function buildFollowUpIntelligence(report) {
   const byService = rows.filter(row => row.dimension === "service");
   const missing = byService.filter(row => row.label === "Unspecified (not recorded)").reduce((n, row) => n + Number(row.sent || 0), 0);
   if (missing) notes.push(`Service attribution is missing on ${missing} of ${total} accepted sends (${percent(missing, total)}%). Investigate recorded treatment labels before drawing conclusions by service.`);
+  const missingShare = total ? missing / total : 0;
+  if (missingShare > MAX_MISSING_SERVICE_SHARE) {
+    notes.push(`Treatment comparisons are withheld because ${percent(missing, total)}% of accepted sends have no recorded service (maximum allowed: 20%).`);
+  }
   const byMedia = rows.filter(row => row.dimension === "media");
   const unknown = byMedia.filter(row => row.label === "Other / unknown media").reduce((n, row) => n + Number(row.sent || 0), 0);
   if (unknown) notes.push(`Media type is unknown for ${unknown} of ${total} sends; verify stored media metadata.`);
@@ -44,23 +49,23 @@ export function buildFollowUpIntelligence(report) {
   const enoughOverall = mature >= MIN_MATURE_SENDS && replied >= MIN_REPLIES;
   const insights = DIMENSIONS.map(([dimension, title]) => {
     const groups = rows.filter(row => row.dimension === dimension && !excluded(row));
-    const qualifying = enoughOverall ? groups.filter(row =>
-      Number(row.reply_matured || 0) >= MIN_MATURE_SENDS &&
-      Number(row.replied_matured || 0) >= MIN_REPLIES) : [];
-    const display = [...qualifying].sort((a, b) =>
-      Number(b.replied_matured || 0) / Number(b.reply_matured || 1) -
-      Number(a.replied_matured || 0) / Number(a.reply_matured || 1));
+    const qualifying = enoughOverall && !(dimension === "service" && missingShare > MAX_MISSING_SERVICE_SHARE)
+      ? groups.filter(row => Number(row.reply_matured || 0) >= MIN_MATURE_SENDS &&
+          Number(row.replied_matured || 0) >= MIN_REPLIES)
+      : [];
     return {
       dimension, title, qualifying: qualifying.length,
-      candidate: display[0] ? {
-        label: display[0].label,
-        mature: Number(display[0].reply_matured),
-        replied: Number(display[0].replied_matured),
-        rate: percent(display[0].replied_matured, display[0].reply_matured),
-      } : null,
-      note: qualifying.length < 2
-        ? "Not enough independent groups with mature responses to make a useful comparison."
-        : "Descriptive only. Differences may reflect lead mix, service interest or timing, not improvement caused by this variation.",
+      groups: qualifying.map(row => ({
+        label: row.label,
+        mature: Number(row.reply_matured),
+        replied: Number(row.replied_matured),
+        rate: percent(row.replied_matured, row.reply_matured),
+      })).sort((a, b) => a.label.localeCompare(b.label)),
+      note: dimension === "service" && missingShare > MAX_MISSING_SERVICE_SHARE
+        ? "Treatment comparison unavailable: more than 20% of sends lack treatment attribution."
+        : qualifying.length < 2
+          ? "Not enough groups with mature responses to make a useful comparison."
+          : "Rates are descriptive, not a ranking or proof of improvement; group sizes, customer mix and treatment interest may differ.",
     };
   });
   return { ready: enoughOverall, total, mature, replied, milestoneMature, notes, insights };
