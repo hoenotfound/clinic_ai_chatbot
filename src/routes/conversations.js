@@ -982,11 +982,9 @@ router.patch("/:contactId/attention", async (req, res) => {
       return res.status(400).json({ error: "needsAttention (boolean) is required." });
     }
 
-    const updated = await contactsRepo.setAttention(
-      contact.id,
-      needsAttention,
-      needsAttention ? reason || "Flagged by staff." : null
-    );
+    const updated = needsAttention
+      ? await contactsRepo.setAttention(contact.id, true, reason || "Flagged by staff.")
+      : await contactsRepo.dismissAttentionAndReviews(contact.id);
     res.json(updated);
   } catch (err) {
     console.error("Failed to update attention flag:", err);
