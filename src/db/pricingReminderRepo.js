@@ -36,9 +36,26 @@ WITH eligible AS (
    ) AS recent_customer_messages,
    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
        'media_url', media.media_url, 'content', media.content,
-       'delivery_status', media.delivery_status, 'whatsapp_message_id', media.whatsapp_message_id
+       'delivery_status', media.delivery_status, 'whatsapp_message_id', media.whatsapp_message_id,
+       'social_accepted_at', media.social_accepted_at,
+       -- Older social replies can have a NULL status despite Meta accepting
+       -- both the separate caption and image. Require both provider receipts.
+       'social_provider_id_count', (
+         SELECT COUNT(DISTINCT s.provider_message_id)::integer
+         FROM social_provider_message_ids s
+         WHERE s.message_id = media.id AND s.contact_id = c.id
+           AND s.channel = c.channel
+           AND s.provider_message_id LIKE (c.channel || ':%')
+       ),
+       'social_final_id_recorded', EXISTS (
+         SELECT 1 FROM social_provider_message_ids s
+         WHERE s.message_id = media.id AND s.contact_id = c.id
+           AND s.channel = c.channel
+           AND s.provider_message_id = media.whatsapp_message_id
+       )
    )), '[]'::jsonb)
-    FROM (SELECT media_url, content, delivery_status, whatsapp_message_id FROM messages
+    FROM (SELECT id, media_url, content, delivery_status, whatsapp_message_id,
+                 social_accepted_at FROM messages
           WHERE contact_id = c.id AND role = 'assistant'
             AND delivery_status IS DISTINCT FROM 'cancelled'
             AND media_url IS NOT NULL AND media_url <> ''
