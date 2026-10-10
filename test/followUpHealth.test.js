@@ -76,7 +76,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
     assert.equal(all.attentionCount,1);
     assert.equal(all.breakdown.some(v=>v.part==="decision"&&v.status==="skipped"),true);
     assert.equal(all.stalePendingCount,1);
-    assert.equal(all.alerts.length,2);
+    assert.equal(all.alerts.length,3);
     assert.equal(all.breakdown.find(v=>v.part==="media").step,3);
     const denied=await health.getFollowUpHealth({days:7,channel:"all"},[2],execute);
     assert.equal(denied.eventCount,2);
