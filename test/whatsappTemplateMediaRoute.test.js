@@ -346,7 +346,7 @@ test("Inbox rejects image-template Retry and requires a fresh billing review", a
   assert.equal(h.events.r2Uploads, 0);
 });
 
-test("Inbox blocks retries after WhatsApp marketing consent is withdrawn", async (t) => {
+test("Inbox blocks opted-out WhatsApp template retries before provider send", async (t) => {
   const h = await harness(t, { marketingAllowed: false });
   patch(t, messagesRepo, "acquireMessageRetryLock", async () => async () => {});
   patch(t, messagesRepo, "getMessageForRetry", async () => ({
@@ -355,7 +355,8 @@ test("Inbox blocks retries after WhatsApp marketing consent is withdrawn", async
     whatsapp_template: { name: "clinic_test", language: "en_US", mediaFormat: "IMAGE" },
   }));
   const result = await h.retry();
-  assert.equal(result.status, 403);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.code, "template_retry_requires_billing_review");
   assert.equal(h.events.metaUploads, 0);
   assert.equal(h.events.metaSends, 0);
 });
