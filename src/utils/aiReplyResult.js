@@ -225,6 +225,7 @@ function parseStructuredReply(raw) {
   const priceQuery = parsed.priceQuery === true;
   const packageQuery = parsed.packageQuery === true;
   const promotionOption = cleanOptionalText(parsed.promotionOption);
+  const reviewType = parsed.reviewType === "information" ? "information" : "clinical";
 
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
@@ -339,6 +340,7 @@ function parseStructuredReply(raw) {
     text: reply,
     flagged: outcome === "needs_human" || outcome === "review_required",
     reviewRequired: outcome === "review_required",
+    reviewType: outcome === "review_required" ? reviewType : null,
     bookingReady: outcome === "booking_ready",
     serviceQuery,
     serviceQuerySource: serviceQuery ? serviceQuerySource : null,
@@ -382,6 +384,7 @@ function parseAiReplyResult(raw) {
   return {
     ...legacy,
     reviewRequired: false,
+    reviewType: null,
     bookingReady,
     serviceQuery: false,
     serviceQuerySource: null,
