@@ -59,6 +59,7 @@ async function mockPortalApi(
     templateCatalog = null,
     followUpActivity = null,
     followUpActivityFailures = 0,
+    followUpHealth = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -502,6 +503,14 @@ async function mockPortalApi(
       return route.fulfill({
         status: 200, contentType: "image/jpeg", body: "mock-preview",
       });
+    }
+
+    if (path === "/api/follow-up-health" && method === "GET") {
+      const filters = Object.fromEntries(url.searchParams.entries());
+      const sample = typeof followUpHealth === "function" ? await followUpHealth(filters) :
+        (followUpHealth || { breakdown: [], alerts: [], upcoming: [], eventCount: 0,
+          failedCount: 0, attentionCount: 0, stalePendingCount: 0 });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sample) });
     }
 
     if (path === "/api/follow-up-activity" && method === "GET") {
@@ -1467,6 +1476,33 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await page.getByRole("tab", { name: "Sequence" }).click();
   await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
+  const data = { eventCount: 5, failedCount: 1, attentionCount: 1, stalePendingCount: 1,
+    breakdown: [
+      { channel: "facebook", type: "follow_up", part: "message", step: 3, status: "sent", count: 1 },
+      { channel: "facebook", type: "follow_up", part: "media", step: 3, status: "failed", count: 1 },
+    ],
+    alerts: [{ id: 21, channel: "facebook", contact_id: 44, type: "follow_up", step: 3,
+      part: "media", status: "failed", created_at: "2026-10-09T10:00:00Z", detail: "Video rejected" }],
+    upcoming: [{ contact_id: 45, channel: "instagram", step: 2,
+      estimated_at: "2026-10-10T11:00:00Z", window_expires_at: "2026-10-10T16:00:00Z" }],
+  };
+  await mockPortalApi(page, { loggedIn: true, followUpHealth: data });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const health = page.getByRole("region", { name: "Follow-up health monitoring" });
+  await expect(health).toContainText("Follow-up monitoring");
+  await expect(health).toContainText("Video rejected");
+  await expect(health).toContainText("FU3 media");
+  await expect(health).toContainText("Upcoming follow-up review queue");
+  await expect(health).toContainText("not confirmed scheduled sends");
+  await expect(health.getByRole("link", { name: "Review in Inbox" }))
+    .toHaveAttribute("href", "/inbox?contact=44");
+  await health.getByRole("combobox", { name: "Health channel" }).selectOption("instagram");
+  await expect(health).toContainText("Follow-up monitoring");
   await expectNoHorizontalPageOverflow(page);
 });
 
