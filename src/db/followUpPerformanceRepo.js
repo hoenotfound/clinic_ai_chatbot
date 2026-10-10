@@ -16,12 +16,12 @@ const PERFORMANCE_SQL = `WITH eligible AS (
     COALESCE(NULLIF(BTRIM(m.automated_follow_up_target_service), ''), 'Unspecified (not recorded)') AS service,
     CASE
       WHEN LOWER(COALESCE(m.media_mime_type, '')) LIKE 'video/%'
-        OR LOWER(COALESCE(m.media_key, '')) ~ '\\\\.(mp4|mov)(\\\\?|$)'
+        OR LOWER(COALESCE(m.media_key, '')) ~ '\\.(mp4|mov)(\\?|$)'
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
           AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
           AND a.delivery_status IN ('sent','delivered','read')
           AND (LOWER(COALESCE(a.media_mime_type,'')) LIKE 'video/%'
-            OR LOWER(COALESCE(a.media_key,'')) ~ '\\\\.(mp4|mov)(\\\\?|$)'))
+            OR LOWER(COALESCE(a.media_key,'')) ~ '\\.(mp4|mov)(\\?|$)'))
       THEN 'Video'
       WHEN NULLIF(m.media_url,'') IS NOT NULL
         OR LOWER(COALESCE(m.media_mime_type, '')) LIKE 'image/%'
@@ -105,8 +105,8 @@ const PERFORMANCE_SQL = `WITH eligible AS (
     count(*) FILTER (WHERE visit_at IS NOT NULL)::integer AS visits_observed,
     count(*) FILTER (WHERE sent_at <= now()-interval '7 days' AND won_at IS NOT NULL)::integer AS won_matured,
     count(*) FILTER (WHERE won_at IS NOT NULL)::integer AS won_observed,
-    ROUND(AVG(extract(epoch FROM reply_at-sent_at)/3600)::numeric,1)
-      FILTER (WHERE reply_at IS NOT NULL) AS avg_reply_hours
+    ROUND(AVG((extract(epoch FROM reply_at-sent_at)/3600)::numeric)
+      FILTER (WHERE reply_at IS NOT NULL),1) AS avg_reply_hours
   FROM dimensions GROUP BY dimension,label
 )
 SELECT COALESCE((SELECT to_jsonb(g) FROM grouped g WHERE dimension='overall' LIMIT 1),'{}'::jsonb) AS summary,
