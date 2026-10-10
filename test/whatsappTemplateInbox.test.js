@@ -92,7 +92,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(modal, /Meta billing.*this template may cost money/);
   assert.match(modal, /I understand Meta may charge for this manual template send/);
   assert.match(inbox, /initialTemplate=\{whatsappTemplatePrefill\}/);
-  assert.match(inbox, /template_retry_requires_billing_review/);
+  assert.match(route, /template_retry_requires_billing_review/);
   assert.match(inbox, /Review & send new template/);
   assert.doesNotMatch(inbox, /You can retry it from the message/);
   assert.match(modal, /initialTemplateKey/);
