@@ -484,6 +484,7 @@ export default function Inbox() {
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
+  const [whatsappTemplatePrefill, setWhatsAppTemplatePrefill] = useState(null);
   const [visibleConversationIds, setVisibleConversationIds] = useState(null);
   const [keepExplicitlyOpenedThread, setKeepExplicitlyOpenedThread] = useState(false);
   const [acquisitionContext, setAcquisitionContext] = useState(null);
@@ -1421,7 +1422,15 @@ export default function Inbox() {
         onSendVoice={handleSendVoice}
         onForwardMessage={handleForwardMessage}
         onOpenContactDetails={() => setContactDetailsOpen(true)}
-        onOpenWhatsAppTemplates={() => setWhatsAppTemplateOpen(true)}
+        onOpenWhatsAppTemplates={(message = null) => {
+          const template = message?.whatsapp_template;
+          setWhatsAppTemplatePrefill(
+            template?.name && template?.language
+              ? { name: template.name, language: template.language }
+              : null
+          );
+          setWhatsAppTemplateOpen(true);
+        }
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
         onBack={handleBackToConversationList}
@@ -1438,7 +1447,11 @@ export default function Inbox() {
         selectedContact?.channel === "whatsapp" && (
         <WhatsAppTemplateModal
           contact={selectedContact}
-          onClose={() => setWhatsAppTemplateOpen(false)}
+          initialTemplate={whatsappTemplatePrefill}
+          onClose={() => {
+            setWhatsAppTemplateOpen(false);
+            setWhatsAppTemplatePrefill(null);
+          }
           onOptInRecorded={async () => {
             await refreshConversations();
             showToast("WhatsApp opt-in recorded.", "info");
@@ -1450,12 +1463,12 @@ export default function Inbox() {
             await refreshConversations();
             if (result?.delivery_status === "unknown") {
               showToast(
-                "Template saved, but delivery could not be confirmed. Check WhatsApp before retrying.",
+                "Template saved, but delivery is unconfirmed. Check WhatsApp before reviewing a new template send.",
                 "warning"
               );
             } else if (result?.delivered === false) {
               showToast(
-                "Template saved, but WhatsApp did not accept the send. You can retry it from the message.",
+                "Template was not accepted by WhatsApp. Review a new send from the template picker; direct retry is disabled.",
                 "warning"
               );
             } else {
@@ -4036,7 +4049,7 @@ function MessageBubble({
               {!policyFailureExplanationText && (
                 <button
                   type="button"
-                  onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.() : onRetry?.(message.id)}
+                  onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.(message) : onRetry?.(message.id)}
                   disabled={message._retrying}
                   className="inline-flex min-h-10 touch-manipulation items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-3 py-1 text-[10px] font-semibold transition-colors active:bg-[var(--color-danger-light)] hover:bg-[var(--color-danger-light)] disabled:opacity-60"
                 >
