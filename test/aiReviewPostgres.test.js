@@ -23,7 +23,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET search_path TO ${schema}`);
     await client.query(`
-      CREATE TABLE contacts (id integer primary key, mode text default 'ai',
+      CREATE TABLE contacts (id integer primary key, mode text default 'ai', takeover_by text, takeover_at timestamptz,
         needs_attention boolean default false, attention_reason text,
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
