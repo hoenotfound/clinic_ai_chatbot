@@ -665,6 +665,14 @@ test("review alerts are cancelled when the original question is no longer pendin
   });
   assert.equal(pending, true);
   assert.match(capturedSql, /r.status = 'pending'/);
+  assert.match(capturedSql, /c.mode = 'ai'/);
+  // A review can remain pending after staff takeover, but its queued
+  // "AI Active" Telegram notification must fail the send-time gate.
+  const staffTakenOver = await shouldSendImmediateAlert(alert, async (sql) => {
+    assert.match(sql, /c.mode = 'ai'/);
+    return { rows: [{ pending: false }] };
+  });
+  assert.equal(staffTakenOver, false);
   assert.match(capturedSql, /FOR SHARE OF c/);
   const resolved = await shouldSendImmediateAlert(alert, async () => ({
     rows: [{ pending: false }],
