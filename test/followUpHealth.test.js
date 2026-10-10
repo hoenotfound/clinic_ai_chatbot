@@ -126,6 +126,36 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
     assert.equal(queue.upcoming[0].contact_id,1);
     assert.equal(queue.dueNowCount,1);
     assert.equal(queue.dueNowPolicyReviewCount,0);
+    // The worker's candidate query does not filter human mode or opt-outs.
+    // Monitoring must expose these as warnings rather than hide candidates.
+    await client.query("UPDATE contacts SET mode='human', social_marketing_opt_out_at=now() WHERE id=1");
+    const policyQueue = await health.getUpcomingReviewQueue({channel:"facebook"},[1],cfg,execute);
+    assert.equal(policyQueue.dueNowCount,1);
+    assert.equal(policyQueue.dueNowPolicyReviewCount,1);
+    assert.deepEqual(policyQueue.upcoming[0].policy_flags,["human_takeover","marketing_opt_out"]);
+
+    // A nominally due FU3 at 23h40 after inbound is past the worker's
+    // 23h35 pricing cutoff even though the reply window is still open.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES(40,2,'user',now()-interval '23 hours 40 minutes');
+      INSERT INTO messages(id,contact_id,role,created_at,sent_by_username,delivery_status)
+        VALUES(41,2,'assistant',now()-interval '23 hours 39 minutes','bot','sent');
+      INSERT INTO messages(id,contact_id,role,created_at,
+        is_automated_follow_up,automated_follow_up_for_message_id,
+        automated_follow_up_step,delivery_status)
+        VALUES (42,2,'assistant',now()-interval '20 hours',true,41,1,'sent'),
+               (43,2,'assistant',now()-interval '17 hours',true,41,2,'sent');
+    `);
+    const cfg3={...cfg,additionalSteps:[{delayMinutes:360},{delayMinutes:1320}],
+      pricingReminder:{enabled:true,enableSocialChannels:true}};
+    const afterCutoff=await health.getUpcomingReviewQueue({channel:"instagram"},[2],cfg3,execute);
+    assert.equal(afterCutoff.dueNowCount,0);
+    assert.equal(afterCutoff.upcoming.length,0);
+    const withoutReserve=await health.getUpcomingReviewQueue({channel:"instagram"},[2],
+      {...cfg3,pricingReminder:{enabled:false}},execute);
+    assert.equal(withoutReserve.dueNowCount,1);
+    assert.equal(withoutReserve.upcoming[0].step,3);
   }finally{
     await client.query("SET search_path TO public");
     await client.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE");
