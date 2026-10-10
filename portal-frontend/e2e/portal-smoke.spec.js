@@ -1550,6 +1550,31 @@ test("Follow-up mobile polish keeps tabs, performance cards, and Activity shortc
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Follow-up mobile layout across phone, tablet and desktop widths", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 2, contacts: 2, reply_matured: 0, replied_matured: 0,
+      milestone_matured: 0 }, breakdown: [{ dimension: "step", label: "FU1",
+      sent: 2, reply_matured: 0, replied_matured: 0, milestone_matured: 0 }], daily: [],
+  }});
+  await page.goto("/tools");
+  for (const width of [320, 375, 390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.getByRole("tab", { name: "Performance" }).click();
+    const report = page.getByRole("region", { name: "Follow-up performance analytics" });
+    await expect(report).toContainText("Follow-up performance");
+    if (width < 640) await expect(report.getByLabel("By follow-up step mobile results")).toBeVisible();
+    else await expect(report.getByLabel("By follow-up step mobile results")).toBeHidden();
+    await expectNoHorizontalPageOverflow(page);
+  }
+  await page.getByRole("tab", { name: "Activity" }).click();
+  for (const target of ["follow-up-delivery-health", "follow-up-delivery-events", "follow-up-template-activity"]) {
+    await page.getByRole("navigation", { name: "Activity section shortcuts" })
+      .locator(`a[href="#${target}"]`).click();
+    await expect(page.locator(`#${target}`)).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe(`#${target}`);
+  }
+});
+
 test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
   const data = { eventCount: 5, failedCount: 1, attentionCount: 1, stalePendingCount: 1,
     dueNowCount: 2, dueNowPolicyReviewCount: 1,
