@@ -679,7 +679,7 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
   if (!updated) return getContactById(id);
   publishContactChange(updated.id);
   notifyTelegram(
-    telegramImmediateAlerts.sendHumanInterventionAlert({
+    telegramImmediateAlerts.sendAiReviewAlert({
       contactId: updated.id,
       messageId: updated.attention_message_id,
       reason: `AI review requested: [#${inboundMessageId}] ${safeSummary}`,
