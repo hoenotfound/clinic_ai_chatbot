@@ -389,6 +389,16 @@ async function listConversations() {
          WHERE r.contact_id = c.id AND r.status = 'pending'
          ORDER BY r.created_at DESC, r.id DESC LIMIT 10
        ) recent) AS pending_review_summaries,
+      (SELECT COALESCE(JSONB_AGG(JSONB_BUILD_OBJECT(
+             'id', recent.id, 'messageId', recent.inbound_message_id,
+             'summary', recent.summary, 'category', recent.category)
+           ORDER BY recent.created_at, recent.id), '[]'::jsonb)
+       FROM (
+         SELECT r.id, r.inbound_message_id, r.summary, r.category, r.created_at
+         FROM ai_review_items r
+         WHERE r.contact_id = c.id AND r.status = 'pending'
+         ORDER BY r.created_at DESC, r.id DESC LIMIT 25
+       ) recent) AS pending_review_items,
       c.is_unread,
       c.needs_follow_up,
       c.whatsapp_opt_in_at,
@@ -501,8 +511,23 @@ async function takeOver(id, staffUsername) {
      ), takeover AS (
        UPDATE contacts c
        SET mode = 'human', takeover_by = $1, takeover_at = now(),
-           needs_attention = CASE WHEN c.attention_reason LIKE 'AI review requested:%' THEN true ELSE false END,
-           attention_reason = CASE WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason ELSE NULL END,
+           needs_attention = EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = c.id AND r.status = 'pending'
+           ) OR c.attention_reason LIKE 'AI review requested:%',
+           attention_reason = CASE
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason
+             WHEN EXISTS (
+               SELECT 1 FROM ai_review_items r
+               WHERE r.contact_id = c.id AND r.status = 'pending'
+             ) THEN 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                 LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM ai_review_items r
+               WHERE r.contact_id = c.id AND r.status = 'pending'
+             ), '')
+             ELSE NULL
+           END,
            is_unread = false,
            updated_at = now()
        FROM current_contact
@@ -562,8 +587,25 @@ async function clearStaffAssistStateIfUnchanged(contact) {
 
   const result = await pool.query(
     `UPDATE contacts
-     SET needs_attention = CASE WHEN attention_reason LIKE 'AI review requested:%' THEN needs_attention ELSE false END,
-         attention_reason = CASE WHEN attention_reason LIKE 'AI review requested:%' THEN attention_reason ELSE NULL END,
+     SET needs_attention = EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = contacts.id AND r.status = 'pending'
+         ) OR (needs_attention AND attention_reason LIKE 'AI review requested:%'),
+         attention_reason = CASE
+           WHEN EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = contacts.id AND r.status = 'pending'
+           ) THEN CASE
+             WHEN attention_reason LIKE 'AI review requested:%' THEN attention_reason
+             ELSE 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                        LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM ai_review_items r
+               WHERE r.contact_id = contacts.id AND r.status = 'pending'
+             ), '')
+           END
+           ELSE NULL
+         END,
          is_unread = false,
          updated_at = now()
      WHERE id = $1
@@ -717,6 +759,55 @@ async function dismissAttentionAndReviews(id) {
   return updated;
 }
 
+// Resolve one review only. The contact row lock serializes staff dismissal
+// with new review inserts, and the remaining count excludes the just-resolved
+// item because data-modifying CTEs share one statement snapshot.
+async function resolveAiReviewItem(contactId, reviewId) {
+  const result = await pool.query(
+    `WITH locked AS MATERIALIZED (
+       SELECT id FROM contacts WHERE id = $1 FOR UPDATE
+     ), resolved AS (
+       UPDATE ai_review_items r
+       SET status = 'resolved', resolved_at = now()
+       FROM locked
+       WHERE r.contact_id = locked.id AND r.id = $2 AND r.status = 'pending'
+       RETURNING r.id
+     ), remaining AS MATERIALIZED (
+       SELECT r.id, r.inbound_message_id, r.summary, r.created_at
+       FROM ai_review_items r, locked
+       WHERE r.contact_id = locked.id AND r.status = 'pending'
+         AND r.id <> $2
+     ), updated AS (
+       UPDATE contacts c
+       SET needs_attention = CASE
+             WHEN EXISTS (SELECT 1 FROM remaining) THEN true
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN false
+             ELSE c.needs_attention
+           END,
+           attention_reason = CASE
+             WHEN c.attention_reason LIKE 'AI review requested:%'
+               AND EXISTS (SELECT 1 FROM remaining)
+             THEN 'AI review requested: ' || COALESCE((
+               SELECT STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
+                       LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
+               FROM remaining r
+             ), '')
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN NULL
+             ELSE c.attention_reason
+           END,
+           updated_at = now()
+       FROM locked
+       WHERE c.id = locked.id AND EXISTS (SELECT 1 FROM resolved)
+       RETURNING c.*
+     )
+     SELECT * FROM updated`,
+    [contactId, reviewId]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 // Delivery problems should not replace a more important reason that already
 // needs staff attention, such as an urgent keyword or an AI handoff. Repeated
 // delivery failures may update the existing delivery reason with newer detail.
@@ -846,6 +937,7 @@ module.exports = {
   setAttention,
   setAiReviewAttention,
   dismissAttentionAndReviews,
+  resolveAiReviewItem,
   setTemporaryAiAttention,
   clearTemporaryAiAttention,
   setDeliveryAttention,
