@@ -26,12 +26,34 @@ test("Phase 6 timing SQL reuses exactly the worker's before-expiry calculator", 
     reservePricingMinutes: 5, reservePricingOnSocial: true, channel: "channel",
   });
   assert.ok(sql.includes(workerDue), "monitoring must share worker pre-expiry SQL");
-  assert.match(sql, /next_step <> 3 OR due_at < inbound_at \+ interval '23 hours 35 minutes'/);
+  assert.match(sql, /next_step <> 3 OR GREATEST\(due_at, now\(\)\) < inbound_at \+ interval '23 hours 35 minutes'/);
   assert.match(sql, /anchor\.sent_by_username IS NOT NULL/);
   assert.match(sql, /lead\.is_closed = false/);
   assert.match(sql, /c\.channel_user_id IS NOT NULL/);
-  assert.match(sql, /c\.social_opt_out_at IS NULL/);
+  assert.match(sql, /c\.social_opt_out_at IS NOT NULL/);
   assert.match(sql, /c\.mode,'ai'/);
+  assert.match(sql, /due_now_policy_review/);
+  assert.doesNotMatch(sql, /AND COALESCE\(c\.mode,'ai'\) <> 'human'/);
+});
+
+test("Phase 6 supports legacy one-step, two-step, and three-step follow-up configurations", () => {
+  const base = {
+    enabled:true, triggerMode:"all", activatedAt:"2026-10-01T00:00:00Z",
+    delayMinutes:120, quietHours:{ enabled:true,start:"00:00",end:"07:00" },
+  };
+  const single = health.normalizeTimingSettings(base);
+  assert.ok(single);
+  assert.deepEqual(single.delays,[120]);
+  const two = health.normalizeTimingSettings({...base,additionalSteps:[{delayMinutes:360}]});
+  assert.ok(two);
+  assert.deepEqual(two.delays,[120,360]);
+  const three = health.normalizeTimingSettings({...base,additionalSteps:[
+    {delayMinutes:360},{timingMode:"before_window_expiry",beforeWindowExpiryMinutes:120},
+  ]});
+  assert.ok(three);
+  assert.deepEqual(three.delays,[120,360,1320]);
+  assert.equal(health.normalizeTimingSettings({...base,additionalSteps:null}),null);
+  assert.equal(health.normalizeTimingSettings({...base,additionalSteps:[{delayMinutes:90}]}),null);
 });
 
 test("real PostgreSQL calculator shifts FU3 from 1 AM to 11:30 PM local before quiet hours", {
