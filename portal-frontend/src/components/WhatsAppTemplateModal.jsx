@@ -125,6 +125,7 @@ function TemplatePicker({ templates, selectedKey, onSelect }) {
 
 export default function WhatsAppTemplateModal({
   contact,
+  initialTemplate = null,
   onClose,
   onSent,
   onOptInRecorded,
@@ -146,6 +147,9 @@ export default function WhatsAppTemplateModal({
   const [actionError, setActionError] = useState("");
 
   const contactId = contact?.contact_id ?? contact?.id;
+  const initialTemplateKey = initialTemplate?.name && initialTemplate?.language
+    ? `${initialTemplate.name}::${initialTemplate.language}`
+    : null;
 
   async function loadCatalog(force = false) {
     if (!contactId) return;
@@ -164,7 +168,13 @@ export default function WhatsAppTemplateModal({
               `${template.name}::${template.language}` === selectedKey &&
               template.sendable
           ) || null;
-      const nextTemplate = currentTemplate || firstSendable;
+      const originalTemplate = !selectedKey && initialTemplateKey
+        ? templates.find((template) =>
+            `${template.name}::${template.language}` === initialTemplateKey &&
+            template.sendable
+          ) || null
+        : null;
+      const nextTemplate = currentTemplate || originalTemplate || firstSendable;
       if (nextTemplate) {
         const key = `${nextTemplate.name}::${nextTemplate.language}`;
         if (!currentTemplate) {
@@ -228,7 +238,7 @@ export default function WhatsAppTemplateModal({
     setSelectedKey(`${template.name}::${template.language}`);
     setValues(emptyValuesFor(template));
     setMediaFile(null);
-        setMediaSelectionId("");
+    setMediaSelectionId("");
     setMarketingConsentConfirmed(false);
     setBillingAcknowledged(false);
     setActionError("");
@@ -297,13 +307,12 @@ export default function WhatsAppTemplateModal({
         // Keep the selected template and upload intact; staff must review the
         // changed/expired server evidence and explicitly check the box again.
         setBillingAcknowledged(false);
-        if (err.billingAdvisory) {
-          setCatalog((current) => current
-            ? { ...current, billingAdvisory: err.billingAdvisory }
-            : current);
-        } else {
-          await loadCatalog();
-        }
+        // The backend can return a review scoped only to the selected
+        // template. Reload the full catalogue so switching language or
+        // treatment never leaves staff with missing billing review tokens.
+        // loadCatalog(false) preserves the selected approved template, typed
+        // variables and selected attachment.
+        await loadCatalog();
       } else if (err.policyBlocked) {
         await loadCatalog();
       }
@@ -338,6 +347,7 @@ export default function WhatsAppTemplateModal({
       : /\.mp4$/i.test(mediaFile.name)));
   const canSend =
     catalog?.eligibility?.allowed === true &&
+    !loadError &&
     mediaFileValid &&
     !marketingReconsentNeeded &&
     selected?.sendable === true &&
@@ -461,6 +471,16 @@ export default function WhatsAppTemplateModal({
 
           {!loading && catalog && (
             <>
+              {initialTemplateKey && (
+                <div role="note" className="rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-3 text-xs leading-5 text-amber-900">
+                  {!(catalog.templates || []).some((template) =>
+                    template.sendable &&
+                    `${template.name}::${template.language}` === initialTemplateKey
+                  )
+                    ? `The original template (${initialTemplate.name}, ${initialTemplate.language}) is no longer available to send. Choose and review an approved alternative.`
+                    : "Reviewing a previously failed or unconfirmed template. This is a NEW send, not a retry. Confirm the current wording, variables, media, customer consent and possible Meta charges before sending. No prior attachment or values are reused automatically."}
+                </div>
+              )}
               <section>
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
