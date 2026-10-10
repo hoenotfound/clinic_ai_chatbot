@@ -1591,6 +1591,23 @@ test("Phase 8 includes text-only sends and suppresses incomplete treatment compa
   await expect(intelligence).not.toContainText("Highest observed reply rate");
 });
 
+test("Phase 8 honours exact sample and service-missing boundaries", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, followUpPerformance: {
+    summary: { sent: 150, contacts: 90, reply_matured: 150, replied_matured: 20, milestone_matured: 150 },
+    breakdown: [
+      { dimension: "service", label: "Unspecified (not recorded)", sent: 30, reply_matured: 30, replied_matured: 0 },
+      { dimension: "service", label: "3D", sent: 60, reply_matured: 60, replied_matured: 10 },
+      { dimension: "service", label: "9D", sent: 60, reply_matured: 60, replied_matured: 10 },
+    ], daily: [],
+  }});
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Performance" }).click();
+  const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
+  await expect(intelligence).toContainText("3D: 16.7%");
+  await expect(intelligence).toContainText("9D: 16.7%");
+  await expect(intelligence).not.toContainText("Treatment comparison unavailable");
+});
+
 test("Phase 6 follow-up health reports failures and tentative next steps without sending", async ({ page }) => {
   const data = { eventCount: 5, failedCount: 1, attentionCount: 1, stalePendingCount: 1,
     dueNowCount: 2, dueNowPolicyReviewCount: 1,
