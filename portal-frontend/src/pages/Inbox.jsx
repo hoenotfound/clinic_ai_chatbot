@@ -1430,7 +1430,7 @@ export default function Inbox() {
               : null
           );
           setWhatsAppTemplateOpen(true);
-        }
+        }}
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
         onBack={handleBackToConversationList}
@@ -1451,7 +1451,7 @@ export default function Inbox() {
           onClose={() => {
             setWhatsAppTemplateOpen(false);
             setWhatsAppTemplatePrefill(null);
-          }
+          }}
           onOptInRecorded={async () => {
             await refreshConversations();
             showToast("WhatsApp opt-in recorded.", "info");
