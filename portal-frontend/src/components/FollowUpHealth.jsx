@@ -35,9 +35,9 @@ export default function FollowUpHealth({ active }) {
   const grouped = useMemo(() => {
     const out = new Map();
     for (const item of data?.breakdown || []) {
-      const key = [item.channel, item.type, item.part, item.step].join(":");
+      const key = [item.channel, item.type, item.part, item.step, item.service || "Unspecified"].join(":");
       if (!out.has(key)) out.set(key, { key, channel: item.channel, type: item.type,
-        part: item.part, step: item.step, sent: 0, failed: 0, pending: 0, skipped: 0, attention: 0 });
+        part: item.part, step: item.step, service: item.service || "Unspecified", sent: 0, failed: 0, pending: 0, skipped: 0, attention: 0 });
       const row = out.get(key);
       if (Object.hasOwn(row, item.status)) row[item.status] += Number(item.count || 0);
     }
@@ -87,6 +87,7 @@ export default function FollowUpHealth({ active }) {
               [data.failedCount, "Failed"],
               [data.attentionCount, "Needs review"],
               [data.stalePendingCount, "Pending over 20 min"],
+              [data.dueNowCount ?? 0, "Due-now candidates (snapshot)"],
             ].map(([number,label])=>(
               <div key={label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
                 <p className="text-xl font-bold">{number}</p>
@@ -94,16 +95,16 @@ export default function FollowUpHealth({ active }) {
               </div>
             ))}
           </div>
-          <h3 className="mt-5 text-sm font-bold">Recorded outcomes by step and channel</h3>
+          <h3 className="mt-5 text-sm font-bold">Recorded outcomes by step, channel and service</h3>
           {grouped.length === 0 ? <p className="mt-2 text-xs text-[var(--color-text-muted)]">No recorded events for this period.</p> :
             <div className="mt-2 overflow-x-auto">
               <table className="min-w-full text-left text-xs">
                 <thead><tr className="border-b border-[var(--color-border)]">
-                  {["Channel / item", "Sent", "Failed", "Pending", "Skipped", "Review"].map(k=>
+                  {["Channel / item / service", "Sent", "Failed", "Pending", "Skipped", "Review"].map(k=>
                     <th key={k} className="whitespace-nowrap px-2 py-2 font-semibold">{k}</th>)}
                 </tr></thead>
                 <tbody>{grouped.map(row=><tr key={row.key} className="border-b border-[var(--color-border)]">
-                  <td className="whitespace-nowrap px-2 py-2">{CHANNELS[row.channel] || row.channel} · {row.type==="pricing"?"Pricing":`FU${row.step}`}{row.part==="media"?" media":row.part==="decision"?" decision":""}</td>
+                  <td className="whitespace-nowrap px-2 py-2">{CHANNELS[row.channel] || row.channel} · {row.type==="pricing"?"Pricing":`FU${row.step}`}{row.part==="media"?" media":row.part==="decision"?" decision":row.part==="contact_alert"?" attention alert":""} · {row.service}</td>
                   {[row.sent,row.failed,row.pending,row.skipped,row.attention].map((value,i)=>
                     <td key={i} className="px-2 py-2 tabular-nums">{value}</td>)}
                 </tr>)}</tbody>
@@ -117,7 +118,7 @@ export default function FollowUpHealth({ active }) {
           {(data.alerts || []).length === 0 ? <p className="mt-2 text-xs text-[var(--color-text-muted)]">No matching recorded delivery issues.</p> :
             <div className="mt-2 space-y-2">
               {data.alerts.map(a=><div key={a.id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
-                <p className="font-semibold">{CHANNELS[a.channel] || a.channel} · {a.type==="pricing"?"Pricing":`FU${a.step}`}{a.part==="media"?" attachment":a.part==="decision"?" decision":""} · {a.stale_pending?"Stale pending":(STATES[a.status] || a.status)}</p>
+                <p className="font-semibold">{CHANNELS[a.channel] || a.channel} · {a.type==="pricing"?"Pricing":`FU${a.step}`}{a.part==="media"?" attachment":a.part==="decision"?" decision":a.part==="contact_alert"?" missing media alert":""} · {a.stale_pending?"Stale pending":(STATES[a.status] || a.status)}</p>
                 <p className="mt-1 break-words text-[var(--color-text-muted)]">Contact #{a.contact_id} · {formatTime(a.created_at)}{a.detail?" · "+a.detail:""}</p>
                 <Link to={`/inbox?contact=${encodeURIComponent(a.contact_id)}`} className="mt-2 inline-flex min-h-9 items-center rounded border px-3 text-[var(--color-primary)]">Review in Inbox</Link>
               </div>)}
@@ -126,23 +127,26 @@ export default function FollowUpHealth({ active }) {
           <h3 className="mt-5 text-sm font-bold">Upcoming follow-up review queue</h3>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
             Estimates from the latest conversation and current saved sequence, not confirmed scheduled sends.
-            Quiet hours, customer replies, staff takeover, appointment stage, opt-out, platform policies and worker eligibility
-            can change or prevent sending. Pricing reminders require separate eligibility and are not predicted here.
+            Timing shares the worker's pre-expiry formula, including FU3 quiet-hour adaptation and pricing buffer.
+            New replies, opt-outs, appointments, platform restrictions and other eligibility changes can prevent sending.
+            Pricing reminders require separate eligibility and are not predicted here.
           </p>
           {(data.upcoming || []).length === 0 ? <p className="mt-2 text-xs text-[var(--color-text-muted)]">
             No estimable next steps in the active reply window.
           </p> : <div className="mt-2 space-y-2">
             {data.upcoming.map(v=><div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] p-3 text-xs"
               key={v.contact_id}>
-              <div><p className="font-semibold">{CHANNELS[v.channel] || v.channel} · FU{v.step} · Contact #{v.contact_id}</p>
+              <div><p className="font-semibold">{CHANNELS[v.channel] || v.channel} · FU{v.step} · Contact #{v.contact_id}{v.service?" · "+v.service:""}</p>
                 <p className="mt-1 text-[var(--color-text-muted)]">Estimated earliest: {formatTime(v.estimated_at)} · Reply window ends {formatTime(v.window_expires_at)}</p>
               </div>
               <Link to={`/inbox?contact=${encodeURIComponent(v.contact_id)}`} className="inline-flex min-h-9 items-center rounded border px-3 text-[var(--color-primary)]">Inspect</Link>
             </div>)}
           </div>}
           <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
-            Counters count persisted events, not unique customers or provider bills. Media companions count separately.
-            Some quiet-hour and eligibility deferrals leave no persisted decision. This dashboard never attempts a send.
+            Historical counters count recorded events and persisted missing-media attention flags, not unique customers or provider bills.
+            Media companions count separately. Due-now candidates are a current, non-billable database snapshot,
+            not historical due opportunities or permission to send. Some deferrals leave no persisted decision.
+            This dashboard never attempts a send.
           </p>
         </>
       )}
