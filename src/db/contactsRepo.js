@@ -514,7 +514,7 @@ async function takeOver(id, staffUsername) {
            needs_attention = EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
-           ) OR c.attention_reason LIKE 'AI review requested:%',
+           ) OR COALESCE(c.attention_reason LIKE 'AI review requested:%', false),
            attention_reason = CASE
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason
              WHEN EXISTS (
