@@ -2203,7 +2203,7 @@ function FollowUpTool({
         )}
       </section>
 
-      <nav role="tablist" aria-label="Follow-up sections" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <nav role="tablist" aria-label="Follow-up sections" className="mb-4 flex min-w-0 gap-2 overflow-x-auto overscroll-x-contain pb-2 sm:grid sm:grid-cols-5 sm:overflow-visible sm:pb-0">
         {[
           { key: "sequence", label: "Sequence" },
           { key: "pricing", label: "Pricing" },
@@ -2219,7 +2219,7 @@ function FollowUpTool({
             aria-selected={followUpTab === key}
             aria-controls={`follow-up-panel-${key}`}
             onClick={() => setFollowUpTab(key)}
-            className={`min-h-11 rounded-xl border px-3 py-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${followUpTab === key
+            className={`min-h-11 shrink-0 whitespace-nowrap rounded-xl border px-3 py-2.5 text-xs font-semibold sm:shrink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${followUpTab === key
               ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
               : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/35"}`}
           >
@@ -3340,9 +3340,15 @@ function FollowUpTool({
             <FollowUpPerformance active={followUpTab === "performance"} />
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
-            <FollowUpHealth active={followUpTab === "activity"} />
-            <FollowUpActivity active={followUpTab === "activity"} />
-            <Card>
+            <nav aria-label="Activity section shortcuts" className="flex flex-wrap gap-2 text-xs font-semibold">
+              <a href="#follow-up-delivery-health" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">Delivery health</a>
+              <a href="#follow-up-delivery-events" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">Recent activity</a>
+              <a href="#follow-up-template-activity" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">WhatsApp templates</a>
+            </nav>
+            <div id="follow-up-delivery-health" className="scroll-mt-4"><FollowUpHealth active={followUpTab === "activity"} />
+            </div>
+            <div id="follow-up-delivery-events" className="scroll-mt-4"><FollowUpActivity active={followUpTab === "activity"} /></div>
+            <div id="follow-up-template-activity" className="scroll-mt-4"><Card>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-base font-bold">Extended WhatsApp template activity</h2>
@@ -3406,7 +3412,7 @@ function FollowUpTool({
               <Link to="/inbox" className="mt-4 inline-flex rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-xs font-semibold text-[var(--color-primary)]">
                 Open Inbox
               </Link>
-            </Card>
+            </Card></div>
           </div>
         </div>
 
@@ -4138,13 +4144,13 @@ function ToolShell({ title, description, switchLabel = null, enabled, savedEnabl
       </main>
 
       {(hasUnsavedChanges || saving) && (
-        <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
+        <footer className="sticky bottom-0 z-20 shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_16px_rgba(0,0,0,0.06)] sm:px-6 xl:px-10">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <span className={`h-2 w-2 shrink-0 rounded-full ${saving ? "bg-[var(--color-primary)]" : "bg-[var(--color-accent)]"}`} />
               <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
             </div>
-            <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-2.5 sm:text-sm">
+            <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-2.5 sm:text-sm">
               {saving && <Spinner />}
               {saving ? "Saving…" : saveLabel}
             </button>
