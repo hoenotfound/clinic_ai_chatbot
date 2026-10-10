@@ -17,20 +17,20 @@ const PERFORMANCE_SQL = `WITH eligible AS (
       ELSE 'Extended WA template' END AS step,
     COALESCE(NULLIF(BTRIM(m.automated_follow_up_target_service), ''), 'Unspecified (not recorded)') AS service,
     CASE
-      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'video/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(m.media_key,'')) ~ '[.](mp4|mov|webm|m4v)($|[?])'))
+      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'video/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(NULLIF(m.media_key,''),m.media_url,'')) ~ '[.](mp4|mov|webm|m4v)($|[?])'))
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
           AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
-          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'video/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(a.media_key,'')) ~ '[.](mp4|mov|webm|m4v)($|[?])'))))
+          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'video/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(NULLIF(a.media_key,''),a.media_url,'')) ~ '[.](mp4|mov|webm|m4v)($|[?])'))))
       THEN 'Video'
-      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'image/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(m.media_key,'')) ~ '[.](jpg|jpeg|png|gif|webp|heic)($|[?])'))
+      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'image/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(NULLIF(m.media_key,''),m.media_url,'')) ~ '[.](jpg|jpeg|png|gif|webp|heic)($|[?])'))
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
           AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
-          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'image/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(a.media_key,'')) ~ '[.](jpg|jpeg|png|gif|webp|heic)($|[?])'))))
+          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'image/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(NULLIF(a.media_key,''),a.media_url,'')) ~ '[.](jpg|jpeg|png|gif|webp|heic)($|[?])'))))
       THEN 'Image'
-      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'audio/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(m.media_key,'')) ~ '[.](mp3|ogg|wav|m4a|aac)($|[?])'))
+      WHEN (LOWER(COALESCE(m.media_mime_type,'')) LIKE 'audio/%' OR (LOWER(COALESCE(m.media_mime_type,'')) = '' AND LOWER(COALESCE(NULLIF(m.media_key,''),m.media_url,'')) ~ '[.](mp3|ogg|wav|m4a|aac)($|[?])'))
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
           AND a.contact_id=m.contact_id AND a.is_automated_follow_up=true
-          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'audio/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(a.media_key,'')) ~ '[.](mp3|ogg|wav|m4a|aac)($|[?])'))))
+          AND a.delivery_status IN ('sent','delivered','read') AND ((LOWER(COALESCE(a.media_mime_type,'')) LIKE 'audio/%' OR (LOWER(COALESCE(a.media_mime_type,'')) = '' AND LOWER(COALESCE(NULLIF(a.media_key,''),a.media_url,'')) ~ '[.](mp3|ogg|wav|m4a|aac)($|[?])'))))
       THEN 'Audio'
       WHEN (NULLIF(m.media_url,'') IS NOT NULL OR NULLIF(m.media_key,'') IS NOT NULL OR NULLIF(m.media_mime_type,'') IS NOT NULL)
         OR EXISTS (SELECT 1 FROM messages a WHERE a.automated_follow_up_parent_message_id=m.id
