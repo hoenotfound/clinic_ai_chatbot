@@ -103,7 +103,7 @@ export default function FollowUpHealth({ active }) {
                     <th key={k} className="whitespace-nowrap px-2 py-2 font-semibold">{k}</th>)}
                 </tr></thead>
                 <tbody>{grouped.map(row=><tr key={row.key} className="border-b border-[var(--color-border)]">
-                  <td className="whitespace-nowrap px-2 py-2">{CHANNELS[row.channel] || row.channel} · {row.type==="pricing"?"Pricing":`FU${row.step}`}{row.part==="media"?" media":""}</td>
+                  <td className="whitespace-nowrap px-2 py-2">{CHANNELS[row.channel] || row.channel} · {row.type==="pricing"?"Pricing":`FU${row.step}`}{row.part==="media"?" media":row.part==="decision"?" decision":""}</td>
                   {[row.sent,row.failed,row.pending,row.skipped,row.attention].map((value,i)=>
                     <td key={i} className="px-2 py-2 tabular-nums">{value}</td>)}
                 </tr>)}</tbody>
@@ -117,7 +117,7 @@ export default function FollowUpHealth({ active }) {
           {(data.alerts || []).length === 0 ? <p className="mt-2 text-xs text-[var(--color-text-muted)]">No matching recorded delivery issues.</p> :
             <div className="mt-2 space-y-2">
               {data.alerts.map(a=><div key={a.id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
-                <p className="font-semibold">{CHANNELS[a.channel] || a.channel} · {a.type==="pricing"?"Pricing":`FU${a.step}`}{a.part==="media"?" attachment":""} · {a.stale_pending?"Stale pending":(STATES[a.status] || a.status)}</p>
+                <p className="font-semibold">{CHANNELS[a.channel] || a.channel} · {a.type==="pricing"?"Pricing":`FU${a.step}`}{a.part==="media"?" attachment":a.part==="decision"?" decision":""} · {a.stale_pending?"Stale pending":(STATES[a.status] || a.status)}</p>
                 <p className="mt-1 break-words text-[var(--color-text-muted)]">Contact #{a.contact_id} · {formatTime(a.created_at)}{a.detail?" · "+a.detail:""}</p>
                 <Link to={`/inbox?contact=${encodeURIComponent(a.contact_id)}`} className="mt-2 inline-flex min-h-9 items-center rounded border px-3 text-[var(--color-primary)]">Review in Inbox</Link>
               </div>)}
