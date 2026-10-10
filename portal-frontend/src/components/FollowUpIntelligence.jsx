@@ -28,15 +28,16 @@ export default function FollowUpIntelligence({ report }) {
           {intelligence.insights.map(insight => (
             <div key={insight.dimension} className="rounded-lg border border-[var(--color-border)] p-3">
               <h4 className="text-xs font-semibold">{insight.title}</h4>
-              {insight.candidate && insight.qualifying >= 2 ? (
-                <>
-                  <p className="mt-2 text-xs">
-                    Highest observed reply rate: <strong>{insight.candidate.label}</strong>, {insight.candidate.rate}%
-                    ({insight.candidate.replied}/{insight.candidate.mature} mature sends)
-                  </p>
-                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{insight.note}</p>
-                </>
-              ) : <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{insight.note}</p>}
+              {insight.groups.length >= 2 && (
+                <div className="mt-2 space-y-1 text-xs">
+                  {insight.groups.map(group => (
+                    <p key={group.label}>
+                      <strong>{group.label}</strong>: {group.rate}% ({group.replied}/{group.mature} mature sends)
+                    </p>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{insight.note}</p>
             </div>
           ))}
         </div>
