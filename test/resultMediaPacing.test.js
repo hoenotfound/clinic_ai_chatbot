@@ -60,7 +60,7 @@ test("skips are reported for ordinary enquiries and pending clinical review, not
   };
   assert.equal(await resolveResultMediaForReply({ ...base, needsAttention: true }), null);
   assert.equal(skips.at(-1), "staff_review_pending");
-  assert.equal(await resolveResultMediaForReply({ ...base, treatment: null }), null);
+  assert.equal(await resolveResultMediaForReply({ ...base, treatment: null, customerText: "想了解脸型" }), null);
   assert.equal(skips.at(-1), "no_verified_treatment");
   assert.equal(await resolveResultMediaForReply({ ...base, wasMediaRecentlySent: async () => true }), null);
   assert.equal(skips.at(-1), "result_media_recently_sent");
