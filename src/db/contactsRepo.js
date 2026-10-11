@@ -657,7 +657,10 @@ async function clearStaffAssistStateIfUnchanged(contact) {
          is_unread = false,
          updated_at = now()
      WHERE id = $1
-       AND updated_at = $2
+       -- node-postgres parses timestamps to millisecond-precision JS Dates,
+       -- whereas now() persists microseconds. Match the same 1ms bucket
+       -- without allowing a newer changed attention/mode/unread snapshot.
+       AND date_trunc('milliseconds', updated_at) = $2::timestamptz
        AND mode = $3
        AND takeover_by IS NOT DISTINCT FROM $4
        AND needs_attention = $5
