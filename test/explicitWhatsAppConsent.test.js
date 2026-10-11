@@ -5,6 +5,7 @@ const { explicitPromotionConsent, businessIsNamed } = require("../src/utils/expl
 const clinic = { businessName: "Neutro Sense TCM Centre" };
 test("classifies voluntarily sent Chinese CTWA follow-up + promotional opt-in", () => {
   for (const text of [
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
     "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
     "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后也愿意收到 WhatsApp 跟进和相关优惠 😊",
     "Hi～想了解 Neutro Sense TCM 的骨盆配套，之后有相关优惠也可以 WhatsApp 通知我～",
@@ -52,4 +53,15 @@ test("business identity is mandatory; consent cannot spill between tenants", () 
   assert.equal(explicitPromotionConsent(text, {businessName:""}), null);
   assert.equal(businessIsNamed(text, "Neutro Sense TCM Centre"), true);
   assert.equal(businessIsNamed("Hi Neutro Sense Team", "Neutro Sense TCM Centre"), false);
+});
+
+test("consent in the chat remains voluntary and must name this business", () => {
+  const exact = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+  assert.equal(explicitPromotionConsent(exact, clinic)?.category, "MARKETING");
+  assert.equal(explicitPromotionConsent(exact, {businessName:"Different Clinic"}), null);
+  for (const text of [
+    "Hi Neutro Sense TCM, 骨盆调理有优惠吗？",
+    "Hi Neutro Sense TCM, 可以跟进我，但是不用给我优惠。",
+    "Hi Neutro Sense TCM, 我想了解骨盆调理。",
+  ]) assert.equal(explicitPromotionConsent(text, clinic), null, text);
 });
