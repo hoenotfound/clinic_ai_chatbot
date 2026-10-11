@@ -53,13 +53,28 @@ function isContextualAdServiceEnquiry(customerText) {
   return CONTEXTUAL_AD_ENQUIRIES.some((pattern) => pattern.test(text));
 }
 
+// Future follow-up permission in an ad prefill is not an immediate request
+// for price graphics or Before & After images.
+const FOLLOW_UP_PERMISSION = /(?:可以|愿意|願意|同意|希望|请|請).{0,30}(?:跟[进進]我|联系我|聯繫我|通知我.{0,8}(?:后续|後續|以后|以後))|\b(?:i(?:'d| would)?\s+(?:also\s+)?(?:like|want)\s+to\s+receive|feel\s+free\s+to|you\s+can|please)\b.{0,110}\b(?:follow[\s-]?ups?|whats\s*app|updates?)\b|\b(?:boleh|sila|saya\s+(?:nak|mahu|setuju)).{0,45}(?:whats\s*app|susulan|hubungi)\b/iu;
+const RELATED_OFFERS = /(?:优惠|優惠|促销|促銷|\b(?:offers?|promos?|promotions?|deals?|discounts?|promosi|tawaran)\b)/iu;
+const DIRECT_PRICE_REQUEST = /(?:多少[钱錢]|(?:价[格钱錢]|價錢|价格|費用|费用|收[费費])[\s:：]*[?？]|(?:价[格钱錢]|價錢|价格)[^。.!?？]{0,14}(?:多少|呢|[?？])|(?:现在|現在|马上|馬上|立即|直接|先|\b(?:now|today|right now)\b)[^。.!?？]{0,35}(?:价[格钱錢]|價錢|优惠|優惠|套餐|配套|\b(?:price|cost|offers?|promos?|packages?)\b)|\b(?:how\s+much|what(?:'s| is)?\s+(?:the\s+)?(?:price|cost)|(?:price|cost|harga)\s*[?？]|berapa\s+harga)\b)/iu;
+const DIRECT_RESULT_REQUEST = /(?:前[后後]对比|前[后後]對比|(?:效果|对比|對比)[图圖]|案例[图圖照片]|\bbefore[\s&/-]*(?:and[\s-]*)?after\b)/iu;
+
+function isFollowUpConsentEnquiry(customerText) {
+  const text = String(customerText || "").normalize("NFKC").trim();
+  if (!text || text.length > 900 ||
+      !FOLLOW_UP_PERMISSION.test(text) || !RELATED_OFFERS.test(text)) return false;
+  // A real current price or results question still takes priority.
+  return !DIRECT_PRICE_REQUEST.test(text) && !DIRECT_RESULT_REQUEST.test(text);
+}
+
 const ACK_ONLY = /^(?:ok(?:ay)?|kk|k|alright|all\s+right|noted|thanks?(?:\s+you)?|thank\s+you|tq|thx|sure|yes|yeah|yep|no|nope|later|fine|got\s+it|received|好的|好|好吧|谢谢|謝謝|收到|明白|嗯|哦|是的|可以|好呀|baik|terima\s+kasih|faham|boleh|ya|tak|👍|🙏|😊|🙂)[\s.!！。~👍🙏😊🙂]*$/iu;
 const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|can\s+you\s+(?:give|send)\s+(?:me\s+)?)\s*)?(?:address|location|branch(?:es)?|business\s+hours?|opening\s+hours?|contact|phone\s+number|whatsapp|opening\s+time|clinic\s+location|appointment\s+slots?|营业时间|營業時間|分店|地址|电话号码|電話號碼|在哪里|在哪裡|营业吗|營業嗎|lokasi|alamat|cawangan|waktu\s+operasi)(?:[\s?？!.。]*)$/iu;
 
 function hasCustomerPriceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
-  if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value)) return false;
+  if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value) || isFollowUpConsentEnquiry(value)) return false;
   return PRICE_OR_PACKAGE.test(value) ||
     ENGLISH_MONEY_QUESTION.test(value) ||
     (MALAY_MONEY_QUESTION.test(value) && !MALAY_NON_PRICE_QUANTITY.test(value));
@@ -75,4 +90,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry };
+module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry };
