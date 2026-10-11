@@ -97,6 +97,21 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
     assert.deepEqual(await candidateIds(), [1102],
       "FU1 should qualify from the confirmed staff response, not the cancelled AI anchor");
 
+    // Provider acceptance is the actual send boundary. An unknown outcome or
+    // unsubmitted staff draft cannot trigger the worker, even when Attention
+    // has been cleared and FU1 is already due.
+    await client.query("UPDATE messages SET delivery_status='unknown' WHERE id=1102");
+    assert.deepEqual(await candidateIds(), [],
+      "unknown staff delivery must not authorize a follow-up");
+    await client.query("UPDATE messages SET delivery_status='pending' WHERE id=1102");
+    assert.deepEqual(await candidateIds(), [1102],
+      "a provider-accepted pending send is a valid follow-up anchor");
+    await client.query("UPDATE messages SET whatsapp_message_id=NULL WHERE id=1102");
+    assert.deepEqual(await candidateIds(), [],
+      "a pending draft with no provider ID is not accepted");
+    await client.query("UPDATE messages SET whatsapp_message_id='wamid.staff.1102',delivery_status='read' WHERE id=1102");
+    assert.deepEqual(await candidateIds(), [1102]);
+
     // Simulate a legacy AI-owned contact with an unresolved handoff flag.
     // Without a reliable original handoff boundary it must fail closed until
     // staff explicitly reviews and dismisses the attention warning.
