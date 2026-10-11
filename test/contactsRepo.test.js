@@ -1,15 +1,3 @@
-test("Inbox exposes the contact update version for stale Return-to-AI protection", async (t) => {
-  const originalQuery = pool.query;
-  t.after(() => { pool.query = originalQuery; });
-  pool.query = async (sql) => {
-    assert.match(sql, /c\.updated_at/);
-    assert.match(sql, /c\.attention_reason/);
-    return { rows: [] };
-  };
-  const rows = await contactsRepo.listConversations();
-  assert.deepEqual(rows, []);
-});
-
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
@@ -23,6 +11,19 @@ function nextTick() {
 }
 
 const UPDATED_AT = "2026-08-29T07:15:00.000Z";
+
+test("Inbox exposes the contact update version for stale Return-to-AI protection", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => { pool.query = originalQuery; });
+  pool.query = async (sql) => {
+    assert.match(sql, /c\.updated_at/);
+    assert.match(sql, /c\.attention_reason/);
+    return { rows: [] };
+  };
+  const rows = await contactsRepo.listConversations();
+  assert.deepEqual(rows, []);
+});
+
 
 test("creates a canonical contact with a race-safe insert", async (t) => {
   const originalQuery = pool.query;
