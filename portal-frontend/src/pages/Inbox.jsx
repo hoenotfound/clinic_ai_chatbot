@@ -940,7 +940,9 @@ export default function Inbox() {
     const contactId = selectedId;
     setActionPending(true);
     try {
-      await api.returnToAi(contactId);
+      const snapshot = conversations?.find((item) =>
+        Number(item.contact_id) === Number(contactId));
+      await api.returnToAi(contactId, snapshot?.updated_at || null);
       await refreshConversations();
     } catch (err) {
       console.error("Failed to return conversation to AI:", err);
