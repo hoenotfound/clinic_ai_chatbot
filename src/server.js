@@ -1406,17 +1406,16 @@ async function processIncomingMessage(
   } catch (err) {
     console.error(`Error handling incoming ${channel} message ${id || "without id"}:`, err);
 
-    if (suppressAutoReply) {
-      if (contact && savedInbound) {
+    if (contact && savedInbound) {
       try {
-        // The inbound turn is durable. Alert staff privately and preserve AI
-        // ownership, allowing the next customer question to be answered.
-        // Do not send a duplicate/unconfirmed error reply to the customer.
+        // Save an internal review, not a customer-facing error message.
+        // A later customer message may still be handled by the AI normally.
         if (ai.isRecoverableAiReplyFailure(err)) {
           await contactsRepo.setTemporaryAiAttention(contact.id);
         } else {
           await contactsRepo.setAiReviewAttention(
-            contact.id, savedInbound.id,
+            contact.id,
+            savedInbound.id,
             "Automated message processing failed. Staff should inspect this customer turn.",
             "clinical"
           );
@@ -1425,7 +1424,6 @@ async function processIncomingMessage(
         console.error("Failed to flag the conversation after processing failure:", attentionErr);
       }
     }
-
     return { wasFirstMessage, keywordReason };
   }
 }
