@@ -38,7 +38,7 @@ function makeContact() {
 }
 
 test("Inbox remains AI while individual staff questions are resolved independently", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
+  // Keep each Playwright project's actual desktop/iPad/iPhone viewport.
   await page.addInitScript(() => {
     class StubEventSource {
       addEventListener() {}
@@ -81,9 +81,24 @@ test("Inbox remains AI while individual staff questions are resolved independent
   const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
   await expect(thread).toBeVisible();
   await expect(thread.getByRole("button", { name: /Needs attention \(2 questions\)/ })).toBeVisible();
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", await page.evaluate(() => document.body.scrollWidth));
+  const dimensions = await page.evaluate(() => ({
+    pageWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+  }));
+  expect(dimensions.pageWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await thread.getByRole("menuitem", { name: "Resolve all 2 review questions" }).click();
+  await expect(thread.getByRole("button", { name: /Needs attention \(2 questions\)/ })).toBeVisible();
+  expect(resolvedIds).toEqual([]);
+
   await expect(thread.getByText("AI + Staff Review")).toHaveCount(0);
   await thread.getByRole("button", { name: /Needs attention \(2 questions\)/ }).click();
-  await expect(thread.getByRole("button", { name: "Mark question 10 resolved" })).toBeVisible();
+  const firstResolve = thread.getByRole("button", { name: "Mark question 10 resolved" });
+  await firstResolve.scrollIntoViewIfNeeded();
+  await expect(firstResolve).toBeInViewport();
+  await expect(firstResolve).toBeVisible();
   await expect(thread.getByRole("button", { name: "Mark question 11 resolved" })).toBeVisible();
 
   await thread.getByRole("button", { name: "Mark question 10 resolved" }).click();
