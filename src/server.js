@@ -392,9 +392,7 @@ async function processIncomingBatch(items) {
     const incoming = unwrapIncoming(batch[index]);
     const message = String(incoming?.text || "");
     if (canGenerateAutomatedReplyForIncoming(batch[index]) &&
-        (isUrgentSafetyMessage(message) ||
-          isActiveSafetyConcern(message) ||
-          isExplicitStaffRequest(message))) {
+        Boolean(checkKeywordTriggers(message))) {
       replyTargetIndex = index;
       break;
     }
@@ -953,10 +951,10 @@ async function processIncomingMessage(
       }
     }
 
-    let reply = isFirstMessage && !urgentSafety && !generateFirstIntro
+    let reply = isFirstMessage && !flagged && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
-    if (isFirstMessage && !urgentSafety && generateFirstIntro) {
+    if (isFirstMessage && !flagged && generateFirstIntro) {
       const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply);
       reply = guardedIntro.reply;
       if (guardedIntro.usedOriginalFallback) {
