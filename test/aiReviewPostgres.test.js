@@ -261,8 +261,10 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
 
     // A later staff reply does not resolve a durable clinical review.
     await contacts.setAiReviewAttention(1,22,'New clinical question','clinical');
-    await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at,sent_by_username,delivery_status)
-      VALUES (23,1,'assistant','Staff answered',now() + interval '4 minutes','staff','read')`);
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,delivery_status,whatsapp_message_id)
+      VALUES (23,1,'assistant','Staff answered',now() + interval '4 minutes',
+        'staff','read','wamid.staff.23')`);
     await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
       needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
     const pendingClinical = await contacts.returnToAi(1);
