@@ -11,8 +11,8 @@ async function recordDecision({
   selectedCount = 0,
   sentCount = 0,
 }) {
-  if (!Number.isSafeInteger(Number(contactId)) ||
-      !Number.isSafeInteger(Number(inboundMessageId))) {
+  if (!Number.isSafeInteger(Number(contactId)) || Number(contactId) <= 0 ||
+      !Number.isSafeInteger(Number(inboundMessageId)) || Number(inboundMessageId) <= 0) {
     throw new Error("Result media audit requires persisted message/contact IDs");
   }
   await pool.query(
