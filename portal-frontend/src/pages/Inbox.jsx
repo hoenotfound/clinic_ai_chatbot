@@ -955,7 +955,7 @@ export default function Inbox() {
     const contactId = selectedId;
     const conversation = conversations?.find((item) => Number(item.contact_id) === Number(contactId));
     const unresolved = Number(conversation?.pending_review_count) || 0;
-    if (unresolved > 1 && !window.confirm(`Dismiss all ${unresolved} pending review questions? This marks every question resolved.`)) {
+    if (unresolved > 0 && !window.confirm(`Resolve all ${unresolved} pending review question${unresolved === 1 ? "" : "s"}? Please confirm that staff has checked the questions. Automated follow-ups may resume.`)) {
       return;
     }
     setActionPending(true);
