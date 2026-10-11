@@ -328,12 +328,12 @@ test("postpartum pelvic sales interest is one service, but recent birth and comp
     items: [{ imageUrl: "https://example.test/result.jpg", caption: "Pelvic proof" }] }];
   const services = [{ name: "骨盆调理" }, { name: "产后调理" }];
   const serviceAliases = [
-    { alias: "骨盆", officialService: "骨盆调理" },
-    { alias: "产后", officialService: "产后调理" },
+    { alias: "骨盆 / pelvic adjustment", officialService: "骨盆调理" },
+    { alias: "产后 / postpartum recovery", officialService: "产后调理" },
   ];
   for (const customerText of [
     "我想了解产后骨盆调理，有优惠吗？",
-    "I'm interested in postpartum pelvic treatment and its price",
+    "I'm interested in postpartum pelvic adjustment and its price",
   ]) {
     assert.equal(hasClinicalMediaRisk(customerText), false, customerText);
     const chosen = await resolveResultMediaForReply({
