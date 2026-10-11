@@ -33,7 +33,7 @@ function explicitServiceNamedByCustomer(resultMedia, customerText) {
   const comparable = (value) => String(value || "")
     .normalize("NFKC")
     .toLocaleLowerCase()
-    .replace(/[\\s\\p{P}\\p{S}]+/gu, "");
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
   const words = comparable(customerText);
   const matches = resultMedia.filter((entry) => {
     const service = comparable(entry?.service);
