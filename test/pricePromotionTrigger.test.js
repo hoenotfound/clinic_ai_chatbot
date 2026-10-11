@@ -743,6 +743,9 @@ test("unresolved provider delivery blocks promotional images even after the stan
   assert.equal(await resolvePricePromotionForReply(base({
     hasUnconfirmedMediaDelivery: undefined,
   })), null, "missing delivery verifier fails closed rather than permitting a repeat");
+  assert.equal(await resolvePricePromotionForReply(base({
+    hasUnconfirmedMediaDelivery: async () => { throw new Error("test provider receipt unavailable"); },
+  })), null, "a verifier outage must suppress optional media without breaking the AI reply");
   assert.ok((await resolvePricePromotionForReply(base({
     hasUnconfirmedMediaDelivery: async () => false,
   })))?.packages?.length, "a reconciled image remains eligible under existing normal rules");
