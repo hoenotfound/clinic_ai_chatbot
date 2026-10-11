@@ -5,6 +5,7 @@ const telegramImmediateAlerts = require("../services/telegramImmediateAlertServi
 const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
+const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
@@ -458,10 +459,10 @@ async function listConversations() {
             FROM messages outbound
             WHERE outbound.contact_id = c.id
               AND outbound.role = 'assistant'
-              AND (
-                outbound.delivery_status IS NULL
-                OR outbound.delivery_status NOT IN ('failed', 'unknown')
-              )
+              -- A saved draft or rejected message cannot hide an unread
+              -- customer request. Reuse the follow-up worker's provider
+              -- acceptance rule for WhatsApp, Messenger and Instagram.
+              AND ${acceptedNormalOutboundSql("outbound")}
               AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
           )
       ) AS has_unreplied
@@ -691,6 +692,11 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            SELECT 1 FROM messages m
            WHERE m.contact_id = contacts.id AND m.role = 'assistant'
              AND m.delivery_status IN ('failed', 'unknown')
+         ) OR (
+           -- A manual reply does not confirm an appointment was booked.
+           -- Keep Booking Ready flagged until staff explicitly dismisses it.
+           contacts.needs_attention = true
+           AND COALESCE(contacts.attention_reason ILIKE 'Booking ready:%', false)
          ),
          attention_reason = CASE
            -- Staff Assist may clear a answered handoff, but must not hide an
@@ -706,6 +712,9 @@ async function clearStaffAssistStateIfUnchanged(contact) {
              THEN attention_reason
              ELSE 'Delivery failed: One or more outbound messages need staff review.'
            END
+           WHEN contacts.needs_attention = true
+             AND COALESCE(contacts.attention_reason ILIKE 'Booking ready:%', false)
+           THEN contacts.attention_reason
            WHEN EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = contacts.id AND r.status = 'pending'
