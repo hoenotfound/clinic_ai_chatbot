@@ -731,6 +731,15 @@ async function clearStaffAssistStateIfUnchanged(contact) {
        AND needs_attention = $5
        AND attention_reason IS NOT DISTINCT FROM $6
        AND is_unread = $7
+       -- A saved draft is not proof that the patient has been answered.
+       -- Preserve genuine handoffs until staff deliberately resolves them;
+       -- informational AI reviews retain the existing separate review logic.
+       AND attention_reason IS DISTINCT FROM 'AI handed off this conversation.'
+       AND NOT (
+         mode = 'human' AND needs_attention = true
+         AND (attention_reason IS NULL
+           OR attention_reason NOT LIKE 'AI review requested:%')
+       )
      RETURNING *`,
     [
       contact.id,
