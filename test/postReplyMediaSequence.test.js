@@ -81,6 +81,7 @@ async function simulateReply({
     resultMedia: configuredResults,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
   const paced = planResultMediaPacing({
@@ -185,6 +186,7 @@ test("clear service enquiry can send result media immediately after the AI reply
     resultMedia: serviceResultMedia,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
 
@@ -218,6 +220,7 @@ test("a non-service admin turn does not send result media even when treatment co
     }],
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
 
@@ -246,6 +249,7 @@ test("ad-name-only attribution cannot trigger automatic result media", async () 
     }],
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
 
@@ -275,6 +279,7 @@ test("normalized Meta attribution only unlocks result media when headline/body c
     resultMedia: configured,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   };
 
@@ -346,6 +351,7 @@ test("language-only and greeting-only messages never trigger result images even 
       resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
       contactId: 42,
       wasMediaRecentlySent: async () => { checked = true; return false; },
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
     });
     assert.equal(result, null, customerText);
@@ -379,6 +385,7 @@ test("model service-query flag cannot trigger results for admin-only messages", 
       resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
       contactId: 42,
       wasMediaRecentlySent: async () => { attempted = true; return false; },
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
     });
     assert.equal(result, null, customerText);
@@ -416,6 +423,7 @@ test("Click-to-WhatsApp default enquiry resolves a single proof image from creat
     resultMedia: configured,
     contactId: 325,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
   assert.equal((await select(creative))?.items?.length, 1);
