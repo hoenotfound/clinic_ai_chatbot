@@ -408,6 +408,7 @@ async function listConversations() {
       c.mode,
       c.takeover_by,
       c.takeover_at,
+      c.updated_at,
       c.needs_attention,
       c.attention_reason,
       (SELECT COUNT(*)::integer FROM ai_review_items r
