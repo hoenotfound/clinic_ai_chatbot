@@ -241,6 +241,8 @@ test("multiple services or aliases remain ambiguous even when the AI picks one s
   const cases = [
     "我想了解骨盆调理和3D小颜术，两种有什么分别？",
     "我想了解pelvic correction和3D face correction哪个好？",
+    "骨盆调理和3D小颜术，两种有什么分别？",
+    "Which is better, pelvic correction or 3D face correction?",
   ];
   for (const customerText of cases) {
     assert.equal(customerNamedServices(media, customerText, aliases).length, 2, customerText);
