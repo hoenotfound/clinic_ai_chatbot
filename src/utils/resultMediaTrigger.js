@@ -3,6 +3,7 @@ const {
   hasCustomerPriceEnquiry,
   hasCustomerServiceEnquiry,
   isContextualAdServiceEnquiry,
+  isFollowUpConsentEnquiry,
 } = require("./customerEnquiryEvidence");
 const {
   normalizeMediaTranslations,
@@ -91,6 +92,7 @@ function explicitServiceNamedByCustomer(
   resultMedia, customerText, serviceAliases = [], services = []
 ) {
   const current = String(customerText || "");
+  if (isFollowUpConsentEnquiry(current)) return null;
   // Admin questions can mention a service without asking for examples.
   if (/(?:地址|在哪[里裡]|营业时间|營業時間|停车|停車|分行|分店|\b(?:address|location|opening hours?|parking|branch(?:es)?|alamat|lokasi|cawangan)\b)/iu.test(current)) {
     return null;
@@ -243,6 +245,7 @@ async function resolveResultMediaForReply({
     return null;
   };
   if (hasClinicalMediaRisk(customerText)) return skip("clinical_media_safety");
+  if (isFollowUpConsentEnquiry(customerText)) return skip("follow_up_consent_introduction");
   if (needsAttention) return skip("staff_review_pending");
   if (flagged || bookingReady || keywordReason || textSendSucceeded !== true) {
     return skip("unsafe_or_unsent_ai_reply");
