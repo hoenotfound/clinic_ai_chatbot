@@ -78,3 +78,57 @@ test("voice transcription failure is an informational review, with clinical revi
   assert.match(contacts, /c\.mode = 'ai'/);
   assert.match(server, /contactsRepo\.canSendAutomaticReviewMedia\(contact\.id\)/);
 });
+
+test("direct customer-named treatment works without AI model intent flags", async () => {
+  const { explicitServiceNamedByCustomer } = require("../src/utils/resultMediaTrigger");
+  const media = [{
+    service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    autoSendCount: 2,
+    items: [
+      { imageUrl: "/api/config/result-media/image/11", caption: "Result one" },
+      { imageUrl: "/api/config/result-media/image/12", caption: "Result two" },
+    ],
+  }];
+  const customerText = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+  assert.equal(explicitServiceNamedByCustomer(media, customerText), "骨盆调理");
+  assert.equal(explicitServiceNamedByCustomer(media, "我想了解骨盆调理的地址"), null);
+  assert.equal(explicitServiceNamedByCustomer(media, "骨盆调理多少钱？"), null);
+
+  const decision = await resolveResultMediaForReply({
+    customerText,
+    treatment: null,
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: false,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: media,
+    contactId: 363,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+  assert.equal(decision.service, "骨盆调理");
+  assert.equal(decision.serviceQuerySource, "customer_message");
+  assert.equal(decision.items.length, 2);
+
+  const duplicate = await resolveResultMediaForReply({
+    customerText,
+    treatment: null,
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: false,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: media,
+    contactId: 363,
+    wasMediaRecentlySent: async () => true,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+  assert.equal(duplicate, null, "manual and AI sends must still suppress repeats for seven days");
+});
