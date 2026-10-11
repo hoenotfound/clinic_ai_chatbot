@@ -410,3 +410,46 @@ test("unknown/unsent result media holds suppress all automatic retries regardles
     getMostRecentlySentMediaUrl: async () => null,
   }), null, "missing unresolved-send verifier must fail closed");
 });
+
+
+test("postpartum interval safety detects Chinese day/week/month expressions and preserves normal package questions", async () => {
+  const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+  const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
+  const risky = [
+    "产后7天想了解骨盆调理优惠",
+    "产后第7天想了解骨盆调理价格",
+    "产后十四天想了解骨盆调理",
+    "产后七周问骨盆套餐",
+    "产后一个月想了解骨盆调理优惠",
+    "产后2个月想知道价格",
+    "产后三个月想了解骨盆调理",
+    "I am 1 month postpartum, pelvic treatment pricing",
+    "2 weeks after delivery, how much for pelvic treatment?",
+    "Saya 2 minggu selepas bersalin, nak harga rawatan pelvis",
+  ];
+  const okay = [
+    "产后骨盆调理有什么优惠",
+    "我想了解产后骨盆调理套餐",
+    "产后4个月想了解骨盆调理优惠",
+    "产后骨盆3个月疗程多少钱？",
+    "What's the price for postpartum pelvic adjustment?",
+  ];
+  const promotions = [{
+    name: "Pelvis Trial", linkedService: "骨盆调理", sendOnPriceQuery: true,
+    imageUrl: "https://example.test/pelvis.jpg", caption: "October RM288",
+  }];
+  for (const customerText of risky) {
+    assert.equal(hasClinicalMediaRisk(customerText), true, customerText);
+    const result = await resolvePricePromotionForReply({
+      priceQuery: true, treatment: "骨盆调理", customerText,
+      flagged: false, bookingReady: false, keywordReason: null,
+      needsAttention: false, textSendSucceeded: true, promotions, contactId: 7,
+      wasPromoRecentlySent: async () => { throw new Error("unsafe media history lookup"); },
+      hasUnconfirmedMediaDelivery: async () => { throw new Error("unsafe unconfirmed lookup"); },
+    });
+    assert.equal(result, null, customerText);
+  }
+  for (const customerText of okay) {
+    assert.equal(hasClinicalMediaRisk(customerText), false, customerText);
+  }
+});
