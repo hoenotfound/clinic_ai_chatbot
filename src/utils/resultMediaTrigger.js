@@ -69,6 +69,24 @@ function customerNamedServices(resultMedia, customerText, serviceAliases = [], s
   return [...match].map((key) => names.get(key));
 }
 
+// A postpartum qualifier can describe why the customer wants *pelvic*
+// treatment. It is not a separate request for the "产后调理" service.
+// Comparisons and two distinct treatment names are still ambiguous.
+function qualifiedTreatmentMentions(namedServices, customerText) {
+  const names = Array.isArray(namedServices) ? namedServices : [];
+  if (names.length !== 2) return names;
+  const normalized = (value) => String(value || "").normalize("NFKC").trim().toLocaleLowerCase();
+  const postpartum = names.find((name) => /^(?:产后|產後)(?:调理|調理)|^postpartum(?:\s+(?:care|recovery|treatment))?$/iu.test(normalized(name)));
+  const pelvic = names.find((name) => /骨盆|骨盘|骨盤|\bpelvi[cs]\b/iu.test(normalized(name)));
+  const text = String(customerText || "");
+  if (!postpartum || !pelvic ||
+      !/(?:产后|產後)\s*(?:的)?\s*(?:骨盆|骨盘|骨盤)|\b(?:postpartum|postnatal)\s+(?:pelvic|pelvis)\b/iu.test(text) ||
+      /(?:产后调理|產後調理)|(?:分别|分別|比较|比較|区别|區別|差别|差別|哪个|哪個|两种|兩種|和|与|與|以及|\b(?:or|versus|vs|compare|comparison|difference|better|and|atau|beza)\b)/iu.test(text)) {
+    return names;
+  }
+  return [pelvic];
+}
+
 function explicitServiceNamedByCustomer(
   resultMedia, customerText, serviceAliases = [], services = []
 ) {
@@ -79,7 +97,9 @@ function explicitServiceNamedByCustomer(
   }
   if (!EXPLICIT_TREATMENT_INTEREST.test(current) ||
       !hasCustomerServiceEnquiry(current)) return null;
-  const matches = customerNamedServices(resultMedia, current, serviceAliases, services);
+  const matches = qualifiedTreatmentMentions(
+    customerNamedServices(resultMedia, current, serviceAliases, services), current
+  );
   if (matches.length !== 1) return null;
   return matchingResultMediaSet(resultMedia, matches[0]) ? matches[0] : null;
 }
@@ -237,8 +257,8 @@ async function resolveResultMediaForReply({
     return skip("contextual_ad_history_unverified_or_not_early");
   }
 
-  const namedServices = customerNamedServices(
-    resultMedia, customerText, serviceAliases, services
+  const namedServices = qualifiedTreatmentMentions(
+    customerNamedServices(resultMedia, customerText, serviceAliases, services), customerText
   );
   if (namedServices.length > 1) return skip("multiple_treatments_ambiguous");
   const directlyNamedTreatment = explicitServiceNamedByCustomer(
@@ -337,6 +357,7 @@ module.exports = {
   matchingResultMediaSet,
   explicitServiceNamedByCustomer,
   customerNamedServices,
+  qualifiedTreatmentMentions,
   mediaIdentity,
   rotateAfter,
   resolveResultMediaForReply,
