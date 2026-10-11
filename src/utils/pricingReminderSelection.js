@@ -1,7 +1,7 @@
 const { findMentionedPromotionPackages, promotionPackages } = require("./activePromotion");
 const { resolveLocalizedMedia, mediaVariants } = require("./mediaLocalization");
 const { inferConfiguredServiceFromText } = require("./serviceInterest");
-const { isFollowUpConsentEnquiry } = require("./customerEnquiryEvidence");
+const { hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
 
 function norm(value) {
   return String(value || "").normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
@@ -48,7 +48,7 @@ function selectedService(candidate, services, aliases = []) {
 // on whether the customer proactively asked about a price.
 function hasPricingInterest(messages) {
   return (Array.isArray(messages) ? messages : []).some((message) =>
-    !isFollowUpConsentEnquiry(message) &&
+    !hasFuturePromotionPermissionWithoutPrice(message) &&
     /(?:价钱|价格|價錢|價格|多少钱|多少錢|收费|費用|优惠|優惠|套餐|配套|how\s+much|pricing|price|cost|package|promo|harga|berapa|pakej|promosi|rm\s*\d)/iu
       .test(String(message || ""))
   );
