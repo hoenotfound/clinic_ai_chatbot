@@ -105,6 +105,17 @@ test("Inbox remains AI while individual staff questions are resolved independent
   await expect(thread.getByRole("button", { name: "Mark question 10 resolved" })).toHaveCount(0);
   await expect(thread.getByRole("button", { name: "Mark question 11 resolved" })).toBeVisible();
 
+  // Even a single pending question must not be bulk-resolved without
+  // explicit confirmation. Dismissing the dialog preserves the review.
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Resolve all 1 pending review question?");
+    await dialog.dismiss();
+  });
+  await thread.getByRole("menuitem", { name: "Resolve all 1 review question" }).click();
+  await expect.poll(() => resolvedIds).toEqual([10]);
+  await expect(thread.getByRole("button", { name: "Mark question 11 resolved" })).toBeVisible();
+
   await thread.getByRole("button", { name: "Mark question 11 resolved" }).click();
   await expect.poll(() => resolvedIds).toEqual([10, 11]);
   await expect(thread.getByText("Needs attention", { exact: false })).toHaveCount(0);
