@@ -16,7 +16,7 @@ const CLINICAL_MEDIA_RED_FLAGS =
 // If AI misses a clinical outcome flag, images still fail closed here. Keep
 // this separate from review categorization, which has different purposes.
 const CLINICAL_MEDIA_SUITABILITY =
-  /(?:可不可以|能不能|是否可以|可以|能否|适不适合|適不適合)(?:.{0,15})(?:做|用|接受|进行|進行)(?:.{0,10})(?:吗|嗎|呢|\?|？)|(?:can|could|should)\s+i\s+(?:have|receive|undergo|try|do)\s+(?:this|the|a|your)?\s*(?:treatment|procedure|therapy|rawatan)|\b(?:am i|is it)\s+(?:eligible|suitable|safe)\b|\b(?:boleh|sesuai)\s+(?:buat|cuba|jalani|rawatan|ke)\b/iu;
+  /(?:可不可以|能不能|是否可以|可以|能否|适不适合|適不適合)(?:.{0,15})(?:做|用|接受|进行|進行)(?:.{0,10})(?:吗|嗎|呢|\?|？)|(?:can|could|should)\s+i\s+(?:have|receive|undergo|try|do)\s+(?:(?:this|the|a|your)\s+)?(?:[\w-]+\s+){0,3}(?:treatment|procedure|therapy|rawatan)|\b(?:am i|is it)\s+(?:eligible|suitable|safe)\b|\b(?:boleh|sesuai)\s+(?:buat|cuba|jalani|rawatan|ke)\b/iu;
 
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
