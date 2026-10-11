@@ -71,13 +71,13 @@ test("unreadable WhatsApp, voice and photo turns do not send scripted apologies"
 });
 
 test("non-urgent model and keyword review turns are silent and keep AI ownership", () => {
-  const reviews = section("if (flagged && !urgentSafety) {", "} else if (flagged) {");
+  const reviews = section("if (flagged && reviewRequired) {", "} else if (flagged) {");
   assert.match(reviews, /setAiReviewAttention/);
   assert.match(reviews, /return \{ wasFirstMessage, keywordReason \};/);
   assert.doesNotMatch(reviews, /sendTrackedText|pauseAiForHumanHandoff/);
-  const keyword = section("Non-urgent keywords are silent staff reviews", "let reply = isFirstMessage");
-  assert.match(keyword, /reviewRequired = true/);
-  assert.doesNotMatch(keyword, /fallbackHandoffReply/);
+  const keyword = section("A model can miss a clear complaint", "let reply = isFirstMessage");
+  assert.match(keyword, /reviewRequired = false/);
+  assert.match(keyword, /fallbackHandoffReply/);
   assert.match(server, /if \(urgentSafety \|\| isActiveSafetyConcern\(text\)\) \{/);
   assert.match(server, /fallbackHandoffReply\([\s\S]*?\{ urgent: true \}/);
   assert.match(server, /const sendOutcome = await sendTrackedText/);
