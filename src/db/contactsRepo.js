@@ -778,7 +778,31 @@ async function dismissAttentionAndReviews(id) {
        RETURNING r.id
      ), cleared AS (
        UPDATE contacts c
-       SET needs_attention = false, attention_reason = NULL, updated_at = now()
+       SET needs_attention = CASE
+             WHEN c.needs_attention = true
+               AND (c.attention_reason IS NULL
+                 OR c.attention_reason NOT LIKE 'AI review requested:%')
+             THEN true
+             WHEN EXISTS (
+               SELECT 1 FROM messages m
+               WHERE m.contact_id = c.id AND m.role = 'assistant'
+                 AND m.delivery_status IN ('failed', 'unknown')
+             ) THEN true
+             ELSE false
+           END,
+           attention_reason = CASE
+             WHEN c.needs_attention = true
+               AND (c.attention_reason IS NULL
+                 OR c.attention_reason NOT LIKE 'AI review requested:%')
+             THEN c.attention_reason
+             WHEN EXISTS (
+               SELECT 1 FROM messages m
+               WHERE m.contact_id = c.id AND m.role = 'assistant'
+                 AND m.delivery_status IN ('failed', 'unknown')
+             ) THEN 'Delivery failed: One or more outbound messages need staff review.'
+             ELSE NULL
+           END,
+           updated_at = now()
        FROM locked WHERE c.id = locked.id
        RETURNING c.*
      )
