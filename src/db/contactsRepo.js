@@ -699,9 +699,16 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            AND COALESCE(contacts.attention_reason ILIKE 'Booking ready:%', false)
          ),
          attention_reason = CASE
-           -- Staff Assist may clear a answered handoff, but must not hide an
-           -- unresolved outbound failure behind a pending review summary.
-           -- Reviews are still displayed separately from ai_review_items.
+           -- Booking Ready is an unresolved scheduling task; an unrelated
+           -- historical delivery failure must not replace that task's reason.
+           -- Failed/unknown messages remain visible in individual Inbox
+           -- delivery statuses and still count towards needs_attention above.
+           -- Explicit attention dismissal remains the only resolution action.
+           WHEN contacts.needs_attention = true
+             AND COALESCE(contacts.attention_reason ILIKE 'Booking ready:%', false)
+           THEN contacts.attention_reason
+           -- For all other attention reasons preserve the existing priority:
+           -- delivery failures take precedence over AI review summaries.
            WHEN EXISTS (
              SELECT 1 FROM messages m
              WHERE m.contact_id = contacts.id AND m.role = 'assistant'
@@ -712,9 +719,6 @@ async function clearStaffAssistStateIfUnchanged(contact) {
              THEN attention_reason
              ELSE 'Delivery failed: One or more outbound messages need staff review.'
            END
-           WHEN contacts.needs_attention = true
-             AND COALESCE(contacts.attention_reason ILIKE 'Booking ready:%', false)
-           THEN contacts.attention_reason
            WHEN EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = contacts.id AND r.status = 'pending'
