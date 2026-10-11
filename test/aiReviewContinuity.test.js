@@ -51,8 +51,8 @@ test("unrecognized handoff outcomes are still rejected", () => {
 test("AI review is silent, preserves AI ownership, and leaves urgent safety on a distinct path", () => {
   const server = source("src/server.js");
   const repo = source("src/db/contactsRepo.js");
-  assert.match(server, /if \(flagged && !urgentSafety\)/);
-  const reviewPath = server.split("if (flagged && !urgentSafety) {")[1].split("} else if (flagged) {")[0];
+  assert.match(server, /if \(flagged && reviewRequired\)/);
+  const reviewPath = server.split("if (flagged && reviewRequired) {")[1].split("} else if (flagged) {")[0];
   assert.match(reviewPath, /contactsRepo\.setAiReviewAttention\(/);
   assert.match(reviewPath, /return \{ wasFirstMessage, keywordReason \};/);
   assert.doesNotMatch(reviewPath, /sendTrackedText|pauseAiForHumanHandoff/);
