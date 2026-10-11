@@ -464,6 +464,41 @@ async function wasMediaRecentlySent(
   );
 }
 
+// Provider acceptance may have succeeded even if the delivery receipt was
+// lost. Keep unknown/in-flight image attempts on hold until reconciled, rather
+// than restarting the seven-day cooldown and risking a duplicate.
+async function hasUnconfirmedMediaDeliveryWithExecutor(executor, contactId, imageUrl) {
+  if (!executor || typeof executor.query !== "function" ||
+      !Number.isSafeInteger(Number(contactId)) || Number(contactId) <= 0 ||
+      !String(imageUrl || "").trim()) {
+    throw new Error("Unconfirmed media requires persisted contact and media URL");
+  }
+  const storedId = storedConfigMediaId(imageUrl);
+  const mediaPredicate = storedId
+    ? [
+        "(media_url = $2",
+        "OR split_part(split_part(media_url, '?', 1), '#', 1)",
+        "   LIKE '%/promo-images/' || $3::integer::text",
+        "OR split_part(split_part(media_url, '?', 1), '#', 1)",
+        "   LIKE '%/api/config/result-media/image/' || $3::integer::text)",
+      ].join("\n")
+    : "media_url = $2";
+  const result = await executor.query([
+    "SELECT 1 FROM messages",
+    "WHERE contact_id = $1 AND role = 'assistant'",
+    "AND " + mediaPredicate,
+    "AND (delivery_status = 'unknown'",
+    "  OR (whatsapp_message_id IS NULL AND",
+    "      (delivery_status IS NULL OR delivery_status = 'pending')))",
+    "LIMIT 1",
+  ].join("\n"), storedId ? [contactId, imageUrl, storedId] : [contactId, imageUrl]);
+  return result.rowCount > 0;
+}
+
+async function hasUnconfirmedMediaDelivery(contactId, imageUrl) {
+  return hasUnconfirmedMediaDeliveryWithExecutor(pool, contactId, imageUrl);
+}
+
 async function getMostRecentlySentMediaUrlWithExecutor(
   executor,
   contactId,
@@ -1683,6 +1718,8 @@ module.exports = {
   wasPromoRecentlySentWithExecutor,
   wasMediaRecentlySent,
   wasMediaRecentlySentWithExecutor,
+  hasUnconfirmedMediaDelivery,
+  hasUnconfirmedMediaDeliveryWithExecutor,
   getMostRecentlySentMediaUrl,
   getMostRecentlySentMediaUrlWithExecutor,
   getMessagePageForContact,

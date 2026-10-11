@@ -1114,3 +1114,38 @@ test("contextual-ad history lookup rejects invalid IDs and propagates database f
     /Neon unavailable/
   );
 });
+
+
+test("unknown or still-unconfirmed result photo blocks automatic repeat beyond seven days", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => { pool.query = originalQuery; });
+  const calls = [];
+  pool.query = async (sql, params) => {
+    calls.push({ sql, params });
+    assert.match(sql, /delivery_status = 'unknown'/);
+    assert.match(sql, /whatsapp_message_id IS NULL/);
+    assert.doesNotMatch(sql, /INTERVAL '1 hour'|NOW\(\) -/);
+    return { rowCount: 1 };
+  };
+  assert.equal(await messagesRepo.hasUnconfirmedMediaDelivery(
+    42, "/api/config/result-media/image/321"
+  ), true);
+  assert.deepEqual(calls[0].params, [42, "/api/config/result-media/image/321", 321]);
+  assert.match(calls[0].sql, /promo-images/);
+  assert.match(calls[0].sql, /api\/config\/result-media\/image/);
+
+  assert.equal(await messagesRepo.hasUnconfirmedMediaDelivery(
+    42, "https://example.test/result1.jpg"
+  ), true);
+  assert.deepEqual(calls[1].params, [42, "https://example.test/result1.jpg"]);
+  assert.doesNotMatch(calls[1].sql, /promo-images/);
+
+  pool.query = async () => ({ rowCount: 0 });
+  assert.equal(await messagesRepo.hasUnconfirmedMediaDelivery(
+    42, "/api/config/result-media/image/321"
+  ), false, "reconciled/confirmed media no longer blocks subsequent sends");
+  await assert.rejects(
+    () => messagesRepo.hasUnconfirmedMediaDelivery(42, ""),
+    /Unconfirmed media requires/
+  );
+});

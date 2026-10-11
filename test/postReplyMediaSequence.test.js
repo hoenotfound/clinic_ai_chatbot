@@ -7,6 +7,7 @@ const {
 const {
   resolveResultMediaForReply,
 } = require("../src/utils/resultMediaTrigger");
+const { planResultMediaPacing } = require("../src/utils/resultMediaPacing");
 const {
   normalizeMetaAdReplyContext,
   resolveMetaAdCreativeService,
@@ -41,61 +42,70 @@ const resultMedia = [{
   }],
 }];
 
-async function runSuccessfulPriceTurn() {
+async function simulateReply({
+  customerText,
+  configuredPromotions = promotions,
+  configuredResults = resultMedia,
+} = {}) {
   const events = ["text"];
   const promoBundle = await resolvePricePromotionForReply({
     priceQuery: true,
     packageQuery: false,
     treatment,
-    customerText: "3D多少钱？",
-    conversationHistory: [{ role: "user", content: "3D多少钱？" }],
+    customerText,
+    conversationHistory: [{ role: "user", content: customerText }],
     flagged: false,
     bookingReady: false,
     keywordReason: null,
     needsAttention: false,
     textSendSucceeded: true,
-    promotions,
+    promotions: configuredPromotions,
     contactId: 42,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
+  for (const item of promoBundle?.packages || []) events.push(`promo:${item.imageUrl}`);
 
-  for (const item of promoBundle?.packages || []) {
-    events.push(`promo:${item.imageUrl}`);
-  }
-
-  if ((promoBundle?.packages?.length || 0) <= 1) {
-    const resultBundle = await resolveResultMediaForReply({
-      priceQuery: true,
-      packageQuery: false,
-      customerText: "3D多少钱？",
-      treatment,
-      flagged: false,
-      bookingReady: false,
-      keywordReason: null,
-      needsAttention: false,
-      textSendSucceeded: true,
-      resultMedia,
-      contactId: 42,
-      wasMediaRecentlySent: async () => false,
-      getMostRecentlySentMediaUrl: async () => null,
-    });
-    for (const item of resultBundle?.items || []) {
-      events.push(`result:${item.imageUrl}`);
-    }
-  }
-
-  return events;
+  // Results are now evaluated regardless of the number of promos.
+  const results = await resolveResultMediaForReply({
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    priceQuery: true,
+    packageQuery: false,
+    customerText,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: configuredResults,
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+  const paced = planResultMediaPacing({
+    customerText,
+    promotionCount: promoBundle?.packages?.length || 0,
+    items: results?.items || [],
+  });
+  for (const item of paced.items) events.push(`result:${item.imageUrl}`);
+  return { events, paced };
 }
 
-test("successful price flow resolves text then promo then result media", async () => {
-  assert.deepEqual(await runSuccessfulPriceTurn(), [
+test("clear combined treatment and price enquiry sends text, promo, then result", async () => {
+  const { events } = await simulateReply({
+    customerText: "我想了解3D小颜术疗程，也想知道优惠价钱",
+  });
+  assert.deepEqual(events, [
     "text",
     "promo:https://example.test/promo-images/201",
     "result:https://example.test/promo-images/301",
   ]);
 });
 
-test("multi-package promo burst suppresses result media in the combined flow", async () => {
+test("price-only enquiry with two packages sends price graphics, not four images", async () => {
   const multiPromotions = [{
     ...promotions[0],
     packages: [
@@ -108,35 +118,47 @@ test("multi-package promo burst suppresses result media in the combined flow", a
       },
     ],
   }];
-
-  const events = ["text"];
-  const promoBundle = await resolvePricePromotionForReply({
-    priceQuery: true,
-    packageQuery: false,
-    treatment,
+  const { events, paced } = await simulateReply({
     customerText: "3D多少钱？",
-    conversationHistory: [{ role: "user", content: "3D多少钱？" }],
-    flagged: false,
-    bookingReady: false,
-    keywordReason: null,
-    needsAttention: false,
-    textSendSucceeded: true,
-    promotions: multiPromotions,
-    contactId: 42,
-    wasPromoRecentlySent: async () => false,
+    configuredPromotions: multiPromotions,
   });
-
-  for (const item of promoBundle?.packages || []) {
-    events.push(`promo:${item.imageUrl}`);
-  }
-  if ((promoBundle?.packages?.length || 0) <= 1) {
-    events.push("result");
-  }
-
+  assert.equal(paced.reason, "promotion_price_priority");
   assert.deepEqual(events, [
     "text",
     "promo:https://example.test/promo-images/201",
     "promo:https://example.test/promo-images/202",
+  ]);
+});
+
+test("two promotions still allow one proof on a clear combined service enquiry", async () => {
+  const multiPromotions = [{
+    ...promotions[0],
+    packages: [
+      promotions[0].packages[0],
+      { name: "B", aliases: ["b"], imageUrl: "https://example.test/promo-images/202", caption: "B" },
+    ],
+  }];
+  const twoProofs = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+    autoSendCount: 2,
+    items: [resultMedia[0].items[0], {
+      imageUrl: "https://example.test/promo-images/302",
+      caption: "Another before and after",
+    }],
+  }];
+  const { events, paced } = await simulateReply({
+    customerText: "我对3D小颜术疗程感兴趣，想了解护理，也想看看配套优惠",
+    configuredPromotions: multiPromotions,
+    configuredResults: twoProofs,
+  });
+  assert.equal(paced.reason, "result_media_paced_after_promotions");
+  assert.deepEqual(events, [
+    "text",
+    "promo:https://example.test/promo-images/201",
+    "promo:https://example.test/promo-images/202",
+    "result:https://example.test/promo-images/301",
   ]);
 });
 
@@ -165,6 +187,7 @@ test("clear service enquiry can send result media immediately after the AI reply
     resultMedia: serviceResultMedia,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
 
@@ -198,6 +221,7 @@ test("a non-service admin turn does not send result media even when treatment co
     }],
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
 
@@ -226,6 +250,7 @@ test("ad-name-only attribution cannot trigger automatic result media", async () 
     }],
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
 
@@ -255,6 +280,7 @@ test("normalized Meta attribution only unlocks result media when headline/body c
     resultMedia: configured,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   };
 
@@ -326,6 +352,7 @@ test("language-only and greeting-only messages never trigger result images even 
       resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
       contactId: 42,
       wasMediaRecentlySent: async () => { checked = true; return false; },
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
     });
     assert.equal(result, null, customerText);
@@ -359,6 +386,7 @@ test("model service-query flag cannot trigger results for admin-only messages", 
       resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
       contactId: 42,
       wasMediaRecentlySent: async () => { attempted = true; return false; },
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
     });
     assert.equal(result, null, customerText);
@@ -396,6 +424,7 @@ test("Click-to-WhatsApp default enquiry resolves a single proof image from creat
     resultMedia: configured,
     contactId: 325,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
   assert.equal((await select(creative))?.items?.length, 1);

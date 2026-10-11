@@ -42,6 +42,7 @@ function base(overrides = {}) {
     resultMedia,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
     ...overrides,
   };
@@ -55,6 +56,7 @@ test("price enquiry resolves one approved service-level result example", async (
       recentCalls.push(args);
       return false;
     },
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async (...args) => {
       historyCalls.push(args);
       return null;
@@ -78,6 +80,7 @@ test("price enquiry resolves one approved service-level result example", async (
 
 test("after the cooldown expires, automatic result media rotates after the last accepted example", async () => {
   const selected = await resolveResultMediaForReply(base({
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => "https://example.test/3d-1.jpg",
   }));
 
@@ -95,6 +98,7 @@ test("rotation wraps and preserves configured multi-example send order", async (
       autoSendCount: 2,
       items: [...resultMedia[0].items, third],
     }],
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => third.imageUrl,
   }));
 

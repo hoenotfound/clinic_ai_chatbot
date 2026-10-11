@@ -72,6 +72,7 @@ test("3D and 9D price enquiries route to their own linked promotions", async (t)
     promotions,
     contactId: 101,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
   assert.equal(threeDPromo?.promotion?.name, "3D First Trial");
   assert.equal(threeDPromo?.packages[0]?.imageUrl, "https://example.test/3d.jpg");
@@ -90,6 +91,7 @@ test("3D and 9D price enquiries route to their own linked promotions", async (t)
     promotions,
     contactId: 102,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
   assert.equal(nineDPromo?.promotion?.name, "9D First Trial");
   assert.equal(nineDPromo?.packages[0]?.imageUrl, "https://example.test/9d.jpg");
@@ -123,6 +125,7 @@ test("an unknown or ambiguous service never falls back to another service's prom
     promotions,
     contactId: 103,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
 
   assert.equal(selected, null);
@@ -192,6 +195,7 @@ test("pelvis generic pricing routes all packages while explicit package alias ro
     promotions: pelvisPromotion,
     contactId: 201,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
   assert.deepEqual(
     genericBundle.packages.map((item) => item.name),
@@ -213,6 +217,7 @@ test("pelvis generic pricing routes all packages while explicit package alias ro
     promotions: pelvisPromotion,
     contactId: 202,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
   assert.deepEqual(
     packageBBundle.packages.map((item) => item.name),
@@ -231,6 +236,7 @@ test("pelvis generic pricing routes all packages while explicit package alias ro
     promotions: pelvisPromotion,
     contactId: 203,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
   assert.deepEqual(aliasBundle.packages.map((item) => item.name), ["Package B"]);
 });
