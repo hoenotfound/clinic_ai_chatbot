@@ -28,7 +28,13 @@ function normalizeServiceName(value) {
 // flag. Require exactly one configured service literally named in that turn,
 // plus explicit treatment interest; do not use CRM interest or ad names here.
 function explicitServiceNamedByCustomer(resultMedia, customerText) {
-  if (!EXPLICIT_TREATMENT_INTEREST.test(String(customerText || "")) ||
+  const current = String(customerText || "");
+  // A location/hours/contact request can name a service without asking for
+  // proof. Do not turn those administrative turns into unsolicited pictures.
+  if (/(?:地址|在哪[里裡]|营业时间|營業時間|停车|停車|分行|分店|\b(?:address|location|opening hours?|parking|branch(?:es)?|alamat|lokasi|cawangan)\b)/iu.test(current)) {
+    return null;
+  }
+  if (!EXPLICIT_TREATMENT_INTEREST.test(current) ||
       !Array.isArray(resultMedia)) return null;
   const comparable = (value) => String(value || "")
     .normalize("NFKC")
