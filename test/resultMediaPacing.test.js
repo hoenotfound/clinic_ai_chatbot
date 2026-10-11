@@ -8,7 +8,8 @@ const {
 const { resolveResultMediaForReply } = require("../src/utils/resultMediaTrigger");
 
 const images = [{ imageUrl: "result-1" }, { imageUrl: "result-2" }];
-const combinedEnquiry = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+const consentPrefill = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+const combinedEnquiry = "我想了解骨盆调理疗程，也想看看优惠";
 
 test("price-only enquiry prioritizes two pricing graphics over optional proof", () => {
   for (const customerText of ["了价格", "骨盆配套 RM388 多少钱?", "3D多少钱？", "How much is the treatment?"]) {
@@ -90,7 +91,7 @@ test("direct customer-named treatment works without AI model intent flags", asyn
       { imageUrl: "/api/config/result-media/image/12", caption: "Result two" },
     ],
   }];
-  const customerText = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+  const customerText = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，想了解一下护理方式和效果 😊";
   assert.equal(explicitServiceNamedByCustomer(media, customerText), "骨盆调理");
   assert.equal(explicitServiceNamedByCustomer(media, "我想了解骨盆调理的地址"), null);
   assert.equal(explicitServiceNamedByCustomer(media, "骨盆调理多少钱？"), null);
@@ -452,4 +453,52 @@ test("postpartum interval safety detects Chinese day/week/month expressions and 
   for (const customerText of okay) {
     assert.equal(hasClinicalMediaRisk(customerText), false, customerText);
   }
+});
+
+test("consent-only CTWA first message never unlocks promotional or results media", async () => {
+  const { hasCustomerPriceEnquiry } = require("../src/utils/customerEnquiryEvidence");
+  const { explicitServiceNamedByCustomer } = require("../src/utils/resultMediaTrigger");
+  const media = [{
+    service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    items: [
+      { imageUrl: "/api/config/result-media/image/11", caption: "Before" },
+      { imageUrl: "/api/config/result-media/image/12", caption: "After" },
+    ],
+  }];
+  assert.equal(hasCustomerPriceEnquiry(consentPrefill), false);
+  assert.equal(explicitServiceNamedByCustomer(media, consentPrefill), null);
+  assert.deepEqual(planResultMediaPacing({
+    customerText: consentPrefill, promotionCount: 0, items: images,
+  }), { items: [], reason: "follow_up_consent_introduction" });
+  assert.deepEqual(planResultMediaPacing({
+    customerText: consentPrefill, promotionCount: 2, items: images,
+  }), { items: [], reason: "follow_up_consent_introduction" });
+  const skipped = [];
+  assert.equal(await resolveResultMediaForReply({
+    customerText: consentPrefill,
+    treatment: "骨盆调理",
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    priceQuery: true, packageQuery: true,
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true,
+    resultMedia: media, contactId: 383,
+    wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+    onSkip: (reason) => skipped.push(reason),
+  }), null);
+  assert.equal(skipped.at(-1), "follow_up_consent_introduction");
+  // The very next real enquiry remains eligible for configured Before & After.
+  const real = await resolveResultMediaForReply({
+    customerText: "想了解骨盆调理有什么效果",
+    treatment: "骨盆调理",
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true,
+    resultMedia: media, contactId: 383,
+    wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+  assert.equal(real?.items?.length, 2);
 });
