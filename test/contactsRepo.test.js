@@ -226,7 +226,7 @@ test("returning a conversation to AI does not reopen the strict cooldown", async
 
   pool.query = async (sql, params) => {
     assert.match(sql, /SET mode = 'ai'/);
-    assert.deepEqual(params, [12]);
+    assert.deepEqual(params, [12, null]);
     return { rows: [{ id: 12, mode: "ai", updated_at: UPDATED_AT }] };
   };
 
