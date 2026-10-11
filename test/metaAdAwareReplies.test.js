@@ -425,7 +425,7 @@ test("AI-generated first greeting is localised instead of prepending the clinic'
   const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   assert.match(serverSource, /generateFirstIntro = isFirstMessage && shouldGenerateLocalizedIntro/);
   assert.match(serverSource, /ai\.getReply\(history, \{[\s\S]*?generateFirstIntro/);
-  assert.match(serverSource, /isFirstMessage && !urgentSafety && !generateFirstIntro/);
+  assert.match(serverSource, /isFirstMessage && !flagged && !generateFirstIntro/);
   assert.match(serverSource, /preserveOriginalIntroFacts\(clinicConfig\.introMessage, aiReply\)/);
 });
 
