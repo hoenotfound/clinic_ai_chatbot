@@ -737,8 +737,8 @@ async function clearStaffAssistStateIfUnchanged(contact) {
        AND attention_reason IS DISTINCT FROM 'AI handed off this conversation.'
        AND NOT (
          mode = 'human' AND needs_attention = true
-         AND (attention_reason IS NULL
-           OR attention_reason NOT LIKE 'AI review requested:%')
+         AND attention_reason IS NOT NULL
+         AND attention_reason NOT LIKE 'AI review requested:%'
        )
      RETURNING *`,
     [
