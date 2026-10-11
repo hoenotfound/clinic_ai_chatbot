@@ -6,6 +6,17 @@ const CLINICAL_QUESTION = /\b(?:pregnan\w*|breastfeed\w*|postpartum|c[.-]?sectio
 
 const MEDICAL_HISTORY = /\b(?:diabet(?:es|ic)|cancer|hypertension|high blood pressure|pcos|polycystic|thyroid|heart disease|kidney disease|kencing manis|darah tinggi|kanser|buah pinggang|sakit jantung)\b|(?:糖尿病|高血压|高血壓|癌症|多囊卵巢|心脏病|心臟病|肾病|腎病)/iu;
 
+// A missing or incorrect AI outcome flag must not authorize unsolicited
+// sales images when the current turn contains medical suitability/risk context.
+// Use exactly the existing conservative clinical-review vocabulary.
+function hasClinicalMediaRisk(customerText) {
+  const value = String(customerText || "");
+  return CLINICAL_QUESTION.test(value) ||
+    CLINICAL_PROCEDURE_TIMING.test(value) ||
+    MEDICAL_HISTORY.test(value) ||
+    Boolean(checkKeywordTriggers(value));
+}
+
 // Never trust an unsupported/unclear category as permission for unsolicited
 // sales automation. Allow informational follow-ups only for clear admin queries.
 function categorizeAiReview(customerText, proposedCategory) {
@@ -38,5 +49,6 @@ function followUpAttentionAllowedSql(alias = "c") {
 
 module.exports = {
   categorizeAiReview,
+  hasClinicalMediaRisk,
   followUpAttentionAllowedSql,
 };
