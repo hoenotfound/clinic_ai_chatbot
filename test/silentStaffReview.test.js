@@ -64,7 +64,7 @@ test("unreadable WhatsApp, voice and photo turns do not send scripted apologies"
     ['if (mediaType === "image") {', 'if (mediaType === "video") {'],
   ]) {
     const code = section(start, end);
-    assert.match(code, /contactsRepo\.setAttention/);
+    assert.match(code, /contactsRepo\.setAiReviewAttention/);
     assert.match(code, /return \{ wasFirstMessage, keywordReason \};/);
     assert.doesNotMatch(code, /sendTrackedText|system_fallback|pauseAiForHumanHandoff/);
   }
@@ -78,7 +78,7 @@ test("non-urgent model and keyword review turns are silent and keep AI ownership
   const keyword = section("Non-urgent keywords are silent staff reviews", "let reply = isFirstMessage");
   assert.match(keyword, /reviewRequired = true/);
   assert.doesNotMatch(keyword, /fallbackHandoffReply/);
-  assert.match(server, /if \(urgentSafety\) \{/);
+  assert.match(server, /if \(urgentSafety \|\| isActiveSafetyConcern\(text\)\) \{/);
   assert.match(server, /fallbackHandoffReply\([\s\S]*?\{ urgent: true \}/);
   assert.match(server, /const sendOutcome = await sendTrackedText/);
 });
@@ -95,4 +95,39 @@ test("prompt requests silent review but permits normal replies and truthful iden
   assert.match(prompt, /Continue to answer future unrelated questions/);
   assert.match(prompt, /If explicitly asked whether you're automated, answer truthfully/);
   assert.match(prompt, /Do not proactively call yourself an AI/);
+});
+
+test("media review uses the nonblocking informational category", () => {
+  const targets = [
+    ["if (unsupportedType) {", 'let text = incoming.text || "";'],
+    ["if (!transcript) {", "text = `🎤 ${transcript}`;"],
+    ['if (mediaType === "image") {', 'if (mediaType === "video") {'],
+    ['if (mediaType === "video") {', 'if (mediaType === "sticker") {'],
+    ['if (mediaType === "video" && !String(incoming.text || "").trim()) {', 'if (mediaType === "sticker") {'],
+  ];
+  for (const [start, end] of targets) {
+    const code = section(start, end);
+    assert.match(code, /setAiReviewAttention/);
+    assert.match(code, /"information"/);
+    assert.doesNotMatch(code, /contactsRepo\.setAttention\(/);
+  }
+});
+
+test("burst selection prioritizes customer safety and keeps ordinary issues separate", () => {
+  const block = section("async function processIncomingBatch(items) {", "/**\n * Store only the durable");
+  assert.match(block, /checkKeywordTriggers\(message\)/);
+  assert.match(block, /inheritedKeywordReason = URGENT_SAFETY_REASON/);
+  assert.doesNotMatch(block, /inheritedKeywordReason = result\.keywordReason/);
+  assert.match(server, /if \(suppressAutoReply\) \{[\s\S]*?setAiReviewAttention/);
+  assert.match(server, /if \(isExplicitStaffRequest\(text\)\)/);
+});
+
+test("clinical and staff handoffs remain distinct from silent one-off questions", () => {
+  const handoff = section("if (urgentSafety || isActiveSafetyConcern(text)) {", "let reply = isFirstMessage");
+  assert.match(handoff, /isExplicitStaffRequest\(text\)/);
+  assert.match(handoff, /fallbackHandoffReply/);
+  assert.match(handoff, /isUnanswerableCustomerReply\(aiReply, text\)/);
+  const review = section("if (flagged && reviewRequired) {", "} else if (flagged) {");
+  assert.doesNotMatch(review, /sendTrackedText|pauseAiForHumanHandoff/);
+  assert.match(server, /isFirstMessage && !flagged && !generateFirstIntro/);
 });
