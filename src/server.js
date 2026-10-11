@@ -27,6 +27,12 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
+const {
+  RESULT_MEDIA_SEND_SPACING_MS,
+  planResultMediaPacing,
+} = require("./utils/resultMediaPacing");
+const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
 const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {
@@ -1220,13 +1226,17 @@ async function processIncomingMessage(
       }
     }
 
-    // Result examples are optional social proof. Keep this isolated from the
-    // core AI reply path so a lookup/storage/provider exception here can never
-    // hand an otherwise healthy conversation to Staff mode.
-    if (automaticPromoMediaSent <= 1) {
+    // Result examples are optional social proof. Independently evaluate them
+    // even after two promotion images; a separate pacing policy limits volume.
+    // Keep errors isolated from the core AI reply path and never expose the
+    // internal skip reason in customer-facing messages.
+    {
       let pendingResultMessage = null;
       let pendingResultSend = null;
       let pendingResultError = null;
+      let auditReason = "not_evaluated";
+      let auditSelected = 0;
+      let auditSent = 0;
       try {
         // A Meta ad may be enriched while the AI composes/sends its text reply.
         // Refresh the local Neon attribution only AFTER the text was accepted,
@@ -1283,7 +1293,7 @@ async function processIncomingMessage(
           metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
           priorCustomerTexts: verifiedPriorCustomerTexts,
-          onSkip: (reason) => console.info(`[Result media] skipped for contact ${contact.id}: ${reason}`),
+          onSkip: (reason) => { auditReason = reason; },
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
@@ -1300,10 +1310,27 @@ async function processIncomingMessage(
         });
 
         if (resultBundle) {
-          console.log(
-            `Automatic result media eligible for ${resultBundle.service} via ${resultBundle.serviceQuerySource || resultBundle.triggerMode}.`
-          );
-          for (const resultItem of resultBundle.items) {
+          const paced = planResultMediaPacing({
+            customerText: text,
+            promotionCount: automaticPromoMediaSent,
+            items: resultBundle.items,
+          });
+          auditSelected = paced.items.length;
+          auditReason = paced.reason;
+          if (paced.items.length) {
+            console.info(
+              `Automatic result media eligible for ${resultBundle.service} via ${resultBundle.serviceQuerySource || resultBundle.triggerMode}; ${paced.items.length} result images after ${automaticPromoMediaSent} promo images.`
+            );
+          }
+          let resultImageIndex = 0;
+          for (const resultItem of paced.items) {
+            // Allow the customer to absorb a promotion before its optional
+            // result example. We recheck ownership, safety and reply-window
+            // conditions AFTER the gap, immediately before each provider send.
+            if (automaticPromoMediaSent > 0 || resultImageIndex > 0) {
+              await pauseBeforeResultMedia(RESULT_MEDIA_SEND_SPACING_MS);
+            }
+            resultImageIndex += 1;
             const resultContact = await getAiOwnedContact(contact, {
               channel,
               from,
@@ -1311,11 +1338,13 @@ async function processIncomingMessage(
               inboundMessageId: savedInbound.id,
             });
             if (!resultContact || !(await contactsRepo.canSendAutomaticReviewMedia(resultContact.id))) {
+              auditReason = "staff_review_or_takeover";
               return { wasFirstMessage, keywordReason };
             }
             contact = resultContact;
 
             if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+              auditReason = "reply_window_or_staff_cancellation";
               return { wasFirstMessage, keywordReason };
             }
 
@@ -1349,6 +1378,7 @@ async function processIncomingMessage(
             pendingResultSend = resultSend;
 
             if (resultSend.cancelled) {
+              auditReason = "reply_window_or_staff_cancellation";
               await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
               pendingResultMessage = null;
               pendingResultSend = null;
@@ -1379,6 +1409,7 @@ async function processIncomingMessage(
             pendingResultError = null;
 
             if (!resultSend.success) {
+              auditReason = "provider_send_failed";
               console.warn(
                 `Result media failed to send to ${channel}:${from}; stopping the remaining result sequence.`
               );
@@ -1388,9 +1419,11 @@ async function processIncomingMessage(
               );
               return { wasFirstMessage, keywordReason };
             }
+            auditSent += 1;
           }
         }
       } catch (resultMediaErr) {
+        auditReason = "result_media_exception";
         console.error(
           `Optional result media failed for ${channel}:${from}; keeping AI ownership unchanged:`,
           resultMediaErr
@@ -1447,6 +1480,28 @@ async function processIncomingMessage(
               cleanupErr
             );
           }
+        }
+      } finally {
+        const auditStatus = auditSent > 0
+          ? (auditReason ? "partial" : "sent")
+          : (["provider_send_failed", "result_media_exception"].includes(auditReason)
+            ? "failed" : "skipped");
+        // Do not let audit availability affect messaging, billing or handoff.
+        try {
+          await resultMediaDecisionRepo.recordDecision({
+            contactId: contact.id,
+            inboundMessageId: savedInbound.id,
+            status: auditStatus,
+            reason: auditReason,
+            promotionCount: automaticPromoMediaSent,
+            selectedCount: auditSelected,
+            sentCount: auditSent,
+          });
+        } catch (auditError) {
+          console.warn(`[Result media] audit persistence failed for contact ${contact.id}:`, auditError);
+        }
+        if (auditReason) {
+          console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=${auditStatus} reason=${auditReason} promos=${automaticPromoMediaSent} results=${auditSent}/${auditSelected}`);
         }
       }
     }
