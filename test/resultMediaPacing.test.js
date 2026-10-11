@@ -156,6 +156,10 @@ test("clinical suitability and medical history suppress both result and promotio
     "I am pregnant, can I try pelvic treatment?",
     "Saya hamil, rawatan pelvis ini selamat tak?",
     "我有糖尿病，骨盆调理的配套多少钱？",
+    "我想了解骨盆调理，不知道可以用吗？",
+    "骨盆调理可不可以做？",
+    "Can I have pelvic treatment?",
+    "Boleh buat rawatan pelvis ke?",
   ]) {
     assert.equal(hasClinicalMediaRisk(customerText), true, customerText);
     const reasons = [];
