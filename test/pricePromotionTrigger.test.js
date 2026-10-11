@@ -721,3 +721,79 @@ test("English recovery time and waiting questions are never price-media triggers
     customerText: "How much is the recovery time and what is the price?",
   })));
 });
+
+
+test("unresolved provider delivery blocks promotional images even after the standard cooldown", async () => {
+  const checks = [];
+  const attemptedAcceptedHistory = [];
+  const unresolved = await resolvePricePromotionForReply(base({
+    hasUnconfirmedMediaDelivery: async (contactId, imageUrl) => {
+      checks.push([contactId, imageUrl]);
+      return imageUrl === nowActivePromo.imageUrl;
+    },
+    wasPromoRecentlySent: async (...args) => {
+      attemptedAcceptedHistory.push(args);
+      return false;
+    },
+  }));
+  assert.equal(unresolved, null);
+  assert.deepEqual(checks, [[42, nowActivePromo.imageUrl]]);
+  assert.equal(attemptedAcceptedHistory.length, 0,
+    "unresolved delivery must be checked before the accepted-send cooldown");
+  assert.equal(await resolvePricePromotionForReply(base({
+    hasUnconfirmedMediaDelivery: undefined,
+  })), null, "missing delivery verifier fails closed rather than permitting a repeat");
+  assert.ok((await resolvePricePromotionForReply(base({
+    hasUnconfirmedMediaDelivery: async () => false,
+  })))?.packages?.length, "a reconciled image remains eligible under existing normal rules");
+});
+
+test("an unconfirmed translated promotional graphic blocks every language of the package", async () => {
+  const localizedPromo = {
+    ...nowActivePromo,
+    mediaTranslations: {
+      zh: { imageUrl: "https://example.test/3d-zh.jpg", caption: "3D 中文优惠" },
+      ms: { imageUrl: "https://example.test/3d-ms.jpg", caption: "Promosi 3D" },
+    },
+  };
+  const lookups = [];
+  for (const language of ["en", "zh", "ms"]) {
+    const result = await resolvePricePromotionForReply(base({
+      promotions: [localizedPromo], language,
+      hasUnconfirmedMediaDelivery: async (contactId, imageUrl) => {
+        lookups.push({ language, contactId, imageUrl });
+        return imageUrl === "https://example.test/3d-zh.jpg";
+      },
+      wasPromoRecentlySent: async () => false,
+    }));
+    assert.equal(result, null, language);
+    assert.ok(lookups.some((call) =>
+      call.language === language && call.imageUrl === "https://example.test/3d-zh.jpg"
+    ), "must consult translated variants even if the customer prefers another language");
+  }
+});
+
+test("one unconfirmed option holds an entire multi-package pricing sequence", async () => {
+  const bundle = {
+    name: "Pelvis October",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    packages: [
+      { name: "Package A", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A offer" },
+      { name: "Package B", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B offer" },
+    ],
+  };
+  let lookups = 0;
+  const decision = await resolvePricePromotionForReply(base({
+    promotions: [bundle],
+    customerText: "How much is the offer?",
+    conversationHistory: [],
+    hasUnconfirmedMediaDelivery: async (_contactId, imageUrl) => {
+      lookups++;
+      return imageUrl.endsWith("/b.jpg");
+    },
+    wasPromoRecentlySent: async () => false,
+  }));
+  assert.equal(decision, null, "do not send only half of the configured A/B package bundle");
+  assert.ok(lookups >= 2);
+});
