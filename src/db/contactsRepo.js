@@ -586,14 +586,28 @@ async function returnToAi(id) {
   // or unconfirmed/failed outbound sends.
   const answeredLegacyHandoff = `(
     c.attention_reason = 'AI handed off this conversation.'
+    -- Do not infer resolution from a historical staff reply when there is
+    -- no reliable handoff boundary (such as after a prior Return to AI).
+    AND c.mode = 'human'
+    AND c.takeover_at IS NOT NULL
     AND EXISTS (
       SELECT 1 FROM messages staff_reply
       WHERE staff_reply.contact_id = c.id
         AND staff_reply.role = 'assistant'
         AND staff_reply.sent_by_username IS NOT NULL
-        AND staff_reply.delivery_status IN ('sent', 'delivered', 'read')
-        -- A staff reply from before the handoff cannot resolve a later issue.
-        AND (c.takeover_at IS NULL OR staff_reply.created_at >= c.takeover_at)
+        AND (
+          staff_reply.delivery_status IN ('sent', 'delivered', 'read')
+          OR EXISTS (
+            SELECT 1 FROM outbound_message_evidence evidence
+            WHERE evidence.message_id = staff_reply.id
+              AND evidence.accepted = true
+          )
+          -- A WhatsApp Business App echo is proof the provider sent it even
+          -- when the echo row has no delivery status.
+          OR (staff_reply.delivery_status IS NULL
+            AND staff_reply.whatsapp_message_id IS NOT NULL)
+        )
+        AND staff_reply.created_at >= c.takeover_at
         AND staff_reply.created_at > COALESCE((
           SELECT MAX(inbound.created_at) FROM messages inbound
           WHERE inbound.contact_id = c.id AND inbound.role = 'user'
@@ -607,6 +621,12 @@ async function returnToAi(id) {
       SELECT 1 FROM messages blocked
       WHERE blocked.contact_id = c.id AND blocked.role = 'assistant'
         AND blocked.delivery_status IN ('failed', 'unknown')
+        -- A resolved failure from an unrelated older conversation cycle must
+        -- not hold a newer, staff-answered handoff hostage.
+        AND blocked.created_at >= COALESCE((
+          SELECT MAX(inbound.created_at) FROM messages inbound
+          WHERE inbound.contact_id = c.id AND inbound.role = 'user'
+        ), '-infinity'::timestamptz)
     )
   )`;
   const result = await pool.query(
