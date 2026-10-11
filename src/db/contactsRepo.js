@@ -838,7 +838,11 @@ async function resolveAiReviewItem(contactId, reviewId) {
        UPDATE contacts c
        SET needs_attention = CASE
              WHEN EXISTS (SELECT 1 FROM remaining) THEN true
-             WHEN c.attention_reason LIKE 'AI review requested:%' THEN false
+             WHEN c.attention_reason LIKE 'AI review requested:%' THEN EXISTS (
+               SELECT 1 FROM messages m
+               WHERE m.contact_id = c.id AND m.role = 'assistant'
+                 AND m.delivery_status IN ('failed', 'unknown')
+             )
              ELSE c.needs_attention
            END,
            attention_reason = CASE
@@ -849,6 +853,13 @@ async function resolveAiReviewItem(contactId, reviewId) {
                        LEFT(r.summary, 200), CHR(10) ORDER BY r.created_at, r.id)
                FROM remaining r
              ), '')
+             WHEN c.attention_reason LIKE 'AI review requested:%'
+               AND EXISTS (
+                 SELECT 1 FROM messages m
+                 WHERE m.contact_id = c.id AND m.role = 'assistant'
+                   AND m.delivery_status IN ('failed', 'unknown')
+               )
+             THEN 'Delivery failed: One or more outbound messages need staff review.'
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN NULL
              ELSE c.attention_reason
            END,
