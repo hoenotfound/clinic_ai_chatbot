@@ -1224,3 +1224,24 @@ test("Gemini request keeps full conversation while scoping repeated static conte
     assert.doesNotMatch(prompt, /NINED_FULL_DETAILS/);
   });
 });
+
+test("WhatsApp follow-up opt-in introductions do not unlock package prices", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    const introductions = [
+      "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+      "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+      "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。可以看效果图吗？",
+    ];
+    for (const content of introductions) {
+      const context = buildConversationPromptContext([{role:"user",content}]);
+      assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+      assert.equal(context.promotionIntent,false,content);
+      const prompt = buildSystemPrompt({conversationContext:context});
+      assert.doesNotMatch(prompt,/PACKAGE_A RM388/,content);
+      assert.doesNotMatch(prompt,/PACKAGE_B RM288/,content);
+    }
+    const question = buildConversationPromptContext([{role:"user",content:"骨盆调理多少钱？"}]);
+    assert.equal(question.promotionIntent,true);
+    assert.match(buildSystemPrompt({conversationContext:question}),/PACKAGE_A RM388/);
+  });
+});
