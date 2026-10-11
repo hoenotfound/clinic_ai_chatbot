@@ -607,21 +607,19 @@ async function processIncomingMessage(
           `A ${customerSingular} photo could not be downloaded.`,
           "information"
         );
-
-        // Keep this unreadable attachment for staff; no automatic apology.
-        return { wasFirstMessage, keywordReason };
+        // A photo can have a valid text caption. Staff reviews the missing
+        // picture, but the caption must still be handled as an ordinary
+        // customer question, not silently discarded.
+        if (!String(incoming.text || "").trim()) {
+          return { wasFirstMessage, keywordReason };
+        }
+      } else {
+        mediaAttachment = { mimeType: media.mimeType, buffer: media.buffer };
       }
 
-      mediaAttachment = {
-        mimeType: media.mimeType,
-        buffer: media.buffer,
-      };
       text = incoming.text ? `📷 ${incoming.text}` : `📷 [${customerLabel} sent a photo]`;
       await conversationStore.updateInboundMessage(
-        contact.id,
-        savedInbound.id,
-        text,
-        mediaAttachment
+        contact.id, savedInbound.id, text, mediaAttachment
       );
     }
 
