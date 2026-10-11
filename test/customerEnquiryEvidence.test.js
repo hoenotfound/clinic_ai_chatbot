@@ -204,5 +204,7 @@ test("CTWA promotional consent does not itself request pricing or result images"
   ];
   for (const text of realRequests) assert.equal(isFollowUpConsentEnquiry(text), false, text);
   assert.equal(hasCustomerPriceEnquiry(realRequests[2]), true);
+  assert.equal(hasCustomerPriceEnquiry(realRequests[3]), false, "asking for results does not request prices");
   assert.equal(hasCustomerPriceEnquiry("现在骨盆调理多少钱？"), true);
+  assert.equal(hasCustomerPriceEnquiry("Hi～我对骨盆调理有兴趣，可以跟进我，有什么优惠？"), true);
 });
