@@ -62,6 +62,7 @@ async function simulateReply({
     promotions: configuredPromotions,
     contactId: 42,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
   });
   for (const item of promoBundle?.packages || []) events.push(`promo:${item.imageUrl}`);
 
