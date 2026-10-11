@@ -100,6 +100,67 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
       'Booking ready: staff should confirm availability.');
     assert.equal(afterBookingAssist.is_unread, false);
 
+    // An unrelated historical failure must not replace the unresolved
+    // appointment reminder when a staff member sends a new message.
+    // The failed outbound row stays available for Inbox delivery review.
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,delivery_status)
+      VALUES (210,10,'assistant','Older failed photo',now()-interval '3 hours','failed')`);
+    await client.query("UPDATE contacts SET is_unread=true WHERE id=10");
+    let bookingSnapshot = (await client.query(
+      "SELECT * FROM contacts WHERE id=10"
+    )).rows[0];
+    const bookingWithOldFailure = await contactsRepo.clearStaffAssistStateIfUnchanged(
+      bookingSnapshot
+    );
+    assert.equal(bookingWithOldFailure.needs_attention,true);
+    assert.equal(bookingWithOldFailure.attention_reason,
+      "Booking ready: staff should confirm availability.");
+    assert.equal(bookingWithOldFailure.is_unread,false);
+    assert.equal((await client.query(
+      "SELECT delivery_status FROM messages WHERE id=210"
+    )).rows[0].delivery_status, "failed",
+    "do not conceal or rewrite the failed message's delivery evidence");
+
+    // Unknown delivery also stays independently visible without erasing the
+    // booking reason. A concurrent clinical review remains pending as well.
+    await client.query("UPDATE messages SET delivery_status='unknown' WHERE id=210");
+    await client.query(`INSERT INTO ai_review_items
+      (contact_id,inbound_message_id,summary,category,status)
+      VALUES (10,10,'Staff must assess treatment safety','clinical','pending')`);
+    await client.query("UPDATE contacts SET is_unread=true WHERE id=10");
+    bookingSnapshot = (await client.query(
+      "SELECT * FROM contacts WHERE id=10"
+    )).rows[0];
+    const bookingWithUnknownAndClinical = await contactsRepo.clearStaffAssistStateIfUnchanged(
+      bookingSnapshot
+    );
+    assert.equal(bookingWithUnknownAndClinical.needs_attention,true);
+    assert.equal(bookingWithUnknownAndClinical.attention_reason,
+      "Booking ready: staff should confirm availability.");
+    assert.equal(bookingWithUnknownAndClinical.is_unread,false);
+    assert.equal((await client.query(
+      "SELECT COUNT(*)::int AS n FROM ai_review_items WHERE contact_id=10 AND status='pending'"
+    )).rows[0].n, 1, "the pending clinical review must not be auto-resolved");
+
+    // Existing delivery-error priority remains intact for all non-booking
+    // reasons, even when the failure predates the latest inbound message.
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,delivery_status)
+      VALUES (211,7,'assistant','Old unknown reply',now()-interval '3 hours','unknown')`);
+    await client.query(`UPDATE contacts SET needs_attention=true,
+      attention_reason='Needs review',is_unread=true WHERE id=7`);
+    const ordinaryWithFailure = (await client.query(
+      "SELECT * FROM contacts WHERE id=7"
+    )).rows[0];
+    const failedPriority = await contactsRepo.clearStaffAssistStateIfUnchanged(
+      ordinaryWithFailure
+    );
+    assert.equal(failedPriority.needs_attention,true);
+    assert.equal(failedPriority.attention_reason,
+      "Delivery failed: One or more outbound messages need staff review.");
+    assert.equal(failedPriority.is_unread,false);
+
     // Keep prior behavior for routine manual-review cleanup, independently
     // of the new persistent booking-ready category.
     await client.query(`UPDATE contacts SET needs_attention=true,
