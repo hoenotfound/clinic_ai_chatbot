@@ -579,19 +579,51 @@ async function takeOver(id, staffUsername) {
 }
 
 async function returnToAi(id) {
+  // An old synthetic handoff can leave the AI-owned conversation permanently
+  // excluded from follow-ups. An explicit Return to AI may clear only that
+  // specific handoff flag, and only after a real staff reply was accepted
+  // *after* the latest customer message. It must not clear unanswered reviews
+  // or unconfirmed/failed outbound sends.
+  const answeredLegacyHandoff = `(
+    c.attention_reason = 'AI handed off this conversation.'
+    AND EXISTS (
+      SELECT 1 FROM messages staff_reply
+      WHERE staff_reply.contact_id = c.id
+        AND staff_reply.role = 'assistant'
+        AND staff_reply.sent_by_username IS NOT NULL
+        AND staff_reply.delivery_status IN ('sent', 'delivered', 'read')
+        AND staff_reply.created_at > COALESCE((
+          SELECT MAX(inbound.created_at) FROM messages inbound
+          WHERE inbound.contact_id = c.id AND inbound.role = 'user'
+        ), '-infinity'::timestamptz)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM ai_review_items review
+      WHERE review.contact_id = c.id AND review.status = 'pending'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM messages blocked
+      WHERE blocked.contact_id = c.id AND blocked.role = 'assistant'
+        AND blocked.delivery_status IN ('failed', 'unknown')
+    )
+  )`;
   const result = await pool.query(
     `UPDATE contacts c
      SET mode = 'ai', takeover_by = NULL, takeover_at = NULL,
-         needs_attention = c.needs_attention OR EXISTS (
-           SELECT 1 FROM ai_review_items r
-           WHERE r.contact_id = c.id AND r.status = 'pending'
-         ),
+         needs_attention = CASE
+           WHEN ${answeredLegacyHandoff} THEN false
+           ELSE c.needs_attention OR EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = c.id AND r.status = 'pending'
+           )
+         END,
          attention_reason = CASE
            WHEN EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
            ) AND (
              c.attention_reason IS NULL
+             OR c.attention_reason = 'AI handed off this conversation.'
              OR c.attention_reason LIKE 'AI review requested:%'
            ) THEN 'AI review requested: ' || COALESCE((
              SELECT RIGHT(STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
@@ -599,6 +631,7 @@ async function returnToAi(id) {
              FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
            ), '')
+           WHEN ${answeredLegacyHandoff} THEN NULL
            ELSE c.attention_reason
          END,
          updated_at = now()
