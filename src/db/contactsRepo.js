@@ -779,6 +779,7 @@ async function dismissAttentionAndReviews(id) {
      ), cleared AS (
        UPDATE contacts c
        SET needs_attention = CASE
+             WHEN NOT EXISTS (SELECT 1 FROM resolved) THEN false
              WHEN c.needs_attention = true
                AND (c.attention_reason IS NULL
                  OR c.attention_reason NOT LIKE 'AI review requested:%')
@@ -791,6 +792,7 @@ async function dismissAttentionAndReviews(id) {
              ELSE false
            END,
            attention_reason = CASE
+             WHEN NOT EXISTS (SELECT 1 FROM resolved) THEN NULL
              WHEN c.needs_attention = true
                AND (c.attention_reason IS NULL
                  OR c.attention_reason NOT LIKE 'AI review requested:%')
