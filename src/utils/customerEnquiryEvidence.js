@@ -60,12 +60,16 @@ const RELATED_OFFERS = /(?:优惠|優惠|促销|促銷|\b(?:offers?|promos?|prom
 const DIRECT_PRICE_REQUEST = /(?:(?:有(?:什么|什麼)|什么|什麼|哪些|哪种|哪種)(?:优惠|優惠|配套|套餐)|多少[钱錢]|(?:价[格钱錢]|價錢|价格|費用|费用|收[费費])[\s:：]*[?？]|(?:价[格钱錢]|價錢|价格)[^。.!?？]{0,14}(?:多少|呢|[?？])|(?:现在|現在|马上|馬上|立即|直接|先|\b(?:now|today|right now)\b)[^。.!?？]{0,35}(?:价[格钱錢]|價錢|优惠|優惠|套餐|配套|\b(?:price|cost|offers?|promos?|packages?)\b)|\b(?:how\s+much|what(?:'s| is)?\s+(?:the\s+)?(?:price|cost)|(?:price|cost|harga)\s*[?？]|berapa\s+harga)\b)/iu;
 const DIRECT_RESULT_REQUEST = /(?:前[后後]对比|前[后後]對比|(?:效果|对比|對比)[图圖]|案例[图圖照片]|\bbefore[\s&/-]*(?:and[\s-]*)?after\b)/iu;
 
-function isFollowUpConsentEnquiry(customerText) {
+function hasFuturePromotionPermissionWithoutPrice(customerText) {
   const text = String(customerText || "").normalize("NFKC").trim();
   if (!text || text.length > 900 ||
       !FOLLOW_UP_PERMISSION.test(text) || !RELATED_OFFERS.test(text)) return false;
-  // A real current price or results question still takes priority.
-  return !DIRECT_PRICE_REQUEST.test(text) && !DIRECT_RESULT_REQUEST.test(text);
+  return !DIRECT_PRICE_REQUEST.test(text);
+}
+
+function isFollowUpConsentEnquiry(customerText) {
+  return hasFuturePromotionPermissionWithoutPrice(customerText) &&
+    !DIRECT_RESULT_REQUEST.test(String(customerText || ""));
 }
 
 const ACK_ONLY = /^(?:ok(?:ay)?|kk|k|alright|all\s+right|noted|thanks?(?:\s+you)?|thank\s+you|tq|thx|sure|yes|yeah|yep|no|nope|later|fine|got\s+it|received|好的|好|好吧|谢谢|謝謝|收到|明白|嗯|哦|是的|可以|好呀|baik|terima\s+kasih|faham|boleh|ya|tak|👍|🙏|😊|🙂)[\s.!！。~👍🙏😊🙂]*$/iu;
@@ -77,8 +81,7 @@ function hasCustomerPriceEnquiry(customerText) {
   if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value)) return false;
   // Future-promotional permission is not a price request, even if the same
   // customer separately asks to see treatment results.
-  if (FOLLOW_UP_PERMISSION.test(value) && RELATED_OFFERS.test(value) &&
-      !DIRECT_PRICE_REQUEST.test(value)) return false;
+  if (hasFuturePromotionPermissionWithoutPrice(value)) return false;
   return PRICE_OR_PACKAGE.test(value) ||
     ENGLISH_MONEY_QUESTION.test(value) ||
     (MALAY_MONEY_QUESTION.test(value) && !MALAY_NON_PRICE_QUANTITY.test(value));
@@ -94,4 +97,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry };
+module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice };
