@@ -1,3 +1,15 @@
+test("Inbox exposes the contact update version for stale Return-to-AI protection", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => { pool.query = originalQuery; });
+  pool.query = async (sql) => {
+    assert.match(sql, /c\.updated_at/);
+    assert.match(sql, /c\.attention_reason/);
+    return { rows: [] };
+  };
+  const rows = await contactsRepo.listConversations();
+  assert.deepEqual(rows, []);
+});
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
