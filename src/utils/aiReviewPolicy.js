@@ -19,6 +19,49 @@ const CLINICAL_MEDIA_RED_FLAGS =
 const RECENT_POSTPARTUM_RISK =
   /(?:刚|剛|刚刚|剛剛|才|不久前)(?:.{0,8})(?:生完|生产|生產|分娩|坐完月子|剖腹)|(?:产后|產後|生产后|生產後)(?:\s*(?:不到|才|刚|剛|仅|僅|只有))?\s*(?:(?:[1-6]|[一二三四五六])\s*(?:天|周|週|星期)|(?:一|两|兩|三)\s*(?:个|個)?(?:星期|周|週))|\b(?:just|recently)\s+(?:gave\s+birth|delivered|had\s+(?:a\s+)?baby|postpartum)|\b(?:[1-6]\s*(?:days?|weeks?)\s+(?:postpartum|after\s+(?:delivery|childbirth)))\b|\b(?:baru\s+(?:lepas\s+)?bersalin|baru\s+melahirkan|selepas\s+pembedahan)\b/iu;
 
+// Natural-language postpartum ages include "产后7天", "产后一个月",
+// "1 month postpartum" and "2 minggu selepas bersalin". The original
+// fast-path regex above covers a few idioms; parse stated ages separately so
+// 7+ days, Chinese numerals and months are not accidentally treated as safe.
+// This is a conservative optional-media rule, not a medical eligibility claim.
+const POSTPARTUM_CONTEXT = /(?:产后|產後|生产后|生產後|生完|生产|生產|分娩|postpartum|postnatal|after\s+(?:giving\s+birth|childbirth|delivery)|gave\s+birth|bersalin|melahirkan)/iu;
+const POSTPARTUM_DURATION = /(?<amount>\d{1,3}|[一二两兩三四五六七八九十]+|半)(?:个|個)?\s*(?<unit>个月|個月|天|日|周|週|星期|月|days?|weeks?|months?|hari|minggu|bulan)\b?/giu;
+function postpartumAmount(raw) {
+  const amount = String(raw || "").trim();
+  if (/^\d{1,3}$/.test(amount)) return Number(amount);
+  if (amount === "半") return 0.5;
+  const values = { 一: 1, 二: 2, 两: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (amount === "十") return 10;
+  if (amount.includes("十")) {
+    const [before, after] = amount.split("十");
+    if (amount.split("十").length !== 2) return null;
+    return (before ? values[before] : 1) * 10 + (after ? values[after] : 0);
+  }
+  return values[amount] ?? null;
+}
+function hasRecentPostpartumInterval(customerText) {
+  const value = String(customerText || "");
+  for (const match of value.matchAll(POSTPARTUM_DURATION)) {
+    const amount = postpartumAmount(match.groups?.amount);
+    if (amount === null || !Number.isFinite(amount)) continue;
+    const unit = match.groups?.unit || "";
+    const recent = /^(?:天|日|days?|hari)$/iu.test(unit) ? amount <= 90
+      : /^(?:周|週|星期|weeks?|minggu)$/iu.test(unit) ? amount <= 12
+        : amount <= 3;
+    if (!recent) continue;
+    // Tie the stated age to childbirth, not a "3个月疗程" duration.
+    const before = value.slice(Math.max(0, match.index - 22), match.index);
+    const after = value.slice(match.index + match[0].length,
+      match.index + match[0].length + 28);
+    const closeBefore = POSTPARTUM_CONTEXT.exec(before);
+    if (closeBefore && !/(?:疗程|療程|套餐|配套|课程|課程|treatment\s+course|package)/iu.test(
+      before.slice(closeBefore.index + closeBefore[0].length)
+    )) return true;
+    if (POSTPARTUM_CONTEXT.test(after)) return true;
+  }
+  return false;
+}
+
 // If AI misses a clinical outcome flag, images still fail closed here. Keep
 // this separate from review categorization, which has different purposes.
 const CLINICAL_MEDIA_SUITABILITY =
@@ -27,7 +70,7 @@ const CLINICAL_MEDIA_SUITABILITY =
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
   return CLINICAL_MEDIA_SUITABILITY.test(value) ||
-    RECENT_POSTPARTUM_RISK.test(value) ||
+    (hasRecentPostpartumInterval(value) || RECENT_POSTPARTUM_RISK.test(value)) ||
     CLINICAL_MEDIA_RED_FLAGS.test(value) ||
     CLINICAL_PROCEDURE_TIMING.test(value) ||
     MEDICAL_HISTORY.test(value) ||
