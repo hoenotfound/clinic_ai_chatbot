@@ -693,12 +693,24 @@ function parseIncomingMessages(body) {
               buttonPayload: message.button?.payload || null,
             });
           } else {
+            // Keep bounded Meta diagnostics on the durable inbound job. The
+            // generic "unsupported" type alone cannot explain why it failed.
+            // Never store the entire raw webhook or unrelated customer data.
+            const unsupportedErrors = Array.isArray(message.errors)
+              ? message.errors.slice(0, 3).map((error) => ({
+                  code: Number.isInteger(error?.code) ? error.code : null,
+                  title: String(error?.title || "").slice(0, 160),
+                  message: String(error?.message || "").slice(0, 300),
+                  details: String(error?.error_data?.details || "").slice(0, 400),
+                }))
+              : [];
             parsed.push({
               ...base,
               text: null,
               mediaId: null,
               mediaType: null,
               unsupportedType: message.type || "unknown",
+              ...(unsupportedErrors.length ? { unsupportedErrors } : {}),
             });
           }
         }

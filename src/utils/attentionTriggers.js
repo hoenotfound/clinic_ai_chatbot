@@ -90,6 +90,26 @@ const HUMAN_HANDOFF_PATTERNS = [
   /(投诉|投訴|我要投诉|我要投訴|退款|退钱|退錢)/u,
 ];
 
+// Explicit staff requests and active adverse reactions must not be treated
+// as ordinary unknown questions. Those require acknowledgement and ownership.
+const EXPLICIT_STAFF_REQUEST_PATTERNS = [
+  /\b(?:speak|talk|connect|transfer)\s+(?:to|with)\s+(?:a\s+|an\s+)?(?:real\s+)?(?:human|person|staff|agent|manager|someone)\b/i,
+  /\b(?:human|staff|agent|manager)\s+(?:please|pls)\b/i,
+  /\b(?:real\s+person|real\s+human|human\s+agent)\b/i,
+  /\b(?:nak|mahu)\s+(?:cakap|bercakap)\s+(?:dengan\s+)?(?:staff|orang|manusia|agent|ejen)\b/i,
+  /\b(?:cakap|sambung)\s+(?:dengan\s+)?(?:staff|orang sebenar|agent|ejen)\b/i,
+  /(?:我要|想找|帮我找|幫我找|转|轉|找)(?:真人|人工|客服|工作人员|工作人員|职员|職員|经理|經理)/u,
+  /(?:真人客服|人工客服|转人工|轉人工|找经理|找經理)/u,
+];
+
+function isExplicitStaffRequest(text) {
+  return matchesAny(text, EXPLICIT_STAFF_REQUEST_PATTERNS);
+}
+
+function isActiveSafetyConcern(text) {
+  return matchesAny(text, SAFETY_HANDOFF_PATTERNS);
+}
+
 const TRIGGER_PATTERNS = [
   ...URGENT_SAFETY_PATTERNS,
   ...SAFETY_HANDOFF_PATTERNS,
@@ -181,5 +201,7 @@ module.exports = {
   extractAiOutcomeSignals,
   extractHandoffSignal,
   isUrgentSafetyMessage,
+  isActiveSafetyConcern,
+  isExplicitStaffRequest,
   stripInternalOutcomeMarkers,
 };

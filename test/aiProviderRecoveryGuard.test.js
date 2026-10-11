@@ -5,20 +5,18 @@ const path = require("node:path");
 
 const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
 
-test("temporary AI provider outages do not force Staff mode", () => {
-  const recoveryIndex = server.indexOf("if (ai.isRecoverableAiReplyFailure(err))");
-  const pauseIndex = server.indexOf(
-    "const pausedContact = await pauseAiForHumanHandoff(",
-    recoveryIndex
-  );
-
-  assert.ok(recoveryIndex >= 0, "recoverable AI failure guard should exist");
-  assert.ok(pauseIndex > recoveryIndex, "provider recovery guard should run before handoff");
-
-  const recoveryBlock = server.slice(recoveryIndex, pauseIndex);
+test("temporary AI provider outages alert staff quietly and keep AI mode", () => {
+  const start = server.indexOf("if (ai.isRecoverableAiReplyFailure(err))");
+  const end = server.indexOf("} else {", start);
+  assert.ok(start >= 0);
+  assert.ok(end > start);
+  const recoveryBlock = server.slice(start, end);
   assert.match(recoveryBlock, /contactsRepo\.setTemporaryAiAttention/);
-  assert.match(recoveryBlock, /sendTrackedText/);
-  assert.doesNotMatch(recoveryBlock, /pauseAiForHumanHandoff/);
+  assert.doesNotMatch(recoveryBlock, /sendTrackedText|pauseAiForHumanHandoff/);
+
+  const failureTail = server.slice(start, server.indexOf("return { wasFirstMessage, keywordReason };", end));
+  assert.match(failureTail, /contactsRepo\.setAiReviewAttention/);
+  assert.doesNotMatch(failureTail, /sendTrackedText/);
 });
 
 test("a successful AI reply clears only temporary provider-outage attention", () => {

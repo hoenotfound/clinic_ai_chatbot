@@ -33,7 +33,7 @@ test("captionless videos never ask the AI to interpret media content and are sur
   );
   assert.match(
     serverSource,
-    /mediaType === "video" && !String\(incoming\.text \|\| ""\)\.trim\(\)[\s\S]*sent a video that requires staff review[\s\S]*Stored WhatsApp video[\s\S]*without generating an AI reply/
+    /mediaType === "video" && !String\(incoming\.text \|\| ""\)\.trim\(\)[\s\S]*sent a video without a caption[\s\S]*Stored WhatsApp video[\s\S]*without generating an AI reply/
   );
   assert.match(
     serverSource,

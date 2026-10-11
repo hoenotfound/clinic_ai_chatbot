@@ -20,7 +20,12 @@ test("global reply pause preserves deterministic human handoff before returning"
 
   const block = serverSource.slice(start, end);
   assert.match(block, /if \(keywordReason\)/);
-  assert.match(block, /pauseAiForHumanHandoff\(contact\.id, keywordReason\)/);
+  // Verify both safety and standard handoff reasons in the new guarded call.
+  // An ordinary handoff must retain the exact legacy reason recognised by
+  // PR #304, while safety warnings keep their original urgent reason.
+  assert.match(block, /keywordReason === URGENT_SAFETY_REASON/);
+  assert.match(block, /isActiveSafetyConcern\(text\)/);
+  assert.match(block, /pauseAiForHumanHandoff\(\s*contact\.id,\s*medicalConcern \? keywordReason : "AI handed off this conversation\."\s*\)/);
 
   const handoffIndex = block.indexOf("pauseAiForHumanHandoff");
   const returnIndex = block.indexOf("return { wasFirstMessage, keywordReason }");
@@ -37,23 +42,11 @@ test("global reply pause happens before customer-facing AI generation", () => {
 });
 
 
-test("processing failures still transition to Staff mode while replies are paused", () => {
+test("processing failures are staff-only and preserve AI mode even while replies are paused", () => {
   const catchIndex = serverSource.indexOf("Error handling incoming");
   assert.ok(catchIndex >= 0);
-
-  const pauseIndex = serverSource.indexOf(
-    'if (!automatedRepliesEnabled()) {',
-    catchIndex
-  );
-  const fallbackGuardIndex = serverSource.indexOf(
-    'const fallbackContact = await getAiOwnedContact',
-    catchIndex
-  );
-
-  assert.ok(pauseIndex > catchIndex && fallbackGuardIndex > pauseIndex);
-  const block = serverSource.slice(pauseIndex, fallbackGuardIndex);
-  assert.match(
-    block,
-    /pauseAiForHumanHandoff\([\s\S]*Message processing failed\. A staff reply is needed\./
-  );
+  const block = serverSource.slice(catchIndex);
+  assert.match(block, /contactsRepo\.setTemporaryAiAttention/);
+  assert.match(block, /contactsRepo\.setAiReviewAttention/);
+  assert.doesNotMatch(block, /pauseAiForHumanHandoff|sendTrackedText|system_fallback/);
 });
