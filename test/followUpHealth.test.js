@@ -118,6 +118,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
       INSERT INTO messages(id,contact_id,role,created_at) VALUES(30,1,'user',now()-interval '4 hours');
       INSERT INTO messages(id,contact_id,role,created_at,sent_by_username,delivery_status)
       VALUES(31,1,'assistant',now()-interval '3 hours 59 minutes','bot','sent');
+      UPDATE messages SET whatsapp_message_id='fb:provider.31' WHERE id=31;
     `);
     const cfg={enabled:true,triggerMode:"all",activatedAt:"2026-10-01T00:00:00Z",
       delayMinutes:120,quietHours:{enabled:false,start:"00:00",end:"07:00"}};
@@ -141,6 +142,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
         VALUES(40,2,'user',now()-interval '23 hours 40 minutes');
       INSERT INTO messages(id,contact_id,role,created_at,sent_by_username,delivery_status)
         VALUES(41,2,'assistant',now()-interval '23 hours 39 minutes','bot','sent');
+      UPDATE messages SET whatsapp_message_id='ig:provider.41' WHERE id=41;
       INSERT INTO messages(id,contact_id,role,created_at,
         is_automated_follow_up,automated_follow_up_for_message_id,
         automated_follow_up_step,delivery_status)
