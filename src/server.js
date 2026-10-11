@@ -1332,6 +1332,7 @@ async function processIncomingMessage(
           language: mediaLanguage,
           contactId: contact.id,
           wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
+          hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
           getMostRecentlySentMediaUrl: messagesRepo.getMostRecentlySentMediaUrl,
         });
 
