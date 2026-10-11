@@ -595,6 +595,12 @@ async function returnToAi(id) {
       WHERE staff_reply.contact_id = c.id
         AND staff_reply.role = 'assistant'
         AND staff_reply.sent_by_username IS NOT NULL
+        AND staff_reply.is_automated_follow_up = false
+        AND NOT EXISTS (
+          SELECT 1 FROM outbound_message_evidence fallback
+          WHERE fallback.message_id = staff_reply.id
+            AND fallback.origin = 'system_fallback'
+        )
         AND (
           staff_reply.delivery_status IN ('sent', 'delivered', 'read')
           OR EXISTS (
