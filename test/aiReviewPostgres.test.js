@@ -28,7 +28,8 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
         needs_attention boolean default false, attention_reason text,
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
-        role text, content text, delivery_status text);
+        role text, content text, delivery_status text, sent_by_username text,
+        created_at timestamptz not null default now());
     `);
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/064_ai_review_items.sql"), "utf8"));
@@ -206,6 +207,63 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     const cleanedLegacy = await contacts.clearStaffAssistStateIfUnchanged(inconsistentContact);
     assert.equal(cleanedLegacy.needs_attention, false);
     assert.equal(cleanedLegacy.attention_reason, null);
+
+    // A delivered staff clarification followed by an explicit Return to AI
+    // resolves only the old synthetic handoff flag, so a new staff-originated
+    // follow-up cycle can qualify under the remaining scheduling safeguards.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,content,created_at,sent_by_username,delivery_status)
+      VALUES
+        (20,1,'user','Is the treatment suitable?',now() + interval '1 minute',null,null),
+        (21,1,'assistant','Staff clarification',now() + interval '2 minutes','staff','read')
+    `);
+    await client.query(`UPDATE contacts
+      SET mode='human',takeover_by='staff',needs_attention=true,
+          attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const resumed = await contacts.returnToAi(1);
+    assert.equal(resumed.mode, 'ai');
+    assert.equal(resumed.needs_attention, false);
+    assert.equal(resumed.attention_reason, null);
+    let resumeGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(resumeGate.rows[0].allowed, true);
+
+    // Returning to AI without answering the latest customer must not
+    // silently release a genuine unresolved handoff.
+    await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at)
+      VALUES (22,1,'user','A new question',now() + interval '3 minutes')`);
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const unanswered = await contacts.returnToAi(1);
+    assert.equal(unanswered.needs_attention, true);
+    assert.equal(unanswered.attention_reason, 'AI handed off this conversation.');
+    resumeGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(resumeGate.rows[0].allowed, false);
+
+    // A later staff reply does not resolve a durable clinical review.
+    await contacts.setAiReviewAttention(1,22,'New clinical question','clinical');
+    await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at,sent_by_username,delivery_status)
+      VALUES (23,1,'assistant','Staff answered',now() + interval '4 minutes','staff','read')`);
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const pendingClinical = await contacts.returnToAi(1);
+    assert.equal(pendingClinical.needs_attention, true);
+    assert.match(pendingClinical.attention_reason, /AI review requested.*#22/);
+    resumeGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
+    assert.equal(resumeGate.rows[0].allowed, false);
+    await contacts.dismissAttentionAndReviews(1);
+
+    // An unresolved delivery failure also prevents an old handoff flag from
+    // being cleared, even with a confirmed staff response.
+    await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at,delivery_status)
+      VALUES (24,1,'assistant','Undelivered image',now() + interval '5 minutes','failed')`);
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const failedDelivery = await contacts.returnToAi(1);
+    assert.equal(failedDelivery.needs_attention, true);
+    await client.query("UPDATE messages SET delivery_status='sent' WHERE id=24");
+    const deliveryRecovered = await contacts.returnToAi(1);
+    assert.equal(deliveryRecovered.needs_attention, false);
+    assert.equal(deliveryRecovered.attention_reason, null);
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
