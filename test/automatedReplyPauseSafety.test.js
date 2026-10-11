@@ -37,23 +37,11 @@ test("global reply pause happens before customer-facing AI generation", () => {
 });
 
 
-test("processing failures still transition to Staff mode while replies are paused", () => {
+test("processing failures are staff-only and preserve AI mode even while replies are paused", () => {
   const catchIndex = serverSource.indexOf("Error handling incoming");
   assert.ok(catchIndex >= 0);
-
-  const pauseIndex = serverSource.indexOf(
-    'if (!automatedRepliesEnabled()) {',
-    catchIndex
-  );
-  const fallbackGuardIndex = serverSource.indexOf(
-    'const fallbackContact = await getAiOwnedContact',
-    catchIndex
-  );
-
-  assert.ok(pauseIndex > catchIndex && fallbackGuardIndex > pauseIndex);
-  const block = serverSource.slice(pauseIndex, fallbackGuardIndex);
-  assert.match(
-    block,
-    /pauseAiForHumanHandoff\([\s\S]*Message processing failed\. A staff reply is needed\./
-  );
+  const block = serverSource.slice(catchIndex);
+  assert.match(block, /contactsRepo\.setTemporaryAiAttention/);
+  assert.match(block, /contactsRepo\.setAiReviewAttention/);
+  assert.doesNotMatch(block, /pauseAiForHumanHandoff|sendTrackedText|system_fallback/);
 });
