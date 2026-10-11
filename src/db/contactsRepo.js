@@ -408,6 +408,7 @@ async function listConversations() {
       c.mode,
       c.takeover_by,
       c.takeover_at,
+      c.updated_at,
       c.needs_attention,
       c.attention_reason,
       (SELECT COUNT(*)::integer FROM ai_review_items r
@@ -578,14 +579,68 @@ async function takeOver(id, staffUsername) {
   return updated;
 }
 
-async function returnToAi(id) {
+async function returnToAi(id, expectedUpdatedAt = null) {
+  // An old synthetic handoff can leave the AI-owned conversation permanently
+  // excluded from follow-ups. An explicit Return to AI may clear only that
+  // specific handoff flag, and only after a real staff reply was accepted
+  // *after* the latest customer message. It must not clear unanswered reviews
+  // or unconfirmed/failed outbound sends.
+  const answeredLegacyHandoff = `(
+    c.attention_reason = 'AI handed off this conversation.'
+    -- Do not infer resolution from a historical staff reply when there is
+    -- no reliable handoff boundary (such as after a prior Return to AI).
+    AND c.mode = 'human'
+    AND c.takeover_at IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM messages staff_reply
+      WHERE staff_reply.contact_id = c.id
+        AND staff_reply.role = 'assistant'
+        AND staff_reply.sent_by_username IS NOT NULL
+        AND staff_reply.is_automated_follow_up = false
+        AND NOT EXISTS (
+          SELECT 1 FROM outbound_message_evidence fallback
+          WHERE fallback.message_id = staff_reply.id
+            AND fallback.origin = 'system_fallback'
+        )
+        -- Provider acceptance is enough; Meta delivery receipts can arrive
+        -- later. Never infer acceptance from a draft, failed or unknown send.
+        AND staff_reply.whatsapp_message_id IS NOT NULL
+        AND (
+          staff_reply.delivery_status IS NULL
+          OR staff_reply.delivery_status IN ('pending', 'sent', 'delivered', 'read')
+        )
+        AND staff_reply.created_at >= c.takeover_at
+        AND staff_reply.created_at > COALESCE((
+          SELECT MAX(inbound.created_at) FROM messages inbound
+          WHERE inbound.contact_id = c.id AND inbound.role = 'user'
+        ), '-infinity'::timestamptz)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM ai_review_items review
+      WHERE review.contact_id = c.id AND review.status = 'pending'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM messages blocked
+      WHERE blocked.contact_id = c.id AND blocked.role = 'assistant'
+        AND blocked.delivery_status IN ('failed', 'unknown')
+        -- A resolved failure from an unrelated older conversation cycle must
+        -- not hold a newer, staff-answered handoff hostage.
+        AND blocked.created_at >= COALESCE((
+          SELECT MAX(inbound.created_at) FROM messages inbound
+          WHERE inbound.contact_id = c.id AND inbound.role = 'user'
+        ), '-infinity'::timestamptz)
+    )
+  )`;
   const result = await pool.query(
     `UPDATE contacts c
      SET mode = 'ai', takeover_by = NULL, takeover_at = NULL,
-         needs_attention = c.needs_attention OR EXISTS (
-           SELECT 1 FROM ai_review_items r
-           WHERE r.contact_id = c.id AND r.status = 'pending'
-         ),
+         needs_attention = CASE
+           WHEN ${answeredLegacyHandoff} THEN false
+           ELSE c.needs_attention OR EXISTS (
+             SELECT 1 FROM ai_review_items r
+             WHERE r.contact_id = c.id AND r.status = 'pending'
+           )
+         END,
          attention_reason = CASE
            WHEN EXISTS (
              SELECT 1 FROM ai_review_items r
@@ -599,12 +654,23 @@ async function returnToAi(id) {
              FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
            ), '')
+           WHEN ${answeredLegacyHandoff} THEN NULL
            ELSE c.attention_reason
          END,
          updated_at = now()
      WHERE c.id = $1
+       AND c.mode = 'human'
+       -- Explicitly returning to AI is a staff resolution action, but an
+       -- unanswered genuine handoff must stay staff-owned. Dismiss attention
+       -- only after staff has actually reviewed the outstanding issue.
+       AND (c.attention_reason IS DISTINCT FROM 'AI handed off this conversation.'
+         OR ${answeredLegacyHandoff})
+       -- Compare the browser's observed version atomically. A stale click
+       -- must not overwrite a newer handoff, contact reply or staff takeover.
+       AND ($2::timestamptz IS NULL
+         OR date_trunc('milliseconds', c.updated_at) = $2::timestamptz)
      RETURNING c.*`,
-    [id]
+    [id, expectedUpdatedAt]
   );
   const updated = result.rows[0] || null;
   // Human-intervention Telegram alerts use a strict rolling 30-minute
@@ -666,6 +732,15 @@ async function clearStaffAssistStateIfUnchanged(contact) {
        AND needs_attention = $5
        AND attention_reason IS NOT DISTINCT FROM $6
        AND is_unread = $7
+       -- A saved draft is not proof that the patient has been answered.
+       -- Preserve genuine handoffs until staff deliberately resolves them;
+       -- informational AI reviews retain the existing separate review logic.
+       AND attention_reason IS DISTINCT FROM 'AI handed off this conversation.'
+       AND NOT (
+         mode = 'human' AND needs_attention = true
+         AND attention_reason IS NOT NULL
+         AND attention_reason NOT LIKE 'AI review requested:%'
+       )
      RETURNING *`,
     [
       contact.id,

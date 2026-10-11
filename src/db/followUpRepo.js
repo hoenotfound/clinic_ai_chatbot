@@ -1,3 +1,4 @@
+const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
@@ -183,7 +184,7 @@ async function findCandidates({
          LIMIT 1
        ) previous_outbound ON true
        JOIN LATERAL (
-         SELECT id, content, sent_by_username, created_at, delivery_status
+         SELECT id, content, sent_by_username, created_at, delivery_status, whatsapp_message_id
          FROM messages
          WHERE contact_id = c.id
            AND role = 'assistant'
@@ -244,7 +245,7 @@ async function findCandidates({
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
          )
-         AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND ${acceptedNormalOutboundSql('anchor')}
          AND (
            latest_lead.id IS NULL
            OR (
@@ -370,7 +371,7 @@ async function getNextCandidateDueAt({
          LIMIT 1
        ) latest_inbound ON true
        JOIN LATERAL (
-         SELECT id, sent_by_username, created_at, delivery_status
+         SELECT id, sent_by_username, created_at, delivery_status, whatsapp_message_id
          FROM messages
          WHERE contact_id = c.id
            AND role = 'assistant'
@@ -430,7 +431,7 @@ async function getNextCandidateDueAt({
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
          )
-         AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND ${acceptedNormalOutboundSql('anchor')}
          AND (
            latest_lead.id IS NULL
            OR (
@@ -582,7 +583,8 @@ async function saveIfStillEligible({
          outbound.id,
          outbound.sent_by_username,
          outbound.created_at,
-         outbound.delivery_status
+         outbound.delivery_status,
+         outbound.whatsapp_message_id
        FROM messages outbound, latest_inbound
        WHERE outbound.contact_id = $1
          AND outbound.role = 'assistant'
@@ -660,7 +662,7 @@ async function saveIfStillEligible({
          OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
        )
        AND anchor.id = $2
-       AND anchor.delivery_status IS DISTINCT FROM 'failed'
+       AND ${acceptedNormalOutboundSql('anchor')}
        AND (
          latest_lead.id IS NULL
          OR (
@@ -857,7 +859,8 @@ async function recordAiDecisionIfStillEligible({
          outbound.id,
          outbound.sent_by_username,
          outbound.created_at,
-         outbound.delivery_status
+         outbound.delivery_status,
+         outbound.whatsapp_message_id
        FROM messages outbound, latest_inbound
        WHERE outbound.contact_id = $1
          AND outbound.role = 'assistant'
@@ -929,7 +932,7 @@ async function recordAiDecisionIfStillEligible({
        WHERE c.id = $1
          AND ${followUpAttentionAllowedSql("c")}
          AND anchor.id = $2
-         AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND ${acceptedNormalOutboundSql('anchor')}
          AND (
            latest_lead.id IS NULL
            OR (
@@ -1073,6 +1076,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
          LIMIT 1
        ) latest_lead ON true
        WHERE ${followUpAttentionAllowedSql("c")}
+         AND ${acceptedNormalOutboundSql('anchor')}
          AND NOT EXISTS (
            SELECT 1
            FROM follow_up_ai_decisions decision

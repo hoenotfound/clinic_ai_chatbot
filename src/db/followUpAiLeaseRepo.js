@@ -1,3 +1,4 @@
+const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
@@ -89,7 +90,8 @@ async function claimIfStillEligible({
        ORDER BY inbound.created_at DESC, inbound.id DESC
        LIMIT 1
      ), anchor AS (
-       SELECT outbound.id, outbound.sent_by_username, outbound.created_at, outbound.delivery_status
+       SELECT outbound.id, outbound.sent_by_username, outbound.created_at, outbound.delivery_status,
+         outbound.whatsapp_message_id
        FROM messages outbound, latest_inbound
        WHERE outbound.contact_id = $1
          AND outbound.role = 'assistant'
@@ -146,7 +148,7 @@ async function claimIfStillEligible({
          OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
        )
        AND anchor.id = $2
-       AND anchor.delivery_status IS DISTINCT FROM 'failed'
+       AND ${acceptedNormalOutboundSql('anchor')}
        AND (
          latest_lead.id IS NULL
          OR (
