@@ -1002,9 +1002,15 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     } else if (flagged) {
       // Genuine takeover/safety events keep the existing strict staff pause.
+      // PR #304 can safely clear this exact legacy handoff reason only after
+      // an accepted staff reply and explicit Return to AI. Keep medical/safety
+      // cases distinct so the normal handoff recovery never clears them.
+      const handoffReason = urgentSafety || isActiveSafetyConcern(text)
+        ? (keywordReason || "Medical safety concern requires staff attention.")
+        : "AI handed off this conversation.";
       const pausedContact = await pauseAiForHumanHandoff(
         contact.id,
-        keywordReason || "AI handed off this conversation."
+        handoffReason
       );
       if (!pausedContact) return { wasFirstMessage, keywordReason };
 
