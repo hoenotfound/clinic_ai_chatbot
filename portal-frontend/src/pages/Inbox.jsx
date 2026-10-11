@@ -465,6 +465,7 @@ export default function Inbox() {
   const showUnassignedAssignment = user?.features?.leadDistributionEnabled === true;
   const canViewAllLeads = permissions.view_all_leads === true;
   const canReplyToLeads = permissions.reply_to_assigned_leads === true;
+  const canManageLeads = permissions.manage_assigned_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedContactParam = searchParams.get("contact");
@@ -1422,6 +1423,7 @@ export default function Inbox() {
         conversations={conversations || []}
         currentUsername={username}
         canReplyToLeads={canReplyToLeads}
+        canManageLeads={canManageLeads}
         showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
         loading={messagesLoading}
@@ -2084,6 +2086,7 @@ function ThreadView({
   conversations,
   currentUsername,
   canReplyToLeads,
+  canManageLeads,
   showUnassignedAssignment,
   messages,
   loading,
@@ -3100,11 +3103,11 @@ function ThreadView({
                     onToggleUnread();
                   }}
                 />
-                {contact.needs_attention && (
+                {canManageLeads && contact.needs_attention && (
                   <ConversationActionItem
                     icon={AlertIcon}
-                    label={Number(contact.pending_review_count) > 1
-                      ? `Dismiss all ${contact.pending_review_count} questions`
+                    label={Number(contact.pending_review_count) > 0
+                      ? `Resolve all ${contact.pending_review_count} review question${Number(contact.pending_review_count) === 1 ? "" : "s"}`
                       : "Dismiss attention"}
                     disabled={conversationStatePending}
                     tone="danger"
@@ -3160,7 +3163,7 @@ function ThreadView({
                   <span className="font-semibold">Question #{review.messageId}: </span>
                   {review.summary}
                 </p>
-                <button type="button" disabled={actionPending || conversationStatePending}
+                <button type="button" disabled={!canManageLeads || actionPending || conversationStatePending}
                   onClick={() => onResolveReview(review.id)}
                   className="min-h-9 shrink-0 rounded-lg border border-[var(--color-border)] px-2 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50"
                   aria-label={`Mark question ${review.messageId} resolved`}>Resolve</button>
