@@ -73,6 +73,7 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         (1101,330,'assistant','Let me check',now() - interval '4 hours',NULL,'read'),
         (1102,330,'assistant','You can arrange a trial appointment',
           now() - interval '3 hours','staff','read');
+      UPDATE messages SET whatsapp_message_id='wamid.staff.1102' WHERE id=1102;
       INSERT INTO follow_up_ai_decisions
         (contact_id, trigger_message_id, follow_up_step, action, reason)
       VALUES (330,1101,1,'skip','Cancelled because clinic staff took over');
