@@ -91,7 +91,7 @@ async function enforceConversationsPolicy(req, res, user) {
     (req.method === "POST" && ["takeover", "return-to-ai"].includes(action)) ||
     (req.method === "PATCH" && (
       ["attention", "follow-up"].includes(action) ||
-      (action === "reviews" && /^\\d+$/.test(subAction) && fourth === "resolve" && parts.length === 4)
+      (action === "reviews" && positiveId(subAction) != null && fourth === "resolve" && parts.length === 4)
     )) ||
     (
       action === "scheduled-messages" &&
