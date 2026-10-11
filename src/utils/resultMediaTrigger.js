@@ -226,6 +226,7 @@ async function resolveResultMediaForReply({
   language = "en",
   contactId,
   wasMediaRecentlySent,
+  hasUnconfirmedMediaDelivery,
   getMostRecentlySentMediaUrl,
   duplicateWindowHours = DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
 }) {
@@ -311,6 +312,7 @@ async function resolveResultMediaForReply({
 
   if (
     typeof wasMediaRecentlySent !== "function" ||
+    typeof hasUnconfirmedMediaDelivery !== "function" ||
     typeof getMostRecentlySentMediaUrl !== "function" ||
     !contactId
   ) {
@@ -321,6 +323,12 @@ async function resolveResultMediaForReply({
   for (const item of resultSet.items) {
     for (const imageUrl of itemImageUrls(item)) {
       allConfiguredImageUrls.push(imageUrl);
+      // Unknown or in-flight delivery can be accepted by Meta without a
+      // durable provider receipt. Never retry before staff reconciliation,
+      // including when the ordinary 168-hour duplicate window has elapsed.
+      if (await hasUnconfirmedMediaDelivery(contactId, imageUrl)) {
+        return skip("result_media_delivery_unconfirmed");
+      }
       const recentlySent = await wasMediaRecentlySent(
         contactId,
         imageUrl,
