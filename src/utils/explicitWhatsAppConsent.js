@@ -40,11 +40,15 @@ function explicitPromotionConsent(message, { businessName } = {}) {
   const englishOffer = /\b(?:offers?|promotions?|promos?|deals?)\b/i.test(text);
   const malayOffer = /\b(?:promosi|tawaran)\b/i.test(text);
   const mentionsWhatsApp = /whats\s*app/i.test(text);
+  // This classifier runs on a customer-sent WhatsApp message. Explicitly
+  // asking this clinic to follow up and send related offers identifies the
+  // ongoing chat as the channel even without spelling out "WhatsApp".
+  const explicitlyPermitsFollowUpHere = /(?:可以|同意|愿意|願意).{0,20}跟[进進]我/u.test(text);
   // A clear, affirmative wish to receive or be notified of ongoing offers.
   const zhPermission =
     (/(?:愿意|願意|同意|希望|想要|可以).{0,55}(?:收到|接收|收取|通知我|发我|發我|跟进我|跟進我)/.test(text) ||
       /(?:优惠|優惠|促销|促銷|推广|推廣).{0,22}(?:可以|请|請).{0,25}(?:通知我|发我|發我)/.test(text)) &&
-    chineseOffer && mentionsWhatsApp;
+    chineseOffer && (mentionsWhatsApp || explicitlyPermitsFollowUpHere);
   const enPermission = /\b(?:i(?:'d| would)?\s+(?:also\s+)?(?:like|want|agree|consent)\s+to\s+(?:receive|get)|feel\s+free\s+to\s+(?:whatsapp|message)|you\s+can\s+(?:whatsapp|send)|please\s+(?:send|whatsapp)\s+me)\b/i.test(text) &&
     englishOffer && mentionsWhatsApp;
   const msPermission = /\b(?:saya\s+(?:juga\s+)?(?:bersetuju|setuju|nak\s+terima)|boleh\s+whatsapp\s+saya|sila\s+(?:whatsapp|hantar))\b/i.test(text) &&
