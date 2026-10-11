@@ -88,6 +88,18 @@ function deliveryFailureEventKey(contactId) {
   return `delivery:${contactId}:event:${crypto.randomUUID()}`;
 }
 
+function aiReviewReference(alert) {
+  if (alert?.alert_type !== "ai_review") return null;
+  const match = /^ai-review:(\d+):(\d+)$/.exec(String(alert.event_key || ""));
+  if (!match) return null;
+  const contactId = Number(match[1]);
+  const inboundMessageId = Number(match[2]);
+  return Number.isSafeInteger(contactId) && contactId > 0 &&
+    Number.isSafeInteger(inboundMessageId) && inboundMessageId > 0 &&
+    Number(alert.contact_id) === contactId
+    ? { contactId, inboundMessageId } : null;
+}
+
 function staffWaitingReference(alert) {
   if (alert?.alert_type !== "staff_waiting") return null;
   const match = /^staff_waiting:(\d+):(\d+)$/.exec(String(alert.event_key || ""));
@@ -127,7 +139,7 @@ async function isLatestBookingReadyAlert(
 }
 
 function shouldWakeConversationSummary(alert) {
-  return ["human_intervention", "booking_ready", "staff_waiting"].includes(
+  return ["human_intervention", "booking_ready", "staff_waiting", "ai_review"].includes(
     String(alert?.alert_type || "")
   );
 }
@@ -151,6 +163,22 @@ async function shouldSendImmediateAlert(
   if (alert?.alert_type === "booking_ready") {
     return isLatestBookingReadyAlert(alert, query);
   }
+  if (alert?.alert_type === "ai_review") {
+    const reference = aiReviewReference(alert);
+    if (!reference) return false;
+    const result = await query(
+      `SELECT EXISTS (
+         SELECT 1 FROM ai_review_items r
+         JOIN contacts c ON c.id = r.contact_id
+         WHERE r.contact_id = $1 AND r.inbound_message_id = $2
+           AND r.status = 'pending'
+           AND c.mode = 'ai'
+         FOR SHARE OF c
+       ) AS pending`,
+      [reference.contactId, reference.inboundMessageId]
+    );
+    return Boolean(result.rows[0]?.pending);
+  }
   if (alert?.alert_type !== "staff_waiting") return true;
 
   const reference = staffWaitingReference(alert);
@@ -165,7 +193,10 @@ async function shouldSendImmediateAlert(
         AND waiting_message.contact_id = c.id
         AND waiting_message.role = 'user'
        WHERE c.id = $1
-         AND (c.mode = 'human' OR c.needs_attention = true)
+         AND (c.mode = 'human' OR (
+           c.needs_attention = true
+           AND COALESCE(c.attention_reason, '') NOT LIKE 'AI review requested:%'
+         ))
          AND NOT EXISTS (
            SELECT 1
            FROM messages outbound
@@ -205,6 +236,7 @@ function buildImmediateAlertMessage({
   const isUnconfirmedDelivery = isDelivery &&
     /^Delivery unconfirmed:/i.test(String(reason || "").trim());
   const isBookingReady = type === "booking_ready";
+  const isAiReview = type === "ai_review";
   const conversion = getConversionProfile(config);
   const labels = getOperationalLabels(config);
   const platform = channelLabel(context.channel || "whatsapp");
@@ -212,7 +244,9 @@ function buildImmediateAlertMessage({
     ? `⚠️ ${platform} Delivery ${isUnconfirmedDelivery ? "Unconfirmed" : "Failed"}`
     : isBookingReady
       ? conversion.alertTitle
-      : "🚨 Human Intervention Required";
+      : isAiReview
+        ? "🔎 Staff Question to Review (AI Active)"
+        : "🚨 Human Intervention Required";
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
     title,
@@ -266,7 +300,9 @@ function buildImmediateAlertMessage({
       ? `Action: Check the failed message in Inbox and retry or contact the ${labels.customerSingular} manually.`
     : isBookingReady
       ? `Action: ${conversion.alertAction}`
-      : "Action: Open the conversation and review/respond as soon as possible.";
+      : isAiReview
+        ? "Action: Review the specific unanswered question in Inbox. AI stays active for other questions; no Return to AI action is needed."
+        : "Action: Open the conversation and review/respond as soon as possible.";
   lines.push("", action);
 
   const inboxUrl = buildInboxUrl(context.contact_id, env);
@@ -498,7 +534,13 @@ function createTelegramImmediateAlertService({
     let eventKey;
     let cooldownMinutes = 0;
 
-    if (type === "human_intervention") {
+    if (type === "ai_review") {
+      const numericMessageId = Number(messageId);
+      if (!Number.isSafeInteger(numericMessageId) || numericMessageId < 1) {
+        return { status: "skipped", reason: "missing-review-message-id" };
+      }
+      eventKey = `ai-review:${contactId}:${numericMessageId}`;
+    } else if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
       if (!eventKey) {
         eventKey = `human:${contactId}:event:${crypto.randomUUID()}`;
@@ -557,6 +599,9 @@ function createTelegramImmediateAlertService({
     sendHumanInterventionAlert(input) {
       return queue("human_intervention", input);
     },
+    sendAiReviewAlert(input) {
+      return queue("ai_review", input);
+    },
     sendDeliveryFailureAlert(input) {
       return queue("delivery_failure", input);
     },
@@ -588,12 +633,14 @@ module.exports = {
   publishImmediateTerminalState,
   shouldSendImmediateAlert,
   staffWaitingReference,
+  aiReviewReference,
   queuePreparedAlert: defaultService.queuePreparedAlert,
   retryDelayMsForAttempt,
   runImmediateAlertQueue,
   startTelegramImmediateAlertRecovery,
   wakeImmediateAlertQueue,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
+  sendAiReviewAlert: defaultService.sendAiReviewAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
   sendBookingReadyAlert: defaultService.sendBookingReadyAlert,
 };

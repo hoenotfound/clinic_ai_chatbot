@@ -126,6 +126,18 @@ test("push payload contains staff-action context but never customer message text
   assert.doesNotMatch(JSON.stringify(payload), /must never appear/);
 });
 
+test("routine review notifications distinguish verification from urgent handoffs", () => {
+  const context = { id: 42, name: "Mei Ling" };
+  const review = buildPayload("ai_review", context);
+  const urgent = buildPayload("human_intervention", context);
+  assert.equal(review.title, "Question Needs Verification");
+  assert.match(review.body, /AI remains active/);
+  assert.equal(review.type, "ai_review");
+  assert.equal(review.url, "/inbox?contact=42");
+  assert.equal(urgent.title, "Needs Human Attention");
+  assert.notEqual(review.tag, urgent.tag);
+});
+
 test("delivery records success and terminal failures independently per device", async () => {
   const successes = [];
   const failures = [];

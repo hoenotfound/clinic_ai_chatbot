@@ -1,3 +1,4 @@
+const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -138,7 +139,7 @@ async function claimIfStillEligible({
      LEFT JOIN previous_follow_up ON true
      LEFT JOIN latest_lead ON true
      WHERE c.id = $1
-       AND c.needs_attention = false
+       AND ${followUpAttentionAllowedSql("c")}
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)

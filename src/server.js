@@ -27,6 +27,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
@@ -893,6 +894,8 @@ async function processIncomingMessage(
     // replace immediate-care guidance with the generic processing-error reply.
     let aiReply;
     let flagged = false;
+    let reviewRequired = false;
+    let reviewType = null;
     let bookingReady = false;
     let serviceQuery = false;
     let serviceQuerySource = null;
@@ -942,6 +945,8 @@ async function processIncomingMessage(
       ({
         text: aiReply,
         flagged,
+        reviewRequired,
+        reviewType,
         bookingReady,
         serviceQuery,
         serviceQuerySource,
@@ -952,8 +957,10 @@ async function processIncomingMessage(
 
       // Non-urgent deterministic handoff phrases remain a backstop if the model
       // misses the staff-handoff outcome.
-      if (keywordReason && !flagged) {
+      if (keywordReason && (!flagged || reviewRequired)) {
         flagged = true;
+        reviewRequired = false;
+        reviewType = null;
         bookingReady = false;
         aiReply = fallbackHandoffReply(
           text,
@@ -1004,17 +1011,29 @@ async function processIncomingMessage(
     if (!aiReplyContact) return { wasFirstMessage, keywordReason };
     contact = aiReplyContact;
 
-    if (flagged) {
-      // A handoff is an actual ownership transition, not only a red badge.
+    if (flagged && reviewRequired) {
+      // One unanswered question does not transfer the whole conversation.
+      // Keep the existing AI badge, but persist staff attention independently.
+      // If staff took over during generation, the final AI ownership guard
+      // below suppresses this late reply.
+      const reviewContact = await contactsRepo.setAiReviewAttention(
+        contact.id,
+        savedInbound.id,
+        String(text || "Unanswered customer question").slice(0, 350),
+        categorizeAiReview(text, reviewType)
+      );
+      if (!reviewContact || reviewContact.mode !== "ai") {
+        return { wasFirstMessage, keywordReason };
+      }
+      contact = reviewContact;
+    } else if (flagged) {
+      // Genuine takeover/safety events keep the existing strict staff pause.
       const pausedContact = await pauseAiForHumanHandoff(
         contact.id,
         keywordReason || "AI handed off this conversation."
       );
       if (!pausedContact) return { wasFirstMessage, keywordReason };
 
-      // Staff can claim the synthetic handoff immediately from the Inbox. Do a
-      // final ownership read right before the one allowed AI handoff message so
-      // a late model reply does not overwrite a staff member who already acted.
       const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
       if (!pendingHandoff) return { wasFirstMessage, keywordReason };
       contact = pendingHandoff;
@@ -1023,7 +1042,7 @@ async function processIncomingMessage(
     // The synthetic AI handoff is intentionally Staff mode, but the one
     // customer-facing handoff acknowledgement is still allowed while that
     // synthetic ownership remains unchanged. Normal replies require AI mode.
-    const finalSendContact = flagged
+    const finalSendContact = flagged && !reviewRequired
       ? await getPendingAiHandoffContact(contact.id)
       : await getAiOwnedContact(contact, {
           channel,
@@ -1033,6 +1052,22 @@ async function processIncomingMessage(
         });
     if (!finalSendContact) return { wasFirstMessage, keywordReason };
     contact = finalSendContact;
+
+    // Optional automatic pictures need a fresh clinical-review and ownership
+    // check at the provider's final pre-send boundary. A new clinical review,
+    // human takeover, staff reply or cancellation must stop delayed media.
+    const allowOptionalMediaSend = async () => {
+      if (canSendAutomatedReply && canSendAutomatedReply() !== true) return false;
+      const liveOwner = await getAiOwnedContact(contact, {
+        channel,
+        from,
+        reason: "optional automated picture",
+        inboundMessageId: savedInbound.id,
+      });
+      return liveOwner
+        ? contactsRepo.canSendAutomaticReviewMedia(liveOwner.id)
+        : false;
+    };
 
     // Run this after the final ownership read, as close as possible to the
     // tracked provider send. A native/inbox staff action marks its cancellation state
@@ -1110,7 +1145,7 @@ async function processIncomingMessage(
         flagged,
         bookingReady,
         keywordReason,
-        needsAttention: contact.needs_attention,
+        needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
         textSendSucceeded: sendOutcome.sendResult.success,
         promotions: clinicConfig.promotions,
         language: mediaLanguage,
@@ -1127,7 +1162,7 @@ async function processIncomingMessage(
           });
           // Re-check ownership and attention before every package so a staff
           // takeover between Package A and B stops the remaining automation.
-          if (!promoContact || promoContact.needs_attention) {
+          if (!promoContact || !(await contactsRepo.canSendAutomaticReviewMedia(promoContact.id))) {
             return { wasFirstMessage, keywordReason };
           }
           contact = promoContact;
@@ -1156,9 +1191,7 @@ async function processIncomingMessage(
             promoPackage.imageUrl,
             promoPackage.caption,
             {
-              ...(guardedPromo
-                ? { preSendCheck: canSendAutomatedReply }
-                : {}),
+              preSendCheck: allowOptionalMediaSend,
               ...(promoProviderRecorder
                 ? { onProviderMessageId: promoProviderRecorder }
                 : {}),
@@ -1273,7 +1306,7 @@ async function processIncomingMessage(
           flagged,
           bookingReady,
           keywordReason,
-          needsAttention: contact.needs_attention,
+          needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
           textSendSucceeded: sendOutcome.sendResult.success,
           resultMedia: clinicConfig.resultMedia,
           language: mediaLanguage,
@@ -1293,7 +1326,7 @@ async function processIncomingMessage(
               reason: `automatic result media for ${resultBundle.service || "service"}`,
               inboundMessageId: savedInbound.id,
             });
-            if (!resultContact || resultContact.needs_attention) {
+            if (!resultContact || !(await contactsRepo.canSendAutomaticReviewMedia(resultContact.id))) {
               return { wasFirstMessage, keywordReason };
             }
             contact = resultContact;
@@ -1323,9 +1356,7 @@ async function processIncomingMessage(
               resultItem.imageUrl,
               resultItem.caption,
               {
-                ...(guardedResult
-                  ? { preSendCheck: canSendAutomatedReply }
-                  : {}),
+                preSendCheck: allowOptionalMediaSend,
                 ...(resultProviderRecorder
                   ? { onProviderMessageId: resultProviderRecorder }
                   : {}),

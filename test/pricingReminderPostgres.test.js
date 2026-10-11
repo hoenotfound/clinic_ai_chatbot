@@ -24,10 +24,12 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       CREATE TABLE contacts (
         id INTEGER PRIMARY KEY, channel TEXT NOT NULL, whatsapp_number TEXT, channel_user_id TEXT,
         needs_attention BOOLEAN NOT NULL DEFAULT false,
+        attention_reason TEXT,
         mode TEXT NOT NULL DEFAULT 'ai',
         whatsapp_opt_out_at TIMESTAMPTZ,
         whatsapp_marketing_opt_out_at TIMESTAMPTZ
       );
+      CREATE TABLE ai_review_items (contact_id INTEGER, status TEXT, category TEXT);
       CREATE TABLE pipeline_stages (id INTEGER PRIMARY KEY, stage_type TEXT, system_key TEXT);
       CREATE TABLE leads (
         id SERIAL PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),

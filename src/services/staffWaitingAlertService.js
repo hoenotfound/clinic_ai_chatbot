@@ -72,7 +72,7 @@ function staffWaitingCandidateJoins() {
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
      ) latest_waiting ON true
-     WHERE (c.mode = 'human' OR c.needs_attention = true)
+     WHERE (c.mode = 'human' OR (c.needs_attention = true AND COALESCE(c.attention_reason, '') NOT LIKE 'AI review requested:%'))
        AND NOT EXISTS (
          SELECT 1
          FROM telegram_immediate_alerts a
@@ -146,7 +146,7 @@ async function isStillWaitingForStaff(
         AND waiting_message.contact_id = c.id
         AND waiting_message.role = 'user'
        WHERE c.id = $1
-         AND (c.mode = 'human' OR c.needs_attention = true)
+         AND (c.mode = 'human' OR (c.needs_attention = true AND COALESCE(c.attention_reason, '') NOT LIKE 'AI review requested:%'))
          AND NOT EXISTS (
            SELECT 1
            FROM messages outbound

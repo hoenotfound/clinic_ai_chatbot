@@ -238,6 +238,12 @@ function notificationCopy(type, context) {
       body: `${name} is ready for staff to confirm the booking.`,
     };
   }
+  if (type === "ai_review") {
+    return {
+      title: "Question Needs Verification",
+      body: `Please review an unanswered question from ${name}. AI remains active.`,
+    };
+  }
   if (type === "delivery_failure") {
     return {
       title: "Message Delivery Failed",

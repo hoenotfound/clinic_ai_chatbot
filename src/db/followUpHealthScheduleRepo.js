@@ -1,3 +1,4 @@
+const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 const { normalizeQuietHours, quietHoursStatus } = require("../utils/quietHours");
@@ -115,7 +116,7 @@ function buildScheduleSql(settings) {
     WHERE c.channel IN ('whatsapp','facebook','instagram')
       AND ($1::text = 'all' OR c.channel = $1)
       AND ($2::integer[] IS NULL OR c.id = ANY($2::integer[]))
-      AND c.needs_attention = false
+      AND ${followUpAttentionAllowedSql("c")}
       -- Match worker candidate discovery. Human takeover/opt-outs are reported
       -- as policy warnings, not silently excluded from worker-candidate totals.
       AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
