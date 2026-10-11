@@ -155,16 +155,11 @@ async function resolveResultMediaForReply({
     priorCustomerTexts,
   });
   const skip = (reason) => {
-    if (contextualAdText && typeof onSkip === "function") onSkip(reason);
+    if (typeof onSkip === "function") onSkip(reason);
     return null;
   };
-  if (
-    flagged ||
-    bookingReady ||
-    keywordReason ||
-    needsAttention ||
-    textSendSucceeded !== true
-  ) {
+  if (needsAttention) return skip("staff_review_pending");
+  if (flagged || bookingReady || keywordReason || textSendSucceeded !== true) {
     return skip("unsafe_or_unsent_ai_reply");
   }
 
