@@ -9,6 +9,7 @@ const {
   resolveLocalizedMedia,
 } = require("./mediaLocalization");
 const { EXPLICIT_TREATMENT_INTEREST } = require("./resultMediaPacing");
+const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
 const RESULT_MEDIA_TRIGGER_MODES = new Set(["off", "price_only", "service_enquiry"]);
 const SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
@@ -24,29 +25,62 @@ function normalizeServiceName(value) {
   return String(value || "").trim().toLocaleLowerCase();
 }
 
-// The customer's current words are stronger evidence than a model intent
-// flag. Require exactly one configured service literally named in that turn,
-// plus explicit treatment interest; do not use CRM interest or ad names here.
-function explicitServiceNamedByCustomer(resultMedia, customerText) {
+// Consider every configured treatment named by the customer before trusting
+// model-selected intent. Configured aliases are not ad or CRM guesses.
+function customerNamedServices(resultMedia, customerText, serviceAliases = [], services = []) {
   const current = String(customerText || "");
-  // A location/hours/contact request can name a service without asking for
-  // proof. Do not turn those administrative turns into unsolicited pictures.
+  if (!EXPLICIT_TREATMENT_INTEREST.test(current) ||
+      !hasCustomerServiceEnquiry(current)) return [];
+
+  const normal = (value) => String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+  const compactText = normal(current);
+  const matchTerm = (rawTerm) => {
+    const term = normal(rawTerm);
+    if (term.length < 2) return false;
+    // Short Latin aliases, including 3D, cannot match inside product codes.
+    if (/^[a-z0-9]{2,4}$/.test(term)) {
+      const escaped = term.replace(/([.*+?^$()|[\]{}\\])/g, "\\$1");
+      return new RegExp("(^|[^a-z0-9])" + escaped + "(?=$|[^a-z0-9])", "iu")
+        .test(current.normalize("NFKC").toLocaleLowerCase());
+    }
+    return compactText.includes(term);
+  };
+
+  const names = new Map();
+  for (const entry of Array.isArray(resultMedia) ? resultMedia : []) {
+    if (entry?.service) names.set(normal(entry.service), String(entry.service).trim());
+  }
+  for (const entry of Array.isArray(services) ? services : []) {
+    if (entry?.name) names.set(normal(entry.name), String(entry.name).trim());
+  }
+  const match = new Set();
+  for (const [key, name] of names) {
+    if (matchTerm(name)) match.add(key);
+  }
+  for (const entry of Array.isArray(serviceAliases) ? serviceAliases : []) {
+    const key = normal(entry?.officialService);
+    if (!names.has(key)) continue;
+    for (const term of String(entry.alias || "").split(/[,/|;，、]+/u)) {
+      if (matchTerm(term.trim())) match.add(key);
+    }
+  }
+  return [...match].map((key) => names.get(key));
+}
+
+function explicitServiceNamedByCustomer(
+  resultMedia, customerText, serviceAliases = [], services = []
+) {
+  const current = String(customerText || "");
+  // Admin questions can mention a service without asking for examples.
   if (/(?:地址|在哪[里裡]|营业时间|營業時間|停车|停車|分行|分店|\b(?:address|location|opening hours?|parking|branch(?:es)?|alamat|lokasi|cawangan)\b)/iu.test(current)) {
     return null;
   }
-  if (!EXPLICIT_TREATMENT_INTEREST.test(current) ||
-      !Array.isArray(resultMedia)) return null;
-  const comparable = (value) => String(value || "")
-    .normalize("NFKC")
-    .toLocaleLowerCase()
-    .replace(/[\s\p{P}\p{S}]+/gu, "");
-  const words = comparable(customerText);
-  const matches = resultMedia.filter((entry) => {
-    const service = comparable(entry?.service);
-    return entry?.enabled === true && service.length >= 3 &&
-      normalizeResultMediaTriggerMode(entry) !== "off" && words.includes(service);
-  });
-  return matches.length === 1 ? String(matches[0].service).trim() : null;
+  const matches = customerNamedServices(resultMedia, current, serviceAliases, services);
+  if (matches.length !== 1) return null;
+  return matchingResultMediaSet(resultMedia, matches[0]) ? matches[0] : null;
 }
 
 function matchingResultMediaSet(resultMedia, treatment) {
@@ -166,6 +200,8 @@ async function resolveResultMediaForReply({
   needsAttention,
   textSendSucceeded,
   resultMedia,
+  serviceAliases = [],
+  services = [],
   language = "en",
   contactId,
   wasMediaRecentlySent,
@@ -184,6 +220,7 @@ async function resolveResultMediaForReply({
     if (typeof onSkip === "function") onSkip(reason);
     return null;
   };
+  if (hasClinicalMediaRisk(customerText)) return skip("clinical_media_safety");
   if (needsAttention) return skip("staff_review_pending");
   if (flagged || bookingReady || keywordReason || textSendSucceeded !== true) {
     return skip("unsafe_or_unsent_ai_reply");
@@ -199,7 +236,13 @@ async function resolveResultMediaForReply({
     return skip("contextual_ad_history_unverified_or_not_early");
   }
 
-  const directlyNamedTreatment = explicitServiceNamedByCustomer(resultMedia, customerText);
+  const namedServices = customerNamedServices(
+    resultMedia, customerText, serviceAliases, services
+  );
+  if (namedServices.length > 1) return skip("multiple_treatments_ambiguous");
+  const directlyNamedTreatment = explicitServiceNamedByCustomer(
+    resultMedia, customerText, serviceAliases, services
+  );
   const effectiveTreatment = directlyNamedTreatment || treatment ||
     (contextualAdEnquiry ? metaAdCreativeService : null);
   if (!effectiveTreatment) return skip("no_verified_treatment");
@@ -292,6 +335,7 @@ module.exports = {
   itemImageUrls,
   matchingResultMediaSet,
   explicitServiceNamedByCustomer,
+  customerNamedServices,
   mediaIdentity,
   rotateAfter,
   resolveResultMediaForReply,
