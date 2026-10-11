@@ -30,6 +30,7 @@ const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
   RESULT_MEDIA_SEND_SPACING_MS,
+  planPromotionMediaPacing,
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
@@ -1125,6 +1126,7 @@ async function processIncomingMessage(
     // price or available packages for one known configured service. Existing
     // safety/ownership gates remain unchanged.
     let automaticPromoMediaSent = 0;
+    let promotionImagesTruncated = false;
     // Promo sends can stop the post-reply sequence before the optional result
     // block is reached. Keep those exit reasons in the same staff-only audit.
     const auditResultMediaEarlyExit = async (reason) => {
@@ -1159,7 +1161,9 @@ async function processIncomingMessage(
         wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
       });
       if (promoBundle) {
-        for (const promoPackage of promoBundle.packages) {
+        const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
+        promotionImagesTruncated = !!pacedPromotions.reason;
+        for (const promoPackage of pacedPromotions.items) {
           const promoContact = await getAiOwnedContact(contact, {
             channel,
             from,
@@ -1323,6 +1327,8 @@ async function processIncomingMessage(
           needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
           textSendSucceeded: sendOutcome.sendResult.success,
           resultMedia: clinicConfig.resultMedia,
+          serviceAliases: clinicConfig.serviceAliases,
+          services: clinicConfig.services,
           language: mediaLanguage,
           contactId: contact.id,
           wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
@@ -1502,6 +1508,10 @@ async function processIncomingMessage(
           }
         }
       } finally {
+        if (promotionImagesTruncated) {
+          auditReason = auditReason
+            ? auditReason + ";promotion_image_budget" : "promotion_image_budget";
+        }
         const auditStatus = auditSent > 0
           ? (auditReason ? "partial" : "sent")
           : (["provider_send_failed", "result_media_exception"].includes(auditReason)
