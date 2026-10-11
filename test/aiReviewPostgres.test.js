@@ -29,10 +29,12 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
         role text, content text, delivery_status text, sent_by_username text,
+        is_automated_follow_up boolean NOT NULL DEFAULT false,
         whatsapp_message_id text,
         created_at timestamptz not null default now());
       CREATE TABLE outbound_message_evidence (
-        message_id integer primary key references messages(id), accepted boolean not null
+        message_id integer primary key references messages(id), accepted boolean not null,
+        origin text
       );
     `);
     await client.query(fs.readFileSync(path.join(__dirname,
