@@ -162,6 +162,9 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(preservedFailure.needs_attention, true);
     assert.match(preservedFailure.attention_reason, /Delivery failed/);
 
+    // Recovered delivery statuses must stop preserving a stale failure flag.
+    await client.query("UPDATE messages SET delivery_status='sent' WHERE id=14");
+
     // Legacy rows can have a true attention flag with a missing reason.
     // The staff-assist cleanup must never assign SQL NULL to needs_attention.
     await client.query(`UPDATE contacts SET needs_attention=true,
