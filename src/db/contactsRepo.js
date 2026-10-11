@@ -621,8 +621,25 @@ async function clearStaffAssistStateIfUnchanged(contact) {
      SET needs_attention = EXISTS (
            SELECT 1 FROM ai_review_items r
            WHERE r.contact_id = contacts.id AND r.status = 'pending'
-         ) OR COALESCE(needs_attention AND attention_reason LIKE 'AI review requested:%', false),
+         ) OR EXISTS (
+           SELECT 1 FROM messages m
+           WHERE m.contact_id = contacts.id AND m.role = 'assistant'
+             AND m.delivery_status IN ('failed', 'unknown')
+         ),
          attention_reason = CASE
+           -- Staff Assist may clear a answered handoff, but must not hide an
+           -- unresolved outbound failure behind a pending review summary.
+           -- Reviews are still displayed separately from ai_review_items.
+           WHEN EXISTS (
+             SELECT 1 FROM messages m
+             WHERE m.contact_id = contacts.id AND m.role = 'assistant'
+               AND m.delivery_status IN ('failed', 'unknown')
+           ) THEN CASE
+             WHEN attention_reason LIKE 'Delivery failed:%'
+               OR attention_reason LIKE 'Delivery unconfirmed:%'
+             THEN attention_reason
+             ELSE 'Delivery failed: One or more outbound messages need staff review.'
+           END
            WHEN EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = contacts.id AND r.status = 'pending'
