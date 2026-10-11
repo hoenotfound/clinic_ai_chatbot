@@ -56,6 +56,7 @@ test("skips are reported for ordinary enquiries and pending clinical review, not
     contactId: 42,
     onSkip: (reason) => skips.push(reason),
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   };
   assert.equal(await resolveResultMediaForReply({ ...base, needsAttention: true }), null);
@@ -108,6 +109,7 @@ test("direct customer-named treatment works without AI model intent flags", asyn
     resultMedia: media,
     contactId: 363,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
   assert.equal(decision.service, "骨盆调理");
@@ -128,6 +130,7 @@ test("direct customer-named treatment works without AI model intent flags", asyn
     resultMedia: media,
     contactId: 363,
     wasMediaRecentlySent: async () => true,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   });
   assert.equal(duplicate, null, "manual and AI sends must still suppress repeats for seven days");
@@ -177,6 +180,7 @@ test("clinical suitability and medical history suppress both result and promotio
       textSendSucceeded: true,
       contactId: 42,
       wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
       onSkip: (reason) => reasons.push(reason),
     }), null);
@@ -266,6 +270,7 @@ test("multiple services or aliases remain ambiguous even when the AI picks one s
       textSendSucceeded: true,
       contactId: 42,
       wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
       onSkip: (reason) => skipped.push(reason),
     }), null);
@@ -291,6 +296,7 @@ test("unique configured aliases recover missing AI intent without ad-name guesse
       textSendSucceeded: true,
       contactId: 42,
       wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
       getMostRecentlySentMediaUrl: async () => null,
     });
     assert.equal(result?.service, "骨盆调理", customerText);
@@ -309,6 +315,7 @@ test("unique configured aliases recover missing AI intent without ad-name guesse
     textSendSucceeded: true,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
   }), null);
 });
