@@ -11,7 +11,13 @@ const MEDICAL_HISTORY = /\b(?:diabet(?:es|ic)|cancer|hypertension|high blood pre
 // enquiry for a configured "子宫套餐" is not itself a contraindication and
 // must not be blocked merely because the package name sounds clinical.
 const CLINICAL_MEDIA_RED_FLAGS =
-  /\b(?:pregnan\w*|breastfeed\w*|postpartum|c[.-]?section\w*|surgery|surgical|operation|procedure\w*|suitab\w*|safe(?:ty)?|risk\w*|pain\w*|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|after treatment|after surgery|just had|recent procedure|can i do|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|產後|产后|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|安全|適合|适合|疼痛|流血|出血|尿失禁|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|整骨風險|整骨风险|坐月子|可以做吗|可以做嗎|能做吗|能做嗎)|\b(?:hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|kesan sampingan)\b/iu;
+  /\b(?:pregnan\w*|breastfeed\w*|c[.-]?section\w*|surgery|surgical|operation|procedure\w*|suitab\w*|safe(?:ty)?|risk\w*|pain\w*|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|after treatment|after surgery|just had|recent procedure|can i do|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|安全|適合|适合|疼痛|流血|出血|尿失禁|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|整骨風險|整骨风险|坐月子|可以做吗|可以做嗎|能做吗|能做嗎)|\b(?:hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|kesan sampingan)\b/iu;
+
+// "产后" / "postpartum" is also a configured treatment name, not
+// automatically a contraindication. Recent childbirth and recovery remain
+// safety signals; ordinary treatment/package interest is not one.
+const RECENT_POSTPARTUM_RISK =
+  /(?:刚|剛|刚刚|剛剛|才|不久前)(?:.{0,8})(?:生完|生产|生產|分娩|坐完月子|剖腹)|(?:产后|產後|生产后|生產後)(?:\s*(?:不到|才|刚|剛|仅|僅|只有))?\s*(?:(?:[1-6]|[一二三四五六])\s*(?:天|周|週|星期)|(?:一|两|兩|三)\s*(?:个|個)?(?:星期|周|週))|\b(?:just|recently)\s+(?:gave\s+birth|delivered|had\s+(?:a\s+)?baby|postpartum)|\b(?:[1-6]\s*(?:days?|weeks?)\s+(?:postpartum|after\s+(?:delivery|childbirth)))\b|\b(?:baru\s+(?:lepas\s+)?bersalin|baru\s+melahirkan|selepas\s+pembedahan)\b/iu;
 
 // If AI misses a clinical outcome flag, images still fail closed here. Keep
 // this separate from review categorization, which has different purposes.
@@ -21,6 +27,7 @@ const CLINICAL_MEDIA_SUITABILITY =
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
   return CLINICAL_MEDIA_SUITABILITY.test(value) ||
+    RECENT_POSTPARTUM_RISK.test(value) ||
     CLINICAL_MEDIA_RED_FLAGS.test(value) ||
     CLINICAL_PROCEDURE_TIMING.test(value) ||
     MEDICAL_HISTORY.test(value) ||
