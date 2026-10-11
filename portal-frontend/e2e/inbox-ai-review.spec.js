@@ -81,7 +81,6 @@ test("Inbox remains AI while individual staff questions are resolved independent
   const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
   await expect(thread).toBeVisible();
   await expect(thread.getByRole("button", { name: /Needs attention \(2 questions\)/ })).toBeVisible();
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", await page.evaluate(() => document.body.scrollWidth));
   const dimensions = await page.evaluate(() => ({
     pageWidth: document.documentElement.scrollWidth,
     viewportWidth: window.innerWidth,
