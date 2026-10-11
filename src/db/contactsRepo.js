@@ -578,7 +578,7 @@ async function takeOver(id, staffUsername) {
   return updated;
 }
 
-async function returnToAi(id) {
+async function returnToAi(id, expectedUpdatedAt = null) {
   // An old synthetic handoff can leave the AI-owned conversation permanently
   // excluded from follow-ups. An explicit Return to AI may clear only that
   // specific handoff flag, and only after a real staff reply was accepted
@@ -601,17 +601,12 @@ async function returnToAi(id) {
           WHERE fallback.message_id = staff_reply.id
             AND fallback.origin = 'system_fallback'
         )
+        -- Provider acceptance is enough; Meta delivery receipts can arrive
+        -- later. Never infer acceptance from a draft, failed or unknown send.
+        AND staff_reply.whatsapp_message_id IS NOT NULL
         AND (
-          staff_reply.delivery_status IN ('sent', 'delivered', 'read')
-          OR EXISTS (
-            SELECT 1 FROM outbound_message_evidence evidence
-            WHERE evidence.message_id = staff_reply.id
-              AND evidence.accepted = true
-          )
-          -- A WhatsApp Business App echo is proof the provider sent it even
-          -- when the echo row has no delivery status.
-          OR (staff_reply.delivery_status IS NULL
-            AND staff_reply.whatsapp_message_id IS NOT NULL)
+          staff_reply.delivery_status IS NULL
+          OR staff_reply.delivery_status IN ('pending', 'sent', 'delivered', 'read')
         )
         AND staff_reply.created_at >= c.takeover_at
         AND staff_reply.created_at > COALESCE((
@@ -651,7 +646,6 @@ async function returnToAi(id) {
              WHERE r.contact_id = c.id AND r.status = 'pending'
            ) AND (
              c.attention_reason IS NULL
-             OR c.attention_reason = 'AI handed off this conversation.'
              OR c.attention_reason LIKE 'AI review requested:%'
            ) THEN 'AI review requested: ' || COALESCE((
              SELECT RIGHT(STRING_AGG('[#' || r.inbound_message_id::text || '] ' ||
@@ -664,8 +658,18 @@ async function returnToAi(id) {
          END,
          updated_at = now()
      WHERE c.id = $1
+       AND c.mode = 'human'
+       -- Explicitly returning to AI is a staff resolution action, but an
+       -- unanswered genuine handoff must stay staff-owned. Dismiss attention
+       -- only after staff has actually reviewed the outstanding issue.
+       AND (c.attention_reason IS DISTINCT FROM 'AI handed off this conversation.'
+         OR ${answeredLegacyHandoff})
+       -- Compare the browser's observed version atomically. A stale click
+       -- must not overwrite a newer handoff, contact reply or staff takeover.
+       AND ($2::timestamptz IS NULL
+         OR date_trunc('milliseconds', c.updated_at) = $2::timestamptz)
      RETURNING c.*`,
-    [id]
+    [id, expectedUpdatedAt]
   );
   const updated = result.rows[0] || null;
   // Human-intervention Telegram alerts use a strict rolling 30-minute
