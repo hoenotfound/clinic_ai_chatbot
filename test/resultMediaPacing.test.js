@@ -333,7 +333,6 @@ test("postpartum pelvic sales interest is one service, but recent birth and comp
   ];
   for (const customerText of [
     "我想了解产后骨盆调理，有优惠吗？",
-    "产后骨盆调理现在RM288吗？",
     "I'm interested in postpartum pelvic treatment and its price",
   ]) {
     assert.equal(hasClinicalMediaRisk(customerText), false, customerText);
@@ -348,6 +347,8 @@ test("postpartum pelvic sales interest is one service, but recent birth and comp
     });
     assert.equal(chosen?.service, "骨盆调理", customerText);
   }
+  assert.equal(hasClinicalMediaRisk("产后骨盆调理现在RM288吗？"), false,
+    "price-only postpartum pricing must remain eligible for promotion, not unsolicited proof");
   for (const customerText of [
     "我刚刚生产，想了解产后骨盆调理优惠",
     "产后两周想了解骨盆调理价格",
