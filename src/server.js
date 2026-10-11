@@ -1397,6 +1397,7 @@ async function processIncomingMessage(
             );
             pendingResultSend = resultSend;
 
+            if (resultSend.success) auditSent += 1;
             if (resultSend.cancelled) {
               auditReason = "reply_window_or_staff_cancellation";
               await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
@@ -1439,7 +1440,6 @@ async function processIncomingMessage(
               );
               return { wasFirstMessage, keywordReason };
             }
-            auditSent += 1;
           }
         }
       } catch (resultMediaErr) {
