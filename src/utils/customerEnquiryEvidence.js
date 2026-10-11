@@ -57,7 +57,7 @@ function isContextualAdServiceEnquiry(customerText) {
 // for price graphics or Before & After images.
 const FOLLOW_UP_PERMISSION = /(?:可以|愿意|願意|同意|希望|请|請).{0,30}(?:跟[进進]我|联系我|聯繫我|通知我.{0,8}(?:后续|後續|以后|以後))|\b(?:i(?:'d| would)?\s+(?:also\s+)?(?:like|want)\s+to\s+receive|feel\s+free\s+to|you\s+can|please)\b.{0,110}\b(?:follow[\s-]?ups?|whats\s*app|updates?)\b|\b(?:boleh|sila|saya\s+(?:nak|mahu|setuju)).{0,45}(?:whats\s*app|susulan|hubungi)\b/iu;
 const RELATED_OFFERS = /(?:优惠|優惠|促销|促銷|\b(?:offers?|promos?|promotions?|deals?|discounts?|promosi|tawaran)\b)/iu;
-const DIRECT_PRICE_REQUEST = /(?:多少[钱錢]|(?:价[格钱錢]|價錢|价格|費用|费用|收[费費])[\s:：]*[?？]|(?:价[格钱錢]|價錢|价格)[^。.!?？]{0,14}(?:多少|呢|[?？])|(?:现在|現在|马上|馬上|立即|直接|先|\b(?:now|today|right now)\b)[^。.!?？]{0,35}(?:价[格钱錢]|價錢|优惠|優惠|套餐|配套|\b(?:price|cost|offers?|promos?|packages?)\b)|\b(?:how\s+much|what(?:'s| is)?\s+(?:the\s+)?(?:price|cost)|(?:price|cost|harga)\s*[?？]|berapa\s+harga)\b)/iu;
+const DIRECT_PRICE_REQUEST = /(?:(?:有(?:什么|什麼)|什么|什麼|哪些|哪种|哪種)(?:优惠|優惠|配套|套餐)|多少[钱錢]|(?:价[格钱錢]|價錢|价格|費用|费用|收[费費])[\s:：]*[?？]|(?:价[格钱錢]|價錢|价格)[^。.!?？]{0,14}(?:多少|呢|[?？])|(?:现在|現在|马上|馬上|立即|直接|先|\b(?:now|today|right now)\b)[^。.!?？]{0,35}(?:价[格钱錢]|價錢|优惠|優惠|套餐|配套|\b(?:price|cost|offers?|promos?|packages?)\b)|\b(?:how\s+much|what(?:'s| is)?\s+(?:the\s+)?(?:price|cost)|(?:price|cost|harga)\s*[?？]|berapa\s+harga)\b)/iu;
 const DIRECT_RESULT_REQUEST = /(?:前[后後]对比|前[后後]對比|(?:效果|对比|對比)[图圖]|案例[图圖照片]|\bbefore[\s&/-]*(?:and[\s-]*)?after\b)/iu;
 
 function isFollowUpConsentEnquiry(customerText) {
@@ -74,7 +74,11 @@ const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|c
 function hasCustomerPriceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
-  if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value) || isFollowUpConsentEnquiry(value)) return false;
+  if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value)) return false;
+  // Future-promotional permission is not a price request, even if the same
+  // customer separately asks to see treatment results.
+  if (FOLLOW_UP_PERMISSION.test(value) && RELATED_OFFERS.test(value) &&
+      !DIRECT_PRICE_REQUEST.test(value)) return false;
   return PRICE_OR_PACKAGE.test(value) ||
     ENGLISH_MONEY_QUESTION.test(value) ||
     (MALAY_MONEY_QUESTION.test(value) && !MALAY_NON_PRICE_QUANTITY.test(value));
