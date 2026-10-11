@@ -134,6 +134,8 @@ test(
             now() - interval '9 hours',
             false
           );
+        UPDATE messages SET whatsapp_message_id='wamid.staff.11',
+          delivery_status='sent' WHERE id=11;
 
         -- Step 1 was originally due 2 hours after the anchor, but quiet hours
         -- delayed the actual send until only one hour ago.
@@ -254,6 +256,8 @@ test(
             now() - interval '3 hours',
             false
           );
+        UPDATE messages SET whatsapp_message_id='wamid.staff.21',
+          delivery_status='sent' WHERE id=21;
       `);
 
       const firstLease = await followUpAiLeaseRepo.claimIfStillEligible({

@@ -964,7 +964,24 @@ router.post("/:contactId/return-to-ai", async (req, res) => {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
-    const updated = await contactsRepo.returnToAi(contact.id);
+    // The Inbox provides the exact contact version it displayed. Older
+    // actions must not overwrite a newer handoff, staff claim or customer turn.
+    const version = req.body?.expectedUpdatedAt;
+    if (version != null && (
+      typeof version !== "string" ||
+      !Number.isFinite(Date.parse(version))
+    )) {
+      return res.status(400).json({ error: "Invalid conversation version." });
+    }
+    const updated = await contactsRepo.returnToAi(
+      contact.id,
+      version || contact.updated_at
+    );
+    if (!updated) {
+      return res.status(409).json({
+        error: "The conversation changed or the handoff still needs a confirmed staff reply. Review the latest messages and dismiss attention when resolved.",
+      });
+    }
     res.json(updated);
   } catch (err) {
     console.error("Failed to return conversation to AI:", err);

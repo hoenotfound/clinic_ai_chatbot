@@ -1,3 +1,4 @@
+const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
 const { pool } = require("./db");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -83,7 +84,7 @@ function buildScheduleSql(settings) {
       ORDER BY created_at DESC, id DESC LIMIT 1
     ) inbound ON true
     JOIN LATERAL (
-      SELECT id, created_at, sent_by_username, delivery_status
+      SELECT id, created_at, sent_by_username, delivery_status, whatsapp_message_id
       FROM messages m
       WHERE m.contact_id = c.id AND role = 'assistant'
         AND m.is_automated_follow_up = false
@@ -121,7 +122,7 @@ function buildScheduleSql(settings) {
       -- as policy warnings, not silently excluded from worker-candidate totals.
       AND ((c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
         OR (c.channel IN ('facebook','instagram') AND c.channel_user_id IS NOT NULL))
-      AND anchor.delivery_status IS DISTINCT FROM 'failed'
+      AND ${acceptedNormalOutboundSql('anchor')}
       AND anchor.created_at >= $4::timestamptz
       AND ($3::text = 'all' OR anchor.sent_by_username IS NOT NULL)
       AND inbound.created_at > now() - interval '23 hours 50 minutes'

@@ -205,6 +205,18 @@ test(
         takeover_by: "WhatsApp Business App",
         message_count: 5,
       });
+
+      // A confirmed Business App reply does not implicitly resolve an
+      // explicit staff handoff: the staff must review and clear it.
+      await client.query(`UPDATE contacts SET needs_attention=true,
+        attention_reason='AI handed off this conversation.' WHERE id=$1`, [contactId]);
+      const unresolvedEcho = await coexistenceRepo.persistStaffEchoIfNew(
+        contactId, "Let me verify your question first",
+        "wamid.business-app-unresolved", "WhatsApp Business App", "AI handoff", client
+      );
+      assert.equal(unresolvedEcho.contact.needs_attention, true);
+      assert.equal(unresolvedEcho.contact.attention_reason,
+        "AI handed off this conversation.");
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});

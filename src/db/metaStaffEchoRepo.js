@@ -165,11 +165,24 @@ async function persistStaffEchoIfNew(
              THEN takeover_at
              ELSE NULL
            END,
-           needs_attention = EXISTS (
-             SELECT 1 FROM ai_review_items r
-             WHERE r.contact_id = contacts.id AND r.status = 'pending'
-           ),
+           -- Provider echoes confirm a staff send, not that every genuine
+           -- handoff or safety escalation was fully resolved. Keep the alert
+           -- until a deliberate staff resolution action.
+           needs_attention = CASE
+             WHEN contacts.mode = 'human' AND contacts.needs_attention = true
+               AND contacts.attention_reason IS NOT NULL
+               AND contacts.attention_reason NOT LIKE 'AI review requested:%'
+             THEN true
+             ELSE EXISTS (
+               SELECT 1 FROM ai_review_items r
+               WHERE r.contact_id = contacts.id AND r.status = 'pending'
+             )
+           END,
            attention_reason = CASE
+             WHEN contacts.mode = 'human' AND contacts.needs_attention = true
+               AND contacts.attention_reason IS NOT NULL
+               AND contacts.attention_reason NOT LIKE 'AI review requested:%'
+             THEN contacts.attention_reason
              WHEN EXISTS (
                SELECT 1 FROM ai_review_items r
                WHERE r.contact_id = contacts.id AND r.status = 'pending'

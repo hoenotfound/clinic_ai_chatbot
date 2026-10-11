@@ -938,13 +938,25 @@ export default function Inbox() {
   async function handleReturnToAi() {
     if (selectedId == null) return;
     const contactId = selectedId;
+    const snapshot = conversations?.find((item) =>
+      Number(item.contact_id) === Number(contactId));
+    // A genuine staff handoff requires staff to deliberately confirm that
+    // the customer's outstanding request was addressed. Merely sending a
+    // message does not prove that a safety / staff issue is resolved.
+    if (snapshot?.attention_reason === "AI handed off this conversation." &&
+        !window.confirm("Have you fully addressed this customer's staff request? Returning to AI may allow follow-up messages within the normal messaging window.")) {
+      return;
+    }
     setActionPending(true);
     try {
-      await api.returnToAi(contactId);
+      await api.returnToAi(contactId, snapshot?.updated_at || null);
       await refreshConversations();
     } catch (err) {
       console.error("Failed to return conversation to AI:", err);
-      showToast("Couldn't return this conversation to the AI — please try again.", "error");
+      showToast(err?.status === 409
+        ? "Conversation changed or the staff handoff is still unresolved. Refresh and review the latest messages before returning to AI."
+        : "Couldn't return this conversation to the AI — please try again.", "error");
+      if (err?.status === 409) await refreshConversations();
     } finally {
       if (selectedIdRef.current === contactId) setActionPending(false);
     }

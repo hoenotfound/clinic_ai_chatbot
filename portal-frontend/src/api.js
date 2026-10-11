@@ -231,7 +231,10 @@ export const api = {
     return res.json();
   },
   takeOver: (contactId) => request(`/conversations/${contactId}/takeover`, { method: "POST" }),
-  returnToAi: (contactId) => request(`/conversations/${contactId}/return-to-ai`, { method: "POST" }),
+  returnToAi: (contactId, expectedUpdatedAt) => request(`/conversations/${contactId}/return-to-ai`, {
+    method: "POST",
+    body: JSON.stringify({ expectedUpdatedAt }),
+  }),
   setAttention: (contactId, needsAttention, reason) =>
     request(`/conversations/${contactId}/attention`, {
       method: "PATCH",
