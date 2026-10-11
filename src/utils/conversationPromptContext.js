@@ -1,4 +1,5 @@
 const config = require("../config/clinicConfig");
+const { hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
 const {
   findMentionedPromotionPackages,
   getActivePromotions,
@@ -420,11 +421,14 @@ function buildConversationPromptContext(
     .map((message) => messageText(message))
     .join("\n");
 
+  // Follow-up consent is not a request for immediate promotional details.
+  // Even a separate request for results does not turn future offers into prices.
   const currentPromotionIntent =
-    PROMOTION_PATTERN.test(currentCustomerText) ||
+    !hasFuturePromotionPermissionWithoutPrice(currentCustomerText) &&
+    (PROMOTION_PATTERN.test(currentCustomerText) ||
     (currentCustomerText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCustomerText)) ||
     configuredPromotionReference(currentCustomerText, promotions) ||
-    PROMOTION_DETAIL_PATTERN.test(currentCustomerText);
+    PROMOTION_DETAIL_PATTERN.test(currentCustomerText));
   const previousCustomerText = customerMessages.length > 1
     ? messageText(customerMessages.at(-2))
     : "";
