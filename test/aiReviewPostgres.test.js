@@ -29,7 +29,11 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
         role text, content text, delivery_status text, sent_by_username text,
+        whatsapp_message_id text,
         created_at timestamptz not null default now());
+      CREATE TABLE outbound_message_evidence (
+        message_id integer primary key references messages(id), accepted boolean not null
+      );
     `);
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/064_ai_review_items.sql"), "utf8"));
@@ -245,6 +249,15 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     resumeGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(resumeGate.rows[0].allowed, false);
 
+    // With no trustworthy handoff timestamp, even a confirmed staff answer
+    // cannot silently clear an AI-owned stale flag. Staff can explicitly
+    // dismiss attention after reviewing the chat.
+    await client.query(`UPDATE contacts SET mode='ai',takeover_at=NULL,
+      needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const missingBoundary = await contacts.returnToAi(1);
+    assert.equal(missingBoundary.needs_attention, true);
+    assert.equal(missingBoundary.attention_reason, 'AI handed off this conversation.');
+
     // A later staff reply does not resolve a durable clinical review.
     await contacts.setAiReviewAttention(1,22,'New clinical question','clinical');
     await client.query(`INSERT INTO messages(id,contact_id,role,content,created_at,sent_by_username,delivery_status)
@@ -267,9 +280,34 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     const failedDelivery = await contacts.returnToAi(1);
     assert.equal(failedDelivery.needs_attention, true);
     await client.query("UPDATE messages SET delivery_status='sent' WHERE id=24");
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      takeover_at=now() + interval '90 seconds' WHERE id=1`);
     const deliveryRecovered = await contacts.returnToAi(1);
     assert.equal(deliveryRecovered.needs_attention, false);
     assert.equal(deliveryRecovered.attention_reason, null);
+
+    // Accepted Business App staff echoes have provider IDs even when delivery
+    // status is NULL, and should also resolve a current real handoff.
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      takeover_at=now() + interval '6 minutes',needs_attention=true,
+      attention_reason='AI handed off this conversation.' WHERE id=1`);
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,delivery_status,whatsapp_message_id)
+      VALUES (25,1,'assistant','Business App echo',now() + interval '7 minutes',
+       'external_staff',NULL,'wamid.businessapp.25')`);
+    const businessAppAnswered = await contacts.returnToAi(1);
+    assert.equal(businessAppAnswered.needs_attention, false);
+
+    // A past failed send belongs to an older customer cycle, so it must not
+    // prevent a safe resolved handoff from a more recent enquiry.
+    await client.query(`UPDATE messages SET delivery_status='failed',
+      created_at=now() - interval '2 hours' WHERE id=24`);
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      takeover_at=now() + interval '6 minutes',needs_attention=true,
+      attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const oldFailure = await contacts.returnToAi(1);
+    assert.equal(oldFailure.needs_attention,false);
+    assert.equal(oldFailure.attention_reason,null);
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
