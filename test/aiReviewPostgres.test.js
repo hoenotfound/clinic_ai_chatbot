@@ -162,8 +162,41 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(preservedFailure.needs_attention, true);
     assert.match(preservedFailure.attention_reason, /Delivery failed/);
 
+    // The same failed message must remain visible when staff reply cleanup
+    // runs with a separate AI review still pending.
+    await client.query("INSERT INTO messages(id,contact_id,role,content) VALUES (15,1,'user','Clinical question')");
+    await contacts.setAiReviewAttention(1,15,"Clinical question?","clinical");
+    const staffSnapshot = (await client.query("SELECT * FROM contacts WHERE id=1")).rows[0];
+    const afterStaffReply = await contacts.clearStaffAssistStateIfUnchanged(staffSnapshot);
+    assert.equal(afterStaffReply.needs_attention,true);
+    assert.match(afterStaffReply.attention_reason, /Delivery failed/);
+    assert.equal((await client.query(
+      "SELECT COUNT(*)::int AS n FROM ai_review_items WHERE status='pending'"
+    )).rows[0].n, 1, "manual staff replies do not resolve review questions");
+    assert.equal(await contacts.canSendAutomaticReviewMedia(1),false);
+
+    // Review summaries stay independently available even while a delivery
+    // alert takes priority in the one-line contact attention reason.
+    const pendingReview = await client.query(
+      "SELECT id FROM ai_review_items WHERE inbound_message_id=15 AND status='pending'"
+    );
+    assert.equal(pendingReview.rows.length,1);
+
+    // A prior unconfirmed delivery is also protected by staff cleanup.
+    await client.query("UPDATE messages SET delivery_status='unknown' WHERE id=14");
+    await client.query("UPDATE contacts SET attention_reason='Delivery unconfirmed: awaiting Meta' WHERE id=1");
+    const unknownSnapshot = (await client.query("SELECT * FROM contacts WHERE id=1")).rows[0];
+    const afterUnknown = await contacts.clearStaffAssistStateIfUnchanged(unknownSnapshot);
+    assert.equal(afterUnknown.needs_attention,true);
+    assert.equal(afterUnknown.attention_reason,'Delivery unconfirmed: awaiting Meta');
+
     // Recovered delivery statuses must stop preserving a stale failure flag.
     await client.query("UPDATE messages SET delivery_status='sent' WHERE id=14");
+    const recoveredSnapshot = (await client.query("SELECT * FROM contacts WHERE id=1")).rows[0];
+    const recoveredStaffReply = await contacts.clearStaffAssistStateIfUnchanged(recoveredSnapshot);
+    assert.equal(recoveredStaffReply.needs_attention,true);
+    assert.match(recoveredStaffReply.attention_reason, /AI review requested/);
+    await contacts.resolveAiReviewItem(1,pendingReview.rows[0].id);
 
     // Legacy rows can have a true attention flag with a missing reason.
     // The staff-assist cleanup must never assign SQL NULL to needs_attention.
