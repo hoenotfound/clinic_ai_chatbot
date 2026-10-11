@@ -29,6 +29,7 @@ function base(overrides = {}) {
     promotions: [nowActivePromo],
     contactId: 42,
     wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
     ...overrides,
   };
 }
