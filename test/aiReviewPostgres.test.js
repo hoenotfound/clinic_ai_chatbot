@@ -246,8 +246,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
       needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
     const unanswered = await contacts.returnToAi(1);
-    assert.equal(unanswered.needs_attention, true);
-    assert.equal(unanswered.attention_reason, 'AI handed off this conversation.');
+    assert.equal(unanswered, null, 'unanswered handoff must remain staff-owned');
     resumeGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(resumeGate.rows[0].allowed, false);
 
@@ -257,8 +256,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query(`UPDATE contacts SET mode='ai',takeover_at=NULL,
       needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
     const missingBoundary = await contacts.returnToAi(1);
-    assert.equal(missingBoundary.needs_attention, true);
-    assert.equal(missingBoundary.attention_reason, 'AI handed off this conversation.');
+    assert.equal(missingBoundary, null, 'stale AI-owned handoffs must fail closed');
 
     // A later staff reply does not resolve a durable clinical review.
     await contacts.setAiReviewAttention(1,22,'New clinical question','clinical');
@@ -267,8 +265,8 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
       needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
     const pendingClinical = await contacts.returnToAi(1);
-    assert.equal(pendingClinical.needs_attention, true);
-    assert.match(pendingClinical.attention_reason, /AI review requested.*#22/);
+    assert.equal(pendingClinical, null, 'pending clinical review blocks handoff recovery');
+    assert.equal((await client.query('SELECT mode FROM contacts WHERE id=1')).rows[0].mode, 'human');
     resumeGate = await client.query(`SELECT ${followUpAttentionAllowedSql("c")} AS allowed FROM contacts c WHERE id=1`);
     assert.equal(resumeGate.rows[0].allowed, false);
     await contacts.dismissAttentionAndReviews(1);
@@ -280,7 +278,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
       needs_attention=true,attention_reason='AI handed off this conversation.' WHERE id=1`);
     const failedDelivery = await contacts.returnToAi(1);
-    assert.equal(failedDelivery.needs_attention, true);
+    assert.equal(failedDelivery, null, 'unconfirmed outbound keeps the handoff staff-owned');
     await client.query("UPDATE messages SET delivery_status='sent' WHERE id=24");
     await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
       takeover_at=now() + interval '90 seconds' WHERE id=1`);
@@ -321,8 +319,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
       VALUES (26,1,'assistant','Automated reminder',now() + interval '10 minutes',
       'Follow-up automation','read',true)`);
     const automationNotStaff = await contacts.returnToAi(1);
-    assert.equal(automationNotStaff.needs_attention,true);
-    assert.equal(automationNotStaff.attention_reason,'AI handed off this conversation.');
+    assert.equal(automationNotStaff, null, 'automation is not proof of a staff answer');
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
