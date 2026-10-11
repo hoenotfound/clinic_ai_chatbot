@@ -122,7 +122,14 @@ async function resolvePricePromotionForReply({
       // just the current reply language, before the normal 24-hour cooldown.
       // An unresolved option holds the *whole* package selection so a
       // two-package offer cannot be sent as a misleading partial bundle.
-      if (await hasUnconfirmedMediaDelivery(contactId, variant.imageUrl)) {
+      try {
+        if (await hasUnconfirmedMediaDelivery(contactId, variant.imageUrl)) {
+          return null;
+        }
+      } catch (error) {
+        // This is optional sales media; an unavailable receipt lookup must
+        // not fail the already-accepted AI text reply or permit a duplicate.
+        console.warn("Skipping promotional images: delivery verification unavailable", error);
         return null;
       }
       if (
