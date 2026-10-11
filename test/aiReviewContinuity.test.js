@@ -107,7 +107,11 @@ test("review-only question is persisted and notified exactly once without takeov
     alertCount += 1;
     return { status: "sent" };
   };
-  pushes.sendContactAlertBestEffort = () => { pushCount += 1; };
+  pushes.sendContactAlertBestEffort = ({ contactId, type }) => {
+    assert.equal(contactId, 37);
+    assert.equal(type, "ai_review", "routine questions must not use urgent PWA messaging");
+    pushCount += 1;
+  };
   const result = await contactsRepo.setAiReviewAttention(37, 88, "Can I pay with card?", "information");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(result.mode, "ai");
