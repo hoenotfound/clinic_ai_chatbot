@@ -460,6 +460,7 @@ test("consent-only CTWA first message never unlocks promotional or results media
   const { explicitServiceNamedByCustomer } = require("../src/utils/resultMediaTrigger");
   const media = [{
     service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    autoSendCount: 2,
     items: [
       { imageUrl: "/api/config/result-media/image/11", caption: "Before" },
       { imageUrl: "/api/config/result-media/image/12", caption: "After" },
