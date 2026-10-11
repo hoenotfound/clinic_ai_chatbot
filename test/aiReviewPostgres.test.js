@@ -320,6 +320,57 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
       'Follow-up automation','read',true)`);
     const automationNotStaff = await contacts.returnToAi(1);
     assert.equal(automationNotStaff, null, 'automation is not proof of a staff answer');
+
+    // A staff reply Meta accepted but has not delivered yet is a valid answer
+    // anchor; the provider ID is essential. An unsent draft with the exact
+    // same status is never sufficient.
+    await client.query(`UPDATE contacts SET mode='human', takeover_by='staff',
+      takeover_at=now() + interval '11 minutes',
+      attention_reason='AI handed off this conversation.' WHERE id=1`);
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,delivery_status)
+      VALUES (27,1,'assistant','Unaccepted draft',
+        now() + interval '12 minutes','staff','pending')`);
+    assert.equal(await contacts.returnToAi(1), null);
+    await client.query(`UPDATE messages SET whatsapp_message_id='wamid.accepted.27'
+      WHERE id=27`);
+    const acceptedPending = await contacts.returnToAi(1);
+    assert.equal(acceptedPending.mode,'ai');
+    assert.equal(acceptedPending.needs_attention,false);
+
+    // A pending information-only review must not disguise an unanswered
+    // explicit customer request for a real person. The handoff itself stays
+    // unresolved and follow-ups remain blocked even though the review category
+    // by itself would ordinarily be allowed.
+    await contacts.setAiReviewAttention(1,20,'Unclear voice note','information');
+    await client.query(`UPDATE contacts SET mode='human', takeover_by='staff',
+      takeover_at=now() + interval '13 minutes',
+      needs_attention=true, attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const infoCannotMaskHandoff = await contacts.returnToAi(1);
+    assert.equal(infoCannotMaskHandoff,null);
+    const preserved = (await client.query(`SELECT mode,attention_reason
+      FROM contacts WHERE id=1`)).rows[0];
+    assert.equal(preserved.mode,'human');
+    assert.equal(preserved.attention_reason,'AI handed off this conversation.');
+    assert.equal((await client.query(`SELECT ${followUpAttentionAllowedSql('c')}
+      AS allowed FROM contacts c WHERE id=1`)).rows[0].allowed,false);
+
+    // A stale browser action cannot override a newer staff takeover even if
+    // its earlier state would otherwise permit returning to AI.
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,
+       whatsapp_message_id,delivery_status)
+      VALUES (28,1,'assistant','Confirmed resolution',
+        now() + interval '14 minutes','staff','wamid.accepted.28','pending')`);
+    await contacts.dismissAttentionAndReviews(1);
+    await client.query(`UPDATE contacts SET needs_attention=true,
+      attention_reason='AI handed off this conversation.' WHERE id=1`);
+    const staleReturn = await contacts.returnToAi(1, '2026-01-01T00:00:00.000Z');
+    assert.equal(staleReturn,null);
+    assert.equal((await client.query('SELECT mode FROM contacts WHERE id=1')).rows[0].mode,'human');
+    const resolvedAfterReview = await contacts.returnToAi(1);
+    assert.equal(resolvedAfterReview.mode,'ai');
+    assert.equal(resolvedAfterReview.needs_attention,false);
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
