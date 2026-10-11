@@ -268,6 +268,18 @@ test(
         trigger_message_id: handoffAnchor.rows[0].id,
       }]);
       assert.ok(handoffInbound.rows[0].id < handoffAnchor.rows[0].id);
+
+      // A Meta Page staff echo confirms sending, not resolution of a
+      // genuine customer staff request. Keep the alert until staff resolves it.
+      await client.query(`UPDATE contacts SET needs_attention=true,
+        attention_reason='AI handed off this conversation.' WHERE id=$1`, [contactId]);
+      const stillUnresolved = await metaStaffEchoRepo.persistStaffEchoIfNew(
+        contactId, "Checking with the clinic", "instagram:ig-unresolved-4",
+        "Instagram", "AI handoff", client
+      );
+      assert.equal(stillUnresolved.contact.needs_attention, true);
+      assert.equal(stillUnresolved.contact.attention_reason,
+        "AI handed off this conversation.");
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client
