@@ -20,7 +20,12 @@ test("global reply pause preserves deterministic human handoff before returning"
 
   const block = serverSource.slice(start, end);
   assert.match(block, /if \(keywordReason\)/);
-  assert.match(block, /pauseAiForHumanHandoff\(contact\.id, keywordReason\)/);
+  // Verify both safety and standard handoff reasons in the new guarded call.
+  // An ordinary handoff must retain the exact legacy reason recognised by
+  // PR #304, while safety warnings keep their original urgent reason.
+  assert.match(block, /keywordReason === URGENT_SAFETY_REASON/);
+  assert.match(block, /isActiveSafetyConcern\(text\)/);
+  assert.match(block, /pauseAiForHumanHandoff\(\s*contact\.id,\s*medicalConcern \? keywordReason : "AI handed off this conversation\."\s*\)/);
 
   const handoffIndex = block.indexOf("pauseAiForHumanHandoff");
   const returnIndex = block.indexOf("return { wasFirstMessage, keywordReason }");
