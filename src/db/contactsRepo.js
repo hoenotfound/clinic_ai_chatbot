@@ -621,7 +621,7 @@ async function clearStaffAssistStateIfUnchanged(contact) {
      SET needs_attention = EXISTS (
            SELECT 1 FROM ai_review_items r
            WHERE r.contact_id = contacts.id AND r.status = 'pending'
-         ) OR (needs_attention AND attention_reason LIKE 'AI review requested:%'),
+         ) OR COALESCE(needs_attention AND attention_reason LIKE 'AI review requested:%', false),
          attention_reason = CASE
            WHEN EXISTS (
              SELECT 1 FROM ai_review_items r
@@ -760,7 +760,7 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
     "AI review",
     updated.id
   );
-  notifyWebPush(updated.id, "human_intervention");
+  notifyWebPush(updated.id, "ai_review");
   return updated;
 }
 
