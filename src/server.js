@@ -1125,6 +1125,22 @@ async function processIncomingMessage(
     // price or available packages for one known configured service. Existing
     // safety/ownership gates remain unchanged.
     let automaticPromoMediaSent = 0;
+    // Promo sends can stop the post-reply sequence before the optional result
+    // block is reached. Keep those exit reasons in the same staff-only audit.
+    const auditResultMediaEarlyExit = async (reason) => {
+      try {
+        await resultMediaDecisionRepo.recordDecision({
+          contactId: contact.id,
+          inboundMessageId: savedInbound.id,
+          status: "skipped",
+          reason,
+          promotionCount: automaticPromoMediaSent,
+        });
+      } catch (auditError) {
+        console.warn(`[Result media] early audit failed for contact ${contact.id}:`, auditError);
+      }
+      console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
+    };
     {
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
@@ -1153,11 +1169,13 @@ async function processIncomingMessage(
           // Re-check ownership and attention before every package so a staff
           // takeover between Package A and B stops the remaining automation.
           if (!promoContact || !(await contactsRepo.canSendAutomaticReviewMedia(promoContact.id))) {
+            await auditResultMediaEarlyExit("staff_review_or_takeover");
             return { wasFirstMessage, keywordReason };
           }
           contact = promoContact;
 
           if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+            await auditResultMediaEarlyExit("reply_window_or_staff_cancellation");
             return { wasFirstMessage, keywordReason };
           }
 
@@ -1190,6 +1208,7 @@ async function processIncomingMessage(
 
           if (promoResult.cancelled) {
             await messagesRepo.deleteUnsentAssistantMessage(savedPromo.id);
+            await auditResultMediaEarlyExit("reply_window_or_staff_cancellation");
             return { wasFirstMessage, keywordReason };
           }
 
@@ -1219,6 +1238,7 @@ async function processIncomingMessage(
               contact.id,
               `Delivery failed: ${publicDeliveryError(promoError)}`
             );
+            await auditResultMediaEarlyExit("promotion_delivery_failed");
             return { wasFirstMessage, keywordReason };
           }
           automaticPromoMediaSent += 1;
