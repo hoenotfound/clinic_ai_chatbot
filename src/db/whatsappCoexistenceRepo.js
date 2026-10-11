@@ -146,8 +146,8 @@ async function persistStaffEchoIfNew(
            -- until a deliberate staff resolution action.
            needs_attention = CASE
              WHEN contacts.mode = 'human' AND contacts.needs_attention = true
-               AND (contacts.attention_reason IS NULL
-                 OR contacts.attention_reason NOT LIKE 'AI review requested:%')
+               AND contacts.attention_reason IS NOT NULL
+               AND contacts.attention_reason NOT LIKE 'AI review requested:%'
              THEN true
              ELSE EXISTS (
                SELECT 1 FROM ai_review_items r
@@ -156,8 +156,8 @@ async function persistStaffEchoIfNew(
            END,
            attention_reason = CASE
              WHEN contacts.mode = 'human' AND contacts.needs_attention = true
-               AND (contacts.attention_reason IS NULL
-                 OR contacts.attention_reason NOT LIKE 'AI review requested:%')
+               AND contacts.attention_reason IS NOT NULL
+               AND contacts.attention_reason NOT LIKE 'AI review requested:%'
              THEN contacts.attention_reason
              WHEN EXISTS (
                SELECT 1 FROM ai_review_items r
