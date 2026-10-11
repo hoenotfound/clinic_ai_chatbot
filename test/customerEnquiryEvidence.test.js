@@ -5,6 +5,7 @@ const {
   hasCustomerPriceEnquiry,
   hasCustomerServiceEnquiry,
   isContextualAdServiceEnquiry,
+  isFollowUpConsentEnquiry,
 } = require("../src/utils/customerEnquiryEvidence");
 
 test("customer enquiry evidence rejects greetings, acknowledgements and admin-only turns", () => {
@@ -180,4 +181,28 @@ test("contextual Meta-ad enquiries are narrowly identified, independently of tre
     "What is your address?", "Can I get more info on your pricing?",
     "What treatment is this?", "I would like to know more about 3D 小颜术",
   ]) assert.equal(isContextualAdServiceEnquiry(text), false, text);
+});
+
+test("CTWA promotional consent does not itself request pricing or result images", () => {
+  const consent = [
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+    "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi! I'm interested in pelvic treatment. I'd also like to receive WhatsApp follow-ups and offers.",
+    "Saya berminat rawatan pelvis. Boleh WhatsApp saya untuk susulan dan promosi berkaitan.",
+  ];
+  for (const text of consent) {
+    assert.equal(isFollowUpConsentEnquiry(text), true, text);
+    assert.equal(hasCustomerPriceEnquiry(text), false, text);
+    assert.equal(hasCustomerServiceEnquiry(text), true, text);
+  }
+  const realRequests = [
+    "现在骨盆调理多少钱？",
+    "有优惠吗？现在配套多少钱？",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。现在多少钱？",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。可以看效果图吗？",
+    "I'm interested in pelvic treatment. Do you have offers right now?",
+  ];
+  for (const text of realRequests) assert.equal(isFollowUpConsentEnquiry(text), false, text);
+  assert.equal(hasCustomerPriceEnquiry(realRequests[2]), true);
+  assert.equal(hasCustomerPriceEnquiry("现在骨盆调理多少钱？"), true);
 });
