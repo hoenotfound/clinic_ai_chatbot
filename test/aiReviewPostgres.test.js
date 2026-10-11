@@ -310,6 +310,19 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     const oldFailure = await contacts.returnToAi(1);
     assert.equal(oldFailure.needs_attention,false);
     assert.equal(oldFailure.attention_reason,null);
+
+    // A successful automated follow-up is not a real staff answer and cannot
+    // clear a newer handoff even if it carries a synthetic sender username.
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      takeover_at=now() + interval '9 minutes',needs_attention=true,
+      attention_reason='AI handed off this conversation.' WHERE id=1`);
+    await client.query(`INSERT INTO messages
+      (id,contact_id,role,content,created_at,sent_by_username,delivery_status,is_automated_follow_up)
+      VALUES (26,1,'assistant','Automated reminder',now() + interval '10 minutes',
+      'Follow-up automation','read',true)`);
+    const automationNotStaff = await contacts.returnToAi(1);
+    assert.equal(automationNotStaff.needs_attention,true);
+    assert.equal(automationNotStaff.attention_reason,'AI handed off this conversation.');
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
