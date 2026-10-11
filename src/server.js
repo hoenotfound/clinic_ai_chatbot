@@ -806,8 +806,11 @@ async function processIncomingMessage(
     );
     if (staffAlreadyReplied) {
       // A live staff assist answers this turn without permanently taking over.
-      // Staff already answered this exact turn. Do not send another
-      // acknowledgement or forcibly take back ownership.
+      // Avoid a duplicate customer reply. Urgent safety still locks ownership
+      // until staff explicitly releases it, even when staff answered quickly.
+      if (keywordReason === URGENT_SAFETY_REASON) {
+        await pauseAiForHumanHandoff(contact.id, keywordReason);
+      }
       console.log(
         `Skipping AI reply for ${channel}:${from} — staff already answered this customer turn.`
       );
@@ -829,15 +832,17 @@ async function processIncomingMessage(
     }
 
     if (!automatedRepliesEnabled()) {
-      // Pausing automation never conceals a safety or staff request.
-      if (keywordReason === URGENT_SAFETY_REASON ||
-          isActiveSafetyConcern(text) || isExplicitStaffRequest(text)) {
-        const pausedContact = await pauseAiForHumanHandoff(contact.id, keywordReason);
-        if (pausedContact) contact = pausedContact;
-      } else if (keywordReason) {
-        await contactsRepo.setAiReviewAttention(
-          contact.id, savedInbound.id, String(text || keywordReason).slice(0, 350), "clinical"
+      // Even with replies globally disabled, every deterministic safety,
+      // complaint and human-request keyword must alert staff. Use the legacy
+      // recovery reason only for nonmedical takeovers (PR #304).
+      if (keywordReason) {
+        const medicalConcern = keywordReason === URGENT_SAFETY_REASON ||
+          isActiveSafetyConcern(text);
+        const pausedContact = await pauseAiForHumanHandoff(
+          contact.id,
+          medicalConcern ? keywordReason : "AI handed off this conversation."
         );
+        if (pausedContact) contact = pausedContact;
       }
       console.log(`Skipping AI reply for ${channel}:${from} — automated replies are globally paused.`);
       return { wasFirstMessage, keywordReason };
