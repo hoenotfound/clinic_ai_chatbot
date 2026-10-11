@@ -8,6 +8,7 @@ const {
   normalizeMediaTranslations,
   resolveLocalizedMedia,
 } = require("./mediaLocalization");
+const { EXPLICIT_TREATMENT_INTEREST } = require("./resultMediaPacing");
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
 const RESULT_MEDIA_TRIGGER_MODES = new Set(["off", "price_only", "service_enquiry"]);
 const SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
@@ -21,6 +22,25 @@ function normalizeResultMediaTriggerMode(entry) {
 
 function normalizeServiceName(value) {
   return String(value || "").trim().toLocaleLowerCase();
+}
+
+// The customer's current words are stronger evidence than a model intent
+// flag. Require exactly one configured service literally named in that turn,
+// plus explicit treatment interest; do not use CRM interest or ad names here.
+function explicitServiceNamedByCustomer(resultMedia, customerText) {
+  if (!EXPLICIT_TREATMENT_INTEREST.test(String(customerText || "")) ||
+      !Array.isArray(resultMedia)) return null;
+  const comparable = (value) => String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\\s\\p{P}\\p{S}]+/gu, "");
+  const words = comparable(customerText);
+  const matches = resultMedia.filter((entry) => {
+    const service = comparable(entry?.service);
+    return entry?.enabled === true && service.length >= 3 &&
+      normalizeResultMediaTriggerMode(entry) !== "off" && words.includes(service);
+  });
+  return matches.length === 1 ? String(matches[0].service).trim() : null;
 }
 
 function matchingResultMediaSet(resultMedia, treatment) {
@@ -173,7 +193,9 @@ async function resolveResultMediaForReply({
     return skip("contextual_ad_history_unverified_or_not_early");
   }
 
-  const effectiveTreatment = treatment || (contextualAdEnquiry ? metaAdCreativeService : null);
+  const directlyNamedTreatment = explicitServiceNamedByCustomer(resultMedia, customerText);
+  const effectiveTreatment = directlyNamedTreatment || treatment ||
+    (contextualAdEnquiry ? metaAdCreativeService : null);
   if (!effectiveTreatment) return skip("no_verified_treatment");
   const resultSet = matchingResultMediaSet(resultMedia, effectiveTreatment);
   if (!resultSet) return skip("no_matching_enabled_result_media");
@@ -199,10 +221,10 @@ async function resolveResultMediaForReply({
   const metaAdSourceVerified =
     serviceQuerySource !== "meta_ad" || verifiedCreativeService;
   const trustedServiceQuery =
-    serviceQuery === true && sourceIsTrusted && metaAdSourceVerified;
+    serviceQuery === true && sourceIsTrusted && (metaAdSourceVerified || !!directlyNamedTreatment);
 
   // Mismatched or unverified Meta source cannot bypass any trigger mode.
-  if (serviceQuerySource === "meta_ad" && !metaAdSourceVerified) {
+  if (serviceQuerySource === "meta_ad" && !metaAdSourceVerified && !directlyNamedTreatment) {
     return skip("meta_creative_conflicts_with_ai");
   }
 
@@ -213,7 +235,7 @@ async function resolveResultMediaForReply({
     contextualAdEnquiry && verifiedCreativeService;
   const intentEligible =
     resultSet.triggerMode === "service_enquiry"
-      ? trustedServiceQuery || verifiedAdFallback
+      ? trustedServiceQuery || verifiedAdFallback || !!directlyNamedTreatment
       : priceQuery === true;
   if (!intentEligible) return skip("structured_service_intent_not_verified");
 
@@ -247,7 +269,8 @@ async function resolveResultMediaForReply({
   return {
     service: resultSet.service,
     triggerMode: resultSet.triggerMode,
-    serviceQuerySource: verifiedAdFallback ? "meta_ad" : trustedServiceQuery ? serviceQuerySource : null,
+    serviceQuerySource: directlyNamedTreatment ? "customer_message"
+      : verifiedAdFallback ? "meta_ad" : trustedServiceQuery ? serviceQuerySource : null,
     items: rotatedItems
       .slice(0, resultSet.autoSendCount)
       .map((item) => resolveLocalizedMedia(item, language)),
@@ -262,6 +285,7 @@ module.exports = {
   normalizeResultMediaTriggerMode,
   itemImageUrls,
   matchingResultMediaSet,
+  explicitServiceNamedByCustomer,
   mediaIdentity,
   rotateAfter,
   resolveResultMediaForReply,
