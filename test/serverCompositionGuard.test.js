@@ -151,11 +151,11 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
   // the final 500 characters preceding resolveResultMediaForReply.
   assert.doesNotMatch(
     serverSource.slice(promoResolveAt, resultResolveAt),
-    /if \\(automaticPromoMediaSent <= 1\\)/
+    /if \(automaticPromoMediaSent <= 1\)/
   );
-  assert.match(serverSource, /planResultMediaPacing\\(\\{/);
-  assert.match(serverSource, /resultMediaDecisionRepo\\.recordDecision\\(\\{/);
-  assert.match(serverSource, /pauseBeforeResultMedia\\(RESULT_MEDIA_SEND_SPACING_MS\\)/);
+  assert.match(serverSource, /planResultMediaPacing\(\{/);
+  assert.match(serverSource, /resultMediaDecisionRepo\.recordDecision\(\{/);
+  assert.match(serverSource, /pauseBeforeResultMedia\(RESULT_MEDIA_SEND_SPACING_MS\)/);
 
   const promoCall = serverSource.slice(promoResolveAt, resultResolveAt);
   const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 1200);
