@@ -81,7 +81,7 @@ function qualifiedTreatmentMentions(namedServices, customerText) {
   const text = String(customerText || "");
   if (!postpartum || !pelvic ||
       !/(?:产后|產後)\s*(?:的)?\s*(?:骨盆|骨盘|骨盤)|\b(?:postpartum|postnatal)\s+(?:pelvic|pelvis)\b/iu.test(text) ||
-      /(?:产后调理|產後調理)|(?:分别|分別|比较|比較|区别|區別|差别|差別|哪个|哪個|两种|兩種|和|与|與|以及|\b(?:or|versus|vs|compare|comparison|difference|better|and|atau|beza)\b)/iu.test(text)) {
+      /(?:产后调理|產後調理)|(?:分别|分別|比较|比較|区别|區別|差别|差別|哪个|哪個|两种|兩種|\b(?:or|versus|vs|compare|comparison|difference|better|atau|beza)\b)/iu.test(text)) {
     return names;
   }
   return [pelvic];
