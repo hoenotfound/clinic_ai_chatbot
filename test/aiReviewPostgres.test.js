@@ -28,7 +28,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
         needs_attention boolean default false, attention_reason text,
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
-        role text, content text);
+        role text, content text, delivery_status text);
     `);
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/064_ai_review_items.sql"), "utf8"));
@@ -136,6 +136,40 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     assert.equal(notified,3);
     const current = await client.query("SELECT count(*)::int AS n FROM ai_review_items WHERE status='pending'");
     assert.equal(current.rows[0].n,1);
+
+    // Resolving review questions must not dismiss a separate booking/staff issue.
+    await client.query(`UPDATE contacts
+      SET needs_attention=true, attention_reason='Booking Ready: Staff must confirm'
+      WHERE id=1`);
+    const preservedBooking = await contacts.dismissAttentionAndReviews(1);
+    assert.equal(preservedBooking.needs_attention, true);
+    assert.equal(preservedBooking.attention_reason, "Booking Ready: Staff must confirm");
+    assert.equal((await client.query("SELECT COUNT(*)::int AS n FROM ai_review_items WHERE status='pending'")).rows[0].n, 0);
+    // A subsequent explicit attention dismissal (with no reviews left) still works.
+    const dismissedBooking = await contacts.dismissAttentionAndReviews(1);
+    assert.equal(dismissedBooking.needs_attention, false);
+    assert.equal(dismissedBooking.attention_reason, null);
+
+    // A previously failed send must remain visible even when the contact-level
+    // reason was an AI review, instead of silently disappearing on bulk dismissal.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,content,delivery_status) VALUES
+        (13,1,'user','Does your clinic accept online booking?',null),
+        (14,1,'assistant','Missed image','failed');
+    `);
+    await contacts.setAiReviewAttention(1,13,"Booking questions?","information");
+    const preservedFailure = await contacts.dismissAttentionAndReviews(1);
+    assert.equal(preservedFailure.needs_attention, true);
+    assert.match(preservedFailure.attention_reason, /Delivery failed/);
+
+    // Legacy rows can have a true attention flag with a missing reason.
+    // The staff-assist cleanup must never assign SQL NULL to needs_attention.
+    await client.query(`UPDATE contacts SET needs_attention=true,
+      attention_reason=NULL,updated_at=date_trunc('milliseconds',now()) WHERE id=1`);
+    const inconsistentContact = (await client.query("SELECT * FROM contacts WHERE id=1")).rows[0];
+    const cleanedLegacy = await contacts.clearStaffAssistStateIfUnchanged(inconsistentContact);
+    assert.equal(cleanedLegacy.needs_attention, false);
+    assert.equal(cleanedLegacy.attention_reason, null);
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
