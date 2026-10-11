@@ -1159,6 +1159,7 @@ async function processIncomingMessage(
         language: mediaLanguage,
         contactId: contact.id,
         wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
+        hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
       });
       if (promoBundle) {
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
