@@ -57,6 +57,7 @@ async function resolvePricePromotionForReply({
   language = "en",
   contactId,
   wasPromoRecentlySent,
+  hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
 }) {
   if (
@@ -105,7 +106,10 @@ async function resolvePricePromotionForReply({
     : genericBundle;
   if (!bundle) return null;
 
-  if (typeof wasPromoRecentlySent !== "function" || !contactId) {
+  // Missing verification must never mean permission to retry a possibly
+  // accepted image. Keep the AI text reply independent of this optional send.
+  if (typeof wasPromoRecentlySent !== "function" ||
+      typeof hasUnconfirmedMediaDelivery !== "function" || !contactId) {
     return null;
   }
 
@@ -113,6 +117,14 @@ async function resolvePricePromotionForReply({
   for (const packageOption of bundle.packages) {
     let recentlySent = false;
     for (const variant of mediaVariants(packageOption)) {
+      // The provider may have accepted an earlier send even when no delivery
+      // receipt was persisted. Check every configured language variant, not
+      // just the current reply language, before the normal 24-hour cooldown.
+      // An unresolved option holds the *whole* package selection so a
+      // two-package offer cannot be sent as a misleading partial bundle.
+      if (await hasUnconfirmedMediaDelivery(contactId, variant.imageUrl)) {
+        return null;
+      }
       if (
         await wasPromoRecentlySent(
           contactId,
