@@ -25,7 +25,7 @@ const RECENT_POSTPARTUM_RISK =
 // 7+ days, Chinese numerals and months are not accidentally treated as safe.
 // This is a conservative optional-media rule, not a medical eligibility claim.
 const POSTPARTUM_CONTEXT = /(?:产后|產後|生产后|生產後|生完|生产|生產|分娩|postpartum|postnatal|after\s+(?:giving\s+birth|childbirth|delivery)|gave\s+birth|bersalin|melahirkan)/iu;
-const POSTPARTUM_DURATION = /(?<amount>\d{1,3}|[一二两兩三四五六七八九十]+|半)(?:个|個)?\s*(?<unit>个月|個月|天|日|周|週|星期|月|days?|weeks?|months?|hari|minggu|bulan)\b?/giu;
+const POSTPARTUM_DURATION = /(?<amount>\d{1,3}|[一二两兩三四五六七八九十]+|半)(?:个|個)?\s*(?<unit>个月|個月|天|日|周|週|星期|月|days?|weeks?|months?|hari|minggu|bulan)/giu;
 function postpartumAmount(raw) {
   const amount = String(raw || "").trim();
   if (/^\d{1,3}$/.test(amount)) return Number(amount);
