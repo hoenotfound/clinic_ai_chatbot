@@ -374,6 +374,26 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
     const resolvedAfterReview = await contacts.returnToAi(1);
     assert.equal(resolvedAfterReview.mode,'ai');
     assert.equal(resolvedAfterReview.needs_attention,false);
+
+    // Staff Assist is invoked before an Inbox message is sent to Meta. It
+    // must not silently dismiss a genuine handoff just because the draft was
+    // stored; staff still needs to confirm the actual customer resolution.
+    await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
+      needs_attention=true,attention_reason='AI handed off this conversation.',
+      updated_at=date_trunc('milliseconds',now()) WHERE id=1`);
+    const unansweredSnapshot = (await client.query(
+      'SELECT * FROM contacts WHERE id=1'
+    )).rows[0];
+    const prematureCleanup = await contacts.clearStaffAssistStateIfUnchanged(
+      unansweredSnapshot
+    );
+    assert.equal(prematureCleanup, null);
+    const stillAwaiting = (await client.query(
+      'SELECT mode,needs_attention,attention_reason FROM contacts WHERE id=1'
+    )).rows[0];
+    assert.equal(stillAwaiting.mode, 'human');
+    assert.equal(stillAwaiting.needs_attention, true);
+    assert.equal(stillAwaiting.attention_reason, 'AI handed off this conversation.');
   } finally {
     pool.query = oldQuery;
     telegram.sendAiReviewAlert = oldTelegram;
