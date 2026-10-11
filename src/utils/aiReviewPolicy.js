@@ -6,12 +6,18 @@ const CLINICAL_QUESTION = /\b(?:pregnan\w*|breastfeed\w*|postpartum|c[.-]?sectio
 
 const MEDICAL_HISTORY = /\b(?:diabet(?:es|ic)|cancer|hypertension|high blood pressure|pcos|polycystic|thyroid|heart disease|kidney disease|kencing manis|darah tinggi|kanser|buah pinggang|sakit jantung)\b|(?:糖尿病|高血压|高血壓|癌症|多囊卵巢|心脏病|心臟病|肾病|腎病)/iu;
 
-// A missing or incorrect AI outcome flag must not authorize unsolicited
-// sales images when the current turn contains medical suitability/risk context.
-// Use exactly the existing conservative clinical-review vocabulary.
+// This is a separate media-only gate. The broader AI review classifier
+// includes terms such as "子宫" for cautious staff triage. An ordinary price
+// enquiry for a configured "子宫套餐" is not itself a contraindication and
+// must not be blocked merely because the package name sounds clinical.
+const CLINICAL_MEDIA_RED_FLAGS =
+  /\b(?:pregnan\w*|breastfeed\w*|postpartum|c[.-]?section\w*|surgery|surgical|operation|procedure\w*|suitab\w*|safe(?:ty)?|risk\w*|pain\w*|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|after treatment|after surgery|just had|recent procedure|can i do|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|產後|产后|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|安全|適合|适合|疼痛|流血|出血|尿失禁|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|整骨風險|整骨风险|坐月子|可以做吗|可以做嗎|能做吗|能做嗎)|\b(?:hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|kesan sampingan)\b/iu;
+
+// If AI misses a clinical outcome flag, images still fail closed here. Keep
+// this separate from review categorization, which has different purposes.
 function hasClinicalMediaRisk(customerText) {
   const value = String(customerText || "");
-  return CLINICAL_QUESTION.test(value) ||
+  return CLINICAL_MEDIA_RED_FLAGS.test(value) ||
     CLINICAL_PROCEDURE_TIMING.test(value) ||
     MEDICAL_HISTORY.test(value) ||
     Boolean(checkKeywordTriggers(value));
