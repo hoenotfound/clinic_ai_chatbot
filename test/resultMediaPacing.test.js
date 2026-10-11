@@ -319,3 +319,93 @@ test("unique configured aliases recover missing AI intent without ad-name guesse
     getMostRecentlySentMediaUrl: async () => null,
   }), null);
 });
+
+
+test("postpartum pelvic sales interest is one service, but recent birth and comparisons stay safe", async () => {
+  const { hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+  const { qualifiedTreatmentMentions } = require("../src/utils/resultMediaTrigger");
+  const media = [{ service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    items: [{ imageUrl: "https://example.test/result.jpg", caption: "Pelvic proof" }] }];
+  const services = [{ name: "骨盆调理" }, { name: "产后调理" }];
+  const serviceAliases = [
+    { alias: "骨盆", officialService: "骨盆调理" },
+    { alias: "产后", officialService: "产后调理" },
+  ];
+  for (const customerText of [
+    "我想了解产后骨盆调理，有优惠吗？",
+    "产后骨盆调理现在RM288吗？",
+    "I'm interested in postpartum pelvic treatment and its price",
+  ]) {
+    assert.equal(hasClinicalMediaRisk(customerText), false, customerText);
+    const chosen = await resolveResultMediaForReply({
+      customerText, resultMedia: media, services, serviceAliases,
+      serviceQuery: false, serviceQuerySource: null, treatment: null,
+      priceQuery: false, flagged: false, bookingReady: false, keywordReason: null,
+      needsAttention: false, textSendSucceeded: true, contactId: 5,
+      wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(chosen?.service, "骨盆调理", customerText);
+  }
+  for (const customerText of [
+    "我刚刚生产，想了解产后骨盆调理优惠",
+    "产后两周想了解骨盆调理价格",
+    "I recently gave birth and want postpartum pelvic treatment",
+    "Saya baru lepas bersalin, nak rawatan pelvis",
+  ]) {
+    assert.equal(hasClinicalMediaRisk(customerText), true, customerText);
+  }
+  const twoDistinct = ["产后调理", "骨盆调理"];
+  assert.deepEqual(
+    qualifiedTreatmentMentions(twoDistinct, "我想了解产后调理和骨盆调理，两个有什么分别？"),
+    twoDistinct
+  );
+  assert.deepEqual(
+    qualifiedTreatmentMentions(twoDistinct, "产后骨盆调理有优惠吗？"),
+    ["骨盆调理"]
+  );
+  const rejected = [];
+  assert.equal(await resolveResultMediaForReply({
+    customerText: "我想了解产后调理和骨盆调理，两个有什么分别？",
+    resultMedia: media, services, serviceAliases,
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    treatment: "骨盆调理", priceQuery: false,
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true, contactId: 5,
+    wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+    onSkip: reason => rejected.push(reason),
+  }), null);
+  assert.equal(rejected.at(-1), "multiple_treatments_ambiguous");
+});
+
+test("unknown/unsent result media holds suppress all automatic retries regardless of cooldown", async () => {
+  const urls = ["https://example.test/result1.jpg", "https://example.test/result2.jpg"];
+  const media = [{service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    items: urls.map((imageUrl) => ({imageUrl, caption: "Before & After"}))}];
+  let recentlyAcceptedLookups = 0;
+  let heldReason = null;
+  const chosen = await resolveResultMediaForReply({
+    customerText: "我想了解骨盆调理", resultMedia: media,
+    serviceQuery: true, serviceQuerySource: "customer_message", treatment: "骨盆调理",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true, contactId: 12,
+    wasMediaRecentlySent: async () => { recentlyAcceptedLookups++; return false; },
+    hasUnconfirmedMediaDelivery: async (_contactId, url) => url === urls[0],
+    getMostRecentlySentMediaUrl: async () => null,
+    onSkip: reason => { heldReason = reason; },
+  });
+  assert.equal(chosen, null);
+  assert.equal(heldReason, "result_media_delivery_unconfirmed");
+  assert.equal(recentlyAcceptedLookups, 0);
+  assert.equal(await resolveResultMediaForReply({
+    customerText: "我想了解骨盆调理", resultMedia: media,
+    serviceQuery: true, serviceQuerySource: "customer_message", treatment: "骨盆调理",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true, contactId: 12,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  }), null, "missing unresolved-send verifier must fail closed");
+});
