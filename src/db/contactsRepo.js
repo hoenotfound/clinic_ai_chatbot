@@ -592,6 +592,8 @@ async function returnToAi(id) {
         AND staff_reply.role = 'assistant'
         AND staff_reply.sent_by_username IS NOT NULL
         AND staff_reply.delivery_status IN ('sent', 'delivered', 'read')
+        -- A staff reply from before the handoff cannot resolve a later issue.
+        AND (c.takeover_at IS NULL OR staff_reply.created_at >= c.takeover_at)
         AND staff_reply.created_at > COALESCE((
           SELECT MAX(inbound.created_at) FROM messages inbound
           WHERE inbound.contact_id = c.id AND inbound.role = 'user'
