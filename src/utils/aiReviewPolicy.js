@@ -53,6 +53,11 @@ function hasRecentPostpartumInterval(customerText) {
     const before = value.slice(Math.max(0, match.index - 22), match.index);
     const after = value.slice(match.index + match[0].length,
       match.index + match[0].length + 28);
+    // A "3个月疗程" describes the service/package duration, not the
+    // customer's age since childbirth.
+    if (/^\s*(?:疗程|療程|课程|課程|配套|套餐|treatment\s+course|packages?)/iu.test(after)) {
+      continue;
+    }
     const closeBefore = POSTPARTUM_CONTEXT.exec(before);
     if (closeBefore && !/(?:疗程|療程|套餐|配套|课程|課程|treatment\s+course|package)/iu.test(
       before.slice(closeBefore.index + closeBefore[0].length)
