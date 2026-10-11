@@ -15,6 +15,9 @@ const leadReengagementAlertService = require("./leadReengagementAlertService");
 function initialInboundText(incoming, config = clinicConfig) {
   const { customerLabel } = getOperationalLabels(config);
   if (incoming.unsupportedType) {
+    if (incoming.unsupportedType === "unsupported") {
+      return `📎 [${customerLabel} sent a WhatsApp message that could not be displayed]`;
+    }
     return `📎 [${customerLabel} sent an unsupported ${incoming.unsupportedType} message]`;
   }
   if (incoming.mediaType === "audio") return `🎤 [${customerLabel} sent a voice message]`;
