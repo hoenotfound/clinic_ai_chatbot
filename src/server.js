@@ -518,31 +518,12 @@ async function processIncomingMessage(
     }
 
     if (unsupportedType) {
+      // Meta diagnostics are kept for staff. No misleading customer reply.
       const label = channelMessaging.labelForChannel(channel);
-      await contactsRepo.setAttention(
-        contact.id,
-        true,
-        `Unsupported ${label} message (${unsupportedType}) needs staff review.`
-      );
-
-      if (!suppressAutoReply) {
-        const autoReplyContact = await getAiOwnedContact(contact, {
-          channel,
-          from,
-          reason: "unsupported-message fallback",
-          inboundMessageId: savedInbound.id,
-        });
-        if (autoReplyContact) {
-          contact = autoReplyContact;
-          responseAttempted = true;
-          await sendTrackedText(
-            contact,
-            "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂",
-            "system_fallback",
-            { canSend: canSendAutomatedReply, processingJobId }
-          );
-        }
-      }
+      const metaCode = incoming.unsupportedErrors?.[0]?.code;
+      const codeLabel = Number.isInteger(metaCode) ? ` (Meta code ${metaCode})` : "";
+      await contactsRepo.setAttention(contact.id, true,
+        `Unsupported ${label} message (${unsupportedType})${codeLabel} needs staff review.`);
       return { wasFirstMessage, keywordReason };
     }
 
@@ -580,24 +561,7 @@ async function processIncomingMessage(
           `A ${customerSingular} voice message could not be transcribed.`
         );
 
-        if (!suppressAutoReply) {
-          const autoReplyContact = await getAiOwnedContact(contact, {
-            channel,
-            from,
-            reason: "voice-transcription fallback",
-            inboundMessageId: savedInbound.id,
-          });
-          if (autoReplyContact) {
-            contact = autoReplyContact;
-            responseAttempted = true;
-            await sendTrackedText(
-              contact,
-              "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂",
-              "system_fallback",
-              { canSend: canSendAutomatedReply, processingJobId }
-            );
-          }
-        }
+        // Keep this unreadable attachment for staff; no automatic apology.
         return { wasFirstMessage, keywordReason };
       }
 
@@ -619,24 +583,7 @@ async function processIncomingMessage(
           `A ${customerSingular} photo could not be downloaded.`
         );
 
-        if (!suppressAutoReply) {
-          const autoReplyContact = await getAiOwnedContact(contact, {
-            channel,
-            from,
-            reason: "photo-download fallback",
-            inboundMessageId: savedInbound.id,
-          });
-          if (autoReplyContact) {
-            contact = autoReplyContact;
-            responseAttempted = true;
-            await sendTrackedText(
-              contact,
-              "Sorry, I couldn't load that photo — mind sending it again? 🙂",
-              "system_fallback",
-              { canSend: canSendAutomatedReply, processingJobId }
-            );
-          }
-        }
+        // Keep this unreadable attachment for staff; no automatic apology.
         return { wasFirstMessage, keywordReason };
       }
 
@@ -839,9 +786,8 @@ async function processIncomingMessage(
     );
     if (staffAlreadyReplied) {
       // A live staff assist answers this turn without permanently taking over.
-      // Deterministic safety/human-request triggers still pause AI ownership so
-      // an escalation cannot be accidentally cleared by an ordinary staff reply.
-      if (keywordReason) {
+      // Routine staff assists must not take AI ownership away.
+      if (keywordReason === URGENT_SAFETY_REASON) {
         const pausedContact = await pauseAiForHumanHandoff(contact.id, keywordReason);
         if (pausedContact) contact = pausedContact;
       }
@@ -859,13 +805,14 @@ async function processIncomingMessage(
     }
 
     if (!automatedRepliesEnabled()) {
-      // Pausing customer replies must not disable the deterministic safety
-      // net. Preserve the normal ownership transition and staff alert for any
-      // keyword that requires human review, but do not send a customer-facing
-      // handoff acknowledgement while the global switch is off.
-      if (keywordReason) {
+      // Global pause remains unchanged; only urgent safety pauses ownership.
+      if (keywordReason === URGENT_SAFETY_REASON) {
         const pausedContact = await pauseAiForHumanHandoff(contact.id, keywordReason);
         if (pausedContact) contact = pausedContact;
+      } else if (keywordReason) {
+        await contactsRepo.setAiReviewAttention(
+          contact.id, savedInbound.id, String(text || keywordReason).slice(0, 350), "clinical"
+        );
       }
       console.log(`Skipping AI reply for ${channel}:${from} — automated replies are globally paused.`);
       return { wasFirstMessage, keywordReason };
@@ -955,17 +902,12 @@ async function processIncomingMessage(
         details,
       } = parsedReply);
 
-      // Non-urgent deterministic handoff phrases remain a backstop if the model
-      // misses the staff-handoff outcome.
+      // Non-urgent keywords are silent staff reviews, never canned replies.
       if (keywordReason && (!flagged || reviewRequired)) {
         flagged = true;
-        reviewRequired = false;
+        reviewRequired = true;
         reviewType = null;
         bookingReady = false;
-        aiReply = fallbackHandoffReply(
-          text,
-          clinicConfig.escalation.handoffMessage
-        );
       }
     }
 
@@ -1011,21 +953,15 @@ async function processIncomingMessage(
     if (!aiReplyContact) return { wasFirstMessage, keywordReason };
     contact = aiReplyContact;
 
-    if (flagged && reviewRequired) {
-      // One unanswered question does not transfer the whole conversation.
-      // Keep the existing AI badge, but persist staff attention independently.
-      // If staff took over during generation, the final AI ownership guard
-      // below suppresses this late reply.
-      const reviewContact = await contactsRepo.setAiReviewAttention(
-        contact.id,
-        savedInbound.id,
+    if (flagged && !urgentSafety) {
+      // This issue belongs to staff, not a scripted customer apology. Keep AI
+      // ownership so the next unrelated enquiry is answered as normal.
+      await contactsRepo.setAiReviewAttention(
+        contact.id, savedInbound.id,
         String(text || "Unanswered customer question").slice(0, 350),
         categorizeAiReview(text, reviewType)
       );
-      if (!reviewContact || reviewContact.mode !== "ai") {
-        return { wasFirstMessage, keywordReason };
-      }
-      contact = reviewContact;
+      return { wasFirstMessage, keywordReason };
     } else if (flagged) {
       // Genuine takeover/safety events keep the existing strict staff pause.
       const pausedContact = await pauseAiForHumanHandoff(
@@ -1039,9 +975,8 @@ async function processIncomingMessage(
       contact = pendingHandoff;
     }
 
-    // The synthetic AI handoff is intentionally Staff mode, but the one
-    // customer-facing handoff acknowledgement is still allowed while that
-    // synthetic ownership remains unchanged. Normal replies require AI mode.
+    // Only urgent safety requires the synthetic Staff-mode acknowledgement.
+    // Ordinary reviews return above before this final send boundary.
     const finalSendContact = flagged && !reviewRequired
       ? await getPendingAiHandoffContact(contact.id)
       : await getAiOwnedContact(contact, {
@@ -1473,92 +1408,21 @@ async function processIncomingMessage(
 
     if (suppressAutoReply) {
       if (contact && savedInbound) {
-        try {
-          await contactsRepo.setAttention(
-            contact.id,
-            true,
-            "Message processing failed. A staff reply is needed."
-          );
-        } catch (attentionErr) {
-          console.error("Failed to flag the suppressed burst message after an error:", attentionErr);
-        }
-      }
-      return { wasFirstMessage, keywordReason };
-    }
-
-    if (contact && savedInbound) {
       try {
-        if (!automatedRepliesEnabled()) {
-          await pauseAiForHumanHandoff(
-            contact.id,
-            "Message processing failed. A staff reply is needed."
-          );
-          return { wasFirstMessage, keywordReason };
-        }
-
-        const fallbackContact = await getAiOwnedContact(contact, {
-          channel,
-          from,
-          reason: "processing-error fallback",
-          inboundMessageId: savedInbound.id,
-        });
-
-        if (!fallbackContact) {
-          await contactsRepo.setAttention(
-            contact.id,
-            true,
-            "Message processing failed. A staff reply is needed."
-          );
-          return { wasFirstMessage, keywordReason };
-        }
-
-        // Temporary AI-provider outages should not permanently hand the
-        // conversation to Staff mode. Flag the chat for attention and send the
-        // bounded fallback, but keep AI ownership so the next customer message
-        // can retry after Gemini/Claude recovers.
+        // The inbound turn is durable. Alert staff privately and preserve AI
+        // ownership, allowing the next customer question to be answered.
+        // Do not send a duplicate/unconfirmed error reply to the customer.
         if (ai.isRecoverableAiReplyFailure(err)) {
-          await contactsRepo.setTemporaryAiAttention(fallbackContact.id);
-          if (!responseAttempted) {
-            responseAttempted = true;
-            await sendTrackedText(
-              fallbackContact,
-              "Sorry, something went wrong on our end. A team member has been alerted — please try again shortly.",
-              "system_fallback",
-              { canSend: canSendAutomatedReply, processingJobId }
-            );
-          }
-          return { wasFirstMessage, keywordReason };
-        }
-
-        const pausedContact = await pauseAiForHumanHandoff(
-          fallbackContact.id,
-          "Message processing failed. A staff reply is needed."
-        );
-        if (!pausedContact) return { wasFirstMessage, keywordReason };
-
-        const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
-        if (!pendingHandoff) return { wasFirstMessage, keywordReason };
-
-        if (!responseAttempted) {
-          responseAttempted = true;
-          await sendTrackedText(
-            pendingHandoff,
-            "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
-            "system_fallback",
-            { canSend: canSendAutomatedReply, processingJobId }
+          await contactsRepo.setTemporaryAiAttention(contact.id);
+        } else {
+          await contactsRepo.setAiReviewAttention(
+            contact.id, savedInbound.id,
+            "Automated message processing failed. Staff should inspect this customer turn.",
+            "clinical"
           );
         }
-      } catch (fallbackErr) {
-        console.error("Failed to save or send the fallback message:", fallbackErr);
-        try {
-          await contactsRepo.setAttention(
-            contact.id,
-            true,
-            "Message processing failed. A staff reply is needed."
-          );
-        } catch (attentionErr) {
-          console.error("Failed to flag the conversation after fallback failure:", attentionErr);
-        }
+      } catch (attentionErr) {
+        console.error("Failed to flag the conversation after processing failure:", attentionErr);
       }
     }
 
