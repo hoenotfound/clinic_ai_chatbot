@@ -275,7 +275,7 @@ test("Staff Assist clears unread and attention only when the contact snapshot is
   };
 
   pool.query = async (sql, params) => {
-    assert.match(sql, /updated_at = \$2/);
+    assert.match(sql, /date_trunc\('milliseconds', updated_at\) = \$2::timestamptz/);
     assert.match(sql, /mode = \$3/);
     assert.match(sql, /takeover_by IS NOT DISTINCT FROM \$4/);
     assert.match(sql, /attention_reason IS NOT DISTINCT FROM \$6/);
