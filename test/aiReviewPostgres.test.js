@@ -228,10 +228,11 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
           takeover_at=now() + interval '3 minutes',
           attention_reason='AI handed off this conversation.' WHERE id=1`);
     const replyPredatesHandoff = await contacts.returnToAi(1);
-    assert.equal(replyPredatesHandoff.needs_attention, true,
+    assert.equal(replyPredatesHandoff, null,
       'A staff reply from before the handoff must not clear the warning');
     await client.query(`UPDATE contacts SET mode='human',takeover_by='staff',
       takeover_at=now() + interval '90 seconds' WHERE id=1`);
+    await client.query("UPDATE messages SET whatsapp_message_id='wamid.staff.21' WHERE id=21");
     const resumed = await contacts.returnToAi(1);
     assert.equal(resumed.mode, 'ai');
     assert.equal(resumed.needs_attention, false);
