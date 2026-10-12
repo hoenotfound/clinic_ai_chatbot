@@ -214,7 +214,65 @@ test("runtime acknowledgement path persists review and exits before promotional 
   assert.match(review, /getAiOwnedContact/);
   assert.match(review, /canSendAutomatedReply/);
   assert.doesNotMatch(review, /sendImageByUrl|markBookingReadyForContact|resolvePricePromotionForReply/);
-  assert.match(server, /hasPendingClinicalAiReview\(contact.id\)/);
+  assert.match(server, /getTcmReviewEvidence\(/);
   assert.match(server, /plan\?\.preserveReview/);
   assert.match(server, /plan\.alreadyInvited/);
+});
+
+
+test("variant spinal notation and ordinary full treatment enquiries are recoverable", () => {
+  for (const value of ["L4+L5","L4 + L5","L4/L5","L4 & L5","Lumber spine 4+5"]) {
+    assert.equal(isStandaloneSpinalConcern(value), true, value);
+    const answer = planFor(value);
+    assert.equal(answer.preserveReview, true, value);
+    assert.match(answer.reply, /practitioner|lower back/i);
+  }
+  for (const value of [
+    "I'm interested in pelvic adjustment",
+    "I want to know about pelvic adjustment",
+    "Can I know about face alignment?",
+    "Do you offer face alignment?",
+    "我想了解骨盆调理",
+    "Nak tahu tentang pelvic adjustment",
+  ]) {
+    const result = planFor(value);
+    assert.ok(result?.reply, value);
+    assert.equal(result.preserveReview,false,value);
+    assert.doesNotMatch(result.reply, /\bRM\s*\d|promotion|discount|优惠/i);
+  }
+  for (const value of [
+    "I want to know about pelvic adjustment after surgery",
+    "Can pelvic adjustment fix L4+L5",
+    "Do you offer face alignment for stroke?",
+    "I'm interested in pelvic adjustment, is it safe if pregnant?",
+    "How much for pelvic adjustment?",
+  ]) {
+    assert.equal(planFor(value),null,value);
+  }
+});
+
+test("verified evidence overrides stale AI history and rejects unsent invitations", () => {
+  const older = [
+    {role:"user",content:"My lumbar spine L4/L5 is injured."},
+    {role:"assistant",content:"Would you like to arrange a 1-to-1 assessment?"},
+  ];
+  const reviewed = planTcmReviewReply({
+    ...options("Face alignment"),
+    conversationHistory:[...older,{role:"user",content:"Face alignment"}],
+    pendingClinicalReview:false,
+    recentCustomerTexts:[],
+    recentAcceptedAssistantTexts:[],
+  });
+  assert.equal(reviewed.preserveReview,false);
+  assert.equal(reviewed.alreadyInvited,false);
+  assert.match(reviewed.reply,/arrange a 1-to-1 assessment/i);
+  const accepted = planTcmReviewReply({
+    ...options("Face alignment"),
+    conversationHistory:[...older,{role:"user",content:"Face alignment"}],
+    pendingClinicalReview:false,
+    recentCustomerTexts:[],
+    recentAcceptedAssistantTexts:["Would you like to arrange a 1-to-1 assessment?"],
+  });
+  assert.equal(accepted.alreadyInvited,true);
+  assert.doesNotMatch(accepted.reply,/arrange a 1-to-1 assessment/i);
 });
