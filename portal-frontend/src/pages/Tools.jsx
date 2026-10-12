@@ -1059,6 +1059,7 @@ export default function Tools() {
             saving={saving}
             services={config.services || []}
             clinicName={config.businessName || config.clinicName || ""}
+            assessmentFirstPricingEnabled={config?.automatedFollowUp?.assessmentFirstPricingEnabled === true}
             promotions={config.promotions || []}
             savedPricingEnabled={savedSettings.pricingReminder?.enabled === true}
             canManagePromotions={user?.role === "admin" || permissions?.manage_settings === true}
@@ -1890,6 +1891,7 @@ function FollowUpTool({
   saving,
   services,
   clinicName,
+  assessmentFirstPricingEnabled,
   promotions,
   canManagePromotions,
   savedPricingEnabled,
@@ -2814,7 +2816,7 @@ function FollowUpTool({
           <PricingPromotionReadiness
             services={services}
             promotions={promotions}
-            pricingEnabled={form.pricingReminder?.enabled === true}
+            pricingEnabled={!assessmentFirstPricingEnabled && form.pricingReminder?.enabled === true}
             savedPricingEnabled={savedPricingEnabled}
             sequenceEnabled={form.enabled === true}
             hasThirdStep={form.additionalSteps.length === 2}
@@ -2858,7 +2860,8 @@ function FollowUpTool({
                   )}
               </div>
               <Switch
-                checked={form.pricingReminder?.enabled === true}
+                checked={!assessmentFirstPricingEnabled && form.pricingReminder?.enabled === true}
+                disabled={assessmentFirstPricingEnabled}
                 ariaLabel="Conditional pricing reminder"
                 onChange={() => setForm((current) => ({
                   ...current,
@@ -2869,7 +2872,14 @@ function FollowUpTool({
                 }))}
               />
             </div>
-            {form.pricingReminder?.enabled === true && allSteps.length < 3 && (
+            {assessmentFirstPricingEnabled && (
+              <p role="status" className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs leading-5 text-[var(--color-text-muted)]">
+                This clinic uses assessment-first pricing. Automatic price graphics are
+                disabled by the clinic policy, even if an earlier setting was enabled.
+                The final consent follow-up can still be used independently.
+              </p>
+            )}
+            {!assessmentFirstPricingEnabled && form.pricingReminder?.enabled === true && allSteps.length < 3 && (
               <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
                 Pricing is configured but cannot run without Follow-up 3. The provider must accept that third follow-up before pricing becomes eligible.
               </p>
@@ -2885,6 +2895,7 @@ function FollowUpTool({
                 </div>
                 <Switch
                   checked={form.pricingReminder?.enableSocialChannels === true}
+                  disabled={assessmentFirstPricingEnabled}
                   ariaLabel="Include Messenger and Instagram pricing reminders"
                   onChange={() => setForm((current) => ({
                     ...current,
@@ -2904,6 +2915,7 @@ function FollowUpTool({
                 </div>
                 <Switch
                   checked={form.pricingReminder?.requirePricingInterest !== false}
+                  disabled={assessmentFirstPricingEnabled}
                   ariaLabel="Require a customer price enquiry"
                   onChange={() => setForm((current) => ({
                     ...current,
@@ -2923,6 +2935,7 @@ function FollowUpTool({
                 </div>
                 <Switch
                   checked={form.pricingReminder?.sendBothPelvicPackages === true}
+                  disabled={assessmentFirstPricingEnabled}
                   ariaLabel="Send both pelvic package graphics"
                   onChange={() => setForm((current) => ({
                     ...current,
