@@ -117,10 +117,10 @@ async function getTemplateBillingAdvisory(contactId, {
         row.recipient, { database, now, env }
       );
     }
-    evidence = describeEvidence({
+    evidence = row ? describeEvidence({
       ...row,
       has_recent_verified_free_entry: freeEntryVerified,
-    });
+    }) : "unknown";
   } catch (error) {
     // Fail conservatively: staff must still explicitly acknowledge a possible
     // charge when the pricing-evidence database is temporarily unavailable.
