@@ -970,7 +970,7 @@ test("verified CTWA free window shows a compact green banner but still requires 
   const banner = page.getByText("Free-entry template window active", { exact: true });
   await expect(banner).toBeVisible();
   await expect(banner.locator("..").locator("..").locator("..")).toHaveClass(/bg-emerald-50/);
-  await expect(page.getByText("24h replies closed. Confirm opt-in first; Meta confirms billing.")).toBeVisible();
+  await expect(page.getByText("24h closed. Template may be free; confirm opt-in.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Confirm opt-in & choose template" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
@@ -995,8 +995,8 @@ test("verified free-entry banner allows the template picker with recorded opt-in
   await page.goto("/inbox");
   await openInboxConversation(page);
   await expect(page.getByText("Free-entry template window active")).toBeVisible();
-  await expect(page.getByText("24h replies closed. Templates may be free; Meta confirms billing.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Choose WhatsApp template" })).toBeVisible();
+  await expect(page.getByText("24h closed. Templates may be free; check marketing consent.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review consent & templates" })).toBeVisible();
   expectNoUnexpectedApi(apiState);
 });
 
