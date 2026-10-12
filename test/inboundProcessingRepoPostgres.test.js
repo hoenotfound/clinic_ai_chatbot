@@ -142,7 +142,7 @@ test(
       // INSERT commits, even if a previous message holds the reply lease.
       // The duplicate webhook may never reapply STOP after staff opts in again.
       for (const socialChannel of ["facebook", "instagram"]) {
-        for (const scope of ["marketing", "all"]) {
+        for (const [scope, quickReply] of [["marketing", false], ["marketing", true], ["all", false], ["all", true]]) {
           const socialContact = await client.query(
             "INSERT INTO contacts(channel) VALUES($1) RETURNING id",
             [socialChannel]
@@ -153,10 +153,11 @@ test(
             [socialId]
           );
           const socialInbound = {
-            id: "mid-" + socialChannel + "-" + scope,
+            id: "mid-" + socialChannel + "-" + scope + (quickReply ? "-button" : "-typed"),
             channel: socialChannel,
             from: "social-person",
             text: "Stop promotions. How long does pelvic treatment take?",
+            ...(quickReply ? { buttonPayload: "STOP_PROMOS" } : {}),
           };
           const socialClaim = await inboundProcessingRepo.storeInboundClaim({
             contactId: socialId,
@@ -172,12 +173,19 @@ test(
             true
           );
           const flags = (await client.query(
-            "SELECT social_opt_out_at, social_marketing_opt_out_at " +
+            "SELECT social_opt_out_at, social_marketing_opt_out_at, " +
+              "social_opt_out_source, social_marketing_opt_out_source " +
               "FROM contacts WHERE id=$1",
             [socialId]
           )).rows[0];
           assert.ok(flags.social_marketing_opt_out_at, socialChannel);
           assert.equal(Boolean(flags.social_opt_out_at), scope === "all");
+          assert.equal(flags.social_marketing_opt_out_source,
+            quickReply ? "customer_quick_reply" : "customer_message");
+          assert.equal(flags.social_opt_out_source,
+            scope === "all"
+              ? (quickReply ? "customer_quick_reply" : "customer_message")
+              : null);
           assert.equal((await client.query(
             "SELECT marketing_consent FROM leads WHERE contact_id=$1",
             [socialId]
