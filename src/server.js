@@ -50,6 +50,7 @@ const {
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
@@ -972,6 +973,19 @@ async function processIncomingMessage(
       }
     }
 
+    // A short "berapa?" or "多少钱?" can refer only to the immediately
+    // previous customer treatment enquiry, never a stale CRM/ad classification.
+    // Require exactly one independently verified configured service.
+    const verifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
+        (isStandalonePriceQuestion(text)
+          ? safeServiceFromCustomer(
+              customerMessages.at(-2)?.content,
+              clinicConfig.services, clinicConfig.serviceAliases
+            )
+          : null)
+      : null;
+
     let reply = isFirstMessage && !flagged && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
@@ -1006,7 +1020,7 @@ async function processIncomingMessage(
         ? guardAssessmentFirstPricingReply({
             channel, customerText: text, reply, flagged, language: mediaLanguage,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-            treatment: details?.treatment,
+            treatment: verifiedPriceService?.name || details?.treatment,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
@@ -1226,12 +1240,8 @@ async function processIncomingMessage(
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
     {
-      // Resolve only a service named in the customer's own words. This
-      // recovers missing model treatment/price flags without trusting an old
-      // CRM classification or a raw ad title to send optional pricing media.
-      const verifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-        ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases)
-        : null;
+      // A directly named service or a one-turn standalone price follow-up
+      // remains customer-verified; never trust a stale CRM/ad label.
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
