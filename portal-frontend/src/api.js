@@ -81,6 +81,8 @@ export const api = {
         ...(replyToMessageId != null ? { replyToMessageId } : {}),
       }),
     }),
+  getWhatsAppTemplateFreeWindowStatus: (contactId) =>
+    request(`/conversations/${contactId}/whatsapp-template-free-window`),
   listWhatsAppTemplates: (contactId, { force = false } = {}) =>
     request(
       `/conversations/${contactId}/whatsapp-templates${force ? "?refresh=true" : ""}`
