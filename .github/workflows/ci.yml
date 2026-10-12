@@ -25,6 +25,9 @@ jobs:
           --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clinic_ai_test
+      # GitHub release downloads for ffmpeg-static can intermittently return
+      # 504. CI already has system FFmpeg installed; use it for test jobs.
+      FFMPEG_BIN: /usr/bin/ffmpeg
     steps:
       - uses: actions/checkout@v7
         with:
