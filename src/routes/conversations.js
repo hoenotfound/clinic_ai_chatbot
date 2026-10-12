@@ -1118,7 +1118,11 @@ router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
     const advisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
     const verified = advisory.evidence === "recent_free_entry_evidence";
     res.set("Cache-Control", "no-store");
-    return res.json({ verified });
+    return res.json({
+      verified,
+      sendReady: verified && advisory.freeEntry?.sendReady === true,
+      blockedReason: verified ? advisory.freeEntry?.blockedReason || null : null,
+    });
   } catch (err) {
     console.warn("WhatsApp free-entry status could not be verified:", err?.message);
     return res.status(503).json({ error: "WhatsApp free-entry status unavailable." });
