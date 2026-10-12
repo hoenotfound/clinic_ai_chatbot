@@ -13,6 +13,7 @@ const { guardAssessmentFirstPricingReply, safeIntroReply } = require("../src/uti
 const { relatedPricingConflict } = require("../src/utils/relatedServicePolicy");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { recentConfiguredServiceNames } = require("../src/services/followUpAiService");
+const { resolveMetaAdCreativeService } = require("../src/services/metaAdReplyContextService");
 
 const services = [
   { name: "徒手体态调理", description: "Full-body manual posture care including shoulders and back.", priceRange: "", duration: "" },
@@ -195,3 +196,9 @@ test("personalized follow-up treats 小颜整骨 as 3D, not generic 骨盆", () 
   assert.deepEqual(recentConfiguredServiceNames([{ role: "user", content: "想了解全身整骨" }]), ["徒手体态调理"]);
   assert.deepEqual(recentConfiguredServiceNames([{ role: "user", content: "整骨与小颜整骨比较" }]).sort(), ["徒手体态调理", "3D 小颜术"].sort());
 }));
+
+test("Meta ad creative uses the specific 整骨 treatment, not the shorter contained alias", () => {
+  assert.equal(resolveMetaAdCreativeService({ headline: "小颜整骨", body: "美颜轮廓" }, services, serviceAliases), "3D 小颜术");
+  assert.equal(resolveMetaAdCreativeService({ headline: "全身整骨", body: "体态调理" }, services, serviceAliases), "徒手体态调理");
+  assert.equal(resolveMetaAdCreativeService({ headline: "整骨和小颜整骨", body: "比较" }, services, serviceAliases), null);
+});
