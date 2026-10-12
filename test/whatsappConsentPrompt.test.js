@@ -110,6 +110,63 @@ test("global STOP blocks a button from reviving consent",async()=>{
   assert.equal(result.handled,false);
   assert.equal(statements.some(s=>s.includes("INSERT INTO whatsapp_marketing_consent_events")),false);
 });
+test("English and Malay prompts use genuine localized WhatsApp button labels",()=>{
+  const {consentQuestion,consentButtons}=require("../src/utils/whatsappConsentPrompt");
+  const clinic="Neutro Sense TCM";
+  const english=consentQuestion({serviceName:"骨盆调理",businessName:clinic,language:"en"});
+  const malay=consentQuestion({serviceName:"骨盆调理",businessName:clinic,language:"ms"});
+  assert.match(english,/pelvic alignment treatment/);
+  assert.match(english,/related offers/);
+  assert.match(malay,/rawatan penjajaran pelvis/);
+  assert.match(malay,/tawaran/);
+  for(const lang of ["zh","en","ms"]){
+    const buttons=consentButtons(37,lang);
+    assert.equal(buttons.length,2);
+    assert.ok(buttons.every(b=>b.title.length<=20),"Meta limits reply titles to 20 characters");
+    assert.equal(repo.parseResponseId(buttons[0].id).decision,"accepted");
+    assert.equal(repo.parseResponseId(buttons[1].id).decision,"declined");
+  }
+});
+
+test("button received before outbound WAMID persistence stays pending, not falsely opted in",async()=>{
+  const sample=fakeDatabase();
+  const original=sample.db.connect;
+  sample.db.connect=async()=>{
+    const client=await original();
+    const query=client.query;
+    client.query=async(sql,args)=>{
+      const out=await query(sql,args);
+      if(sql.includes("FROM whatsapp_consent_prompts p JOIN contacts c")) {
+        out.rows[0].status="claimed";
+        out.rows[0].prompt_provider_id=null;
+        out.rows[0].prompt_accepted_at=null;
+      }
+      return out;
+    };
+    return client;
+  };
+  const response=await repo.recordButtonResponse({
+    contactId:7,messageId:101,leadId:17,
+    replyId:"da_consent_yes:37",businessName:"Neutro Sense TCM",
+  },{database:sample.db});
+  assert.deepEqual(response,{handled:false,pending:true});
+  assert.equal(sample.statements.some(sql=>sql.includes("UPDATE contacts")),false);
+  assert.equal(sample.statements.some(sql=>sql.includes("INSERT INTO whatsapp_marketing_consent_events")),false);
+});
+
+test("verified No writes a scoped contact-level marketing refusal, never a global STOP",async()=>{
+  const sample=fakeDatabase({decline:true});
+  const response=await repo.recordButtonResponse({
+    contactId:7,messageId:101,leadId:17,
+    replyId:"da_consent_no:37",businessName:"Neutro Sense TCM",
+  },{database:sample.db});
+  assert.equal(response.decision,"declined");
+  const refusal=sample.statements.find(sql=>sql.includes("customer_consent_button_decline"));
+  assert.ok(refusal);
+  assert.doesNotMatch(refusal,/whatsapp_opt_out_at\s*=/);
+  assert.ok(sample.statements.some(sql=>sql.includes("WHERE contact_id=$1")));
+});
+
 test("candidate and final pre-send SQL require FU3, current lead, 24h and no prior prompt",()=>{
   assert.match(repo.CANDIDATES_SQL,/automated_follow_up_step=3/);
   assert.match(repo.CANDIDATES_SQL,/third|final/);
@@ -118,6 +175,8 @@ test("candidate and final pre-send SQL require FU3, current lead, 24h and no pri
   assert.match(repo.CANDIDATES_SQL,/lead.marketing_consent='unknown'/);
   assert.match(repo.CANDIDATES_SQL,/whatsapp_marketing_consent_events evidence/);
   assert.match(repo.CANDIDATES_SQL,/pricing_reminder_decisions decision/);
+  assert.match(repo.CANDIDATES_SQL,/pricing_reminder_batch_completions completed/);
+  assert.match(repo.nextDeferredRetryAt.toString(),/retry_after/);
   assert.match(repo.CANDIDATES_SQL,/GREATEST\(final.whatsapp_accepted_at/);
   assert.match(repo.CANDIDATES_SQL,/whatsapp_marketing_opt_out_at IS NULL/);
   assert.match(repo.CANDIDATES_SQL,/whatsapp_opt_out_at IS NULL/);
