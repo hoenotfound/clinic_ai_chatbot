@@ -92,22 +92,24 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'consent:' || p.id::text AS event_id, p.created_at, p.contact_id, c.channel,
     'consent' AS type, NULL::integer AS step,
     CASE
-      WHEN p.status = 'unknown' THEN 'attention'
-      WHEN p.status = 'failed' THEN 'failed'
+      WHEN p.status = 'unknown' OR m.delivery_status = 'unknown' THEN 'attention'
+      WHEN p.status = 'failed' OR m.delivery_status = 'failed' THEN 'failed'
       WHEN p.decision IS NOT NULL OR m.delivery_status IN ('sent','delivered','read') THEN 'sent'
       ELSE 'pending'
     END AS state,
     LEFT(COALESCE(m.delivery_error, p.status), 240) AS detail,
-    COALESCE(m.delivery_status, p.status) AS raw_status,
+    CASE WHEN p.status='deferred' THEN 'deferred'
+      ELSE COALESCE(m.delivery_status, p.status) END AS raw_status,
     CASE WHEN m.whatsapp_message_id IS NOT NULL AND m.whatsapp_accepted_at IS NOT NULL
       THEN 'accepted' ELSE 'none' END AS provider_evidence,
     'text'::text AS media_type, 'consent_prompt'::text AS message_part,
     NULL::integer AS parent_message_id,
     CASE WHEN p.decision='accepted' THEN 'accepted'
       WHEN p.decision='declined' THEN 'declined'
-      WHEN p.status='accepted' AND now() >= p.created_at + interval '24 hours'
-        THEN 'unanswered'
-      WHEN p.status='accepted' THEN 'awaiting_response'
+      WHEN p.status='accepted' AND COALESCE(m.delivery_status,'pending') NOT IN ('failed','unknown','cancelled')
+        AND now() >= p.created_at + interval '24 hours' THEN 'unanswered'
+      WHEN p.status='accepted' AND COALESCE(m.delivery_status,'pending') NOT IN ('failed','unknown','cancelled')
+        THEN 'awaiting_response'
       ELSE NULL END AS response_status
   FROM whatsapp_consent_prompts p
   JOIN contacts c ON c.id=p.contact_id
