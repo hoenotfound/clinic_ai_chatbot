@@ -45,7 +45,7 @@ function recoverTcmServiceReviewReply({
   } else if (locale.startsWith("ms")) {
     reply = `Ya, kami ada rawatan berkaitan ${phrase} 😊 Pengamal kami perlu menilai keadaan anda dahulu sebelum mencadangkan rawatan yang sesuai. Nak aturkan sesi penilaian 1-ke-1?`;
   } else {
-    reply = `Yes, we offer care related to ${phrase} 😊 Our practitioner would first assess your concerns before advising which treatment, if any, is suitable. Would you like to arrange a 1-to-1 assessment?`;
+    reply = `We provide services related to ${phrase} 😊 Our practitioner would first assess your concerns before advising which treatment, if any, is suitable. Would you like to arrange a 1-to-1 assessment?`;
   }
   // Configured service names can be edited by staff. Reject unsafe commercial
   // content instead of turning a model review into an unsolicited offer.
