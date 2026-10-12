@@ -125,6 +125,12 @@ test("related-media selection stays opt-in and fails closed if config is ambiguo
   assert.equal(await mediaDecision("我想了解整骨", {
     resultMedia: [...resultMedia, { ...resultMedia[0], service: "Another care" }],
   }), null);
+  assert.equal(await mediaDecision("想了解整骨", {
+    resultMedia: [
+      { service: "徒手体态调理", enabled: false, triggerMode: "off", items: resultMedia[0].items },
+      ...resultMedia,
+    ],
+  }), null, "explicitly disabled full-body result media takes priority over related sets");
   assert.equal((await mediaDecision("想了解骨盆调理"))?.service, "骨盆调理");
 });
 
