@@ -8,6 +8,7 @@ const channelMessaging=require("./channelMessagingService");
 const realtimeEvents=require("../utils/realtimeEvents");
 const { quietHoursStatus }=require("../utils/quietHours");
 const { consentQuestion,consentButtons }=require("../utils/whatsappConsentPrompt");
+const { detectConversationLanguage }=require("../utils/chatLanguage");
 
 function businessDisplayName(config=clinicConfig) {
   return String(config.businessName || config.clinicName || "")
@@ -40,8 +41,9 @@ function publish(message,reason) {
 }
 async function sendOne(candidate,settings,now=new Date()) {
   if (!liveEnabled(settings) || quietHoursStatus(now,settings.quietHours).active) return false;
+  const language=detectConversationLanguage(candidate.recent_customer_messages||[],"zh");
   const question=consentQuestion({
-    serviceName:candidate.service_name,businessName:businessDisplayName(),
+    serviceName:candidate.service_name,businessName:businessDisplayName(),language,
   });
   if (!question) return false;
   const claimed=await repo.claim(candidate,{
@@ -56,7 +58,7 @@ async function sendOne(candidate,settings,now=new Date()) {
   let result;
   try {
     result=await channelMessaging.sendConsentButtons(
-      contact,question,consentButtons(claimed.promptId),{
+      contact,question,consentButtons(claimed.promptId,language),{
         currentMessageId:claimed.message.id,
         preSendCheck:async()=>liveEnabled(settings) &&
           !quietHoursStatus(new Date(),settings.quietHours).active &&
@@ -152,6 +154,14 @@ async function runFinalConsentPrompts(settings,now=new Date()) {
       const retryAt=new Date(Date.now()+60_000).toISOString();
       if (!next || Date.parse(retryAt)<Date.parse(next)) next=retryAt;
     }
+  }
+  // Reconstruct the earliest durable retry after Render restarts. A deferred
+  // row is hidden from ordinary candidates until its backoff expires.
+  const deferredDue=await repo.nextDeferredRetryAt({
+    activatedAt:activationCutoff(settings),now,
+  });
+  if(deferredDue&&(!next||Date.parse(deferredDue)<Date.parse(next))) {
+    next=new Date(deferredDue).toISOString();
   }
   // If there is a very large cohort, wake again for a bounded next page.
   if (candidates.length>=200) {
