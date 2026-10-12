@@ -9,6 +9,7 @@ const {
   resolveLocalizedMedia,
 } = require("./mediaLocalization");
 const { EXPLICIT_TREATMENT_INTEREST } = require("./resultMediaPacing");
+const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
 const RESULT_MEDIA_TRIGGER_MODES = new Set(["off", "price_only", "service_enquiry"]);
@@ -55,18 +56,26 @@ function customerNamedServices(resultMedia, customerText, serviceAliases = [], s
   for (const entry of Array.isArray(services) ? services : []) {
     if (entry?.name) names.set(normal(entry.name), String(entry.name).trim());
   }
-  const match = new Set();
-  for (const [key, name] of names) {
-    if (matchTerm(name)) match.add(key);
-  }
+  const matches = new Map();
+  const addMatch = (key, term) => {
+    if (!matchTerm(term)) return;
+    const spans = termSpans(compactText, normal(term));
+    if (!spans.length) return;
+    if (!matches.has(key)) matches.set(key, { name: names.get(key), spans: [] });
+    matches.get(key).spans.push(...spans);
+  };
+  for (const [key, name] of names) addMatch(key, name);
   for (const entry of Array.isArray(serviceAliases) ? serviceAliases : []) {
     const key = normal(entry?.officialService);
     if (!names.has(key)) continue;
     for (const term of String(entry.alias || "").split(/[,/|;，、]+/u)) {
-      if (matchTerm(term.trim())) match.add(key);
+      addMatch(key, term.trim());
     }
   }
-  return [...match].map((key) => names.get(key));
+  // An exact "小颜整骨" alias covers the generic "整骨" alias.
+  // But "整骨和小颜整骨" still names two distinct treatments.
+  return pruneCoveredServiceMentions([...matches.values()])
+    .map(({ name }) => name);
 }
 
 // A postpartum qualifier can describe why the customer wants *pelvic*
