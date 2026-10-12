@@ -156,7 +156,7 @@ function conversationServicesList(conversationContext, terms) {
         const description = promptContextText(service?.description, 1_600) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
         const duration = promptContextText(service?.duration, 300) || "Not configured";
-        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
       })
       .join("\n");
   }
