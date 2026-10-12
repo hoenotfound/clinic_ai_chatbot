@@ -71,7 +71,7 @@ test("face 整骨 is still 3D, and a genuinely separate face plus body enquiry i
 });
 
 test("an explicit 整骨 enquiry sends the configured pelvic examples with no price request", async () => {
-  for (const query of ["你好，我想了解整骨", "我想了解全身整骨"]) {
+  for (const query of ["整骨", "你好～整骨", "你好，我想了解整骨", "我想了解全身整骨"]) {
     assert.equal(explicitServiceNamedByCustomer(media, query, serviceAliases, services), "骨盆调理", query);
     const result = await resultDecision(query);
     assert.equal(result?.service, "骨盆调理", query);
