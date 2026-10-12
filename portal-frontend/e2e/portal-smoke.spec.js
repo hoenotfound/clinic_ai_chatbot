@@ -1462,6 +1462,36 @@ test("Pricing reminder explains the missing third follow-up without disabling ex
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("assessment-first clinics cannot enable an ineffective pricing reminder but may enable consent", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn:true,user:ADMIN_USER,
+    businessConfig:{
+      services:[{name:"骨盆调理"}],
+      automatedFollowUp:{
+        enabled:true,delayMinutes:120,message:"First follow-up",
+        additionalSteps:[
+          {delayMinutes:360,message:"Second follow-up"},
+          {delayMinutes:1200,message:"Third follow-up"},
+        ],
+        assessmentFirstPricingEnabled:true,
+        pricingReminder:{enabled:false},
+        consentRequest:{enabled:false},
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab",{name:"Pricing"}).click();
+  const price=page.getByRole("switch",{name:"Conditional pricing reminder"});
+  await expect(price).toBeDisabled();
+  await expect(price).toHaveAttribute("aria-checked","false");
+  await expect(page.getByText(/This clinic uses assessment-first pricing/)).toBeVisible();
+  const consent=page.getByRole("switch",{name:"Enable final WhatsApp consent follow-up"});
+  await expect(consent).toBeEnabled();
+  await consent.click();
+  await expect(consent).toHaveAttribute("aria-checked","true");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Automated follow-up sections preserve draft settings while switching tabs", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true });
   await page.goto("/tools");
@@ -1476,6 +1506,14 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await page.getByRole("tab", { name: "Pricing" }).click();
   await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sequence at a glance" })).not.toBeVisible();
+
+  const consentToggle = page.getByRole("switch", { name: "Enable final WhatsApp consent follow-up" });
+  await expect(consentToggle).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByRole("heading", { name: "Final WhatsApp consent follow-up" })).toBeVisible();
+  await consentToggle.click();
+  await expect(consentToggle).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText("同意接收跟进优惠", { exact: true })).toBeVisible();
+  await expect(page.getByText("暂时不用", { exact: true })).toBeVisible();
 
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();

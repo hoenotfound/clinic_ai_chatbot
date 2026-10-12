@@ -4,7 +4,7 @@ const { quietHoursStatus } = require("../utils/quietHours");
 
 const ACTIVITY_DAYS = new Set([7, 30]);
 const ACTIVITY_CHANNELS = new Set(["all", "whatsapp", "facebook", "instagram"]);
-const ACTIVITY_TYPES = new Set(["all", "sequence", "pricing"]);
+const ACTIVITY_TYPES = new Set(["all", "sequence", "pricing", "consent"]);
 const ACTIVITY_STATES = new Set(["all", "sent", "pending", "failed", "skipped", "attention"]);
 const PAGE_SIZE = 25;
 const MAX_PAGE = 20;
@@ -56,7 +56,8 @@ const ACTIVITY_SQL = `WITH activity AS (
       ELSE 'text'
     END AS media_type,
     CASE WHEN parent.id IS NOT NULL THEN 'media_companion' ELSE 'follow_up' END AS message_part,
-    parent.id AS parent_message_id
+    parent.id AS parent_message_id,
+    NULL::text AS response_status
   FROM messages m
   JOIN contacts c ON c.id = m.contact_id
   LEFT JOIN messages parent
@@ -75,7 +76,7 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'pricing_decision:' || p.id::text, p.created_at, p.contact_id, c.channel,
     'pricing', 4,
     CASE WHEN p.reason = 'delivery_review' THEN 'attention' ELSE 'skipped' END,
-    LEFT(p.reason, 240), p.reason, NULL::text, NULL::text, NULL::text, NULL::integer
+    LEFT(p.reason, 240), p.reason, NULL::text, NULL::text, NULL::text, NULL::integer, NULL::text
   FROM pricing_reminder_decisions p
   JOIN contacts c ON c.id = p.contact_id
   WHERE p.created_at >= now() - $1::integer * interval '1 day'
@@ -83,10 +84,37 @@ const ACTIVITY_SQL = `WITH activity AS (
   SELECT 'sequence_decision:' || d.id::text, d.created_at, d.contact_id, c.channel,
     'sequence', d.follow_up_step,
     CASE WHEN d.action = 'human_review' THEN 'attention' ELSE 'skipped' END,
-    LEFT(COALESCE(d.reason, d.action), 240), d.action, NULL::text, NULL::text, NULL::text, NULL::integer
+    LEFT(COALESCE(d.reason, d.action), 240), d.action, NULL::text, NULL::text, NULL::text, NULL::integer, NULL::text
   FROM follow_up_ai_decisions d
   JOIN contacts c ON c.id = d.contact_id
   WHERE d.created_at >= now() - $1::integer * interval '1 day'
+  UNION ALL
+  SELECT 'consent:' || p.id::text AS event_id, p.created_at, p.contact_id, c.channel,
+    'consent' AS type, NULL::integer AS step,
+    CASE
+      WHEN p.status = 'unknown' OR m.delivery_status = 'unknown' THEN 'attention'
+      WHEN p.status = 'failed' OR m.delivery_status = 'failed' THEN 'failed'
+      WHEN p.decision IS NOT NULL OR m.delivery_status IN ('sent','delivered','read') THEN 'sent'
+      ELSE 'pending'
+    END AS state,
+    LEFT(COALESCE(m.delivery_error, p.status), 240) AS detail,
+    CASE WHEN p.status='deferred' THEN 'deferred'
+      ELSE COALESCE(m.delivery_status, p.status) END AS raw_status,
+    CASE WHEN m.whatsapp_message_id IS NOT NULL AND m.whatsapp_accepted_at IS NOT NULL
+      THEN 'accepted' ELSE 'none' END AS provider_evidence,
+    'text'::text AS media_type, 'consent_prompt'::text AS message_part,
+    NULL::integer AS parent_message_id,
+    CASE WHEN p.decision='accepted' THEN 'accepted'
+      WHEN p.decision='declined' THEN 'declined'
+      WHEN p.status='accepted' AND COALESCE(m.delivery_status,'pending') NOT IN ('failed','unknown','cancelled')
+        AND now() >= p.created_at + interval '24 hours' THEN 'unanswered'
+      WHEN p.status='accepted' AND COALESCE(m.delivery_status,'pending') NOT IN ('failed','unknown','cancelled')
+        THEN 'awaiting_response'
+      ELSE NULL END AS response_status
+  FROM whatsapp_consent_prompts p
+  JOIN contacts c ON c.id=p.contact_id
+  LEFT JOIN messages m ON m.id=p.message_id AND m.contact_id=p.contact_id
+  WHERE p.created_at >= now() - $1::integer * interval '1 day'
 ), scoped AS (
   SELECT * FROM activity
   WHERE ($2::text = 'all' OR channel = $2)
@@ -105,7 +133,7 @@ SELECT
   ) FROM scoped) AS summary,
   (SELECT COUNT(*)::integer FROM visible) AS total,
   COALESCE((SELECT jsonb_agg(to_jsonb(paged) ORDER BY paged.occurred_at DESC, paged.event_id DESC) FROM (
-    SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status, provider_evidence, media_type, message_part, parent_message_id
+    SELECT event_id, occurred_at, contact_id, channel, type, step, state, detail, raw_status, provider_evidence, media_type, message_part, parent_message_id, response_status
     FROM visible
     ORDER BY occurred_at DESC, event_id DESC
     LIMIT $5::integer OFFSET $6::integer

@@ -37,6 +37,7 @@ const DEFAULT_FOLLOW_UP = {
   additionalSteps: [],
   freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
+  consentRequest: { enabled:false },
   whatsappFreeOnly: { enabled: false },
 };
 
@@ -198,6 +199,7 @@ function normalizeFollowUpSettings(value = {}) {
         : [26, 50, 74, 98, 122, 162],
     },
     whatsappFreeOnly: { enabled: value?.whatsappFreeOnly?.enabled === true },
+    consentRequest: { enabled: value?.consentRequest?.enabled === true },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
@@ -228,6 +230,7 @@ function followUpFormFromSettings(value = {}) {
     freeEntry: settings.freeEntry,
     whatsappFreeOnly: settings.whatsappFreeOnly,
     pricingReminder: settings.pricingReminder,
+    consentRequest: settings.consentRequest,
   };
 }
 
@@ -895,6 +898,7 @@ export default function Tools() {
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
           whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true, acknowledgeImpact: freeOnlyImpactConfirmed },
+          consentRequest: { enabled:form.consentRequest?.enabled === true },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -1054,6 +1058,8 @@ export default function Tools() {
             uploadingVideo={uploadingVideo}
             saving={saving}
             services={config.services || []}
+            clinicName={config.businessName || config.clinicName || ""}
+            assessmentFirstPricingEnabled={config?.automatedFollowUp?.assessmentFirstPricingEnabled === true}
             promotions={config.promotions || []}
             savedPricingEnabled={savedSettings.pricingReminder?.enabled === true}
             canManagePromotions={user?.role === "admin" || permissions?.manage_settings === true}
@@ -1884,6 +1890,8 @@ function FollowUpTool({
   uploadingVideo,
   saving,
   services,
+  clinicName,
+  assessmentFirstPricingEnabled,
   promotions,
   canManagePromotions,
   savedPricingEnabled,
@@ -2808,7 +2816,7 @@ function FollowUpTool({
           <PricingPromotionReadiness
             services={services}
             promotions={promotions}
-            pricingEnabled={form.pricingReminder?.enabled === true}
+            pricingEnabled={!assessmentFirstPricingEnabled && form.pricingReminder?.enabled === true}
             savedPricingEnabled={savedPricingEnabled}
             sequenceEnabled={form.enabled === true}
             hasThirdStep={form.additionalSteps.length === 2}
@@ -2852,7 +2860,8 @@ function FollowUpTool({
                   )}
               </div>
               <Switch
-                checked={form.pricingReminder?.enabled === true}
+                checked={!assessmentFirstPricingEnabled && form.pricingReminder?.enabled === true}
+                disabled={assessmentFirstPricingEnabled}
                 ariaLabel="Conditional pricing reminder"
                 onChange={() => setForm((current) => ({
                   ...current,
@@ -2863,7 +2872,14 @@ function FollowUpTool({
                 }))}
               />
             </div>
-            {form.pricingReminder?.enabled === true && allSteps.length < 3 && (
+            {assessmentFirstPricingEnabled && (
+              <p role="status" className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs leading-5 text-[var(--color-text-muted)]">
+                This clinic uses assessment-first pricing. Automatic price graphics are
+                disabled by the clinic policy, even if an earlier setting was enabled.
+                The final consent follow-up can still be used independently.
+              </p>
+            )}
+            {!assessmentFirstPricingEnabled && form.pricingReminder?.enabled === true && allSteps.length < 3 && (
               <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
                 Pricing is configured but cannot run without Follow-up 3. The provider must accept that third follow-up before pricing becomes eligible.
               </p>
@@ -2879,6 +2895,7 @@ function FollowUpTool({
                 </div>
                 <Switch
                   checked={form.pricingReminder?.enableSocialChannels === true}
+                  disabled={assessmentFirstPricingEnabled}
                   ariaLabel="Include Messenger and Instagram pricing reminders"
                   onChange={() => setForm((current) => ({
                     ...current,
@@ -2898,6 +2915,7 @@ function FollowUpTool({
                 </div>
                 <Switch
                   checked={form.pricingReminder?.requirePricingInterest !== false}
+                  disabled={assessmentFirstPricingEnabled}
                   ariaLabel="Require a customer price enquiry"
                   onChange={() => setForm((current) => ({
                     ...current,
@@ -2917,6 +2935,7 @@ function FollowUpTool({
                 </div>
                 <Switch
                   checked={form.pricingReminder?.sendBothPelvicPackages === true}
+                  disabled={assessmentFirstPricingEnabled}
                   ariaLabel="Send both pelvic package graphics"
                   onChange={() => setForm((current) => ({
                     ...current,
@@ -2927,6 +2946,58 @@ function FollowUpTool({
                   }))}
                 />
               </div>
+            </div>
+          </Card>
+          <Card>
+            <SectionHeading
+              number="5"
+              title="Final WhatsApp consent follow-up"
+              description="An optional one-time reply-button question after Follow-up 3 and the pricing reminder."
+            />
+            <div className="mt-4 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Ask customers without recorded promotional consent</p>
+                <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
+                  WhatsApp only. After Follow-up 3 has been accepted, wait 15 minutes.
+                  This runs after the optional pricing reminder (5 minutes after Follow-up 3).
+                  Skip if the customer already opted in, opted out, replied, booked,
+                  or if the 24-hour reply window or quiet hours prevent sending.
+                  Only one prompt per lead. Enabling starts a fresh cohort; older conversations are not prompted.
+                </p>
+              </div>
+              <Switch
+                checked={form.consentRequest?.enabled === true}
+                ariaLabel="Enable final WhatsApp consent follow-up"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  consentRequest: { enabled:current.consentRequest?.enabled !== true },
+                }))}
+              />
+            </div>
+            {form.consentRequest?.enabled === true && form.additionalSteps.length < 2 && (
+              <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
+                This final consent message needs an enabled three-step follow-up sequence.
+              </p>
+            )}
+            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+              <p className="text-[11px] font-semibold text-[var(--color-text-muted)]">WhatsApp consent preview</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
+                {`对了～之后如果有关于${(services || []).find((item) => item.name === "骨盆调理")?.name || services?.[0]?.name || "相关疗程"}的资讯或相关优惠，${String(clinicName || "本中心").trim().replace(/\s+(?:Centre|Center)$/i, "")} 可以继续 WhatsApp 跟进通知您吗？😊`}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <span className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-center text-xs font-semibold">
+                  同意接收跟进优惠
+                </span>
+                <span className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-center text-xs font-semibold">
+                  暂时不用
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                Actual WhatsApp interactive reply buttons. The treatment and business name come from the current lead and clinic.
+                Only a genuine Yes tap records permission and its Meta message ID in Neon.
+                An ignored or declined prompt never enables Marketing templates.
+                The existing Strict RM0 protection still applies; this is not a template send.
+              </p>
             </div>
           </Card>
 

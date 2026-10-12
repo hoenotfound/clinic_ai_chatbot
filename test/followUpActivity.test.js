@@ -17,6 +17,8 @@ test("activity filters are restricted and pagination is bounded", () => {
     assert.equal(repo.parseActivityFilters(query), null);
   }
   assert.match(repo.ACTIVITY_SQL, /pricing_reminder_decisions/);
+  assert.match(repo.ACTIVITY_SQL, /whatsapp_consent_prompts/);
+  assert.deepEqual(repo.parseActivityFilters({type:"consent"}).type,"consent");
   assert.match(repo.ACTIVITY_SQL, /follow_up_ai_decisions/);
   assert.match(repo.ACTIVITY_SQL, /pricing_reminder_anchor_id IS NOT NULL/);
   assert.match(repo.ACTIVITY_SQL, /automated_follow_up_parent_message_id/);
@@ -129,6 +131,10 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
         follow_up_step INTEGER, created_at TIMESTAMPTZ DEFAULT now(),
         action TEXT, reason TEXT
       );
+      CREATE TABLE whatsapp_consent_prompts(
+        id INTEGER PRIMARY KEY,contact_id INTEGER,created_at TIMESTAMPTZ DEFAULT now(),
+        message_id INTEGER,status TEXT,decision TEXT
+      );
       INSERT INTO contacts(id,channel) VALUES (1,'whatsapp'), (2,'facebook'), (3,'instagram');
       INSERT INTO messages(id,contact_id,delivery_status,is_automated_follow_up,automated_follow_up_for_message_id,automated_follow_up_step)
       VALUES (20,1,'sent',true,10,1),
@@ -197,6 +203,15 @@ test("Postgres activity feed returns real persisted send, cancellation, pricing 
     assert.equal(instagramFailed.items[0].step, 2);
     assert.equal(instagramFailed.items[0].message_part, "media_companion");
     assert.equal(facebook.summary.pending, 1);
+    await client.query(`INSERT INTO whatsapp_consent_prompts(id,contact_id,message_id,status,decision)
+      VALUES (1,1,20,'accepted','accepted'), (2,2,22,'accepted','declined'),
+        (3,3,NULL,'deferred',NULL)`);
+    const consent = await repo.listActivity({ type:"consent" },null,execute);
+    assert.equal(consent.total,3);
+    assert.equal(consent.items.find(x=>x.event_id==="consent:1").response_status,"accepted");
+    assert.equal(consent.items.find(x=>x.event_id==="consent:2").response_status,"declined");
+    assert.equal(consent.items.find(x=>x.event_id==="consent:3").raw_status,"deferred");
+    assert.ok(consent.items.every(x=>x.type==="consent"));
   } finally {
     await client.query("SET search_path TO public");
     await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE");

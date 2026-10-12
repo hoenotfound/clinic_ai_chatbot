@@ -16,6 +16,7 @@ const REASON_LABELS = {
   ambiguous_package: "Package choice or graphics are ambiguous",
   missing_promotion: "Matching pricing promotion or media unavailable",
   insufficient_window: "Not enough time remaining in the reply window",
+  deferred: "The consent question is waiting for a safe sending opportunity",
   no_pricing_interest: "Customer did not meet the clinic's price-interest condition",
   human_review: "Human review requested",
 };
@@ -24,6 +25,15 @@ const MEDIA_LABELS = { video: "Video", image: "Image", text: "Text", attachment:
 const SELECT_CLASS = "min-h-10 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-2 text-xs font-medium text-[var(--color-text)]";
 
 function labelForReason(row) {
+  if (row.type === "consent") {
+    if (row.response_status === "accepted") return "Customer tapped Yes. Verified treatment-specific WhatsApp marketing permission recorded.";
+    if (row.response_status === "declined") return "Customer tapped No. No marketing consent was granted.";
+    if (row.response_status === "unanswered") return "No response to the consent question was recorded.";
+    if (row.response_status === "awaiting_response") return "Consent question accepted by Meta. Awaiting a customer reply.";
+    if (row.raw_status === "deferred") return "Sending was blocked before reaching Meta; waiting for a safe retry.";
+    if (row.state === "attention") return "Delivery is uncertain. Staff should verify before another send.";
+    return "Consent request status: " + String(row.raw_status || "pending") + ".";
+  }
   if (row.event_id?.startsWith("message:")) {
     const isCompanion = row.message_part === "media_companion";
     const mediaContext = isCompanion
@@ -111,7 +121,7 @@ export default function FollowUpActivity({ active }) {
           <h2 className="text-base font-bold">Follow-up delivery activity</h2>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
             Recorded Follow-up 1–3 messages, separately sent Messenger/Instagram media attachments,
-            pricing reminders and terminal skip/review decisions. Extended WhatsApp templates are shown separately below.
+            pricing reminders, consent requests and terminal skip/review decisions. Extended WhatsApp templates are shown separately below.
           </p>
         </div>
         <button type="button" onClick={refreshActivity} disabled={loading}
@@ -152,6 +162,7 @@ export default function FollowUpActivity({ active }) {
             <option value="all">All types</option>
             <option value="sequence">Follow-up 1–3</option>
             <option value="pricing">Pricing reminders</option>
+            <option value="consent">Consent requests</option>
           </select>
         </label>
         <label className="min-w-0 text-[11px] font-semibold">
@@ -188,7 +199,7 @@ export default function FollowUpActivity({ active }) {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-xs font-bold">
-                        {row.type === "pricing" ? "Pricing reminder" : `Follow-up ${row.step || "?"}`}
+                        {row.type === "consent" ? "Consent request" : row.type === "pricing" ? "Pricing reminder" : `Follow-up ${row.step || "?"}`}
                         {row.message_part === "media_companion" ? " · Separate media" : ""}
                         {" · "}{CHANNEL_LABELS[row.channel] || row.channel}
                         {row.media_type ? " · " + (MEDIA_LABELS[row.media_type] || "Attachment") : ""}

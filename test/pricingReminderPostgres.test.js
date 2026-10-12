@@ -94,6 +94,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       path.join(__dirname, "../src/db/migrations/053_pricing_preflight_retry.sql"),
       "utf8"
     ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/067_whatsapp_final_consent_prompt.sql"),
+      "utf8"
+    ));
 
     await client.query(`
       INSERT INTO contacts (id,channel,whatsapp_number)
@@ -182,7 +186,40 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       thirdId:candidate.third_id,recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offerB.packageName,
     }),true);
+    // Two-package pricing cannot report completion after Package A alone.
+    await client.query(`UPDATE messages SET delivery_status='pending',
+      whatsapp_message_id='wamid.price.a',whatsapp_accepted_at=now()
+      WHERE id=$1`,[saved.id]);
+    assert.equal(await pricingRepo.markBatchCompleted({
+      contactId:1,anchorId:101,expectedPackages:[offer.packageName,offerB.packageName],
+    }),false);
+    await client.query(`UPDATE messages SET delivery_status='pending',
+      whatsapp_message_id='wamid.price.b',whatsapp_accepted_at=now()
+      WHERE id=$1`,[savedB.id]);
+    assert.equal(await pricingRepo.markBatchCompleted({
+      contactId:1,anchorId:101,expectedPackages:[offer.packageName,offerB.packageName],
+    }),true);
+    assert.equal((await pricingRepo.listEligible({activatedAt,triggerMode:"all",settings})).length,0);
+    await client.query("DELETE FROM pricing_reminder_batch_completions WHERE anchor_id=101");
     await client.query("DELETE FROM messages WHERE id=$1",[savedB.id]);
+
+    // Completion tracking must also recognize Messenger/Instagram's own
+    // provider acceptance fields without requiring a WhatsApp WAMID timestamp.
+    await client.query(`INSERT INTO contacts(id,channel,channel_user_id)
+      VALUES(9,'facebook','facebook-user');
+      INSERT INTO messages(id,contact_id,role,content) VALUES(901,9,'assistant','Original reply');
+      INSERT INTO messages(id,contact_id,role,content,
+        is_automated_follow_up,automated_follow_up_step,
+        pricing_reminder_anchor_id,pricing_reminder_package_key,
+        whatsapp_message_id,social_accepted_at,delivery_status)
+      VALUES(902,9,'assistant','Pricing image',true,4,901,'Social offer',
+        'facebook:accepted-id',now(),'sent');`);
+    assert.equal(await pricingRepo.markBatchCompleted({
+      contactId:9,anchorId:901,expectedPackages:["Social offer"],
+    }),true);
+    assert.equal((await client.query(
+      "SELECT accepted_packages FROM pricing_reminder_batch_completions WHERE anchor_id=901"
+    )).rows[0].accepted_packages,1);
 
     const progress = await client.query(
       "SELECT MAX(automated_follow_up_step) AS step FROM messages WHERE automated_follow_up_for_message_id=101"

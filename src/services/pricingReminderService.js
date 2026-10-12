@@ -304,6 +304,7 @@ async function runPricingReminders(settings, now = new Date()) {
           continue;
         }
         if (canSendAfterFinal(candidate, now, offers.length)) {
+          let allAccepted=true;
           for (const [index, offer] of offers.entries()) {
             // Distinct provider receipts and one durable claim per package.
             // Stop on partial, unknown, or failed sends for staff review.
@@ -314,7 +315,18 @@ async function runPricingReminders(settings, now = new Date()) {
                     (!nextDueAt || retryTime < Date.parse(nextDueAt))) {
                   nextDueAt = new Date(retryTime).toISOString();
                 }
-              }))) break;
+              }))) {
+              allAccepted=false;
+              break;
+            }
+          }
+          if (allAccepted) {
+            // A/B graphics are a single logical reminder. Final consent
+            // cannot start until each selected graphic has a Meta receipt.
+            await pricingRepo.markBatchCompleted({
+              contactId:candidate.contact_id,anchorId:candidate.anchor_id,
+              expectedPackages:offers.map(offer=>offer.packageName),
+            });
           }
         }
       } catch (err) {

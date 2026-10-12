@@ -4,6 +4,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const freeEntryReferralsRepo = require("../db/whatsappFreeEntryReferralsRepo");
 const whatsappInboundConsentRepo = require("../db/whatsappInboundConsentRepo");
+const whatsappConsentPromptRepo = require("../db/whatsappConsentPromptRepo");
 const { explicitPromotionConsent } = require("../utils/explicitWhatsAppConsent");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -50,6 +51,7 @@ function createInboundMessageClaimService({
   processing = inboundProcessingRepo,
   freeEntryReferrals = freeEntryReferralsRepo,
   inboundConsent = whatsappInboundConsentRepo,
+  buttonConsent = whatsappConsentPromptRepo,
   events = realtimeEvents,
   policy = whatsappPolicy,
   reengagement = leadReengagementAlertService,
@@ -165,6 +167,29 @@ function createInboundMessageClaimService({
       lead = leadOutcome?.lead || null;
     } catch (err) {
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
+    }
+
+    // Only a genuine Meta interactive.button_reply callback can confirm or
+    // decline the matching outbound consent request. Never parse typed button
+    // labels into permission, and never let the AI answer a consent tap.
+    if (channel === "whatsapp" && incoming?.interactiveReplyId && lead?.id) {
+      const response = await buttonConsent.recordButtonResponse({
+        contactId: contact.id,
+        messageId: savedInbound.id,
+        leadId: lead.id,
+        replyId: incoming.interactiveReplyId,
+        businessName: config.clinicName || config.businessName,
+      });
+      if (response?.pending) {
+        // The button callback arrived before the provider-accepted prompt's
+        // WAMID could be committed. Do not feed it to the AI or call it consent.
+        // The durable inbound job will retry once that evidence exists.
+        throw new Error("WhatsApp consent button awaiting outbound provider receipt");
+      }
+      if (response?.handled) {
+        await processing.markCompletedByMessageId(savedInbound.id);
+        return null;
+      }
     }
 
     // Capture only customer-authored, explicit promotional permission. This is
