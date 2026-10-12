@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const { pool } = require("../db/db");
+const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 
 // A billing advisory is not a Meta price quote and NEVER guarantees RM0.
 // Recent billable messages take priority over any earlier free-entry evidence.
@@ -14,32 +15,8 @@ SELECT EXISTS (
     AND (NULLIF(BTRIM(entry.ctwa_clid),'') IS NOT NULL
       OR NULLIF(BTRIM(entry.meta_ad_id),'') IS NOT NULL)
 ) AS has_ctwa_referral,
-EXISTS (
-  SELECT 1
-  FROM whatsapp_free_entry_referrals entry
-  JOIN messages inbound ON inbound.id=entry.origin_message_id
-    AND inbound.contact_id=entry.contact_id AND inbound.role='user'
-  JOIN LATERAL (
-    SELECT reply.created_at, reply.whatsapp_message_id
-    FROM messages reply
-    WHERE reply.contact_id=entry.contact_id AND reply.role='assistant'
-      AND reply.whatsapp_message_id IS NOT NULL
-      AND reply.created_at>=inbound.created_at
-      AND reply.created_at<inbound.created_at+interval '24 hours'
-    ORDER BY reply.created_at,reply.id LIMIT 1
-  ) first_reply ON TRUE
-  JOIN whatsapp_free_entry_pricing_evidence evidence
-    ON evidence.wamid=first_reply.whatsapp_message_id
-    AND evidence.pricing_type='free_entry_point'
-    AND evidence.billable=false
-    AND evidence.delivery_status IN ('sent','delivered','read')
-  WHERE entry.contact_id=$1 AND entry.source_type='ad'
-    AND (NULLIF(BTRIM(entry.ctwa_clid),'') IS NOT NULL
-      OR NULLIF(BTRIM(entry.meta_ad_id),'') IS NOT NULL)
-    AND first_reply.created_at<=$2::timestamptz
-    -- Conservative 72-hour horizon; later periods need separate verification.
-    AND $2::timestamptz<first_reply.created_at+interval '71 hours'
-) AS has_recent_verified_free_entry,
+(SELECT c.whatsapp_number FROM contacts c
+ WHERE c.id=$1 AND c.channel='whatsapp') AS recipient,
 EXISTS (
   SELECT 1 FROM messages m
   JOIN whatsapp_free_entry_pricing_evidence billed
@@ -129,7 +106,21 @@ async function getTemplateBillingAdvisory(contactId, {
   let evidence = "unknown";
   try {
     const result = await database.query(BILLING_ADVISORY_SQL, [id, now]);
-    evidence = describeEvidence(result.rows?.[0]);
+    const row = result.rows?.[0];
+    // The Inbox and manual template picker must use the exact same verified
+    // free-entry check, including proven 7-day extensions and strict-mode
+    // account guards. A confirmed billable message always takes precedence.
+    let freeEntryVerified = false;
+    if (row?.has_ctwa_referral === true &&
+        row?.has_recent_billable_message !== true && row?.recipient) {
+      freeEntryVerified = await whatsappZeroCostGuard.hasVerifiedFreeTemplateWindow(
+        row.recipient, { database, now, env }
+      );
+    }
+    evidence = describeEvidence({
+      ...row,
+      has_recent_verified_free_entry: freeEntryVerified,
+    });
   } catch (error) {
     // Fail conservatively: staff must still explicitly acknowledge a possible
     // charge when the pricing-evidence database is temporarily unavailable.
