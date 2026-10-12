@@ -8,8 +8,9 @@ const {
 // price enquiry. Consent detection must not control unsolicited price safety.
 // Replace commercial model output with deterministic conversational copy.
 // Bare numbers may be phone numbers, address units or durations, not prices.
+// Merely describing Package A and Package B is not a price or promotion.
 const COMMERCIAL_REPLY_CONTENT =
-  /(?:\b(?:rm|myr)(?=\d|\s|[^\p{L}\p{N}]|$)|\b(?:ringgit|pricing|prices?|costs?|fees?|charges?|promos?|promotions?|discounts?|deals?|vouchers?|coupons?|offers?|sales?|harga|promosi|tawaran|diskaun|percuma|gifts?|bonuses?|rebates?|cashbacks?)\b|\b(?:free|complimentary)\b.{0,50}\b(?:massage|gift|session|treatment|trial|consultation|add[-\s]?on|bonus)\b|(?:first[\s-]*trial|trial[\s-]*price)|令吉|[价價][钱錢格位]|优惠|優惠|促销|促銷|折扣|限时|限時|特价|特價|赠|贈|礼遇|禮遇|免费|免費|原价|原價|现价|現價|只需|仅需|僅需|\d{1,3}\s*%\s*(?:off|discount)?|(?:\d\uFE0F?\u20E3){2,}|(?:套餐|配套)\s*[ABC].{0,20}(?:套餐|配套)\s*[ABC]|\bpackage\s*[abc]\b.{0,30}\bpackage\s*[abc]\b)/iu;
+  /(?:\b(?:rm|myr)(?=\d|\s|[^\p{L}\p{N}]|$)|\b(?:ringgit|pricing|prices?|costs?|fees?|charges?|promos?|promotions?|discounts?|deals?|vouchers?|coupons?|offers?|sales?|harga|promosi|tawaran|diskaun|percuma|gifts?|bonuses?|rebates?|cashbacks?)\b|\b(?:free|complimentary)\b.{0,50}\b(?:massage|gift|session|treatment|trial|consultation|add[-\s]?on|bonus)\b|(?:first[\s-]*trial|trial[\s-]*price)|令吉|[价價][钱錢格位]|优惠|優惠|促销|促銷|折扣|限时|限時|特价|特價|赠|贈|礼遇|禮遇|免费|免費|原价|原價|现价|現價|只需|仅需|僅需|\d{1,3}\s*%\s*(?:off|discount)?|(?:\d\uFE0F?\u20E3){2,})/iu;
 
 const DURATION_REQUEST =
   /(?:多久|多长|多長|几分钟|幾分鐘|几小时|幾小時|\bhow\s+long\b|\bduration\b|\bberapa\s+lama\b)/iu;
