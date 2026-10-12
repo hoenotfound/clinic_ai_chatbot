@@ -162,6 +162,11 @@ function hasCustomerPriceEnquiry(customerText) {
 
 // A specific monetary treatment-price question is narrower than asking
 // whether offers/packages exist or consenting to future promotional updates.
+function isStandalonePriceQuestion(customerText) {
+  const t = String(customerText || "").normalize("NFKC").trim();
+  return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t);
+}
+
 function isContextualBarePriceQuestion(customerText, treatment = null) {
   return Boolean(String(treatment || "").trim()) &&
     /^(?:berapa|brp|brapa|berapa\s+ya|berapa\s+eh)[\s?.!！。？]*$/iu.test(
@@ -212,4 +217,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { LOCAL_MONETARY_QUESTION, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { LOCAL_MONETARY_QUESTION, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
