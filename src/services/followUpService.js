@@ -1036,6 +1036,27 @@ function currentSessionHasPromotionEnquiry(
   return targetPromotionEnquirySeen || genericPromotionEnquirySeen;
 }
 
+function enforceAssessmentFirstFollowUpCopy({
+  message, candidate = {}, targetedService = null, language = "en",
+} = {}) {
+  const original = String(message || "");
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled !== true ||
+      !hasTreatmentPriceContent(original)) {
+    return { message: original, suppressMedia: false };
+  }
+  return {
+    message: assessmentFirstInvitation({
+      treatment: targetedService || candidate.treatment_interest,
+      customerText: (candidate.recent_inbound_messages || []).at(-1) ||
+        candidate.trigger_message_content || "",
+      language,
+      services: clinicConfig.services,
+      serviceAliases: clinicConfig.serviceAliases,
+    }),
+    suppressMedia: true,
+  };
+}
+
 async function sendCandidate(candidate) {
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
@@ -1296,21 +1317,17 @@ async function sendCandidate(candidate) {
     return;
   }
 
-  // Apply the policy to *every* follow-up: fixed, targeted-media caption,
-  // AI-generated, AI fallback, and promotion overrides. A price-bearing
-  // attachment may itself show the price so suppress that media as well.
-  const originalHasPrice = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-    hasTreatmentPriceContent(followUpMessage);
-  if (originalHasPrice) {
+  // Guard every follow-up channel and mode just before durable reservation.
+  // If configured media was paired with a price-bearing caption, omit the
+  // attachment as well: an image itself might display an unasked amount.
+  const safeFollowUp = enforceAssessmentFirstFollowUpCopy({
+    message: followUpMessage, candidate, targetedService, language,
+  });
+  if (safeFollowUp.suppressMedia) {
     console.info(`[Assessment-first] Suppressed unsolicited price in follow-up step ${stepIndex} contact ${candidate.contact_id}`);
-    followUpMessage = assessmentFirstInvitation({
-      treatment: targetedService || candidate.treatment_interest,
-      customerText: (candidate.recent_inbound_messages || []).at(-1) || candidate.trigger_message_content || "",
-      language,
-      services: clinicConfig.services,
-      serviceAliases: clinicConfig.serviceAliases,
-    });
   }
+  followUpMessage = safeFollowUp.message;
+  const originalHasPrice = safeFollowUp.suppressMedia;
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
@@ -1717,6 +1734,7 @@ realtimeEvents.subscribe("config_changed", (payload) => {
 });
 
 module.exports = {
+  enforceAssessmentFirstFollowUpCopy,
   FOLLOW_UP_CHECK_INTERVAL_MS,
   STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,
