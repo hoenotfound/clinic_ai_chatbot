@@ -87,6 +87,9 @@ function createInboundMessageClaimService({
     // the customer's message durable and visible, mark it unread/attention,
     // then complete its processing job without generating any outbound reply.
     const optOutScope = customerOptOutScope(incoming);
+    const separateServiceQuestion = optOutScope === "marketing"
+      ? whatsappPolicy.extractQuestionAfterMarketingOptOut(incoming.text, optOutScope)
+      : null;
     if (optOutScope) {
       const source = incoming?.buttonPayload
         ? "customer_quick_reply"
@@ -126,8 +129,12 @@ function createInboundMessageClaimService({
         console.error(`Failed to mark opt-out message unread for contact ${contact.id}:`, err);
       }
 
-      await processing.markCompletedByMessageId(savedInbound.id);
-      return null;
+      if (!separateServiceQuestion) {
+        await processing.markCompletedByMessageId(savedInbound.id);
+        return null;
+      }
+      // Marketing consent has already been revoked. Continue a normal
+      // customer-initiated service question without any marketing permission.
     }
 
     // Operational bookkeeping is best-effort after the durable message + job
@@ -417,7 +424,10 @@ function createInboundMessageClaimService({
 
     // Opt-outs never enter the outbound-processing lease; they are completed
     // directly by prepareStoredInbound with no automated response.
-    if (customerOptOutScope(incoming)) {
+    const stopScope = customerOptOutScope(incoming);
+    const hasSeparateQuestion = stopScope === "marketing" &&
+      whatsappPolicy.extractQuestionAfterMarketingOptOut(incoming.text, stopScope);
+    if (stopScope && !hasSeparateQuestion) {
       try {
         return await prepareStoredInbound(durableClaim);
       } catch (err) {
