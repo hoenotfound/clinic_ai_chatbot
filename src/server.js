@@ -34,6 +34,7 @@ const {
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
+const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {
@@ -1572,21 +1573,19 @@ async function processIncomingMessage(
           }
         }
       } finally {
-        if (promotionImagesTruncated) {
-          auditReason = auditReason
-            ? auditReason + ";promotion_image_budget" : "promotion_image_budget";
-        }
-        const auditStatus = auditSent > 0
-          ? (auditReason ? "partial" : "sent")
-          : (["provider_send_failed", "result_media_exception"].includes(auditReason)
-            ? "failed" : "skipped");
+        const { status: auditStatus, reason: finalAuditReason } =
+          resultMediaAuditOutcome({
+            reason: auditReason,
+            sentCount: auditSent,
+            promotionImagesTruncated,
+          });
         // Do not let audit availability affect messaging, billing or handoff.
         try {
           await resultMediaDecisionRepo.recordDecision({
             contactId: contact.id,
             inboundMessageId: savedInbound.id,
             status: auditStatus,
-            reason: auditReason,
+            reason: finalAuditReason,
             promotionCount: automaticPromoMediaSent,
             selectedCount: auditSelected,
             sentCount: auditSent,
@@ -1594,8 +1593,8 @@ async function processIncomingMessage(
         } catch (auditError) {
           console.warn(`[Result media] audit persistence failed for contact ${contact.id}:`, auditError);
         }
-        if (auditReason) {
-          console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=${auditStatus} reason=${auditReason} promos=${automaticPromoMediaSent} results=${auditSent}/${auditSelected}`);
+        if (finalAuditReason) {
+          console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=${auditStatus} reason=${finalAuditReason} promos=${automaticPromoMediaSent} results=${auditSent}/${auditSelected}`);
         }
       }
     }
