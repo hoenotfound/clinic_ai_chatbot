@@ -355,11 +355,12 @@ test("verified first service enquiry gets an assessment invite while keeping the
   const untouched=[
     {...opts,isFirstMessage:false,customerText:"想了解骨盆调理",treatment:"骨盆调理"},
     {...opts,customerText:"骨盆多少钱？",treatment:"骨盆调理"},
-    {...opts,customerText:"我想了解骨盆调理",serviceQuery:false,treatment:"骨盆调理"},
+    {...opts,customerText:"我想了解骨盆调理",serviceQuery:false,treatment:null},
     {...opts,customerText:"我想了解骨盆调理",flagged:true,treatment:"骨盆调理"},
     {...opts,customerText:"想了解骨盆和3D",treatment:"骨盆调理"},
   ];
   for(const input of untouched) assert.equal(ensureFirstAssessmentInvitation({...input,reply:text}).appended,false,JSON.stringify(input));
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"我想了解骨盆调理",serviceQuery:false,treatment:"骨盆调理"}).appended,true);
   assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"我想了解这个",treatment:"骨盆调理"}).appended,false);
   assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理",
     verifiedAdService:"骨盆调理",}).appended,true);
