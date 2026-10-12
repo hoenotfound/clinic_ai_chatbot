@@ -266,3 +266,19 @@ test("immediate offers override future opt-in, but refusals and duration do not 
     "Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。"
   ).hasFuturePermission, false);
 });
+
+
+test("declining one service does not swallow a separate explicit price request",()=>{
+  for(const message of [
+    "Hi～我不想做9D，请问3D 小颜术现在多少钱？",
+    "Hi～我不要9D, 请问3D多少钱?",
+    "我不想做9D，但骨盆多少钱？",
+  ]) assert.equal(hasCustomerPriceEnquiry(message),true,message);
+
+  for(const message of [
+    "Hi～我不想做9D，想了解3D",
+    "Hi～我不想做9D，也不想收优惠",
+    "Hi～我不希望接收WhatsApp优惠，想了解骨盆",
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+  ]) assert.equal(hasCustomerPriceEnquiry(message),false,message);
+});
