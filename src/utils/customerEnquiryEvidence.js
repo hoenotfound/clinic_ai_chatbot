@@ -127,7 +127,15 @@ const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|c
 function hasCustomerPriceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
-  if (DECLINED_TREATMENT.test(value) || DECLINED_PRICE.test(value)) return false;
+  // Declining one treatment must not suppress a separate, explicit CURRENT
+  // pricing question about another treatment in the same customer message.
+  // A standalone refusal still does not authorize promotional images.
+  if (DECLINED_PRICE.test(value)) return false;
+  if (DECLINED_TREATMENT.test(value) &&
+      !DIRECT_CURRENT_REQUEST.test(value) &&
+      !/(?:多少[钱錢]|价格(?:是)?多少|價錢(?:是)?多少|价钱(?:是)?多少|\bhow\s+much\b)/iu.test(value)) {
+    return false;
+  }
   const current = stripFutureFollowUpPermission(value).text;
   return PRICE_OR_PACKAGE.test(current) ||
     ENGLISH_MONEY_QUESTION.test(current) ||
