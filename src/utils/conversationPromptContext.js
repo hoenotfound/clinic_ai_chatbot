@@ -428,10 +428,25 @@ function buildConversationPromptContext(
   const previousCustomerText = customerMessages.length > 1
     ? messageText(customerMessages.at(-2))
     : "";
-  const previousCommercialText = stripFutureFollowUpPermission(previousCustomerText).text;
-  const previousPromotionTopic =
-    PROMOTION_PATTERN.test(previousCommercialText) ||
-    configuredPromotionReference(previousCommercialText, promotions);
+  // A named package can remain relevant through a couple of short customer
+  // questions ("包括什么？" -> "需要多久？"). Do not carry it across a
+  // customer-chosen change of treatment or a broad topic reset.
+  let previousPromotionTopic = false;
+  for (const previous of customerMessages.slice(-4, -1).reverse()) {
+    const earlier = stripFutureFollowUpPermission(messageText(previous)).text;
+    if (!earlier || TOPIC_CHANGE_PATTERN.test(earlier)) break;
+    const priorIntent = customerServiceIntent(earlier, candidates, promotions);
+    if (priorIntent.broadIntent || (
+      priorIntent.explicitMatches.length > 0 &&
+      (relevantServiceNames.length !== 1 ||
+       !priorIntent.explicitMatches.includes(relevantServiceNames[0]))
+    )) break;
+    if (PROMOTION_PATTERN.test(earlier) ||
+        configuredPromotionReference(earlier, promotions)) {
+      previousPromotionTopic = true;
+      break;
+    }
+  }
   const currentPromotionIntent =
     PROMOTION_PATTERN.test(currentCommercialText) ||
     (currentCommercialText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCommercialText)) ||
