@@ -2,8 +2,12 @@ const { isGreetingOrLanguageOnly } = require("./chatLanguage");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
-const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|packages?|rm\s*\d{2,})\b|\b(?:harga|pakej|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc]|(?:special|current|any)\s+offers?)\b)/iu;
+const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|rm\s*\d{2,})\b|\b(?:harga|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc]|(?:special|current|any)\s+offers?)\b)/iu;
 
+
+// Naming a package is treatment interest, not by itself a request for its
+// price or promotional graphics. A question about actual options is different.
+const PACKAGE_OPTIONS_REQUEST = /(?:\b(?:do\s+you\s+have|what|which|any|show\s+me|list|send\s+me)\b.{0,35}\bpackages?\b|\bpackages?\s+(?:available|options?|details?)\b|\bpackage\s+[abc]\s*(?:[?？]|$)|(?:有(?:什么|什麼|哪些|没有|沒有)|哪(?:些|种|種)|列出|给我看|給我看|发我|發我|介绍|介紹|看看|查看).{0,20}(?:配套|套餐|pakej|packages?)|(?:配套|套餐|pakej).{0,15}(?:有哪[些种種]|有哪些|是什[么麼]|选项|選項|详情|詳情)|\b(?:apa|ada|senarai|pilihan)\b.{0,25}\bpakej\b|\bpakej\b.{0,20}\b(?:apa|ada|pilihan)\b)/iu;
 
 // "How much" can be a price enquiry or a question about time, discomfort,
 // frequency, quantity and recovery. Only unambiguous usages count as price
@@ -138,6 +142,7 @@ function hasCustomerPriceEnquiry(customerText) {
   }
   const current = stripFutureFollowUpPermission(value).text;
   return PRICE_OR_PACKAGE.test(current) ||
+    PACKAGE_OPTIONS_REQUEST.test(current) ||
     ENGLISH_MONEY_QUESTION.test(current) ||
     (MALAY_MONEY_QUESTION.test(current) && !MALAY_NON_PRICE_QUANTITY.test(current));
 }
