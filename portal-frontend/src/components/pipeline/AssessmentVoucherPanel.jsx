@@ -38,6 +38,7 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
   const pelvicInterest = /^(?:骨盆(?:调理|調理|矫正|矯正|调整|調整)|骨盤(?:調理|调理)|骨盘(?:调理|調理)|pelvic\s+(?:care|adjustment|treatment))$/iu
     .test(String(lead.treatment_interest || "").trim());
   const attendanceMarked = lead.appointment_status === "visited";
+  const eligibilityCurrent = pelvicInterest && attendanceMarked;
 
   async function changeStatus(next) {
     if (!canManage || saving) return;
@@ -94,6 +95,12 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
               )}
             </>
           )}
+          {(status === "eligible" || status === "issued") && !eligibilityCurrent && (
+            <p role="alert" className="text-xs text-[var(--color-danger)]">
+              This lead no longer has both pelvic treatment interest and Visited status.
+              Confirm or correct the lead details before issuing or redeeming the voucher.
+            </p>
+          )}
           {status === "eligible" && (
             <>
               <p className="text-xs text-[var(--color-text-muted)]">
@@ -116,7 +123,7 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
                     <input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)}
                       className="mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
                   </label>
-                  <button type="button" disabled={saving || !termsConfirmed || !termsNote.trim()}
+                  <button type="button" disabled={saving || !eligibilityCurrent || !termsConfirmed || !termsNote.trim()}
                     onClick={() => changeStatus("issued")}
                     className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
                     Mark voucher issued
@@ -138,7 +145,7 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
                     onChange={(e) => setRedemptionNote(e.target.value)}
                     placeholder="E.g. Treatment booked; voucher applied once, no stacking confirmed"
                     className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
-                  <button type="button" disabled={saving || !redemptionNote.trim()}
+                  <button type="button" disabled={saving || !eligibilityCurrent || !redemptionNote.trim()}
                     onClick={() => changeStatus("redeemed")}
                     className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
                     Mark redeemed
