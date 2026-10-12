@@ -919,6 +919,13 @@ function parseIncomingMessages(body) {
         from: String(senderId),
         channel,
         profileName: null,
+        // Messenger/Instagram quick replies carry the displayed text alongside
+        // message.quick_reply.payload. Keep that source marker through the
+        // durable inbound claim so atomic STOP attribution is accurate.
+        ...(typeof message.quick_reply?.payload === "string" &&
+            message.quick_reply.payload.trim()
+          ? { buttonPayload: message.quick_reply.payload }
+          : {}),
         ...(attribution ? { attribution } : {}),
       };
 
