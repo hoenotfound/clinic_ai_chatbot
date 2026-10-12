@@ -2175,6 +2175,8 @@ function ThreadView({
   const [attentionExpanded, setAttentionExpanded] = useState(false);
   const [policyNow, setPolicyNow] = useState(Date.now());
   const [verifiedFreeTemplateWindow, setVerifiedFreeTemplateWindow] = useState(null);
+  const [freeWindowRefreshSignal, setFreeWindowRefreshSignal] = useState(0);
+  const freeWindowLastCheckedAt = useRef(0);
 
   activeContactIdRef.current = contact?.contact_id;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
@@ -2196,13 +2198,16 @@ function ThreadView({
   const canCheckFreeTemplateWindow =
     whatsappTemplateAvailable &&
     messagingPolicy.code === "outside_customer_service_window" &&
-    !messagingPolicy.optedOutAt &&
-    !messagingPolicy.marketingOptedOut;
+    !messagingPolicy.optedOutAt;
   const freeWindowRefreshMinute = Math.floor(policyNow / 60000);
   const freeTemplateWindowActive =
     canCheckFreeTemplateWindow &&
     verifiedFreeTemplateWindow?.contactId === contact?.contact_id &&
     verifiedFreeTemplateWindow?.verified === true;
+  const freeTemplateSendingPaused =
+    freeTemplateWindowActive &&
+    verifiedFreeTemplateWindow?.sendReady !== true;
+  const freeTemplateGreen = freeTemplateWindowActive && !freeTemplateSendingPaused;
   const replyWindowCompactLabel = quietReplyAvailable
     ? String(messagingPolicy.label || "")
         .replace(/^Reply available\s*·\s*/i, "")
@@ -2230,8 +2235,23 @@ function ThreadView({
     return () => clearInterval(timer);
   }, [contact?.contact_id]);
 
-  // Only inspect the selected closed WhatsApp chat. Revalidate as the verified
-  // free-entry period can expire without a new message or realtime event.
+  // Only the selected closed WhatsApp chat is checked. Refocus/reopen
+  // rechecks promptly without sending duplicate requests on rapid tab changes.
+  useEffect(() => {
+    if (!canCheckFreeTemplateWindow) return undefined;
+    const refreshOnReturn = () => {
+      if (document.visibilityState !== "visible" ||
+          Date.now() - freeWindowLastCheckedAt.current < 30 * 1000) return;
+      setFreeWindowRefreshSignal((value) => value + 1);
+    };
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
+  }, [canCheckFreeTemplateWindow, contact?.contact_id]);
+
   useEffect(() => {
     const contactId = contact?.contact_id;
     let cancelled = false;
@@ -2239,18 +2259,24 @@ function ThreadView({
       setVerifiedFreeTemplateWindow(null);
       return undefined;
     }
-    setVerifiedFreeTemplateWindow((previous) =>
-      previous?.contactId === contactId ? previous : null
-    );
+    freeWindowLastCheckedAt.current = Date.now();
+    // Never keep a previous green send-ready verdict while a refresh is pending.
+    setVerifiedFreeTemplateWindow(null);
     api.getWhatsAppTemplateFreeWindowStatus(contactId)
-      .then(({ verified }) => {
-        if (!cancelled) setVerifiedFreeTemplateWindow({ contactId, verified: verified === true });
+      .then(({ verified, sendReady, blockedReason }) => {
+        if (!cancelled) setVerifiedFreeTemplateWindow({
+          contactId, verified: verified === true,
+          sendReady: sendReady === true,
+          blockedReason: blockedReason || null,
+        });
       })
       .catch(() => {
-        if (!cancelled) setVerifiedFreeTemplateWindow({ contactId, verified: false });
+        if (!cancelled) setVerifiedFreeTemplateWindow({
+          contactId, verified: false, sendReady: false, blockedReason: null,
+        });
       });
     return () => { cancelled = true; };
-  }, [contact?.contact_id, canCheckFreeTemplateWindow, freeWindowRefreshMinute]);
+  }, [contact?.contact_id, canCheckFreeTemplateWindow, freeWindowRefreshMinute, freeWindowRefreshSignal]);
 
   useEffect(() => {
     setAttentionExpanded(false);
@@ -3224,24 +3250,29 @@ function ThreadView({
         {messagingPolicy.applies && !quietReplyAvailable && (
           <div
             className={`border-t px-3 py-2.5 sm:px-5 ${
-              freeTemplateWindowActive
+              freeTemplateGreen
                 ? "border-emerald-200 bg-emerald-50 text-emerald-900"
                 : "border-amber-200 bg-amber-50 text-amber-900"
             }`}
           >
             <div className="flex items-start gap-2">
               <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
-                freeTemplateWindowActive ? "bg-emerald-500" : "bg-amber-500"
+                freeTemplateGreen ? "bg-emerald-500" : "bg-amber-500"
               }`} />
               <div className="min-w-0 flex-1">
                 <p className="break-words text-[11px] font-semibold">
-                  {freeTemplateWindowActive ? "Free-entry template window active" : messagingPolicy.label}
+                  {freeTemplateSendingPaused ? "Free-entry verified · sending paused"
+                    : freeTemplateWindowActive ? "Free-entry period verified" : messagingPolicy.label}
                 </p>
                 {freeTemplateWindowActive ? (
                   <p className="mt-0.5 break-words text-[10px] leading-4">
-                    {whatsappTemplateNeedsOptIn
-                      ? "24h closed. Template may be free; confirm opt-in."
-                      : "24h closed. Templates may be free; check marketing consent."}
+                    {freeTemplateSendingPaused
+                      ? "24h closed. Check the billing status before sending."
+                      : whatsappTemplateNeedsOptIn
+                      ? "24h closed. Confirm opt-in before a template."
+                      : messagingPolicy.marketingOptedOut
+                      ? "24h closed. Marketing blocked; check Utility templates."
+                      : "24h closed. Templates may be free; check consent."}
                   </p>
                 ) : (
                   <>
@@ -3270,7 +3301,7 @@ function ThreadView({
                     type="button"
                     onClick={onOpenWhatsAppTemplates}
                     className={`mt-2 inline-flex touch-manipulation items-center rounded-lg px-3 py-1.5 text-[10px] font-semibold text-white transition ${
-                      freeTemplateWindowActive
+                      freeTemplateGreen
                         ? "bg-emerald-700 hover:bg-emerald-800"
                         : "bg-amber-900 hover:bg-amber-950"
                     }`}
