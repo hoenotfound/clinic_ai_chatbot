@@ -164,8 +164,8 @@ function hasExplicitPriceRequest(customerText) {
   const current = withoutExplicitMarketingRefusal(
     stripFutureFollowUpPermission(original).text
   ).normalize("NFKC").trim();
-  if (!current || /^(?:(?:no|don't|do not|not)\\s+(?:price|pricing|cost)|(?:不要|不想|不用|无需|無需)\\s*(?:知道|了解|问|問)?\\s*(?:价格|價錢|价钱))\\s*[.!！。?？]*$/iu.test(current)) return false;
-  return /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\\b(?:price|pricing|cost|fees?|charges?|rates?|how\\s+much|harga|bayaran|berapa\\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\\s*\\d{2,}|myr\\s*\\d{2,})\\b)/iu.test(current);
+  if (!current || /^(?:(?:no|don't|do not|not)\s+(?:price|pricing|cost)|(?:不要|不想|不用|无需|無需)\s*(?:知道|了解|问|問)?\s*(?:价格|價錢|价钱))\s*[.!！。?？]*$/iu.test(current)) return false;
+  return /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
 
 function hasCustomerServiceEnquiry(customerText) {
