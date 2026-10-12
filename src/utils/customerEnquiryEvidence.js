@@ -7,7 +7,7 @@ const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|p
 
 // Naming a package is treatment interest, not by itself a request for its
 // price or promotional graphics. A question about actual options is different.
-const PACKAGE_OPTIONS_REQUEST = /(?:\b(?:do\s+you\s+have|what|which|any|show\s+me|list|send\s+me)\b.{0,35}\bpackages?\b|\bpackages?\s+(?:available|options?|details?)\b|\bpackage\s+[abc]\s*(?:[?？]|$)|(?:有(?:什么|什麼|哪些|没有|沒有)|哪(?:些|种|種)|列出|给我看|給我看|发我|發我|介绍|介紹|看看|查看).{0,20}(?:配套|套餐|pakej|packages?)|(?:配套|套餐|pakej).{0,15}(?:有哪[些种種]|有哪些|是什[么麼]|选项|選項|详情|詳情)|\b(?:apa|ada|senarai|pilihan)\b.{0,25}\bpakej\b|\bpakej\b.{0,20}\b(?:apa|ada|pilihan)\b|\b(?:packages?|pakej)\s+(?:apa|yang\s+mana|ada)\b)/iu;
+const PACKAGE_OPTIONS_REQUEST = /(?:\b(?:do\s+you\s+have|what|which|any|show\s+me|list|send\s+me)\b.{0,35}\bpackages?\b|\bpackages?\s+(?:available|options?)\b|\bpackage\s+[abc]\s*(?:[?？]|$)|(?:有(?:什么|什麼|哪些|没有|沒有)|哪(?:些|种|種)|列出|给我看|給我看|发我|發我).{0,20}(?:配套|套餐|pakej|packages?)|(?:配套|套餐|pakej).{0,15}(?:有哪[些种種]|有哪些|是什[么麼]|选项|選項)|\b(?:apa|ada|senarai|pilihan)\b.{0,25}\bpakej\b|\bpakej\b.{0,20}\b(?:apa|ada|pilihan)\b|\b(?:packages?|pakej)\s+(?:apa|yang\s+mana|ada)\b)/iu;
 
 // "How much" can be a price enquiry or a question about time, discomfort,
 // frequency, quantity and recovery. Only unambiguous usages count as price
