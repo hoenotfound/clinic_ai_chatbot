@@ -121,6 +121,14 @@ function matchingResultMediaSet(resultMedia, treatment) {
   const target = normalizeServiceName(treatment);
   if (!target || !Array.isArray(resultMedia)) return null;
 
+  const configuredDirect = resultMedia.filter((entry) =>
+    normalizeServiceName(entry?.service) === target
+  );
+  // An explicitly disabled direct set must not fall back to a related set.
+  if (configuredDirect.length > 0 && !configuredDirect.some((entry) =>
+    entry?.enabled === true && normalizeResultMediaTriggerMode(entry) !== "off"
+  )) return null;
+
   const eligible = resultMedia.filter(
     (entry) => entry?.enabled === true &&
       normalizeResultMediaTriggerMode(entry) !== "off"
