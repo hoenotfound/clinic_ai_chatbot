@@ -288,7 +288,6 @@ function guardAssessmentFirstPricingReply({
           .map((entry) => configuredServiceMention(entry.content, services, serviceAliases))
           .find(Boolean)
         : null);
-    const retained = stripUnsolicitedTreatmentPrice(original);
     const invitation = assessmentFirstInvitation({
       treatment: primary, customerText, language, services, serviceAliases,
     });
@@ -298,7 +297,8 @@ function guardAssessmentFirstPricingReply({
         ? "Harga rawatan seluruh badan perlu disahkan oleh pihak pusat mengikut jenis rawatan."
         : "Our centre will need to confirm the pricing for the specific full-body treatment.";
     return {
-      reply: [retained, priceClarification, invitation].filter(Boolean).join("\n"),
+      // Discard unsafe package fragments instead of preserving a partial wrong quote.
+      reply: [priceClarification, invitation].filter(Boolean).join("\n"),
       replaced: true,
     };
   }
