@@ -84,11 +84,11 @@ test("recovery is localized and keeps assessment-first without pricing", () => {
 test("runtime recovery sits behind the model review outcome and preserves staff reviews", () => {
   const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   const prompt = fs.readFileSync(path.join(__dirname, "../src/utils/systemPrompt.js"), "utf8");
-  const start = server.indexOf("if (flagged && reviewRequired && !keywordReason)");
+  const start = server.indexOf('if (!keywordReason && !bookingReady && (!flagged || reviewRequired)');
   const end = server.indexOf("// Do not permit a model", start);
   assert.ok(start > 0 && end > start);
   const block = server.slice(start, end);
-  assert.match(block, /recoverTcmServiceReviewReply/);
+  assert.match(block, /planTcmReviewReply/);
   assert.match(block, /businessType: clinicConfig\.businessType/);
   assert.match(block, /priceQuery = false/);
   assert.match(block, /packageQuery = false/);
@@ -215,6 +215,6 @@ test("runtime acknowledgement path persists review and exits before promotional 
   assert.match(review, /canSendAutomatedReply/);
   assert.doesNotMatch(review, /sendImageByUrl|markBookingReadyForContact|resolvePricePromotionForReply/);
   assert.match(server, /hasPendingClinicalAiReview\(contact.id\)/);
-  assert.match(server, /plan\.preserveReview/);
+  assert.match(server, /plan\?\.preserveReview/);
   assert.match(server, /plan\.alreadyInvited/);
 });
