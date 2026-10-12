@@ -34,6 +34,7 @@ const {
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
+const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {
@@ -48,7 +49,8 @@ const {
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
-const { guardFutureOfferIntroductionReply } = require("./utils/initialOfferReplyGuard");
+const { guardFutureOfferIntroductionReply, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -866,6 +868,14 @@ async function processIncomingMessage(
         .filter((message) => message?.role === "user")
         .map((message) => message.content)
     );
+    const marketingStopQuestion = whatsappPolicy.extractQuestionAfterMarketingOptOut(text);
+    // Keep the actual customer message intact in Neon. Only the model's
+    // current-turn context is narrowed to the separately asked service question
+    // so it cannot interpret the marketing refusal as a request for a deal.
+    const replyHistory = marketingStopQuestion
+      ? history.map((entry, index) => index === history.length - 1 && entry?.role === "user"
+          ? { ...entry, content: marketingStopQuestion } : entry)
+      : history;
     const isFirstMessage = forceFirstMessage || history.length === 1;
     const customerMessages = history.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
@@ -922,7 +932,7 @@ async function processIncomingMessage(
         );
       }
 
-      const rawAiReply = await ai.getReply(history, {
+      const rawAiReply = await ai.getReply(replyHistory, {
         contactId: contact.id,
         isFirstMessage,
         generateFirstIntro,
@@ -996,6 +1006,17 @@ async function processIncomingMessage(
         console.warn("[Reply guard] Replaced unsolicited commercial text in first WhatsApp opt-in reply.");
         reply = guardedOfferIntro.reply;
       }
+    }
+
+    // A marketing STOP must not become a price/promotion reply even if the
+    // model adds unsolicited commercial copy. Preserve useful service answers.
+    if (marketingStopQuestion && hasCommercialReplyContent(reply) && !flagged) {
+      reply = safeIntroReply({
+        customerText: marketingStopQuestion,
+        language: mediaLanguage,
+        services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+      });
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
@@ -1144,6 +1165,23 @@ async function processIncomingMessage(
       }
     }
 
+    // Honor the just-recorded marketing opt-out on this turn. The separate
+    // service question is answerable, but no optional promotional or results
+    // media should be sent together with an explicit refusal of marketing.
+    if (marketingStopQuestion) {
+      try {
+        await resultMediaDecisionRepo.recordDecision({
+          contactId: contact.id,
+          inboundMessageId: savedInbound.id,
+          status: "skipped",
+          reason: "marketing_opt_out_turn",
+        });
+      } catch (auditError) {
+        console.warn("[Result media] marketing opt-out audit failed:", auditError);
+      }
+      return { wasFirstMessage, keywordReason };
+    }
+
     // Promotional media is reactive, not a first-message blast. Only follow a
     // successful normal AI reply when the customer explicitly asked about the
     // price or available packages for one known configured service. Existing
@@ -1285,6 +1323,8 @@ async function processIncomingMessage(
       let auditReason = "not_evaluated";
       let auditSelected = 0;
       let auditSent = 0;
+      // The single finally block records every outcome, including early returns
+      // after a staff takeover, provider failure or a partially sent sequence.
       try {
         // A Meta ad may be enriched while the AI composes/sends its text reply.
         // Refresh the local Neon attribution only AFTER the text was accepted,
@@ -1533,21 +1573,19 @@ async function processIncomingMessage(
           }
         }
       } finally {
-        if (promotionImagesTruncated) {
-          auditReason = auditReason
-            ? auditReason + ";promotion_image_budget" : "promotion_image_budget";
-        }
-        const auditStatus = auditSent > 0
-          ? (auditReason ? "partial" : "sent")
-          : (["provider_send_failed", "result_media_exception"].includes(auditReason)
-            ? "failed" : "skipped");
+        const { status: auditStatus, reason: finalAuditReason } =
+          resultMediaAuditOutcome({
+            reason: auditReason,
+            sentCount: auditSent,
+            promotionImagesTruncated,
+          });
         // Do not let audit availability affect messaging, billing or handoff.
         try {
           await resultMediaDecisionRepo.recordDecision({
             contactId: contact.id,
             inboundMessageId: savedInbound.id,
             status: auditStatus,
-            reason: auditReason,
+            reason: finalAuditReason,
             promotionCount: automaticPromoMediaSent,
             selectedCount: auditSelected,
             sentCount: auditSent,
@@ -1555,8 +1593,8 @@ async function processIncomingMessage(
         } catch (auditError) {
           console.warn(`[Result media] audit persistence failed for contact ${contact.id}:`, auditError);
         }
-        if (auditReason) {
-          console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=${auditStatus} reason=${auditReason} promos=${automaticPromoMediaSent} results=${auditSent}/${auditSelected}`);
+        if (finalAuditReason) {
+          console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=${auditStatus} reason=${finalAuditReason} promos=${automaticPromoMediaSent} results=${auditSent}/${auditSelected}`);
         }
       }
     }

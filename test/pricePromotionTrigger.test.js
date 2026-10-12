@@ -823,3 +823,82 @@ test("CTWA service-interest opt-ins cannot auto-send pricing even when AI sets p
   });
   assert.equal(real?.packages?.length,1);
 });
+
+test("runtime promotion resolver never sends graphics for a package explanation despite model packageQuery", async () => {
+  const promo = {
+    name: "Pelvis Offer", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/pelvis.jpg",
+    caption: "RM388",
+  };
+  const opts = base({
+    priceQuery: true, packageQuery: true,
+    treatment: "骨盆调理", promotions: [promo],
+  });
+  for (const customerText of [
+    "Hi～我想了解 Neutro Sense TCM 的骨盆配套。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "可以介绍一下骨盆配套吗？",
+    "Tell me the details of the pelvic package",
+    "I want to know how Package B works",
+  ]) {
+    assert.equal(await resolvePricePromotionForReply({ ...opts, customerText }), null, customerText);
+  }
+  for (const customerText of ["你们有什么骨盆配套？", "骨盆套餐多少钱？"]) {
+    const result = await resolvePricePromotionForReply({ ...opts, customerText });
+    assert.equal(result?.promotion?.name, "Pelvis Offer", customerText);
+  }
+});
+
+test("package information does not activate automatic promotion media", async () => {
+  const promo = {
+    name: "Pelvic Offer", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/pelvis.jpg",
+    caption: "RM388",
+  };
+  const baseReply = base({
+    treatment: "骨盆调理", promotions: [promo],
+    priceQuery: true, packageQuery: true,
+  });
+  for (const customerText of [
+    "Please send me package details",
+    "Show me this treatment package",
+    "Can you send me the pelvic package details?",
+    "What are the package details?",
+    "Can I get details about package B?",
+    "可以发我骨盆配套介绍吗？",
+    "你们的配套内容是什么？",
+  ]) {
+    const result = await resolvePricePromotionForReply({
+      ...baseReply, customerText,
+    });
+    assert.equal(result, null, customerText);
+  }
+  for (const customerText of [
+    "你们有什么骨盆配套？", "骨盆套餐多少钱？", "Package B?",
+    "What packages are available?",
+  ]) {
+    const result = await resolvePricePromotionForReply({
+      ...baseReply, customerText,
+    });
+    assert.equal(result?.promotion?.name, "Pelvic Offer", customerText);
+  }
+});
+
+
+test("marketing refusals are not automatic price/media requests even if model flags pricing", async () => {
+  const offer = {
+    name: "Pelvic Offer", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/pelvis-promo.jpg",
+    caption: "RM388",
+  };
+  for (const customerText of [
+    "No promotions please, just explain pelvic treatment",
+    "No more offers please. How long does pelvic treatment take?",
+    "Don't send me promotions, can you explain how 3D works?",
+  ]) {
+    const result = await resolvePricePromotionForReply(base({
+      customerText, treatment: "骨盆调理",
+      promotions: [offer], priceQuery: true, packageQuery: true,
+    }));
+    assert.equal(result, null, customerText);
+  }
+});

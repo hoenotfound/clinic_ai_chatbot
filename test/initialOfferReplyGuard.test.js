@@ -19,7 +19,6 @@ test("unasked model prices and promotional offer text are replaced before Meta s
     "骨盆调理 RM388，另有RM288套餐。",
     "Only RM3️⃣8️⃣8️⃣ this month!",
     "Free 1-hour massage and first-trial special offer.",
-    "骨盆调理套餐A和套餐B可以选哦。",
     "现在五折优惠，只需388令吉。",
     "欢迎了解～赠送免费1小时全身按摩",
   ];
@@ -289,4 +288,119 @@ test("declining a different service does not permit AI unsolicited commercial te
     "3D 体验价 RM488", {services,serviceAliases}
   );
   assert.deepEqual(requested,{reply:"3D 体验价 RM488",replaced:false});
+});
+
+test("first WhatsApp replies retain ordinary numeric clinic details", () => {
+  for (const text of [
+    "我们的联络号码是 017-483 1336 😊",
+    "地址在 PJ C-12-6, Dataran 3 Two Business Centre。",
+    "我们的营业时间是星期二至星期五 10am 至 8pm。",
+    "For appointments call 012-649 9718.",
+  ]) {
+    assert.equal(commercial(text), false, text);
+    assert.deepEqual(checkReply("请问你们的电话号码或地址？", text), {
+      reply: text, replaced: false,
+    });
+  }
+  const unsolicited = checkReply("我想了解骨盆配套", "骨盆配套体验价 RM388");
+  assert.equal(unsolicited.replaced, true);
+  assert.equal(commercial(unsolicited.reply), false);
+});
+
+test("actual first-turn guard catches bare treatment prices without rewriting ordinary package explanations", () => {
+  const greeting = "我想了解骨盆配套";
+  for (const reply of [
+    "骨盆调理 388 / 288",
+    "骨盆调理 388，套餐 B 288",
+    "388",
+    "骨盆护理这次只要 388",
+    "Pelvic treatment 388 / 288",
+  ]) {
+    const result = checkReply(greeting, reply);
+    assert.equal(result.replaced, true, reply);
+    assert.equal(commercial(result.reply), false, reply);
+  }
+  for (const reply of [
+    "骨盆配套主要针对骨盆、腹直肌与体态问题，先由中医师进行评估。",
+    "我们可以先介绍骨盆配套的护理方式和适合人群 😊",
+    "骨盆调理套餐主要是徒手护理，不是注射。",
+    "骨盆调理套餐A和套餐B可以选哦。",
+    "可以帮你安排体态评估，之后再看哪种骨盆护理适合。",
+    "地址在 PJ C-12-6, Dataran 3 Two Business Centre；联络号码 017-483 1336",
+    "2026年星期二至星期五营业；护理一般需要30–40分钟。",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(greeting, reply), { reply, replaced: false }, reply);
+  }
+});
+
+
+test("real client case counts stay factual while Chinese bare ringgit amounts are blocked", () => {
+  const enquiry = "我想了解骨盆配套";
+  for (const reply of [
+    "我们已有1000+体态案例，可以先做1对1评估。",
+    "骨盆调理相关的1000+体态案例可供中医师参考。",
+    "目前超过1500+位客户了解过这个疗程。",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(enquiry, reply), { reply, replaced: false }, reply);
+  }
+  for (const reply of ["骨盆调理388令吉", "骨盆护理 288 令吉"]) {
+    assert.equal(checkReply(enquiry, reply).replaced, true, reply);
+  }
+});
+
+
+test("price-free Package A/B comparison survives first-contact reply guard", () => {
+  const initial = "Hi～我想了解骨盆配套。之后 WhatsApp 可以跟进我，有优惠也可以通知我 😊";
+  for (const reply of [
+    "骨盆套餐A和套餐B主要分别针对不同护理需求，中医师会先评估。",
+    "骨盆配套A包含腹直肌，配套B侧重骨盆。",
+    "套餐 A 和 套餐 B 均有不同的护理流程，可以先介绍。",
+    "Package A and Package B focus on different goals.",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(initial, reply), { reply, replaced: false }, reply);
+  }
+  for (const reply of [
+    "骨盆套餐A RM388，套餐B RM288",
+    "骨盆配套A 388，配套B 288",
+    "Package A 388 and Package B 288",
+    "骨盆套餐A和套餐B有本月优惠",
+  ]) {
+    assert.equal(commercial(reply), true, reply);
+    const guarded = checkReply(initial, reply);
+    assert.equal(guarded.replaced, true, reply);
+    assert.equal(commercial(guarded.reply), false, reply);
+  }
+});
+
+
+test("address and phone context does not conceal unrelated treatment prices", () => {
+  const enquiry = "Hi～我想了解骨盆调理，之后可以 WhatsApp 跟进我 😊";
+  for (const reply of [
+    "地址在PJ 骨盆调理388",
+    "地址在PJ C-12-6 骨盆配套 388 / 288",
+    "电话 012-3456789 骨盆调理 388",
+    "Our address is in PJ pelvic treatment 388",
+    "Contact us at 012-3456789; pelvic treatment 288",
+    "地址在 PJ 47301 骨盆调理 388",
+  ]) {
+    assert.equal(commercial(reply), true, reply);
+    const guarded = checkReply(enquiry, reply);
+    assert.equal(guarded.replaced, true, reply);
+    assert.equal(commercial(guarded.reply), false, reply);
+  }
+  for (const reply of [
+    "地址在 PJ 47301",
+    "地址在 PJ C-12-6 Dataran 3 Two Business Centre",
+    "电话号码是 017-483 1336",
+    "Contact us at 012-649 9718",
+    "地址 PJ 47301，电话 017-483 1336",
+    "我们的营业时间是10am到8pm，骨盆调理一般30–40分钟",
+    "骨盆套餐A和套餐B可以选哦。",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(enquiry, reply), { reply, replaced: false }, reply);
+  }
 });

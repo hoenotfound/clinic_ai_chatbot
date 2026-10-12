@@ -282,3 +282,84 @@ test("declining one service does not swallow a separate explicit price request",
     "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
   ]) assert.equal(hasCustomerPriceEnquiry(message),false,message);
 });
+
+test("general package introductions are not pricing enquiries but explicit option requests are", () => {
+  for (const message of [
+    "我想了解骨盆配套",
+    "Hi～我想了解 Neutro Sense TCM 的骨盆配套。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Tell me more about the pelvic package",
+    "I want to know how Package B works",
+    "Saya nak tahu tentang pakej pelvis",
+    "Package B适合产后吗？",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), false, message);
+  for (const message of [
+    "骨盆套餐多少钱？", "套餐有哪些？", "你们有什么配套？",
+    "do you have a package?", "Package B?", "有什么package？",
+    "What packages are available?", "Berapa harga pakej ini?",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), true, message);
+});
+
+test("asking how a named package works is not a request for its price graphics", () => {
+  for (const question of [
+    "可以介绍一下骨盆配套吗？",
+    "可以简单介绍骨盆套餐吗？",
+    "我想看看骨盆配套是怎么做的",
+    "介绍一下套餐内容",
+    "Tell me the details of the pelvic package",
+    "Could you explain the pelvic package?",
+    "Nak tahu pakej rawatan ni macam mana",
+  ]) assert.equal(hasCustomerPriceEnquiry(question), false, question);
+  for (const question of [
+    "骨盆套餐有哪些？", "你们有什么骨盆配套？",
+    "What packages are available?", "package apa ada?",
+    "请发我配套选项", "骨盆套餐多少钱?",
+  ]) assert.equal(hasCustomerPriceEnquiry(question), true, question);
+});
+
+
+test("package description requests stay informational across Chinese, English and CTWA", () => {
+  for (const text of [
+    "Please send me package details",
+    "Show me this treatment package",
+    "Can you send me the pelvic package details?",
+    "What are the package details?",
+    "Can I get details about package B?",
+    "可以发我骨盆配套介绍吗？",
+    "请发我骨盆配套的内容",
+    "你们的配套内容是什么？",
+    "Hi～我想了解 Neutro Sense TCM 的骨盆配套。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(text), false, text);
+  }
+  for (const text of [
+    "do you have a package?",
+    "Package B?",
+    "你们有什么配套？",
+    "骨盆套餐有哪些？",
+    "请发我配套选项",
+    "What packages are available?",
+    "Show me packages available",
+    "package apa ada?",
+    "现在骨盆多少钱？",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(text), true, text);
+  }
+});
+
+
+test("plain-language opt-outs never unlock immediate pricing media", () => {
+  for (const value of [
+    "No promotions please, just explain pelvic treatment",
+    "No promos thanks",
+    "No more offers please. How long does pelvic treatment take?",
+    "Don't send me promotions, can you explain how 3D works?",
+    "No discounts please, I only want service information",
+    "Stop promotions. Can you tell me about the treatment?",
+  ]) assert.equal(hasCustomerPriceEnquiry(value), false, value);
+  for (const value of [
+    "Any promotions for pelvic treatment?",
+    "No promotions available today?",
+    "What offers do you have?",
+    "No promotions please, but what is the price of pelvic treatment?",
+  ]) assert.equal(hasCustomerPriceEnquiry(value), true, value);
+});

@@ -1,9 +1,16 @@
 const { isGreetingOrLanguageOnly } = require("./chatLanguage");
+const { withoutExplicitMarketingRefusal } = require("./marketingRefusal");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
-const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|packages?|rm\s*\d{2,})\b|\b(?:harga|pakej|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|套[餐]|配套|优惠|優惠|折扣|促销|促銷|\b(?:[abc]\s*套餐|package\s*[abc]|(?:special|current|any)\s+offers?)\b)/iu;
+const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|rm\s*\d{2,})\b|\b(?:harga|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|优惠|優惠|折扣|促销|促銷|\b(?:(?:special|current|any|what|which)\s+offers?)\b)/iu;
 
+
+// Naming a package is treatment interest, not by itself a request for its
+// price or promotional graphics. A question about *which options exist* is different.
+// Requests for a single package's details, composition or procedure remain
+// service enquiries, even if the customer says "send" or "show me".
+const PACKAGE_OPTIONS_REQUEST = /(?:\b(?:do\s+you\s+have\s+(?:any\s+)?(?:a\s+)?packages?|(?:what|which|any|show\s+me|list(?:\s+me)?|send\s+me)\b.{0,35}\bpackages\b)(?!\s+(?:details?|information|description|contents?|explanation))|\bpackages?\s+(?:available|options?)\b|(?:^|[,，。;；\n])\s*package\s+[abc]\s*(?:[?？]|$)|(?:有(?:什么|什麼|哪些|没有|沒有)|哪(?:些|种|種)|列出).{0,20}(?:配套|套餐|pakej|packages?)|(?:配套|套餐|pakej).{0,15}(?:有哪[些种種]|有哪些|选项|選項|清单|清單|列表)|(?:发我|發我|发给我|發給我|给我看|給我看).{0,20}(?:配套|套餐)(?:选项|選項|清单|清單|列表)|\b(?:apa|ada|senarai|pilihan)\b.{0,25}\bpakej\b|\bpakej\b.{0,20}\b(?:apa|ada|pilihan)\b|\b(?:packages?|pakej)\s+(?:apa|yang\s+mana|ada)\b)/iu;
 
 // "How much" can be a price enquiry or a question about time, discomfort,
 // frequency, quantity and recovery. Only unambiguous usages count as price
@@ -110,6 +117,7 @@ function hasFuturePromotionPermissionWithoutPrice(customerText) {
   const parsed = stripFutureFollowUpPermission(customerText);
   return parsed.hasFuturePermission &&
     !PRICE_OR_PACKAGE.test(parsed.text) &&
+    !PACKAGE_OPTIONS_REQUEST.test(parsed.text) &&
     !ENGLISH_MONEY_QUESTION.test(parsed.text) &&
     !(MALAY_MONEY_QUESTION.test(parsed.text) && !MALAY_NON_PRICE_QUANTITY.test(parsed.text));
 }
@@ -136,8 +144,14 @@ function hasCustomerPriceEnquiry(customerText) {
       !/(?:多少[钱錢]|价格(?:是)?多少|價錢(?:是)?多少|价钱(?:是)?多少|\bhow\s+much\b)/iu.test(value)) {
     return false;
   }
-  const current = stripFutureFollowUpPermission(value).text;
+  // A refusal to receive promotions is not an invitation to show their
+  // graphics. Strip only the refusal wording; preserve an independent,
+  // explicit price question if the customer separately asks one.
+  const current = withoutExplicitMarketingRefusal(
+    stripFutureFollowUpPermission(value).text
+  );
   return PRICE_OR_PACKAGE.test(current) ||
+    PACKAGE_OPTIONS_REQUEST.test(current) ||
     ENGLISH_MONEY_QUESTION.test(current) ||
     (MALAY_MONEY_QUESTION.test(current) && !MALAY_NON_PRICE_QUANTITY.test(current));
 }

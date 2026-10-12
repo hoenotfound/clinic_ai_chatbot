@@ -169,3 +169,30 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
   assert.match(resultCall, /packageQuery,/);
   assert.match(resultCall, /language: mediaLanguage/);
 });
+
+test("mixed opt-out answer remains noncommercial and skips optional media", () => {
+  assert.match(serverSource, /const marketingStopQuestion = whatsappPolicy\.extractQuestionAfterMarketingOptOut\(text\)/);
+  assert.match(serverSource, /const rawAiReply = await ai\.getReply\(replyHistory,/);
+  assert.match(serverSource, /marketingStopQuestion && hasCommercialReplyContent\(reply\)/);
+  assert.match(serverSource, /reason: "marketing_opt_out_turn"/);
+  assert.ok(
+    serverSource.indexOf('reason: "marketing_opt_out_turn"') <
+    serverSource.indexOf("resolvePricePromotionForReply({"),
+    "marketing STOP cannot reach promotional media resolution"
+  );
+});
+
+test("result-image early returns use one audit write in finally", () => {
+  const start = serverSource.indexOf("let auditReason =");
+  const end = serverSource.indexOf("} catch (err)", start);
+  assert.ok(start > 0 && end > start);
+  const stage = serverSource.slice(start, end);
+  assert.match(stage, /finally \{/);
+  assert.match(stage, /resultMediaAuditOutcome\(\{/);
+  assert.match(stage, /resultMediaDecisionRepo\.recordDecision\(\{/);
+  assert.equal((stage.match(/resultMediaDecisionRepo\.recordDecision\(\{/g) || []).length, 1);
+  assert.doesNotMatch(stage, /auditResultExit/);
+  for (const reason of [
+    "staff_review_or_takeover", "reply_window_or_staff_cancellation", "provider_send_failed",
+  ]) assert.match(stage, new RegExp('auditReason = "' + reason + '"'));
+});

@@ -33,6 +33,10 @@ test(
           whatsapp_opt_out_source text,
           whatsapp_marketing_opt_out_at timestamptz,
           whatsapp_marketing_opt_out_source text,
+          social_opt_out_at timestamptz,
+          social_opt_out_source text,
+          social_marketing_opt_out_at timestamptz,
+          social_marketing_opt_out_source text,
           updated_at timestamptz DEFAULT now()
         );
         CREATE TABLE leads (
@@ -133,6 +137,82 @@ test(
         "SELECT marketing_consent FROM leads WHERE contact_id=$1",
         [contactId])).rows[0].marketing_consent,"opted_out");
       await inboundProcessingRepo.markCompletedByMessageId(stop.savedInbound.id,client);
+
+      // Social STOP must be visible to other workers as soon as the inbound
+      // INSERT commits, even if a previous message holds the reply lease.
+      // The duplicate webhook may never reapply STOP after staff opts in again.
+      for (const socialChannel of ["facebook", "instagram"]) {
+        for (const [scope, quickReply] of [["marketing", false], ["marketing", true], ["all", false], ["all", true]]) {
+          const socialContact = await client.query(
+            "INSERT INTO contacts(channel) VALUES($1) RETURNING id",
+            [socialChannel]
+          );
+          const socialId = socialContact.rows[0].id;
+          await client.query(
+            "INSERT INTO leads(contact_id,marketing_consent) VALUES($1,'opted_in')",
+            [socialId]
+          );
+          const socialInbound = {
+            id: "mid-" + socialChannel + "-" + scope + (quickReply ? "-button" : "-typed"),
+            channel: socialChannel,
+            from: "social-person",
+            text: "Stop promotions. How long does pelvic treatment take?",
+            ...(quickReply ? { buttonPayload: "STOP_PROMOS" } : {}),
+          };
+          const socialClaim = await inboundProcessingRepo.storeInboundClaim({
+            contactId: socialId,
+            content: socialInbound.text,
+            storedMessageId: socialChannel + ":" + socialInbound.id,
+            channel: socialChannel,
+            incoming: socialInbound,
+            optOutScope: scope,
+          }, client);
+          assert.ok(socialClaim?.savedInbound?.id);
+          assert.equal(
+            socialClaim.processingJob.incoming_payload._socialStopEnforcedAtomically,
+            true
+          );
+          const flags = (await client.query(
+            "SELECT social_opt_out_at, social_marketing_opt_out_at, " +
+              "social_opt_out_source, social_marketing_opt_out_source " +
+              "FROM contacts WHERE id=$1",
+            [socialId]
+          )).rows[0];
+          assert.ok(flags.social_marketing_opt_out_at, socialChannel);
+          assert.equal(Boolean(flags.social_opt_out_at), scope === "all");
+          assert.equal(flags.social_marketing_opt_out_source,
+            quickReply ? "customer_quick_reply" : "customer_message");
+          assert.equal(flags.social_opt_out_source,
+            scope === "all"
+              ? (quickReply ? "customer_quick_reply" : "customer_message")
+              : null);
+          assert.equal((await client.query(
+            "SELECT marketing_consent FROM leads WHERE contact_id=$1",
+            [socialId]
+          )).rows[0].marketing_consent, "opted_out");
+
+          // Simulate an explicit new permission from staff. A duplicate
+          // delivery of the older STOP ID must not clear it again.
+          await client.query(
+            "UPDATE contacts SET social_opt_out_at=NULL, " +
+              "social_marketing_opt_out_at=NULL WHERE id=$1",
+            [socialId]
+          );
+          assert.equal(await inboundProcessingRepo.storeInboundClaim({
+            contactId: socialId, content: socialInbound.text,
+            storedMessageId: socialChannel + ":" + socialInbound.id,
+            channel: socialChannel, incoming: socialInbound,
+            optOutScope: scope,
+          }, client), null);
+          assert.equal((await client.query(
+            "SELECT social_marketing_opt_out_at FROM contacts WHERE id=$1",
+            [socialId]
+          )).rows[0].social_marketing_opt_out_at, null);
+          await inboundProcessingRepo.markCompletedByMessageId(
+            socialClaim.savedInbound.id, client
+          );
+        }
+      }
 
       await inboundProcessingRepo.markPrepared(
         first.savedInbound.id,
