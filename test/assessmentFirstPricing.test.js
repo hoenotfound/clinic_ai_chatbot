@@ -340,7 +340,7 @@ test("Malaysian colloquial money questions are explicit while package exploratio
 test("verified first service enquiry gets an assessment invite while keeping the reply and existing result eligibility", () => {
   const { ensureFirstAssessmentInvitation } = require("../src/utils/initialOfferReplyGuard");
   const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
-  const opts={isFirstMessage:true,services,serviceQuery:true,language:"zh",serviceAliases:[{alias:"3D",officialService:"3D 小颜术"}]};
+  const opts={isFirstMessage:true,services,serviceQuery:true,language:"zh",serviceAliases:[{alias:"3D",officialService:"3D 小颜术"},{alias:"骨盆",officialService:"骨盆调理"}]};
   const text="我们是徒手调理，通常根据体态安排体验 😊";
   const pelvis=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理"});
   assert.equal(pelvis.appended,true);
