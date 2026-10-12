@@ -421,17 +421,23 @@ function buildConversationPromptContext(
     .map((message) => messageText(message))
     .join("\n");
 
-  // Scope commercial knowledge to the CURRENT customer request; future
-  // follow-up permission alone must not load or elicit package pricing.
+  // Treatment duration / service inclusions are not themselves requests
+  // for promotional prices. Restore offer details for a short follow-up only
+  // if the customer has independently discussed pricing or a package before.
   const currentCommercialText = stripFutureFollowUpPermission(currentCustomerText).text;
+  const previousCustomerText = customerMessages.length > 1
+    ? messageText(customerMessages.at(-2))
+    : "";
+  const previousCommercialText = stripFutureFollowUpPermission(previousCustomerText).text;
+  const previousPromotionTopic =
+    PROMOTION_PATTERN.test(previousCommercialText) ||
+    configuredPromotionReference(previousCommercialText, promotions);
   const currentPromotionIntent =
     PROMOTION_PATTERN.test(currentCommercialText) ||
     (currentCommercialText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCommercialText)) ||
     configuredPromotionReference(currentCommercialText, promotions) ||
-    PROMOTION_DETAIL_PATTERN.test(currentCommercialText);
-  const previousCustomerText = customerMessages.length > 1
-    ? messageText(customerMessages.at(-2))
-    : "";
+    (PROMOTION_DETAIL_PATTERN.test(currentCommercialText) &&
+      !topicChangeIntent && previousPromotionTopic);
   const carriedPromotionIntent =
     !currentPromotionIntent &&
     currentCustomerText.length <= 40 &&
