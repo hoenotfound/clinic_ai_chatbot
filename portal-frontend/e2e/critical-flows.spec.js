@@ -167,6 +167,9 @@ async function installApi(page, {
   initialMessages = inboundMessages(),
   initialPipeline = pipelineFixture(),
   initialContacts = [contactFixture()],
+  authUser = STAFF_USER,
+  initialVoucher = null,
+  voucherWriteError = false,
 } = {}) {
   await stubRealtime(page);
 
@@ -180,6 +183,8 @@ async function installApi(page, {
     leads: initialPipeline.leads.map((item) => ({ ...item })),
   };
   let nextMessageId = 2;
+  let voucher = initialVoucher ? { ...initialVoucher } : { status: "not_verified", valueRm: 100 };
+  let voucherActivities = [];
 
   const calls = [];
   const unexpected = [];
@@ -261,14 +266,14 @@ async function installApi(page, {
 
     if (path === "/api/auth/me" && method === "GET") {
       if (!authenticated) return fulfill(route, { error: "Not logged in." }, 401);
-      return fulfill(route, { username: STAFF_USER.username, user: STAFF_USER });
+      return fulfill(route, { username: authUser.username, user: authUser });
     }
 
     if (path === "/api/auth/login" && method === "POST") {
       const body = request.postDataJSON();
       record(request, body);
       authenticated = true;
-      return fulfill(route, { username: STAFF_USER.username, user: STAFF_USER });
+      return fulfill(route, { username: authUser.username, user: authUser });
     }
 
     if (path === "/api/auth/logout" && method === "POST") {
@@ -550,6 +555,21 @@ async function installApi(page, {
       return fulfill(route, pipeline.branches || []);
     }
 
+    const voucherMatch = path.match(/^\/api\/pipeline\/leads\/(\d+)\/assessment-voucher$/);
+    if (voucherMatch && method === "GET") return fulfill(route, voucher);
+    if (voucherMatch && method === "POST") {
+      const body = request.postDataJSON();
+      record(request, body);
+      if (voucherWriteError) return fulfill(route, {error:"Voucher state changed, reload this lead."}, 409);
+      voucher = { ...voucher, status: body.status, valueRm: 100, updatedBy: authUser.username,
+        ...(body.status === "issued" ? {termsNote:body.termsNote, expiresAt:body.expiresAt || null} : {}),
+        ...(body.status === "redeemed" ? {redemptionNote:body.redemptionNote} : {}) };
+      voucherActivities = [{id:voucherActivities.length+1,description:"Voucher status updated to "+body.status,actor:authUser.username,
+        created_at:new Date().toISOString()},...voucherActivities];
+      return fulfill(route, voucher);
+    }
+    const activitiesMatch = path.match(/^\/api\/pipeline\/leads\/(\d+)\/activities$/);
+    if (activitiesMatch && method === "GET") return fulfill(route, voucherActivities);
     const leadMatch = path.match(/^\/api\/pipeline\/leads\/(\d+)$/);
     if (leadMatch && method === "PATCH") {
       const leadId = Number(leadMatch[1]);
@@ -565,6 +585,8 @@ async function installApi(page, {
             ...(body.stageId != null ? { stage_id: Number(body.stageId) } : {}),
             ...(body.lostReason !== undefined ? { lost_reason: body.lostReason } : {}),
             ...(body.estimatedValue !== undefined ? { estimated_value: body.estimatedValue } : {}),
+            ...(body.appointmentStatus !== undefined ? { appointment_status: body.appointmentStatus } : {}),
+            ...(body.treatmentInterest !== undefined ? { treatment_interest: body.treatmentInterest } : {}),
           };
           return updated;
         }),
@@ -599,6 +621,7 @@ async function installApi(page, {
     unexpected,
     getConversations: () => conversations,
     getPipeline: () => pipeline,
+    getVoucher: () => voucher,
   };
 }
 
@@ -1256,5 +1279,84 @@ test("iPad touch drag moves a lead through the same stage update API", async ({ 
   await expect.poll(() => findCall(apiState, "PATCH", "/api/pipeline/leads/501")?.body)
     .toEqual({ stageId: 2 });
   await expect(contactedStage.getByText("Alex Tan", { exact: true })).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+
+test("Neutro pelvic voucher Pipeline UX verifies attendance, records terms and redemption, refreshes activity", async ({page}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium","Voucher E2E on desktop Chrome");
+  const fixture=pipelineFixture();
+  fixture.leads[0].appointment_status="visited";
+  fixture.leads[0].treatment_interest="骨盆调理";
+  fixture.services=["骨盆调理"];
+  const apiState=await installApi(page,{
+    authUser:{...STAFF_USER,features:{assessmentVoucherTrackingEnabled:true}},
+    initialPipeline:fixture,
+    initialVoucher:{status:"not_verified",valueRm:100},
+  });
+  await page.goto("/pipeline");
+  await page.getByRole("button").filter({hasText:"Alex Tan"}).first().click();
+  const panel=page.locator('section[aria-label="Pelvic assessment voucher"]');
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText("Not verified")).toBeVisible();
+  await panel.getByRole("button",{name:"Confirm assessment attendance"}).click();
+  await expect(panel.getByText("Assessment attended")).toBeVisible();
+  await expect(panel.getByRole("button",{name:"Mark voucher issued"})).toBeDisabled();
+  await panel.getByRole("checkbox").check();
+  await panel.getByPlaceholder(/One-time RM100 off/).fill("RM100 off pelvic care, no stacking with packages");
+  await panel.getByRole("button",{name:"Mark voucher issued"}).click();
+  await expect(panel.getByText("Voucher issued")).toBeVisible();
+  await expect(panel.getByText(/Approved terms:/)).toBeVisible();
+  await panel.getByPlaceholder(/Treatment booked/).fill("Staff verified single redemption");
+  await panel.getByRole("button",{name:"Mark redeemed"}).click();
+  await expect(panel.getByText("Redeemed",{exact:true})).toBeVisible();
+  const calls=apiState.calls.filter(x=>x.path==="/api/pipeline/leads/501/assessment-voucher");
+  expect(calls.map(x=>x.body?.status)).toEqual(["eligible","issued","redeemed"]);
+  expect(calls[1].body).toMatchObject({termsConfirmed:true,termsNote:"RM100 off pelvic care, no stacking with packages"});
+  expect(calls[2].body).toMatchObject({redemptionNote:"Staff verified single redemption"});
+  await expect(page.getByText("Voucher status updated to redeemed")).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("Neutro voucher Pipeline UX prevents issue/redeem on conflicting lead state and hides staff actions for read-only access",async({page},testInfo)=>{
+  test.skip(testInfo.project.name!=="desktop-chromium","Voucher E2E on desktop Chrome");
+  const fixture=pipelineFixture();
+  fixture.leads[0].appointment_status="set";
+  fixture.leads[0].treatment_interest="3D 小颜术";
+  const apiState=await installApi(page,{
+    authUser:{...STAFF_USER,features:{assessmentVoucherTrackingEnabled:true},
+      permissions:{...STAFF_USER.permissions,manage_assigned_leads:false}},
+    initialPipeline:fixture,
+    initialVoucher:{status:"issued",valueRm:100,termsNote:"No stacking",expiresAt:null},
+  });
+  await page.goto("/pipeline");
+  await page.getByRole("button").filter({hasText:"Alex Tan"}).first().click();
+  const panel=page.locator('section[aria-label="Pelvic assessment voucher"]');
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("alert")).toContainText("no longer has both pelvic");
+  await expect(panel.getByRole("button",{name:"Mark redeemed"})).toHaveCount(0);
+  await expect(panel.getByRole("button",{name:"Void this voucher"})).toHaveCount(0);
+  expect(apiState.calls.filter(x=>x.path==="/api/pipeline/leads/501/assessment-voucher"&&x.method==="POST")).toHaveLength(0);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("Neutro voucher Pipeline handles a stale update without claiming successful redemption",async({page},testInfo)=>{
+  test.skip(testInfo.project.name!=="desktop-chromium","Voucher E2E on desktop Chrome");
+  const fixture=pipelineFixture();
+  fixture.leads[0].appointment_status="visited";
+  fixture.leads[0].treatment_interest="骨盆调理";
+  const apiState=await installApi(page,{
+    authUser:{...STAFF_USER,features:{assessmentVoucherTrackingEnabled:true}},
+    initialPipeline:fixture,voucherWriteError:true,
+    initialVoucher:{status:"issued",valueRm:100,termsNote:"One-time",expiresAt:null},
+  });
+  await page.goto("/pipeline");
+  await page.getByRole("button").filter({hasText:"Alex Tan"}).first().click();
+  const panel=page.locator('section[aria-label="Pelvic assessment voucher"]');
+  await panel.getByPlaceholder(/Treatment booked/).fill("Staff-confirmed redemption");
+  await panel.getByRole("button",{name:"Mark redeemed"}).click();
+  await expect(panel.getByText("Voucher issued")).toBeVisible();
+  await expect(page.getByText(/Voucher state changed, reload this lead/)).toBeVisible();
+  expect(apiState.getVoucher().status).toBe("issued");
   expectNoUnexpectedApi(apiState);
 });
