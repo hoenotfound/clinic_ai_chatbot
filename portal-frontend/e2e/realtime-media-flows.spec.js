@@ -446,6 +446,11 @@ async function installApi(page, {
       return fulfill(route, conversations);
     }
 
+    const freeWindowMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-template-free-window$/);
+    if (freeWindowMatch && method === "GET") {
+      return fulfill(route, { verified: false });
+    }
+
     const attributionMatch = path.match(/^\/api\/conversations\/(\d+)\/attribution$/);
     if (attributionMatch && method === "GET") {
       return fulfill(route, { lead: null, attribution: null });
