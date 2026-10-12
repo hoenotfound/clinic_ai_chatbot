@@ -239,3 +239,30 @@ test("future WhatsApp opt-in does not mask current questions or trigger prematur
   assert.equal(stripFutureFollowUpPermission(noConsent).hasFuturePermission, false);
   assert.equal(hasCustomerPriceEnquiry(noConsent), false);
 });
+
+test("immediate offers override future opt-in, but refusals and duration do not unlock prices", () => {
+  const {stripFutureFollowUpPermission} = require("../src/utils/customerEnquiryEvidence");
+  const original = "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊";
+  for (const message of [
+    original,
+    original + "。护理需要多久？",
+    "可以先跟进我，有优惠也发我看看",
+    "Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。",
+    "Hi Neutro Sense TCM，我不希望你们 WhatsApp 跟进我，有相关优惠可以 WhatsApp 通知我。",
+    "Hi Neutro Sense TCM，我不接受 WhatsApp 跟进，有优惠也可以通知我。",
+    "Hi Neutro Sense TCM，可以跟进我，不过优惠现在不要发给我。",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), false, message);
+  for (const message of [
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠现在发给我看看 😊",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠马上发给我看看 😊",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠先发给我看看 😊",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠直接发给我看看 😊",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠现在就可以发吗 😊",
+    original + "。骨盆套餐有哪些？",
+    "Hi Neutro Sense TCM，不希望WhatsApp跟进我。现在骨盆套餐多少钱？",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), true, message);
+  assert.equal(stripFutureFollowUpPermission(original).hasFuturePermission, true);
+  assert.equal(stripFutureFollowUpPermission(
+    "Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。"
+  ).hasFuturePermission, false);
+});
