@@ -823,3 +823,27 @@ test("CTWA service-interest opt-ins cannot auto-send pricing even when AI sets p
   });
   assert.equal(real?.packages?.length,1);
 });
+
+test("runtime promotion resolver never sends graphics for a package explanation despite model packageQuery", async () => {
+  const promo = {
+    name: "Pelvis Offer", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/pelvis.jpg",
+    caption: "RM388",
+  };
+  const opts = base({
+    priceQuery: true, packageQuery: true,
+    treatment: "骨盆调理", promotions: [promo],
+  });
+  for (const customerText of [
+    "Hi～我想了解 Neutro Sense TCM 的骨盆配套。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "可以介绍一下骨盆配套吗？",
+    "Tell me the details of the pelvic package",
+    "I want to know how Package B works",
+  ]) {
+    assert.equal(await resolvePricePromotionForReply({ ...opts, customerText }), null, customerText);
+  }
+  for (const customerText of ["你们有什么骨盆配套？", "骨盆套餐多少钱？"]) {
+    const result = await resolvePricePromotionForReply({ ...opts, customerText });
+    assert.equal(result?.promotion?.name, "Pelvis Offer", customerText);
+  }
+});
