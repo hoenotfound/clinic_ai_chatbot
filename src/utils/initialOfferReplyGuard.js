@@ -9,7 +9,7 @@ const {
 // Replace commercial model output with deterministic conversational copy.
 // Bare numbers may be phone numbers, address units or durations, not prices.
 const COMMERCIAL_REPLY_CONTENT =
-  /(?:\b(?:rm|myr)(?=\d|\s|[^\p{L}\p{N}]|$)|\b(?:ringgit|pricing|prices?|costs?|fees?|charges?|promos?|promotions?|discounts?|deals?|vouchers?|coupons?|offers?|sales?|harga|promosi|tawaran|diskaun|percuma|gifts?|bonuses?|rebates?|cashbacks?)\b|\b(?:free|complimentary)\b.{0,50}\b(?:massage|gift|session|treatment|trial|consultation|add[-\s]?on|bonus)\b|(?:first[\s-]*trial|trial[\s-]*price)|[价價][钱錢格位]|优惠|優惠|促销|促銷|折扣|限时|限時|特价|特價|赠|贈|礼遇|禮遇|免费|免費|原价|原價|现价|現價|只需|仅需|僅需|\d{1,3}\s*%\s*(?:off|discount)?|(?:\d\uFE0F?\u20E3){2,}|(?:套餐|配套)\s*[ABC].{0,20}(?:套餐|配套)\s*[ABC]|\bpackage\s*[abc]\b.{0,30}\bpackage\s*[abc]\b)/iu;
+  /(?:\b(?:rm|myr)(?=\d|\s|[^\p{L}\p{N}]|$)|\b(?:ringgit|pricing|prices?|costs?|fees?|charges?|promos?|promotions?|discounts?|deals?|vouchers?|coupons?|offers?|sales?|harga|promosi|tawaran|diskaun|percuma|gifts?|bonuses?|rebates?|cashbacks?)\b|\b(?:free|complimentary)\b.{0,50}\b(?:massage|gift|session|treatment|trial|consultation|add[-\s]?on|bonus)\b|(?:first[\s-]*trial|trial[\s-]*price)|令吉|[价價][钱錢格位]|优惠|優惠|促销|促銷|折扣|限时|限時|特价|特價|赠|贈|礼遇|禮遇|免费|免費|原价|原價|现价|現價|只需|仅需|僅需|\d{1,3}\s*%\s*(?:off|discount)?|(?:\d\uFE0F?\u20E3){2,}|(?:套餐|配套)\s*[ABC].{0,20}(?:套餐|配套)\s*[ABC]|\bpackage\s*[abc]\b.{0,30}\bpackage\s*[abc]\b)/iu;
 
 const DURATION_REQUEST =
   /(?:多久|多长|多長|几分钟|幾分鐘|几小时|幾小時|\bhow\s+long\b|\bduration\b|\bberapa\s+lama\b)/iu;
@@ -21,7 +21,7 @@ const DURATION_REQUEST =
 const BARE_AMOUNT = /(?<![A-Za-z0-9])[1-9]\d{2,4}(?![A-Za-z0-9])/gu;
 const BARE_PRICE_CONTEXT = /(?:骨盆|小颜|小顏|逆龄|逆齡|护理|護理|疗程|療程|调理|調理|价|價|套餐|配套|体验|體驗|首单|首單|仅|僅|只要|现在|現在|起|每次|\b(?:3d|9d|pelvic|treatment|package|trial|offer|promo|only|just|from|starting|cost|price|for|per\s+session|harga|pakej|rawatan)\b)/iu;
 const CONTACT_OR_ADDRESS_CONTEXT = /(?:电话|電話|联络|聯絡|联系|聯繫|号码|號碼|地址|邮编|郵編|楼|樓|门牌|門牌|\b(?:call|phone|contact|tel|whatsapp|address|postcode|unit|suite|block|nombor|telefon|alamat)\b)/iu;
-const NON_PRICE_NUMBER_SUFFIX = /^\s*(?:年|月|日|人|位|个|個|次|分钟|分鐘|小时|小時|岁|歲|例|名|天|周|週|星期|%|\b(?:years?|months?|days?|hours?|minutes?|mins?|people|times|sessions?|cases?|patients?|weeks?|percent)\b)/iu;
+const NON_PRICE_NUMBER_SUFFIX = /^\s*(?:\+\s*(?:体态案例|體態案例|案例|顾客|顧客|客户|客戶|患者|个|個|人|位|例|\b(?:cases?|clients?|customers?|patients?)\b)|年|月|日|人|位|个|個|次|分钟|分鐘|小时|小時|岁|歲|例|名|天|周|週|星期|%|\b(?:years?|months?|days?|hours?|minutes?|mins?|people|times|sessions?|cases?|patients?|weeks?|percent)\b)/iu;
 
 function hasBarePriceContent(value) {
   const content = String(value || "").normalize("NFKC");
