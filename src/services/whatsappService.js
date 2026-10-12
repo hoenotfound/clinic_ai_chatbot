@@ -217,6 +217,48 @@ async function sendMessageUnchecked(to, text, options = {}) {
  *   accepted the send request (never throws — a failed promo image should never
  *   take down the actual text reply around it)
  */
+// Meta interactive reply buttons are free-form messages. They are permitted
+// only inside the customer's live 24-hour service window and must pass the
+// same account-level zero-cost reservation as other WhatsApp sends.
+async function sendInteractiveButtonsUnchecked(to, body, buttons) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  if (!phoneNumberId || !token || typeof body !== "string" ||
+      body.length > 1024 || !Array.isArray(buttons) ||
+      buttons.length !== 2 || buttons.some(button =>
+        !button.id || !button.title || button.title.length > 20 || button.id.length > 256)) {
+    return { success:false, wamid:null, error:"Invalid WhatsApp consent button configuration." };
+  }
+  try {
+    const res = await fetchWithTimeout(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+      {
+        method:"POST",
+        headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+        body:JSON.stringify({
+          messaging_product:"whatsapp",to,type:"interactive",
+          interactive:{
+            type:"button",
+            body:{text:body},
+            action:{buttons:buttons.map(b=>({type:"reply",reply:{id:b.id,title:b.title}}))},
+          },
+        }),
+      },
+      requestTimeoutMs(process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS)
+    );
+    if (!res.ok) return classifyWhatsappSendFailure(res.status,await res.text());
+    return classifyWhatsappAcceptedResponse(await res.json());
+  } catch(err){return interruptedDeliveryResult(err);}
+}
+
+async function sendInteractiveButtons(to,body,buttons,options={}) {
+  return whatsappZeroCostGuard.perform(to,
+    ()=>sendInteractiveButtonsUnchecked(to,body,buttons), {
+      currentMessageId:options.currentMessageId,
+      messageKind:"interactive_consent",
+    });
+}
+
 async function sendImageUnchecked(to, imageUrl, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
@@ -680,6 +722,16 @@ function parseIncomingMessages(body) {
               mediaType: "sticker",
               unsupportedType: null,
             });
+          } else if (message.type === "interactive" &&
+                     message.interactive?.type === "button_reply") {
+            const reply = message.interactive.button_reply;
+            parsed.push({
+              ...base,
+              text: String(reply?.title || "").trim(),
+              mediaId: null,mediaType:null,unsupportedType:null,
+              // Only an actual Meta interactive callback carries this field.
+              interactiveReplyId: String(reply?.id || "").trim(),
+            });
           } else if (message.type === "button") {
             const buttonText = String(
               message.button?.text || message.button?.payload || ""
@@ -903,6 +955,7 @@ module.exports = {
   interruptedDeliveryResult,
   parseWhatsappApiError,
   sendMessage,
+  sendInteractiveButtons,
   sendImage,
   uploadMedia,
   sendImageById,
