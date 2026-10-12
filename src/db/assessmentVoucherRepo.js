@@ -1,7 +1,6 @@
 "use strict";
 
 const { pool } = require("./db");
-const { hasCapability } = require("../utils/permissions");
 
 const VOUCHER_VALUE_RM = 100;
 const STATUSES = new Set(["eligible", "issued", "redeemed", "voided"]);
