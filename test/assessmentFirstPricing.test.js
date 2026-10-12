@@ -53,7 +53,7 @@ test("RM100 voucher is permitted but treatment prices in all common formats are 
 });
 
 test("assessment-first outbound guard works for any message turn/channel but never blocks a direct price request", () => {
-  const options = {customerText: initial, reply: "骨盆套餐 RM388 / RM288", treatment: "骨盆调理",language:"zh"};
+  const options = {customerText: initial, reply: "骨盆套餐 RM388 / RM288", treatment: "骨盆调理",language:"zh",services:[{name:"骨盆调理"}]};
   for (const channel of ["whatsapp", "facebook", "instagram"]) {
     const out = guardAssessmentFirstPricingReply({...options, channel});
     assert.equal(out.replaced, true);
