@@ -18,7 +18,7 @@ const DURATION_REQUEST =
 // be guarded when Gemini writes "骨盆 388 / 288" without an RM prefix.
 // Avoid interpreting phone numbers, address codes, years, session counts and
 // clinical durations as sales amounts.
-const BARE_AMOUNT = /(?<![\p{L}\p{N}])[1-9]\d{2,4}(?![\p{L}\p{N}])/gu;
+const BARE_AMOUNT = /(?<![A-Za-z0-9])[1-9]\d{2,4}(?![A-Za-z0-9])/gu;
 const BARE_PRICE_CONTEXT = /(?:骨盆|小颜|小顏|逆龄|逆齡|护理|護理|疗程|療程|调理|調理|价|價|套餐|配套|体验|體驗|首单|首單|仅|僅|只要|现在|現在|起|每次|\b(?:3d|9d|pelvic|treatment|package|trial|offer|promo|only|just|from|starting|cost|price|for|per\s+session|harga|pakej|rawatan)\b)/iu;
 const CONTACT_OR_ADDRESS_CONTEXT = /(?:电话|電話|联络|聯絡|联系|聯繫|号码|號碼|地址|邮编|郵編|楼|樓|门牌|門牌|\b(?:call|phone|contact|tel|whatsapp|address|postcode|unit|suite|block|nombor|telefon|alamat)\b)/iu;
 const NON_PRICE_NUMBER_SUFFIX = /^\s*(?:年|月|日|人|位|个|個|次|分钟|分鐘|小时|小時|岁|歲|例|名|天|周|週|星期|%|\b(?:years?|months?|days?|hours?|minutes?|mins?|people|times|sessions?|cases?|patients?|weeks?|percent)\b)/iu;
@@ -33,10 +33,12 @@ function hasBarePriceContent(value) {
       const value = match[0], index = match.index;
       if (/^(?:19|20)\d{2}$/u.test(value)) return false;
       if (ranges.some(([start, end]) => index >= start && index + value.length <= end)) return false;
+      const prefix = clause.slice(Math.max(0, index - 24), index);
+      if (CONTACT_OR_ADDRESS_CONTEXT.test(prefix)) return false;
       if (NON_PRICE_NUMBER_SUFFIX.test(clause.slice(index + value.length))) return false;
       return true;
     });
-    if (!candidates.length || CONTACT_OR_ADDRESS_CONTEXT.test(clause)) continue;
+    if (!candidates.length) continue;
     const bareOnly = /^\s*[1-9]\d{2,4}\s*$/u.test(clause);
     const multipleAmounts = candidates.length >= 2 &&
       /(?:\/|和|或|及|\bor\b|\band\b)/iu.test(clause);
