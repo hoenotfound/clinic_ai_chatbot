@@ -292,6 +292,33 @@ async function preflightTemplate(to, { database = pool, now = new Date() } = {})
   }
 }
 
+// Read-only signal for the Inbox. This is not a Meta price quote or permission
+// to send. Reuse the strict preflight when enabled, and otherwise require the
+// same verified CTWA/FEP receipts with the conservative expiry buffer.
+async function hasVerifiedFreeTemplateWindow(to, {
+  database = pool, now = new Date(), env = process.env,
+} = {}) {
+  if (enabled()) {
+    return (await preflightTemplate(to, { database, now })).allowed === true;
+  }
+  const recipient = String(to || "").replace(/\D/g, "");
+  const stamp = new Date(now);
+  if (recipient.length < 8 || !Number.isFinite(stamp.getTime())) return false;
+  try {
+    let ceiling = 72;
+    if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true") {
+      const proof = await database.query(SEVEN_DAY_PROOF_SQL);
+      if (proof.rows?.[0]?.verified === true) ceiling = 168;
+    }
+    const result = await database.query(VERIFIED_WINDOW_SQL,
+      [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
+    return result.rows?.[0]?.eligible === true;
+  } catch (error) {
+    console.warn("[WhatsApp free-only] Inbox preview could not be verified:", error?.message);
+    return false;
+  }
+}
+
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
   const account = configuredAccount();
@@ -523,6 +550,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,preflightTemplate,reserve,complete,perform,
+  blockedResult,configuredAccount,enabled,settings,preflightTemplate,hasVerifiedFreeTemplateWindow,reserve,complete,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
