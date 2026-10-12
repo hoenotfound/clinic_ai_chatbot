@@ -283,7 +283,12 @@ function ensureFirstAssessmentInvitation({
     : malay
       ? "Anda juga boleh datang untuk penilaian 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Hari biasa atau hujung minggu lebih sesuai?"
       : "You can also begin with a 1-on-1 assessment + trial with our TCM practitioner 😊 Would a weekday or weekend suit you?";
-  return { reply: original + "\n\n" + invitation, appended: true };
+  // An AI reply may already end with a useful question about the client's
+  // concern. Avoid tacking on a second scheduling question immediately.
+  const oneQuestionInvitation = /[?？]\s*$/u.test(original)
+    ? invitation.replace(/(?:你比较方便平日还是周末来呢？|你比较方便平日还是周末？|Hari biasa atau hujung minggu lebih sesuai\?|Would a weekday or weekend suit you\?|Would a weekday or weekend be more convenient\?)\s*$/u, "").trim()
+    : invitation;
+  return { reply: original + "\n\n" + (oneQuestionInvitation || invitation), appended: true };
 }
 
 function stripUnsolicitedTreatmentPrice(reply) {
