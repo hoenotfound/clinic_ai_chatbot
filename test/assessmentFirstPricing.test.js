@@ -32,6 +32,13 @@ test("current monetary price requests differ from treatment/package interest and
   ]) assert.equal(hasExplicitPriceRequest(message), false, message);
 
   assert.equal(hasExplicitPriceRequest(initial + "。现在骨盆调理多少钱？"), true);
+  assert.equal(hasExplicitPriceRequest("My budget is RM300"),false);
+  assert.equal(hasExplicitPriceRequest("我的预算 RM300"),false);
+  assert.equal(hasExplicitPriceRequest("价格不是问题"),false);
+  assert.equal(hasExplicitPriceRequest("我比较在意价格"),false);
+  assert.equal(hasExplicitPriceRequest("Price is not an issue"),false);
+  assert.equal(hasExplicitPriceRequest("RM388?"),true);
+
 });
 
 test("RM100 voucher is permitted but treatment prices in all common formats are blocked", () => {
