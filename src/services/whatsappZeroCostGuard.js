@@ -374,15 +374,16 @@ async function inspectFreeTemplateWindow(to, {
       [ceiling, stamp.toISOString(), recipient]);
     if (verified.rows?.[0]?.verified !== true) return result;
 
-    const ready = enabled()
-      ? await preflightTemplate(to, { database, now })
-      : await (async () => {
-        const send = await database.query(VERIFIED_WINDOW_SQL,
-          [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
-        return send.rows?.[0]?.eligible === true
-          ? { allowed: true }
-          : { allowed: false, code: "unresolved_pricing" };
-      })();
+    let ready;
+    if (enabled()) {
+      ready = await preflightTemplate(to, { database, now });
+    } else {
+      const send = await database.query(VERIFIED_WINDOW_SQL,
+        [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
+      ready = send.rows?.[0]?.eligible === true
+        ? { allowed: true }
+        : { allowed: false, code: "unresolved_pricing" };
+    }
     return {
       verified: true,
       sendReady: ready.allowed === true,
