@@ -3,9 +3,7 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
-const {
-  YES_PREFIX, NO_PREFIX, CONSENT_SCOPE, CONSENT_CATEGORY,
-} = require("../utils/whatsappConsentPrompt");
+const { CONSENT_SCOPE, CONSENT_CATEGORY } = require("../utils/whatsappConsentPrompt");
 
 const DUE_AFTER_THIRD_MINUTES = 15;
 const SAFETY_WINDOW_MINUTES = 10;
@@ -139,6 +137,7 @@ async function stillEligible(claimed, { activatedAt, triggerMode }, database = p
       JOIN messages m ON m.id=p.message_id AND m.contact_id=p.contact_id
       JOIN contacts c ON c.id=p.contact_id
       JOIN leads l ON l.id=p.lead_id AND l.contact_id=p.contact_id
+      LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
       JOIN messages anchor ON anchor.id=p.anchor_id AND anchor.contact_id=p.contact_id
       JOIN messages latest ON latest.id=$4 AND latest.contact_id=p.contact_id AND latest.role='user'
       WHERE p.id=$1 AND p.contact_id=$2 AND p.anchor_id=$3
@@ -149,7 +148,12 @@ async function stillEligible(claimed, { activatedAt, triggerMode }, database = p
         AND ${followUpAttentionAllowedSql("c")}
         AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
         AND l.is_closed=false AND l.marketing_consent IS DISTINCT FROM 'opted_in'
-        AND l.appointment_status NOT IN ('set','visited')
+        AND COALESCE(l.appointment_status,'none') NOT IN ('set','visited')
+        AND COALESCE(stage.stage_type,'open')='open'
+        AND COALESCE(stage.system_key,'') NOT IN ('appointment_set','visited')
+        AND NULLIF(BTRIM(l.treatment_interest),'')=NULLIF(BTRIM(p.service_name),'')
+        AND (SELECT id FROM leads WHERE contact_id=p.contact_id
+          ORDER BY is_closed ASC,created_at DESC,id DESC LIMIT 1)=l.id
         AND anchor.created_at >= $6::timestamptz
         AND ($7='all' OR anchor.sent_by_username IS NOT NULL)
         AND (SELECT id FROM messages WHERE contact_id=p.contact_id AND role='user'
@@ -204,6 +208,14 @@ async function recordButtonResponse({
        COALESCE(source_created_at,created_at) AS sent_at
        FROM messages WHERE id=$1 AND contact_id=$2`,[messageId,contactId]
     )).rows[0];
+    // If a worker crashed after committing the button decision but before
+    // completing the inbound job, acknowledge the replay without repeating
+    // consent writes or letting the AI reply to a one-tap response.
+    if (prompt && incoming && Number(prompt.response_message_id)===Number(messageId) &&
+        prompt.decision===parsed.decision) {
+      await client.query("ROLLBACK");
+      return {handled:true,decision:parsed.decision,alreadyRecorded:true};
+    }
     if (!prompt || !incoming || incoming.role!=="user" || !incoming.whatsapp_message_id ||
         incoming.is_forwarded || incoming.media_mime_type || !prompt.message_id ||
         prompt.status==="failed" || prompt.response_message_id ||
