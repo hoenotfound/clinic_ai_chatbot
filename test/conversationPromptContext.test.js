@@ -1236,7 +1236,9 @@ test("WhatsApp follow-up opt-in introductions do not unlock package prices", () 
       const context = buildConversationPromptContext([{role:"user",content}]);
       assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
       assert.equal(context.promotionIntent,false,content);
+      assert.equal(context.futureFollowUpIntroduction,true,content);
       const prompt = buildSystemPrompt({conversationContext:context});
+      assert.doesNotMatch(prompt,/PELVIS_PRICE RM388/,content);
       assert.doesNotMatch(prompt,/PACKAGE_A RM388/,content);
       assert.doesNotMatch(prompt,/PACKAGE_B RM288/,content);
     }
