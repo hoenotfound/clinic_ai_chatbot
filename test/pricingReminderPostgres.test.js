@@ -209,9 +209,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       VALUES(2,'facebook','facebook-user');
       INSERT INTO messages(id,contact_id,role,content) VALUES(201,2,'assistant','Original reply');
       INSERT INTO messages(id,contact_id,role,content,
+        is_automated_follow_up,automated_follow_up_step,
         pricing_reminder_anchor_id,pricing_reminder_package_key,
         whatsapp_message_id,social_accepted_at,delivery_status)
-      VALUES(202,2,'assistant','Pricing image',201,'Social offer',
+      VALUES(202,2,'assistant','Pricing image',true,4,201,'Social offer',
         'facebook:accepted-id',now(),'sent');`);
     assert.equal(await pricingRepo.markBatchCompleted({
       contactId:2,anchorId:201,expectedPackages:["Social offer"],
