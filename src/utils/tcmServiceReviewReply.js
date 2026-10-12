@@ -118,7 +118,7 @@ function planTcmReviewReply({
   // All outputs are static, non-diagnostic and unpriced. A staff-edited service
   // name must not introduce unauthorized promotions or prices.
   if (hasCommercialReplyContent(reply)) return null;
-  return { reply, preserveReview: Boolean(medicalContext) };
+  return { reply, preserveReview: Boolean(medicalContext), alreadyInvited: context.alreadyInvited };
 }
 
 // Compatibility helper for simple isolated service reviews.
