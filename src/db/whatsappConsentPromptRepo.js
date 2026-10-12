@@ -17,6 +17,10 @@ SELECT
  inbound.created_at AS inbound_at,
  anchor.id AS anchor_id, final.id AS third_id,
  final.whatsapp_accepted_at AS third_accepted_at,
+ (SELECT COALESCE(jsonb_agg(txt.content ORDER BY txt.created_at DESC,txt.id DESC),'[]'::jsonb)
+  FROM (SELECT id,content,created_at FROM messages
+        WHERE contact_id=c.id AND role='user' ORDER BY created_at DESC,id DESC LIMIT 15) txt
+ ) AS recent_customer_messages,
  GREATEST(final.whatsapp_accepted_at + interval '${DUE_AFTER_THIRD_MINUTES} minutes',
    COALESCE((SELECT MAX(price.whatsapp_accepted_at) FROM messages price
      WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
@@ -89,9 +93,8 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
     AND (price.whatsapp_message_id IS NULL OR price.delivery_status IN ('unknown','failed','cancelled')))
  AND (NOT $4::boolean OR anchor.created_at<$5::timestamptz OR EXISTS(
    SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=anchor.id
- ) OR EXISTS(SELECT 1 FROM messages price
-   WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
-     AND price.whatsapp_message_id IS NOT NULL))
+ ) OR EXISTS(SELECT 1 FROM pricing_reminder_batch_completions completed
+     WHERE completed.anchor_id=anchor.id AND completed.contact_id=c.id))
  AND GREATEST(final.whatsapp_accepted_at + interval '${DUE_AFTER_THIRD_MINUTES} minutes',
    COALESCE((SELECT MAX(price.whatsapp_accepted_at) FROM messages price
      WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
@@ -100,6 +103,30 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
 ORDER BY due_at,contact_id
 LIMIT 200
 `;
+
+// A timer restart must not lose pending retries. This is a read-only
+// scheduling query; the normal eligibility checks are repeated at claim time.
+async function nextDeferredRetryAt({ activatedAt, now=new Date() }, database=pool) {
+  const result=await database.query(`
+    SELECT MIN(p.retry_after) AS due_at
+    FROM whatsapp_consent_prompts p
+    JOIN contacts c ON c.id=p.contact_id
+    JOIN messages anchor ON anchor.id=p.anchor_id
+    JOIN LATERAL(
+      SELECT COALESCE(source_created_at,created_at) AS source_at
+      FROM messages WHERE contact_id=c.id AND role='user'
+      ORDER BY created_at DESC,id DESC LIMIT 1
+    ) inbound ON true
+    WHERE p.status='deferred' AND p.attempts<3
+      AND p.retry_after IS NOT NULL
+      AND p.retry_after>=$2::timestamptz
+      AND p.retry_after<inbound.source_at + interval '23 hours 50 minutes'
+      AND anchor.created_at >= $1::timestamptz
+      AND c.channel='whatsapp' AND c.whatsapp_opt_out_at IS NULL
+      AND c.whatsapp_marketing_opt_out_at IS NULL`,
+    [activatedAt,new Date(now).toISOString()]);
+  return result.rows?.[0]?.due_at || null;
+}
 
 async function listCandidates({ activatedAt, triggerMode, pricingEnabled = false, pricingActivation = null, now = new Date() }, database = pool) {
   const result = await database.query(CANDIDATES_SQL,
@@ -225,10 +252,8 @@ async function stillEligible(claimed, { activatedAt, triggerMode, pricingEnabled
               pricing.delivery_status IN ('unknown','failed','cancelled')))
         AND (NOT $8::boolean OR anchor.created_at<$9::timestamptz OR EXISTS(
           SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=p.anchor_id
-        ) OR EXISTS(SELECT 1 FROM messages price
-          WHERE price.contact_id=p.contact_id
-           AND price.pricing_reminder_anchor_id=p.anchor_id
-           AND price.whatsapp_message_id IS NOT NULL))
+        ) OR EXISTS(SELECT 1 FROM pricing_reminder_batch_completions completed
+           WHERE completed.anchor_id=p.anchor_id AND completed.contact_id=p.contact_id))
         AND now() >= GREATEST(
           (SELECT MAX(third.whatsapp_accepted_at)+interval '${DUE_AFTER_THIRD_MINUTES} minutes'
            FROM messages third WHERE third.automated_follow_up_for_message_id=p.anchor_id
@@ -378,6 +403,6 @@ async function recordButtonResponse({
 
 module.exports={
   DUE_AFTER_THIRD_MINUTES,CANDIDATES_SQL,
-  listCandidates,claim,stillEligible,markSent,deferUnsent,
+  listCandidates,nextDeferredRetryAt,claim,stillEligible,markSent,deferUnsent,
   parseResponseId,recordButtonResponse,
 };
