@@ -99,25 +99,7 @@ function inferConfiguredServiceFromText(value, config = clinicConfig) {
   if (distinctMatches.length === 0) return null;
   if (distinctMatches.length === 1) return distinctMatches[0].serviceName;
 
-  // A combined configured service may legitimately contain the aliases of its
-  // component services (for example "3D+9D"). Prefer that combined service only
-  // when one of its matched terms fully covers every competing service term.
-  const covering = distinctMatches.filter((candidate) =>
-    candidate.matchedTerms.some((candidateTerm) =>
-      distinctMatches.every((other) => {
-        if (other === candidate) return true;
-        return other.matchedTerms.some(
-          (otherTerm) =>
-            candidateTerm.length > otherTerm.length &&
-            candidateTerm.includes(otherTerm)
-        );
-      })
-    )
-  );
-
-  if (covering.length === 1) return covering[0].serviceName;
-
-  return configuredCombinationService(distinctMatches, normalizedText, config);
+  // Span-based precedence already removes an alias that is wholly within a\n  // longer, specific alias. Keep genuinely separate service mentions distinct.\n  return configuredCombinationService(distinctMatches, normalizedText, config);
 }
 
 function cleanScoredTreatmentInterest(value, config = clinicConfig) {
