@@ -501,7 +501,13 @@ async function generatePersonalizedFollowUp({
     const result = parseFollowUpAiResult(raw);
     if (result.action !== "send") return result;
     if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true && hasTreatmentPriceContent(result.message)) {
-      return { action: "skip", message: "", reason: "assessment_first_unsolicited_treatment_price", topic: result.topic || "" };
+      // Retry once with explicit guidance, without removing the rest of the
+      // customer's useful conversation context. Never send the first draft.
+      if (attempt === 0) {
+        avoidMessage = "Prior draft accidentally quoted a treatment price. Rewrite the useful reply WITHOUT amounts, package prices or pricing graphics. Do not repeat: " + result.message.slice(0, 300);
+        continue;
+      }
+      return { action: "skip", message: "", reason: "assessment_first_unsolicited_treatment_price_after_retry", topic: result.topic || "" };
     }
 
     const comparisonMessages = [
