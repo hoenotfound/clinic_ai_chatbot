@@ -26,7 +26,7 @@ const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
-const whatsappZeroCostGuard = require("../services/whatsappZeroCostGuard");
+
 const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
@@ -1115,7 +1115,8 @@ router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
 
     // An ad label, ad click or opt-in alone is never sufficient proof.
     // The actual send still rechecks consent and billing restrictions.
-    const verified = await whatsappZeroCostGuard.hasVerifiedFreeTemplateWindow(contact.whatsapp_number);
+    const advisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
+    const verified = advisory.evidence === "recent_free_entry_evidence";
     res.set("Cache-Control", "no-store");
     return res.json({ verified });
   } catch (err) {
