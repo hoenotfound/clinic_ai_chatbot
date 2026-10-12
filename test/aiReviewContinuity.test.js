@@ -55,7 +55,11 @@ test("AI review is silent, preserves AI ownership, and leaves urgent safety on a
   const reviewPath = server.split("if (flagged && reviewRequired) {")[1].split("} else if (flagged) {")[0];
   assert.match(reviewPath, /contactsRepo\.setAiReviewAttention\(/);
   assert.match(reviewPath, /return \{ wasFirstMessage, keywordReason \};/);
-  assert.doesNotMatch(reviewPath, /sendTrackedText|pauseAiForHumanHandoff/);
+  assert.doesNotMatch(reviewPath, /pauseAiForHumanHandoff/);
+  // Other review turns remain silent; only a verified TCM clinical
+  // acknowledgement may use the guarded outbound path.
+  assert.match(reviewPath, /if \(clinicalAcknowledgement\)/);
+  assert.match(reviewPath, /await sendTrackedText\(/);
   assert.match(server, /finalSendContact = flagged && !reviewRequired/);
   assert.match(repo, /WHERE c.id = \$1 AND c.mode = 'ai'/);
   assert.match(repo, /INSERT INTO ai_review_items/);
