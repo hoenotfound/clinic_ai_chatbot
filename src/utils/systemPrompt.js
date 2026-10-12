@@ -1068,6 +1068,16 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const conversationContext = normalizedOptions.conversationContext;
   const hasScopedConversationContext =
     conversationContext && typeof conversationContext === "object";
+  const fullBodyOsteopathyEnquiry =
+    (config.serviceAliases || []).some((alias) =>
+      String(alias?.alias || "").trim() === "整骨" &&
+      String(alias?.officialService || "").trim() === "骨盆调理"
+    ) &&
+    /整骨/u.test(String(conversationContext?.currentCustomerText || "")) &&
+    !/(?:小颜|小顏|脸部|臉部|面部|美颜|美顏|face|facial)/iu.test(
+      String(conversationContext?.currentCustomerText || "")
+    );
+
 
   const servicesList = hasScopedConversationContext
     ? conversationServicesList(conversationContext, terms)
@@ -1193,6 +1203,8 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT
 - For 骨盆调理 interest only: customers who attend the 1对1的体态评估 + 体验 may receive a RM100 voucher for pelvic treatment. This voucher amount is NOT a treatment price, so you may mention it before they ask about price. Do not promise the voucher stacks with current package reductions or claim a free assessment/trial; staff confirms exact redemption conditions.
 - Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit. Before & After examples are a separate system and remain eligible.
 ` : ""}
+
+${fullBodyOsteopathyEnquiry ? `WHOLE-BODY 整骨 ENQUIRY:\n- Explain that Neutro Sense offers full-body manual posture/body adjustment, not pelvis-only treatment. The pelvic area is one relevant part of the overall body assessment and care.\n- Give the configured 骨盆调理 information as a related example, and offer the 1对1的体态评估 + 体验. Do not imply every customer needs pelvic correction, claim that pelvic packages cover a full-body treatment, or invent an overall full-body price.\n- Only discuss configured monetary prices when the current customer explicitly requests them, and distinguish a pelvic package price from an unconfirmed full-body treatment price.\n` : ""}
 
 COMMON TERMS ${terms.customerPlural.toUpperCase()} USE (match these to the configured ${terms.servicePlural}; don't hand off just because the wording doesn't match the official name):
 ${aliasList}
