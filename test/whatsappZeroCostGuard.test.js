@@ -202,7 +202,8 @@ test("evidence-only lookup cannot authorize or reserve a new WhatsApp send", asy
 test("every WhatsApp Cloud API outgoing path is guarded, including templates",()=>{
   const raw=fs.readFileSync(path.join(__dirname,"../src/services/whatsappService.js"),"utf8");
   const templ=fs.readFileSync(path.join(__dirname,"../src/services/whatsappTemplateService.js"),"utf8");
-  assert.equal((raw.match(/whatsappZeroCostGuard\.perform\(to/g)||[]).length,7);
+  assert.equal((raw.match(/whatsappZeroCostGuard\.perform\(to/g)||[]).length,8);
+  assert.match(raw,/messageKind:\s*"interactive_consent"/);
   assert.match(templ,/whatsappZeroCostGuard\.perform\(contact\?\.whatsapp_number/);
 });
 
