@@ -163,7 +163,10 @@ function hasExplicitPriceRequest(customerText) {
   if (!original || isGreetingOrLanguageOnly(original)) return false;
   const current = withoutExplicitMarketingRefusal(
     stripFutureFollowUpPermission(original).text
-  ).normalize("NFKC").trim();
+  ).normalize("NFKC").trim().replace(
+    /(?:\b(?:RM|MYR)\s*100\s*(?:voucher|coupon|discount|off|baucar)|(?:优惠券|優惠券|抵用券|baucar|voucher|coupon)\s*(?:RM|MYR)\s*100|(?:RM|MYR)\s*100\s*(?:优惠券|優惠券|抵用券))/giu,
+    "[VOUCHER]"
+  );
   if (!current || /^(?:(?:no|don't|do not|not)\s+(?:price|pricing|cost)|(?:不要|不想|不用|无需|無需)\s*(?:知道|了解|问|問)?\s*(?:价格|價錢|价钱))\s*[.!！。?？]*$/iu.test(current)) return false;
   return /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
