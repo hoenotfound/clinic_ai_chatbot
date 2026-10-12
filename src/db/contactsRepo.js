@@ -300,6 +300,60 @@ async function getContactById(id) {
 // Fail closed for optional automatic images. An unresolved clinical question
 // must block sales/result graphics even when another workflow has cleared the
 // contact-level attention flag. Staff takeover always blocks auto media.
+// Evidence for a clinical review and a short invitation sequence is separate
+// from the AI context, because outbound messages may have newer database IDs
+// than the incoming message saved during a concurrent typing burst.
+async function getTcmReviewEvidence(contactId, inboundMessageId) {
+  if (!Number.isSafeInteger(Number(inboundMessageId)) || Number(inboundMessageId) < 1) return null;
+  try {
+    const result = await pool.query(
+      `WITH resolved_boundary AS (
+         SELECT COALESCE(MAX(inbound_message_id), 0) AS last_resolved_id
+         FROM ai_review_items
+         WHERE contact_id = $1 AND status = 'resolved'
+           AND inbound_message_id < $2
+       )
+       SELECT
+         EXISTS (
+           SELECT 1 FROM ai_review_items r
+           WHERE r.contact_id = $1 AND r.status = 'pending'
+             AND r.category <> 'information'
+         ) AS pending_clinical_review,
+         (SELECT COALESCE(JSONB_AGG(recent.content), '[]'::jsonb)
+          FROM (
+            SELECT m.content FROM messages m, resolved_boundary b
+            WHERE m.contact_id = $1 AND m.role = 'user'
+              AND m.id < $2 AND m.id > b.last_resolved_id
+              AND m.created_at >= NOW() - INTERVAL '7 days'
+            ORDER BY m.id DESC LIMIT 8
+          ) recent) AS recent_customer_texts,
+         (SELECT COALESCE(JSONB_AGG(recent.content), '[]'::jsonb)
+          FROM (
+            SELECT m.content FROM messages m
+            WHERE m.contact_id = $1 AND m.role = 'assistant'
+              AND m.sent_by_username IS NULL
+              AND m.is_automated_follow_up = false
+              AND m.created_at >= NOW() - INTERVAL '10 minutes'
+              AND ${acceptedNormalOutboundSql("m")}
+            ORDER BY m.created_at DESC, m.id DESC LIMIT 8
+          ) recent) AS recent_accepted_assistant_texts`,
+      [contactId, Number(inboundMessageId)]
+    );
+    const row = result.rows[0];
+    if (!row || typeof row.pending_clinical_review !== "boolean" ||
+        !Array.isArray(row.recent_customer_texts) ||
+        !Array.isArray(row.recent_accepted_assistant_texts)) return null;
+    return {
+      pendingClinicalReview: row.pending_clinical_review,
+      recentCustomerTexts: row.recent_customer_texts,
+      recentAcceptedAssistantTexts: row.recent_accepted_assistant_texts,
+    };
+  } catch (error) {
+    console.error("Failed to verify TCM reply evidence:", error);
+    return null;
+  }
+}
+
 // Distinguish a pending clinical review from an unrelated Inbox warning.
 // An unavailable lookup must not authorize a normal sales reply.
 async function hasPendingClinicalAiReview(id) {
@@ -1147,6 +1201,7 @@ module.exports = {
   getContactById,
   canSendAutomaticReviewMedia,
   hasPendingClinicalAiReview,
+  getTcmReviewEvidence,
   updateContactName,
   listConversations,
   listContacts,
