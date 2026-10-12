@@ -9,7 +9,7 @@ const {
 // offer notifications. A model prompt alone cannot prevent unsolicited prices.
 // Replace commercial model output with deterministic conversational copy.
 const COMMERCIAL_REPLY_CONTENT =
-  /(?:\b(?:rm|myr|ringgit|pricing|prices?|costs?|fees?|charges?|packages?|promos?|promotions?|discounts?|deals?|vouchers?|coupons?|offers?|sales?|harga|pakej|promosi|tawaran|diskaun|percuma)\b|(?:first[\s-]*trial|trial[\s-]*price|free[\s-]*(?:gift|massage|session|treatment))|[价價][钱錢格位]|优惠|優惠|促销|促銷|配套|套餐|折扣|限时|限時|特价|特價|赠|贈|礼遇|禮遇|免费|免費|原价|原價|现价|現價|只需|仅需|僅需|\b\d{1,3}\s*%\s*(?:off|discount)?\b|(?:^|[^\d])\d{3,5}(?:[^\d]|$))/iu;
+  /(?:\b(?:rm|myr)(?=\d|\s|[^\p{L}\p{N}]|$)|\b(?:ringgit|pricing|prices?|costs?|fees?|charges?|packages?|promos?|promotions?|discounts?|deals?|vouchers?|coupons?|offers?|sales?|harga|pakej|promosi|tawaran|diskaun|percuma|free)\b|(?:first[\s-]*trial|trial[\s-]*price)|[价價][钱錢格位]|优惠|優惠|促销|促銷|配套|套餐|折扣|限时|限時|特价|特價|赠|贈|礼遇|禮遇|免费|免費|原价|原價|现价|現價|只需|仅需|僅需|\d{1,3}\s*%\s*(?:off|discount)?|(?:\d\uFE0F?\u20E3){2,}|(?:^|[^\d])\d{3,5}(?:[^\d]|$))/iu;
 
 const DURATION_REQUEST =
   /(?:多久|多长|多長|几分钟|幾分鐘|几小时|幾小時|\bhow\s+long\b|\bduration\b|\bberapa\s+lama\b)/iu;
