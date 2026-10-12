@@ -2,6 +2,7 @@
 
 const {
   hasCustomerPriceEnquiry,
+  hasExplicitPriceRequest,
 } = require("./customerEnquiryEvidence");
 
 // A final outbound boundary for a first WhatsApp message without a current
@@ -210,7 +211,45 @@ function guardFutureOfferIntroductionReply({
   return { reply: safe, replaced: true };
 }
 
+// Assessment-first is an opt-in clinic policy; this check blocks prices, not
+// the RM100 voucher incentive. Preserve the existing generic intro guard.
+function hasTreatmentPriceContent(reply) {
+  const original = String(reply || "").normalize("NFKC");
+  const withoutVoucher = original
+    .replace(/\\b(?:RM|MYR)\\s*100(?=\\s*(?:voucher|coupon|discount|off|baucar|优惠券|優惠券|折扣券|抵用券))/giu, "[VOUCHER]")
+    .replace(/(?:voucher|coupon|baucar|优惠券|優惠券|抵用券|折扣券)\\s*(?:worth\\s*)?(?:RM|MYR)\\s*100\\b/giu, "[VOUCHER]")
+    .replace(/\\b(?:RM|MYR)\\s*100(?=\\s*(?:的)?\\s*(?:骨盆(?:调理|調理))?\\s*(?:疗程|療程)?\\s*(?:优惠券|優惠券|抵用券))/giu, "[VOUCHER]");
+  return /\\b(?:RM|MYR)\\s*(?:[0-9]|[0-9]️⃣)|(?:[0-9]️⃣){2,}|(?:原价|原價|现价|現價|只需|仅需|僅需|价格是|價錢是|(?:price|cost)\\s*(?:is|:)|harga\\s*(?:ialah|:))/iu.test(withoutVoucher) ||
+    hasBarePriceContent(withoutVoucher);
+}
+
+function guardAssessmentFirstPricingReply({
+  customerText, reply, flagged = false, language = "en",
+  services = [], serviceAliases = [], treatment = null,
+} = {}) {
+  const original = String(reply || "");
+  if (flagged || hasExplicitPriceRequest(customerText) ||
+      !hasTreatmentPriceContent(original)) {
+    return { reply: original, replaced: false };
+  }
+  const topic = String(treatment || "") + " " + String(customerText || "");
+  const isPelvis = /骨盆|pelvi[sc]|posture|体态|體態|pinggul/iu.test(topic);
+  const locale = String(language || "").toLowerCase();
+  const zh = locale.startsWith("zh") || (!locale && /[\\u3400-\\u9fff]/u.test(customerText));
+  const ms = locale.startsWith("ms");
+  const safe = isPelvis
+    ? (zh
+      ? "可以先让中医师帮你做一个1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，使用细节由门店确认。你比较方便平日还是周末来呢？"
+      : ms
+        ? "Boleh datang untuk penilaian postur 1-ke-1 + sesi percubaan terlebih dahulu 😊 Selepas hadir, anda boleh menerima baucar RM100 untuk rawatan pelvis (syarat penggunaan akan disahkan pihak pusat). Hari biasa atau hujung minggu lebih sesuai?"
+        : "You can start with a 1-on-1 posture assessment + trial with our TCM practitioner 😊 Attending also qualifies you for an RM100 pelvic-treatment voucher, subject to the clinic confirming its terms. Would a weekday or weekend suit you?")
+    : safeIntroReply({ customerText, language, services, serviceAliases });
+  return { reply: safe, replaced: true };
+}
+
 module.exports = {
+  guardAssessmentFirstPricingReply,
+  hasTreatmentPriceContent,
   guardFutureOfferIntroductionReply,
   hasCommercialReplyContent,
   safeIntroReply,
