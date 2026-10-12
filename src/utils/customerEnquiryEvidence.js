@@ -167,7 +167,14 @@ function hasExplicitPriceRequest(customerText) {
     /(?:\b(?:RM|MYR)\s*100\s*(?:voucher|coupon|discount|off|baucar)|(?:优惠券|優惠券|抵用券|baucar|voucher|coupon)\s*(?:RM|MYR)\s*100|(?:RM|MYR)\s*100\s*(?:优惠券|優惠券|抵用券))/giu,
     "[VOUCHER]"
   );
-  if (!current || /^(?:(?:no|don't|do not|not)\s+(?:price|pricing|cost)|(?:不要|不想|不用|无需|無需)\s*(?:知道|了解|问|問)?\s*(?:价格|價錢|价钱))\s*[.!！。?？]*$/iu.test(current)) return false;
+  if (!current) return false;
+  // A customer refusing to discuss prices is not making a price request.
+  const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost)\b/iu.test(current);
+  if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
+  // "How much time/recovery" asks for a duration, not a treatment price.
+  if (/\bhow\s+much\b/iu.test(current) &&
+      !ENGLISH_MONEY_QUESTION.test(current) &&
+      !/(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fee|rm\s*\d+)\b)/iu.test(current)) return false;
   return /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
 
