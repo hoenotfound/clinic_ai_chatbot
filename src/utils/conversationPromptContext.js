@@ -445,6 +445,11 @@ function buildConversationPromptContext(
     schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText) || MAP_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
     promotionIntent: currentPromotionIntent || carriedPromotionIntent,
+    // Avoid showing unnecessary prices to the reply model when a customer
+    // expresses treatment interest alongside future-offer consent.
+    futureFollowUpIntroduction:
+      stripFutureFollowUpPermission(currentCustomerText).hasFuturePermission &&
+      !currentPromotionIntent,
     serviceDiscoveryIntent,
     broadPriceIntent,
   };
