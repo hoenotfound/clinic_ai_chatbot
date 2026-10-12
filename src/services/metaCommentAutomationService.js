@@ -380,6 +380,7 @@ async function generateReplyCopy(event, settings, aiClient = ai, sourceContext =
       {
         isFirstMessage: true,
         channel: event.channel,
+        commentText: event.text,
         surface: "comment_automation",
         publicReplyEnabled: settings.publicReplyEnabled,
         privateReplyEnabled: settings.privateReplyEnabled,
