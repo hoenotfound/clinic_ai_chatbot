@@ -1,6 +1,7 @@
 "use strict";
 
 const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
+const { relatedPricingConflict, configuredServiceMention } = require("./relatedServicePolicy");
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
@@ -266,14 +267,52 @@ function stripUnsolicitedTreatmentPrice(reply) {
 function guardAssessmentFirstPricingReply({
   customerText, reply, flagged = false, language = "en",
   services = [], serviceAliases = [], treatment = null,
+  resultMedia = [], conversationHistory = [],
 } = {}) {
   const original = String(reply || "");
-  if (flagged || hasExplicitPriceRequest(customerText, { treatment }) ||
-      !hasTreatmentPriceContent(original)) return { reply: original, replaced: false };
+  if (flagged || !hasTreatmentPriceContent(original)) {
+    return { reply: original, replaced: false };
+  }
+
+  // A price question about full-body care must not be answered with a
+  // related pelvic treatment's price, even when the AI picked pelvic as its
+  // structured treatment. Keep the service-specific RM100 voucher exempt.
+  if (relatedPricingConflict({
+    customerText, treatment, conversationHistory,
+    services, serviceAliases, resultMedia,
+  })) {
+    const primary = configuredServiceMention(customerText, services, serviceAliases) ||
+      (Array.isArray(conversationHistory)
+        ? [...conversationHistory].reverse()
+          .filter((entry) => entry?.role === "user")
+          .map((entry) => configuredServiceMention(entry.content, services, serviceAliases))
+          .find(Boolean)
+        : null);
+    const retained = stripUnsolicitedTreatmentPrice(original);
+    const invitation = assessmentFirstInvitation({
+      treatment: primary, customerText, language, services, serviceAliases,
+    });
+    const priceClarification = String(language || "").startsWith("zh")
+      ? "全身整骨的实际费用需要由门店根据具体调理项目确认。"
+      : String(language || "").startsWith("ms")
+        ? "Harga rawatan seluruh badan perlu disahkan oleh pihak pusat mengikut jenis rawatan."
+        : "Our centre will need to confirm the pricing for the specific full-body treatment.";
+    return {
+      reply: [retained, priceClarification, invitation].filter(Boolean).join("\n"),
+      replaced: true,
+    };
+  }
+
+  if (hasExplicitPriceRequest(customerText, { treatment })) {
+    return { reply: original, replaced: false };
+  }
   const retained = stripUnsolicitedTreatmentPrice(original);
-  const fallback = assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
+  const fallback = assessmentFirstInvitation({
+    treatment, customerText, language, services, serviceAliases,
+  });
   return { reply: retained || fallback, replaced: true };
 }
+
 module.exports = {
   guardAssessmentFirstPricingReply,
   assessmentFirstInvitation,
