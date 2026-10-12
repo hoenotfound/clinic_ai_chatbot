@@ -882,3 +882,23 @@ test("package information does not activate automatic promotion media", async ()
     assert.equal(result?.promotion?.name, "Pelvic Offer", customerText);
   }
 });
+
+
+test("marketing refusals are not automatic price/media requests even if model flags pricing", async () => {
+  const offer = {
+    name: "Pelvic Offer", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/pelvis-promo.jpg",
+    caption: "RM388",
+  };
+  for (const customerText of [
+    "No promotions please, just explain pelvic treatment",
+    "No more offers please. How long does pelvic treatment take?",
+    "Don't send me promotions, can you explain how 3D works?",
+  ]) {
+    const result = await resolvePricePromotionForReply(base({
+      customerText, treatment: "骨盆调理",
+      promotions: [offer], priceQuery: true, packageQuery: true,
+    }));
+    assert.equal(result, null, customerText);
+  }
+});
