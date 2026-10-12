@@ -405,3 +405,15 @@ test("MARKETING templates require verified CRM consent and a real consent event;
   hasEvidence=true;
   assert.equal((await policy.checkTemplateAllowed(contact,{category:"MARKETING"})).allowed,true);
 });
+
+test("a marketing STOP can include an independent service question, never a pricing question", () => {
+  const parse = policy.extractQuestionAfterMarketingOptOut;
+  assert.equal(parse("不要再发优惠了，我想问骨盆护理要多久？"), "我想问骨盆护理要多久？");
+  assert.equal(parse("Please stop sending me promotions, how long does pelvic treatment take?"),
+    "how long does pelvic treatment take?");
+  assert.equal(parse("不要再发优惠了，请问营业时间？"), "请问营业时间？");
+  assert.equal(parse("Stop promotions"), null);
+  assert.equal(parse("Stop all, how long does pelvic treatment take?"), null);
+  assert.equal(parse("不要再发优惠了，套餐多少钱？"), null);
+  assert.equal(parse("不要再发优惠了，有优惠可以发我看看"), null);
+});
