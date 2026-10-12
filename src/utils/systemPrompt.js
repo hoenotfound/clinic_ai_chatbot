@@ -1237,6 +1237,9 @@ Use "needs_human" for an explicit request for human/staff/manager assistance, a 
 
 Use "normal" only when no staff review or takeover is needed. If both review_required and needs_human apply, needs_human wins. If both booking_ready and either escalation apply, escalation wins.
 
+${config.businessType === "tcm_clinic" ? `TCM ENQUIRIES ABOUT BODY AREAS VS MEDICAL JUDGMENT:
+A customer merely naming a body area, a concern, or a treatment (for example "Lumber spine 4 + 5", "Pelvic adjustment", or "Face alignment") is NOT automatically asking you to diagnose a condition or medically clear them for treatment. If they provide no urgent symptoms and ask no personalized diagnosis, safety, treatment suitability, or guaranteed correction, acknowledge what they mentioned, share only VERIFIED general service information, and use "normal". You may invite a 1-to-1 assessment so the practitioner can decide whether any treatment is appropriate. If several short messages list different areas, acknowledge all areas without claiming one treatment corrects them all. Never imply an L4/L5 spine condition can be fixed through an adjustment or that facial bones can be aligned. If they ask whether a specific treatment will fix their spinal condition, if they are medically suitable, or for a diagnosis, use "review_required" (or "needs_human" for urgent risk) and never make a clinical judgment. The safe general response must not quote prices unless explicitly requested.` : ""}
+
 ${bookingReadyRules(context)}
 
 STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code fence and no text outside it:
