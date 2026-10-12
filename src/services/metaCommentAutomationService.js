@@ -1,4 +1,5 @@
 const clinicConfig = require("../config/clinicConfig");
+const { guardAssessmentFirstPricingReply } = require("../utils/initialOfferReplyGuard");
 const commentRepo = require("../db/metaCommentAutomationRepo");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
@@ -605,7 +606,13 @@ function createMetaCommentAutomationService({
             : settings.publicReplyStyle === "fixed"
               ? settings.fixedPublicReply
               : copy.publicReply || settings.fixedPublicReply;
-        const publicResult = await meta.replyToComment(event.channel, event.commentId, publicText);
+        const guardedPublicText = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+          ? guardAssessmentFirstPricingReply({
+              customerText: event.text, reply: publicText,
+              language: /[\u3400-\u9fff]/u.test(event.text || "") ? "zh" : "en",
+            }).reply
+          : publicText;
+        const publicResult = await meta.replyToComment(event.channel, event.commentId, guardedPublicText);
         if (!publicResult.success) {
           throw new Error(publicResult.error || "Meta rejected the public comment reply.");
         }
@@ -616,12 +623,18 @@ function createMetaCommentAutomationService({
       }
 
       if (settings.privateReplyEnabled && !liveJob.privateReplyMessageId) {
+        const privateText = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+          ? guardAssessmentFirstPricingReply({
+              customerText: event.text, reply: copy.privateReply,
+              language: /[\u3400-\u9fff]/u.test(event.text || "") ? "zh" : "en",
+            }).reply
+          : copy.privateReply;
         // Make the outbound intent durable before calling Meta. An Instagram
         // or Facebook echo can arrive before the Send API response gets back to
         // this process; the echo handler uses this marker to recognize that
         // early event as our own comment-automation DM instead of a staff reply.
         liveJob = await repo.markPrivateReplyPending(job.id, {
-          text: copy.privateReply,
+          text: privateText,
         });
         if (!liveJob) {
           throw new Error("Could not reserve the comment private reply before sending.");
@@ -630,7 +643,7 @@ function createMetaCommentAutomationService({
         const privateResult = await meta.sendPrivateReplyToComment(
           event.channel,
           event.commentId,
-          copy.privateReply
+          privateText
         );
         if (!privateResult.success && !privateResult.alreadySent) {
           throw new Error(privateResult.error || "Meta rejected the private comment reply.");
