@@ -1,5 +1,6 @@
 const { pool } = require("../db/db");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
+const { hasCustomerServiceEnquiry, hasCustomerPriceEnquiry } = require("../utils/customerEnquiryEvidence");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -62,6 +63,26 @@ function classifyOptOutText(value) {
     return "all";
   }
   return null;
+}
+
+
+// Only a separate, noncommercial service/admin question may be answered on the
+// same turn as a marketing-only opt-out. A global STOP stays entirely terminal.
+// This deliberately requires a distinct clause, not a vague "stop promos and..."
+// fragment that might change the meaning of the refusal.
+function extractQuestionAfterMarketingOptOut(message, scope = classifyOptOutText(message)) {
+  if (scope !== "marketing") return null;
+  const clauses = String(message || "").split(/[，,。.!！;；\n]+/u)
+    .map((part) => part.trim()).filter(Boolean);
+  if (clauses.length < 2) return null;
+  const question = clauses.find((part) =>
+    !classifyOptOutText(part) &&
+    !hasCustomerPriceEnquiry(part) &&
+    (hasCustomerServiceEnquiry(part) ||
+      /(?:营业时间|營業時間|几点开|幾點開|地址|在哪里|在哪裡|停车|停車|分行|分店|\b(?:hours?|open|address|location|parking|branch|appointment|booking)\b)/iu.test(part)) &&
+    /(?:[?？]|想(?:问|問|了解|知道)|请问|請問|多久|多长|多長|怎么|怎麼|如何|什么时候|什麼時候|几点|幾點|哪里|哪裡|\b(?:how|what|when|where|can|could|does|do|is|are|berapa|boleh|nak tahu|mahu tahu)\b)/iu.test(part)
+  );
+  return question || null;
 }
 
 function isOptOutText(value) {
@@ -514,6 +535,7 @@ module.exports = {
   checkFreeformAllowed,
   checkTemplateAllowed,
   classifyOptOutText,
+  extractQuestionAfterMarketingOptOut,
   evaluateFreeformState,
   getPolicyState,
   isOptOutText,
