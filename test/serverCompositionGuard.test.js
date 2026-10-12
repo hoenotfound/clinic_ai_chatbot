@@ -169,3 +169,30 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
   assert.match(resultCall, /packageQuery,/);
   assert.match(resultCall, /language: mediaLanguage/);
 });
+
+test("mixed opt-out answer remains noncommercial and skips optional media", () => {
+  assert.match(serverSource, /const marketingStopQuestion = whatsappPolicy\.extractQuestionAfterMarketingOptOut\(text\)/);
+  assert.match(serverSource, /const rawAiReply = await ai\.getReply\(replyHistory,/);
+  assert.match(serverSource, /marketingStopQuestion && hasCommercialReplyContent\(reply\)/);
+  assert.match(serverSource, /reason: "marketing_opt_out_turn"/);
+  assert.ok(
+    serverSource.indexOf('reason: "marketing_opt_out_turn"') <
+    serverSource.indexOf("resolvePricePromotionForReply({"),
+    "marketing STOP cannot reach promotional media resolution"
+  );
+});
+
+test("result-image early return branches persist an audit with partial-send evidence", () => {
+  const start = serverSource.indexOf("const auditResultExit = async (reason)");
+  const end = serverSource.indexOf("} catch (resultMediaErr)", start);
+  assert.ok(start > 0 && end > start);
+  const loop = serverSource.slice(start, end);
+  assert.match(loop, /status: auditSent > 0 \? "partial"/);
+  assert.match(loop, /selectedCount: auditSelected/);
+  assert.match(loop, /sentCount: auditSent/);
+  for (const reason of [
+    "staff_review_or_takeover", "reply_window_or_staff_cancellation", "provider_send_failed",
+  ]) {
+    assert.match(loop, new RegExp('auditReason = "' + reason + '"[\\s\\S]{0,600}await auditResultExit\\(auditReason\\)'));
+  }
+});
