@@ -1,4 +1,4 @@
-const { hasCustomerPriceEnquiry, isFollowUpConsentEnquiry } = require("./customerEnquiryEvidence");
+const { hasCustomerPriceEnquiry } = require("./customerEnquiryEvidence");
 
 // A price question on its own is not evidence that the customer also asked
 // for treatment results. Recognize a separate, explicit treatment enquiry in
@@ -29,7 +29,6 @@ function planResultMediaPacing({ customerText, promotionCount = 0, items = [] } 
     ? Math.max(0, promotionCount)
     : 0;
   const results = Array.isArray(items) ? items : [];
-  if (isFollowUpConsentEnquiry(customerText)) return { items: [], reason: "follow_up_consent_introduction" };
   if (!results.length) return { items: [], reason: "no_eligible_result_media" };
 
   if (hasCustomerPriceEnquiry(customerText) &&
