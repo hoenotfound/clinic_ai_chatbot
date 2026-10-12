@@ -83,3 +83,17 @@ test("negated follow-up consent never authorizes WhatsApp marketing", () => {
     "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
   ]) assert.equal(explicitPromotionConsent(value, clinic)?.category, "MARKETING", value);
 });
+
+test("explicit refusal of WhatsApp follow-up or promotions never grants consent", () => {
+  for (const message of [
+    "Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。",
+    "Hi Neutro Sense TCM，我不希望你们 WhatsApp 跟进我，有相关优惠可以 WhatsApp 通知我。",
+    "Hi Neutro Sense TCM，暂时不方便 WhatsApp 跟进我，但有相关优惠可以 WhatsApp 通知我。",
+    "Hi Neutro Sense TCM，我不接受 WhatsApp 跟进，有优惠也可以通知我。",
+    "Hi Neutro Sense TCM，我不想要收到 WhatsApp 优惠，请介绍一下骨盆调理。",
+  ]) assert.equal(explicitPromotionConsent(message, clinic), null, message);
+  assert.equal(explicitPromotionConsent(
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    clinic
+  )?.category, "MARKETING");
+});
