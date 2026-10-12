@@ -1,6 +1,7 @@
 const { pool } = require("../db/db");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 const { hasCustomerServiceEnquiry, hasCustomerPriceEnquiry } = require("../utils/customerEnquiryEvidence");
+const { hasExplicitMarketingRefusal } = require("../utils/marketingRefusal");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -56,7 +57,8 @@ function classifyOptOutText(value) {
     /(?:不要|别|不想|不需要|停止|取消|不用|无需).{0,45}(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣|宣传|宣傳)/.test(text) ||
     /(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣).{0,28}(?:不要|别发|別發|停止|取消|不用|不需要|不想)/.test(text) ||
     /(?:jangan|tak nak|tak mahu|tidak mahu|berhenti|hentikan|tidak ingin).{0,90}(?:promosi|tawaran|iklan|pemasaran)/i.test(text);
-  if (refusePromotion || MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
+  if (refusePromotion || hasExplicitMarketingRefusal(text) ||
+      MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
     return "marketing";
   }
   if (GLOBAL_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
@@ -80,7 +82,7 @@ function extractQuestionAfterMarketingOptOut(message, scope = classifyOptOutText
     !hasCustomerPriceEnquiry(part) &&
     (hasCustomerServiceEnquiry(part) ||
       /(?:营业时间|營業時間|几点开|幾點開|地址|在哪里|在哪裡|停车|停車|分行|分店|\b(?:hours?|open|address|location|parking|branch|appointment|booking)\b)/iu.test(part)) &&
-    /(?:[?？]|想(?:问|問|了解|知道)|请问|請問|多久|多长|多長|怎么|怎麼|如何|什么时候|什麼時候|几点|幾點|哪里|哪裡|\b(?:how|what|when|where|can|could|does|do|is|are|berapa|boleh|nak tahu|mahu tahu)\b)/iu.test(part)
+    /(?:[?？]|想(?:问|問|了解|知道)|请问|請問|多久|多长|多長|怎么|怎麼|如何|什么时候|什麼時候|几点|幾點|哪里|哪裡|\b(?:how|what|when|where|can|could|does|do|is|are|explain|describe|tell\s+me\s+about|berapa|boleh|nak tahu|mahu tahu)\b)/iu.test(part)
   );
   return question || null;
 }
