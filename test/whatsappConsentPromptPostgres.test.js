@@ -106,8 +106,8 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
     assert.equal((await repo.listCandidates(pricing,pool)).length,1);
     await pool.query("DELETE FROM pricing_reminder_decisions");
     await pool.query(`INSERT INTO messages(id,contact_id,role,content,
-      pricing_reminder_anchor_id,whatsapp_accepted_at,whatsapp_message_id,delivery_status)
-      VALUES(13,1,'assistant','Pricing image',11,now()-interval '3 minutes',
+      is_automated_follow_up,pricing_reminder_anchor_id,whatsapp_accepted_at,whatsapp_message_id,delivery_status)
+      VALUES(13,1,'assistant','Pricing image',true,11,now()-interval '3 minutes',
         'wamid.price','pending')`);
     assert.ok(Date.parse((await repo.listCandidates(pricing,pool))[0].due_at)>Date.now());
     await pool.query(`UPDATE messages SET whatsapp_accepted_at=now()-interval '7 minutes' WHERE id=13`);
