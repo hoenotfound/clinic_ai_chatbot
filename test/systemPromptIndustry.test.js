@@ -95,3 +95,49 @@ test("generic profile has no configured services or locations to hallucinate fro
     assert.doesNotMatch(prompt, /HIFU/);
   });
 });
+
+test("BB demo market references are only in explicit customer price questions", () => {
+  const profile = getIndustryProfile("aesthetic_clinic");
+  withProfile({
+    ...profile,
+    businessName: "BB World Clinique",
+    clinicName: "BB World Clinique",
+    services: [{
+      name: "Pico Laser",
+      description: "General Pico laser procedure.",
+      priceRange: "BB price not confirmed; ask staff.",
+      marketPriceGuide: "RM700–RM1,500 per session at other Malaysian clinics.",
+      duration: "Varies",
+    }],
+    serviceAliases: [{ alias: "pico", officialService: "Pico Laser" }],
+    promotions: [],
+  }, () => {
+    const current = { currentCustomerText: "Pico Laser 多少钱？", relevantServiceNames: ["Pico Laser"] };
+    const pricing = buildSystemPrompt({
+      channel: "facebook", conversationContext: current,
+    });
+    assert.match(pricing, /RM700–RM1,500/);
+    assert.match(pricing, /OTHER MALAYSIAN CLINICS' DEMO MARKET REFERENCE/);
+    assert.match(pricing, /NOT BB World Clinique's fee/);
+    assert.match(pricing, /BB price not confirmed/);
+
+    const general = buildSystemPrompt({
+      channel: "facebook",
+      conversationContext: { ...current, currentCustomerText: "我想了解 Pico Laser" },
+    });
+    assert.doesNotMatch(general, /RM700–RM1,500/);
+    const optin = buildSystemPrompt({
+      channel: "facebook", isFirstMessage: true,
+      conversationContext: { ...current, futureFollowUpIntroduction: true },
+    });
+    assert.doesNotMatch(optin, /RM700–RM1,500/);
+    assert.doesNotMatch(buildSystemPrompt({ channel: "facebook" }), /RM700–RM1,500/);
+    assert.doesNotMatch(buildSystemPrompt({
+      surface: "comment_automation", channel: "facebook", commentText: "Pico Laser?"
+    }), /RM700–RM1,500/);
+    assert.doesNotMatch(buildSystemPrompt({
+      surface: "follow_up", channel: "facebook",
+      followUpContext: { treatmentInterest: "Pico Laser", stepNumber: 1 },
+    }), /RM700–RM1,500/);
+  });
+});

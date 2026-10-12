@@ -159,6 +159,14 @@ function explicitConversationPriceRequest(conversationContext) {
   });
 }
 
+// Other-clinic benchmarks are reference data, not verified prices for this business.
+// They are supplied to the AI only in response to a current explicit price request.
+function marketPriceReferenceForExplicitEnquiry(service, conversationContext) {
+  const guide = promptContextText(service?.marketPriceGuide, 500);
+  if (!guide || !explicitConversationPriceRequest(conversationContext)) return "";
+  return ` | OTHER MALAYSIAN CLINICS' DEMO MARKET REFERENCE (NOT ${config.businessName || "this clinic"}'s fee, offer, or quote): ${guide}. The clinic's actual price requires staff confirmation.`;
+}
+
 function conversationServicesList(conversationContext, terms) {
   const selected = conversationSelectedServices(conversationContext);
   if (selected.length) {
@@ -167,7 +175,7 @@ function conversationServicesList(conversationContext, terms) {
         const description = promptContextText(service?.description, 1_600) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
         const duration = promptContextText(service?.duration, 300) || "Not configured";
-        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)) ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
+        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)) ? "" : ` | Price: ${price}${marketPriceReferenceForExplicitEnquiry(service, conversationContext)}`} | Duration: ${duration}`;
       })
       .join("\n");
   }
@@ -184,7 +192,7 @@ function conversationServicesList(conversationContext, terms) {
         const description = promptContextText(service?.description, 1_200) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
         const duration = promptContextText(service?.duration, 300) || "Not configured";
-        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+        return `- ${service.name}: ${description} | Price: ${price}${marketPriceReferenceForExplicitEnquiry(service, conversationContext)} | Duration: ${duration}`;
       }),
     ].join("\n");
   }
@@ -690,7 +698,7 @@ function promotionAuthorityRules() {
 - ACTIVE PROMOTIONS is the only authority for treatment promotions, package prices, discounts, bundles, free add-ons and deadlines.
 ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Separate assessment attendance incentive: the current approved assessment-first business policy allows only the RM100 骨盆调理疗程 voucher for customers who attend the 1对1体态评估 + 体验. This does NOT authorize a new package price, additional stacked discount, expiry date, or any other voucher conditions. Confirm actual redemption terms with staff." : ""}
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
-- SERVICES remains authoritative for standing normal/regular treatment prices, standalone treatment durations, mechanisms and safety. Promotional advertising copy may describe a package total or an older normal price; never use it to override those standing facts. If conflicting package totals or offer facts remain, ask the team to confirm instead of guessing.
+- SERVICES remains authoritative for standing normal/regular treatment prices, standalone treatment durations, mechanisms and safety. Promotional advertising copy may describe a package total or an older normal price; never use it to override those standing facts. If conflicting package totals or offer facts remain, ask the team to confirm instead of guessing.\n${(config.services || []).some((service) => service?.marketPriceGuide) ? "- DEMO MARKET REFERENCES from other Malaysian clinics are NOT this clinic\u0027s prices, discounts or offers. Discuss them ONLY in response to an explicit current customer price question, identify their external source clearly, and keep the actual clinic fee unconfirmed." : ""}
 - A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
 - If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
 - A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
