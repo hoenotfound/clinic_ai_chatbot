@@ -74,7 +74,11 @@ test("non-urgent model and keyword review turns are silent and keep AI ownership
   const reviews = section("if (flagged && reviewRequired) {", "} else if (flagged) {");
   assert.match(reviews, /setAiReviewAttention/);
   assert.match(reviews, /return \{ wasFirstMessage, keywordReason \};/);
-  assert.doesNotMatch(reviews, /sendTrackedText|pauseAiForHumanHandoff/);
+  assert.doesNotMatch(reviews, /pauseAiForHumanHandoff/);
+  // Other review turns remain silent; only a verified TCM clinical
+  // acknowledgement may use the guarded outbound path.
+  assert.match(reviews, /if \(clinicalAcknowledgement\)/);
+  assert.match(reviews, /await sendTrackedText\(/);
   const keyword = section("A model can miss a clear complaint", "let reply = isFirstMessage");
   assert.match(keyword, /reviewRequired = false/);
   assert.match(keyword, /fallbackHandoffReply/);
@@ -128,6 +132,8 @@ test("clinical and staff handoffs remain distinct from silent one-off questions"
   assert.match(handoff, /fallbackHandoffReply/);
   assert.match(handoff, /isUnanswerableCustomerReply\(aiReply, text\)/);
   const review = section("if (flagged && reviewRequired) {", "} else if (flagged) {");
-  assert.doesNotMatch(review, /sendTrackedText|pauseAiForHumanHandoff/);
+  assert.doesNotMatch(review, /pauseAiForHumanHandoff/);
+  assert.match(review, /if \(clinicalAcknowledgement\)/);
+  assert.match(review, /await sendTrackedText\(/);
   assert.match(server, /isFirstMessage && !flagged && !generateFirstIntro/);
 });
