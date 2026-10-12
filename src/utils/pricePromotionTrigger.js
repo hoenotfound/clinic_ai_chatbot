@@ -47,6 +47,7 @@ async function resolvePricePromotionForReply({
   priceQuery,
   packageQuery,
   treatment,
+  verifiedServiceFromText = null,
   customerText,
   conversationHistory,
   flagged,
@@ -66,6 +67,7 @@ async function resolvePricePromotionForReply({
     // when the LLM under-classifies priceQuery. Keep all media safety checks.
     (priceQuery !== true && packageQuery !== true &&
       !(clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        verifiedServiceFromText === treatment &&
         hasExplicitPriceRequest(customerText, { treatment }))) ||
     !(hasCustomerPriceEnquiry(customerText) ||
       (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
