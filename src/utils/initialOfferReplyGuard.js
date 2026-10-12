@@ -6,6 +6,7 @@ const {
   hasCustomerServiceEnquiry,
   isContextualAdServiceEnquiry,
 } = require("./customerEnquiryEvidence");
+const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 
 // A final outbound boundary for a first WhatsApp message without a current
 // price enquiry. Consent detection must not control unsolicited price safety.
@@ -261,6 +262,7 @@ function ensureFirstAssessmentInvitation({
 } = {}) {
   const original = String(reply || "").trim();
   if (!isFirstMessage || flagged || !original ||
+      hasClinicalMediaRisk(customerText) ||
       hasExplicitPriceRequest(customerText, { treatment }) ||
       !hasCustomerServiceEnquiry(customerText)) {
     return { reply: original, appended: false };
@@ -322,7 +324,9 @@ function guardAssessmentFirstPricingReply({
   if (flagged || hasExplicitPriceRequest(customerText, { treatment }) ||
       !hasTreatmentPriceContent(original)) return { reply: original, replaced: false };
   const retained = stripUnsolicitedTreatmentPrice(original);
-  const fallback = assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
+  const fallback = hasClinicalMediaRisk(customerText)
+    ? safeIntroReply({ customerText, language, services, serviceAliases })
+    : assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
   return { reply: retained || fallback, replaced: true };
 }
 module.exports = {
