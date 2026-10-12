@@ -282,3 +282,19 @@ test("declining one service does not swallow a separate explicit price request",
     "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
   ]) assert.equal(hasCustomerPriceEnquiry(message),false,message);
 });
+
+test("general package introductions are not pricing enquiries but explicit option requests are", () => {
+  for (const message of [
+    "我想了解骨盆配套",
+    "Hi～我想了解 Neutro Sense TCM 的骨盆配套。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Tell me more about the pelvic package",
+    "I want to know how Package B works",
+    "Saya nak tahu tentang pakej pelvis",
+    "Package B适合产后吗？",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), false, message);
+  for (const message of [
+    "骨盆套餐多少钱？", "套餐有哪些？", "你们有什么配套？",
+    "do you have a package?", "Package B?", "有什么package？",
+    "What packages are available?", "Berapa harga pakej ini?",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), true, message);
+});
