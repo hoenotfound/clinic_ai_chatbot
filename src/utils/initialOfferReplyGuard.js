@@ -1,5 +1,6 @@
 "use strict";
 
+const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
@@ -117,7 +118,7 @@ function safeServiceFromCustomer(customerText, services, serviceAliases = []) {
       addMentions(canonical, term);
     }
   }
-  const entries = [...mentions.values()];
+  const entries = pruneCoveredServiceMentions([...mentions.values()]);
   if (!entries.length) return null;
 
   const combos = entries.filter(({ service }) =>
