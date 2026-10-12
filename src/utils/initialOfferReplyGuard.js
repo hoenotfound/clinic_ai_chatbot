@@ -3,6 +3,7 @@
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
+  isStandalonePriceQuestion,
   hasCustomerServiceEnquiry,
   isContextualAdServiceEnquiry,
 } = require("./customerEnquiryEvidence");
@@ -316,13 +317,36 @@ function stripUnsolicitedTreatmentPrice(reply) {
   return retained && !hasTreatmentPriceContent(retained) ? retained : "";
 }
 
+// When a clinic requires customer-grounded treatment evidence, a direct
+// monetary question by itself never authorizes a model-selected service price.
+// The only trusted treatment at this boundary is one independently resolved
+// from the current or immediately previous customer message by the caller.
 function guardAssessmentFirstPricingReply({
   customerText, reply, flagged = false, language = "en",
   services = [], serviceAliases = [], treatment = null,
+  requireVerifiedTreatment = false,
 } = {}) {
   const original = String(reply || "");
-  if (flagged || hasExplicitPriceRequest(customerText, { treatment }) ||
-      !hasTreatmentPriceContent(original)) return { reply: original, replaced: false };
+  if (flagged || !hasTreatmentPriceContent(original)) {
+    return { reply: original, replaced: false };
+  }
+  const priceAsked = hasExplicitPriceRequest(customerText, { treatment });
+  if (priceAsked && (!requireVerifiedTreatment || Boolean(treatment))) {
+    return { reply: original, replaced: false };
+  }
+  // An unverified treatment and a price question require clarification, not
+  // Gemini's guessed RM amount. This also covers mixed-treatment enquiries
+  // without arbitrarily choosing one package.
+  if (requireVerifiedTreatment && !treatment &&
+      (priceAsked || isStandalonePriceQuestion(customerText))) {
+    const locale = String(language || "").toLowerCase();
+    const clarification = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText))
+      ? "请问你想了解哪一项疗程的价格呢？我可以帮你确认 😊"
+      : locale.startsWith("ms")
+        ? "Boleh saya tahu harga untuk rawatan yang mana satu ya? 😊"
+        : "Which treatment would you like the price for? I can help you check 😊";
+    return { reply: clarification, replaced: true };
+  }
   const retained = stripUnsolicitedTreatmentPrice(original);
   const fallback = hasClinicalMediaRisk(customerText)
     ? safeIntroReply({ customerText, language, services, serviceAliases })
