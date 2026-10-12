@@ -33,7 +33,7 @@ test("new WhatsApp STOP is enforced atomically with the durable inbound and CRM 
   }
 });
 
-test("ordinary enquiries and non-WhatsApp messages cannot opt out contacts through durability phase", async ()=>{
+test("ordinary enquiries remain free of STOP-specific durability CTEs", async ()=>{
   for (const channel of ["whatsapp","facebook"]) {
     const calls=[];
     const database={async query(sql,params){
@@ -42,10 +42,45 @@ test("ordinary enquiries and non-WhatsApp messages cannot opt out contacts throu
     }};
     await inbound.storeInboundClaim({
       contactId:3,channel,content:"I want treatment",
-      storedMessageId:"wamid.generic",optOutScope:channel==="facebook"?"all":null,
+      storedMessageId:"wamid.generic",optOutScope:null,
       incoming:{text:"I want treatment"},
     },database);
     assert.equal(calls[0].params.length,8);
     assert.doesNotMatch(calls[0].sql,/enforced_whatsapp_stop/);
+  }
+});
+
+test("Facebook and Instagram STOP is persisted atomically before reply-worker leasing", async () => {
+  for (const channel of ["facebook", "instagram"]) {
+    for (const optOutScope of ["marketing", "all"]) {
+      const calls = [];
+      const database = { async query(sql, params) {
+        calls.push({ sql, params });
+        return { rows: [{
+          saved_inbound: { id: 58, contact_id: 12 },
+          processing_job: { id: 71, message_id: 58 },
+          derived_first_message: false,
+        }] };
+      }};
+      const result = await inbound.storeInboundClaim({
+        contactId: 12, channel,
+        content: "Stop promotions. How long is the pelvic treatment?",
+        storedMessageId: channel + ":social-stop-1",
+        optOutScope, incoming: {
+          id: "social-stop-1", text: "Stop promotions. How long is the pelvic treatment?",
+        },
+      }, database);
+      assert.equal(result?.savedInbound.id, 58);
+      assert.equal(calls.length, 1, "social opt-out is enforced in the message INSERT");
+      const { sql, params } = calls[0];
+      assert.match(sql, /enforced_social_stop AS \(/);
+      assert.match(sql, /synchronized_social_stop_leads AS \(/);
+      assert.match(sql, /EXISTS\(SELECT 1 FROM inserted_message\)/);
+      assert.match(sql, /social_marketing_opt_out_at = now\(\)/);
+      assert.match(sql, /ON CONFLICT \(whatsapp_message_id\) DO NOTHING/);
+      assert.equal(params[8], optOutScope);
+      assert.equal(params[3], channel);
+      assert.equal(JSON.parse(params[4])._socialStopEnforcedAtomically, true);
+    }
   }
 });
