@@ -21,7 +21,9 @@ function fakeDatabase({ lead = { id: 7, appointment_status: "visited", treatment
           issued_at: params[1] === "issued" ? new Date().toISOString() : (state?.issued_at || null),
           redeemed_at: params[1] === "redeemed" ? new Date().toISOString() : (state?.redeemed_at || null),
           updated_at: new Date().toISOString(), updated_by: params[2],
-          redemption_note: params[3] || state?.redemption_note || null };
+          redemption_note: params[3] || state?.redemption_note || null,
+          terms_note: params[4] || state?.terms_note || null,
+          expires_at: params[5] || state?.expires_at || null };
         return { rows: [state] };
       }
       return { rows: [] };
@@ -38,13 +40,14 @@ test("voucher lifecycle is staff-only, one-way, and recorded in lead activity", 
   assert.equal(eligible.valueRm,100);
   assert.equal(db.calls.some(x=>x.sql.includes("lead_activities")),true);
   assert.equal(db.calls.filter(x=>x.sql==="COMMIT").length,1);
-  const issued=await voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true},"staff",db);
+  const issued=await voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true,termsNote:"Once per pelvic treatment, no stacking."},"staff",db);
   assert.equal(issued.status,"issued");
+  assert.match(issued.termsNote,/no stacking/);
   const redeemed=await voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:"Voucher redeemed once, no stacking."},"staff",db);
   assert.equal(redeemed.status,"redeemed");
   assert.equal(redeemed.redemptionNote,"Voucher redeemed once, no stacking.");
   assert.equal(db.calls.filter(x=>x.sql==="COMMIT").length,3);
-  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true},"staff",db),
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true,termsNote:"Once per pelvic treatment"},"staff",db),
     err=>err.status===409);
 });
 
@@ -66,6 +69,10 @@ test("voucher issuance confirms terms and redemption requires an audit note", as
   const eligible={status:"eligible",assessed_at:new Date().toISOString()};
   await assert.rejects(voucher.transitionVoucher(7,{status:"issued"},"staff",fakeDatabase({current:eligible})),
     err=>err.status===400);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true},"staff",fakeDatabase({current:eligible})),
+    err=>err.status===400);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true,termsNote:"Valid voucher",expiresAt:"2001-01-01T00:00:00Z"},"staff",fakeDatabase({current:eligible})),
+    err=>err.status===400);
   await assert.rejects(voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:""},"staff",
     fakeDatabase({current:{...eligible,status:"issued"}})),err=>err.status===400);
   await assert.rejects(voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:"x".repeat(501)},"staff",
@@ -77,6 +84,9 @@ test("voucher issuance confirms terms and redemption requires an audit note", as
   assert.equal(voucher.isPelvicLead("骨盆调理"),true);
   assert.equal(voucher.isPelvicLead("徒手体态调理"),false);
   assert.equal(voucher.publicVoucher(null).status,"not_verified");
+  const expired=fakeDatabase({current:{...eligible,status:"issued",expires_at:"2001-01-01T00:00:00Z"}});
+  await assert.rejects(voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:"Used"},"staff",expired),
+    err=>err.status===409);
 });
 
 test("voucher is persisted in a new non-destructive versioned migration",()=>{
@@ -84,4 +94,6 @@ test("voucher is persisted in a new non-destructive versioned migration",()=>{
   assert.match(file,/CREATE TABLE IF NOT EXISTS assessment_voucher_tracking/);
   assert.match(file,/REFERENCES leads\(id\) ON DELETE CASCADE/);
   assert.match(file,/redeemed/);
+  assert.match(file,/terms_note TEXT/);
+  assert.match(file,/expires_at TIMESTAMPTZ/);
 });
