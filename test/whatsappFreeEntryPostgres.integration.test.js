@@ -9,6 +9,7 @@ const path = require("node:path");
 const worker = require("../src/services/whatsappFreeEntryFollowUpService");
 const deliveryRepo = require("../src/db/whatsappDeliveryStatusRepo");
 const freeEntryReport = require("../src/db/whatsappFreeEntryReportRepo");
+const billingAdvisory = require("../src/services/whatsappTemplateBillingAdvisory");
 const { sessionLateralSql } = require("../src/db/whatsappFreeEntrySessionSql");
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -98,6 +99,31 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       };
       process.env.WHATSAPP_PHONE_NUMBER_ID = "free-only-test-account";
       process.env.WHATSAPP_FEP_7DAY_VERIFIED = "false";
+
+      // PostgreSQL integration: real CTWA receipt remains verified even when
+      // the strict account gate temporarily prevents a template send.
+      const initialPreview = await billingAdvisory.getTemplateBillingAdvisory(1, {
+        database:guardDb,now:new Date(),
+      });
+      assert.equal(initialPreview.evidence,"recent_free_entry_evidence");
+      assert.equal(initialPreview.freeEntry.verified,true);
+      assert.equal(initialPreview.freeEntry.sendReady,true);
+      await guardDb.query(`INSERT INTO whatsapp_free_only_send_gate(phone_number_id,status)
+        VALUES('free-only-test-account','reserved')`);
+      const pendingPreview = await billingAdvisory.getTemplateBillingAdvisory(1,{
+        database:guardDb,now:new Date(),
+      });
+      assert.equal(pendingPreview.evidence,"recent_free_entry_evidence");
+      assert.equal(pendingPreview.freeEntry.verified,true);
+      assert.equal(pendingPreview.freeEntry.sendReady,false);
+      assert.equal(pendingPreview.freeEntry.blockedReason,"zero_cost_previous_send_unreconciled");
+      await guardDb.query(`UPDATE whatsapp_free_only_send_gate
+        SET status='idle' WHERE phone_number_id='free-only-test-account'`);
+      const expiredPreview = await zeroCostGuard.inspectFreeTemplateWindow("60121234567",{
+        database:guardDb,now:new Date(Date.now()+18*3600000),
+      });
+      assert.equal(expiredPreview.verified,false,
+        "conservative 71h FEP limit expires even if an older reply was verified");
 
       // Strict-mode day 4–7 proof is obtained from any independently
       // delivered nonbillable CTWA message, not only a worker-claimed slot.
