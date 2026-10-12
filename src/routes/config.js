@@ -618,7 +618,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   if (requested.assessmentFirstPricingEnabled !== undefined &&
       typeof requested.assessmentFirstPricingEnabled !== "boolean") return null;
   if (requested.assessmentFirstPricingEnabled !== undefined &&
-      requested.assessmentFirstPricingEnabled !== current?.assessmentFirstPricingEnabled) return null;
+      requested.assessmentFirstPricingEnabled !== (current?.assessmentFirstPricingEnabled === true)) return null;
   const assessmentFirstPricingEnabled = current?.assessmentFirstPricingEnabled === true;
   const triggerMode = requested.triggerMode;
   const quietHours = normalizeQuietHours(requested.quietHours);
