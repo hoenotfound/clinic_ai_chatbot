@@ -89,7 +89,8 @@ function stripFutureFollowUpPermission(customerText) {
     // direct price request, but never mistake the refusal or remaining
     // future-offer notification for a request to send media immediately.
     const kept = clauses.filter((part) => {
-      if (DIRECT_CURRENT_REQUEST.test(part) && !REFUSED_PROMOTION.test(part)) return true;
+      if (DIRECT_CURRENT_REQUEST.test(part) &&
+          !REFUSED_PROMOTION.test(part) && !REFUSED_FOLLOW_UP.test(part)) return true;
       return !REFUSED_FOLLOW_UP.test(part) &&
         !REFUSED_PROMOTION.test(part) &&
         !FUTURE_OFFER_NOTIFICATION.test(part) &&
