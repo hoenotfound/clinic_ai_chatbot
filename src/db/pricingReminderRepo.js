@@ -348,15 +348,24 @@ async function markBatchCompleted({ contactId, anchorId, expectedPackages }) {
     SELECT $2,$1,$4 FROM guard
     WHERE EXISTS(SELECT 1 FROM messages anchor WHERE anchor.id=$2 AND anchor.contact_id=$1)
      AND NOT EXISTS(SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=$2)
-     AND (SELECT COUNT(DISTINCT pricing_reminder_package_key)::integer FROM messages m
+     AND (SELECT COUNT(DISTINCT pricing_reminder_package_key)::integer
+          FROM messages m JOIN contacts c ON c.id=m.contact_id
+          WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
+            AND m.pricing_reminder_package_key=ANY($3::text[])
+            AND ((c.channel='whatsapp' AND m.whatsapp_accepted_at IS NOT NULL
+                  AND m.whatsapp_message_id IS NOT NULL
+                  AND m.delivery_status IN ('pending','sent','delivered','read'))
+               OR (c.channel IN ('facebook','instagram') AND m.social_accepted_at IS NOT NULL
+                  AND m.whatsapp_message_id LIKE (c.channel || ':%')
+                  AND m.delivery_status='sent')))=$4
+     AND NOT EXISTS(SELECT 1 FROM messages m JOIN contacts c ON c.id=m.contact_id
        WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
-        AND m.pricing_reminder_package_key=ANY($3::text[])
-        AND m.whatsapp_message_id IS NOT NULL AND m.whatsapp_accepted_at IS NOT NULL
-        AND m.delivery_status IN ('pending','sent','delivered','read'))=$4
-     AND NOT EXISTS(SELECT 1 FROM messages m
-       WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
-         AND (m.whatsapp_message_id IS NULL OR m.whatsapp_accepted_at IS NULL
-           OR m.delivery_status IS NULL OR m.delivery_status IN ('failed','unknown','cancelled')))
+         AND NOT ((c.channel='whatsapp' AND m.whatsapp_accepted_at IS NOT NULL
+                   AND m.whatsapp_message_id IS NOT NULL
+                   AND m.delivery_status IN ('pending','sent','delivered','read'))
+                  OR (c.channel IN ('facebook','instagram') AND m.social_accepted_at IS NOT NULL
+                     AND m.whatsapp_message_id LIKE (c.channel || ':%')
+                     AND m.delivery_status='sent')))
     ON CONFLICT DO NOTHING RETURNING anchor_id`,
     [contactId,anchorId,packages,packages.length]);
   return result.rowCount===1;
