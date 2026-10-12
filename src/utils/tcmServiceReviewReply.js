@@ -40,8 +40,8 @@ function bareServiceName(text, services, aliases) {
   return { service, phrase };
 }
 
-const SPINAL_CONCERN = /\b(?:l[1-5]\s*[\/+-]\s*[ls]?[1-5]|(?:lumbar|lumber)\s+spine|slipped\s+disc|herniated\s+disc|disc\s+(?:bulge|protrusion)|scoliosis|sciatica|spinal\s+stenosis)\b|(?:腰椎|脊椎|椎间盘|椎間盤|脊柱側彎|脊柱侧弯)/iu;
-const STANDALONE_SPINE = /^(?:(?:lumbar|lumber)\s+spine\s+(?:(?:l)?[1-5]\s*[+\/-]\s*[ls]?[1-5]|[1-5]\s+(?:and|&)\s+[1-5])|l[1-5]\s*[\/-]\s*[ls]?[1-5])$/iu;
+const SPINAL_CONCERN = /\b(?:l[1-5]\s*[+\/&-]\s*[ls]?[1-5]|(?:lumbar|lumber)\s+spine|slipped\s+disc|herniated\s+disc|disc\s+(?:bulge|protrusion)|scoliosis|sciatica|spinal\s+stenosis)\b|(?:腰椎|脊椎|椎间盘|椎間盤|脊柱側彎|脊柱侧弯)/iu;
+const STANDALONE_SPINE = /^(?:(?:lumbar|lumber)\s+spine\s+(?:(?:l)?[1-5]\s*[+\/&-]\s*[ls]?[1-5]|[1-5]\s+(?:and|&)\s+[1-5])|l[1-5]\s*[+\/&-]\s*[ls]?[1-5])$/iu;
 const ASSESSMENT = /(?:assessment|评估|評估|penilaian)/iu;
 const ASSESSMENT_INVITE = /(?:arrange|book|schedule|would you like|want to come|come in for|安排|预约|預約|約個|约个|nak aturkan|nak buat|buat temujanji)/iu;
 
