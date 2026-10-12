@@ -97,3 +97,28 @@ test("voucher is persisted in a new non-destructive versioned migration",()=>{
   assert.match(file,/terms_note TEXT/);
   assert.match(file,/expires_at TIMESTAMPTZ/);
 });
+
+
+test("changed CRM appointment or treatment status blocks subsequent issuance/redemption without losing voucher history",async()=>{
+ const eligible={status:"eligible",assessed_at:"2026-10-12T00:00:00Z"};
+ for(const changedLead of [
+  {id:7,appointment_status:"set",treatment_interest:"骨盆调理"},
+  {id:7,appointment_status:"visited",treatment_interest:"3D 小颜术"},
+  {id:7,appointment_status:"cancelled",treatment_interest:"3D 小颜术"}
+ ]) {
+  for (const state of ["eligible","issued"]) {
+   const db=fakeDatabase({lead:changedLead,current:{...eligible,status:state}});
+   const target=state==="eligible"?"issued":"redeemed";
+   const payload=target==="issued"
+     ? {status:target,termsConfirmed:true,termsNote:"Staff confirmed no stacking"}
+     : {status:target,redemptionNote:"Voucher applied with staff approval"};
+   await assert.rejects(voucher.transitionVoucher(7,payload,"staff",db),err=>err.status===400);
+   assert.equal(db.calls.some(x=>x.sql.includes("INSERT INTO assessment_voucher_tracking")),false);
+   assert.ok(db.calls.some(x=>x.sql==="ROLLBACK"));
+  }
+ }
+ // Staff must retain a way to void invalidated vouchers without re-marking a visit.
+ const voided=await voucher.transitionVoucher(7,{status:"voided"},"staff",
+   fakeDatabase({lead:{id:7,appointment_status:"cancelled",treatment_interest:"3D 小颜术"},current:eligible}));
+ assert.equal(voided.status,"voided");
+});
