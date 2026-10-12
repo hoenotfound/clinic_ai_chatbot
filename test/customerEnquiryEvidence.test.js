@@ -298,3 +298,20 @@ test("general package introductions are not pricing enquiries but explicit optio
     "What packages are available?", "Berapa harga pakej ini?",
   ]) assert.equal(hasCustomerPriceEnquiry(message), true, message);
 });
+
+test("asking how a named package works is not a request for its price graphics", () => {
+  for (const question of [
+    "可以介绍一下骨盆配套吗？",
+    "可以简单介绍骨盆套餐吗？",
+    "我想看看骨盆配套是怎么做的",
+    "介绍一下套餐内容",
+    "Tell me the details of the pelvic package",
+    "Could you explain the pelvic package?",
+    "Nak tahu pakej rawatan ni macam mana",
+  ]) assert.equal(hasCustomerPriceEnquiry(question), false, question);
+  for (const question of [
+    "骨盆套餐有哪些？", "你们有什么骨盆配套？",
+    "What packages are available?", "package apa ada?",
+    "请发我配套选项", "骨盆套餐多少钱?",
+  ]) assert.equal(hasCustomerPriceEnquiry(question), true, question);
+});
