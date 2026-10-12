@@ -42,7 +42,9 @@ test("three-message TCM conversation preserves staff reviews, AI ownership and a
       ");",
       "CREATE TABLE messages (",
       " id integer primary key, contact_id integer REFERENCES contacts(id),",
-      " role text, content text, created_at timestamptz DEFAULT now()",
+      " role text, content text, created_at timestamptz DEFAULT now(),",
+      " sent_by_username text, delivery_status text, whatsapp_message_id text,",
+      " is_automated_follow_up boolean NOT NULL DEFAULT false",
       ");",
       "INSERT INTO contacts(id) VALUES (7);",
     ].join("\n"));
@@ -70,12 +72,13 @@ test("three-message TCM conversation preserves staff reviews, AI ownership and a
     for (const [id, content] of turns) {
       await client.query("INSERT INTO messages(id,contact_id,role,content) VALUES ($1,7,'user',$2)", [id, content]);
       history.push({ role: "user", content });
-      const pendingClinicalReview = await contacts.hasPendingClinicalAiReview(7);
+      const evidence = await contacts.getTcmReviewEvidence(7,id);
+      assert.ok(evidence, content);
       const plan = planTcmReviewReply({
         businessType: "tcm_clinic",
         customerText: content,
         services, serviceAliases, language: "en", conversationHistory: history,
-        pendingClinicalReview,
+        ...evidence,
       });
       assert.ok(plan, content);
       assert.equal(plan.preserveReview, true);
@@ -84,7 +87,7 @@ test("three-message TCM conversation preserves staff reviews, AI ownership and a
       await contacts.setAiReviewAttention(7, id, content, "clinical");
       if (plan.reply) {
         sent.push(plan.reply);
-        await client.query("INSERT INTO messages(id,contact_id,role,content) VALUES ($1,7,'assistant',$2)", [id+1000,plan.reply]);
+        await client.query("INSERT INTO messages(id,contact_id,role,content,whatsapp_message_id,delivery_status) VALUES ($1,7,'assistant',$2,$3,'sent')", [id+1000,plan.reply,"wamid-"+id]);
         history.push({ role: "assistant", content: plan.reply });
       }
     }
@@ -108,6 +111,27 @@ test("three-message TCM conversation preserves staff reviews, AI ownership and a
     // Resolving the rows explicitly is the only way to remove clinical status.
     await client.query("UPDATE ai_review_items SET status='resolved' WHERE contact_id=7");
     assert.equal(await contacts.hasPendingClinicalAiReview(7), false);
+    // Old spinal questions must not trigger fresh staff reviews after a
+    // practitioner has resolved the previous clinical review.
+    await client.query("INSERT INTO messages(id,contact_id,role,content) VALUES (1430,7,'user','Face alignment')");
+    const resolvedEvidence = await contacts.getTcmReviewEvidence(7,1430);
+    assert.deepEqual(resolvedEvidence.recentCustomerTexts,[]);
+    assert.equal(resolvedEvidence.pendingClinicalReview,false);
+    assert.equal(planTcmReviewReply({
+      businessType:"tcm_clinic",customerText:"Face alignment",language:"en",
+      services,serviceAliases,conversationHistory:history,...resolvedEvidence,
+    }).preserveReview,false);
+
+    // A previous accepted invitation outside the short window cannot suppress
+    // a new enquiry. Failed and staff-authored drafts cannot qualify either.
+    await client.query("UPDATE messages SET created_at=now()-interval '1 day' WHERE role='assistant'");
+    await client.query("INSERT INTO messages(id,contact_id,role,content,delivery_status) VALUES (3000,7,'assistant','Would you like to arrange a 1-to-1 assessment?','failed')");
+    const laterEvidence = await contacts.getTcmReviewEvidence(7,1430);
+    assert.deepEqual(laterEvidence.recentAcceptedAssistantTexts,[]);
+    assert.equal(planTcmReviewReply({
+      businessType:"tcm_clinic",customerText:"Face alignment",language:"en",
+      services,serviceAliases,conversationHistory:history,...laterEvidence,
+    }).alreadyInvited,false);
 
     // A database outage is NOT interpreted as permission to downgrade.
     pool.query = async () => { throw new Error("test: database unavailable"); };
