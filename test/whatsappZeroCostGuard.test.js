@@ -120,6 +120,49 @@ test("71h default; 167h only with verified seven-day account evidence",async t=>
   assert.match(guard.VERIFIED_WINDOW_SQL,/\$1::integer - 1/);
 });
 
+test("Inbox verified free-template preview checks Meta evidence without weakening sends", async t => {
+  mode(t, false);
+  const db = mockedDatabase({ eligible: false });
+  assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: db }), false);
+  assert.equal(db.calls.some(call => call.sql === guard.VERIFIED_WINDOW_SQL), true);
+  db.calls.length = 0;
+  assert.equal(await guard.hasVerifiedFreeTemplateWindow("invalid", { database: db }), false);
+  assert.equal(db.calls.length, 0);
+
+  const verified = mockedDatabase({ eligible: true });
+  assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: verified }), true);
+  assert.deepEqual(
+    verified.calls.find(call => call.sql === guard.VERIFIED_WINDOW_SQL).params.slice(0, 1),
+    [72]
+  );
+});
+
+test("Inbox preview uses verified seven-day evidence, not the environment flag alone", async t => {
+  mode(t, false);
+  const oldFlag = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+  process.env.WHATSAPP_FEP_7DAY_VERIFIED = "true";
+  t.after(() => {
+    if (oldFlag === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+    else process.env.WHATSAPP_FEP_7DAY_VERIFIED = oldFlag;
+  });
+  const noProof = mockedDatabase({ sevenDays: false });
+  await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: noProof });
+  assert.equal(noProof.calls.find(call => call.sql === guard.VERIFIED_WINDOW_SQL).params[0], 72);
+  const proven = mockedDatabase({ sevenDays: true });
+  await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: proven });
+  assert.equal(proven.calls.find(call => call.sql === guard.VERIFIED_WINDOW_SQL).params[0], 168);
+});
+
+test("Inbox preview honors strict billing blocks", async t => {
+  mode(t, true);
+  const healthy = mockedDatabase({ eligible: true });
+  assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: healthy }), true);
+  const billed = mockedDatabase({ billed: true, eligible: true });
+  assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: billed }), false);
+  const unverified = mockedDatabase({ eligible: false });
+  assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: unverified }), false);
+});
+
 test("every WhatsApp Cloud API outgoing path is guarded, including templates",()=>{
   const raw=fs.readFileSync(path.join(__dirname,"../src/services/whatsappService.js"),"utf8");
   const templ=fs.readFileSync(path.join(__dirname,"../src/services/whatsappTemplateService.js"),"utf8");
