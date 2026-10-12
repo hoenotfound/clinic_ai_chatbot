@@ -115,3 +115,25 @@ test("duplicate protection, staff review and clinical contraindications still su
     treatment: "骨盆调理", serviceQuery: true, serviceQuerySource: "customer_message",
   }), null);
 });
+
+
+test("the scoped AI prompt describes 整骨 as whole-body, not pelvis-only", () => {
+  const config = require("../src/config/clinicConfig");
+  const { buildSystemPrompt } = require("../src/utils/systemPrompt");
+  const saved = JSON.parse(JSON.stringify(config));
+  try {
+    Object.assign(config, {
+      ...saved, businessType: "tcm_clinic", businessName: "Neutro Sense TCM",
+      services, serviceAliases, promotions: [],
+    });
+    const body = buildSystemPrompt({ conversationContext: promptContext("我想了解全身整骨") });
+    assert.match(body, /WHOLE-BODY 整骨 ENQUIRY/);
+    assert.match(body, /not pelvis-only treatment/);
+    assert.match(body, /do not imply every customer needs pelvic correction/i);
+    const face = buildSystemPrompt({ conversationContext: promptContext("我想了解小颜整骨") });
+    assert.doesNotMatch(face, /WHOLE-BODY 整骨 ENQUIRY/);
+  } finally {
+    for (const key of Object.keys(config)) delete config[key];
+    Object.assign(config, saved);
+  }
+});
