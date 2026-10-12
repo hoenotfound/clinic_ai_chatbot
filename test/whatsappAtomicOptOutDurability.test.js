@@ -117,3 +117,47 @@ test("social atomic opt-out records whether it originated from a quick-reply but
     }
   }
 });
+
+test("real Meta quick-reply webhook preserves STOP provenance in atomic inbound claim", async () => {
+  const meta = require("../src/services/metaMessagingService");
+  const policy = require("../src/services/whatsappPolicyService");
+  for (const [object, channel] of [["page", "facebook"], ["instagram", "instagram"]]) {
+    const [incoming] = meta.parseIncomingMessages({
+      object, entry: [{
+        id: "business-page",
+        messaging: [{
+          sender: { id: "lead-123" },
+          message: {
+            mid: channel + "-reply-123",
+            text: "Stop promotions",
+            quick_reply: { payload: "STOP_PROMOS" },
+          },
+        }],
+      }],
+    });
+    assert.equal(incoming.buttonPayload, "STOP_PROMOS");
+    const optOutScope = policy.classifyOptOutText(incoming.text);
+    assert.equal(optOutScope, "marketing");
+    let sql;
+    let params;
+    await inbound.storeInboundClaim({
+      contactId: 25,
+      content: incoming.text,
+      storedMessageId: channel + ":" + incoming.id,
+      channel,
+      optOutScope,
+      incoming,
+    }, { async query(statement, values) {
+      sql = statement;
+      params = values;
+      return { rows: [{
+        saved_inbound: { id: 6, contact_id: 25 },
+        processing_job: { id: 7, message_id: 6 },
+        derived_first_message: false,
+      }] };
+    } });
+    assert.equal(JSON.parse(params[4]).buttonPayload, "STOP_PROMOS");
+    assert.equal(JSON.parse(params[4])._socialStopEnforcedAtomically, true);
+    assert.match(sql, /social_marketing_opt_out_source = CASE WHEN NULLIF\(\$5::jsonb ->> 'buttonPayload', ''\)/);
+  }
+});
