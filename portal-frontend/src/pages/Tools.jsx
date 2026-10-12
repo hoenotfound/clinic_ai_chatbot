@@ -37,6 +37,7 @@ const DEFAULT_FOLLOW_UP = {
   additionalSteps: [],
   freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
+  consentRequest: { enabled:false },
   whatsappFreeOnly: { enabled: false },
 };
 
@@ -198,6 +199,7 @@ function normalizeFollowUpSettings(value = {}) {
         : [26, 50, 74, 98, 122, 162],
     },
     whatsappFreeOnly: { enabled: value?.whatsappFreeOnly?.enabled === true },
+    consentRequest: { enabled: value?.consentRequest?.enabled === true },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
       requirePricingInterest:value?.pricingReminder?.requirePricingInterest !== false,
@@ -228,6 +230,7 @@ function followUpFormFromSettings(value = {}) {
     freeEntry: settings.freeEntry,
     whatsappFreeOnly: settings.whatsappFreeOnly,
     pricingReminder: settings.pricingReminder,
+    consentRequest: settings.consentRequest,
   };
 }
 
@@ -895,6 +898,7 @@ export default function Tools() {
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
           whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true, acknowledgeImpact: freeOnlyImpactConfirmed },
+          consentRequest: { enabled:form.consentRequest?.enabled === true },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
             requirePricingInterest:form.pricingReminder?.requirePricingInterest !== false,
@@ -2927,6 +2931,58 @@ function FollowUpTool({
                   }))}
                 />
               </div>
+            </div>
+          </Card>
+          <Card>
+            <SectionHeading
+              number="5"
+              title="Final WhatsApp consent follow-up"
+              description="An optional one-time reply-button question after Follow-up 3 and the pricing reminder."
+            />
+            <div className="mt-4 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Ask customers without recorded promotional consent</p>
+                <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
+                  WhatsApp only. After Follow-up 3 has been accepted, wait 15 minutes.
+                  This runs after the optional pricing reminder (5 minutes after Follow-up 3).
+                  Skip if the customer already opted in, opted out, replied, booked,
+                  or if the 24-hour reply window or quiet hours prevent sending.
+                  Only one prompt per lead. Enabling starts a fresh cohort; older conversations are not prompted.
+                </p>
+              </div>
+              <Switch
+                checked={form.consentRequest?.enabled === true}
+                ariaLabel="Enable final WhatsApp consent follow-up"
+                onChange={() => setForm((current) => ({
+                  ...current,
+                  consentRequest: { enabled:current.consentRequest?.enabled !== true },
+                }))}
+              />
+            </div>
+            {form.consentRequest?.enabled === true && form.additionalSteps.length < 2 && (
+              <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
+                This final consent message needs an enabled three-step follow-up sequence.
+              </p>
+            )}
+            <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+              <p className="text-[11px] font-semibold text-[var(--color-text-muted)]">WhatsApp preview · 骨盆调理</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
+                对了～之后如果有关于骨盆调理的资讯或相关优惠，Neutro Sense TCM 可以继续 WhatsApp 跟进通知您吗？😊
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <span className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-center text-xs font-semibold">
+                  同意接收跟进优惠
+                </span>
+                <span className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-center text-xs font-semibold">
+                  暂时不用
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                Actual WhatsApp interactive reply buttons. The treatment and business name come from the current lead and clinic.
+                Only a genuine Yes tap records permission and its Meta message ID in Neon.
+                An ignored or declined prompt never enables Marketing templates.
+                The existing Strict RM0 protection still applies; this is not a template send.
+              </p>
             </div>
           </Card>
 
