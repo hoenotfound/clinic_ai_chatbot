@@ -1058,6 +1058,7 @@ export default function Tools() {
             uploadingVideo={uploadingVideo}
             saving={saving}
             services={config.services || []}
+            clinicName={config.businessName || config.clinicName || ""}
             promotions={config.promotions || []}
             savedPricingEnabled={savedSettings.pricingReminder?.enabled === true}
             canManagePromotions={user?.role === "admin" || permissions?.manage_settings === true}
@@ -1888,6 +1889,7 @@ function FollowUpTool({
   uploadingVideo,
   saving,
   services,
+  clinicName,
   promotions,
   canManagePromotions,
   savedPricingEnabled,
@@ -2967,7 +2969,7 @@ function FollowUpTool({
             <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
               <p className="text-[11px] font-semibold text-[var(--color-text-muted)]">WhatsApp preview · 骨盆调理</p>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
-                对了～之后如果有关于骨盆调理的资讯或相关优惠，Neutro Sense TCM 可以继续 WhatsApp 跟进通知您吗？😊
+                {`对了～之后如果有关于${(services || []).find((item) => item.name === "骨盆调理")?.name || services?.[0]?.name || "相关疗程"}的资讯或相关优惠，${String(clinicName || "本中心").trim().replace(/\\s+(?:Centre|Center)$/i, "")} 可以继续 WhatsApp 跟进通知您吗？😊`}
               </p>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <span className="rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-center text-xs font-semibold">
