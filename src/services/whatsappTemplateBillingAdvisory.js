@@ -104,22 +104,22 @@ async function getTemplateBillingAdvisory(contactId, {
   const id = Number(contactId);
   if (!Number.isSafeInteger(id) || id <= 0) return { evidence: "unknown" };
   let evidence = "unknown";
+  let freeEntry = { verified: false, sendReady: false, blockedReason: null };
   try {
     const result = await database.query(BILLING_ADVISORY_SQL, [id, now]);
     const row = result.rows?.[0];
-    // The Inbox and manual template picker must use the exact same verified
-    // free-entry check, including proven 7-day extensions and strict-mode
-    // account guards. A confirmed billable message always takes precedence.
-    let freeEntryVerified = false;
+    // Both displays use the same receipt and seven-day evidence. An account
+    // gate can pause sending without revoking the underlying free period.
+    // A recent charged message still takes precedence over the free indicator.
     if (row?.has_ctwa_referral === true &&
         row?.has_recent_billable_message !== true && row?.recipient) {
-      freeEntryVerified = await whatsappZeroCostGuard.hasVerifiedFreeTemplateWindow(
+      freeEntry = await whatsappZeroCostGuard.inspectFreeTemplateWindow(
         row.recipient, { database, now, env }
       );
     }
     evidence = row ? describeEvidence({
       ...row,
-      has_recent_verified_free_entry: freeEntryVerified,
+      has_recent_verified_free_entry: freeEntry.verified,
     }) : "unknown";
   } catch (error) {
     // Fail conservatively: staff must still explicitly acknowledge a possible
@@ -128,6 +128,7 @@ async function getTemplateBillingAdvisory(contactId, {
   }
   return {
     evidence,
+    freeEntry,
     reviewedAt: new Date(now).toISOString(),
     // Separate tokens for each approved template language. A token may never
     // be reused for a different template, even via a forged direct API call.
