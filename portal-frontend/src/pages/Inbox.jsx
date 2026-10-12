@@ -3240,8 +3240,8 @@ function ThreadView({
                 {freeTemplateWindowActive ? (
                   <p className="mt-0.5 break-words text-[10px] leading-4">
                     {whatsappTemplateNeedsOptIn
-                      ? "24h replies closed. Confirm opt-in first; Meta confirms billing."
-                      : "24h replies closed. Templates may be free; Meta confirms billing."}
+                      ? "24h closed. Template may be free; confirm opt-in."
+                      : "24h closed. Templates may be free; check marketing consent."}
                   </p>
                 ) : (
                   <>
@@ -3276,7 +3276,7 @@ function ThreadView({
                     }`}
                   >
                     {freeTemplateWindowActive
-                      ? (whatsappTemplateNeedsOptIn ? "Confirm opt-in & choose template" : "Choose WhatsApp template")
+                      ? (whatsappTemplateNeedsOptIn ? "Confirm opt-in & choose template" : "Review consent & templates")
                       : (whatsappTemplateNeedsOptIn ? "Record opt-in & choose template" : "Send WhatsApp template")}
                   </button>
                 )}
