@@ -989,6 +989,7 @@ async function processIncomingMessage(
         flagged,
         language: mediaLanguage,
         services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
       });
       if (guardedOfferIntro.replaced) {
         console.warn("[Reply guard] Replaced unsolicited commercial text in first WhatsApp opt-in reply.");
