@@ -2278,6 +2278,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
   const [sets, setSets] = useState(() =>
     (config.resultMedia || []).map((entry) => ({
       service: entry.service || "",
+      relatedServices: Array.isArray(entry.relatedServices) ? entry.relatedServices : [],
       enabled: entry.enabled === true,
       triggerMode: ["off", "price_only", "service_enquiry"].includes(entry.triggerMode)
         ? entry.triggerMode
@@ -2313,6 +2314,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
       ...sets,
       {
         service,
+        relatedServices: [],
         enabled: true,
         triggerMode: "service_enquiry",
         autoSendCount: 1,
@@ -2362,6 +2364,8 @@ function ResultMediaSection({ config, onSaved, onError }) {
 
         return {
           service: String(entry.service || "").trim(),
+          relatedServices: [...new Set((Array.isArray(entry.relatedServices) ? entry.relatedServices : [])
+            .filter((name) => serviceNames.includes(name) && name !== entry.service))],
           enabled: entry.enabled === true,
           triggerMode: ["off", "price_only", "service_enquiry"].includes(entry.triggerMode)
             ? entry.triggerMode
@@ -2548,6 +2552,36 @@ function ResultMediaSection({ config, onSaved, onError }) {
                         admin, safety, complaints, and ambiguous multi-service questions do not trigger it.
                       </p>
                     </div>
+
+                    {serviceNames.filter((name) => name !== entry.service).length > 0 && (
+                      <details className="rounded-xl border border-[var(--color-border)] px-3.5 py-3">
+                        <summary className="cursor-pointer text-sm font-semibold">
+                          Share these examples with related services
+                          {entry.relatedServices?.length ? ` (${entry.relatedServices.length})` : ""}
+                        </summary>
+                        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                          People asking about these related services can see examples from
+                          {entry.service ? ` ${entry.service}` : " this treatment"}. This never shares
+                          pricing or makes the two treatments identical.
+                        </p>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {serviceNames.filter((name) => name !== entry.service).map((name) => (
+                            <label key={name} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={(entry.relatedServices || []).includes(name)}
+                                onChange={(event) => updateSet(index, {
+                                  relatedServices: event.target.checked
+                                    ? [...new Set([...(entry.relatedServices || []), name])]
+                                    : (entry.relatedServices || []).filter((candidate) => candidate !== name),
+                                })}
+                              />
+                              <span>{name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </details>
+                    )}
 
                     <div>
                       <label className={labelClass}>Automatic examples per eligible reply</label>
