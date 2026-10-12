@@ -94,6 +94,10 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       path.join(__dirname, "../src/db/migrations/053_pricing_preflight_retry.sql"),
       "utf8"
     ));
+    await client.query(fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/067_whatsapp_final_consent_prompt.sql"),
+      "utf8"
+    ));
 
     await client.query(`
       INSERT INTO contacts (id,channel,whatsapp_number)
@@ -182,6 +186,21 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
       thirdId:candidate.third_id,recipientId:candidate.whatsapp_number, channel:"whatsapp",
       packageKey:offerB.packageName,
     }),true);
+    // Two-package pricing cannot report completion after Package A alone.
+    await client.query(`UPDATE messages SET delivery_status='pending',
+      whatsapp_message_id='wamid.price.a',whatsapp_accepted_at=now()
+      WHERE id=$1`,[saved.id]);
+    assert.equal(await pricingRepo.markBatchCompleted({
+      contactId:1,anchorId:101,expectedPackages:[offer.packageName,offerB.packageName],
+    }),false);
+    await client.query(`UPDATE messages SET delivery_status='pending',
+      whatsapp_message_id='wamid.price.b',whatsapp_accepted_at=now()
+      WHERE id=$1`,[savedB.id]);
+    assert.equal(await pricingRepo.markBatchCompleted({
+      contactId:1,anchorId:101,expectedPackages:[offer.packageName,offerB.packageName],
+    }),true);
+    assert.equal((await pricingRepo.listEligible({activatedAt,triggerMode:"all",settings})).length,0);
+    await client.query("DELETE FROM pricing_reminder_batch_completions WHERE anchor_id=101");
     await client.query("DELETE FROM messages WHERE id=$1",[savedB.id]);
 
     const progress = await client.query(
