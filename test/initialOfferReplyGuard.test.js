@@ -61,15 +61,21 @@ test("actual current price requests are never censored",()=>{
     assert.deepEqual(checkReply(customerText,reply),{reply,replaced:false},customerText);
   }
 });
-test("only first, non-escalated WhatsApp opt-in turns are guarded",()=>{
+test("all first WhatsApp turns without a current price request are guarded, including consent refusals",()=>{
   const reply="骨盆 RM388";
   for(const overrides of [
     {isFirstMessage:false},{channel:"facebook"},{channel:"instagram"},{flagged:true},
   ]) assert.deepEqual(checkReply(initial,reply,overrides),{reply,replaced:false});
+  // Missing/declined marketing consent must NEVER create an exemption from
+  // the customer's no-unrequested-prices rule on their first WhatsApp turn.
   for(const customerText of [
     "我想了解骨盆调理",
     "Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。",
-  ]) assert.equal(checkReply(customerText,reply).replaced,false);
+  ]) {
+    const guarded=checkReply(customerText,reply);
+    assert.equal(guarded.replaced,true,customerText);
+    assert.equal(commercial(guarded.reply),false);
+  }
 });
 test("safe configured duration is retained if customer asked how long",()=>{
   const text=initial+"。骨盆调理护理需要多久？";
@@ -217,4 +223,70 @@ test("9D alias fallback also respects English and Malay service enquiries",()=>{
   // through the standalone helper.
   const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   assert.match(source,/guardFutureOfferIntroductionReply\(\{[\s\S]*?serviceAliases: clinicConfig\.serviceAliases/);
+});
+
+
+test("combination aliases require a literal combination and no separate service",()=>{
+  const services=[
+    {name:"骨盆调理",duration:"约30–40分钟"},
+    {name:"3D 小颜术",duration:"约1小时30分钟"},
+    {name:"9D 逆龄抗衰",duration:"约2小时"},
+    {name:"3D + 9D 组合",duration:""},
+  ];
+  const serviceAliases=[
+    {alias:"骨盆",officialService:"骨盆调理"},
+    {alias:"3D",officialService:"3D 小颜术"},
+    {alias:"9D",officialService:"9D 逆龄抗衰"},
+    {alias:"3D+9D",officialService:"3D + 9D 组合"},
+    {alias:"9D+3D",officialService:"3D + 9D 组合"},
+  ];
+  const cases=[
+    ["3D + 9D 组合","3D + 9D 组合"],
+    ["3D+9D","3D + 9D 组合"],
+    ["9D+3D","3D + 9D 组合"],
+    ["3D、9D",null],
+    ["3D 和 9D",null],
+    ["3D+9D 还有骨盆",null],
+    ["3D + 9D 组合，还有骨盆调理",null],
+    ["3D 小颜术，不要 9D","3D 小颜术"],
+    ["9D 护理没兴趣",null],
+    ["19D 设备",null],
+  ];
+  for(const [topic,wanted] of cases){
+    const text="Hi～想了解 Neutro Sense TCM "+topic+"，有优惠 WhatsApp 通知我 😊";
+    const result=checkReply(text,"促销 RM488",{services,serviceAliases});
+    assert.equal(result.replaced,true,topic);
+    assert.equal(commercial(result.reply),false,topic);
+    if(wanted){
+      assert.ok(result.reply.includes("欢迎了解"+wanted),topic);
+    }else{
+      assert.match(result.reply,/你目前最想了解哪一种护理/,topic);
+    }
+  }
+});
+
+test("declining a different service does not permit AI unsolicited commercial text",()=>{
+  const services=[{name:"3D 小颜术"},{name:"9D 逆龄抗衰"}];
+  const serviceAliases=[
+    {alias:"3D",officialService:"3D 小颜术"},
+    {alias:"9D",officialService:"9D 逆龄抗衰"},
+  ];
+  const customerText="Hi～我想了解 Neutro Sense TCM 3D 小颜术，不要 9D，有优惠 WhatsApp 通知我 😊";
+  const out=checkReply(customerText,"3D RM488，送免费按摩",{services,serviceAliases});
+  assert.equal(out.replaced,true);
+  assert.match(out.reply,/欢迎了解3D 小颜术/);
+  assert.equal(commercial(out.reply),false);
+  // Even an explicit refusal to receive marketing should not expose a price
+  // that the person did not request.
+  const refusing="Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。";
+  const reply=checkReply(refusing,"本月 RM388 优惠",{services:[{name:"骨盆调理"}]});
+  assert.equal(reply.replaced,true);
+  assert.equal(commercial(reply.reply),false);
+
+  // First-contact price questions still pass through untouched.
+  const requested=checkReply(
+    "Hi～我不想做9D，请问3D 小颜术现在多少钱？",
+    "3D 体验价 RM488", {services,serviceAliases}
+  );
+  assert.deepEqual(requested,{reply:"3D 体验价 RM488",replaced:false});
 });
