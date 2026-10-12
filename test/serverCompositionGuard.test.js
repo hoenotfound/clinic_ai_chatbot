@@ -182,17 +182,17 @@ test("mixed opt-out answer remains noncommercial and skips optional media", () =
   );
 });
 
-test("result-image early return branches persist an audit with partial-send evidence", () => {
-  const start = serverSource.indexOf("const auditResultExit = async (reason)");
-  const end = serverSource.indexOf("} catch (resultMediaErr)", start);
+test("result-image early returns use one audit write in finally", () => {
+  const start = serverSource.indexOf("let auditReason =");
+  const end = serverSource.indexOf("} catch (err)", start);
   assert.ok(start > 0 && end > start);
-  const loop = serverSource.slice(start, end);
-  assert.match(loop, /status: auditSent > 0 \? "partial"/);
-  assert.match(loop, /selectedCount: auditSelected/);
-  assert.match(loop, /sentCount: auditSent/);
+  const stage = serverSource.slice(start, end);
+  assert.match(stage, /finally \{/);
+  assert.match(stage, /resultMediaAuditOutcome\(\{/);
+  assert.match(stage, /resultMediaDecisionRepo\.recordDecision\(\{/);
+  assert.equal((stage.match(/resultMediaDecisionRepo\.recordDecision\(\{/g) || []).length, 1);
+  assert.doesNotMatch(stage, /auditResultExit/);
   for (const reason of [
     "staff_review_or_takeover", "reply_window_or_staff_cancellation", "provider_send_failed",
-  ]) {
-    assert.match(loop, new RegExp('auditReason = "' + reason + '"[\\s\\S]{0,600}await auditResultExit\\(auditReason\\)'));
-  }
+  ]) assert.match(stage, new RegExp('auditReason = "' + reason + '"'));
 });
