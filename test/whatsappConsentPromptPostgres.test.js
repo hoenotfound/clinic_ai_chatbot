@@ -109,10 +109,22 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       is_automated_follow_up,pricing_reminder_anchor_id,whatsapp_accepted_at,whatsapp_message_id,delivery_status)
       VALUES(13,1,'assistant','Pricing image',true,11,now()-interval '3 minutes',
         'wamid.price','pending')`);
+    // A Meta-accepted first package must NOT release consent while Package B
+    // is still running. Completion is a durable final transaction.
+    assert.equal((await repo.listCandidates(pricing,pool)).length,0);
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,
+      is_automated_follow_up,pricing_reminder_anchor_id,whatsapp_accepted_at,whatsapp_message_id,delivery_status)
+      VALUES(14,1,'assistant','Pricing package B',true,11,now()-interval '3 minutes',
+        'wamid.price.b','pending')`);
+    assert.equal((await repo.listCandidates(pricing,pool)).length,0);
+    await pool.query(`INSERT INTO pricing_reminder_batch_completions
+      (anchor_id,contact_id,accepted_packages) VALUES(11,1,2)`);
     assert.ok(Date.parse((await repo.listCandidates(pricing,pool))[0].due_at)>Date.now());
-    await pool.query(`UPDATE messages SET whatsapp_accepted_at=now()-interval '7 minutes' WHERE id=13`);
+    await pool.query(`UPDATE messages SET whatsapp_accepted_at=now()-interval '7 minutes'
+      WHERE id IN (13,14)`);
     assert.ok(Date.parse((await repo.listCandidates(pricing,pool))[0].due_at)<Date.now());
-    await pool.query("DELETE FROM messages WHERE id=13");
+    await pool.query("DELETE FROM pricing_reminder_batch_completions");
+    await pool.query("DELETE FROM messages WHERE id IN (13,14)");
 
     const rows=await repo.listCandidates(settings,pool);
     assert.equal(rows.length,1,"accepted FU3 makes the current silent chat eligible");
@@ -132,6 +144,9 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
     const deferred=await repo.deferUnsent(prompt,"zero_cost_previous_send_unreconciled",pool);
     assert.equal(deferred.attempts,1);
     assert.ok(Date.parse(deferred.retry_after)>Date.now());
+    const wake=await repo.nextDeferredRetryAt(settings,pool);
+    assert.ok(Math.abs(Date.parse(wake)-Date.parse(deferred.retry_after))<1000,
+      "Render restart must recover the deferred retry from PostgreSQL");
     assert.equal((await repo.listCandidates(settings,pool)).length,0);
     const later={...settings,now:new Date(Date.now()+3*60*1000)};
     const retryRows=await repo.listCandidates(later,pool);
@@ -169,6 +184,35 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       replyId:"da_consent_yes:"+prompt.promptId,businessName:"Neutro Sense TCM Centre",
     },{database:pool});
     assert.equal(replay.alreadyRecorded,true);
+    // A separate CRM journey does not erase a contact-level "Not now".
+    await pool.query(`INSERT INTO leads(id,contact_id,treatment_interest,marketing_consent,
+      is_closed,appointment_status,stage_id,created_at)
+      VALUES(2,1,'9D 逆龄抗衰','unknown',false,'none',1,now())`);
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at,
+       whatsapp_message_id,whatsapp_accepted_at,delivery_status)
+       VALUES(102,1,'assistant','Permission request',now()-interval '3 minutes',
+         'wamid.prompt.second',now()-interval '3 minutes','sent')`);
+    await pool.query(`INSERT INTO whatsapp_consent_prompts
+      (contact_id,lead_id,anchor_id,service_name,question,status,message_id)
+      VALUES(1,2,102,'9D 逆龄抗衰','Can we contact you?','accepted',102)`);
+    const second=(await pool.query("SELECT id FROM whatsapp_consent_prompts WHERE lead_id=2")).rows[0];
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at,
+      whatsapp_message_id) VALUES(103,1,'user','Not now',now(),'wamid.tap.no')`);
+    const no=await repo.recordButtonResponse({
+      contactId:1,messageId:103,leadId:2,
+      replyId:"da_consent_no:"+second.id,businessName:"Neutro Sense TCM",
+    },{database:pool});
+    assert.equal(no.decision,"declined");
+    const refused=(await pool.query(`
+      SELECT whatsapp_marketing_opt_out_at,whatsapp_opt_out_at,
+        whatsapp_marketing_opt_out_source FROM contacts WHERE id=1`)).rows[0];
+    assert.ok(refused.whatsapp_marketing_opt_out_at);
+    assert.equal(refused.whatsapp_opt_out_at,null,
+      "Not now must NOT become a full WhatsApp STOP");
+    assert.equal(refused.whatsapp_marketing_opt_out_source,"customer_consent_button_decline");
+    assert.equal((await pool.query(
+      "SELECT count(*)::integer AS n FROM leads WHERE contact_id=1 AND marketing_consent='opted_out'"
+    )).rows[0].n,2);
   } finally {
     await pool?.end().catch(()=>{});
     await admin.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
