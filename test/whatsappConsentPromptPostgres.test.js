@@ -45,6 +45,7 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       CREATE TABLE outbound_message_evidence(message_id INTEGER,origin TEXT);
       CREATE TABLE ai_review_items(contact_id INTEGER,status TEXT,category TEXT);
       CREATE TABLE follow_up_ai_decisions(contact_id INTEGER,trigger_message_id INTEGER,action TEXT);
+      CREATE TABLE pricing_reminder_decisions(anchor_id INTEGER PRIMARY KEY);
       CREATE TABLE whatsapp_marketing_consent_events(
         id BIGSERIAL PRIMARY KEY, contact_id INTEGER, lead_id INTEGER, source TEXT,
         recorded_by TEXT,message_id INTEGER UNIQUE,provider_message_id TEXT,
@@ -76,6 +77,43 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
     pool=new Pool({connectionString,options:"-c search_path="+schema,max:3});
     const activatedAt=new Date(Date.now()-21*60*60*1000).toISOString();
     const settings={activatedAt,triggerMode:"all",now:new Date()};
+    // A lead who declined marketing must NEVER receive a new opt-in prompt.
+    await pool.query("UPDATE leads SET marketing_consent='opted_out' WHERE id=1");
+    assert.equal((await repo.listCandidates(settings,pool)).length,0);
+    await pool.query("UPDATE leads SET marketing_consent='unknown' WHERE id=1");
+
+    // Existing verified consent to this SAME treatment is respected even
+    // if the current lead was not synchronized. Unrelated care is not inferred.
+    await pool.query(`UPDATE contacts SET whatsapp_opt_in_at=now()-interval '1 hour' WHERE id=1`);
+    await pool.query(`INSERT INTO whatsapp_marketing_consent_events
+      (contact_id,lead_id,source,message_id,consent_category,consent_scope,
+       consent_service,consented_at)
+      SELECT 1,1,'customer_whatsapp_text',10,'MARKETING',
+        'treatment_followups_and_related_offers','骨盆调理',
+        whatsapp_opt_in_at FROM contacts WHERE id=1`);
+    assert.equal((await repo.listCandidates(settings,pool)).length,0);
+    await pool.query("UPDATE whatsapp_marketing_consent_events SET consent_service='9D 逆龄抗衰'");
+    assert.equal((await repo.listCandidates(settings,pool)).length,1);
+    await pool.query("DELETE FROM whatsapp_marketing_consent_events");
+    await pool.query("UPDATE contacts SET whatsapp_opt_in_at=NULL WHERE id=1");
+
+    // When pricing is enabled the consent request waits for the price worker's
+    // terminal decision or accepted graphic and at least five minutes' spacing.
+    const pricing={...settings,pricingEnabled:true,
+      pricingActivation:new Date(Date.now()-21*60*60*1000).toISOString()};
+    assert.equal((await repo.listCandidates(pricing,pool)).length,0);
+    await pool.query(`INSERT INTO pricing_reminder_decisions(anchor_id) VALUES(11)`);
+    assert.equal((await repo.listCandidates(pricing,pool)).length,1);
+    await pool.query("DELETE FROM pricing_reminder_decisions");
+    await pool.query(`INSERT INTO messages(id,contact_id,role,content,
+      pricing_reminder_anchor_id,whatsapp_accepted_at,whatsapp_message_id,delivery_status)
+      VALUES(13,1,'assistant','Pricing image',11,now()-interval '3 minutes',
+        'wamid.price','pending')`);
+    assert.ok(Date.parse((await repo.listCandidates(pricing,pool))[0].due_at)>Date.now());
+    await pool.query(`UPDATE messages SET whatsapp_accepted_at=now()-interval '7 minutes' WHERE id=13`);
+    assert.ok(Date.parse((await repo.listCandidates(pricing,pool))[0].due_at)<Date.now());
+    await pool.query("DELETE FROM messages WHERE id=13");
+
     const rows=await repo.listCandidates(settings,pool);
     assert.equal(rows.length,1,"accepted FU3 makes the current silent chat eligible");
     const question="对了～之后如果有关于骨盆调理的资讯或相关优惠，Neutro Sense TCM 可以继续 WhatsApp 跟进通知您吗？😊";
@@ -89,6 +127,24 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       "SELECT status,message_id FROM whatsapp_consent_prompts WHERE id=$1",
       [prompt.promptId]);
     assert.equal(record.rows[0].status,"claimed");
+    // A Strict RM0 preflight block is provably unsent. The claim is preserved
+    // with backoff rather than irreversibly consuming the one opportunity.
+    const deferred=await repo.deferUnsent(prompt,"zero_cost_previous_send_unreconciled",pool);
+    assert.equal(deferred.attempts,1);
+    assert.ok(Date.parse(deferred.retry_after)>Date.now());
+    assert.equal((await repo.listCandidates(settings,pool)).length,0);
+    const later={...settings,now:new Date(Date.now()+3*60*1000)};
+    const retryRows=await repo.listCandidates(later,pool);
+    assert.equal(retryRows.length,1);
+    const again=await repo.claim(retryRows[0],{...later,question},pool);
+    assert.equal(again.promptId,prompt.promptId);
+    assert.notEqual(again.message.id,prompt.message.id);
+    assert.equal((await pool.query(
+      "SELECT attempts FROM whatsapp_consent_prompts WHERE id=$1",[again.promptId]
+    )).rows[0].attempts,2);
+    await pool.query(`UPDATE messages SET whatsapp_message_id='wamid.real.question',
+      whatsapp_accepted_at=now()-interval '1 minute',delivery_status='pending'
+      WHERE id=$1`,[again.message.id]);
     await pool.query("UPDATE whatsapp_consent_prompts SET status='accepted' WHERE id=$1",
       [prompt.promptId]);
     await pool.query(`INSERT INTO messages(id,contact_id,role,content,created_at,
