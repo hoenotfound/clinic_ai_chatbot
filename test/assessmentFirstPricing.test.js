@@ -340,7 +340,7 @@ test("Malaysian colloquial money questions are explicit while package exploratio
 test("verified first service enquiry gets an assessment invite while keeping the reply and existing result eligibility", () => {
   const { ensureFirstAssessmentInvitation } = require("../src/utils/initialOfferReplyGuard");
   const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
-  const opts={isFirstMessage:true,services,serviceQuery:true,language:"zh"};
+  const opts={isFirstMessage:true,services,serviceQuery:true,language:"zh",serviceAliases:[{alias:"3D",officialService:"3D 小颜术"}]};
   const text="我们是徒手调理，通常根据体态安排体验 😊";
   const pelvis=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理"});
   assert.equal(pelvis.appended,true);
@@ -410,7 +410,7 @@ test("standalone Malay/Chinese price follow-ups use only the immediately establi
   const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
   const known=safeServiceFromCustomer("我想了解骨盆调理",services,[]);
   assert.equal(known?.name,"骨盆调理");
-  assert.equal(safeServiceFromCustomer("3D还是骨盆调理?",services,[]),null);
+  assert.equal(safeServiceFromCustomer("3D还是骨盆调理?",services,[{alias:"3D",officialService:"3D 小颜术"}]),null);
   const old=config.automatedFollowUp;
   config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
   try{
