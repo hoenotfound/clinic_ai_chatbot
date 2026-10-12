@@ -99,7 +99,9 @@ function inferConfiguredServiceFromText(value, config = clinicConfig) {
   if (distinctMatches.length === 0) return null;
   if (distinctMatches.length === 1) return distinctMatches[0].serviceName;
 
-  // Span-based precedence already removes an alias that is wholly within a\n  // longer, specific alias. Keep genuinely separate service mentions distinct.\n  return configuredCombinationService(distinctMatches, normalizedText, config);
+  // Span-based precedence already removes an alias that is wholly within a
+  // longer, specific alias. Keep genuinely separate service mentions distinct.
+  return configuredCombinationService(distinctMatches, normalizedText, config);
 }
 
 function cleanScoredTreatmentInterest(value, config = clinicConfig) {
