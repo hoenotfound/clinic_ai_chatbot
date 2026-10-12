@@ -160,7 +160,7 @@ function enrichAutomatedTemplateSpec(spec, template, {
 } = {}) {
   if (!spec || !template || template.name !== spec.templateName) return null;
   if (config.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-      template.name === "ns_fu_pricing_graphic") return null;
+      ["ns_fu_pricing_graphic", "ns_fu_meridian_gift"].includes(template.name)) return null;
   if (!AUTO_VARIABLE_TEMPLATES.has(template.name)) return { ...spec, bodyValue: null };
   if (spec.mediaKey || spec.mediaUrl) return null; // auto templates cannot override the approved promotion asset
   const service = exactConfiguredService(spec.identifiedTreatment, config);
