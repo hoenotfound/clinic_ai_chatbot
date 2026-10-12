@@ -1,4 +1,5 @@
 const clinicConfig = require("../config/clinicConfig");
+const { hasTreatmentPriceContent, assessmentFirstInvitation } = require("../utils/initialOfferReplyGuard");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const contactsRepo = require("../db/contactsRepo");
@@ -1295,17 +1296,32 @@ async function sendCandidate(candidate) {
     return;
   }
 
+  // Apply the policy to *every* follow-up: fixed, targeted-media caption,
+  // AI-generated, AI fallback, and promotion overrides. A price-bearing
+  // attachment may itself show the price so suppress that media as well.
+  const originalHasPrice = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+    hasTreatmentPriceContent(followUpMessage);
+  if (originalHasPrice) {
+    console.info(`[Assessment-first] Suppressed unsolicited price in follow-up step ${stepIndex} contact ${candidate.contact_id}`);
+    followUpMessage = assessmentFirstInvitation({
+      treatment: targetedService || candidate.treatment_interest,
+      customerText: (candidate.recent_inbound_messages || []).at(-1) || candidate.trigger_message_content || "",
+      language,
+      services: clinicConfig.services,
+      serviceAliases: clinicConfig.serviceAliases,
+    });
+  }
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
   // A promotion override replaces the normal step content. Use only the
   // matched promotion/package follow-up graphic; never fall back to the
   // generic step image because it may belong to a different offer.
-  const effectiveImageUrl = promotionFollowUp
+  const effectiveImageUrl = originalHasPrice ? "" : promotionFollowUp
     ? promotionFollowUpImageUrl
     : selectedImageUrl;
   const effectiveVideoKey =
-    !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
+    !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
   const effectiveVideoFilename =
     selectedVideoFilename || "follow-up-video.mp4";
 
