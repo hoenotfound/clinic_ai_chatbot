@@ -1322,24 +1322,8 @@ async function processIncomingMessage(
       let auditReason = "not_evaluated";
       let auditSelected = 0;
       let auditSent = 0;
-      // Early returns inside the image loop must retain the audit decision.
-      // The final write below still handles normal completion and exceptions.
-      const auditResultExit = async (reason) => {
-        try {
-          await resultMediaDecisionRepo.recordDecision({
-            contactId: contact.id,
-            inboundMessageId: savedInbound.id,
-            status: auditSent > 0 ? "partial"
-              : reason === "provider_send_failed" ? "failed" : "skipped",
-            reason,
-            promotionCount: automaticPromoMediaSent,
-            selectedCount: auditSelected,
-            sentCount: auditSent,
-          });
-        } catch (auditError) {
-          console.warn("[Result media] early exit audit failed:", auditError);
-        }
-      };
+      // The single finally block records every outcome, including early returns
+      // after a staff takeover, provider failure or a partially sent sequence.
       try {
         // A Meta ad may be enriched while the AI composes/sends its text reply.
         // Refresh the local Neon attribution only AFTER the text was accepted,
@@ -1445,14 +1429,12 @@ async function processIncomingMessage(
             });
             if (!resultContact || !(await contactsRepo.canSendAutomaticReviewMedia(resultContact.id))) {
               auditReason = "staff_review_or_takeover";
-              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
             contact = resultContact;
 
             if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
               auditReason = "reply_window_or_staff_cancellation";
-              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
 
@@ -1491,7 +1473,6 @@ async function processIncomingMessage(
               await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
               pendingResultMessage = null;
               pendingResultSend = null;
-              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
 
@@ -1527,7 +1508,6 @@ async function processIncomingMessage(
                 contact.id,
                 `Delivery failed: ${publicDeliveryError(resultError)}`
               );
-              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
           }
