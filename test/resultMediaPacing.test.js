@@ -455,31 +455,51 @@ test("postpartum interval safety detects Chinese day/week/month expressions and 
   }
 });
 
-test("consent-only CTWA first message never unlocks promotional or results media", async () => {
+test("CTWA introduction with genuine pelvic interest sends results but not pricing", async () => {
   const { hasCustomerPriceEnquiry } = require("../src/utils/customerEnquiryEvidence");
   const { explicitServiceNamedByCustomer } = require("../src/utils/resultMediaTrigger");
   const media = [{
     service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
     autoSendCount: 2,
     items: [
-      { imageUrl: "/api/config/result-media/image/11", caption: "Before" },
-      { imageUrl: "/api/config/result-media/image/12", caption: "After" },
+      { imageUrl: "/api/config/result-media/image/11", caption: "Pelvic result 1" },
+      { imageUrl: "/api/config/result-media/image/12", caption: "Pelvic result 2" },
     ],
   }];
-  assert.equal(hasCustomerPriceEnquiry(consentPrefill), false);
-  assert.equal(explicitServiceNamedByCustomer(media, consentPrefill), null);
-  assert.deepEqual(planResultMediaPacing({
-    customerText: consentPrefill, promotionCount: 0, items: images,
-  }), { items: [], reason: "follow_up_consent_introduction" });
-  assert.deepEqual(planResultMediaPacing({
-    customerText: consentPrefill, promotionCount: 2, items: images,
-  }), { items: [], reason: "follow_up_consent_introduction" });
+  const introductions = [
+    consentPrefill,
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi～我现在想了解骨盆调理，可以跟进我，有优惠也发我看看",
+  ];
+  for (const customerText of introductions) {
+    assert.equal(hasCustomerPriceEnquiry(customerText), false, customerText);
+    assert.equal(explicitServiceNamedByCustomer(media, customerText), "骨盆调理", customerText);
+    assert.deepEqual(planResultMediaPacing({
+      customerText, promotionCount: 0, items: images,
+    }).items, images, customerText);
+    const result = await resolveResultMediaForReply({
+      customerText, treatment: null, serviceQuery: false, serviceQuerySource: null,
+      priceQuery: true, packageQuery: true, // an incorrect model flag must not block genuine treatment interest
+      flagged: false, bookingReady: false, keywordReason: null,
+      needsAttention: false, textSendSucceeded: true,
+      resultMedia: media, contactId: 383,
+      wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(result?.service, "骨盆调理");
+    assert.equal(result?.items?.length, 2, customerText);
+    assert.deepEqual(result.items.map((item) => item.imageUrl), [
+      "/api/config/result-media/image/11",
+      "/api/config/result-media/image/12",
+    ]);
+  }
+  // Permission without independently expressed treatment interest is not
+  // enough to unlock any service's before/after collection.
   const skipped = [];
   assert.equal(await resolveResultMediaForReply({
-    customerText: consentPrefill,
-    treatment: "骨盆调理",
-    serviceQuery: true, serviceQuerySource: "customer_message",
-    priceQuery: true, packageQuery: true,
+    customerText: "可以跟进我，有优惠也发我看看",
+    treatment: "骨盆调理", serviceQuery: true, serviceQuerySource: "customer_message",
     flagged: false, bookingReady: false, keywordReason: null,
     needsAttention: false, textSendSucceeded: true,
     resultMedia: media, contactId: 383,
@@ -488,18 +508,48 @@ test("consent-only CTWA first message never unlocks promotional or results media
     getMostRecentlySentMediaUrl: async () => null,
     onSkip: (reason) => skipped.push(reason),
   }), null);
-  assert.equal(skipped.at(-1), "follow_up_consent_introduction");
-  // The very next real enquiry remains eligible for configured Before & After.
-  const real = await resolveResultMediaForReply({
-    customerText: "想了解骨盆调理有什么效果",
-    treatment: "骨盆调理",
+  assert.equal(skipped.at(-1), "no_customer_service_enquiry");
+  // The first two manually sent or automatically sent photos are still
+  // protected from duplicates within seven days.
+  const reasons = [];
+  assert.equal(await resolveResultMediaForReply({
+    customerText: introductions[1], treatment: "骨盆调理",
     serviceQuery: true, serviceQuerySource: "customer_message",
     flagged: false, bookingReady: false, keywordReason: null,
     needsAttention: false, textSendSucceeded: true,
     resultMedia: media, contactId: 383,
+    wasMediaRecentlySent: async () => true,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+    onSkip: (reason) => reasons.push(reason),
+  }), null);
+  assert.equal(reasons.at(-1), "result_media_recently_sent");
+  // Two valid pricing graphics still leave room for at most one result.
+  assert.equal(planResultMediaPacing({
+    customerText: introductions[1], promotionCount: 2, items: images,
+  }).items.length, 1);
+});
+
+test("future-offer permission does not override clinical and staff media blocks", async () => {
+  const text = "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊";
+  const baseline = {
+    customerText: text, treatment: "骨盆调理",
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true,
+    resultMedia: [{
+      service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+      items: [{imageUrl:"photo1",caption:"result"}],
+    }],
+    contactId: 383,
     wasMediaRecentlySent: async () => false,
     hasUnconfirmedMediaDelivery: async () => false,
     getMostRecentlySentMediaUrl: async () => null,
-  });
-  assert.equal(real?.items?.length, 2);
+  };
+  assert.equal(await resolveResultMediaForReply({...baseline, needsAttention:true}),null);
+  assert.equal(await resolveResultMediaForReply({...baseline, flagged:true}),null);
+  assert.equal(await resolveResultMediaForReply({...baseline, textSendSucceeded:false}),null);
+  assert.equal(await resolveResultMediaForReply({...baseline,
+    customerText:"我刚生产两周，想了解骨盆调理，之后可以WhatsApp跟进我，有优惠也发我看看",
+  }),null);
 });
