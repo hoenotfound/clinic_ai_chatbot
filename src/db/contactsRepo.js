@@ -300,6 +300,25 @@ async function getContactById(id) {
 // Fail closed for optional automatic images. An unresolved clinical question
 // must block sales/result graphics even when another workflow has cleared the
 // contact-level attention flag. Staff takeover always blocks auto media.
+// Distinguish a pending clinical review from an unrelated Inbox warning.
+// An unavailable lookup must not authorize a normal sales reply.
+async function hasPendingClinicalAiReview(id) {
+  try {
+    const result = await pool.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM ai_review_items
+         WHERE contact_id = $1 AND status = 'pending'
+           AND category <> 'information'
+       ) AS pending`,
+      [id]
+    );
+    return result.rows[0]?.pending === true;
+  } catch (error) {
+    console.error(`Unable to verify clinical review for contact ${id}:`, error);
+    return null;
+  }
+}
+
 async function canSendAutomaticReviewMedia(id) {
   try {
     const result = await pool.query(
@@ -1127,6 +1146,7 @@ module.exports = {
   getOrCreateChannelContact,
   getContactById,
   canSendAutomaticReviewMedia,
+  hasPendingClinicalAiReview,
   updateContactName,
   listConversations,
   listContacts,
