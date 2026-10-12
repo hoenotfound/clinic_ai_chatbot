@@ -87,7 +87,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM messages price
   WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
     AND (price.whatsapp_message_id IS NULL OR price.delivery_status IN ('unknown','failed','cancelled')))
- AND (NOT $4::boolean OR EXISTS(
+ AND (NOT $4::boolean OR anchor.created_at<$5::timestamptz OR EXISTS(
    SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=anchor.id
  ) OR EXISTS(SELECT 1 FROM messages price
    WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
@@ -101,13 +101,13 @@ ORDER BY due_at,contact_id
 LIMIT 200
 `;
 
-async function listCandidates({ activatedAt, triggerMode, pricingEnabled = false, now = new Date() }, database = pool) {
+async function listCandidates({ activatedAt, triggerMode, pricingEnabled = false, pricingActivation = null, now = new Date() }, database = pool) {
   const result = await database.query(CANDIDATES_SQL,
-    [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled]);
+    [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled,pricingActivation]);
   return result.rows;
 }
 
-async function claim(candidate, { activatedAt, triggerMode, pricingEnabled = false, now = new Date(), question }, database = pool) {
+async function claim(candidate, { activatedAt, triggerMode, pricingEnabled = false, pricingActivation = null, now = new Date(), question }, database = pool) {
   // Use the normal conversation lock and a unique lead prompt. A second
   // process cannot schedule another prompt for the same active CRM lead.
   const client = await database.connect();
@@ -116,7 +116,7 @@ async function claim(candidate, { activatedAt, triggerMode, pricingEnabled = fal
     await client.query("SELECT pg_advisory_xact_lock($1,$2)",
       [CONVERSATION_LOCK_NAMESPACE,candidate.contact_id]);
     const fresh = (await client.query(CANDIDATES_SQL,
-      [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled])).rows
+      [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled,pricingActivation])).rows
       .find(row => Number(row.contact_id)===Number(candidate.contact_id) &&
         Number(row.anchor_id)===Number(candidate.anchor_id) &&
         Number(row.inbound_id)===Number(candidate.inbound_id) &&
@@ -168,7 +168,7 @@ async function claim(candidate, { activatedAt, triggerMode, pricingEnabled = fal
   } finally {client.release();}
 }
 
-async function stillEligible(claimed, { activatedAt, triggerMode, pricingEnabled = false }, database = pool) {
+async function stillEligible(claimed, { activatedAt, triggerMode, pricingEnabled = false, pricingActivation = null }, database = pool) {
   const result = await database.query(
     `SELECT EXISTS (
       SELECT 1 FROM whatsapp_consent_prompts p
@@ -223,7 +223,7 @@ async function stillEligible(claimed, { activatedAt, triggerMode, pricingEnabled
           WHERE pricing.pricing_reminder_anchor_id=p.anchor_id
             AND (pricing.whatsapp_message_id IS NULL OR
               pricing.delivery_status IN ('unknown','failed','cancelled')))
-        AND (NOT $8::boolean OR EXISTS(
+        AND (NOT $8::boolean OR anchor.created_at<$9::timestamptz OR EXISTS(
           SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=p.anchor_id
         ) OR EXISTS(SELECT 1 FROM messages price
           WHERE price.contact_id=p.contact_id
@@ -241,7 +241,7 @@ async function stillEligible(claimed, { activatedAt, triggerMode, pricingEnabled
              AND third.automated_follow_up_step=3)) + interval '5 minutes')
     ) AS eligible`,
     [claimed.promptId,claimed.contact_id,claimed.anchor_id,claimed.inbound_id,
-      claimed.whatsapp_number,activatedAt,triggerMode,pricingEnabled]
+      claimed.whatsapp_number,activatedAt,triggerMode,pricingEnabled,pricingActivation]
   );
   return result.rows[0]?.eligible===true;
 }
