@@ -2,7 +2,6 @@ const aiService = require("./aiService");
 const clinicConfig = require("../config/clinicConfig");
 const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const { hasTreatmentPriceContent } = require("../utils/initialOfferReplyGuard");
-const clinicConfig = require("../config/clinicConfig");
 
 const MAX_CONTEXT_MESSAGES = 10;
 const MAX_CONTEXT_CHARS = 6_000;
