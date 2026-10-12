@@ -256,7 +256,7 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
 function ensureFirstAssessmentInvitation({
   isFirstMessage = false, customerText, reply, flagged = false,
   language = "en", treatment = null, serviceQuery = false,
-  services = [], serviceAliases = [],
+  verifiedAdService = null, services = [], serviceAliases = [],
 } = {}) {
   const original = String(reply || "").trim();
   if (!isFirstMessage || flagged || !serviceQuery || !original ||
@@ -266,17 +266,19 @@ function ensureFirstAssessmentInvitation({
     return { reply: original, appended: false };
   }
   const verified = safeServiceFromCustomer(customerText, services, serviceAliases);
-  const configured = (Array.isArray(services) ? services : []).find(
-    item => item?.name === treatment
+  const verifiedCreative = (Array.isArray(services) ? services : []).find(
+    item => item?.name === verifiedAdService && item?.name === treatment
   );
-  const service = verified || configured;
+  const service = verified || verifiedCreative;
   if (!service) return { reply: original, appended: false };
   // Do not promise an automatic voucher, an extra RM100 reduction or a free
   // trial. Voucher copy is intentionally governed separately from invitation.
   const lang = String(language || "").toLowerCase();
   const chinese = lang.startsWith("zh") || (!lang && /[\u3400-\u9fff]/u.test(customerText));
   const malay = lang.startsWith("ms");
-  const invitation = chinese
+  const invitation = service.name === "骨盆调理"
+    ? assessmentFirstInvitation({ treatment: service.name, customerText, language, services, serviceAliases })
+    : chinese
     ? "你也可以先来让中医师做一个1对1的评估 + 体验，再了解适合自己的调理方式 😊 你比较方便平日还是周末？"
     : malay
       ? "Anda juga boleh datang untuk penilaian 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Hari biasa atau hujung minggu lebih sesuai?"
