@@ -138,6 +138,7 @@ WITH eligible AS (
    -- Allow recent expiry cases to be recorded as insufficient_window.
    AND inbound.created_at > now() - interval '72 hours'
    AND decision.id IS NULL
+   AND NOT EXISTS (SELECT 1 FROM pricing_reminder_batch_completions done WHERE done.anchor_id=anchor.id)
    AND (lead.treatment_interest IS NOT NULL OR EXISTS(
      SELECT 1 FROM messages u WHERE u.contact_id = c.id AND u.role='user'
    ))
@@ -236,6 +237,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
          WHERE r.anchor_id=$2 AND r.package_key=$12
            AND (r.attempts >= 3 OR r.retry_after > now()))
        AND NOT EXISTS (SELECT 1 FROM pricing_reminder_decisions d WHERE d.anchor_id=$2)
+       AND NOT EXISTS (SELECT 1 FROM pricing_reminder_batch_completions done WHERE done.anchor_id=$2)
        AND COALESCE((SELECT l.treatment_interest FROM leads l
          WHERE l.contact_id=$1 ORDER BY l.created_at DESC,l.id DESC LIMIT 1),'')
           = COALESCE($11::text,'')
@@ -330,6 +332,40 @@ async function isClaimStillEligible({
   return result.rows[0]?.eligible === true;
 }
 
+// A price reminder is complete only when ALL selected packages have
+// provider-accepted, durable receipts. The contact lock prevents a concurrent
+// consent claim from observing an incomplete A/B package batch.
+async function markBatchCompleted({ contactId, anchorId, expectedPackages }) {
+  const packages=[...new Set((expectedPackages || []).map(value=>String(value||"").trim()).filter(Boolean))];
+  if (!packages.length || packages.length>10) return false;
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1,$2)",
+      [CONVERSATION_LOCK_NAMESPACE,contactId]);
+    const result=await client.query(`
+      INSERT INTO pricing_reminder_batch_completions(anchor_id,contact_id,accepted_packages)
+      SELECT $2,$1,$4
+      WHERE EXISTS(SELECT 1 FROM messages anchor WHERE anchor.id=$2 AND anchor.contact_id=$1)
+       AND NOT EXISTS(SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=$2)
+       AND (SELECT COUNT(DISTINCT pricing_reminder_package_key)::integer FROM messages m
+         WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
+           AND m.pricing_reminder_package_key=ANY($3::text[])
+           AND m.whatsapp_message_id IS NOT NULL
+           AND m.whatsapp_accepted_at IS NOT NULL
+           AND m.delivery_status IN ('pending','sent','delivered','read'))=$4
+       AND NOT EXISTS(SELECT 1 FROM messages m
+         WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
+           AND (m.whatsapp_message_id IS NULL OR m.whatsapp_accepted_at IS NULL
+             OR m.delivery_status IS NULL OR m.delivery_status IN ('failed','unknown','cancelled')))
+      ON CONFLICT DO NOTHING RETURNING anchor_id`,
+      [contactId,anchorId,packages,packages.length]);
+    await client.query("COMMIT");
+    return result.rowCount===1;
+  } catch(err){await client.query("ROLLBACK").catch(()=>{});throw err}
+  finally{client.release();}
+}
+
 async function recordDecision({ candidate, reason }) {
   const allowed = new Set([
     "already_sent", "delivery_review", "ambiguous_service",
@@ -388,4 +424,4 @@ async function discard({ messageId, contactId }) {
   return result.rowCount > 0;
 }
 module.exports = { listEligible, claim, isClaimStillEligible, recordDecision, discard, notePreflightFailure,
-  eligibleSql, MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES };
+  eligibleSql, MINUTES_AFTER_TESTIMONIAL, WINDOW_SAFETY_MINUTES, markBatchCompleted };
