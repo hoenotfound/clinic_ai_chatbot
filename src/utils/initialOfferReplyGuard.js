@@ -3,6 +3,7 @@
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
+  hasCustomerServiceEnquiry,
 } = require("./customerEnquiryEvidence");
 
 // A final outbound boundary for a first WhatsApp message without a current
@@ -252,6 +253,37 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
   return safeIntroReply({ customerText, language, services, serviceAliases });
 }
 
+function ensureFirstAssessmentInvitation({
+  isFirstMessage = false, customerText, reply, flagged = false,
+  language = "en", treatment = null, serviceQuery = false,
+  services = [], serviceAliases = [],
+} = {}) {
+  const original = String(reply || "").trim();
+  if (!isFirstMessage || flagged || !serviceQuery || !original ||
+      hasExplicitPriceRequest(customerText, { treatment }) ||
+      !hasCustomerServiceEnquiry(customerText) ||
+      /(?:1\s*[对對]\s*1|1\s*[-–]?\s*on\s*[-–]?\s*1|one\s*[-–]?\s*on\s*[-–]?\s*one|penilaian\s*(?:postur)?|体态评估|體態評估|面部评估|面部評估)/iu.test(original)) {
+    return { reply: original, appended: false };
+  }
+  const verified = safeServiceFromCustomer(customerText, services, serviceAliases);
+  const configured = (Array.isArray(services) ? services : []).find(
+    item => item?.name === treatment
+  );
+  const service = verified || configured;
+  if (!service) return { reply: original, appended: false };
+  // Do not promise an automatic voucher, an extra RM100 reduction or a free
+  // trial. Voucher copy is intentionally governed separately from invitation.
+  const lang = String(language || "").toLowerCase();
+  const chinese = lang.startsWith("zh") || (!lang && /[\u3400-\u9fff]/u.test(customerText));
+  const malay = lang.startsWith("ms");
+  const invitation = chinese
+    ? "你也可以先来让中医师做一个1对1的评估 + 体验，再了解适合自己的调理方式 😊 你比较方便平日还是周末？"
+    : malay
+      ? "Anda juga boleh datang untuk penilaian 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Hari biasa atau hujung minggu lebih sesuai?"
+      : "You can also begin with a 1-on-1 assessment + trial with our TCM practitioner 😊 Would a weekday or weekend suit you?";
+  return { reply: original + "\n\n" + invitation, appended: true };
+}
+
 function stripUnsolicitedTreatmentPrice(reply) {
   const source = String(reply || "").trim();
   // Preserve complete, useful non-price sentences instead of throwing away
@@ -275,6 +307,8 @@ function guardAssessmentFirstPricingReply({
 }
 module.exports = {
   guardAssessmentFirstPricingReply,
+  ensureFirstAssessmentInvitation,
+  safeServiceFromCustomer,
   assessmentFirstInvitation,
   stripUnsolicitedTreatmentPrice,
   hasTreatmentPriceContent,
