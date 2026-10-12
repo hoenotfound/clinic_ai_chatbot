@@ -506,3 +506,27 @@ test("new CRM journeys check scope-compatible contact marketing consent without 
   assert.equal(inherited[0].adName,"3D 小颜术 First Trial");
   assert.ok(calls.some(x=>x[0]==="prepared"));
 });
+
+test("mixed marketing opt-out is recorded and a separate safe question reaches AI preparation", async () => {
+  const recorded = [];
+  const policy = {
+    classifyOptOutText(message) {
+      return /不要再发优惠/.test(message) ? "marketing" : null;
+    },
+    async recordMarketingOptOut(contactId, source) {
+      recorded.push([contactId, source]);
+    },
+    async recordOptOut() { assert.fail("Must not revoke all service messaging"); },
+  };
+  const { claim, calls, wasCompleted } = makeService({ policy });
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-stop-then-question", channel: "whatsapp", from: "60123456789",
+    text: "不要再发优惠了，我想问骨盆护理要多久？",
+  });
+  const result = await claim.prepareIncomingClaim(durable);
+  assert.deepEqual(recorded, [[42, "customer_message"]]);
+  assert.equal(wasCompleted(), false);
+  assert.ok(result?.savedInbound, "service question remains available for an AI answer");
+  assert.ok(calls.some((x) => x[0] === "prepared"));
+  assert.equal(calls.some((x) => x[0] === "completed"), false);
+});
