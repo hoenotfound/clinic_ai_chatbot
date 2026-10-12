@@ -1,5 +1,8 @@
 "use strict";
 
+const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
+const { relatedPricingConflict, configuredServiceMention, unpricedRelatedPrimary } = require("./relatedServicePolicy");
+
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
@@ -121,7 +124,7 @@ function safeServiceFromCustomer(customerText, services, serviceAliases = []) {
       addMentions(canonical, term);
     }
   }
-  const entries = [...mentions.values()];
+  const entries = pruneCoveredServiceMentions([...mentions.values()]);
   if (!entries.length) return null;
 
   const combos = entries.filter(({ service }) =>
@@ -325,10 +328,41 @@ function guardAssessmentFirstPricingReply({
   customerText, reply, flagged = false, language = "en",
   services = [], serviceAliases = [], treatment = null,
   requireVerifiedTreatment = false,
+  resultMedia = [], conversationHistory = [],
 } = {}) {
   const original = String(reply || "");
   if (flagged || !hasTreatmentPriceContent(original)) {
     return { reply: original, replaced: false };
+  }
+  // A related result-photo link is NOT a license to quote that other
+  // treatment's package price. Protect full-body care even when the AI
+  // correctly names the original service but invents a pelvic package cost.
+  const relatedConflict = relatedPricingConflict({
+    customerText, treatment, conversationHistory,
+    services, serviceAliases, resultMedia,
+  });
+  const unpricedPrimary = unpricedRelatedPrimary({
+    customerText, conversationHistory, services, serviceAliases, resultMedia,
+  });
+  if (relatedConflict || unpricedPrimary) {
+    const primary = unpricedPrimary ||
+      configuredServiceMention(customerText, services, serviceAliases) ||
+      (Array.isArray(conversationHistory)
+        ? [...conversationHistory].reverse()
+          .filter((entry) => entry?.role === "user")
+          .map((entry) => configuredServiceMention(entry.content, services, serviceAliases))
+          .find(Boolean)
+        : null);
+    const locale = String(language || "").toLowerCase();
+    const clarification = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText))
+      ? "这项调理的实际费用需要由门店根据具体项目确认。"
+      : locale.startsWith("ms")
+        ? "Harga rawatan ini perlu disahkan oleh pihak pusat berdasarkan rawatan yang sesuai."
+        : "The centre will confirm the price for the specific treatment.";
+    const invitation = assessmentFirstInvitation({
+      treatment: primary, customerText, language, services, serviceAliases,
+    });
+    return { reply: [clarification, invitation].filter(Boolean).join("\n"), replaced: true };
   }
   const priceAsked = hasExplicitPriceRequest(customerText, { treatment });
   if (priceAsked && (!requireVerifiedTreatment || Boolean(treatment))) {

@@ -8,6 +8,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
+const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 const {
   getActivePromotions,
   promotionPackages,
@@ -261,6 +262,7 @@ function configuredServicesMentionedInText(value) {
   if (!text) return [];
 
   const matches = [];
+  const normalizedText = normalizedServiceName(text);
   for (const service of Array.isArray(clinicConfig.services)
     ? clinicConfig.services
     : []) {
@@ -273,12 +275,13 @@ function configuredServicesMentionedInText(value) {
       textContainsServiceTerm(text, term)
     );
     if (matchedTerms.length > 0) {
-      matches.push({ serviceName, matchedTerms });
+      matches.push({ serviceName, matchedTerms, spans: matchedTerms.flatMap((term) => termSpans(normalizedText, term)) });
     }
   }
 
-  if (matches.length <= 1) {
-    return matches.map((item) => item.serviceName);
+  const distinctMatches = pruneCoveredServiceMentions(matches);
+  if (distinctMatches.length <= 1) {
+    return distinctMatches.map((item) => item.serviceName);
   }
 
   // Prefer one explicitly named combined service only when its matched phrase
@@ -286,10 +289,9 @@ function configuredServicesMentionedInText(value) {
   // also appear separately elsewhere in the same customer message. This turns
   // "3D+9D" into the configured combination service while keeping genuine
   // comparisons such as "3D or 9D?" ambiguous.
-  const normalizedText = normalizedServiceName(text);
-  const covering = matches.filter((candidate) =>
+  const covering = distinctMatches.filter((candidate) =>
     candidate.matchedTerms.some((candidateTerm) =>
-      matches.every((other) => {
+      distinctMatches.every((other) => {
         if (other === candidate) return true;
         return other.matchedTerms.some(
           (otherTerm) =>
@@ -306,7 +308,7 @@ function configuredServicesMentionedInText(value) {
       (current, term) => current.split(term).join(" "),
       normalizedText
     );
-    const hasSeparateComponent = matches.some(
+    const hasSeparateComponent = distinctMatches.some(
       (other) =>
         other !== candidate &&
         serviceTerms(other.serviceName).some((term) =>
@@ -325,7 +327,7 @@ function configuredServicesMentionedInText(value) {
   // services and fall back to a generic follow-up. Reuse the shared resolver
   // only when no combined service phrase was already matched above, preserving
   // the stricter residual check for text such as "3D+9D, but I want 3D".
-  const hasDirectCombinedMatch = matches.some((item) =>
+  const hasDirectCombinedMatch = distinctMatches.some((item) =>
     normalizedServiceName(item.serviceName).includes("+")
   );
   if (!hasDirectCombinedMatch) {
@@ -338,7 +340,7 @@ function configuredServicesMentionedInText(value) {
     }
   }
 
-  return matches.map((item) => item.serviceName);
+  return distinctMatches.map((item) => item.serviceName);
 }
 
 function serviceMentionFromMessages(messages) {

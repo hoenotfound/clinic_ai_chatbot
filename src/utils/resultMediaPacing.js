@@ -3,7 +3,7 @@ const { hasCustomerPriceEnquiry } = require("./customerEnquiryEvidence");
 // A price question on its own is not evidence that the customer also asked
 // for treatment results. Recognize a separate, explicit treatment enquiry in
 // the customer's own current message, not a model flag or an ad name.
-const EXPLICIT_TREATMENT_INTEREST = /(?:想了解|想知道|想咨询|想諮詢|想做|我对|我對|对.*有兴趣|對.*有興趣|感兴趣|感興趣|了解一下|想看看|想看|想改善|想试|想試|想预约|想預約|interested in|want to (?:know|learn|try|do)|would like to (?:know|learn|try|do)|tell me (?:more )?about|learn more about|enquir(?:y|e) about|berminat (?:dengan|untuk)|nak (?:tahu|cuba|buat)|mahu (?:tahu|cuba|buat))(?:(?![。.!?？]).){0,95}(?:骨盆|调理|調理|疗程|療程|小颜|小顏|逆龄|逆齡|面部|脸型|臉型|体态|體態|治疗|治療|treatment|pelvi[cs]|postpartum|facial|hifu|3d|9d|rawatan)|(?:骨盆|调理|調理|疗程|療程|小颜|小顏|逆龄|逆齡|面部|脸型|臉型|体态|體態|治疗|治療|treatment|pelvi[cs]|postpartum|facial|hifu|3d|9d|rawatan)(?:(?![。.!?？]).){0,95}(?:想了解|想知道|想做|感兴趣|感興趣|有兴趣|有興趣|interested|want to (?:know|learn|try|do)|would like to (?:know|learn|try|do)|berminat)/iu;
+const EXPLICIT_TREATMENT_INTEREST = /(?:想了解|想知道|想咨询|想諮詢|想做|我对|我對|对.*有兴趣|對.*有興趣|感兴趣|感興趣|了解一下|想看看|想看|想改善|想试|想試|想预约|想預約|interested in|want to (?:know|learn|try|do)|would like to (?:know|learn|try|do)|tell me (?:more )?about|learn more about|enquir(?:y|e) about|berminat (?:dengan|untuk)|nak (?:tahu|cuba|buat)|mahu (?:tahu|cuba|buat))(?:(?![。.!?？]).){0,95}(?:骨盆|整骨|调理|調理|疗程|療程|小颜|小顏|逆龄|逆齡|面部|脸型|臉型|体态|體態|治疗|治療|treatment|pelvi[cs]|postpartum|facial|hifu|3d|9d|rawatan)|(?:骨盆|整骨|调理|調理|疗程|療程|小颜|小顏|逆龄|逆齡|面部|脸型|臉型|体态|體態|治疗|治療|treatment|pelvi[cs]|postpartum|facial|hifu|3d|9d|rawatan)(?:(?![。.!?？]).){0,95}(?:想了解|想知道|想做|感兴趣|感興趣|有兴趣|有興趣|interested|want to (?:know|learn|try|do)|would like to (?:know|learn|try|do)|berminat)/iu;
 
 // Explicit result requests are not the same as price enquiries, and should
 // still be considered when proof is configured and independently eligible.
@@ -24,7 +24,7 @@ function planPromotionMediaPacing(packages = []) {
   };
 }
 
-function planResultMediaPacing({ customerText, promotionCount = 0, items = [] } = {}) {
+function planResultMediaPacing({ customerText, promotionCount = 0, items = [], allowRelatedPriceProof = false } = {}) {
   const promotions = Number.isSafeInteger(promotionCount)
     ? Math.max(0, promotionCount)
     : 0;
@@ -33,7 +33,8 @@ function planResultMediaPacing({ customerText, promotionCount = 0, items = [] } 
 
   if (hasCustomerPriceEnquiry(customerText) &&
       !EXPLICIT_TREATMENT_INTEREST.test(String(customerText || "")) &&
-      !EXPLICIT_RESULT_IMAGE_REQUEST.test(String(customerText || ""))) {
+      !EXPLICIT_RESULT_IMAGE_REQUEST.test(String(customerText || "")) &&
+      !(allowRelatedPriceProof === true && promotions === 0)) {
     return { items: [], reason: "promotion_price_priority" };
   }
 

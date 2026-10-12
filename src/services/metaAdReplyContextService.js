@@ -1,5 +1,6 @@
 const leadAttributionRepo = require("../db/leadAttributionRepo");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
+const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 
 const FIELD_LIMITS = Object.freeze({
   headline: 500,
@@ -137,19 +138,22 @@ function matchingMetaAdCreativeServices(
   const creativeText = [headline, body].filter(Boolean).join(" ");
   if (!creativeText) return [];
 
+  const normalized = compactServiceTerm(creativeText);
   const matched = (Array.isArray(services) ? services : [])
     .map((service) => {
-      const canonical = String(service?.name || "").trim();
-      if (!canonical) return null;
-      const terms = configuredServiceTerms(service, services, aliases);
-      return terms.some((term) => serviceTermAppearsInCreative(term, creativeText))
-        ? canonical
-        : null;
+      const name = String(service?.name || "").trim();
+      if (!name) return null;
+      const spans = configuredServiceTerms(service, services, aliases)
+        .filter((term) => serviceTermAppearsInCreative(term, creativeText))
+        .flatMap((term) => termSpans(normalized, compactServiceTerm(term)));
+      return spans.length ? { name, spans } : null;
     })
     .filter(Boolean);
 
-  const unique = [...new Set(matched)];
-  return unique;
+  // For "小颜整骨", the specific facial alias contains "整骨", so it must
+  // not simultaneously identify a body treatment. Two separate mentions in
+  // the creative remain ambiguous, as do unverified creative hints.
+  return [...new Set(pruneCoveredServiceMentions(matched).map(({ name }) => name))];
 }
 
 function resolveMetaAdCreativeService(context, services = [], aliases = []) {

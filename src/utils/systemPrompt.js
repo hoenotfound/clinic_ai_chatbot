@@ -2,6 +2,7 @@ const config = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { relatedMediaTargets } = require("./relatedServicePolicy");
 
 function normalizeOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
@@ -1068,6 +1069,16 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const conversationContext = normalizedOptions.conversationContext;
   const hasScopedConversationContext =
     conversationContext && typeof conversationContext === "object";
+  // Related photos are explicitly opted in by this client's result-media
+  // configuration; sharing examples never changes the primary treatment.
+  const selectedConversationServices = conversationSelectedServices(conversationContext);
+  const relatedInformation = selectedConversationServices.length === 1
+    ? relatedMediaTargets(selectedConversationServices[0].name, config.resultMedia)
+        .slice(0, 2)
+        .map((name) => configuredServiceByExactName(name))
+        .filter(Boolean)
+    : [];
+
 
   const servicesList = hasScopedConversationContext
     ? conversationServicesList(conversationContext, terms)
@@ -1193,6 +1204,15 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT
 - For 骨盆调理 interest only: customers who attend the 1对1的体态评估 + 体验 may receive a RM100 voucher for pelvic treatment. This voucher amount is NOT a treatment price, so you may mention it before they ask about price. Do not promise the voucher stacks with current package reductions or claim a free assessment/trial; staff confirms exact redemption conditions.
 - Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit. Before & After examples are a separate system and remain eligible.
 ` : ""}
+
+${relatedInformation.length ? `RELATED TREATMENT INFORMATION (informational only):
+- The customer's primary interest is ${selectedConversationServices[0].name}. Answer its full configured description first.
+- The following are related services whose examples can be shown; they are NOT the same treatment, and their durations, coverage and prices are NOT prices for ${selectedConversationServices[0].name}.
+${relatedInformation.map((service) => `- ${service.name}: ${promptContextText(service.description, 950) || "No description configured."} | Standalone duration: ${promptContextText(service.duration, 120) || "Not confirmed"}`).join("\\n")}
+- You may explain how these related treatments fit into a 1对1的体态评估 + 体验. Before & After photos for a related treatment are examples of that specific treatment, not proof of identical results for the primary treatment.
+- Never quote or send a related treatment's package price as the primary treatment's price. If the customer wants the primary treatment's price and it is not configured, acknowledge that staff must confirm it. If the customer explicitly asks for the related treatment's own package price, distinguish it clearly.
+` : ""}
+
 
 COMMON TERMS ${terms.customerPlural.toUpperCase()} USE (match these to the configured ${terms.servicePlural}; don't hand off just because the wording doesn't match the official name):
 ${aliasList}

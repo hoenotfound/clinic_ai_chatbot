@@ -295,6 +295,13 @@ function isResultMediaSet(value) {
     typeof value.enabled === "boolean" &&
     (hasValidTriggerMode || hasLegacyTrigger) &&
     (
+      value.relatedServices === undefined ||
+      (Array.isArray(value.relatedServices) &&
+        value.relatedServices.length <= 30 &&
+        value.relatedServices.every(isNonEmptyString) &&
+        new Set(value.relatedServices.map((service) => service.trim().toLowerCase())).size === value.relatedServices.length)
+    ) &&
+    (
       value.autoSendCount === undefined ||
       (Number.isInteger(value.autoSendCount) &&
         value.autoSendCount >= 1 &&
@@ -1028,6 +1035,17 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
         };
       }
       seenServices.add(normalized);
+      for (const related of Array.isArray(entry.relatedServices) ? entry.relatedServices : []) {
+        const key = String(related || "").trim().toLowerCase();
+        if (!serviceNames.has(key) || key === normalized) {
+          return {
+            ok: false,
+            status: 400,
+            error: `Related result service "${related}" must be another configured service.`,
+            invalidKeys: ["resultMedia"],
+          };
+        }
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
 const clinicConfig = require("../config/clinicConfig");
+const { relatedPricingConflict } = require("./relatedServicePolicy");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const {
   findMentionedPromotionPackages,
@@ -56,6 +57,9 @@ async function resolvePricePromotionForReply({
   needsAttention,
   textSendSucceeded,
   promotions,
+  services = clinicConfig.services,
+  serviceAliases = clinicConfig.serviceAliases,
+  resultMedia = clinicConfig.resultMedia,
   language = "en",
   contactId,
   wasPromoRecentlySent,
@@ -84,6 +88,10 @@ async function resolvePricePromotionForReply({
   ) {
     return null;
   }
+
+  if (relatedPricingConflict({
+    customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
+  })) return null;
 
   const genericBundle = getPricePromotionBundle(
     promotions,

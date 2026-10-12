@@ -1025,6 +1025,7 @@ async function processIncomingMessage(
             // treatment evidence (same standard as promotional images).
             treatment: verifiedPriceService?.name || null,
             requireVerifiedTreatment: true,
+            resultMedia: clinicConfig.resultMedia, conversationHistory: history,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
@@ -1259,6 +1260,9 @@ async function processIncomingMessage(
         needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
         textSendSucceeded: sendOutcome.sendResult.success,
         promotions: clinicConfig.promotions,
+        services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage,
         contactId: contact.id,
         wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
@@ -1447,6 +1451,7 @@ async function processIncomingMessage(
             customerText: text,
             promotionCount: automaticPromoMediaSent,
             items: resultBundle.items,
+            allowRelatedPriceProof: resultBundle.allowRelatedPriceProof === true,
           });
           auditSelected = paced.items.length;
           auditReason = paced.reason;

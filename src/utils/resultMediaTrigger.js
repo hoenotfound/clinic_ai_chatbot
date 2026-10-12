@@ -9,6 +9,7 @@ const {
   resolveLocalizedMedia,
 } = require("./mediaLocalization");
 const { EXPLICIT_TREATMENT_INTEREST } = require("./resultMediaPacing");
+const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
 const RESULT_MEDIA_TRIGGER_MODES = new Set(["off", "price_only", "service_enquiry"]);
@@ -55,18 +56,26 @@ function customerNamedServices(resultMedia, customerText, serviceAliases = [], s
   for (const entry of Array.isArray(services) ? services : []) {
     if (entry?.name) names.set(normal(entry.name), String(entry.name).trim());
   }
-  const match = new Set();
-  for (const [key, name] of names) {
-    if (matchTerm(name)) match.add(key);
-  }
+  const matches = new Map();
+  const addMatch = (key, term) => {
+    if (!matchTerm(term)) return;
+    const spans = termSpans(compactText, normal(term));
+    if (!spans.length) return;
+    if (!matches.has(key)) matches.set(key, { name: names.get(key), spans: [] });
+    matches.get(key).spans.push(...spans);
+  };
+  for (const [key, name] of names) addMatch(key, name);
   for (const entry of Array.isArray(serviceAliases) ? serviceAliases : []) {
     const key = normal(entry?.officialService);
     if (!names.has(key)) continue;
     for (const term of String(entry.alias || "").split(/[,/|;，、]+/u)) {
-      if (matchTerm(term.trim())) match.add(key);
+      addMatch(key, term.trim());
     }
   }
-  return [...match].map((key) => names.get(key));
+  // An exact "小颜整骨" alias covers the generic "整骨" alias.
+  // But "整骨和小颜整骨" still names two distinct treatments.
+  return pruneCoveredServiceMentions([...matches.values()])
+    .map(({ name }) => name);
 }
 
 // A postpartum qualifier can describe why the customer wants *pelvic*
@@ -95,7 +104,11 @@ function explicitServiceNamedByCustomer(
   if (/(?:地址|在哪[里裡]|营业时间|營業時間|停车|停車|分行|分店|\b(?:address|location|opening hours?|parking|branch(?:es)?|alamat|lokasi|cawangan)\b)/iu.test(current)) {
     return null;
   }
-  if (!EXPLICIT_TREATMENT_INTEREST.test(current) ||
+  // An otherwise bare osteopathy service name is itself an enquiry.
+  // It still needs one unambiguous configured alias and an enabled media set.
+  const bareOsteopathyEnquiry =
+    /^(?:(?:你好|hi|hello|嗨)[\s～~,，.!！。]*)?(?:整骨|全身整骨|中医徒手整骨)[\s?？.!！。]*$/iu.test(current.trim());
+  if ((!EXPLICIT_TREATMENT_INTEREST.test(current) && !bareOsteopathyEnquiry) ||
       !hasCustomerServiceEnquiry(current)) return null;
   const matches = qualifiedTreatmentMentions(
     customerNamedServices(resultMedia, current, serviceAliases, services), current
@@ -108,13 +121,31 @@ function matchingResultMediaSet(resultMedia, treatment) {
   const target = normalizeServiceName(treatment);
   if (!target || !Array.isArray(resultMedia)) return null;
 
-  const matches = resultMedia.filter(
-    (entry) =>
-      entry &&
-      entry.enabled === true &&
-      normalizeResultMediaTriggerMode(entry) !== "off" &&
-      normalizeServiceName(entry.service) === target
+  const configuredDirect = resultMedia.filter((entry) =>
+    normalizeServiceName(entry?.service) === target
   );
+  // An explicitly disabled direct set must not fall back to a related set.
+  if (configuredDirect.length > 0 && !configuredDirect.some((entry) =>
+    entry?.enabled === true && normalizeResultMediaTriggerMode(entry) !== "off"
+  )) return null;
+
+  const eligible = resultMedia.filter(
+    (entry) => entry?.enabled === true &&
+      normalizeResultMediaTriggerMode(entry) !== "off"
+  );
+  // A configured service can share *informational result examples* from one
+  // related treatment, without inheriting that treatment's packages or prices.
+  // Exact media always wins. Ambiguous relationships fail closed.
+  const direct = eligible.filter((entry) =>
+    normalizeServiceName(entry.service) === target
+  );
+  if (direct.length > 1) return null;
+  const related = direct.length ? [] : eligible.filter((entry) =>
+    normalizeResultMediaTriggerMode(entry) === "service_enquiry" &&
+    Array.isArray(entry.relatedServices) &&
+    entry.relatedServices.some((name) => normalizeServiceName(name) === target)
+  );
+  const matches = direct.length ? direct : related;
   if (matches.length !== 1) return null;
 
   const [entry] = matches;
@@ -262,9 +293,21 @@ async function resolveResultMediaForReply({
     customerNamedServices(resultMedia, customerText, serviceAliases, services), customerText
   );
   if (namedServices.length > 1) return skip("multiple_treatments_ambiguous");
+  // For a verified, explicitly named primary service which only borrows
+  // related proof photos, a price-only enquiry may still show those examples
+  // if the primary has no price graphic. This does not authorize promotions.
+  const relatedPriceProof =
+    namedServices.length === 1 &&
+    hasCustomerPriceEnquiry(customerText) &&
+    hasCustomerServiceEnquiry(customerText) &&
+    (() => {
+      const relatedSet = matchingResultMediaSet(resultMedia, namedServices[0]);
+      return relatedSet?.triggerMode === "service_enquiry" &&
+        normalizeServiceName(relatedSet.service) !== normalizeServiceName(namedServices[0]);
+    })();
   const directlyNamedTreatment = explicitServiceNamedByCustomer(
     resultMedia, customerText, serviceAliases, services
-  );
+  ) || (relatedPriceProof ? namedServices[0] : null);
   const effectiveTreatment = directlyNamedTreatment || treatment ||
     (contextualAdEnquiry ? metaAdCreativeService : null);
   if (!effectiveTreatment) return skip("no_verified_treatment");
@@ -347,6 +390,7 @@ async function resolveResultMediaForReply({
   return {
     service: resultSet.service,
     triggerMode: resultSet.triggerMode,
+    allowRelatedPriceProof: relatedPriceProof === true,
     serviceQuerySource: directlyNamedTreatment ? "customer_message"
       : verifiedAdFallback ? "meta_ad" : trustedServiceQuery ? serviceQuerySource : null,
     items: rotatedItems

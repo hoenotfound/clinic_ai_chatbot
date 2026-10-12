@@ -1,4 +1,5 @@
 const config = require("../config/clinicConfig");
+const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 const {
   findMentionedPromotionPackages,
@@ -210,45 +211,31 @@ function serviceCandidates(services = config.services, aliases = config.serviceA
     .filter(Boolean);
 }
 
-function findServicesInText(text, candidates) {
-  const normalized = normalizeComparable(text);
-  if (!normalized) return [];
-
-  const matches = [];
-  for (const candidate of candidates) {
-    if (candidate.terms.some(({ key }) => normalized.includes(key))) {
-      matches.push(candidate.name);
-    }
-  }
-  return matches;
-}
-
-function strongServiceMatchesInText(text, candidates) {
+function matchedServiceNames(text, candidates, strongOnly = false) {
   const normalized = normalizeComparable(text);
   if (!normalized) return [];
 
   const matches = [];
   for (const candidate of candidates) {
     const canonicalKey = normalizeComparable(candidate.name);
-    if (canonicalKey && normalized.includes(canonicalKey)) {
-      matches.push(candidate.name);
-      continue;
-    }
-
-    const hasStrongAlias = candidate.terms.some(({ key }) => {
-      if (!normalized.includes(key)) return false;
-      if (key.length >= 3) return true;
-      return (
-        /^[a-z0-9]+$/u.test(key) &&
-        /[a-z]/u.test(key) &&
-        /[0-9]/u.test(key)
-      );
-    });
-    if (hasStrongAlias) matches.push(candidate.name);
+    const spans = candidate.terms
+      .filter(({ key }) =>
+        !strongOnly || key === canonicalKey || key.length >= 3 ||
+        (/^[a-z0-9]+$/u.test(key) && /[a-z]/u.test(key) && /[0-9]/u.test(key))
+      )
+      .flatMap(({ key }) => termSpans(normalized, key));
+    if (spans.length) matches.push({ name: candidate.name, spans });
   }
-  return matches;
+  return pruneCoveredServiceMentions(matches).map(({ name }) => name);
 }
 
+function findServicesInText(text, candidates) {
+  return matchedServiceNames(text, candidates);
+}
+
+function strongServiceMatchesInText(text, candidates) {
+  return matchedServiceNames(text, candidates, true);
+}
 
 function recentConversationServiceAnchor(messages, candidates, maxMessages = 16, promotions = config.promotions) {
   const source = Array.isArray(messages) ? messages : [];

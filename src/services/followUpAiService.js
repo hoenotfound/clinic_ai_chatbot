@@ -2,6 +2,7 @@ const aiService = require("./aiService");
 const clinicConfig = require("../config/clinicConfig");
 const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const { hasTreatmentPriceContent } = require("../utils/initialOfferReplyGuard");
+const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 
 const MAX_CONTEXT_MESSAGES = 10;
 const MAX_CONTEXT_CHARS = 6_000;
@@ -191,12 +192,16 @@ function recentConfiguredServiceNames(messages, maxServices = 2) {
   for (let index = recent.length - 1; index >= 0; index -= 1) {
     const contentKey = normalizedComparable(recent[index].content);
     if (!contentKey) continue;
-    for (const candidate of candidates) {
-      if (found.includes(candidate.name)) continue;
-      if (candidate.terms.some(({ key }) => contentKey.includes(key))) {
-        found.push(candidate.name);
-        if (found.length >= maxServices) return found;
-      }
+    const matches = candidates
+      .map((candidate) => ({
+        name: candidate.name,
+        spans: candidate.terms.flatMap(({ key }) => termSpans(contentKey, key)),
+      }))
+      .filter(({ spans }) => spans.length > 0);
+    for (const { name } of pruneCoveredServiceMentions(matches)) {
+      if (found.includes(name)) continue;
+      found.push(name);
+      if (found.length >= maxServices) return found;
     }
   }
   return found;
