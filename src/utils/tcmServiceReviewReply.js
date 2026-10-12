@@ -17,12 +17,19 @@ function key(value) {
 
 function bareServiceName(text, services, aliases) {
   const original = String(text || "").normalize("NFKC").trim();
-  if (!original || original.length > 90) return null;
-  const phrase = original.replace(/^[\s.,!?。，！？～~]+|[\s.,!?。，！？～~]+$/gu, "").trim();
-  if (!phrase || checkKeywordTriggers(original) || hasClinicalMediaRisk(original)) return null;
+  if (!original || original.length > 120 ||
+      checkKeywordTriggers(original) || hasClinicalMediaRisk(original)) return null;
+  // Accept only a small set of ordinary service enquiry phrasings. Never
+  // remove clinical qualifiers, suitability questions, or price requests.
+  const cleaned = original.replace(/^[\s.,!?。，！？～~]+|[\s.,!?。，！？～~]+$/gu, "").trim();
+  const english = cleaned.match(/^(?:(?:i(?:'m| am) interested in|i want to (?:know about|ask about|try)|can i (?:ask about|know about)|do you (?:offer|have|provide)|tell me (?:about|more about)|interested in|about)\s+)(.+)$/iu);
+  const chinese = cleaned.match(/^(?:我想了解|想了解|请问有|請問有|有没有|有沒有|想问|想問|可以介绍|可以介紹)\s*(.+?)(?:吗|嗎|呢)?$/u);
+  const malay = cleaned.match(/^(?:saya (?:nak|mahu) (?:tahu|tanya)(?: tentang)?|nak tahu(?: tentang)?|boleh tanya(?: tentang)?)\s+(.+)$/iu);
+  const phrase = (english?.[1] || chinese?.[1] || malay?.[1] || cleaned).trim()
+    .replace(/^[\s.,!?。，！？～~]+|[\s.,!?。，！？～~]+$/gu, "").trim();
+  if (!phrase) return null;
   const service = safeServiceFromCustomer(phrase, services, aliases);
   if (!service) return null;
-
   const normalized = key(phrase);
   const names = [service.name];
   for (const alias of Array.isArray(aliases) ? aliases : []) {
@@ -44,15 +51,20 @@ function isStandaloneSpinalConcern(text) {
   return value.length <= 75 && STANDALONE_SPINE.test(value);
 }
 
-function recentConversationContext(history) {
-  // Model history is oldest-to-newest and includes the current user message.
-  // Inspect a bounded number of preceding turns; never use customer text as
-  // instruction, only as a signal that professional assessment is required.
+function recentConversationContext(history, recentCustomerTexts, recentAcceptedAssistantTexts) {
+  // Live webhook decisions use database-verified clinical boundaries and
+  // accepted outbound messages. Model history is only used by isolated tests
+  // and legacy callers without evidence. Never let an unsent draft suppress
+  // a new invitation or reopen staff-resolved old medical questions.
   const entries = history.slice(-16, -1);
-  const priorCustomers = entries.filter((m) => m?.role === "user")
-    .slice(-8).map((m) => String(m.content || ""));
-  const priorAssistants = entries.filter((m) => m?.role === "assistant")
-    .slice(-5).map((m) => String(m.content || ""));
+  const priorCustomers = Array.isArray(recentCustomerTexts)
+    ? recentCustomerTexts.map(String)
+    : entries.filter((m) => m?.role === "user")
+        .slice(-8).map((m) => String(m.content || ""));
+  const priorAssistants = Array.isArray(recentAcceptedAssistantTexts)
+    ? recentAcceptedAssistantTexts.map(String)
+    : entries.filter((m) => m?.role === "assistant")
+        .slice(-5).map((m) => String(m.content || ""));
   return {
     medicalContext: priorCustomers.some((m) =>
       SPINAL_CONCERN.test(m) || hasClinicalMediaRisk(m)
@@ -97,6 +109,7 @@ function recoveryText({ phrase, service, language, medicalContext, alreadyInvite
 function planTcmReviewReply({
   businessType, customerText, language, services, serviceAliases,
   conversationHistory, pendingClinicalReview = false,
+  recentCustomerTexts, recentAcceptedAssistantTexts,
 } = {}) {
   if (businessType !== "tcm_clinic" || !Array.isArray(conversationHistory)) return null;
   const matched = bareServiceName(customerText, services, serviceAliases);
@@ -104,7 +117,9 @@ function planTcmReviewReply({
   if (!matched && !spine) return null;
   if (pendingClinicalReview !== true && pendingClinicalReview !== false) return null;
 
-  const context = recentConversationContext(conversationHistory);
+  const context = recentConversationContext(
+    conversationHistory, recentCustomerTexts, recentAcceptedAssistantTexts
+  );
   // Do not continue selling on the back of recent emergency symptoms.
   if (context.urgentContext) return { reply: null, preserveReview: true };
   const medicalContext = spine || context.medicalContext || pendingClinicalReview;
