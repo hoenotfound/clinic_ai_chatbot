@@ -393,7 +393,7 @@ for (const channel of ["facebook","instagram"]) {
     const result=await claim.prepareIncomingClaim(durable);
     assert.equal(result,null);
     assert.equal(wasCompleted(),true);
-    assert.deepEqual(records,[{contactId:42,source:"customer_message"}]);
+    assert.deepEqual(records,[], "already enforced by the atomic social inbound INSERT");
     assert.equal(calls.some(c=>c[0]==="processing-claim"),false);
   });
 }
@@ -530,3 +530,34 @@ test("mixed marketing opt-out is recorded and a separate safe question reaches A
   assert.ok(calls.some((x) => x[0] === "prepared"));
   assert.equal(calls.some((x) => x[0] === "completed"), false);
 });
+
+
+for (const channel of ["facebook", "instagram"]) {
+  test(`${channel} mixed marketing STOP remains enforced even if another reply-processing lease is occupied`, async () => {
+    const records = [];
+    const policy = {
+      classifyOptOutText: (message) =>
+        /stop promotions/i.test(message) ? "marketing" : null,
+      async recordMarketingOptOut() {
+        records.push("late-stop");
+      },
+      async recordOptOut() { assert.fail("global opt-out not requested"); },
+    };
+    const { claim, calls, wasCompleted } = makeService({ channel, policy });
+    const saved = await claim.storeIncomingMessage({
+      channel, id: "mid.social-mixed-stop", from: "user-22",
+      text: "Stop promotions. How long does pelvic treatment take?",
+    });
+    assert.equal(saved.incoming._socialStopEnforcedAtomically, true);
+    assert.equal(wasCompleted(), false);
+    const prepared = await claim.prepareIncomingClaim(saved);
+    assert.ok(prepared?.processingJobId);
+    assert.equal(records.length, 0, "no replay/re-date of an already atomic STOP");
+    assert.equal(calls.some((entry) => entry[0] === "prepared"), true);
+    assert.equal(wasCompleted(), false);
+    // Simulate a process restart recovering this durable job. The persisted
+    // marker ensures the same STOP is never applied a second time.
+    await claim.resumeProcessingJob({ id: 91 });
+    assert.deepEqual(records, []);
+  });
+}
