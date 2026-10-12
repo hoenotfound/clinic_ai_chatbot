@@ -363,7 +363,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
-        billingAdvisory: { evidence: "no_ctwa_referral", reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
+        billingAdvisory: { evidence: verifiedFreeTemplateWindow ? "recent_free_entry_evidence" : "no_ctwa_referral", reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
@@ -975,8 +975,9 @@ test("verified CTWA free window shows a compact green banner but still requires 
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
   await page.getByRole("button", { name: "Confirm opt-in & choose template" }).click();
-  await expect(page.getByRole("dialog", { name: "Send WhatsApp template" })
-    .getByText("WhatsApp opt-in required")).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
+  await expect(dialog.getByText("WhatsApp opt-in required")).toBeVisible();
+  await expect(dialog.getByText(/A recent free-entry billing receipt was found/)).toBeVisible();
   expectNoUnexpectedApi(apiState);
 });
 
