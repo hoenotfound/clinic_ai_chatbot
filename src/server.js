@@ -1006,6 +1006,7 @@ async function processIncomingMessage(
         ? guardAssessmentFirstPricingReply({
             channel, customerText: text, reply, flagged, language: mediaLanguage,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            resultMedia: clinicConfig.resultMedia, conversationHistory: history,
             treatment: details?.treatment,
           })
         : guardedOfferIntro;
@@ -1224,6 +1225,9 @@ async function processIncomingMessage(
         needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
         textSendSucceeded: sendOutcome.sendResult.success,
         promotions: clinicConfig.promotions,
+        services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage,
         contactId: contact.id,
         wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
