@@ -11,7 +11,7 @@ const MEDICAL_HISTORY = /\b(?:diabet(?:es|ic)|cancer|hypertension|high blood pre
 // enquiry for a configured "子宫套餐" is not itself a contraindication and
 // must not be blocked merely because the package name sounds clinical.
 const CLINICAL_MEDIA_RED_FLAGS =
-  /\b(?:pregnan\w*|breastfeed\w*|c[.-]?section\w*|surgery|surgical|operation|procedure\w*|suitab\w*|safe(?:ty)?|risk\w*|pain\w*|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|after treatment|after surgery|just had|recent procedure|can i do|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|安全|適合|适合|疼痛|流血|出血|尿失禁|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|整骨風險|整骨风险|坐月子|可以做吗|可以做嗎|能做吗|能做嗎)|\b(?:hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|kesan sampingan)\b/iu;
+  /\b(?:pregnan\w*|breastfeed\w*|c[.-]?section\w*|surgery|surgical|operation|procedure\w*|suitab\w*|safe(?:ty)?|risk\w*|pain\w*|symptom\w*|bleed\w*|infection\w*|medicin\w*|medication\w*|diagnos\w*|incontinen\w*|prolapse\w*|allerg\w*|wound\w*|side effects?|contraindicat\w*|after treatment|after surgery|just had|recent procedure|can i do|can i receive)\b|(?:怀孕|懷孕|孕期|孕婦|孕妇|懷胎|怀胎|胎兒|胎儿|哺乳|餵奶|喂奶|術後|术后|剖腹|手術|手术|醫藥|医药|藥物|药物|安全|適合|适合|疼痛|会不会很痛|會不會很痛|会不会痛|會不會痛|会痛吗|會痛嗎|流血|出血|尿失禁|過敏|过敏|副作用|診斷|诊断|宮頸|宫颈|整骨風險|整骨风险|坐月子|可以做吗|可以做嗎|能做吗|能做嗎)|\b(?:hamil|mengandung|kandungan|berbadan dua|preggy|menyusu\w*|bersalin|pembedahan|ubat|selamat|sakit|darah|alahan|sesuai|risiko|keguguran|gugur|kesan sampingan)\b/iu;
 
 // "产后" / "postpartum" is also a configured treatment name, not
 // automatically a contraindication. Recent childbirth and recovery remain
