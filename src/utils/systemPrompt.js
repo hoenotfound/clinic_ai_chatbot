@@ -788,10 +788,12 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
 function buildCommentAutomationPrompt(options = {}) {
   const context = getBusinessContext();
   const { terminology: terms } = context;
+  const currentCommentPriceRequest = config.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+    hasExplicitPriceRequest(options.commentText);
   const servicesList = listOrNone(
     config.services,
     (service) =>
-      `- ${service.name}: ${service.description} | Price: ${service.priceRange}`,
+      `- ${service.name}: ${service.description}${config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !currentCommentPriceRequest ? "" : ` | Price: ${service.priceRange}`}`,
     `No ${terms.servicePlural} are configured. Do not invent any.`
   );
   const guardrailsList = listOrNone(
@@ -809,7 +811,7 @@ BUSINESS INFO:
 - Services:
 ${servicesList}
 - Active promotions:
-${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] }) : activePromotionsList()}
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !currentCommentPriceRequest ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] }) : activePromotionsList()}
 
 RULES:
 ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Neutro assessment-first: if the current comment does NOT explicitly ask for a monetary price, do NOT mention treatment/package/trial prices in public or private replies, even when the comment asks about packages or offers. Invite the 1对1体态评估 + 体验 when relevant. For pelvic interest only, a RM100 voucher for attending may be mentioned, without promising extra stacking or free treatment. If the comment explicitly asks how much, give the verified configured price instead of hiding it behind an assessment." : ""}
