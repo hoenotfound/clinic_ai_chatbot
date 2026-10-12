@@ -18,21 +18,59 @@ function hasCommercialReplyContent(value) {
   return COMMERCIAL_REPLY_CONTENT.test(String(value || "").normalize("NFKC"));
 }
 
-function safeServiceFromCustomer(customerText, services) {
+function safeServiceFromCustomer(customerText, services, serviceAliases = []) {
   const normalize = (text) => String(text || "")
     .normalize("NFKC").toLocaleLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "");
-  const input = normalize(customerText);
-  const matched = (Array.isArray(services) ? services : []).filter((service) => {
+  const sourceText = String(customerText || "").normalize("NFKC").toLocaleLowerCase();
+  const compactText = normalize(sourceText);
+  const hasNamedTerm = (rawTerm) => {
+    const term = normalize(rawTerm);
+    if (term.length < 2) return false;
+    // Do not match short Latin aliases like "9D" inside "19D" or a code.
+    if (/^[a-z0-9]{2,4}$/u.test(term)) {
+      return new RegExp("(^|[^a-z0-9])" + term + "(?=$|[^a-z0-9])", "iu")
+        .test(sourceText);
+    }
+    return compactText.includes(term);
+  };
+
+  const byName = new Map();
+  for (const service of Array.isArray(services) ? services : []) {
     const name = String(service?.name || "").trim();
-    return name && normalize(name).length >= 3 && input.includes(normalize(name));
-  });
-  if (matched.length !== 1 || hasCommercialReplyContent(matched[0].name)) return null;
-  return matched[0];
+    if (normalize(name).length >= 2) byName.set(normalize(name), service);
+  }
+  const matches = new Map();
+  for (const [key, service] of byName) {
+    if (hasNamedTerm(service.name)) matches.set(key, service);
+  }
+  const exactMatches = [...matches.values()];
+  // The canonical name of a combination treatment takes precedence over its
+  // own short constituent aliases, provided no second canonical service is
+  // separately named.
+  if (exactMatches.length === 1 &&
+      /[+＋&]|组合|組合|\b(?:combo|combination)\b/iu.test(exactMatches[0].name) &&
+      !hasCommercialReplyContent(exactMatches[0].name)) {
+    return exactMatches[0];
+  }
+  // Use only explicit, configured aliases resolving to existing services.
+  // Mixed treatment enquiries fail closed to a generic greeting.
+  for (const alias of Array.isArray(serviceAliases) ? serviceAliases : []) {
+    const key = normalize(alias?.officialService);
+    const canonical = byName.get(key);
+    if (!canonical) continue;
+    const terms = String(alias?.alias || "").split(/[,|;，、]+/u);
+    if (terms.some((term) => hasNamedTerm(term.trim()))) {
+      matches.set(key, canonical);
+    }
+  }
+  if (matches.size !== 1) return null;
+  const service = matches.values().next().value;
+  return hasCommercialReplyContent(service.name) ? null : service;
 }
 
-function safeIntroReply({ customerText, language, services }) {
-  const service = safeServiceFromCustomer(customerText, services);
+function safeIntroReply({ customerText, language, services, serviceAliases = [] }) {
+  const service = safeServiceFromCustomer(customerText, services, serviceAliases);
   const name = String(service?.name || "").trim();
   const duration = String(service?.duration || "").trim();
   const includeDuration = name && DURATION_REQUEST.test(customerText) &&
@@ -80,6 +118,7 @@ function guardFutureOfferIntroductionReply({
   flagged = false,
   language = "en",
   services = [],
+  serviceAliases = [],
 } = {}) {
   const original = String(reply || "");
   if (String(channel || "").toLowerCase() !== "whatsapp" ||
@@ -89,7 +128,7 @@ function guardFutureOfferIntroductionReply({
       !hasCommercialReplyContent(original)) {
     return { reply: original, replaced: false };
   }
-  const safe = safeIntroReply({ customerText, language, services });
+  const safe = safeIntroReply({ customerText, language, services, serviceAliases });
   // Even misconfigured service names and durations must never bypass the gate.
   if (hasCommercialReplyContent(safe)) {
     return {
