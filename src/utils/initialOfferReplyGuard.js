@@ -4,6 +4,7 @@ const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
   hasCustomerServiceEnquiry,
+  isContextualAdServiceEnquiry,
 } = require("./customerEnquiryEvidence");
 
 // A final outbound boundary for a first WhatsApp message without a current
@@ -266,9 +267,11 @@ function ensureFirstAssessmentInvitation({
     return { reply: original, appended: false };
   }
   const verified = safeServiceFromCustomer(customerText, services, serviceAliases);
-  const verifiedCreative = (Array.isArray(services) ? services : []).find(
-    item => item?.name === verifiedAdService && item?.name === treatment
-  );
+  const verifiedCreative = isContextualAdServiceEnquiry(customerText)
+    ? (Array.isArray(services) ? services : []).find(
+        item => item?.name === verifiedAdService && item?.name === treatment
+      )
+    : null;
   const service = verified || verifiedCreative;
   if (!service) return { reply: original, appended: false };
   // Do not promise an automatic voucher, an extra RM100 reduction or a free
