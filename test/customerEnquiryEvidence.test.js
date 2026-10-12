@@ -315,3 +315,33 @@ test("asking how a named package works is not a request for its price graphics",
     "请发我配套选项", "骨盆套餐多少钱?",
   ]) assert.equal(hasCustomerPriceEnquiry(question), true, question);
 });
+
+
+test("package description requests stay informational across Chinese, English and CTWA", () => {
+  for (const text of [
+    "Please send me package details",
+    "Show me this treatment package",
+    "Can you send me the pelvic package details?",
+    "What are the package details?",
+    "Can I get details about package B?",
+    "可以发我骨盆配套介绍吗？",
+    "请发我骨盆配套的内容",
+    "你们的配套内容是什么？",
+    "Hi～我想了解 Neutro Sense TCM 的骨盆配套。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(text), false, text);
+  }
+  for (const text of [
+    "do you have a package?",
+    "Package B?",
+    "你们有什么配套？",
+    "骨盆套餐有哪些？",
+    "请发我配套选项",
+    "What packages are available?",
+    "Show me packages available",
+    "package apa ada?",
+    "现在骨盆多少钱？",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(text), true, text);
+  }
+});
