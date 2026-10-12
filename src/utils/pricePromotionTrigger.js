@@ -65,10 +65,10 @@ async function resolvePricePromotionForReply({
   if (
     // A verified monetary question is sufficient for opted-in clinics even
     // when the LLM under-classifies priceQuery. Keep all media safety checks.
-    (priceQuery !== true && packageQuery !== true &&
-      !(clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-        verifiedServiceFromText === treatment &&
-        hasExplicitPriceRequest(customerText, { treatment }))) ||
+    (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? (!treatment || !verifiedServiceFromText || verifiedServiceFromText !== treatment ||
+          !hasExplicitPriceRequest(customerText, { treatment }))
+      : (priceQuery !== true && packageQuery !== true)) ||
     !(hasCustomerPriceEnquiry(customerText) ||
       (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
         isContextualBarePriceQuestion(customerText, treatment))) ||
