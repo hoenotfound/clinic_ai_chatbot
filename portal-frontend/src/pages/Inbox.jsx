@@ -2198,6 +2198,7 @@ function ThreadView({
     messagingPolicy.code === "outside_customer_service_window" &&
     !messagingPolicy.optedOutAt &&
     !messagingPolicy.marketingOptedOut;
+  const freeWindowRefreshMinute = Math.floor(policyNow / 60000);
   const freeTemplateWindowActive =
     canCheckFreeTemplateWindow &&
     verifiedFreeTemplateWindow?.contactId === contact?.contact_id &&
@@ -2249,7 +2250,7 @@ function ThreadView({
         if (!cancelled) setVerifiedFreeTemplateWindow({ contactId, verified: false });
       });
     return () => { cancelled = true; };
-  }, [contact?.contact_id, canCheckFreeTemplateWindow, Math.floor(policyNow / 60000)]);
+  }, [contact?.contact_id, canCheckFreeTemplateWindow, freeWindowRefreshMinute]);
 
   useEffect(() => {
     setAttentionExpanded(false);
