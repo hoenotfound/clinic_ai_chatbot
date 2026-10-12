@@ -2,6 +2,7 @@ const config = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { relatedMediaTargets } = require("./relatedServicePolicy");
 
 function normalizeOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
@@ -1068,15 +1069,15 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const conversationContext = normalizedOptions.conversationContext;
   const hasScopedConversationContext =
     conversationContext && typeof conversationContext === "object";
-  const fullBodyOsteopathyEnquiry =
-    (config.serviceAliases || []).some((alias) =>
-      String(alias?.alias || "").trim() === "整骨" &&
-      String(alias?.officialService || "").trim() === "骨盆调理"
-    ) &&
-    /整骨/u.test(String(conversationContext?.currentCustomerText || "")) &&
-    !/(?:小颜|小顏|脸部|臉部|面部|美颜|美顏|face|facial)/iu.test(
-      String(conversationContext?.currentCustomerText || "")
-    );
+  // Related photos are explicitly opted in by this client's result-media
+  // configuration; sharing examples never changes the primary treatment.
+  const selectedConversationServices = conversationSelectedServices(conversationContext);
+  const relatedInformation = selectedConversationServices.length === 1
+    ? relatedMediaTargets(selectedConversationServices[0].name, config.resultMedia)
+        .slice(0, 2)
+        .map((name) => configuredServiceByExactName(name))
+        .filter(Boolean)
+    : [];
 
 
   const servicesList = hasScopedConversationContext
@@ -1204,7 +1205,14 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT
 - Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit. Before & After examples are a separate system and remain eligible.
 ` : ""}
 
-${fullBodyOsteopathyEnquiry ? `WHOLE-BODY 整骨 ENQUIRY:\n- Explain that Neutro Sense offers full-body manual posture/body adjustment, not pelvis-only treatment. The pelvic area is one relevant part of the overall body assessment and care.\n- Give the configured 骨盆调理 information as a related example, and offer the 1对1的体态评估 + 体验. Do not imply every customer needs pelvic correction, claim that pelvic packages cover a full-body treatment, or invent an overall full-body price.\n- Only discuss configured monetary prices when the current customer explicitly requests them, and distinguish a pelvic package price from an unconfirmed full-body treatment price.\n` : ""}
+${relatedInformation.length ? `RELATED TREATMENT INFORMATION (informational only):
+- The customer's primary interest is ${selectedConversationServices[0].name}. Answer its full configured description first.
+- The following are related services whose examples can be shown; they are NOT the same treatment, and their durations, coverage and prices are NOT prices for ${selectedConversationServices[0].name}.
+${relatedInformation.map((service) => `- ${service.name}: ${promptContextText(service.description, 950) || "No description configured."} | Standalone duration: ${promptContextText(service.duration, 120) || "Not confirmed"}`).join("\\n")}
+- You may explain how these related treatments fit into a 1对1的体态评估 + 体验. Before & After photos for a related treatment are examples of that specific treatment, not proof of identical results for the primary treatment.
+- Never quote or send a related treatment's package price as the primary treatment's price. If the customer wants the primary treatment's price and it is not configured, acknowledge that staff must confirm it. If the customer explicitly asks for the related treatment's own package price, distinguish it clearly.
+` : ""}
+
 
 COMMON TERMS ${terms.customerPlural.toUpperCase()} USE (match these to the configured ${terms.servicePlural}; don't hand off just because the wording doesn't match the official name):
 ${aliasList}
