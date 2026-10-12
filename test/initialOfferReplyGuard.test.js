@@ -374,3 +374,33 @@ test("price-free Package A/B comparison survives first-contact reply guard", () 
     assert.equal(commercial(guarded.reply), false, reply);
   }
 });
+
+
+test("address and phone context does not conceal unrelated treatment prices", () => {
+  const enquiry = "Hi～我想了解骨盆调理，之后可以 WhatsApp 跟进我 😊";
+  for (const reply of [
+    "地址在PJ 骨盆调理388",
+    "地址在PJ C-12-6 骨盆配套 388 / 288",
+    "电话 012-3456789 骨盆调理 388",
+    "Our address is in PJ pelvic treatment 388",
+    "Contact us at 012-3456789; pelvic treatment 288",
+    "地址在 PJ 47301 骨盆调理 388",
+  ]) {
+    assert.equal(commercial(reply), true, reply);
+    const guarded = checkReply(enquiry, reply);
+    assert.equal(guarded.replaced, true, reply);
+    assert.equal(commercial(guarded.reply), false, reply);
+  }
+  for (const reply of [
+    "地址在 PJ 47301",
+    "地址在 PJ C-12-6 Dataran 3 Two Business Centre",
+    "电话号码是 017-483 1336",
+    "Contact us at 012-649 9718",
+    "地址 PJ 47301，电话 017-483 1336",
+    "我们的营业时间是10am到8pm，骨盆调理一般30–40分钟",
+    "骨盆套餐A和套餐B可以选哦。",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(enquiry, reply), { reply, replaced: false }, reply);
+  }
+});
