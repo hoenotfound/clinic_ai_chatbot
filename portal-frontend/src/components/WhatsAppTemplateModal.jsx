@@ -630,6 +630,12 @@ export default function WhatsAppTemplateModal({
                             ? "A recent free-entry billing receipt was found. It does not guarantee that this template will be free; Meta determines the charge after delivery."
                             : "Free-entry billing evidence could not be checked. Assume this template may be billed."}
                     </p>
+                    {catalog?.billingAdvisory?.freeEntry?.verified === true &&
+                      catalog?.billingAdvisory?.freeEntry?.sendReady !== true && (
+                        <p className="mt-1 text-[10px] font-semibold leading-4">
+                          Free period verified, but sending is paused pending billing checks.
+                        </p>
+                      )}
                     <p className="mt-1 text-[10px] leading-4">
                       Customer opt-in permits messaging but never guarantees free billing.
                     </p>
