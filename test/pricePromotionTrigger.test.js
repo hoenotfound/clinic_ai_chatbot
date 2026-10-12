@@ -800,3 +800,26 @@ test("one unconfirmed option holds an entire multi-package pricing sequence", as
   assert.equal(decision, null, "do not send only half of the configured A/B package bundle");
   assert.ok(lookups >= 2);
 });
+
+test("CTWA service-interest opt-ins cannot auto-send pricing even when AI sets priceQuery", async () => {
+  const promo = {
+    name:"Pelvis Trial",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    imageUrl:"https://example.test/pelvic-promo.jpg",caption:"RM388",
+  };
+  const opts = base({
+    treatment:"骨盆调理",promotions:[promo],
+    priceQuery:true,packageQuery:true,
+  });
+  const prefills = [
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi～我现在想了解骨盆调理，可以跟进我，有优惠也发我看看",
+  ];
+  for (const customerText of prefills) {
+    assert.equal(await resolvePricePromotionForReply({...opts,customerText}),null,customerText);
+  }
+  const real = await resolvePricePromotionForReply({
+    ...opts,customerText:prefills[1]+"。骨盆套餐有哪些？",
+  });
+  assert.equal(real?.packages?.length,1);
+});
