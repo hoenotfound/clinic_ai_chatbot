@@ -1023,6 +1023,7 @@ async function processIncomingMessage(
       const invited = ensureFirstAssessmentInvitation({
         isFirstMessage, customerText: text, reply, flagged, language: mediaLanguage,
         serviceQuery, treatment: details?.treatment,
+        verifiedAdService: serviceQuerySource === "meta_ad" ? metaAdCreativeService : null,
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
       });
       reply = invited.reply;
@@ -1235,6 +1236,7 @@ async function processIncomingMessage(
         priceQuery,
         packageQuery,
         treatment: verifiedPriceService?.name || details?.treatment,
+        verifiedServiceFromText: verifiedPriceService?.name || null,
         customerText: text,
         conversationHistory: history,
         flagged,
