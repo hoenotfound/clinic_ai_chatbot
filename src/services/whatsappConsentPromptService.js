@@ -26,6 +26,13 @@ function liveEnabled(settings) {
     live.consentRequest.activatedAt===settings.consentRequest.activatedAt &&
     live.triggerMode===settings.triggerMode;
 }
+function pricingCoordination(settings) {
+  const pricing=settings?.pricingReminder;
+  const active=pricing?.enabled===true &&
+    clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled!==true &&
+    Number.isFinite(Date.parse(pricing?.activatedAt));
+  return { pricingEnabled:active, pricingActivation:active?pricing.activatedAt:null };
+}
 function publish(message,reason) {
   realtimeEvents.publish("conversation_changed",{
     contactId:message.contact_id,messageId:message.id,reason,
@@ -38,7 +45,8 @@ async function sendOne(candidate,settings,now=new Date()) {
   });
   if (!question) return false;
   const claimed=await repo.claim(candidate,{
-    activatedAt:activationCutoff(settings),triggerMode:settings.triggerMode,now,question,
+    activatedAt:activationCutoff(settings),triggerMode:settings.triggerMode,
+    ...pricingCoordination(settings),now,question,
   });
   if (!claimed) return false;
   publish(claimed.message,"message");
@@ -54,6 +62,7 @@ async function sendOne(candidate,settings,now=new Date()) {
           !quietHoursStatus(new Date(),settings.quietHours).active &&
           repo.stillEligible(claimed,{
             activatedAt:activationCutoff(settings),triggerMode:settings.triggerMode,
+            ...pricingCoordination(settings),
           }),
       }
     );
@@ -62,7 +71,34 @@ async function sendOne(candidate,settings,now=new Date()) {
     result={success:false,unknown:true,ambiguous:true,
       error:"Consent prompt delivery could not be confirmed."};
   }
-  // A claimed prompt is final. Unknown acceptance must never be retried blindly.
+  // A result blocked BEFORE the provider was contacted is safe to defer.
+  // This includes Strict RM0 billing reservations awaiting reconciliation.
+  // Interrupted/ambiguous provider calls are NEVER retried automatically.
+  const provablyUnsent = result?.cancelled===true ||
+    result?.policyBlocked===true || result?.preSendCheckFailed===true;
+  if (provablyUnsent && !result?.partialCaptionSent) {
+    try {
+      const deferred=await repo.deferUnsent(
+        claimed,result?.policyCode||result?.error||"pre_send_cancelled"
+      );
+      if (!deferred) throw new Error("Could not atomically release an unsent prompt.");
+      publish({...claimed.message,delivery_status:"cancelled"},"message_cancelled");
+      if (deferred.attempts>=3) {
+        await contactsRepo.setDeliveryAttention(claimed.contact_id,
+          "Consent request blocked before delivery three times. Staff review required.")
+          .catch(()=>{});
+      }
+      return deferred.retry_after ? new Date(deferred.retry_after).toISOString() : false;
+    } catch(err) {
+      console.error("Consent request could not be safely deferred:",err);
+      await repo.markSent(claimed.promptId,"unknown").catch(()=>{});
+      await contactsRepo.setDeliveryAttention(claimed.contact_id,
+        "Consent request status is uncertain. Staff must review before retrying.")
+        .catch(()=>{});
+      return false;
+    }
+  }
+  // A claimed prompt is final on unknown acceptance. Never retry blindly.
   const status=result?.success && result?.wamid ? "accepted" :
     result?.unknown || result?.ambiguous ? "unknown" : "failed";
   try {
@@ -94,7 +130,7 @@ async function runFinalConsentPrompts(settings,now=new Date()) {
       !activationCutoff(settings)) return null;
   const candidates=await repo.listCandidates({
     activatedAt:activationCutoff(settings),
-    triggerMode:settings.triggerMode,now,
+    triggerMode:settings.triggerMode,...pricingCoordination(settings),now,
   });
   let next=null;
   for (const candidate of candidates) {
@@ -106,7 +142,11 @@ async function runFinalConsentPrompts(settings,now=new Date()) {
       break;
     }
     try {
-      await sendOne(candidate,settings,now);
+      const outcome=await sendOne(candidate,settings,now);
+      if (typeof outcome==="string") {
+        const retryTime=Date.parse(outcome);
+        if (Number.isFinite(retryTime) && (!next || retryTime<Date.parse(next))) next=outcome;
+      }
     } catch(err) {
       console.error("Final WhatsApp consent request failed for contact",candidate.contact_id,err);
       const retryAt=new Date(Date.now()+60_000).toISOString();
