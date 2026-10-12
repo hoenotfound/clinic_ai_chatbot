@@ -23,6 +23,7 @@ const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const pricingReminderService = require("./pricingReminderService");
+const whatsappConsentPromptService = require("./whatsappConsentPromptService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
   normalizeQuietHours,
@@ -206,6 +207,10 @@ function getActiveSettings() {
     activatedAt: settings.activatedAt,
     quietHours,
     steps,
+    consentRequest: {
+      enabled: settings.consentRequest?.enabled === true,
+      activatedAt: settings.consentRequest?.activatedAt || null,
+    },
     pricingReminder: {
       enabled: settings.pricingReminder?.enabled === true,
       activatedAt: settings.pricingReminder?.activatedAt || null,
@@ -1660,6 +1665,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
     }
 
     const pricingNextDueAt = await pricingReminderService.runPricingReminders(settings, now);
+    const consentNextDueAt = await whatsappConsentPromptService.runFinalConsentPrompts(settings, now);
 
     const liveSettings = getActiveSettings();
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
@@ -1681,7 +1687,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       candidateCount: candidates.length,
       recoveredCount,
       nextDueAt: (() => {
-        const times = [nextDueAt, pricingNextDueAt]
+        const times = [nextDueAt, pricingNextDueAt, consentNextDueAt]
           .filter(Boolean)
           .map((value) => new Date(value).getTime())
           .filter(Number.isFinite);
