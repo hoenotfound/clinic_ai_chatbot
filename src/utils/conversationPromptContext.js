@@ -1,5 +1,5 @@
 const config = require("../config/clinicConfig");
-const { hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
+const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 const {
   findMentionedPromotionPackages,
   getActivePromotions,
@@ -421,14 +421,14 @@ function buildConversationPromptContext(
     .map((message) => messageText(message))
     .join("\n");
 
-  // Follow-up consent is not a request for immediate promotional details.
-  // Even a separate request for results does not turn future offers into prices.
+  // Scope commercial knowledge to the CURRENT customer request; future
+  // follow-up permission alone must not load or elicit package pricing.
+  const currentCommercialText = stripFutureFollowUpPermission(currentCustomerText).text;
   const currentPromotionIntent =
-    !hasFuturePromotionPermissionWithoutPrice(currentCustomerText) &&
-    (PROMOTION_PATTERN.test(currentCustomerText) ||
-    (currentCustomerText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCustomerText)) ||
-    configuredPromotionReference(currentCustomerText, promotions) ||
-    PROMOTION_DETAIL_PATTERN.test(currentCustomerText));
+    PROMOTION_PATTERN.test(currentCommercialText) ||
+    (currentCommercialText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCommercialText)) ||
+    configuredPromotionReference(currentCommercialText, promotions) ||
+    PROMOTION_DETAIL_PATTERN.test(currentCommercialText);
   const previousCustomerText = customerMessages.length > 1
     ? messageText(customerMessages.at(-2))
     : "";
