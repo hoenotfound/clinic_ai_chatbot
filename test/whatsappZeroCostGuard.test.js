@@ -18,7 +18,7 @@ function mode(t,enabled=true){
     else process.env.WHATSAPP_PHONE_NUMBER_ID=oldAccount;});
 }
 
-function mockedDatabase({eligible=true,billed=false,sevenDays=false}={}){
+function mockedDatabase({eligible=true,billed=false,sevenDays=false,sessionVerified=eligible}={}){
   const calls=[];
   const state={status:"idle",reservation_id:null,wamid:null,recipient:null};
   const priced=new Map();
@@ -31,6 +31,7 @@ function mockedDatabase({eligible=true,billed=false,sevenDays=false}={}){
     if(sql.includes("FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1"))
       return {rows:priced.has(params[0])?[priced.get(params[0])]:[]};
     if(sql.includes("AS tripped"))return {rows:[{tripped:billed}]};
+    if(sql===guard.VERIFIED_SESSION_WINDOW_SQL)return {rows:[{verified:sessionVerified}]};
     if(sql.includes("AS verified"))return {rows:[{verified:sevenDays}]};
     if(sql.includes("AS eligible"))return {rows:[{eligible}]};
     if(sql.includes("UPDATE whatsapp_free_only_send_gate")){
@@ -162,6 +163,40 @@ test("Inbox preview honors strict billing blocks", async t => {
   assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: billed }), false);
   const unverified = mockedDatabase({ eligible: false });
   assert.equal(await guard.hasVerifiedFreeTemplateWindow("601130535053", { database: unverified }), false);
+});
+
+test("verified free-entry remains visible while strict billing is temporarily held", async t => {
+  mode(t);
+  const db = mockedDatabase({eligible:true,sessionVerified:true});
+  let status = await guard.inspectFreeTemplateWindow("601130535053",{database:db});
+  assert.deepEqual(status,{verified:true,sendReady:true,blockedReason:null});
+
+  db.state.status = "reserved";
+  status = await guard.inspectFreeTemplateWindow("601130535053",{database:db});
+  assert.equal(status.verified,true);
+  assert.equal(status.sendReady,false);
+  assert.equal(status.blockedReason,"zero_cost_previous_send_unreconciled");
+
+  db.state.status = "idle";
+  const bad = mockedDatabase({eligible:false,sessionVerified:true});
+  status = await guard.inspectFreeTemplateWindow("601130535053",{database:bad});
+  assert.equal(status.verified,true);
+  assert.equal(status.sendReady,false);
+  const expired = mockedDatabase({eligible:true,sessionVerified:false});
+  status = await guard.inspectFreeTemplateWindow("601130535053",{database:expired});
+  assert.equal(status.verified,false);
+  assert.equal(status.sendReady,false);
+  assert.equal(expired.calls.some(x=>x.sql===guard.VERIFIED_WINDOW_SQL),false,
+    "expired evidence must not be used to check send readiness");
+});
+
+test("evidence-only lookup cannot authorize or reserve a new WhatsApp send", async t => {
+  mode(t,false);
+  const db = mockedDatabase({eligible:true});
+  const status = await guard.inspectFreeTemplateWindow("601130535053",{database:db});
+  assert.equal(status.verified,true);
+  assert.equal(db.calls.some(x=>/UPDATE whatsapp_free_only_send_gate|INSERT INTO whatsapp_free_only_send_gate/.test(x.sql)),false);
+  assert.equal(db.state.status,"idle");
 });
 
 test("every WhatsApp Cloud API outgoing path is guarded, including templates",()=>{
