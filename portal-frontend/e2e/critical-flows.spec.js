@@ -364,7 +364,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
-        billingAdvisory: { evidence: verifiedFreeTemplateWindow ? "recent_free_entry_evidence" : "no_ctwa_referral", reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
+        billingAdvisory: { evidence: verifiedFreeTemplateWindow ? "recent_free_entry_evidence" : "no_ctwa_referral", freeEntry: { verified: verifiedFreeTemplateWindow, sendReady: verifiedFreeTemplateWindow && freeTemplateSendReady }, reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
@@ -1044,8 +1044,9 @@ test("paused strict sending keeps CTWA evidence but never paints sending green",
   await expect(heading.locator("..").locator("..").locator("..")).toHaveClass(/bg-amber-50/);
   await expect(page.getByText("24h closed. Check the billing status before sending.")).toBeVisible();
   await page.getByRole("button", { name: "Review consent & templates" }).click();
-  await expect(page.getByRole("dialog", { name: "Send WhatsApp template" })
-    .getByText(/A recent free-entry billing receipt was found/)).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
+  await expect(dialog.getByText(/A recent free-entry billing receipt was found/)).toBeVisible();
+  await expect(dialog.getByText(/Free period verified, but sending is paused/)).toBeVisible();
   expectNoUnexpectedApi(apiState);
 });
 
