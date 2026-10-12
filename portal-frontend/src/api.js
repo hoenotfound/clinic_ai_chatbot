@@ -456,6 +456,13 @@ export const api = {
   updateLead: (leadId, data) =>
     request(`/pipeline/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(data) }),
   listLeadActivities: (leadId) => request(`/pipeline/leads/${leadId}/activities`),
+  getAssessmentVoucher: (leadId) =>
+    request(`/pipeline/leads/${leadId}/assessment-voucher`),
+  updateAssessmentVoucher: (leadId, payload) =>
+    request(`/pipeline/leads/${leadId}/assessment-voucher`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   addLeadNote: (leadId, content) =>
     request(`/pipeline/leads/${leadId}/notes`, {
       method: "POST",
