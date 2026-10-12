@@ -359,7 +359,7 @@ test("verified first service enquiry gets an assessment invite while keeping the
   const untouched=[
     {...opts,isFirstMessage:false,customerText:"想了解骨盆调理",treatment:"骨盆调理"},
     {...opts,customerText:"骨盆多少钱？",treatment:"骨盆调理"},
-    {...opts,customerText:"我想了解骨盆调理",serviceQuery:false,treatment:null},
+    {...opts,customerText:"我想了解这个",serviceQuery:false,treatment:null},
     {...opts,customerText:"我想了解骨盆调理",flagged:true,treatment:"骨盆调理"},
     {...opts,customerText:"想了解骨盆和3D",treatment:"骨盆调理"},
   ];
