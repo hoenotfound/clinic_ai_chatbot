@@ -87,6 +87,9 @@ function createInboundMessageClaimService({
     // the customer's message durable and visible, mark it unread/attention,
     // then complete its processing job without generating any outbound reply.
     const optOutScope = customerOptOutScope(incoming);
+    const socialStopEnforcedAtStore =
+      ["facebook", "instagram"].includes(channel) &&
+      incoming?._socialStopEnforcedAtomically === true;
     const separateServiceQuestion = optOutScope === "marketing"
       ? whatsappPolicy.extractQuestionAfterMarketingOptOut(incoming.text, optOutScope)
       : null;
@@ -99,10 +102,15 @@ function createInboundMessageClaimService({
           ? new Date(Math.min(Date.now(), Number(incoming.timestamp) * 1000)).toISOString()
           : savedInbound.created_at || null) : null;
       try {
-        if (optOutScope === "marketing") {
-          await policy.recordMarketingOptOut(contact.id, source, originalStopAt);
-        } else {
-          await policy.recordOptOut(contact.id, source, originalStopAt);
+        // WhatsApp and legacy/unmarked social jobs retain this recovery path.
+        // New social inbound messages already revoked consent atomically with
+        // the durable INSERT. Never redate that STOP on a later job retry.
+        if (!socialStopEnforcedAtStore) {
+          if (optOutScope === "marketing") {
+            await policy.recordMarketingOptOut(contact.id, source, originalStopAt);
+          } else {
+            await policy.recordOptOut(contact.id, source, originalStopAt);
+          }
         }
       } catch (err) {
         // Do not complete an unpersisted STOP. The recovery worker must retry
@@ -370,13 +378,21 @@ function createInboundMessageClaimService({
           incoming.photoUrl || null
         );
 
+    const stopScope = customerOptOutScope(incoming);
+    const isSocialAtomicStop = ["facebook", "instagram"].includes(channel) &&
+      Boolean(stopScope);
+    // The inbound JSON persisted in the job must match what live processing
+    // sees; recovery uses this marker to avoid re-applying an older STOP.
+    const storedIncoming = isSocialAtomicStop
+      ? { ...incoming, _socialStopEnforcedAtomically: true }
+      : { ...incoming, _socialStopEnforcedAtomically: false };
     const durableClaim = await processing.storeInboundClaim({
       contactId: contact.id,
       content: initialInboundText(incoming, config),
       storedMessageId: storedInboundId,
       channel,
-      incoming,
-      optOutScope: channel === "whatsapp" ? customerOptOutScope(incoming) : null,
+      incoming: storedIncoming,
+      optOutScope: stopScope,
     });
 
     // A resolved message_edit job is complete only after the normal customer
@@ -402,7 +418,7 @@ function createInboundMessageClaimService({
 
     publishInboundMessage(events, durableClaim.savedInbound);
     return {
-      incoming,
+      incoming: storedIncoming,
       contact,
       savedInbound: durableClaim.savedInbound,
       processingJob: durableClaim.processingJob,
