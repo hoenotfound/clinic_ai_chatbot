@@ -1,5 +1,6 @@
 const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
 const clinicConfig = require("../config/clinicConfig");
+const { relatedPricingConflict } = require("./relatedServicePolicy");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const {
   findMentionedPromotionPackages,
@@ -55,6 +56,9 @@ async function resolvePricePromotionForReply({
   needsAttention,
   textSendSucceeded,
   promotions,
+  services = clinicConfig.services,
+  serviceAliases = clinicConfig.serviceAliases,
+  resultMedia = clinicConfig.resultMedia,
   language = "en",
   contactId,
   wasPromoRecentlySent,
@@ -78,6 +82,14 @@ async function resolvePricePromotionForReply({
   ) {
     return null;
   }
+
+  // Promotional media always belongs to its priced service, never to a
+  // related service that merely borrows result examples. Protect against
+  // incorrect AI treatment selection and short price follow-ups alike.
+  if (relatedPricingConflict({
+    customerText, treatment, conversationHistory,
+    services, serviceAliases, resultMedia,
+  })) return null;
 
   const genericBundle = getPricePromotionBundle(
     promotions,
