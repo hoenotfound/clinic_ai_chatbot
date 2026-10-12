@@ -489,3 +489,49 @@ test("first assessment invite is suppressed for independent clinical red flags d
   }
   assert.equal(ensureFirstAssessmentInvitation({...args,customerText:"我想了解骨盆调理"}).appended,true);
 });
+
+
+test("assessment-first text guard never trusts Gemini treatment for a bare price question", () => {
+  const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  for (const [customerText,language] of [
+    ["Berapa?","ms"],
+    ["多少钱？","zh"],
+    ["How much?","en"],
+    ["价位？","zh"],
+    ["3D 和骨盆调理分别多少钱？","zh"],
+  ]) {
+    const guessedReply="骨盆调理 RM388，3D 小颜术 RM488";
+    const result=guardAssessmentFirstPricingReply({
+      customerText,reply:guessedReply,language,services,
+      treatment:null,requireVerifiedTreatment:true,
+    });
+    assert.equal(result.replaced,true,customerText);
+    assert.equal(hasTreatmentPriceContent(result.reply),false,customerText);
+    assert.doesNotMatch(result.reply,/RM388|RM488|优惠券|voucher|baucar/iu);
+    assert.match(result.reply,/哪一项疗程|rawatan yang mana|Which treatment/u);
+  }
+  for(const [customerText,language,treatment] of [
+    ["Berapa?","ms","骨盆调理"],
+    ["多少钱？","zh","骨盆调理"],
+    ["骨盆调理多少钱？","zh","骨盆调理"],
+    ["3D多少钱？","zh","3D 小颜术"],
+  ]) {
+    const reply=treatment==="骨盆调理"?"骨盆调理 RM388":"3D 小颜术 RM488";
+    assert.deepEqual(guardAssessmentFirstPricingReply({
+      customerText,reply,language,services,treatment,
+      requireVerifiedTreatment:true,
+    }),{reply,replaced:false},customerText);
+  }
+  const noPrice="需要中医师先做体态评估，才能知道什么方案适合你。";
+  assert.deepEqual(guardAssessmentFirstPricingReply({
+    customerText:"Berapa?",reply:noPrice,language:"ms",
+    treatment:null,requireVerifiedTreatment:true,
+  }),{reply:noPrice,replaced:false},"safe non-price explanations are preserved");
+});
+
+test("production assessment-first pricing guard uses only verified text-service resolution",()=>{
+  const server=fs.readFileSync(path.resolve(__dirname,"../src/server.js"),"utf8");
+  assert.match(server,/const verifiedPriceService = [\s\S]*?safeServiceFromCustomer\(text, clinicConfig\.services, clinicConfig\.serviceAliases\)/);
+  assert.match(server,/guardAssessmentFirstPricingReply\(\{[\s\S]*?treatment: verifiedPriceService\?\.name \|\| null,[\s\S]*?requireVerifiedTreatment: true,/);
+  assert.doesNotMatch(server,/guardAssessmentFirstPricingReply\(\{[\s\S]{0,400}treatment: verifiedPriceService\?\.name \|\| details\?\.treatment/);
+});
