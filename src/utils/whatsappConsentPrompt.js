@@ -34,7 +34,7 @@ function consentButtons(promptId,language="zh") {
   const id=Number(promptId);
   if(!Number.isSafeInteger(id)||id<=0)throw new Error("Invalid consent request");
   const titles=language==="en"
-    ? ["Yes, updates & offers","Not now"]
+    ? ["Yes, updates/offers","Not now"]
     : language==="ms"
       ? ["Ya, saya setuju","Tak mahu"]
       : [YES_TEXT,NO_TEXT];
