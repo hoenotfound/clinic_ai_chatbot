@@ -349,3 +349,28 @@ test("real client case counts stay factual while Chinese bare ringgit amounts ar
     assert.equal(checkReply(enquiry, reply).replaced, true, reply);
   }
 });
+
+
+test("price-free Package A/B comparison survives first-contact reply guard", () => {
+  const initial = "Hi～我想了解骨盆配套。之后 WhatsApp 可以跟进我，有优惠也可以通知我 😊";
+  for (const reply of [
+    "骨盆套餐A和套餐B主要分别针对不同护理需求，中医师会先评估。",
+    "骨盆配套A包含腹直肌，配套B侧重骨盆。",
+    "套餐 A 和 套餐 B 均有不同的护理流程，可以先介绍。",
+    "Package A and Package B focus on different goals.",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(initial, reply), { reply, replaced: false }, reply);
+  }
+  for (const reply of [
+    "骨盆套餐A RM388，套餐B RM288",
+    "骨盆配套A 388，配套B 288",
+    "Package A 388 and Package B 288",
+    "骨盆套餐A和套餐B有本月优惠",
+  ]) {
+    assert.equal(commercial(reply), true, reply);
+    const guarded = checkReply(initial, reply);
+    assert.equal(guarded.replaced, true, reply);
+    assert.equal(commercial(guarded.reply), false, reply);
+  }
+});
