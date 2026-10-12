@@ -19,3 +19,12 @@ CREATE TABLE IF NOT EXISTS whatsapp_consent_prompts (
 );
 CREATE INDEX IF NOT EXISTS idx_whatsapp_consent_prompts_contact
   ON whatsapp_consent_prompts(contact_id,created_at DESC);
+
+-- A completed multi-graphic pricing reminder is proven only after every chosen
+-- package received a durable provider acceptance receipt.
+CREATE TABLE IF NOT EXISTS pricing_reminder_batch_completions (
+  anchor_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  accepted_packages INTEGER NOT NULL CHECK (accepted_packages BETWEEN 1 AND 10),
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
