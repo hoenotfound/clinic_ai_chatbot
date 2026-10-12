@@ -298,3 +298,15 @@ test("price-containing AI follow-up is regenerated once without losing valid fol
     config.automatedFollowUp=settings;
   }
 });
+
+
+test("price image IDs configured as promotions are never recycled into price-free follow-ups",()=>{
+  const { isConfiguredPromotionPriceGraphic }=require("../src/services/followUpService");
+  const promos=[{name:"Pelvis",imageUrl:"https://clinic.example/promo-images/31",
+    packages:[{name:"Package A",imageUrl:"/promo-images/33",followUpImageUrl:"https://clinic.example/promo-images/34"}]}];
+  assert.equal(isConfiguredPromotionPriceGraphic("https://cdn.example/promo-images/31?exp=10",promos),true);
+  assert.equal(isConfiguredPromotionPriceGraphic("/promo-images/33",promos),true);
+  assert.equal(isConfiguredPromotionPriceGraphic("/promo-images/34",promos),true);
+  assert.equal(isConfiguredPromotionPriceGraphic("/api/config/result-media/image/11",promos),false);
+  assert.equal(isConfiguredPromotionPriceGraphic("",promos),false);
+});
