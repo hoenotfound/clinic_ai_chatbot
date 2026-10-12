@@ -34,6 +34,13 @@ test("safe useful treatment answers are preserved",()=>{
   const reply="骨盆调理主要是徒手体态护理 😊 你比较在意小腹还是久坐腰髋紧呢？";
   assert.deepEqual(checkReply(initial,reply),{reply,replaced:false});
 });
+test("ordinary 'feel free to ask' support is not confused with a free promotional gift",()=>{
+  const message = "Feel free to tell us what you'd like to know about 骨盆调理 😊";
+  assert.equal(commercial(message),false);
+  assert.deepEqual(checkReply(initial,message),{reply:message,replaced:false});
+  assert.equal(commercial("Free 1-hour full body massage"),true);
+});
+
 test("configured intro is included in final reply review, after assembly and before send",()=>{
   const contaminated="Hi 欢迎来到 Neutro Sense，目前优惠 RM388\n\n骨盆调理主要是徒手体态护理。";
   const result=checkReply(initial,contaminated);
