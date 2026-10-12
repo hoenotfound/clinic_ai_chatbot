@@ -180,6 +180,12 @@ function createInboundMessageClaimService({
         replyId: incoming.interactiveReplyId,
         businessName: config.clinicName || config.businessName,
       });
+      if (response?.pending) {
+        // The button callback arrived before the provider-accepted prompt's
+        // WAMID could be committed. Do not feed it to the AI or call it consent.
+        // The durable inbound job will retry once that evidence exists.
+        throw new Error("WhatsApp consent button awaiting outbound provider receipt");
+      }
       if (response?.handled) {
         await processing.markCompletedByMessageId(savedInbound.id);
         return null;
