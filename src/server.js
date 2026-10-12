@@ -48,7 +48,8 @@ const {
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
-const { guardFutureOfferIntroductionReply } = require("./utils/initialOfferReplyGuard");
+const { guardFutureOfferIntroductionReply, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -866,6 +867,14 @@ async function processIncomingMessage(
         .filter((message) => message?.role === "user")
         .map((message) => message.content)
     );
+    const marketingStopQuestion = whatsappPolicy.extractQuestionAfterMarketingOptOut(text);
+    // Keep the actual customer message intact in Neon. Only the model's
+    // current-turn context is narrowed to the separately asked service question
+    // so it cannot interpret the marketing refusal as a request for a deal.
+    const replyHistory = marketingStopQuestion
+      ? history.map((entry, index) => index === history.length - 1 && entry?.role === "user"
+          ? { ...entry, content: marketingStopQuestion } : entry)
+      : history;
     const isFirstMessage = forceFirstMessage || history.length === 1;
     const customerMessages = history.filter((message) => message?.role === "user");
     const newestCustomerText = customerMessages.at(-1)?.content || text;
@@ -922,7 +931,7 @@ async function processIncomingMessage(
         );
       }
 
-      const rawAiReply = await ai.getReply(history, {
+      const rawAiReply = await ai.getReply(replyHistory, {
         contactId: contact.id,
         isFirstMessage,
         generateFirstIntro,
@@ -996,6 +1005,17 @@ async function processIncomingMessage(
         console.warn("[Reply guard] Replaced unsolicited commercial text in first WhatsApp opt-in reply.");
         reply = guardedOfferIntro.reply;
       }
+    }
+
+    // A marketing STOP must not become a price/promotion reply even if the
+    // model adds unsolicited commercial copy. Preserve useful service answers.
+    if (marketingStopQuestion && hasCommercialReplyContent(reply) && !flagged) {
+      reply = safeIntroReply({
+        customerText: marketingStopQuestion,
+        language: mediaLanguage,
+        services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+      });
     }
 
     // Coexistence staff can reply from the phone while generation is in flight.
@@ -1144,6 +1164,23 @@ async function processIncomingMessage(
       }
     }
 
+    // Honor the just-recorded marketing opt-out on this turn. The separate
+    // service question is answerable, but no optional promotional or results
+    // media should be sent together with an explicit refusal of marketing.
+    if (marketingStopQuestion) {
+      try {
+        await resultMediaDecisionRepo.recordDecision({
+          contactId: contact.id,
+          inboundMessageId: savedInbound.id,
+          status: "skipped",
+          reason: "marketing_opt_out_turn",
+        });
+      } catch (auditError) {
+        console.warn("[Result media] marketing opt-out audit failed:", auditError);
+      }
+      return { wasFirstMessage, keywordReason };
+    }
+
     // Promotional media is reactive, not a first-message blast. Only follow a
     // successful normal AI reply when the customer explicitly asked about the
     // price or available packages for one known configured service. Existing
@@ -1285,6 +1322,24 @@ async function processIncomingMessage(
       let auditReason = "not_evaluated";
       let auditSelected = 0;
       let auditSent = 0;
+      // Early returns inside the image loop must retain the audit decision.
+      // The final write below still handles normal completion and exceptions.
+      const auditResultExit = async (reason) => {
+        try {
+          await resultMediaDecisionRepo.recordDecision({
+            contactId: contact.id,
+            inboundMessageId: savedInbound.id,
+            status: auditSent > 0 ? "partial"
+              : reason === "provider_send_failed" ? "failed" : "skipped",
+            reason,
+            promotionCount: automaticPromoMediaSent,
+            selectedCount: auditSelected,
+            sentCount: auditSent,
+          });
+        } catch (auditError) {
+          console.warn("[Result media] early exit audit failed:", auditError);
+        }
+      };
       try {
         // A Meta ad may be enriched while the AI composes/sends its text reply.
         // Refresh the local Neon attribution only AFTER the text was accepted,
@@ -1390,12 +1445,14 @@ async function processIncomingMessage(
             });
             if (!resultContact || !(await contactsRepo.canSendAutomaticReviewMedia(resultContact.id))) {
               auditReason = "staff_review_or_takeover";
+              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
             contact = resultContact;
 
             if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
               auditReason = "reply_window_or_staff_cancellation";
+              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
 
@@ -1434,6 +1491,7 @@ async function processIncomingMessage(
               await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
               pendingResultMessage = null;
               pendingResultSend = null;
+              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
 
@@ -1469,6 +1527,7 @@ async function processIncomingMessage(
                 contact.id,
                 `Delivery failed: ${publicDeliveryError(resultError)}`
               );
+              await auditResultExit(auditReason);
               return { wasFirstMessage, keywordReason };
             }
           }
