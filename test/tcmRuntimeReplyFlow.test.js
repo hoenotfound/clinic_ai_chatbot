@@ -71,6 +71,7 @@ function harness({ failDelivery = false } = {}) {
     aiReplyCancellation: {
       keyForWhatsAppNumber: () => "whatsapp:test", snapshot: () => 0,
       safeToSend: () => state.allowSend,
+      settleBeforeSend: async () => state.allowSend,
     },
     getOperationalLabels: () => ({ customerLabel: "Customer", customerSingular: "customer" }),
     clinicConfig: {
