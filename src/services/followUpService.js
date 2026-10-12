@@ -1036,6 +1036,22 @@ function currentSessionHasPromotionEnquiry(
   return targetPromotionEnquirySeen || genericPromotionEnquirySeen;
 }
 
+function isConfiguredPromotionPriceGraphic(url, promotions = clinicConfig.promotions) {
+  const candidate = String(url || "").trim();
+  if (!candidate) return false;
+  const normalized = candidate.replace(/^https?:\/\/[^/]+/iu, "").split(/[?#]/u)[0];
+  return (Array.isArray(promotions) ? promotions : []).some(promotion => [
+    promotion?.imageUrl,
+    promotion?.followUpImageUrl,
+    ...(Array.isArray(promotion?.packages)
+      ? promotion.packages.flatMap(item => [item?.imageUrl, item?.followUpImageUrl])
+      : []),
+  ].some(item => {
+    const path = String(item || "").trim().replace(/^https?:\/\/[^/]+/iu, "").split(/[?#]/u)[0];
+    return path && path === normalized;
+  }));
+}
+
 function enforceAssessmentFirstFollowUpCopy({
   message, candidate = {}, targetedService = null, language = "en",
 } = {}) {
@@ -1334,9 +1350,14 @@ async function sendCandidate(candidate) {
   // A promotion override replaces the normal step content. Use only the
   // matched promotion/package follow-up graphic; never fall back to the
   // generic step image because it may belong to a different offer.
-  const effectiveImageUrl = originalHasPrice ? "" : promotionFollowUp
+  const selectedFollowUpImage = promotionFollowUp
     ? promotionFollowUpImageUrl
     : selectedImageUrl;
+  const effectiveImageUrl =
+    originalHasPrice ||
+    (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      isConfiguredPromotionPriceGraphic(selectedFollowUpImage))
+      ? "" : selectedFollowUpImage;
   const effectiveVideoKey =
     !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
   const effectiveVideoFilename =
@@ -1734,6 +1755,7 @@ realtimeEvents.subscribe("config_changed", (payload) => {
 });
 
 module.exports = {
+  isConfiguredPromotionPriceGraphic,
   enforceAssessmentFirstFollowUpCopy,
   FOLLOW_UP_CHECK_INTERVAL_MS,
   STALE_CLAIM_GRACE_MINUTES,
