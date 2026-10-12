@@ -336,34 +336,30 @@ async function isClaimStillEligible({
 // provider-accepted, durable receipts. The contact lock prevents a concurrent
 // consent claim from observing an incomplete A/B package batch.
 async function markBatchCompleted({ contactId, anchorId, expectedPackages }) {
-  const packages=[...new Set((expectedPackages || []).map(value=>String(value||"").trim()).filter(Boolean))];
+  const packages=[...new Set((expectedPackages||[]).map(value=>String(value||"").trim()).filter(Boolean))];
   if (!packages.length || packages.length>10) return false;
-  const client=await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock($1,$2)",
-      [CONVERSATION_LOCK_NAMESPACE,contactId]);
-    const result=await client.query(`
-      INSERT INTO pricing_reminder_batch_completions(anchor_id,contact_id,accepted_packages)
-      SELECT $2,$1,$4
-      WHERE EXISTS(SELECT 1 FROM messages anchor WHERE anchor.id=$2 AND anchor.contact_id=$1)
-       AND NOT EXISTS(SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=$2)
-       AND (SELECT COUNT(DISTINCT pricing_reminder_package_key)::integer FROM messages m
-         WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
-           AND m.pricing_reminder_package_key=ANY($3::text[])
-           AND m.whatsapp_message_id IS NOT NULL
-           AND m.whatsapp_accepted_at IS NOT NULL
-           AND m.delivery_status IN ('pending','sent','delivered','read'))=$4
-       AND NOT EXISTS(SELECT 1 FROM messages m
-         WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
-           AND (m.whatsapp_message_id IS NULL OR m.whatsapp_accepted_at IS NULL
-             OR m.delivery_status IS NULL OR m.delivery_status IN ('failed','unknown','cancelled')))
-      ON CONFLICT DO NOTHING RETURNING anchor_id`,
-      [contactId,anchorId,packages,packages.length]);
-    await client.query("COMMIT");
-    return result.rowCount===1;
-  } catch(err){await client.query("ROLLBACK").catch(()=>{});throw err}
-  finally{client.release();}
+  // One atomic SQL statement obtains the SAME conversation lock as pricing
+  // claims and consent claims. No separate connection or partial transaction.
+  const result=await pool.query(`
+    WITH guard AS MATERIALIZED (
+      SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE},$1::integer)
+    )
+    INSERT INTO pricing_reminder_batch_completions(anchor_id,contact_id,accepted_packages)
+    SELECT $2,$1,$4 FROM guard
+    WHERE EXISTS(SELECT 1 FROM messages anchor WHERE anchor.id=$2 AND anchor.contact_id=$1)
+     AND NOT EXISTS(SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=$2)
+     AND (SELECT COUNT(DISTINCT pricing_reminder_package_key)::integer FROM messages m
+       WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
+        AND m.pricing_reminder_package_key=ANY($3::text[])
+        AND m.whatsapp_message_id IS NOT NULL AND m.whatsapp_accepted_at IS NOT NULL
+        AND m.delivery_status IN ('pending','sent','delivered','read'))=$4
+     AND NOT EXISTS(SELECT 1 FROM messages m
+       WHERE m.contact_id=$1 AND m.pricing_reminder_anchor_id=$2
+         AND (m.whatsapp_message_id IS NULL OR m.whatsapp_accepted_at IS NULL
+           OR m.delivery_status IS NULL OR m.delivery_status IN ('failed','unknown','cancelled')))
+    ON CONFLICT DO NOTHING RETURNING anchor_id`,
+    [contactId,anchorId,packages,packages.length]);
+  return result.rowCount===1;
 }
 
 async function recordDecision({ candidate, reason }) {
