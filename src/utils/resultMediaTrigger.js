@@ -293,9 +293,21 @@ async function resolveResultMediaForReply({
     customerNamedServices(resultMedia, customerText, serviceAliases, services), customerText
   );
   if (namedServices.length > 1) return skip("multiple_treatments_ambiguous");
+  // For a verified, explicitly named primary service which only borrows
+  // related proof photos, a price-only enquiry may still show those examples
+  // if the primary has no price graphic. This does not authorize promotions.
+  const relatedPriceProof =
+    namedServices.length === 1 &&
+    hasCustomerPriceEnquiry(customerText) &&
+    hasCustomerServiceEnquiry(customerText) &&
+    (() => {
+      const relatedSet = matchingResultMediaSet(resultMedia, namedServices[0]);
+      return relatedSet?.triggerMode === "service_enquiry" &&
+        normalizeServiceName(relatedSet.service) !== normalizeServiceName(namedServices[0]);
+    })();
   const directlyNamedTreatment = explicitServiceNamedByCustomer(
     resultMedia, customerText, serviceAliases, services
-  );
+  ) || (relatedPriceProof ? namedServices[0] : null);
   const effectiveTreatment = directlyNamedTreatment || treatment ||
     (contextualAdEnquiry ? metaAdCreativeService : null);
   if (!effectiveTreatment) return skip("no_verified_treatment");
@@ -378,6 +390,7 @@ async function resolveResultMediaForReply({
   return {
     service: resultSet.service,
     triggerMode: resultSet.triggerMode,
+    allowRelatedPriceProof: relatedPriceProof === true,
     serviceQuerySource: directlyNamedTreatment ? "customer_message"
       : verifiedAdFallback ? "meta_ad" : trustedServiceQuery ? serviceQuerySource : null,
     items: rotatedItems

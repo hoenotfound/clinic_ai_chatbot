@@ -49,7 +49,8 @@ const {
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
-const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
@@ -972,6 +973,19 @@ async function processIncomingMessage(
       }
     }
 
+    // A short "berapa?" or "多少钱?" can refer only to the immediately
+    // previous customer treatment enquiry, never a stale CRM/ad classification.
+    // Require exactly one independently verified configured service.
+    const verifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
+        (isStandalonePriceQuestion(text)
+          ? safeServiceFromCustomer(
+              customerMessages.at(-2)?.content,
+              clinicConfig.services, clinicConfig.serviceAliases
+            )
+          : null)
+      : null;
+
     let reply = isFirstMessage && !flagged && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
@@ -1006,14 +1020,32 @@ async function processIncomingMessage(
         ? guardAssessmentFirstPricingReply({
             channel, customerText: text, reply, flagged, language: mediaLanguage,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            // Do not let Gemini's treatment guess create pricing permission.
+            // Direct and one-turn follow-up requests use only verified customer
+            // treatment evidence (same standard as promotional images).
+            treatment: verifiedPriceService?.name || null,
+            requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
-            treatment: details?.treatment,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
         console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
         reply = finalOfferGuard.reply;
       }
+    }
+
+    // Preserve the useful original service explanation. If an eligible first
+    // treatment enquiry omits an assessment invitation, append just one
+    // invitation without replacing the answer or altering result-media intent.
+    if (!flagged && !marketingStopQuestion &&
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+      const invited = ensureFirstAssessmentInvitation({
+        isFirstMessage, customerText: text, reply, flagged, language: mediaLanguage,
+        serviceQuery, treatment: details?.treatment,
+        verifiedAdService: serviceQuerySource === "meta_ad" ? metaAdCreativeService : null,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+      });
+      reply = invited.reply;
     }
 
     // A marketing STOP must not become a price/promotion reply even if the
@@ -1213,10 +1245,13 @@ async function processIncomingMessage(
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
     {
+      // A directly named service or a one-turn standalone price follow-up
+      // remains customer-verified; never trust a stale CRM/ad label.
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
-        treatment: details?.treatment,
+        treatment: verifiedPriceService?.name || details?.treatment,
+        verifiedServiceFromText: verifiedPriceService?.name || null,
         customerText: text,
         conversationHistory: history,
         flagged,
@@ -1416,6 +1451,7 @@ async function processIncomingMessage(
             customerText: text,
             promotionCount: automaticPromoMediaSent,
             items: resultBundle.items,
+            allowRelatedPriceProof: resultBundle.allowRelatedPriceProof === true,
           });
           auditSelected = paced.items.length;
           auditReason = paced.reason;

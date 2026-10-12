@@ -24,7 +24,7 @@ function planPromotionMediaPacing(packages = []) {
   };
 }
 
-function planResultMediaPacing({ customerText, promotionCount = 0, items = [] } = {}) {
+function planResultMediaPacing({ customerText, promotionCount = 0, items = [], allowRelatedPriceProof = false } = {}) {
   const promotions = Number.isSafeInteger(promotionCount)
     ? Math.max(0, promotionCount)
     : 0;
@@ -33,7 +33,8 @@ function planResultMediaPacing({ customerText, promotionCount = 0, items = [] } 
 
   if (hasCustomerPriceEnquiry(customerText) &&
       !EXPLICIT_TREATMENT_INTEREST.test(String(customerText || "")) &&
-      !EXPLICIT_RESULT_IMAGE_REQUEST.test(String(customerText || ""))) {
+      !EXPLICIT_RESULT_IMAGE_REQUEST.test(String(customerText || "")) &&
+      !(allowRelatedPriceProof === true && promotions === 0)) {
     return { items: [], reason: "promotion_price_priority" };
   }
 

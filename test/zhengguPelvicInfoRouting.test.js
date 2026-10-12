@@ -78,6 +78,7 @@ function withConfig(callback) {
 }
 const prices = (customerText, overrides = {}) => withConfig(() => resolvePricePromotionForReply({
   priceQuery: true, packageQuery: false, treatment: "骨盆调理",
+  verifiedServiceFromText: "骨盆调理",
   customerText, conversationHistory: [], flagged: false, bookingReady: false,
   keywordReason: null, needsAttention: false, textSendSucceeded: true,
   promotions, services, serviceAliases, resultMedia, contactId: 99,
@@ -201,4 +202,47 @@ test("Meta ad creative uses the specific 整骨 treatment, not the shorter conta
   assert.equal(resolveMetaAdCreativeService({ headline: "小颜整骨", body: "美颜轮廓" }, services, serviceAliases), "3D 小颜术");
   assert.equal(resolveMetaAdCreativeService({ headline: "全身整骨", body: "体态调理" }, services, serviceAliases), "徒手体态调理");
   assert.equal(resolveMetaAdCreativeService({ headline: "整骨和小颜整骨", body: "比较" }, services, serviceAliases), null);
+});
+
+test("correctly classified unpriced full-body treatment still cannot quote pelvic price", () => {
+  const result = guardAssessmentFirstPricingReply({
+    customerText: "整骨多少钱？", reply: "骨盆配套 RM388 / RM288",
+    treatment: "徒手体态调理", requireVerifiedTreatment: true,
+    language: "zh", services, serviceAliases, resultMedia,
+  });
+  assert.equal(result.replaced, true);
+  assert.doesNotMatch(result.reply, /RM388|RM288/);
+  assert.match(result.reply, /门店/);
+  const followUp = guardAssessmentFirstPricingReply({
+    customerText: "价格？", reply: "RM388 骨盆配套",
+    conversationHistory: [{ role: "user", content: "想了解全身整骨" }, { role: "user", content: "价格？" }],
+    treatment: "徒手体态调理", requireVerifiedTreatment: true,
+    language: "zh", services, serviceAliases, resultMedia,
+  });
+  assert.equal(followUp.replaced, true);
+  assert.doesNotMatch(followUp.reply, /388/);
+});
+
+test("explicit 整骨 price-only enquiry permits related pictures only when no price graphic was sent", async () => {
+  const selected = await mediaDecision("你好，pm整骨价钱");
+  assert.equal(selected?.service, "骨盆调理");
+  assert.equal(selected?.allowRelatedPriceProof, true);
+  const eligible = planResultMediaPacing({
+    customerText: "你好，pm整骨价钱",
+    promotionCount: 0,
+    allowRelatedPriceProof: selected.allowRelatedPriceProof,
+    items: selected.items,
+  });
+  assert.equal(eligible.items.length, 2);
+  assert.equal(planResultMediaPacing({
+    customerText: "你好，pm整骨价钱",
+    promotionCount: 2,
+    allowRelatedPriceProof: true,
+    items: selected.items,
+  }).items.length, 0);
+  assert.equal(planResultMediaPacing({
+    customerText: "骨盆调理多少钱？",
+    promotionCount: 0,
+    items: resultMedia[0].items,
+  }).items.length, 0);
 });

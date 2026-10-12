@@ -48,6 +48,7 @@ async function resolvePricePromotionForReply({
   priceQuery,
   packageQuery,
   treatment,
+  verifiedServiceFromText = null,
   customerText,
   conversationHistory,
   flagged,
@@ -66,7 +67,12 @@ async function resolvePricePromotionForReply({
   duplicateWindowHours = 24,
 }) {
   if (
-    (priceQuery !== true && packageQuery !== true) ||
+    // A verified monetary question is sufficient for opted-in clinics even
+    // when the LLM under-classifies priceQuery. Keep all media safety checks.
+    (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? (!treatment || !verifiedServiceFromText || verifiedServiceFromText !== treatment ||
+          !hasExplicitPriceRequest(customerText, { treatment }))
+      : (priceQuery !== true && packageQuery !== true)) ||
     !(hasCustomerPriceEnquiry(customerText) ||
       (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
         isContextualBarePriceQuestion(customerText, treatment))) ||
@@ -83,12 +89,8 @@ async function resolvePricePromotionForReply({
     return null;
   }
 
-  // Promotional media always belongs to its priced service, never to a
-  // related service that merely borrows result examples. Protect against
-  // incorrect AI treatment selection and short price follow-ups alike.
   if (relatedPricingConflict({
-    customerText, treatment, conversationHistory,
-    services, serviceAliases, resultMedia,
+    customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
   })) return null;
 
   const genericBundle = getPricePromotionBundle(

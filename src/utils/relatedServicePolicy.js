@@ -57,6 +57,36 @@ function relatedPricingConflict({
   return false;
 }
 
+// A service can show a related treatment's result photos without sharing its
+// package price. When its own price is not configured, an AI amount cannot be
+// verified even if the AI correctly selected the primary service.
+function unpricedRelatedPrimary({
+  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  resultMedia = [],
+} = {}) {
+  const isUnpricedRelated = (name) => {
+    if (!name || !relatedMediaTargets(name, resultMedia).length) return false;
+    const service = (Array.isArray(services) ? services : []).find((entry) =>
+      normalize(entry?.name) === normalize(name)
+    );
+    return service && !String(service.priceRange || "").trim();
+  };
+  const now = configuredServiceMention(customerText, services, serviceAliases);
+  if (now) return isUnpricedRelated(now) ? now : null;
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  let seen = 0;
+  for (let index = history.length - 1; index >= 0 && seen < 8; index -= 1) {
+    const entry = history[index];
+    if (entry?.role !== "user" || !String(entry.content || "").trim() ||
+        String(entry.content).trim() === String(customerText || "").trim()) continue;
+    seen += 1;
+    const previous = configuredServiceMention(entry.content, services, serviceAliases);
+    if (previous) return isUnpricedRelated(previous) ? previous : null;
+  }
+  return null;
+}
+
 module.exports = {
   relatedMediaTargets, isRelatedTreatment, configuredServiceMention, relatedPricingConflict,
+  unpricedRelatedPrimary,
 };

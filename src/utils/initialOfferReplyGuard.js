@@ -1,11 +1,16 @@
 "use strict";
 
 const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
-const { relatedPricingConflict, configuredServiceMention } = require("./relatedServicePolicy");
+const { relatedPricingConflict, configuredServiceMention, unpricedRelatedPrimary } = require("./relatedServicePolicy");
+
 const {
   hasCustomerPriceEnquiry,
   hasExplicitPriceRequest,
+  isStandalonePriceQuestion,
+  hasCustomerServiceEnquiry,
+  isContextualAdServiceEnquiry,
 } = require("./customerEnquiryEvidence");
+const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 
 // A final outbound boundary for a first WhatsApp message without a current
 // price enquiry. Consent detection must not control unsolicited price safety.
@@ -254,6 +259,57 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
   return safeIntroReply({ customerText, language, services, serviceAliases });
 }
 
+function ensureFirstAssessmentInvitation({
+  isFirstMessage = false, customerText, reply, flagged = false,
+  language = "en", treatment = null, serviceQuery = false,
+  verifiedAdService = null, services = [], serviceAliases = [],
+} = {}) {
+  const original = String(reply || "").trim();
+  if (!isFirstMessage || flagged || !original ||
+      hasClinicalMediaRisk(customerText) ||
+      hasExplicitPriceRequest(customerText, { treatment }) ||
+      !hasCustomerServiceEnquiry(customerText)) {
+    return { reply: original, appended: false };
+  }
+  const verified = safeServiceFromCustomer(customerText, services, serviceAliases);
+  const verifiedCreative = isContextualAdServiceEnquiry(customerText)
+    ? (Array.isArray(services) ? services : []).find(
+        item => item?.name === verifiedAdService && item?.name === treatment
+      )
+    : null;
+  const service = verified || verifiedCreative;
+  if (!service) return { reply: original, appended: false };
+  // Do not promise an automatic voucher, an extra RM100 reduction or a free
+  // trial. Voucher copy is intentionally governed separately from invitation.
+  const lang = String(language || "").toLowerCase();
+  const chinese = lang.startsWith("zh") || (!lang && /[\u3400-\u9fff]/u.test(customerText));
+  const malay = lang.startsWith("ms");
+  const alreadyInvited = /(?:1\s*[对對]\s*1|1\s*[-–]?\s*on\s*[-–]?\s*1|one\s*[-–]?\s*on\s*[-–]?\s*one|penilaian\s*(?:postur)?|体态评估|體態評估|面部评估|面部評估)/iu.test(original);
+  const hasVoucher = /\b(?:RM|MYR)\s*100\b/iu.test(original);
+  if (alreadyInvited) {
+    if (service.name !== "骨盆调理" || hasVoucher) return { reply: original, appended: false };
+    const voucherNote = chinese
+      ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
+      : malay
+        ? "Selepas hadir untuk penilaian + sesi percubaan, anda juga boleh menerima baucar RM100 untuk rawatan pelvis. Syarat ditegaskan oleh pusat."
+        : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
+    return { reply: original + "\n\n" + voucherNote, appended: true };
+  }
+  const invitation = service.name === "骨盆调理"
+    ? assessmentFirstInvitation({ treatment: service.name, customerText, language, services, serviceAliases })
+    : chinese
+    ? "你也可以先来让中医师做一个1对1的评估 + 体验，再了解适合自己的调理方式 😊 你比较方便平日还是周末？"
+    : malay
+      ? "Anda juga boleh datang untuk penilaian 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Hari biasa atau hujung minggu lebih sesuai?"
+      : "You can also begin with a 1-on-1 assessment + trial with our TCM practitioner 😊 Would a weekday or weekend suit you?";
+  // An AI reply may already end with a useful question about the client's
+  // concern. Avoid tacking on a second scheduling question immediately.
+  const oneQuestionInvitation = /[?？]\s*$/u.test(original)
+    ? invitation.replace(/(?:你比较方便平日还是周末来呢？|你比较方便平日还是周末？|Hari biasa atau hujung minggu lebih sesuai\?|Would a weekday or weekend suit you\?|Would a weekday or weekend be more convenient\?)\s*$/u, "").trim()
+    : invitation;
+  return { reply: original + "\n\n" + (oneQuestionInvitation || invitation), appended: true };
+}
+
 function stripUnsolicitedTreatmentPrice(reply) {
   const source = String(reply || "").trim();
   // Preserve complete, useful non-price sentences instead of throwing away
@@ -264,57 +320,77 @@ function stripUnsolicitedTreatmentPrice(reply) {
   return retained && !hasTreatmentPriceContent(retained) ? retained : "";
 }
 
+// When a clinic requires customer-grounded treatment evidence, a direct
+// monetary question by itself never authorizes a model-selected service price.
+// The only trusted treatment at this boundary is one independently resolved
+// from the current or immediately previous customer message by the caller.
 function guardAssessmentFirstPricingReply({
   customerText, reply, flagged = false, language = "en",
   services = [], serviceAliases = [], treatment = null,
+  requireVerifiedTreatment = false,
   resultMedia = [], conversationHistory = [],
 } = {}) {
   const original = String(reply || "");
   if (flagged || !hasTreatmentPriceContent(original)) {
     return { reply: original, replaced: false };
   }
-
-  // A price question about full-body care must not be answered with a
-  // related pelvic treatment's price, even when the AI picked pelvic as its
-  // structured treatment. Keep the service-specific RM100 voucher exempt.
-  if (relatedPricingConflict({
+  // A related result-photo link is NOT a license to quote that other
+  // treatment's package price. Protect full-body care even when the AI
+  // correctly names the original service but invents a pelvic package cost.
+  const relatedConflict = relatedPricingConflict({
     customerText, treatment, conversationHistory,
     services, serviceAliases, resultMedia,
-  })) {
-    const primary = configuredServiceMention(customerText, services, serviceAliases) ||
+  });
+  const unpricedPrimary = unpricedRelatedPrimary({
+    customerText, conversationHistory, services, serviceAliases, resultMedia,
+  });
+  if (relatedConflict || unpricedPrimary) {
+    const primary = unpricedPrimary ||
+      configuredServiceMention(customerText, services, serviceAliases) ||
       (Array.isArray(conversationHistory)
         ? [...conversationHistory].reverse()
           .filter((entry) => entry?.role === "user")
           .map((entry) => configuredServiceMention(entry.content, services, serviceAliases))
           .find(Boolean)
         : null);
+    const locale = String(language || "").toLowerCase();
+    const clarification = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText))
+      ? "这项调理的实际费用需要由门店根据具体项目确认。"
+      : locale.startsWith("ms")
+        ? "Harga rawatan ini perlu disahkan oleh pihak pusat berdasarkan rawatan yang sesuai."
+        : "The centre will confirm the price for the specific treatment.";
     const invitation = assessmentFirstInvitation({
       treatment: primary, customerText, language, services, serviceAliases,
     });
-    const priceClarification = String(language || "").startsWith("zh")
-      ? "全身整骨的实际费用需要由门店根据具体调理项目确认。"
-      : String(language || "").startsWith("ms")
-        ? "Harga rawatan seluruh badan perlu disahkan oleh pihak pusat mengikut jenis rawatan."
-        : "Our centre will need to confirm the pricing for the specific full-body treatment.";
-    return {
-      // Discard unsafe package fragments instead of preserving a partial wrong quote.
-      reply: [priceClarification, invitation].filter(Boolean).join("\n"),
-      replaced: true,
-    };
+    return { reply: [clarification, invitation].filter(Boolean).join("\n"), replaced: true };
   }
-
-  if (hasExplicitPriceRequest(customerText, { treatment })) {
+  const priceAsked = hasExplicitPriceRequest(customerText, { treatment });
+  if (priceAsked && (!requireVerifiedTreatment || Boolean(treatment))) {
     return { reply: original, replaced: false };
   }
+  // An unverified treatment and a price question require clarification, not
+  // Gemini's guessed RM amount. This also covers mixed-treatment enquiries
+  // without arbitrarily choosing one package.
+  if (requireVerifiedTreatment && !treatment &&
+      (priceAsked || isStandalonePriceQuestion(customerText))) {
+    const locale = String(language || "").toLowerCase();
+    const clarification = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText))
+      ? "请问你想了解哪一项疗程的价格呢？我可以帮你确认 😊"
+      : locale.startsWith("ms")
+        ? "Boleh saya tahu harga untuk rawatan yang mana satu ya? 😊"
+        : "Which treatment would you like the price for? I can help you check 😊";
+    return { reply: clarification, replaced: true };
+  }
   const retained = stripUnsolicitedTreatmentPrice(original);
-  const fallback = assessmentFirstInvitation({
-    treatment, customerText, language, services, serviceAliases,
-  });
+  const fallback = hasClinicalMediaRisk(customerText)
+    ? safeIntroReply({ customerText, language, services, serviceAliases })
+    : assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
   return { reply: retained || fallback, replaced: true };
 }
-
 module.exports = {
   guardAssessmentFirstPricingReply,
+  ensureFirstAssessmentInvitation,
+  safeServiceFromCustomer,
   assessmentFirstInvitation,
   stripUnsolicitedTreatmentPrice,
   hasTreatmentPriceContent,
