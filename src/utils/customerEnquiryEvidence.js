@@ -1,4 +1,5 @@
 const { isGreetingOrLanguageOnly } = require("./chatLanguage");
+const { withoutExplicitMarketingRefusal } = require("./marketingRefusal");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
@@ -143,7 +144,12 @@ function hasCustomerPriceEnquiry(customerText) {
       !/(?:多少[钱錢]|价格(?:是)?多少|價錢(?:是)?多少|价钱(?:是)?多少|\bhow\s+much\b)/iu.test(value)) {
     return false;
   }
-  const current = stripFutureFollowUpPermission(value).text;
+  // A refusal to receive promotions is not an invitation to show their
+  // graphics. Strip only the refusal wording; preserve an independent,
+  // explicit price question if the customer separately asks one.
+  const current = withoutExplicitMarketingRefusal(
+    stripFutureFollowUpPermission(value).text
+  );
   return PRICE_OR_PACKAGE.test(current) ||
     PACKAGE_OPTIONS_REQUEST.test(current) ||
     ENGLISH_MONEY_QUESTION.test(current) ||
