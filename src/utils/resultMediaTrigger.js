@@ -121,13 +121,23 @@ function matchingResultMediaSet(resultMedia, treatment) {
   const target = normalizeServiceName(treatment);
   if (!target || !Array.isArray(resultMedia)) return null;
 
-  const matches = resultMedia.filter(
-    (entry) =>
-      entry &&
-      entry.enabled === true &&
-      normalizeResultMediaTriggerMode(entry) !== "off" &&
-      normalizeServiceName(entry.service) === target
+  const eligible = resultMedia.filter(
+    (entry) => entry?.enabled === true &&
+      normalizeResultMediaTriggerMode(entry) !== "off"
   );
+  // A configured service can share *informational result examples* from one
+  // related treatment, without inheriting that treatment's packages or prices.
+  // Exact media always wins. Ambiguous relationships fail closed.
+  const direct = eligible.filter((entry) =>
+    normalizeServiceName(entry.service) === target
+  );
+  if (direct.length > 1) return null;
+  const related = direct.length ? [] : eligible.filter((entry) =>
+    normalizeResultMediaTriggerMode(entry) === "service_enquiry" &&
+    Array.isArray(entry.relatedServices) &&
+    entry.relatedServices.some((name) => normalizeServiceName(name) === target)
+  );
+  const matches = direct.length ? direct : related;
   if (matches.length !== 1) return null;
 
   const [entry] = matches;
