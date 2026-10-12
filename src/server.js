@@ -51,6 +51,7 @@ const {
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
 const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence");
+const { recoverTcmServiceReviewReply } = require("./utils/tcmServiceReviewReply");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
@@ -963,6 +964,33 @@ async function processIncomingMessage(
         bookingReady = false;
         aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
       }
+      // A bare, configured TCM service name is an ordinary enquiry even if
+      // the model over-classifies it as a clinical review. Never override an
+      // actual keyword handoff, risk qualifier or unresolved medical question.
+      // Earlier clinical reviews remain pending for staff, and existing
+      // pre-send ownership and clinical-media checks still apply.
+      if (flagged && reviewRequired && !keywordReason) {
+        const recoveredReply = recoverTcmServiceReviewReply({
+          businessType: clinicConfig.businessType,
+          customerText: text,
+          language: mediaLanguage,
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+        });
+        if (recoveredReply) {
+          aiReply = recoveredReply;
+          flagged = false;
+          reviewRequired = false;
+          reviewType = null;
+          bookingReady = false;
+          serviceQuery = false;
+          serviceQuerySource = null;
+          priceQuery = false;
+          packageQuery = false;
+          details = null;
+        }
+      }
+
       // Do not permit a model to smuggle an inability-to-answer apology
       // through a nominally normal outcome.
       if (!flagged && isUnanswerableCustomerReply(aiReply, text)) {
