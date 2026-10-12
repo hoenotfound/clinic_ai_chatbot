@@ -51,7 +51,7 @@ const {
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
 const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence");
-const { recoverTcmServiceReviewReply } = require("./utils/tcmServiceReviewReply");
+const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = require("./utils/tcmServiceReviewReply");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
@@ -893,6 +893,7 @@ async function processIncomingMessage(
     let flagged = false;
     let reviewRequired = false;
     let reviewType = null;
+    let clinicalAcknowledgement = null;
     let bookingReady = false;
     let serviceQuery = false;
     let serviceQuerySource = null;
@@ -964,30 +965,60 @@ async function processIncomingMessage(
         bookingReady = false;
         aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
       }
-      // A bare, configured TCM service name is an ordinary enquiry even if
-      // the model over-classifies it as a clinical review. Never override an
-      // actual keyword handoff, risk qualifier or unresolved medical question.
-      // Earlier clinical reviews remain pending for staff, and existing
-      // pre-send ownership and clinical-media checks still apply.
-      if (flagged && reviewRequired && !keywordReason) {
-        const recoveredReply = recoverTcmServiceReviewReply({
-          businessType: clinicConfig.businessType,
-          customerText: text,
-          language: mediaLanguage,
-          services: clinicConfig.services,
-          serviceAliases: clinicConfig.serviceAliases,
-        });
-        if (recoveredReply) {
-          aiReply = recoveredReply;
-          flagged = false;
-          reviewRequired = false;
-          reviewType = null;
+      // Resolve exact TCM treatment names using verified current config, the
+      // recent conversation, and durable unresolved clinical reviews. Do not
+      // downgrade clinical concerns simply because the latest message names a
+      // service. A narrowly safe acknowledgment can accompany a staff review,
+      // but never enables promotional images, follow-ups or booking actions.
+      if (!keywordReason && !bookingReady && (!flagged || reviewRequired) &&
+          clinicConfig.businessType === "tcm_clinic" &&
+          (bareServiceName(text, clinicConfig.services, clinicConfig.serviceAliases) ||
+           isStandaloneSpinalConcern(text))) {
+        const pendingClinicalReview = await contactsRepo.hasPendingClinicalAiReview(contact.id);
+        if (pendingClinicalReview !== null) {
+          const plan = planTcmReviewReply({
+            businessType: clinicConfig.businessType,
+            customerText: text,
+            language: mediaLanguage,
+            services: clinicConfig.services,
+            serviceAliases: clinicConfig.serviceAliases,
+            conversationHistory: history,
+            pendingClinicalReview,
+          });
+          if (plan?.preserveReview) {
+            flagged = true;
+            reviewRequired = true;
+            reviewType = "clinical";
+            clinicalAcknowledgement = plan.reply;
+            bookingReady = false;
+            serviceQuery = false;
+            serviceQuerySource = null;
+            priceQuery = false;
+            packageQuery = false;
+            details = null;
+          } else if (plan?.reply && reviewRequired) {
+            // Isolated, unpriced service name with no unresolved clinical issue.
+            aiReply = plan.reply;
+            flagged = false;
+            reviewRequired = false;
+            reviewType = null;
+            bookingReady = false;
+            serviceQuery = false;
+            serviceQuerySource = null;
+            priceQuery = false;
+            packageQuery = false;
+            details = null;
+          } else if (plan?.reply && !flagged && plan.alreadyInvited) {
+            // Do not send the same assessment invitation again when a patient
+            // lists several treatments in separate WhatsApp messages.
+            aiReply = plan.reply;
+          }
+        } else {
+          // A failed clinical-review lookup must not permit recovery.
+          flagged = true;
+          reviewRequired = true;
+          reviewType = "clinical";
           bookingReady = false;
-          serviceQuery = false;
-          serviceQuerySource = null;
-          priceQuery = false;
-          packageQuery = false;
-          details = null;
         }
       }
 
@@ -1123,6 +1154,24 @@ async function processIncomingMessage(
         String(text || "Unanswered customer question").slice(0, 350),
         categorizeAiReview(text, reviewType)
       );
+      if (clinicalAcknowledgement) {
+        // A narrow, non-diagnostic acknowledgement can be sent without
+        // resolving the clinical review. Re-check staff ownership after the
+        // review write, then use the same guarded provider send as normal.
+        const reviewOwner = await getAiOwnedContact(contact, {
+          channel, from,
+          reason: "TCM clinical review acknowledgment",
+          inboundMessageId: savedInbound.id,
+        });
+        if (!reviewOwner || (canSendAutomatedReply && !canSendAutomatedReply())) {
+          return { wasFirstMessage, keywordReason };
+        }
+        responseAttempted = true;
+        await sendTrackedText(
+          reviewOwner, clinicalAcknowledgement, "ai_reply",
+          { canSend: canSendAutomatedReply, processingJobId }
+        );
+      }
       return { wasFirstMessage, keywordReason };
     } else if (flagged) {
       // Genuine takeover/safety events keep the existing strict staff pause.
