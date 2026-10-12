@@ -28,12 +28,16 @@ function fakeDatabase(rows) {
     query: async (sql, args) => {
       queries.push({ sql, args });
       const row = typeof rows === "function" ? rows() : rows;
-      if (sql.includes("AS verified")) {
+      if (sql === whatsappZeroCostGuard.VERIFIED_SESSION_WINDOW_SQL) {
+        return { rows: [{ verified: row?.has_recent_verified_free_entry === true }] };
+      }
+      if (sql === whatsappZeroCostGuard.SEVEN_DAY_PROOF_SQL) {
         return { rows: [{ verified: row?.has_post_72h_proof === true }] };
       }
       if (sql.includes("AS eligible")) {
         assert.equal(args[2], "60123456789");
-        return { rows: [{ eligible: row?.has_recent_verified_free_entry === true }] };
+        return { rows: [{ eligible: row?.has_recent_verified_free_entry === true &&
+          row?.has_send_ready !== false }] };
       }
       assert.equal(args[0], 85);
       return { rows: [{ recipient: "60123456789", ...row }] };
@@ -86,6 +90,23 @@ test("manual billing advisory agrees with a proven seven-day free-entry window",
   });
   assert.equal(billed.evidence, "recent_billable_message");
   assert.equal(charged.calls, 1, "Billed message takes precedence over an older free receipt");
+});
+
+test("unsettled previous pricing pauses sending but keeps proven free-entry evidence", async () => {
+  const db = fakeDatabase({
+    has_ctwa_referral: true,
+    has_recent_verified_free_entry: true,
+    has_recent_billable_message: false,
+    has_send_ready: false,
+  });
+  const advisory = await getTemplateBillingAdvisory(85, {
+    database: db, now: reviewedAt, staffUsername: "admin", env, ...reviewOptions,
+  });
+  assert.equal(advisory.evidence, "recent_free_entry_evidence");
+  assert.equal(advisory.freeEntry.verified, true);
+  assert.equal(advisory.freeEntry.sendReady, false);
+  assert.equal(advisory.freeEntry.blockedReason, "unresolved_pricing");
+  assert.ok(advisory.reviewTokens[selected.name+"::"+selected.language]);
 });
 
 test("signed billing reviews bind contact, staff, evidence, secret and expiration", () => {
