@@ -259,7 +259,7 @@ function ensureFirstAssessmentInvitation({
   verifiedAdService = null, services = [], serviceAliases = [],
 } = {}) {
   const original = String(reply || "").trim();
-  if (!isFirstMessage || flagged || !serviceQuery || !original ||
+  if (!isFirstMessage || flagged || !original ||
       hasExplicitPriceRequest(customerText, { treatment }) ||
       !hasCustomerServiceEnquiry(customerText) ||
       /(?:1\s*[对對]\s*1|1\s*[-–]?\s*on\s*[-–]?\s*1|one\s*[-–]?\s*on\s*[-–]?\s*one|penilaian\s*(?:postur)?|体态评估|體態評估|面部评估|面部評估)/iu.test(original)) {
