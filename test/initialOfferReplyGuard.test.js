@@ -307,3 +307,29 @@ test("first WhatsApp replies retain ordinary numeric clinic details", () => {
   assert.equal(unsolicited.replaced, true);
   assert.equal(commercial(unsolicited.reply), false);
 });
+
+test("actual first-turn guard catches bare treatment prices without rewriting ordinary package explanations", () => {
+  const greeting = "我想了解骨盆配套";
+  for (const reply of [
+    "骨盆调理 388 / 288",
+    "骨盆调理 388，套餐 B 288",
+    "388",
+    "骨盆护理这次只要 388",
+    "Pelvic treatment 388 / 288",
+  ]) {
+    const result = checkReply(greeting, reply);
+    assert.equal(result.replaced, true, reply);
+    assert.equal(commercial(result.reply), false, reply);
+  }
+  for (const reply of [
+    "骨盆配套主要针对骨盆、腹直肌与体态问题，先由中医师进行评估。",
+    "我们可以先介绍骨盆配套的护理方式和适合人群 😊",
+    "骨盆调理套餐主要是徒手护理，不是注射。",
+    "可以帮你安排体态评估，之后再看哪种骨盆护理适合。",
+    "地址在 PJ C-12-6, Dataran 3 Two Business Centre；联络号码 017-483 1336",
+    "2026年星期二至星期五营业；护理一般需要30–40分钟。",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(greeting, reply), { reply, replaced: false }, reply);
+  }
+});
