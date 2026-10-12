@@ -368,6 +368,10 @@ test("verified first service enquiry gets an assessment invite while keeping the
   assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"我想了解这个",treatment:"骨盆调理"}).appended,false);
   assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理",
     verifiedAdService:"骨盆调理",}).appended,true);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"3D还是骨盆调理哪个好?",treatment:"骨盆调理",
+    verifiedAdService:"骨盆调理"}).appended,false,"mixed services cannot be resolved from ad alone");
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解这个",treatment:"骨盆调理",
+    verifiedAdService:"骨盆调理"}).appended,true,"verified contextual ad service is eligible");
   assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估",customerText:"想了解骨盆调理",treatment:"骨盆调理"}).appended,false);
 });
 
