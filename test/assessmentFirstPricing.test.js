@@ -434,3 +434,58 @@ test("standalone Malay/Chinese price follow-ups use only the immediately establi
     }),null);
   }finally{config.automatedFollowUp=old;}
 });
+
+
+test("price affordability remarks never enable assessment-first monetary media", async () => {
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old, assessmentFirstPricingEnabled:true};
+  const { hasCustomerPriceEnquiry }=require("../src/utils/customerEnquiryEvidence");
+  const offers=[{ name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    packages:[{name:"Package A",caption:"RM388",imageUrl:"https://example.test/pelvicA.jpg"}]}];
+  const base={
+    priceQuery:true,packageQuery:true,treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+    textSendSucceeded:true,contactId:301,promotions:offers,
+    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+  };
+  try {
+    for(const s of ["骨盆调理的价位太高了", "价位有点贵", "这个价格太贵了", "价格不是问题", "这个价位偏高", "harga mahal sangat"]) {
+      assert.equal(hasExplicitPriceRequest(s),false,s);
+      assert.equal(await resolvePricePromotionForReply({...base,customerText:s}),null,s);
+    }
+    for(const s of ["请问骨盆调理价位？", "价位？", "骨盆调理几钱？", "price pls", "骨盆调理多少钱？"]) {
+      assert.equal(hasExplicitPriceRequest(s),true,s);
+    }
+    assert.equal(hasCustomerPriceEnquiry("价位有点贵"),true,"general topic recognition is separate from monetary intent");
+  } finally { config.automatedFollowUp=old; }
+});
+
+test("model priceQuery cannot select one image for ambiguous multi-treatment enquiries", async () => {
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
+  const base={
+    priceQuery:true,packageQuery:true,treatment:"骨盆调理",verifiedServiceFromText:null,
+    textSendSucceeded:true,contactId:302,promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+  };
+  try {
+    for(const s of ["3D 和骨盆调理分别多少钱？","骨盆和9D什么价钱？"]) {
+      assert.equal(await resolvePricePromotionForReply({...base,customerText:s}),null,s);
+    }
+    assert.equal(await resolvePricePromotionForReply({...base,customerText:"骨盆调理多少钱？",verifiedServiceFromText:"3D 小颜术"}),null);
+    const yes=await resolvePricePromotionForReply({...base,customerText:"骨盆调理多少钱？",verifiedServiceFromText:"骨盆调理"});
+    assert.equal(yes?.packages?.length,1);
+  } finally { config.automatedFollowUp=old; }
+});
+
+test("first assessment invite is suppressed for independent clinical red flags despite clean Gemini flags", () => {
+  const {ensureFirstAssessmentInvitation}=require("../src/utils/initialOfferReplyGuard");
+  const args={isFirstMessage:true,flagged:false,reply:"骨盆调理可帮助改善整体体态。",services:[{name:"骨盆调理"}],
+    treatment:"骨盆调理",language:"zh"};
+  for(const customerText of ["我怀孕了，想了解骨盆调理","骨盆调理适合刚做完手术的人吗？","剖腹产后两周想了解骨盆调理", "骨盆调理会不会很痛？"]) {
+    const got=ensureFirstAssessmentInvitation({...args,customerText});
+    assert.equal(got.appended,false,customerText);
+    assert.doesNotMatch(got.reply,/到店完成评估|RM100/);
+  }
+  assert.equal(ensureFirstAssessmentInvitation({...args,customerText:"我想了解骨盆调理"}).appended,true);
+});
