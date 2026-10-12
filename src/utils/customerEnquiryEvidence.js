@@ -25,7 +25,7 @@ const ADMIN_TOPIC = /(?:\b(?:contact(?:\s+(?:details?|information|info|number))?
 
 // Admin context alone is not a treatment request. An explicit service question
 // can still ask two things (e.g. "3D treatment and your opening hours").
-const SPECIFIC_TREATMENT_TOPIC = /(?:\b(?:treatments?|rawatan|facial|pelvic|pelvis|postpartum|hifu|jawline|acne)\b|\b[39]\s*d\b|疗程|療程|治疗|治療|骨盆|小颜|小顏|逆龄|逆齡|调理|調理|脸型|臉型|双下巴|雙下巴|下颚|下顎|法令纹|法令紋)/iu;
+const SPECIFIC_TREATMENT_TOPIC = /(?:\b(?:treatments?|rawatan|facial|pelvic|pelvis|postpartum|hifu|jawline|acne)\b|\b[39]\s*d\b|疗程|療程|治疗|治療|骨盆|整骨|小颜|小顏|逆龄|逆齡|调理|調理|脸型|臉型|双下巴|雙下巴|下颚|下顎|法令纹|法令紋)/iu;
 
 const DECLINED_TREATMENT = /(?:\b(?:not\s+interested|no\s+interest|don['’]?t\s+want|do\s+not\s+want|not\s+looking\s+for)\b|不感兴趣|不感興趣|不想了解|不想做|不要这个|不要這個|没兴趣|沒興趣|tak\s+(?:berminat|mahu|nak))/iu;
 
@@ -33,7 +33,7 @@ const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(
 
 // Positive treatment-interest language, independent of Meta and AI labels.
 // Keep this deliberately conservative: absent evidence means no automatic media.
-const SERVICE_ENQUIRY = /(?:\b(?:interested|enquir(?:y|e)|inquir(?:y|e)|information|details?|tell\s+me\s+more|learn\s+more|know\s+more|find\s+out|want\s+to\s+(?:know|try|do|improve|treat)|would\s+like\s+to\s+(?:know|try|do|improve|treat)|can\s+(?:i|you)\s+(?:try|do|know|see|improve|treat)|how\s+(?:does|do|can|long)|what\s+(?:is|are|does|results?|benefits?|treatment)|does\s+(?:it|this)|results?|before\s*(?:and|&)\s*after|pelvic|pelvis|postpartum|facial|jawline|double\s+chin|treatment)\b|\b(?:nak\s+(?:tahu|cuba|buat|rawatan)|mahu\s+(?:tahu|cuba|buat)|berminat|rawatan|hasil|kesan|boleh\s+(?:ke|tahu))\b|想了解|想知道|想咨询|想諮詢|想问|想問|想做|感兴趣|感興趣|可以改善|怎么做|怎麼做|如何做|怎么改善|怎麼改善|有什么效果|有什麼效果|有效吗|有效嗎|案例|效果|骨盆|小腹|产后|產後|脸型|臉型|下颚|下顎|双下巴|雙下巴|皮肤松弛|皮膚鬆弛|小颜|小顏|逆龄|逆齡|\b[39]\s*d\b)/iu;
+const SERVICE_ENQUIRY = /(?:\b(?:interested|enquir(?:y|e)|inquir(?:y|e)|information|details?|tell\s+me\s+more|learn\s+more|know\s+more|find\s+out|want\s+to\s+(?:know|try|do|improve|treat)|would\s+like\s+to\s+(?:know|try|do|improve|treat)|can\s+(?:i|you)\s+(?:try|do|know|see|improve|treat)|how\s+(?:does|do|can|long)|what\s+(?:is|are|does|results?|benefits?|treatment)|does\s+(?:it|this)|results?|before\s*(?:and|&)\s*after|pelvic|pelvis|postpartum|facial|jawline|double\s+chin|treatment)\b|\b(?:nak\s+(?:tahu|cuba|buat|rawatan)|mahu\s+(?:tahu|cuba|buat)|berminat|rawatan|hasil|kesan|boleh\s+(?:ke|tahu))\b|想了解|想知道|想咨询|想諮詢|想问|想問|想做|感兴趣|感興趣|可以改善|怎么做|怎麼做|如何做|怎么改善|怎麼改善|有什么效果|有什麼效果|有效吗|有效嗎|案例|效果|整骨|骨盆|小腹|产后|產後|脸型|臉型|下颚|下顎|双下巴|雙下巴|皮肤松弛|皮膚鬆弛|小颜|小顏|逆龄|逆齡|\b[39]\s*d\b)/iu;
 
 // A contextual enquiry ("more info on this") refers to an ad but does not
 // identify a treatment on its own. Callers must separately verify the current
