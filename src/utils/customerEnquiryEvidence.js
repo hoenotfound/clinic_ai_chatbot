@@ -156,6 +156,18 @@ function hasCustomerPriceEnquiry(customerText) {
     (MALAY_MONEY_QUESTION.test(current) && !MALAY_NON_PRICE_QUANTITY.test(current));
 }
 
+// A specific monetary treatment-price question is narrower than asking
+// whether offers/packages exist or consenting to future promotional updates.
+function hasExplicitPriceRequest(customerText) {
+  const original = String(customerText || "").trim();
+  if (!original || isGreetingOrLanguageOnly(original)) return false;
+  const current = withoutExplicitMarketingRefusal(
+    stripFutureFollowUpPermission(original).text
+  ).normalize("NFKC").trim();
+  if (!current || /^(?:(?:no|don't|do not|not)\\s+(?:price|pricing|cost)|(?:不要|不想|不用|无需|無需)\\s*(?:知道|了解|问|問)?\\s*(?:价格|價錢|价钱))\\s*[.!！。?？]*$/iu.test(current)) return false;
+  return /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\\b(?:price|pricing|cost|fees?|charges?|rates?|how\\s+much|harga|bayaran|berapa\\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\\s*\\d{2,}|myr\\s*\\d{2,})\\b)/iu.test(current);
+}
+
 function hasCustomerServiceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
@@ -166,4 +178,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
