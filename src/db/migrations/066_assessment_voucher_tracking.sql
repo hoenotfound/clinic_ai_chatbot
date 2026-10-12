@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS assessment_voucher_tracking (
   redeemed_at TIMESTAMPTZ,
   updated_by TEXT NOT NULL,
   redemption_note TEXT,
+  terms_note TEXT,
+  expires_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
