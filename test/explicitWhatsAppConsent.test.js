@@ -5,6 +5,7 @@ const { explicitPromotionConsent, businessIsNamed } = require("../src/utils/expl
 const clinic = { businessName: "Neutro Sense TCM Centre" };
 test("classifies voluntarily sent Chinese CTWA follow-up + promotional opt-in", () => {
   for (const text of [
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
     "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
     "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后也愿意收到 WhatsApp 跟进和相关优惠 😊",
     "Hi～想了解 Neutro Sense TCM 的骨盆配套，之后有相关优惠也可以 WhatsApp 通知我～",
@@ -52,4 +53,47 @@ test("business identity is mandatory; consent cannot spill between tenants", () 
   assert.equal(explicitPromotionConsent(text, {businessName:""}), null);
   assert.equal(businessIsNamed(text, "Neutro Sense TCM Centre"), true);
   assert.equal(businessIsNamed("Hi Neutro Sense Team", "Neutro Sense TCM Centre"), false);
+});
+
+test("consent in the chat remains voluntary and must name this business", () => {
+  const exact = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+  assert.equal(explicitPromotionConsent(exact, clinic)?.category, "MARKETING");
+  assert.equal(explicitPromotionConsent(exact, {businessName:"Different Clinic"}), null);
+  for (const text of [
+    "Hi Neutro Sense TCM, 骨盆调理有优惠吗？",
+    "Hi Neutro Sense TCM, 可以跟进我，但是不用给我优惠。",
+    "Hi Neutro Sense TCM, 我想了解骨盆调理。",
+  ]) assert.equal(explicitPromotionConsent(text, clinic), null, text);
+});
+
+test("negated follow-up consent never authorizes WhatsApp marketing", () => {
+  const rejected = [
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，不可以跟进我，有优惠也发我看看 😊",
+    "Hi Neutro Sense TCM, 不可以 WhatsApp 跟进我，有优惠也发给我看看",
+    "Hi Neutro Sense TCM, 不能跟进我，有优惠也发给我看看",
+    "Hi Neutro Sense TCM, 请勿跟进我，有优惠也发我看看",
+    "Hi Neutro Sense TCM, 可以跟进我，有优惠也发我看看，不过暂时不要发。",
+    "Hi Neutro Sense TCM, 别跟进我，有优惠也发我看看",
+  ];
+  for (const value of rejected) {
+    assert.equal(explicitPromotionConsent(value, clinic), null, value);
+  }
+  for (const value of [
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+  ]) assert.equal(explicitPromotionConsent(value, clinic)?.category, "MARKETING", value);
+});
+
+test("explicit refusal of WhatsApp follow-up or promotions never grants consent", () => {
+  for (const message of [
+    "Hi Neutro Sense TCM，我不希望接收 WhatsApp 优惠，只是想了解骨盆调理。",
+    "Hi Neutro Sense TCM，我不希望你们 WhatsApp 跟进我，有相关优惠可以 WhatsApp 通知我。",
+    "Hi Neutro Sense TCM，暂时不方便 WhatsApp 跟进我，但有相关优惠可以 WhatsApp 通知我。",
+    "Hi Neutro Sense TCM，我不接受 WhatsApp 跟进，有优惠也可以通知我。",
+    "Hi Neutro Sense TCM，我不想要收到 WhatsApp 优惠，请介绍一下骨盆调理。",
+  ]) assert.equal(explicitPromotionConsent(message, clinic), null, message);
+  assert.equal(explicitPromotionConsent(
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    clinic
+  )?.category, "MARKETING");
 });

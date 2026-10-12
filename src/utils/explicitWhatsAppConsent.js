@@ -35,16 +35,20 @@ function explicitPromotionConsent(message, { businessName } = {}) {
   if (!raw || !businessIsNamed(raw, businessName)) return null;
   // Reject an otherwise matching message if it contains a refusal or an
   // opt-out. Never infer renewed consent from a later ordinary enquiry.
-  if (/(?:不同意|不愿意|不想|不需要|不要|别(?:发|通知)|拒绝|取消订阅|stop\s+promotions?|do\s+not|don't|not\s+interested|unsubscribe|tak\s+nak|tidak\s+mahu|jangan|\b(?:another|other)\s+(?:clinic|business|provider)\b|(?:其他|别的|別的).{0,8}(?:诊所|診所|商家))/i.test(text)) return null;
+  if (/(?:不同意|不愿意|不願意|不希望|不接受|不方便|不願|不愿|不可以|不能|不准|不想|不需要|不要|不用|无需|無需|不必|拒收|別|别(?:发|發|通知|跟[进進]|联系|聯繫)|別(?:發|通知|跟[进進]|聯繫)|请勿|請勿|拒绝|取消订阅|stop\s+promotions?|do\s+not|don't|not\s+interested|unsubscribe|tak\s+nak|tidak\s+mahu|jangan|\b(?:another|other)\s+(?:clinic|business|provider)\b|(?:其他|别的|別的).{0,8}(?:诊所|診所|商家))/i.test(text)) return null;
   const chineseOffer = /(?:优惠|優惠|促销|促銷|推广|推廣|活动优惠)/.test(text);
   const englishOffer = /\b(?:offers?|promotions?|promos?|deals?)\b/i.test(text);
   const malayOffer = /\b(?:promosi|tawaran)\b/i.test(text);
   const mentionsWhatsApp = /whats\s*app/i.test(text);
+  // This classifier runs on a customer-sent WhatsApp message. Explicitly
+  // asking this clinic to follow up and send related offers identifies the
+  // ongoing chat as the channel even without spelling out "WhatsApp".
+  const explicitlyPermitsFollowUpHere = /(?:可以|同意|愿意|願意).{0,20}跟[进進]我/u.test(text);
   // A clear, affirmative wish to receive or be notified of ongoing offers.
   const zhPermission =
     (/(?:愿意|願意|同意|希望|想要|可以).{0,55}(?:收到|接收|收取|通知我|发我|發我|跟进我|跟進我)/.test(text) ||
       /(?:优惠|優惠|促销|促銷|推广|推廣).{0,22}(?:可以|请|請).{0,25}(?:通知我|发我|發我)/.test(text)) &&
-    chineseOffer && mentionsWhatsApp;
+    chineseOffer && (mentionsWhatsApp || explicitlyPermitsFollowUpHere);
   const enPermission = /\b(?:i(?:'d| would)?\s+(?:also\s+)?(?:like|want|agree|consent)\s+to\s+(?:receive|get)|feel\s+free\s+to\s+(?:whatsapp|message)|you\s+can\s+(?:whatsapp|send)|please\s+(?:send|whatsapp)\s+me)\b/i.test(text) &&
     englishOffer && mentionsWhatsApp;
   const msPermission = /\b(?:saya\s+(?:juga\s+)?(?:bersetuju|setuju|nak\s+terima)|boleh\s+whatsapp\s+saya|sila\s+(?:whatsapp|hantar))\b/i.test(text) &&

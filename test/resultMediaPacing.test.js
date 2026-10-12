@@ -8,7 +8,8 @@ const {
 const { resolveResultMediaForReply } = require("../src/utils/resultMediaTrigger");
 
 const images = [{ imageUrl: "result-1" }, { imageUrl: "result-2" }];
-const combinedEnquiry = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+const consentPrefill = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+const combinedEnquiry = "我想了解骨盆调理疗程，也想看看优惠";
 
 test("price-only enquiry prioritizes two pricing graphics over optional proof", () => {
   for (const customerText of ["了价格", "骨盆配套 RM388 多少钱?", "3D多少钱？", "How much is the treatment?"]) {
@@ -90,7 +91,7 @@ test("direct customer-named treatment works without AI model intent flags", asyn
       { imageUrl: "/api/config/result-media/image/12", caption: "Result two" },
     ],
   }];
-  const customerText = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+  const customerText = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，想了解一下护理方式和效果 😊";
   assert.equal(explicitServiceNamedByCustomer(media, customerText), "骨盆调理");
   assert.equal(explicitServiceNamedByCustomer(media, "我想了解骨盆调理的地址"), null);
   assert.equal(explicitServiceNamedByCustomer(media, "骨盆调理多少钱？"), null);
@@ -452,4 +453,103 @@ test("postpartum interval safety detects Chinese day/week/month expressions and 
   for (const customerText of okay) {
     assert.equal(hasClinicalMediaRisk(customerText), false, customerText);
   }
+});
+
+test("CTWA introduction with genuine pelvic interest sends results but not pricing", async () => {
+  const { hasCustomerPriceEnquiry } = require("../src/utils/customerEnquiryEvidence");
+  const { explicitServiceNamedByCustomer } = require("../src/utils/resultMediaTrigger");
+  const media = [{
+    service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    autoSendCount: 2,
+    items: [
+      { imageUrl: "/api/config/result-media/image/11", caption: "Pelvic result 1" },
+      { imageUrl: "/api/config/result-media/image/12", caption: "Pelvic result 2" },
+    ],
+  }];
+  const introductions = [
+    consentPrefill,
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi～我现在想了解骨盆调理，可以跟进我，有优惠也发我看看",
+  ];
+  for (const customerText of introductions) {
+    assert.equal(hasCustomerPriceEnquiry(customerText), false, customerText);
+    assert.equal(explicitServiceNamedByCustomer(media, customerText), "骨盆调理", customerText);
+    assert.deepEqual(planResultMediaPacing({
+      customerText, promotionCount: 0, items: images,
+    }).items, images, customerText);
+    const result = await resolveResultMediaForReply({
+      customerText, treatment: null, serviceQuery: false, serviceQuerySource: null,
+      priceQuery: true, packageQuery: true, // an incorrect model flag must not block genuine treatment interest
+      flagged: false, bookingReady: false, keywordReason: null,
+      needsAttention: false, textSendSucceeded: true,
+      resultMedia: media, contactId: 383,
+      wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+      getMostRecentlySentMediaUrl: async () => null,
+    });
+    assert.equal(result?.service, "骨盆调理");
+    assert.equal(result?.items?.length, 2, customerText);
+    assert.deepEqual(result.items.map((item) => item.imageUrl), [
+      "/api/config/result-media/image/11",
+      "/api/config/result-media/image/12",
+    ]);
+  }
+  // Permission without independently expressed treatment interest is not
+  // enough to unlock any service's before/after collection.
+  const skipped = [];
+  assert.equal(await resolveResultMediaForReply({
+    customerText: "可以跟进我，有优惠也发我看看",
+    treatment: "骨盆调理", serviceQuery: true, serviceQuerySource: "customer_message",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true,
+    resultMedia: media, contactId: 383,
+    wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+    onSkip: (reason) => skipped.push(reason),
+  }), null);
+  assert.equal(skipped.at(-1), "no_customer_service_enquiry");
+  // The first two manually sent or automatically sent photos are still
+  // protected from duplicates within seven days.
+  const reasons = [];
+  assert.equal(await resolveResultMediaForReply({
+    customerText: introductions[1], treatment: "骨盆调理",
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true,
+    resultMedia: media, contactId: 383,
+    wasMediaRecentlySent: async () => true,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+    onSkip: (reason) => reasons.push(reason),
+  }), null);
+  assert.equal(reasons.at(-1), "result_media_recently_sent");
+  // Two valid pricing graphics still leave room for at most one result.
+  assert.equal(planResultMediaPacing({
+    customerText: introductions[1], promotionCount: 2, items: images,
+  }).items.length, 1);
+});
+
+test("future-offer permission does not override clinical and staff media blocks", async () => {
+  const text = "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊";
+  const baseline = {
+    customerText: text, treatment: "骨盆调理",
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    flagged: false, bookingReady: false, keywordReason: null,
+    needsAttention: false, textSendSucceeded: true,
+    resultMedia: [{
+      service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+      items: [{imageUrl:"photo1",caption:"result"}],
+    }],
+    contactId: 383,
+    wasMediaRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  };
+  assert.equal(await resolveResultMediaForReply({...baseline, needsAttention:true}),null);
+  assert.equal(await resolveResultMediaForReply({...baseline, flagged:true}),null);
+  assert.equal(await resolveResultMediaForReply({...baseline, textSendSucceeded:false}),null);
+  assert.equal(await resolveResultMediaForReply({...baseline,
+    customerText:"我刚生产两周，想了解骨盆调理，之后可以WhatsApp跟进我，有优惠也发我看看",
+  }),null);
 });

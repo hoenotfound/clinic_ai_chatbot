@@ -332,3 +332,16 @@ test("unrelated Meta ad names must not invent a service interest",()=>{
   assert.equal(result.offer,null);
   assert.equal(result.reason,"ambiguous_service");
 });
+
+test("future promotional consent alone is not evidence of immediate price interest", () => {
+  const { hasPricingInterest } = require("../src/utils/pricingReminderSelection");
+  const prefill = "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊";
+  assert.equal(hasPricingInterest([prefill]), false);
+  assert.equal(hasPricingInterest(["可以先跟进我，有优惠也发我看看"]), false);
+  assert.equal(hasPricingInterest([prefill, "骨盆多少钱？"]), true);
+  assert.equal(hasPricingInterest([
+    "可以跟进我，有优惠也发我看看。你们的套餐有哪些？",
+  ]), true);
+  // This checks only the opt-in wording, not the separate configured timing
+  // and permission rules for the actual scheduled follow-up.
+});

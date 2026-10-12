@@ -1,4 +1,5 @@
 const config = require("../config/clinicConfig");
+const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 const {
   findMentionedPromotionPackages,
   getActivePromotions,
@@ -420,14 +421,38 @@ function buildConversationPromptContext(
     .map((message) => messageText(message))
     .join("\n");
 
-  const currentPromotionIntent =
-    PROMOTION_PATTERN.test(currentCustomerText) ||
-    (currentCustomerText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCustomerText)) ||
-    configuredPromotionReference(currentCustomerText, promotions) ||
-    PROMOTION_DETAIL_PATTERN.test(currentCustomerText);
+  // Treatment duration / service inclusions are not themselves requests
+  // for promotional prices. Restore offer details for a short follow-up only
+  // if the customer has independently discussed pricing or a package before.
+  const currentCommercialText = stripFutureFollowUpPermission(currentCustomerText).text;
   const previousCustomerText = customerMessages.length > 1
     ? messageText(customerMessages.at(-2))
     : "";
+  // A named package can remain relevant through a couple of short customer
+  // questions ("包括什么？" -> "需要多久？"). Do not carry it across a
+  // customer-chosen change of treatment or a broad topic reset.
+  let previousPromotionTopic = false;
+  for (const previous of customerMessages.slice(-4, -1).reverse()) {
+    const earlier = stripFutureFollowUpPermission(messageText(previous)).text;
+    if (!earlier || TOPIC_CHANGE_PATTERN.test(earlier)) break;
+    const priorIntent = customerServiceIntent(earlier, candidates, promotions);
+    if (priorIntent.broadIntent || (
+      priorIntent.explicitMatches.length > 0 &&
+      (relevantServiceNames.length !== 1 ||
+       !priorIntent.explicitMatches.includes(relevantServiceNames[0]))
+    )) break;
+    if (PROMOTION_PATTERN.test(earlier) ||
+        configuredPromotionReference(earlier, promotions)) {
+      previousPromotionTopic = true;
+      break;
+    }
+  }
+  const currentPromotionIntent =
+    PROMOTION_PATTERN.test(currentCommercialText) ||
+    (currentCommercialText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCommercialText)) ||
+    configuredPromotionReference(currentCommercialText, promotions) ||
+    (PROMOTION_DETAIL_PATTERN.test(currentCommercialText) &&
+      !topicChangeIntent && previousPromotionTopic);
   const carriedPromotionIntent =
     !currentPromotionIntent &&
     currentCustomerText.length <= 40 &&
@@ -441,6 +466,11 @@ function buildConversationPromptContext(
     schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText) || MAP_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
     promotionIntent: currentPromotionIntent || carriedPromotionIntent,
+    // Avoid showing unnecessary prices to the reply model when a customer
+    // expresses treatment interest alongside future-offer consent.
+    futureFollowUpIntroduction:
+      stripFutureFollowUpPermission(currentCustomerText).hasFuturePermission &&
+      !currentPromotionIntent,
     serviceDiscoveryIntent,
     broadPriceIntent,
   };

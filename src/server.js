@@ -48,6 +48,7 @@ const {
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
+const { guardFutureOfferIntroductionReply } = require("./utils/initialOfferReplyGuard");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -972,6 +973,26 @@ async function processIncomingMessage(
           `Localized first intro omitted ${guardedIntro.missingCount} protected details; ` +
           "appended configured source intro to avoid silently losing clinic information."
         );
+      }
+    }
+
+    // This is the last assembled-text boundary before Meta/Neon outbound
+    // reservation. A valid FUTURE-offer opt-in is not a price request, even if
+    // the model or configured intro accidentally includes an offer. Preserve
+    // all AI intent fields and optional Before & After media eligibility.
+    if (!flagged) {
+      const guardedOfferIntro = guardFutureOfferIntroductionReply({
+        channel,
+        isFirstMessage,
+        customerText: text,
+        reply,
+        flagged,
+        language: mediaLanguage,
+        services: clinicConfig.services,
+      });
+      if (guardedOfferIntro.replaced) {
+        console.warn("[Reply guard] Replaced unsolicited commercial text in first WhatsApp opt-in reply.");
+        reply = guardedOfferIntro.reply;
       }
     }
 

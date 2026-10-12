@@ -1224,3 +1224,62 @@ test("Gemini request keeps full conversation while scoping repeated static conte
     assert.doesNotMatch(prompt, /NINED_FULL_DETAILS/);
   });
 });
+
+test("WhatsApp follow-up opt-in introductions do not unlock package prices", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    const introductions = [
+      "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+      "Hi～想了解 Neutro Sense TCM 的骨盆调理，之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+      "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。可以看效果图吗？",
+    ];
+    for (const content of introductions) {
+      const context = buildConversationPromptContext([{role:"user",content}]);
+      assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+      assert.equal(context.promotionIntent,false,content);
+      assert.equal(context.futureFollowUpIntroduction,true,content);
+      const prompt = buildSystemPrompt({conversationContext:context});
+      assert.doesNotMatch(prompt,/PELVIS_PRICE RM388/,content);
+      assert.doesNotMatch(prompt,/PACKAGE_A RM388/,content);
+      assert.doesNotMatch(prompt,/PACKAGE_B RM288/,content);
+    }
+    const question = buildConversationPromptContext([{role:"user",content:"骨盆调理多少钱？"}]);
+    assert.equal(question.promotionIntent,true);
+    assert.match(buildSystemPrompt({conversationContext:question}),/PACKAGE_A RM388/);
+  });
+});
+
+test("durations on future-opt-in treatment introductions do not unlock promotional prices", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    const intro = "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊";
+    for (const message of [
+      intro + "。护理需要多久？",
+      "Hi～我想了解骨盆调理要多久。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+      "Hi～我想了解骨盆调理。之后有优惠也可以WhatsApp通知我。需要多久？",
+    ]) {
+      const context = buildConversationPromptContext([{role:"user",content:message}]);
+      assert.deepEqual(context.relevantServiceNames,["骨盆调理"]);
+      assert.equal(context.promotionIntent,false,message);
+      assert.equal(context.futureFollowUpIntroduction,true,message);
+      const prompt = buildSystemPrompt({conversationContext:context});
+      assert.doesNotMatch(prompt,/PACKAGE_A RM388|PACKAGE_B RM288|PELVIS_PRICE RM388/,message);
+    }
+    for (const message of [
+      intro + "。有优惠现在发给我看看。",
+      intro + "。骨盆套餐有哪些？",
+    ]) {
+      const context = buildConversationPromptContext([{role:"user",content:message}]);
+      assert.equal(context.promotionIntent,true,message);
+      assert.equal(context.futureFollowUpIntroduction,false,message);
+      assert.match(buildSystemPrompt({conversationContext:context}),/PACKAGE_A RM388/);
+    }
+    for (const message of ["需要多久？","包括什么？","What is included?","berapa lama?"]) {
+      const context=buildConversationPromptContext([
+        {role:"user",content:"骨盆套餐多少钱？"},
+        {role:"assistant",content:"可以先了解骨盆调理套餐"},
+        {role:"user",content:message},
+      ]);
+      assert.equal(context.promotionIntent,true,message);
+      assert.match(buildSystemPrompt({conversationContext:context}),/PACKAGE_A RM388/);
+    }
+  });
+});
