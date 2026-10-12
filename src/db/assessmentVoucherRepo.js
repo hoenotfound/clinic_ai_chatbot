@@ -39,6 +39,8 @@ function publicVoucher(row) {
     updatedAt: row.updated_at,
     updatedBy: row.updated_by,
     redemptionNote: row.redemption_note,
+    termsNote: row.terms_note,
+    expiresAt: row.expires_at,
   } : { status: "not_verified", valueRm: VOUCHER_VALUE_RM };
 }
 
@@ -50,12 +52,19 @@ async function getVoucher(leadId, queryable = pool) {
   return publicVoucher(result.rows[0]);
 }
 
-async function transitionVoucher(leadId, { status, redemptionNote, termsConfirmed }, actor, database = pool) {
+async function transitionVoucher(leadId, { status, redemptionNote, termsConfirmed, termsNote, expiresAt }, actor, database = pool) {
   const next = String(status || "");
   if (!STATUSES.has(next)) throw new VoucherValidationError("Invalid voucher action.");
   if (!actor || typeof actor !== "string") throw new VoucherValidationError("Staff identity is required.", 403);
   if (status === "issued" && termsConfirmed !== true) {
     throw new VoucherValidationError("Staff must confirm voucher terms before issuing.");
+  }
+  if (status === "issued" && (typeof termsNote !== "string" || !termsNote.trim() || termsNote.trim().length > 500)) {
+    throw new VoucherValidationError("Record the approved voucher conditions (up to 500 characters) before issuing.");
+  }
+  const expiry = expiresAt ? new Date(expiresAt) : null;
+  if (status === "issued" && expiry && (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now())) {
+    throw new VoucherValidationError("Voucher expiry, when set, must be in the future.");
   }
   if (status === "redeemed" && (typeof redemptionNote !== "string" || !redemptionNote.trim())) {
     throw new VoucherValidationError("A redemption note describing the agreed terms is required.");
@@ -84,6 +93,9 @@ async function transitionVoucher(leadId, { status, redemptionNote, termsConfirme
     if (!validTransition(current?.status, next)) {
       throw new VoucherValidationError("Voucher state changed or that action is no longer available.", 409);
     }
+    if (next === "redeemed" && current?.expires_at && new Date(current.expires_at).getTime() <= Date.now()) {
+      throw new VoucherValidationError("This voucher has expired; staff must resolve eligibility before redemption.", 409);
+    }
     if (next === "eligible" &&
         (lead.appointment_status !== "visited" || !isPelvicLead(lead.treatment_interest))) {
       throw new VoucherValidationError(
@@ -92,22 +104,29 @@ async function transitionVoucher(leadId, { status, redemptionNote, termsConfirme
     }
     const result = await client.query(
       `INSERT INTO assessment_voucher_tracking (
-        lead_id, status, assessed_at, issued_at, redeemed_at, updated_by, redemption_note
+        lead_id, status, assessed_at, issued_at, redeemed_at,
+        updated_by, redemption_note, terms_note, expires_at
        ) VALUES (
         $1, $2, CASE WHEN $2 = 'eligible' THEN now() ELSE NULL END,
         CASE WHEN $2 = 'issued' THEN now() ELSE NULL END,
-        CASE WHEN $2 = 'redeemed' THEN now() ELSE NULL END, $3, $4
+        CASE WHEN $2 = 'redeemed' THEN now() ELSE NULL END, $3, $4, $5, $6
        )
        ON CONFLICT (lead_id) DO UPDATE SET
          status = EXCLUDED.status,
          issued_at = CASE WHEN EXCLUDED.status = 'issued' THEN now() ELSE assessment_voucher_tracking.issued_at END,
          redeemed_at = CASE WHEN EXCLUDED.status = 'redeemed' THEN now() ELSE assessment_voucher_tracking.redeemed_at END,
          updated_by = EXCLUDED.updated_by,
+         terms_note = CASE WHEN EXCLUDED.status = 'issued' THEN EXCLUDED.terms_note
+                           ELSE assessment_voucher_tracking.terms_note END,
+         expires_at = CASE WHEN EXCLUDED.status = 'issued' THEN EXCLUDED.expires_at
+                           ELSE assessment_voucher_tracking.expires_at END,
          redemption_note = CASE WHEN EXCLUDED.status = 'redeemed' THEN EXCLUDED.redemption_note
                                 ELSE assessment_voucher_tracking.redemption_note END,
          updated_at = now()
        RETURNING *`,
-      [leadId, next, actor, status === "redeemed" ? redemptionNote.trim() : null]
+      [leadId, next, actor, status === "redeemed" ? redemptionNote.trim() : null,
+        status === "issued" ? termsNote.trim() : null,
+        status === "issued" && expiry ? expiry.toISOString() : null]
     );
     await client.query(
       `INSERT INTO lead_activities (lead_id, activity_type, description, actor, metadata)
@@ -121,6 +140,7 @@ async function transitionVoucher(leadId, { status, redemptionNote, termsConfirme
         type: "pelvic_assessment_voucher",
         from: current?.status || "not_verified",
         to: next,
+        ...(status === "issued" ? { termsNote: termsNote.trim(), expiresAt: expiry?.toISOString() || null } : {}),
         ...(status === "redeemed" ? { redemptionNote: redemptionNote.trim() } : {}),
       }]
     );
