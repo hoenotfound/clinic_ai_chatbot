@@ -158,7 +158,14 @@ function hasCustomerPriceEnquiry(customerText) {
 
 // A specific monetary treatment-price question is narrower than asking
 // whether offers/packages exist or consenting to future promotional updates.
-function hasExplicitPriceRequest(customerText) {
+function isContextualBarePriceQuestion(customerText, treatment = null) {
+  return Boolean(String(treatment || "").trim()) &&
+    /^(?:berapa|brp|brapa|berapa\s+ya|berapa\s+eh)[\s?.!！。？]*$/iu.test(
+      String(customerText || "").normalize("NFKC").trim()
+    );
+}
+
+function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   const original = String(customerText || "").trim();
   if (!original || isGreetingOrLanguageOnly(original)) return false;
   const current = withoutExplicitMarketingRefusal(
@@ -168,6 +175,7 @@ function hasExplicitPriceRequest(customerText) {
     "[VOUCHER]"
   );
   if (!current) return false;
+  if (isContextualBarePriceQuestion(current, treatment)) return true;
   // A customer refusing to discuss prices is not making a price request.
   const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost)\b/iu.test(current);
   if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
@@ -188,4 +196,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
