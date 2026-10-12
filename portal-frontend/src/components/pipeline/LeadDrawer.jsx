@@ -26,7 +26,7 @@ const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wi
 
 export default function LeadDrawer({ lead, stages, owners, services, now, noReplyHours, activityRefreshToken = 0, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
   const { config } = useBusinessConfig();
   const ui = getBusinessTerminology(config || {});
   const canManageLeads = permissions.manage_assigned_leads === true;
@@ -376,7 +376,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
             )}
           </form>
 
-          {config?.automatedFollowUp?.assessmentFirstPricingEnabled === true && (
+          {user?.features?.assessmentVoucherTrackingEnabled === true && (
             <AssessmentVoucherPanel
               lead={lead}
               canManage={canManageLeads}
