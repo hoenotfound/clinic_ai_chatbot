@@ -455,7 +455,7 @@ test("price affordability remarks never enable assessment-first monetary media",
     for(const s of ["请问骨盆调理价位？", "价位？", "骨盆调理几钱？", "price pls", "骨盆调理多少钱？"]) {
       assert.equal(hasExplicitPriceRequest(s),true,s);
     }
-    assert.equal(hasCustomerPriceEnquiry("价位有点贵"),true,"general topic recognition is separate from monetary intent");
+    assert.equal(hasCustomerPriceEnquiry("价位有点贵"),false,"affordability statements must not trigger promotional media");
   } finally { config.automatedFollowUp=old; }
 });
 
