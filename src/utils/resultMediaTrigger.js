@@ -107,7 +107,7 @@ function explicitServiceNamedByCustomer(
   // An otherwise bare osteopathy service name is itself an enquiry.
   // It still needs one unambiguous configured alias and an enabled media set.
   const bareOsteopathyEnquiry =
-    /^(?:(?:你好|hi|hello|嗨)[\\s～~,，.!！。]*)?(?:整骨|全身整骨|中医徒手整骨)[\\s?？.!！。]*$/iu.test(current.trim());
+    /^(?:(?:你好|hi|hello|嗨)[\s～~,，.!！。]*)?(?:整骨|全身整骨|中医徒手整骨)[\s?？.!！。]*$/iu.test(current.trim());
   if ((!EXPLICIT_TREATMENT_INTEREST.test(current) && !bareOsteopathyEnquiry) ||
       !hasCustomerServiceEnquiry(current)) return null;
   const matches = qualifiedTreatmentMentions(
