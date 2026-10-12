@@ -372,7 +372,10 @@ test("verified first service enquiry gets an assessment invite while keeping the
     verifiedAdService:"骨盆调理"}).appended,false,"mixed services cannot be resolved from ad alone");
   assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解这个",treatment:"骨盆调理",
     verifiedAdService:"骨盆调理"}).appended,true,"verified contextual ad service is eligible");
-  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估",customerText:"想了解骨盆调理",treatment:"骨盆调理"}).appended,false);
+  const alreadyInvited = ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估",customerText:"想了解骨盆调理",treatment:"骨盆调理"});
+  assert.equal(alreadyInvited.appended,true);
+  assert.match(alreadyInvited.reply,/RM100/);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估，领取 RM100 优惠券",customerText:"想了解骨盆调理",treatment:"骨盆调理"}).appended,false);
 });
 
 test("AI missing the priceQuery flag cannot drop a verified treatment price graphic",async()=>{
