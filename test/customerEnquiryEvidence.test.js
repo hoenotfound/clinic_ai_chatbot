@@ -208,3 +208,34 @@ test("CTWA promotional consent does not itself request pricing or result images"
   assert.equal(hasCustomerPriceEnquiry("现在骨盆调理多少钱？"), true);
   assert.equal(hasCustomerPriceEnquiry("Hi～我对骨盆调理有兴趣，可以跟进我，有什么优惠？"), true);
 });
+
+test("future WhatsApp opt-in does not mask current questions or trigger premature prices", () => {
+  const { stripFutureFollowUpPermission } = require("../src/utils/customerEnquiryEvidence");
+  const optIns = [
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi～我现在想了解骨盆调理，可以跟进我，有优惠也发我看看",
+    "我想先了解骨盆调理，可以跟进我，有优惠也发我看看",
+    "可以先跟进我，有优惠也发我看看",
+  ];
+  for (const value of optIns) {
+    assert.equal(hasCustomerPriceEnquiry(value), false, value);
+    assert.equal(isFollowUpConsentEnquiry(value), true, value);
+  }
+  for (const value of [
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。你们的套餐有哪些？",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。优惠是多少？",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。想看看优惠详情",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。我想知道配套价格",
+    "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。现在多少钱？",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(value), true, value);
+    assert.equal(isFollowUpConsentEnquiry(value), false, value);
+  }
+  const proof = "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看。可以看效果图吗？";
+  assert.equal(hasCustomerPriceEnquiry(proof), false);
+  assert.equal(isFollowUpConsentEnquiry(proof), false);
+  assert.match(stripFutureFollowUpPermission(proof).text, /可以看效果图/);
+  const noConsent = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，不可以跟进我，有优惠也发我看看 😊";
+  assert.equal(stripFutureFollowUpPermission(noConsent).hasFuturePermission, false);
+  assert.equal(hasCustomerPriceEnquiry(noConsent), false);
+});
