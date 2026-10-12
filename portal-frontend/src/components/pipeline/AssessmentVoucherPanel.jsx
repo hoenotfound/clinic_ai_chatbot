@@ -16,6 +16,8 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
   const [saving, setSaving] = useState(false);
   const [termsConfirmed, setTermsConfirmed] = useState(false);
   const [redemptionNote, setRedemptionNote] = useState("");
+  const [termsNote, setTermsNote] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -23,6 +25,8 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
     setVoucher(null);
     setTermsConfirmed(false);
     setRedemptionNote("");
+    setTermsNote("");
+    setExpiresAt("");
     api.getAssessmentVoucher(lead.id)
       .then((record) => { if (active) setVoucher(record); })
       .catch((error) => { if (active) onToast(error.message || "Couldn't load voucher status.", "error"); })
@@ -41,12 +45,17 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
     try {
       const changed = await api.updateAssessmentVoucher(lead.id, {
         status: next,
-        ...(next === "issued" ? { termsConfirmed } : {}),
+        ...(next === "issued" ? {
+          termsConfirmed, termsNote: termsNote.trim(),
+          ...(expiresAt ? { expiresAt: new Date(expiresAt).toISOString() } : {}),
+        } : {}),
         ...(next === "redeemed" ? { redemptionNote: redemptionNote.trim() } : {}),
       });
       setVoucher(changed);
       setTermsConfirmed(false);
       setRedemptionNote("");
+      setTermsNote("");
+      setExpiresAt("");
       onToast("Voucher status saved.", "info");
       onChanged?.();
     } catch (error) {
@@ -96,7 +105,18 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
                     <input type="checkbox" checked={termsConfirmed} onChange={(e) => setTermsConfirmed(e.target.checked)} className="mt-1" />
                     I have confirmed the applicable voucher terms with the clinic.
                   </label>
-                  <button type="button" disabled={saving || !termsConfirmed}
+                  <label className="block text-xs text-[var(--color-text-muted)]">
+                    Approved redemption conditions (required)
+                    <textarea rows={2} maxLength={500} value={termsNote} onChange={(e) => setTermsNote(e.target.value)}
+                      placeholder="E.g. One-time RM100 off pelvic treatment, not combinable with October package offer"
+                      className="mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
+                  </label>
+                  <label className="block text-xs text-[var(--color-text-muted)]">
+                    Expiry (optional, only if confirmed by the clinic)
+                    <input type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
+                  </label>
+                  <button type="button" disabled={saving || !termsConfirmed || !termsNote.trim()}
                     onClick={() => changeStatus("issued")}
                     className="rounded-xl border border-[var(--color-border)] px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50">
                     Mark voucher issued
@@ -107,6 +127,10 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
           )}
           {status === "issued" && (
             <>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Approved terms: {voucher.termsNote || "Not recorded"}
+                {voucher.expiresAt ? ` · Expires ${new Date(voucher.expiresAt).toLocaleString()}` : " · No confirmed expiry recorded"}
+              </p>
               <p className="text-xs text-[var(--color-text-muted)]">Mark redeemed only after staff verify the actual transaction. Describe the agreed redemption conditions.</p>
               {canManage && (
                 <>
@@ -126,6 +150,7 @@ export default function AssessmentVoucherPanel({ lead, canManage, onToast, onCha
           {status === "redeemed" && (
             <p className="text-xs text-[var(--color-text-muted)]">
               Redeemed by {voucher.updatedBy}. {voucher.redemptionNote || ""}
+              {voucher.termsNote ? ` · Terms: ${voucher.termsNote}` : ""}
             </p>
           )}
           {status === "voided" && <p className="text-xs text-[var(--color-text-muted)]">Voucher voided; consult the activity history for details.</p>}
