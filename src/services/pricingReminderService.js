@@ -88,6 +88,7 @@ function publish(message, reason) {
 }
 
 async function sendPricingReminder(candidate, offer, settings, imageCount = 1, onRetryAt = null) {
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) return false;
   const channel = candidate.channel || "whatsapp";
   if (!["whatsapp","facebook","instagram"].includes(channel) ||
       (channel !== "whatsapp" && settings.pricingReminder?.enableSocialChannels !== true)) return false;
@@ -245,6 +246,8 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1, o
 // Called by the existing follow-up worker so this feature does not add another
 // scheduler, timer, or process to each clinic's Render instance.
 async function runPricingReminders(settings, now = new Date()) {
+  // Preserve the scheduled worker's Date-or-null return contract.
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) return null;
   if (settings?.pricingReminder?.enabled !== true ||
       settings.steps.length < 3) return null;
 

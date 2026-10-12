@@ -1,6 +1,7 @@
 const config = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
+const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 
 function normalizeOptions(optionsOrFirstMessage = false) {
   if (typeof optionsOrFirstMessage === "boolean") {
@@ -9,6 +10,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
       generateFirstIntro: false,
       channel: "whatsapp",
       surface: "conversation",
+      commentText: "",
       publicReplyEnabled: true,
       privateReplyEnabled: true,
       metaAdContext: null,
@@ -23,6 +25,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     generateFirstIntro: optionsOrFirstMessage?.generateFirstIntro === true,
     channel: optionsOrFirstMessage?.channel || "whatsapp",
     surface: optionsOrFirstMessage?.surface || "conversation",
+    commentText: String(optionsOrFirstMessage?.commentText || ""),
     publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
@@ -148,6 +151,13 @@ function renderCompactService(service) {
   return `- ${promptContextText(service?.name, 180) || "Unnamed service"}${description ? `: ${description}` : ""}`;
 }
 
+function explicitConversationPriceRequest(conversationContext) {
+  const selected = conversationSelectedServices(conversationContext);
+  return hasExplicitPriceRequest(conversationContext?.currentCustomerText, {
+    treatment: selected.length === 1 ? selected[0].name : null,
+  });
+}
+
 function conversationServicesList(conversationContext, terms) {
   const selected = conversationSelectedServices(conversationContext);
   if (selected.length) {
@@ -156,7 +166,7 @@ function conversationServicesList(conversationContext, terms) {
         const description = promptContextText(service?.description, 1_600) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
         const duration = promptContextText(service?.duration, 300) || "Not configured";
-        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
+        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)) ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
       })
       .join("\n");
   }
@@ -165,7 +175,8 @@ function conversationServicesList(conversationContext, terms) {
   if (!configured.length) {
     return `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`;
   }
-  if (conversationContext?.promotionIntent === true) {
+  if ((conversationContext?.promotionIntent === true || explicitConversationPriceRequest(conversationContext)) &&
+      (config.automatedFollowUp?.assessmentFirstPricingEnabled !== true || explicitConversationPriceRequest(conversationContext))) {
     return [
       "- No single current service is established. The customer is asking about price/package/promotion information, so full configured service pricing is included for this turn.",
       ...configured.slice(0, 30).map((service) => {
@@ -312,7 +323,8 @@ function conversationPromotionsList(conversationContext) {
 
   const selected = conversationSelectedServices(conversationContext);
   if (!selected.length) {
-    if (conversationContext?.promotionIntent === true) {
+    if ((conversationContext?.promotionIntent === true || explicitConversationPriceRequest(conversationContext)) &&
+        (config.automatedFollowUp?.assessmentFirstPricingEnabled !== true || explicitConversationPriceRequest(conversationContext))) {
       return active
         .slice(0, 20)
         .flatMap((promotion) => promotionKnowledgeLines(promotion))
@@ -331,7 +343,8 @@ function conversationPromotionsList(conversationContext) {
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
 
-  if (conversationContext?.promotionIntent !== true) {
+  if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
+      (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
@@ -503,6 +516,9 @@ function renderFollowUpPromotion(promotion) {
   const linkedService = promotion.linkedService
     ? ` | service: ${promptContextText(promotion.linkedService, 200)}`
     : "";
+  if (config.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+    return `- ${promptContextText(promotion.name, 240) || "Active promotion"}${linkedService}${dates ? ` | ${dates}` : ""} (do not quote package amounts in follow-ups)`;
+  }
   const caption = promptContextText(promotion.caption, 800);
   const packages = (Array.isArray(promotion.packages) ? promotion.packages : [])
     .filter((item) => item && typeof item === "object")
@@ -670,13 +686,14 @@ function followUpHandoffTriggers() {
 
 function promotionAuthorityRules() {
   return `PROMOTION AUTHORITY — follow this even if another section contains older wording:
-- ACTIVE PROMOTIONS is the only authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active.
+- ACTIVE PROMOTIONS is the only authority for treatment promotions, package prices, discounts, bundles, free add-ons and deadlines.
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Separate assessment attendance incentive: the current approved assessment-first business policy allows only the RM100 骨盆调理疗程 voucher for customers who attend the 1对1体态评估 + 体验. This does NOT authorize a new package price, additional stacked discount, expiry date, or any other voucher conditions. Confirm actual redemption terms with staff." : ""}
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
 - SERVICES remains authoritative for standing normal/regular treatment prices, standalone treatment durations, mechanisms and safety. Promotional advertising copy may describe a package total or an older normal price; never use it to override those standing facts. If conflicting package totals or offer facts remain, ask the team to confirm instead of guessing.
 - A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
 - If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
 - A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
-- If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
+- If a treatment deal, package discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it. The separate attendance-only assessment voucher exception above does not change treatment prices.
 - If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
 - Standing non-promotional facts explicitly described as always available may still be used, but never turn them into a time-limited promotion unless ACTIVE PROMOTIONS says so.
 - The "auto-send on price/package enquiry" marker is internal automation metadata. Never mention or explain that marker to the customer.`;
@@ -784,10 +801,12 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
 function buildCommentAutomationPrompt(options = {}) {
   const context = getBusinessContext();
   const { terminology: terms } = context;
+  const currentCommentPriceRequest = config.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+    hasExplicitPriceRequest(options.commentText);
   const servicesList = listOrNone(
     config.services,
     (service) =>
-      `- ${service.name}: ${service.description} | Price: ${service.priceRange}`,
+      `- ${service.name}: ${service.description}${config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !currentCommentPriceRequest ? "" : ` | Price: ${service.priceRange}`}`,
     `No ${terms.servicePlural} are configured. Do not invent any.`
   );
   const guardrailsList = listOrNone(
@@ -805,9 +824,10 @@ BUSINESS INFO:
 - Services:
 ${servicesList}
 - Active promotions:
-${activePromotionsList()}
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !currentCommentPriceRequest ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] }) : activePromotionsList()}
 
 RULES:
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Neutro assessment-first: if the current comment does NOT explicitly ask for a monetary price, do NOT mention treatment/package/trial prices in public or private replies, even when the comment asks about packages or offers. Invite the 1对1体态评估 + 体验 when relevant. For pelvic interest only, a RM100 voucher for attending may be mentioned, without promising extra stacking or free treatment. If the comment explicitly asks how much, give the verified configured price instead of hiding it behind an assessment." : ""}
 - Match the language or natural language mix used by the commenter.
 - Keep the public reply short, natural, and safe for anyone to read. Do not expose personal, medical, complaint, account, payment, or other sensitive details publicly.
 - ${options.publicReplyEnabled ? "Write a useful publicReply. If a private reply will also be sent, naturally mention that you sent details privately when appropriate." : "Set publicReply to an empty string because public replies are disabled."}
@@ -995,6 +1015,7 @@ FOLLOW-UP SALES RULES:
 - Never invent or guess prices, promotions, availability, booking status, treatment results, medical advice, diagnosis, or business facts.
 - Do not use guaranteed or absolute treatment-result language.
 - A follow-up never confirms an appointment, slot, offer validity, or other staff-dependent action by itself.
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- For this clinic, NEVER write a treatment, original, package, discounted or first-trial price in an unsolicited follow-up, even if pricing was discussed earlier. A relevant pelvic assessment invitation may mention only the RM100 voucher for attending, not a package price. Never claim the assessment or trial is free or that discounts can stack." : ""}
 
 DECIDE THE ACTION:
 - Use "send" when there is a genuine unresolved point and a short follow-up could help the customer continue.
@@ -1050,12 +1071,14 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
 
   const servicesList = hasScopedConversationContext
     ? conversationServicesList(conversationContext, terms)
-    : listOrNone(
+    : (config.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? listOrNone(config.services, renderCompactService, "No services configured.")
+      : listOrNone(
         config.services,
         (service) =>
           `- ${service.name}: ${service.description} | Price: ${service.priceRange} | Duration: ${service.duration}`,
         `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`
-      );
+      ));
 
   const faqList = listOrNone(
     config.faqs,
@@ -1105,7 +1128,7 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     !hasScopedConversationContext || conversationContext.contactIntent === true;
   const promotionsList = hasScopedConversationContext
     ? conversationPromotionsList(conversationContext)
-    : activePromotionsList();
+    : (config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] }) : activePromotionsList());
   const sopText = hasScopedConversationContext
     ? filterServiceScopedGuidance(config.sop, conversationContext)
     : String(config.sop || "");
@@ -1162,6 +1185,14 @@ ACTIVE PROMOTIONS — this structured section is the ONLY authority for whether 
 ${promotionsList}
 
 ${promotionAuthorityRules()}
+
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT-FIRST PRICING POLICY (overrides older sales guidance):
+- Only answer treatment monetary prices when the CURRENT customer message explicitly asks how much it costs, the price, fees, or a directly equivalent question. Be direct and truthful if asked. Never require a visit just to learn a configured price.
+- Asking how a service works, what package options include, whether an offer exists, or giving permission for future promotions does NOT authorize sending or mentioning treatment prices.
+- Otherwise introduce the relevant care, answer the concern and gently invite a 1对1的体态评估 + 体验 with the 中医师 where appropriate; do not force a booking or repeat the invitation.
+- For 骨盆调理 interest only: customers who attend the 1对1的体态评估 + 体验 may receive a RM100 voucher for pelvic treatment. This voucher amount is NOT a treatment price, so you may mention it before they ask about price. Do not promise the voucher stacks with current package reductions or claim a free assessment/trial; staff confirms exact redemption conditions.
+- Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit. Before & After examples are a separate system and remain eligible.
+` : ""}
 
 COMMON TERMS ${terms.customerPlural.toUpperCase()} USE (match these to the configured ${terms.servicePlural}; don't hand off just because the wording doesn't match the official name):
 ${aliasList}

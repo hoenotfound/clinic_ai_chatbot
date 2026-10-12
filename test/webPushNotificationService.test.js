@@ -48,7 +48,10 @@ test("push endpoints are restricted to trusted browser push services", () => {
 test("push config requires a matching P-256 VAPID key pair", () => {
   const ecdh = crypto.createECDH("prime256v1");
   const publicKey = ecdh.generateKeys().toString("base64url");
-  const privateKey = ecdh.getPrivateKey().toString("base64url");
+  // OpenSSL can return a 31-byte scalar when its leading byte is zero.
+  // VAPID requires a 32-byte P-256 scalar; pad this random test fixture.
+  const scalar = ecdh.getPrivateKey();
+  const privateKey = Buffer.concat([Buffer.alloc(32 - scalar.length), scalar]).toString("base64url");
 
   assert.equal(
     pushConfig({

@@ -1,4 +1,5 @@
-const { hasCustomerPriceEnquiry } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
+const clinicConfig = require("../config/clinicConfig");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const {
   findMentionedPromotionPackages,
@@ -62,7 +63,11 @@ async function resolvePricePromotionForReply({
 }) {
   if (
     (priceQuery !== true && packageQuery !== true) ||
-    !hasCustomerPriceEnquiry(customerText) ||
+    !(hasCustomerPriceEnquiry(customerText) ||
+      (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        isContextualBarePriceQuestion(customerText, treatment))) ||
+    (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      !hasExplicitPriceRequest(customerText, { treatment })) ||
     hasClinicalMediaRisk(customerText) ||
     !treatment ||
     flagged ||

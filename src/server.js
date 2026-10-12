@@ -49,7 +49,7 @@ const {
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
-const { guardFutureOfferIntroductionReply, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
@@ -994,7 +994,7 @@ async function processIncomingMessage(
     if (!flagged) {
       const guardedOfferIntro = guardFutureOfferIntroductionReply({
         channel,
-        isFirstMessage,
+        isFirstMessage: clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true ? false : isFirstMessage,
         customerText: text,
         reply,
         flagged,
@@ -1002,9 +1002,16 @@ async function processIncomingMessage(
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
       });
-      if (guardedOfferIntro.replaced) {
-        console.warn("[Reply guard] Replaced unsolicited commercial text in first WhatsApp opt-in reply.");
-        reply = guardedOfferIntro.reply;
+      const finalOfferGuard = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+        ? guardAssessmentFirstPricingReply({
+            channel, customerText: text, reply, flagged, language: mediaLanguage,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            treatment: details?.treatment,
+          })
+        : guardedOfferIntro;
+      if (finalOfferGuard.replaced) {
+        console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
+        reply = finalOfferGuard.reply;
       }
     }
 

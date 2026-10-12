@@ -156,6 +156,48 @@ function hasCustomerPriceEnquiry(customerText) {
     (MALAY_MONEY_QUESTION.test(current) && !MALAY_NON_PRICE_QUANTITY.test(current));
 }
 
+// A specific monetary treatment-price question is narrower than asking
+// whether offers/packages exist or consenting to future promotional updates.
+function isContextualBarePriceQuestion(customerText, treatment = null) {
+  return Boolean(String(treatment || "").trim()) &&
+    /^(?:berapa|brp|brapa|berapa\s+ya|berapa\s+eh)[\s?.!！。？]*$/iu.test(
+      String(customerText || "").normalize("NFKC").trim()
+    );
+}
+
+function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
+  const original = String(customerText || "").trim();
+  if (!original || isGreetingOrLanguageOnly(original)) return false;
+  const current = withoutExplicitMarketingRefusal(
+    stripFutureFollowUpPermission(original).text
+  ).normalize("NFKC").trim().replace(
+    /(?:\b(?:RM|MYR)\s*100\s*(?:voucher|coupon|discount|off|baucar)|(?:优惠券|優惠券|抵用券|baucar|voucher|coupon)\s*(?:RM|MYR)\s*100|(?:RM|MYR)\s*100\s*(?:优惠券|優惠券|抵用券))/giu,
+    "[VOUCHER]"
+  );
+  if (!current) return false;
+  if (isContextualBarePriceQuestion(current, treatment)) return true;
+  // A customer refusing to discuss prices is not making a price request.
+  const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost)\b/iu.test(current);
+  if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
+  // Mentioning a budget or saying prices are acceptable is not a request
+  // for the clinic's actual treatment price. These statements used to bypass
+  // the final no-unsolicited-prices check just because they contained RM/价钱.
+  const nonRequest = /(?:\b(?:my|our)\s+budget\b|\bbudget\s*(?:is|around|about|of|rm)\b|预算|預算|比较在意|比較在意|担心|擔心|不在意|不介意|无所谓|無所謂|没关系|沒關係).{0,40}(?:价格|價錢|价钱|费用|費用|\b(?:price|pricing|cost|rm\s*\d+|myr\s*\d+)\b)|(?:价格|價錢|价钱|费用|費用|\b(?:price|pricing|cost)\b).{0,20}(?:不是问题|不是問題|不重要|不介意|无所谓|無所謂|太贵|太貴|太高|acceptable|not\s+an?\s+issue|not\s+important|doesn['’]?t\s+matter)/iu.test(current);
+  const clearRequest = /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
+  if (nonRequest && !clearRequest) return false;
+  // A money amount given as the customer's own budget does not ask what our
+  // treatment costs. Bare RM amounts need a question/request to qualify.
+  if (/\b(?:RM|MYR)\s*\d{2,}/iu.test(current) &&
+      !/[?？]/u.test(current) && !clearRequest &&
+      !/(?:多少钱|多少錢|几多钱|幾多錢)/u.test(current) &&
+      !/(?:价格|價錢|价钱|\b(?:price|pricing|cost|fee|harga)\b)/iu.test(current)) return false;
+  // "How much time/recovery" asks for a duration, not a treatment price.
+  if (/\bhow\s+much\b/iu.test(current) &&
+      !ENGLISH_MONEY_QUESTION.test(current) &&
+      !/(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fee|rm\s*\d+)\b)/iu.test(current)) return false;
+  return /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
+}
+
 function hasCustomerServiceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
@@ -166,4 +208,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };

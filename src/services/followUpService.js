@@ -1,4 +1,5 @@
 const clinicConfig = require("../config/clinicConfig");
+const { hasTreatmentPriceContent, assessmentFirstInvitation } = require("../utils/initialOfferReplyGuard");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const contactsRepo = require("../db/contactsRepo");
@@ -456,6 +457,8 @@ function localizedPromotionFollowUp(value, language) {
 }
 
 function promotionFollowUpForCandidate(candidate, language = "en") {
+  // Never substitute a fixed promotional price/caption for an assessment-first follow-up.
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) return null;
   const recentInbound = Array.isArray(candidate.recent_inbound_messages)
     ? candidate.recent_inbound_messages.filter(
         (value) => typeof value === "string" && value.trim()
@@ -1033,6 +1036,43 @@ function currentSessionHasPromotionEnquiry(
   return targetPromotionEnquirySeen || genericPromotionEnquirySeen;
 }
 
+function isConfiguredPromotionPriceGraphic(url, promotions = clinicConfig.promotions) {
+  const candidate = String(url || "").trim();
+  if (!candidate) return false;
+  const normalized = candidate.replace(/^https?:\/\/[^/]+/iu, "").split(/[?#]/u)[0];
+  return (Array.isArray(promotions) ? promotions : []).some(promotion => [
+    promotion?.imageUrl,
+    promotion?.followUpImageUrl,
+    ...(Array.isArray(promotion?.packages)
+      ? promotion.packages.flatMap(item => [item?.imageUrl, item?.followUpImageUrl])
+      : []),
+  ].some(item => {
+    const path = String(item || "").trim().replace(/^https?:\/\/[^/]+/iu, "").split(/[?#]/u)[0];
+    return path && path === normalized;
+  }));
+}
+
+function enforceAssessmentFirstFollowUpCopy({
+  message, candidate = {}, targetedService = null, language = "en",
+} = {}) {
+  const original = String(message || "");
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled !== true ||
+      !hasTreatmentPriceContent(original)) {
+    return { message: original, suppressMedia: false };
+  }
+  return {
+    message: assessmentFirstInvitation({
+      treatment: targetedService || candidate.treatment_interest,
+      customerText: (candidate.recent_inbound_messages || []).at(-1) ||
+        candidate.trigger_message_content || "",
+      language,
+      services: clinicConfig.services,
+      serviceAliases: clinicConfig.serviceAliases,
+    }),
+    suppressMedia: true,
+  };
+}
+
 async function sendCandidate(candidate) {
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
@@ -1293,17 +1333,33 @@ async function sendCandidate(candidate) {
     return;
   }
 
+  // Guard every follow-up channel and mode just before durable reservation.
+  // If configured media was paired with a price-bearing caption, omit the
+  // attachment as well: an image itself might display an unasked amount.
+  const safeFollowUp = enforceAssessmentFirstFollowUpCopy({
+    message: followUpMessage, candidate, targetedService, language,
+  });
+  if (safeFollowUp.suppressMedia) {
+    console.info(`[Assessment-first] Suppressed unsolicited price in follow-up step ${stepIndex} contact ${candidate.contact_id}`);
+  }
+  followUpMessage = safeFollowUp.message;
+  const originalHasPrice = safeFollowUp.suppressMedia;
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
   // A promotion override replaces the normal step content. Use only the
   // matched promotion/package follow-up graphic; never fall back to the
   // generic step image because it may belong to a different offer.
-  const effectiveImageUrl = promotionFollowUp
+  const selectedFollowUpImage = promotionFollowUp
     ? promotionFollowUpImageUrl
     : selectedImageUrl;
+  const effectiveImageUrl =
+    originalHasPrice ||
+    (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      isConfiguredPromotionPriceGraphic(selectedFollowUpImage))
+      ? "" : selectedFollowUpImage;
   const effectiveVideoKey =
-    !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
+    !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
   const effectiveVideoFilename =
     selectedVideoFilename || "follow-up-video.mp4";
 
@@ -1699,6 +1755,8 @@ realtimeEvents.subscribe("config_changed", (payload) => {
 });
 
 module.exports = {
+  isConfiguredPromotionPriceGraphic,
+  enforceAssessmentFirstFollowUpCopy,
   FOLLOW_UP_CHECK_INTERVAL_MS,
   STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,

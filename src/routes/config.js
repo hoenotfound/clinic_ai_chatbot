@@ -402,6 +402,8 @@ function isAutomatedFollowUpConfig(value) {
     !Array.isArray(value.additionalSteps) ||
     value.additionalSteps.length > 2 ||
     !value.additionalSteps.every(isFollowUpStep) ||
+    (value.assessmentFirstPricingEnabled !== undefined &&
+      typeof value.assessmentFirstPricingEnabled !== "boolean") ||
     (value.freeEntry !== undefined && !isFreeEntryFollowUpConfig(value.freeEntry)) ||
     (value.whatsappFreeOnly !== undefined &&
       (!isPlainObject(value.whatsappFreeOnly) ||
@@ -611,6 +613,13 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   if (!isPlainObject(requested)) return null;
 
   const enabled = requested.enabled;
+  // Keep the existing per-client pricing policy on every Follow-up Tools save.
+  // This feature has no portal toggle; an ordinary save cannot disable it.
+  if (requested.assessmentFirstPricingEnabled !== undefined &&
+      typeof requested.assessmentFirstPricingEnabled !== "boolean") return null;
+  if (requested.assessmentFirstPricingEnabled !== undefined &&
+      requested.assessmentFirstPricingEnabled !== (current?.assessmentFirstPricingEnabled === true)) return null;
+  const assessmentFirstPricingEnabled = current?.assessmentFirstPricingEnabled === true;
   const triggerMode = requested.triggerMode;
   const quietHours = normalizeQuietHours(requested.quietHours);
   const firstStep = prepareFollowUpStep(requested);
@@ -701,9 +710,13 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     (current?.pricingReminder?.sendBothPelvicPackages === true);
   const enableSocialChannels = requestedPricing?.enableSocialChannels ??
     (current?.pricingReminder?.enableSocialChannels === true);
-  const pricingEnabled = requestedPricing === undefined
-    ? current?.pricingReminder?.enabled === true
-    : requestedPricing.enabled === true;
+  // Assessment-first never queues unsolicited reminder graphics, including
+  // when older browsers re-submit a stale enabled checkbox.
+  const pricingEnabled = assessmentFirstPricingEnabled
+    ? false
+    : requestedPricing === undefined
+      ? current?.pricingReminder?.enabled === true
+      : requestedPricing.enabled === true;
   const pricingActivation =
     pricingEnabled
       ? current?.pricingReminder?.enabled === true &&
@@ -770,6 +783,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
 
   return {
     enabled,
+    assessmentFirstPricingEnabled,
     triggerMode,
     quietHours,
     ...firstStep,
