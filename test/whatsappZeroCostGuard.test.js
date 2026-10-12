@@ -27,6 +27,7 @@ function mockedDatabase({eligible=true,billed=false,sevenDays=false}={}){
     if(sql==="BEGIN" || sql==="COMMIT" || sql==="ROLLBACK")return {rows:[]};
     if(sql.includes("INSERT INTO whatsapp_free_only_send_gate"))return {rows:[]};
     if(sql.includes("FROM whatsapp_free_only_send_gate") && sql.includes("FOR UPDATE"))return {rows:[{...state}]};
+    if(sql.includes("FROM whatsapp_free_only_send_gate"))return {rows:[{...state}]};
     if(sql.includes("FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1"))
       return {rows:priced.has(params[0])?[priced.get(params[0])]:[]};
     if(sql.includes("AS tripped"))return {rows:[{tripped:billed}]};
