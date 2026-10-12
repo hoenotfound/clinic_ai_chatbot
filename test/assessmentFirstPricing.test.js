@@ -392,3 +392,38 @@ test("AI missing the priceQuery flag cannot drop a verified treatment price grap
     assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",textSendSucceeded:false}),null);
   }finally{config.automatedFollowUp=old;}
 });
+
+
+test("standalone Malay/Chinese price follow-ups use only the immediately established service",async()=>{
+  const { isStandalonePriceQuestion }=require("../src/utils/customerEnquiryEvidence");
+  const { safeServiceFromCustomer }=require("../src/utils/initialOfferReplyGuard");
+  for(const q of ["berapa?", "Berapa ya?", "多少钱？", "几钱？", "price?", "how much?"]){
+    assert.equal(isStandalonePriceQuestion(q),true,q);
+  }
+  for(const q of ["berapa kali?", "berapa lama?", "how much longer?", "my budget RM300", "几多疗程", "any packages?"]){
+    assert.equal(isStandalonePriceQuestion(q),false,q);
+  }
+  const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  const known=safeServiceFromCustomer("我想了解骨盆调理",services,[]);
+  assert.equal(known?.name,"骨盆调理");
+  assert.equal(safeServiceFromCustomer("3D还是骨盆调理?",services,[]),null);
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
+  try{
+    const out=await resolvePricePromotionForReply({
+      priceQuery:false,packageQuery:false,treatment:known.name,verifiedServiceFromText:known.name,
+      customerText:"Berapa?",textSendSucceeded:true,contactId:3,
+      promotions:[{name:"Pelvic",linkedService:known.name,sendOnPriceQuery:true,
+        packages:[{name:"Package B",caption:"RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
+      wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.equal(out?.packages?.[0]?.caption,"RM288");
+    assert.equal(await resolvePricePromotionForReply({
+      priceQuery:false,packageQuery:false,treatment:known.name,verifiedServiceFromText:null,
+      customerText:"Berapa?",textSendSucceeded:true,contactId:3,
+      promotions:[{name:"Pelvic",linkedService:known.name,sendOnPriceQuery:true,
+        packages:[{name:"Package B",caption:"RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
+      wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+    }),null);
+  }finally{config.automatedFollowUp=old;}
+});
