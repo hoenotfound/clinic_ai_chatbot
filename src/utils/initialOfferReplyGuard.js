@@ -262,8 +262,7 @@ function ensureFirstAssessmentInvitation({
   const original = String(reply || "").trim();
   if (!isFirstMessage || flagged || !original ||
       hasExplicitPriceRequest(customerText, { treatment }) ||
-      !hasCustomerServiceEnquiry(customerText) ||
-      /(?:1\s*[对對]\s*1|1\s*[-–]?\s*on\s*[-–]?\s*1|one\s*[-–]?\s*on\s*[-–]?\s*one|penilaian\s*(?:postur)?|体态评估|體態評估|面部评估|面部評估)/iu.test(original)) {
+      !hasCustomerServiceEnquiry(customerText)) {
     return { reply: original, appended: false };
   }
   const verified = safeServiceFromCustomer(customerText, services, serviceAliases);
@@ -279,6 +278,17 @@ function ensureFirstAssessmentInvitation({
   const lang = String(language || "").toLowerCase();
   const chinese = lang.startsWith("zh") || (!lang && /[\u3400-\u9fff]/u.test(customerText));
   const malay = lang.startsWith("ms");
+  const alreadyInvited = /(?:1\s*[对對]\s*1|1\s*[-–]?\s*on\s*[-–]?\s*1|one\s*[-–]?\s*on\s*[-–]?\s*one|penilaian\s*(?:postur)?|体态评估|體態評估|面部评估|面部評估)/iu.test(original);
+  const hasVoucher = /\b(?:RM|MYR)\s*100\b/iu.test(original);
+  if (alreadyInvited) {
+    if (service.name !== "骨盆调理" || hasVoucher) return { reply: original, appended: false };
+    const voucherNote = chinese
+      ? "到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件由门店确认 🎁"
+      : malay
+        ? "Selepas hadir untuk penilaian + sesi percubaan, anda juga boleh menerima baucar RM100 untuk rawatan pelvis. Syarat ditegaskan oleh pusat."
+        : "After attending the assessment + trial, you can also receive an RM100 pelvic-treatment voucher. Our centre will confirm redemption conditions.";
+    return { reply: original + "\n\n" + voucherNote, appended: true };
+  }
   const invitation = service.name === "骨盆调理"
     ? assessmentFirstInvitation({ treatment: service.name, customerText, language, services, serviceAliases })
     : chinese
