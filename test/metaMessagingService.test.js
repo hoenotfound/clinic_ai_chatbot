@@ -1001,3 +1001,49 @@ test("social image without an accepted caption can cancel safely before provider
   assert.equal(result.cancelled, true);
   assert.ok(!result.partialCaptionSent);
 });
+
+test("Meta webhook carries Messenger and Instagram quick-reply provenance into STOP handling", () => {
+  for (const [object, channel] of [["page", "facebook"], ["instagram", "instagram"]]) {
+    const message = {
+      mid: channel + "-stop-quick-reply",
+      text: "Stop promotions",
+      quick_reply: { payload: "STOP_PROMOS" },
+    };
+    const parsed = meta.parseIncomingMessages({
+      object, entry: [{
+        id: "business-page-1",
+        messaging: [{
+          sender: { id: channel + "-customer-1" },
+          recipient: { id: "business-page-1" },
+          message,
+        }],
+      }],
+    });
+    assert.equal(parsed.length, 1, channel);
+    assert.equal(parsed[0].channel, channel);
+    assert.equal(parsed[0].text, "Stop promotions");
+    assert.equal(parsed[0].buttonPayload, "STOP_PROMOS");
+    const typed = meta.parseIncomingMessages({
+      object, entry: [{
+        id: "business-page-1",
+        messaging: [{
+          sender: { id: channel + "-customer-1" },
+          message: { mid: channel + "-typed-stop", text: "Stop promotions" },
+        }],
+      }],
+    });
+    assert.equal(typed.length, 1, channel);
+    assert.equal(Object.hasOwn(typed[0], "buttonPayload"), false);
+    const emptyPayload = meta.parseIncomingMessages({
+      object, entry: [{
+        id: "business-page-1",
+        messaging: [{
+          sender: { id: channel + "-customer-1" },
+          message: { mid: channel + "-empty-payload", text: "Stop promotions", quick_reply: { payload: " " } },
+        }],
+      }],
+    });
+    assert.equal(emptyPayload.length, 1);
+    assert.equal(Object.hasOwn(emptyPayload[0], "buttonPayload"), false);
+  }
+});
