@@ -17,7 +17,11 @@ SELECT
  inbound.created_at AS inbound_at,
  anchor.id AS anchor_id, final.id AS third_id,
  final.whatsapp_accepted_at AS third_accepted_at,
- final.whatsapp_accepted_at + interval '${DUE_AFTER_THIRD_MINUTES} minutes' AS due_at
+ GREATEST(final.whatsapp_accepted_at + interval '${DUE_AFTER_THIRD_MINUTES} minutes',
+   COALESCE((SELECT MAX(price.whatsapp_accepted_at) FROM messages price
+     WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
+       AND price.whatsapp_message_id IS NOT NULL),
+     final.whatsapp_accepted_at) + interval '5 minutes') AS due_at
 FROM contacts c
 JOIN LATERAL (
  SELECT m.id,m.created_at,COALESCE(m.source_created_at,m.created_at) AS source_at
@@ -55,7 +59,17 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
  AND COALESCE(c.mode,'ai') <> 'human'
  AND ${followUpAttentionAllowedSql("c")}
  AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
- AND lead.marketing_consent IS DISTINCT FROM 'opted_in'
+ AND lead.marketing_consent='unknown'
+ AND NOT EXISTS(SELECT 1 FROM whatsapp_marketing_consent_events evidence
+   WHERE evidence.contact_id=c.id
+     AND c.whatsapp_opt_in_at IS NOT NULL
+     AND ((evidence.message_id IS NOT NULL
+       AND evidence.consent_category='MARKETING'
+       AND evidence.consent_scope='treatment_followups_and_related_offers'
+       AND evidence.consented_at=c.whatsapp_opt_in_at
+       AND LOWER(BTRIM(evidence.consent_service))=LOWER(BTRIM(lead.treatment_interest)))
+       OR (evidence.message_id IS NULL AND evidence.lead_id=lead.id
+         AND evidence.consent_scope IS NULL)))
  AND lead.is_closed=false AND COALESCE(lead.stage_type,'open')='open'
  AND COALESCE(lead.appointment_status,'none') NOT IN ('set','visited')
  AND COALESCE(lead.system_key,'') NOT IN ('appointment_set','visited')
@@ -64,26 +78,36 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
  AND ($2::text='all' OR anchor.sent_by_username IS NOT NULL)
  AND inbound.source_at <= $3::timestamptz
  AND $3::timestamptz < inbound.source_at + interval '23 hours 50 minutes'
- AND NOT EXISTS(SELECT 1 FROM whatsapp_consent_prompts p WHERE p.lead_id=lead.id)
+ AND NOT EXISTS(SELECT 1 FROM whatsapp_consent_prompts p
+    WHERE p.lead_id=lead.id AND (p.status<>'deferred'
+      OR p.retry_after>$3::timestamptz OR p.attempts>=3))
  AND NOT EXISTS(SELECT 1 FROM follow_up_ai_decisions d
   WHERE d.contact_id=c.id AND d.trigger_message_id=anchor.id
    AND d.action IN ('skip','human_review'))
- AND NOT EXISTS(SELECT 1 FROM messages m
-  WHERE m.contact_id=c.id AND m.pricing_reminder_anchor_id=anchor.id
-    AND (m.delivery_status IS NULL OR m.delivery_status IN ('pending','unknown','failed')))
- AND final.whatsapp_accepted_at + interval '${DUE_AFTER_THIRD_MINUTES} minutes'
-  < inbound.source_at + interval '23 hours 50 minutes'
+ AND NOT EXISTS(SELECT 1 FROM messages price
+  WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
+    AND (price.whatsapp_message_id IS NULL OR price.delivery_status IN ('unknown','failed','cancelled')))
+ AND (NOT $4::boolean OR EXISTS(
+   SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=anchor.id
+ ) OR EXISTS(SELECT 1 FROM messages price
+   WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
+     AND price.whatsapp_message_id IS NOT NULL))
+ AND GREATEST(final.whatsapp_accepted_at + interval '${DUE_AFTER_THIRD_MINUTES} minutes',
+   COALESCE((SELECT MAX(price.whatsapp_accepted_at) FROM messages price
+     WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
+       AND price.whatsapp_message_id IS NOT NULL),
+     final.whatsapp_accepted_at) + interval '5 minutes') < inbound.source_at + interval '23 hours 50 minutes'
 ORDER BY due_at,contact_id
 LIMIT 200
 `;
 
-async function listCandidates({ activatedAt, triggerMode, now = new Date() }, database = pool) {
+async function listCandidates({ activatedAt, triggerMode, pricingEnabled = false, now = new Date() }, database = pool) {
   const result = await database.query(CANDIDATES_SQL,
-    [activatedAt,triggerMode,new Date(now).toISOString()]);
+    [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled]);
   return result.rows;
 }
 
-async function claim(candidate, { activatedAt, triggerMode, now = new Date(), question }, database = pool) {
+async function claim(candidate, { activatedAt, triggerMode, pricingEnabled = false, now = new Date(), question }, database = pool) {
   // Use the normal conversation lock and a unique lead prompt. A second
   // process cannot schedule another prompt for the same active CRM lead.
   const client = await database.connect();
@@ -92,7 +116,7 @@ async function claim(candidate, { activatedAt, triggerMode, now = new Date(), qu
     await client.query("SELECT pg_advisory_xact_lock($1,$2)",
       [CONVERSATION_LOCK_NAMESPACE,candidate.contact_id]);
     const fresh = (await client.query(CANDIDATES_SQL,
-      [activatedAt,triggerMode,new Date(now).toISOString()])).rows
+      [activatedAt,triggerMode,new Date(now).toISOString(),pricingEnabled])).rows
       .find(row => Number(row.contact_id)===Number(candidate.contact_id) &&
         Number(row.anchor_id)===Number(candidate.anchor_id) &&
         Number(row.inbound_id)===Number(candidate.inbound_id) &&
@@ -103,7 +127,16 @@ async function claim(candidate, { activatedAt, triggerMode, now = new Date(), qu
       await client.query("ROLLBACK");
       return null;
     }
-    const prompt = await client.query(
+    const previous = (await client.query(
+      "SELECT id,status,attempts,retry_after FROM whatsapp_consent_prompts WHERE lead_id=$1 FOR UPDATE",
+      [fresh.lead_id]
+    )).rows[0];
+    if (previous && (previous.status!=="deferred" || previous.attempts>=3 ||
+        new Date(previous.retry_after).getTime()>new Date(now).getTime())) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const prompt = previous ? { rows:[previous] } : await client.query(
       `INSERT INTO whatsapp_consent_prompts(contact_id,lead_id,anchor_id,service_name,question)
        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id`,
       [fresh.contact_id,fresh.lead_id,fresh.anchor_id,fresh.service_name,question]
@@ -120,8 +153,13 @@ async function claim(candidate, { activatedAt, triggerMode, now = new Date(), qu
       [fresh.contact_id,question]
     );
     await client.query(
-      "UPDATE whatsapp_consent_prompts SET message_id=$2 WHERE id=$1",
-      [prompt.rows[0].id,message.rows[0].id]);
+      `UPDATE whatsapp_consent_prompts
+       SET message_id=$2, anchor_id=$3, service_name=$4, question=$5,
+           status='claimed', retry_after=NULL,
+           attempts=CASE WHEN $6::boolean THEN attempts+1 ELSE attempts END
+       WHERE id=$1`,
+      [prompt.rows[0].id,message.rows[0].id,fresh.anchor_id,fresh.service_name,
+        question,Boolean(previous)]);
     await client.query("COMMIT");
     return { ...fresh, promptId:prompt.rows[0].id, message:message.rows[0], question };
   } catch(error) {
@@ -130,7 +168,7 @@ async function claim(candidate, { activatedAt, triggerMode, now = new Date(), qu
   } finally {client.release();}
 }
 
-async function stillEligible(claimed, { activatedAt, triggerMode }, database = pool) {
+async function stillEligible(claimed, { activatedAt, triggerMode, pricingEnabled = false }, database = pool) {
   const result = await database.query(
     `SELECT EXISTS (
       SELECT 1 FROM whatsapp_consent_prompts p
@@ -147,7 +185,17 @@ async function stillEligible(claimed, { activatedAt, triggerMode }, database = p
         AND COALESCE(c.mode,'ai') <> 'human'
         AND ${followUpAttentionAllowedSql("c")}
         AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
-        AND l.is_closed=false AND l.marketing_consent IS DISTINCT FROM 'opted_in'
+        AND l.is_closed=false AND l.marketing_consent='unknown'
+        AND NOT EXISTS(SELECT 1 FROM whatsapp_marketing_consent_events evidence
+         WHERE evidence.contact_id=c.id
+          AND c.whatsapp_opt_in_at IS NOT NULL
+          AND ((evidence.message_id IS NOT NULL
+            AND evidence.consent_category='MARKETING'
+            AND evidence.consent_scope='treatment_followups_and_related_offers'
+            AND evidence.consented_at=c.whatsapp_opt_in_at
+            AND LOWER(BTRIM(evidence.consent_service))=LOWER(BTRIM(l.treatment_interest)))
+            OR (evidence.message_id IS NULL AND evidence.lead_id=l.id
+             AND evidence.consent_scope IS NULL)))
         AND COALESCE(l.appointment_status,'none') NOT IN ('set','visited')
         AND COALESCE(stage.stage_type,'open')='open'
         AND COALESCE(stage.system_key,'') NOT IN ('appointment_set','visited')
@@ -155,6 +203,13 @@ async function stillEligible(claimed, { activatedAt, triggerMode }, database = p
         AND (SELECT id FROM leads WHERE contact_id=p.contact_id
           ORDER BY is_closed ASC,created_at DESC,id DESC LIMIT 1)=l.id
         AND anchor.created_at >= $6::timestamptz
+        AND (SELECT id FROM messages recent_anchor
+          WHERE recent_anchor.contact_id=p.contact_id AND recent_anchor.role='assistant'
+            AND recent_anchor.is_automated_follow_up=false
+            AND recent_anchor.delivery_status IS DISTINCT FROM 'failed'
+            AND recent_anchor.delivery_status IS DISTINCT FROM 'cancelled'
+            AND (recent_anchor.created_at,recent_anchor.id)>(latest.created_at,latest.id)
+          ORDER BY recent_anchor.created_at DESC,recent_anchor.id DESC LIMIT 1)=p.anchor_id
         AND ($7='all' OR anchor.sent_by_username IS NOT NULL)
         AND (SELECT id FROM messages WHERE contact_id=p.contact_id AND role='user'
              ORDER BY created_at DESC,id DESC LIMIT 1)=latest.id
@@ -166,11 +221,27 @@ async function stillEligible(claimed, { activatedAt, triggerMode }, database = p
           AND now()>=third.whatsapp_accepted_at+interval '${DUE_AFTER_THIRD_MINUTES} minutes')
         AND NOT EXISTS(SELECT 1 FROM messages pricing
           WHERE pricing.pricing_reminder_anchor_id=p.anchor_id
-            AND (pricing.delivery_status IS NULL OR
-              pricing.delivery_status IN ('pending','unknown','failed')))
+            AND (pricing.whatsapp_message_id IS NULL OR
+              pricing.delivery_status IN ('unknown','failed','cancelled')))
+        AND (NOT $8::boolean OR EXISTS(
+          SELECT 1 FROM pricing_reminder_decisions decision WHERE decision.anchor_id=p.anchor_id
+        ) OR EXISTS(SELECT 1 FROM messages price
+          WHERE price.contact_id=p.contact_id
+           AND price.pricing_reminder_anchor_id=p.anchor_id
+           AND price.whatsapp_message_id IS NOT NULL))
+        AND now() >= GREATEST(
+          (SELECT MAX(third.whatsapp_accepted_at)+interval '${DUE_AFTER_THIRD_MINUTES} minutes'
+           FROM messages third WHERE third.automated_follow_up_for_message_id=p.anchor_id
+             AND third.automated_follow_up_step=3),
+          COALESCE((SELECT MAX(pricing.whatsapp_accepted_at) FROM messages pricing
+             WHERE pricing.pricing_reminder_anchor_id=p.anchor_id
+               AND pricing.whatsapp_message_id IS NOT NULL),
+            (SELECT MAX(third.whatsapp_accepted_at) FROM messages third
+             WHERE third.automated_follow_up_for_message_id=p.anchor_id
+             AND third.automated_follow_up_step=3)) + interval '5 minutes')
     ) AS eligible`,
     [claimed.promptId,claimed.contact_id,claimed.anchor_id,claimed.inbound_id,
-      claimed.whatsapp_number,activatedAt,triggerMode]
+      claimed.whatsapp_number,activatedAt,triggerMode,pricingEnabled]
   );
   return result.rows[0]?.eligible===true;
 }
@@ -180,6 +251,35 @@ async function markSent(id,status,database=pool) {
     "UPDATE whatsapp_consent_prompts SET status=$2 WHERE id=$1 AND status='claimed'",
     [id,status]
   );
+}
+
+// Retry only known pre-provider blocks. Preserve the one-prompt-per-lead row
+// and a bounded backoff; discarded message placeholders are marked cancelled.
+async function deferUnsent(claimed, reason, database=pool) {
+  const client=await database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1,$2)",
+      [CONVERSATION_LOCK_NAMESPACE,claimed.contact_id]);
+    const row=(await client.query(
+      `UPDATE whatsapp_consent_prompts p
+        SET status='deferred',
+          retry_after=CASE WHEN attempts>=3 THEN NULL
+            ELSE now()+attempts*interval '2 minutes' END
+        FROM messages m WHERE p.id=$1 AND p.contact_id=$2 AND p.message_id=$3
+          AND p.status='claimed' AND m.id=p.message_id
+          AND m.whatsapp_message_id IS NULL AND m.delivery_status IS NULL
+        RETURNING p.id,p.attempts,p.retry_after,m.id AS message_id`,
+      [claimed.promptId,claimed.contact_id,claimed.message.id]
+    )).rows[0];
+    if (!row) { await client.query("ROLLBACK");return null;}
+    await client.query(
+      "UPDATE messages SET delivery_status='cancelled',delivery_error=$2 WHERE id=$1 AND whatsapp_message_id IS NULL AND delivery_status IS NULL",
+      [row.message_id,String(reason||"Pre-send blocked").slice(0,240)]);
+    await client.query("COMMIT");
+    return row;
+  } catch(err){await client.query("ROLLBACK").catch(()=>{});throw err;}
+  finally{client.release();}
 }
 
 function parseResponseId(value) {
@@ -198,9 +298,12 @@ async function recordButtonResponse({
   try {
     await client.query("BEGIN");
     const prompt=(await client.query(
-      `SELECT p.*,c.whatsapp_opt_out_at,c.whatsapp_marketing_opt_out_at,c.whatsapp_opt_in_at
+      `SELECT p.*,c.whatsapp_opt_out_at,c.whatsapp_marketing_opt_out_at,
+         c.whatsapp_opt_in_at,sent.whatsapp_message_id AS prompt_provider_id,
+         sent.whatsapp_accepted_at AS prompt_accepted_at
        FROM whatsapp_consent_prompts p JOIN contacts c ON c.id=p.contact_id
-       WHERE p.id=$1 AND p.contact_id=$2 AND p.lead_id=$3 FOR UPDATE OF p`,
+       LEFT JOIN messages sent ON sent.id=p.message_id AND sent.contact_id=p.contact_id
+       WHERE p.id=$1 AND p.contact_id=$2 AND p.lead_id=$3 FOR UPDATE OF p,c`,
        [parsed.promptId,contactId,leadId]
     )).rows[0];
     const incoming=(await client.query(
@@ -218,13 +321,15 @@ async function recordButtonResponse({
     }
     if (!prompt || !incoming || incoming.role!=="user" || !incoming.whatsapp_message_id ||
         incoming.is_forwarded || incoming.media_mime_type || !prompt.message_id ||
-        prompt.status==="failed" || prompt.response_message_id ||
+        !["claimed","accepted"].includes(prompt.status) ||
+        !prompt.prompt_provider_id || !prompt.prompt_accepted_at ||
+        prompt.response_message_id ||
         prompt.whatsapp_opt_out_at) {
       await client.query("ROLLBACK");return {handled:false};
     }
     const sentAt=new Date(incoming.sent_at);
     if (!Number.isFinite(sentAt.getTime()) ||
-        sentAt.getTime()<new Date(prompt.created_at).getTime() ||
+        sentAt.getTime()<new Date(prompt.prompt_accepted_at).getTime() ||
         (prompt.whatsapp_opt_in_at && sentAt<=new Date(prompt.whatsapp_opt_in_at)) ||
         (prompt.whatsapp_marketing_opt_out_at && sentAt<=new Date(prompt.whatsapp_marketing_opt_out_at))) {
       await client.query("ROLLBACK");return {handled:false};
@@ -273,6 +378,6 @@ async function recordButtonResponse({
 
 module.exports={
   DUE_AFTER_THIRD_MINUTES,CANDIDATES_SQL,
-  listCandidates,claim,stillEligible,markSent,
+  listCandidates,claim,stillEligible,markSent,deferUnsent,
   parseResponseId,recordButtonResponse,
 };
