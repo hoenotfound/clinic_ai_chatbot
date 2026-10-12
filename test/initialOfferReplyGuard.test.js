@@ -290,3 +290,20 @@ test("declining a different service does not permit AI unsolicited commercial te
   );
   assert.deepEqual(requested,{reply:"3D 体验价 RM488",replaced:false});
 });
+
+test("first WhatsApp replies retain ordinary numeric clinic details", () => {
+  for (const text of [
+    "我们的联络号码是 017-483 1336 😊",
+    "地址在 PJ C-12-6, Dataran 3 Two Business Centre。",
+    "我们的营业时间是星期二至星期五 10am 至 8pm。",
+    "For appointments call 012-649 9718.",
+  ]) {
+    assert.equal(commercial(text), false, text);
+    assert.deepEqual(checkReply("请问你们的电话号码或地址？", text), {
+      reply: text, replaced: false,
+    });
+  }
+  const unsolicited = checkReply("我想了解骨盆配套", "骨盆配套体验价 RM388");
+  assert.equal(unsolicited.replaced, true);
+  assert.equal(commercial(unsolicited.reply), false);
+});
