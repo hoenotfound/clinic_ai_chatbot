@@ -62,7 +62,11 @@ async function resolvePricePromotionForReply({
   duplicateWindowHours = 24,
 }) {
   if (
-    (priceQuery !== true && packageQuery !== true) ||
+    // A verified monetary question is sufficient for opted-in clinics even
+    // when the LLM under-classifies priceQuery. Keep all media safety checks.
+    (priceQuery !== true && packageQuery !== true &&
+      !(clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        hasExplicitPriceRequest(customerText, { treatment }))) ||
     !(hasCustomerPriceEnquiry(customerText) ||
       (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
         isContextualBarePriceQuestion(customerText, treatment))) ||
