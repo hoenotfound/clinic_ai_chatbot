@@ -809,9 +809,10 @@ BUSINESS INFO:
 - Services:
 ${servicesList}
 - Active promotions:
-${activePromotionsList()}
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? conversationPromotionsList({ currentCustomerText: "", relevantServiceNames: [] }) : activePromotionsList()}
 
 RULES:
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Neutro assessment-first: if the current comment does NOT explicitly ask for a monetary price, do NOT mention treatment/package/trial prices in public or private replies, even when the comment asks about packages or offers. Invite the 1对1体态评估 + 体验 when relevant. For pelvic interest only, a RM100 voucher for attending may be mentioned, without promising extra stacking or free treatment. If the comment explicitly asks how much, give the verified configured price instead of hiding it behind an assessment." : ""}
 - Match the language or natural language mix used by the commenter.
 - Keep the public reply short, natural, and safe for anyone to read. Do not expose personal, medical, complaint, account, payment, or other sensitive details publicly.
 - ${options.publicReplyEnabled ? "Write a useful publicReply. If a private reply will also be sent, naturally mention that you sent details privately when appropriate." : "Set publicReply to an empty string because public replies are disabled."}
