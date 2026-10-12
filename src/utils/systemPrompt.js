@@ -686,13 +686,14 @@ function followUpHandoffTriggers() {
 
 function promotionAuthorityRules() {
   return `PROMOTION AUTHORITY — follow this even if another section contains older wording:
-- ACTIVE PROMOTIONS is the only authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active.
+- ACTIVE PROMOTIONS is the only authority for treatment promotions, package prices, discounts, bundles, free add-ons and deadlines.
+${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- Separate assessment attendance incentive: the current approved assessment-first business policy allows only the RM100 骨盆调理疗程 voucher for customers who attend the 1对1体态评估 + 体验. This does NOT authorize a new package price, additional stacked discount, expiry date, or any other voucher conditions. Confirm actual redemption terms with staff." : ""}
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
 - SERVICES remains authoritative for standing normal/regular treatment prices, standalone treatment durations, mechanisms and safety. Promotional advertising copy may describe a package total or an older normal price; never use it to override those standing facts. If conflicting package totals or offer facts remain, ask the team to confirm instead of guessing.
 - A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
 - If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
 - A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
-- If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
+- If a treatment deal, package discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it. The separate attendance-only assessment voucher exception above does not change treatment prices.
 - If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
 - Standing non-promotional facts explicitly described as always available may still be used, but never turn them into a time-limited promotion unless ACTIVE PROMOTIONS says so.
 - The "auto-send on price/package enquiry" marker is internal automation metadata. Never mention or explain that marker to the customer.`;
