@@ -3,13 +3,15 @@
 CREATE TABLE IF NOT EXISTS whatsapp_consent_prompts (
   id BIGSERIAL PRIMARY KEY,
   contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  lead_id INTEGER NOT NULL UNIQUE REFERENCES leads(id) ON DELETE CASCADE,
   anchor_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
   message_id INTEGER UNIQUE REFERENCES messages(id) ON DELETE SET NULL,
   service_name TEXT NOT NULL,
   question TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'claimed'
-    CHECK (status IN ('claimed','accepted','failed','unknown')),
+    CHECK (status IN ('claimed','deferred','accepted','failed','unknown')),
+  attempts INTEGER NOT NULL DEFAULT 1 CHECK (attempts BETWEEN 1 AND 3),
+  retry_after TIMESTAMPTZ,
   response_message_id INTEGER UNIQUE REFERENCES messages(id) ON DELETE SET NULL,
   decision TEXT CHECK (decision IN ('accepted','declined')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
