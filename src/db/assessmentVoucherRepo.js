@@ -96,10 +96,10 @@ async function transitionVoucher(leadId, { status, redemptionNote, termsConfirme
     if (next === "redeemed" && current?.expires_at && new Date(current.expires_at).getTime() <= Date.now()) {
       throw new VoucherValidationError("This voucher has expired; staff must resolve eligibility before redemption.", 409);
     }
-    if (next === "eligible" &&
+    if (next !== "voided" &&
         (lead.appointment_status !== "visited" || !isPelvicLead(lead.treatment_interest))) {
       throw new VoucherValidationError(
-        "Confirm the pelvic treatment interest and mark the appointment as Visited before verifying assessment attendance."
+        "Pelvic treatment interest and Visited status must still be verified before confirming, issuing or redeeming a voucher."
       );
     }
     const result = await client.query(
