@@ -1,4 +1,4 @@
-const { hasCustomerPriceEnquiry } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const {
   findMentionedPromotionPackages,
@@ -62,7 +62,7 @@ async function resolvePricePromotionForReply({
 }) {
   if (
     (priceQuery !== true && packageQuery !== true) ||
-    !hasCustomerPriceEnquiry(customerText) ||
+    !hasExplicitPriceRequest(customerText) ||
     hasClinicalMediaRisk(customerText) ||
     !treatment ||
     flagged ||
