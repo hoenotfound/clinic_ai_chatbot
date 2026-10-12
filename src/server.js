@@ -974,8 +974,10 @@ async function processIncomingMessage(
           clinicConfig.businessType === "tcm_clinic" &&
           (bareServiceName(text, clinicConfig.services, clinicConfig.serviceAliases) ||
            isStandaloneSpinalConcern(text))) {
-        const pendingClinicalReview = await contactsRepo.hasPendingClinicalAiReview(contact.id);
-        if (pendingClinicalReview !== null) {
+        const verifiedEvidence = await contactsRepo.getTcmReviewEvidence(
+          contact.id, savedInbound.id
+        );
+        if (verifiedEvidence) {
           const plan = planTcmReviewReply({
             businessType: clinicConfig.businessType,
             customerText: text,
@@ -983,7 +985,7 @@ async function processIncomingMessage(
             services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
             conversationHistory: history,
-            pendingClinicalReview,
+            ...verifiedEvidence,
           });
           if (plan?.preserveReview) {
             flagged = true;
