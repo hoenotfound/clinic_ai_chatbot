@@ -59,9 +59,12 @@ function isContextualAdServiceEnquiry(customerText) {
 const FOLLOW_UP_PERMISSION = /(?:可以|愿意|願意|同意|希望|请|請).{0,35}(?:跟[进進]我|联系我|聯繫我|whats\s*app\s*(?:跟[进進]|联系|聯繫|通知)|收(?:到|取).{0,20}(?:跟[进進]|优惠|優惠))|\b(?:i(?:'d| would)?\s+(?:also\s+)?(?:like|want)\s+to\s+receive|feel\s+free\s+to|you\s+can|please)\b.{0,110}\b(?:follow[\s-]?ups?|whats\s*app|updates?)\b|\b(?:boleh|sila|saya\s+(?:nak|mahu|setuju|bersetuju)).{0,80}(?:whats\s*app|susulan|hubungi)\b/iu;
 const RELATED_OFFERS = /(?:优惠|優惠|促销|促銷|\b(?:offers?|promos?|promotions?|deals?|discounts?|promosi|tawaran)\b)/iu;
 const FUTURE_OFFER_NOTIFICATION = /(?:有(?:相关|相關|最新|新|其他)?(?:的)?(?:优惠|優惠|促销|促銷).{0,32}(?:发|發|通知|告诉|告訴)|(?:之后|之後|以后|以後|后续|後續|将来|將來).{0,45}(?:优惠|優惠|promos?|promotions?|offers?).{0,40}(?:通知|发|發|send|whats\s*app)|(?:优惠|優惠|促销|促銷).{0,28}(?:可以|请|請).{0,25}(?:发|發|通知))/iu;
-const REFUSED_FOLLOW_UP = /(?:不\s*可以|不\s*要|不\s*想|不\s*用|不\s*愿意|不\s*願意|不\s*同意|不能|别|別|請勿|请勿|暂时不要|暫時不要).{0,20}(?:跟[进進]|联系|聯繫|whats\s*app|发|發|通知)|(?:don't|do\s+not|stop|unsubscribe|no\s+follow[\s-]?ups?|not\s+agree|jangan|tak\s+nak|tidak\s+mahu).{0,50}(?:follow[\s-]?ups?|whats\s*app|messages?|promotions?|offers?|susulan|promosi)/iu;
+const REFUSED_FOLLOW_UP = /(?:不\s*可以|不\s*要|不\s*想|不\s*用|不\s*愿意|不\s*願意|不\s*同意|不希望|不接受|不方便|不能|别|別|請勿|请勿|暂时不要|暫時不要).{0,20}(?:跟[进進]|联系|聯繫|whats\s*app|发|發|通知)|(?:don't|do\s+not|stop|unsubscribe|no\s+follow[\s-]?ups?|not\s+agree|jangan|tak\s+nak|tidak\s+mahu).{0,50}(?:follow[\s-]?ups?|whats\s*app|messages?|promotions?|offers?|susulan|promosi)/iu;
+// A refusal of future contact or marketing is not a price enquiry.
+// Do not let a separate optimistic "offers can be sent" phrase reverse it.
+const REFUSED_PROMOTION = /(?:不\s*(?:希望|接受|方便|愿意|願意|想|要|需要|可以)|拒收|拒绝|別|别|请勿|請勿).{0,45}(?:优惠|優惠|促销|促銷|广告|廣告|营销|營銷|推广|推廣|\b(?:whats\s*app|offers?|promos?|promotions?|marketing)\b)|(?:don't|do\s+not|no\s+more|unsubscribe|opt\s*out|not\s+interested).{0,65}\b(?:offers?|promos?|promotions?|marketing|messages?|whats\s*app)\b/iu;
 const DIRECT_RESULT_REQUEST = /(?:前[后後]对比|前[后後]對比|(?:效果|对比|對比)[图圖]|案例[图圖照片]|\bbefore[\s&/-]*(?:and[\s-]*)?after\b)/iu;
-const DIRECT_CURRENT_REQUEST = /(?:\b(?:how\s+much|what(?:'s| is)?\s+(?:the\s+)?(?:price|cost)|send\s+(?:me\s+)?(?:the\s+)?(?:price|packages?|offers?)|show\s+me\s+(?:the\s+)?(?:packages?|offers?|promotions?)|(?:what|which)\s+(?:packages?|offers?|promotions?)|right\s+now|today)\b|(?:现在|現在|马上|馬上|立即).{0,24}(?:多少[钱錢]|价[格钱錢]|價錢|优惠|優惠|配套|套餐)|(?:有(?:什么|什麼)|什么|什麼|哪些|哪种|哪種)(?:优惠|優惠|配套|套餐)|(?:优惠|優惠)(?:是)?多少|(?:套餐|配套)(?:有哪些|有哪[些种種]|是什[么麼]|详情|詳情)|(?:想知道|想看|给我|給我|发我|發我|介绍|介紹|查看|看看).{0,18}(?:优惠详情|優惠詳情|优惠内容|優惠內容|配套(?:价格|價錢|详情|詳情)|套餐(?:价格|價錢|详情|詳情)))/iu;
+const DIRECT_CURRENT_REQUEST = /(?:\b(?:how\s+much|what(?:'s| is)?\s+(?:the\s+)?(?:price|cost)|send\s+(?:me\s+)?(?:the\s+)?(?:price|packages?|offers?)|show\s+me\s+(?:the\s+)?(?:packages?|offers?|promotions?)|(?:what|which)\s+(?:packages?|offers?|promotions?)|right\s+now|today)\b|(?:现在|現在|马上|馬上|立即).{0,24}(?:多少[钱錢]|价[格钱錢]|價錢|优惠|優惠|配套|套餐)|(?:有(?:什么|什麼)|什么|什麼|哪些|哪种|哪種)(?:优惠|優惠|配套|套餐)|(?:优惠|優惠|促销|促銷|配套|套餐).{0,18}(?:现在|現在|马上|馬上|立刻|立即|直接|先).{0,15}(?:发|發|给|給|看|传|傳|send|通知)|(?:优惠|優惠)(?:是)?多少|(?:套餐|配套)(?:有哪些|有哪[些种種]|是什[么麼]|详情|詳情)|(?:想知道|想看|给我|給我|发我|發我|介绍|介紹|查看|看看).{0,18}(?:优惠详情|優惠詳情|优惠内容|優惠內容|配套(?:价格|價錢|详情|詳情)|套餐(?:价格|價錢|详情|詳情)))/iu;
 
 function stripFutureFollowUpPermission(customerText) {
   const original = String(customerText || "").normalize("NFKC").trim();
@@ -69,27 +72,33 @@ function stripFutureFollowUpPermission(customerText) {
     return { text: original, hasFuturePermission: false };
   }
   const clauses = original.split(/[，,。.!！;；\n]+/u).map((part) => part.trim()).filter(Boolean);
+  const denied = clauses.some((part) =>
+    REFUSED_FOLLOW_UP.test(part) || REFUSED_PROMOTION.test(part)
+  );
   const affirmative = clauses.some((part) =>
-    FOLLOW_UP_PERMISSION.test(part) && !REFUSED_FOLLOW_UP.test(part)
+    FOLLOW_UP_PERMISSION.test(part) && !REFUSED_FOLLOW_UP.test(part) &&
+    !REFUSED_PROMOTION.test(part)
   );
   const standaloneFutureOffer = clauses.some((part) =>
     FUTURE_OFFER_NOTIFICATION.test(part) &&
     /(?:之后|之後|以后|以後|后续|後續|将来|將來)/u.test(part) &&
-    !REFUSED_FOLLOW_UP.test(part)
+    !REFUSED_FOLLOW_UP.test(part) && !REFUSED_PROMOTION.test(part)
   );
-  if (!affirmative && !standaloneFutureOffer) {
-    // An explicit refusal cannot be turned into marketing consent or an
-    // immediate pricing enquiry by a nearby future-offer notification.
-    if (clauses.some((part) => REFUSED_FOLLOW_UP.test(part))) {
-      const kept = clauses.filter((part) =>
-        !FUTURE_OFFER_NOTIFICATION.test(part) || DIRECT_CURRENT_REQUEST.test(part)
-      );
-      return { text: kept.join("。"), hasFuturePermission: false };
-    }
-    return { text: original, hasFuturePermission: false };
+  if (denied || (!affirmative && !standaloneFutureOffer)) {
+    // Refusal takes priority across the entire message. Keep any separate
+    // direct price request, but never mistake the refusal or remaining
+    // future-offer notification for a request to send media immediately.
+    const kept = clauses.filter((part) => {
+      if (DIRECT_CURRENT_REQUEST.test(part) && !REFUSED_PROMOTION.test(part)) return true;
+      return !REFUSED_FOLLOW_UP.test(part) &&
+        !REFUSED_PROMOTION.test(part) &&
+        !FUTURE_OFFER_NOTIFICATION.test(part) &&
+        !FOLLOW_UP_PERMISSION.test(part);
+    });
+    return { text: kept.join("。"), hasFuturePermission: false };
   }
   const kept = clauses.filter((part) => {
-    if (DIRECT_CURRENT_REQUEST.test(part) || REFUSED_FOLLOW_UP.test(part)) return true;
+    if (DIRECT_CURRENT_REQUEST.test(part)) return true;
     if (FOLLOW_UP_PERMISSION.test(part) || FUTURE_OFFER_NOTIFICATION.test(part)) return false;
     return true;
   });
