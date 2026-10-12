@@ -211,8 +211,8 @@ function guardFutureOfferIntroductionReply({
   return { reply: safe, replaced: true };
 }
 
-// Assessment-first is an opt-in clinic policy; this check blocks prices, not
-// the RM100 voucher incentive. Preserve the existing generic intro guard.
+// This guard runs after the full customer-facing text is assembled. It is
+// scoped by the caller to assessment-first clients, on any channel or turn.
 function hasTreatmentPriceContent(reply) {
   const original = String(reply || "").normalize("NFKC");
   const withoutVoucher = original
@@ -223,32 +223,60 @@ function hasTreatmentPriceContent(reply) {
     hasBarePriceContent(withoutVoucher);
 }
 
+function assessmentFirstInvitation({ treatment, customerText, language = "en", services = [], serviceAliases = [] } = {}) {
+  // Require a single verified service. General body/posture vocabulary is not
+  // proof of pelvic-treatment interest or eligibility for a pelvic voucher.
+  const matched = safeServiceFromCustomer(customerText, services, serviceAliases);
+  const canonical = (Array.isArray(services) ? services : [])
+    .find(service => String(service?.name || "").trim() === String(treatment || "").trim());
+  const service = canonical || matched;
+  const isPelvis = String(service?.name || "").trim() === "骨盆调理";
+  const name = String(service?.name || "").trim();
+  const locale = String(language || "").toLowerCase();
+  const zh = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText));
+  const ms = locale.startsWith("ms");
+  if (isPelvis) {
+    return zh
+      ? "可以先让中医师帮你做一个1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"
+      : ms
+        ? "Anda boleh datang dahulu untuk penilaian postur 1-ke-1 + sesi percubaan bersama pengamal TCM 😊 Selepas hadir, anda boleh menerima baucar RM100 untuk rawatan pelvis. Syarat penggunaan akan disahkan oleh pusat. Hari biasa atau hujung minggu lebih sesuai?"
+        : "You can start with a 1-on-1 posture assessment + trial with our TCM practitioner 😊 After attending, you can receive an RM100 pelvic-treatment voucher. Our centre can confirm the redemption conditions. Would a weekday or weekend suit you?";
+  }
+  if (name) {
+    return zh
+      ? "可以先让中医师帮你做一个1对1的评估 + 体验，根据你的情况再了解适合的" + name + "护理 😊 你比较方便平日还是周末呢？"
+      : ms
+        ? "Boleh mulakan dengan penilaian 1-ke-1 + sesi percubaan untuk " + name + " dahulu 😊 Hari biasa atau hujung minggu lebih sesuai?"
+        : "You can start with a 1-on-1 assessment + trial for " + name + " 😊 Would a weekday or weekend be more convenient?";
+  }
+  return safeIntroReply({ customerText, language, services, serviceAliases });
+}
+
+function stripUnsolicitedTreatmentPrice(reply) {
+  const source = String(reply || "").trim();
+  // Preserve complete, useful non-price sentences instead of throwing away
+  // the whole reply. Never preserve a sentence containing a suspicious amount.
+  const segments = source.split(/(?<=[。！？!?;\n])|(?<=\.)\s+(?=[A-Z])/u);
+  const retained = segments.filter(segment => !hasTreatmentPriceContent(segment))
+    .join("").trim();
+  return retained && !hasTreatmentPriceContent(retained) ? retained : "";
+}
+
 function guardAssessmentFirstPricingReply({
   customerText, reply, flagged = false, language = "en",
   services = [], serviceAliases = [], treatment = null,
 } = {}) {
   const original = String(reply || "");
-  if (flagged || hasExplicitPriceRequest(customerText) ||
-      !hasTreatmentPriceContent(original)) {
-    return { reply: original, replaced: false };
-  }
-  const topic = String(treatment || "") + " " + String(customerText || "");
-  const isPelvis = /骨盆|pelvi[sc]|posture|体态|體態|pinggul/iu.test(topic);
-  const locale = String(language || "").toLowerCase();
-  const zh = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText));
-  const ms = locale.startsWith("ms");
-  const safe = isPelvis
-    ? (zh
-      ? "可以先让中医师帮你做一个1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，使用细节由门店确认。你比较方便平日还是周末来呢？"
-      : ms
-        ? "Boleh datang untuk penilaian postur 1-ke-1 + sesi percubaan terlebih dahulu 😊 Selepas hadir, anda boleh menerima baucar RM100 untuk rawatan pelvis (syarat penggunaan akan disahkan pihak pusat). Hari biasa atau hujung minggu lebih sesuai?"
-        : "You can start with a 1-on-1 posture assessment + trial with our TCM practitioner 😊 Attending also qualifies you for an RM100 pelvic-treatment voucher, subject to the clinic confirming its terms. Would a weekday or weekend suit you?")
-    : safeIntroReply({ customerText, language, services, serviceAliases });
-  return { reply: safe, replaced: true };
+  if (flagged || hasExplicitPriceRequest(customerText, { treatment }) ||
+      !hasTreatmentPriceContent(original)) return { reply: original, replaced: false };
+  const retained = stripUnsolicitedTreatmentPrice(original);
+  const fallback = assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
+  return { reply: retained || fallback, replaced: true };
 }
-
 module.exports = {
   guardAssessmentFirstPricingReply,
+  assessmentFirstInvitation,
+  stripUnsolicitedTreatmentPrice,
   hasTreatmentPriceContent,
   guardFutureOfferIntroductionReply,
   hasCommercialReplyContent,
