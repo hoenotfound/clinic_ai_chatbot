@@ -203,6 +203,23 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
     await client.query("DELETE FROM pricing_reminder_batch_completions WHERE anchor_id=101");
     await client.query("DELETE FROM messages WHERE id=$1",[savedB.id]);
 
+    // Completion tracking must also recognize Messenger/Instagram's own
+    // provider acceptance fields without requiring a WhatsApp WAMID timestamp.
+    await client.query(`INSERT INTO contacts(id,channel,channel_user_id)
+      VALUES(2,'facebook','facebook-user');
+      INSERT INTO messages(id,contact_id,role,content) VALUES(201,2,'assistant','Original reply');
+      INSERT INTO messages(id,contact_id,role,content,
+        pricing_reminder_anchor_id,pricing_reminder_package_key,
+        whatsapp_message_id,social_accepted_at,delivery_status)
+      VALUES(202,2,'assistant','Pricing image',201,'Social offer',
+        'facebook:accepted-id',now(),'sent');`);
+    assert.equal(await pricingRepo.markBatchCompleted({
+      contactId:2,anchorId:201,expectedPackages:["Social offer"],
+    }),true);
+    assert.equal((await client.query(
+      "SELECT accepted_packages FROM pricing_reminder_batch_completions WHERE anchor_id=201"
+    )).rows[0].accepted_packages,1);
+
     const progress = await client.query(
       "SELECT MAX(automated_follow_up_step) AS step FROM messages WHERE automated_follow_up_for_message_id=101"
     );
