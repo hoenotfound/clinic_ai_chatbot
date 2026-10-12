@@ -333,3 +333,19 @@ test("actual first-turn guard catches bare treatment prices without rewriting or
     assert.deepEqual(checkReply(greeting, reply), { reply, replaced: false }, reply);
   }
 });
+
+
+test("real client case counts stay factual while Chinese bare ringgit amounts are blocked", () => {
+  const enquiry = "我想了解骨盆配套";
+  for (const reply of [
+    "我们已有1000+体态案例，可以先做1对1评估。",
+    "骨盆调理相关的1000+体态案例可供中医师参考。",
+    "目前超过1500+位客户了解过这个疗程。",
+  ]) {
+    assert.equal(commercial(reply), false, reply);
+    assert.deepEqual(checkReply(enquiry, reply), { reply, replaced: false }, reply);
+  }
+  for (const reply of ["骨盆调理388令吉", "骨盆护理 288 令吉"]) {
+    assert.equal(checkReply(enquiry, reply).replaced, true, reply);
+  }
+});
