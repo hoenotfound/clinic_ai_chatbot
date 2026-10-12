@@ -21,7 +21,7 @@ const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringg
 const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
 // Malaysian colloquial price requests are not generic treatment or package
 // enquiries. "几钱" is different from "几次" or "几多疗程".
-const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[钱錢]|幾\s*多\s*[钱錢]|多\s*[少幾几]\s*(?:块|塊|令吉)|(?:几|幾)\s*(?:块|塊)(?:钱|錢)?|价\s*位|價\s*位|(?:(?:price|harga|kos|caj|rate|fee|rm)\s*(?:please|pls|plz|berapa|brp)|(?:pm|p\.?m\.?)\s*(?:(?:一下|下|我|me)\s*)?(?:价格|價錢|价钱|价位|價位|几钱|幾錢|harga|price)))\b?/iu;
+const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[钱錢]|幾\s*多\s*[钱錢]|多\s*[少幾几]\s*(?:块|塊|令吉)|(?:几|幾)\s*(?:块|塊)(?:钱|錢)?|价\s*位|價\s*位|(?:(?:price|harga|kos|caj|rate|fee|rm)\s*(?:please|pls|plz|berapa|brp)|(?:pm|p\.?m\.?)\s*(?:(?:一下|下|我|me)\s*)?(?:价格|價錢|价钱|价位|價位|几钱|幾錢|harga|price)))/iu;
 
 // The generic word "berapa" means "how many/how much", not necessarily price.
 const ADMIN_TOPIC = /(?:\b(?:contact(?:\s+(?:details?|information|info|number))?|phone(?:\s+number)?|tel(?:ephone)?|mobile(?:\s+number)?|whatsapp(?:\s+number)?|e-?mail|address|location|branches?|opening\s+(?:hours?|times?)|operating\s+hours?|working\s+hours?|business\s+hours?|parking|directions?|google\s+maps?|postal\s+code|opening\s+day|closing\s+time|appointment\s+(?:slots?|time|availability)|payment\s+method|payment\s+options?)\b|联络方式|聯絡方式|联系方式|聯繫方式|电话号码|電話號碼|电话|電話|地址|在哪里|在哪裡|营业时间|營業時間|几点开门|幾點開門|停车|停車|分行|分店|怎么去|怎麼去|停车位|停車位|\b(?:nombor\s+(?:telefon|whatsapp)|telefon|hubungi|alamat|lokasi|cawangan|waktu\s+operasi|tempat\s+letak\s+kereta|parking)\b)/iu;
