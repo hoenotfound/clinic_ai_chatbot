@@ -19,7 +19,6 @@ test("unasked model prices and promotional offer text are replaced before Meta s
     "骨盆调理 RM388，另有RM288套餐。",
     "Only RM3️⃣8️⃣8️⃣ this month!",
     "Free 1-hour massage and first-trial special offer.",
-    "骨盆调理套餐A和套餐B可以选哦。",
     "现在五折优惠，只需388令吉。",
     "欢迎了解～赠送免费1小时全身按摩",
   ];
@@ -325,6 +324,7 @@ test("actual first-turn guard catches bare treatment prices without rewriting or
     "骨盆配套主要针对骨盆、腹直肌与体态问题，先由中医师进行评估。",
     "我们可以先介绍骨盆配套的护理方式和适合人群 😊",
     "骨盆调理套餐主要是徒手护理，不是注射。",
+    "骨盆调理套餐A和套餐B可以选哦。",
     "可以帮你安排体态评估，之后再看哪种骨盆护理适合。",
     "地址在 PJ C-12-6, Dataran 3 Two Business Centre；联络号码 017-483 1336",
     "2026年星期二至星期五营业；护理一般需要30–40分钟。",
