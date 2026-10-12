@@ -1477,6 +1477,14 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Sequence at a glance" })).not.toBeVisible();
 
+  const consentToggle = page.getByRole("switch", { name: "Enable final WhatsApp consent follow-up" });
+  await expect(consentToggle).toHaveAttribute("aria-checked", "false");
+  await expect(page.getByRole("heading", { name: "Final WhatsApp consent follow-up" })).toBeVisible();
+  await consentToggle.click();
+  await expect(consentToggle).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText("同意接收跟进优惠", { exact: true })).toBeVisible();
+  await expect(page.getByText("暂时不用", { exact: true })).toBeVisible();
+
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
