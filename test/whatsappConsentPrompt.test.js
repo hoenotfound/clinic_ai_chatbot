@@ -57,6 +57,7 @@ function fakeDatabase({alreadyRecorded=false,stop=false,decline=false}={}) {
     decision:alreadyRecorded?(decline?"declined":"accepted"):null,
     whatsapp_opt_out_at:stop?"2026-10-11T00:00:00Z":null,
     whatsapp_marketing_opt_out_at:null,whatsapp_opt_in_at:null,
+    prompt_provider_id:"wamid.real.consent.question",prompt_accepted_at:"2026-10-12T04:05:00Z",
   };
   const msg={
     id:101,role:"user",content:decline?NO_TEXT:YES_TEXT,
@@ -113,7 +114,35 @@ test("candidate and final pre-send SQL require FU3, current lead, 24h and no pri
   assert.match(repo.CANDIDATES_SQL,/automated_follow_up_step=3/);
   assert.match(repo.CANDIDATES_SQL,/third|final/);
   assert.match(repo.CANDIDATES_SQL,/23 hours 50 minutes/);
-  assert.match(repo.CANDIDATES_SQL,/NOT EXISTS\(SELECT 1 FROM whatsapp_consent_prompts p WHERE p.lead_id=lead.id\)/);
+  assert.match(repo.CANDIDATES_SQL,/NOT EXISTS\(SELECT 1 FROM whatsapp_consent_prompts p/);
+  assert.match(repo.CANDIDATES_SQL,/lead.marketing_consent='unknown'/);
+  assert.match(repo.CANDIDATES_SQL,/whatsapp_marketing_consent_events evidence/);
+  assert.match(repo.CANDIDATES_SQL,/pricing_reminder_decisions decision/);
+  assert.match(repo.CANDIDATES_SQL,/GREATEST\(final.whatsapp_accepted_at/);
   assert.match(repo.CANDIDATES_SQL,/whatsapp_marketing_opt_out_at IS NULL/);
   assert.match(repo.CANDIDATES_SQL,/whatsapp_opt_out_at IS NULL/);
+});
+
+test("a reply is not consent unless its stored prompt was accepted by Meta",async()=>{
+  const sample=fakeDatabase();
+  // Exercise the same provider-acceptance guard used for real webhook receipts.
+  const original=sample.db.connect;
+  sample.db.connect=async()=> {
+    const client=await original();
+    const query=client.query;
+    client.query=async(sql,params)=>{
+      const result=await query(sql,params);
+      if(sql.includes("FROM whatsapp_consent_prompts p JOIN contacts c")){
+        result.rows[0].prompt_provider_id=null;
+      }
+      return result;
+    };
+    return client;
+  };
+  const answer=await repo.recordButtonResponse({
+    contactId:7,messageId:101,leadId:17,
+    replyId:"da_consent_yes:37",businessName:"Neutro Sense TCM",
+  },{database:sample.db});
+  assert.equal(answer.handled,false);
+  assert.ok(!sample.statements.some(x=>x.includes("INSERT INTO whatsapp_marketing_consent_events")));
 });
