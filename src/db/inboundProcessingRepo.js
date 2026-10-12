@@ -119,13 +119,22 @@ async function storeInboundClaim({
   incoming,
   optOutScope = null,
 }, database = pool) {
-  const payload = serializeIncoming(incoming);
-  const sourceCreatedAt = whatsappMessageSourceCreatedAt(channel, incoming);
-  const stopScope = channel === "whatsapp" && ["marketing","all"].includes(optOutScope)
+  const stopScope = ["whatsapp", "facebook", "instagram"].includes(channel) &&
+    ["marketing", "all"].includes(optOutScope)
     ? optOutScope : null;
+  const socialStopScope = ["facebook", "instagram"].includes(channel)
+    ? stopScope : null;
+  // Persist the atomic STOP marker in the recovery payload, not just in the
+  // ephemeral webhook handler. A replay of the preparation step must not
+  // timestamp the same social STOP again after a later explicit re-opt-in.
+  const persistedIncoming = socialStopScope
+    ? { ...incoming, _socialStopEnforcedAtomically: true }
+    : incoming;
+  const payload = serializeIncoming(persistedIncoming);
+  const sourceCreatedAt = whatsappMessageSourceCreatedAt(channel, incoming);
   // Keep the original eight-parameter statement for ordinary inbound messages.
   // The STOP-only CTEs add consent-table dependencies only to STOP webhooks.
-  const stopCtes = stopScope ? `, enforced_whatsapp_stop AS (
+  const stopCtes = channel === "whatsapp" && stopScope ? `, enforced_whatsapp_stop AS (
        -- Apply STOP in the very same statement as the durable inbound. If
        -- Neon cannot store the opt-out, it cannot ACK the webhook claim as
        -- successfully saved; no marketing worker sees a stale opt-in.
@@ -152,6 +161,29 @@ async function storeInboundClaim({
        WHERE contact_id IN (SELECT id FROM enforced_whatsapp_stop)
        RETURNING id
      )` : "";
+  const socialStopCtes = socialStopScope ? `, enforced_social_stop AS (
+       -- A social marketing/global opt-out is committed in the same SQL
+       -- statement as its inbound message, before any reply-processing lease.
+       -- Only the insert winner may revoke consent; duplicate Meta webhook
+       -- deliveries cannot reset a newer staff-recorded opt-in.
+       UPDATE contacts
+       SET social_opt_out_at = CASE WHEN $9::text = 'all'
+             THEN now() ELSE social_opt_out_at END,
+           social_opt_out_source = CASE WHEN $9::text = 'all'
+             THEN 'customer_message' ELSE social_opt_out_source END,
+           social_marketing_opt_out_at = now(),
+           social_marketing_opt_out_source = 'customer_message',
+           updated_at = now()
+       WHERE id=$1 AND channel=$4::text
+         AND $4::text IN ('facebook','instagram')
+         AND $9::text IN ('all','marketing')
+         AND EXISTS(SELECT 1 FROM inserted_message)
+       RETURNING id
+     ), synchronized_social_stop_leads AS (
+       UPDATE leads SET marketing_consent='opted_out',updated_at=now()
+       WHERE contact_id IN (SELECT id FROM enforced_social_stop)
+       RETURNING id
+     )` : "";
   const result = await database.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
@@ -171,7 +203,7 @@ async function storeInboundClaim({
        SELECT id, contact_id, $4, $5::jsonb
        FROM inserted_message
        RETURNING ${JOB_COLUMNS}
-     )${stopCtes}
+     )${stopCtes}${socialStopCtes}
      SELECT
        row_to_json(m.*) AS saved_inbound,
        row_to_json(j.*) AS processing_job,
