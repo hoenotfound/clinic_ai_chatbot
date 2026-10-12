@@ -317,3 +317,73 @@ test("price image IDs configured as promotions are never recycled into price-fre
   assert.equal(isConfiguredPromotionPriceGraphic("/api/config/result-media/image/11",promos),false);
   assert.equal(isConfiguredPromotionPriceGraphic("",promos),false);
 });
+
+
+test("Malaysian colloquial money questions are explicit while package exploration remains price-free", () => {
+  const { hasCustomerPriceEnquiry } = require("../src/utils/customerEnquiryEvidence");
+  for (const enquiry of [
+    "骨盆几钱？", "3D幾錢", "几多钱", "请问价位？", "PM 价钱",
+    "p.m. 价钱", "price pls", "berapa harga ya", "RM388?",
+  ]) {
+    assert.equal(hasExplicitPriceRequest(enquiry), true, enquiry);
+    assert.equal(hasCustomerPriceEnquiry(enquiry), true, enquiry);
+  }
+  for (const nonPrice of [
+    "几次会有效？", "几多疗程？", "我的预算 RM300", "价格不是问题",
+    "有什么配套？", "有优惠可以通知我", "how much longer to recover?",
+    "Do you have an RM100 voucher?",
+  ]) {
+    assert.equal(hasExplicitPriceRequest(nonPrice), false, nonPrice);
+  }
+});
+
+test("verified first service enquiry gets an assessment invite while keeping the reply and existing result eligibility", () => {
+  const { ensureFirstAssessmentInvitation } = require("../src/utils/initialOfferReplyGuard");
+  const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  const opts={isFirstMessage:true,services,serviceQuery:true,language:"zh"};
+  const text="我们是徒手调理，通常根据体态安排体验 😊";
+  const pelvis=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理"});
+  assert.equal(pelvis.appended,true);
+  assert.match(pelvis.reply,/我们是徒手调理/);
+  assert.match(pelvis.reply,/1对1/);
+  assert.match(pelvis.reply,/RM100/);
+  assert.equal(hasTreatmentPriceContent(pelvis.reply),false);
+  const face=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解3D小颜术",treatment:"3D 小颜术"});
+  assert.equal(face.appended,true);
+  assert.match(face.reply,/1对1/);
+  assert.doesNotMatch(face.reply,/RM100|骨盆调理优惠券/);
+  const untouched=[
+    {...opts,isFirstMessage:false,customerText:"想了解骨盆调理",treatment:"骨盆调理"},
+    {...opts,customerText:"骨盆多少钱？",treatment:"骨盆调理"},
+    {...opts,customerText:"我想了解骨盆调理",serviceQuery:false,treatment:"骨盆调理"},
+    {...opts,customerText:"我想了解骨盆调理",flagged:true,treatment:"骨盆调理"},
+    {...opts,customerText:"想了解骨盆和3D",treatment:"骨盆调理"},
+  ];
+  for(const input of untouched) assert.equal(ensureFirstAssessmentInvitation({...input,reply:text}).appended,false,JSON.stringify(input));
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"我想了解这个",treatment:"骨盆调理"}).appended,false);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理",
+    verifiedAdService:"骨盆调理",}).appended,true);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估",customerText:"想了解骨盆调理",treatment:"骨盆调理"}).appended,false);
+});
+
+test("AI missing the priceQuery flag cannot drop a verified treatment price graphic",async()=>{
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
+  const args={
+    priceQuery:false,packageQuery:false,
+    treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+    customerText:"骨盆几钱?",textSendSucceeded:true,contactId:81,
+    promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+  };
+  try{
+    const result=await resolvePricePromotionForReply(args);
+    assert.equal(result?.packages?.[0]?.caption,"RM388");
+    assert.equal(await resolvePricePromotionForReply({...args,verifiedServiceFromText:null}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"有什么配套？"}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",flagged:true}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",needsAttention:true}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",textSendSucceeded:false}),null);
+  }finally{config.automatedFollowUp=old;}
+});
