@@ -83,10 +83,16 @@ test("promotion images now require a monetary price enquiry, not package browsin
     wasPromoRecentlySent:async()=>false,
     hasUnconfirmedMediaDelivery:async()=>false,
   };
-  assert.equal(await resolvePricePromotionForReply(input),null);
-  const bundle=await resolvePricePromotionForReply({...input,
-    customerText:"配套多少钱？",priceQuery:true});
-  assert.equal(bundle?.packages?.[0]?.caption,"RM388");
+  const existing = config.automatedFollowUp;
+  config.automatedFollowUp = {...existing, assessmentFirstPricingEnabled:true};
+  try {
+    assert.equal(await resolvePricePromotionForReply(input),null);
+    const bundle=await resolvePricePromotionForReply({...input,
+      customerText:"配套多少钱？",priceQuery:true});
+    assert.equal(bundle?.packages?.[0]?.caption,"RM388");
+  } finally {
+    config.automatedFollowUp = existing;
+  }
 });
 
 test("assessment-first prompt hides package prices unless the current customer asks for money", () => {
