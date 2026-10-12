@@ -344,6 +344,10 @@ test("verified first service enquiry gets an assessment invite while keeping the
   const text="我们是徒手调理，通常根据体态安排体验 😊";
   const pelvis=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理"});
   assert.equal(pelvis.appended,true);
+  const existingQuestion = ensureFirstAssessmentInvitation({...opts,reply:"骨盆护理主要关注腰臀和体态。你最困扰哪方面？",customerText:"想了解骨盆调理",treatment:"骨盆调理"});
+  assert.equal(existingQuestion.appended,true);
+  assert.equal((existingQuestion.reply.match(/[?？]/gu)||[]).length,1,"avoid repeating two questions");
+
   assert.match(pelvis.reply,/我们是徒手调理/);
   assert.match(pelvis.reply,/1对1/);
   assert.match(pelvis.reply,/RM100/);
