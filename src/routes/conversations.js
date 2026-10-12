@@ -1113,11 +1113,9 @@ router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
       return res.status(400).json({ error: "WhatsApp only." });
     }
 
-    // Only label a window verified when strict protection is enabled and its
-    // existing read-only send preflight confirms real CTWA/FEP billing evidence.
     // An ad label, ad click or opt-in alone is never sufficient proof.
-    const verified = whatsappZeroCostGuard.enabled() &&
-      (await whatsappZeroCostGuard.preflightTemplate(contact.whatsapp_number)).allowed === true;
+    // The actual send still rechecks consent and billing restrictions.
+    const verified = await whatsappZeroCostGuard.hasVerifiedFreeTemplateWindow(contact.whatsapp_number);
     res.set("Cache-Control", "no-store");
     return res.json({ verified });
   } catch (err) {
