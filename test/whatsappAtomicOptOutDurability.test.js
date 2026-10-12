@@ -84,3 +84,36 @@ test("Facebook and Instagram STOP is persisted atomically before reply-worker le
     }
   }
 });
+
+
+test("social atomic opt-out records whether it originated from a quick-reply button", async () => {
+  for (const channel of ["facebook", "instagram"]) {
+    for (const scope of ["marketing", "all"]) {
+      for (const quickReply of [false, true]) {
+        let statement = "";
+        let params = null;
+        const database = { async query(sql, args) {
+          statement = sql;
+          params = args;
+          return { rows: [{
+            saved_inbound: { id: 11, contact_id: 6 },
+            processing_job: { id: 12, message_id: 11 },
+            derived_first_message: false,
+          }] };
+        }};
+        const payload = {
+          id: "stop-1", channel, text: "Stop promotions",
+          ...(quickReply ? { buttonPayload: "STOP_PROMOS" } : {}),
+        };
+        await inbound.storeInboundClaim({
+          contactId: 6, channel, content: payload.text,
+          storedMessageId: channel + ":stop-1",
+          incoming: payload, optOutScope: scope,
+        }, database);
+        assert.match(statement, /social_marketing_opt_out_source = CASE WHEN NULLIF\(\$5::jsonb ->> 'buttonPayload', ''\)/);
+        assert.match(statement, /social_opt_out_source = CASE WHEN \$9::text = 'all'/);
+        assert.equal(JSON.parse(params[4]).buttonPayload || null, quickReply ? "STOP_PROMOS" : null);
+      }
+    }
+  }
+});
