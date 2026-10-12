@@ -34,8 +34,18 @@ function hasBarePriceContent(value) {
       const value = match[0], index = match.index;
       if (/^(?:19|20)\d{2}$/u.test(value)) return false;
       if (ranges.some(([start, end]) => index >= start && index + value.length <= end)) return false;
-      const prefix = clause.slice(Math.max(0, index - 24), index);
-      if (CONTACT_OR_ADDRESS_CONTEXT.test(prefix)) return false;
+      const prefix = clause.slice(Math.max(0, index - 48), index);
+      // An earlier address/phone label only exempts numbers belonging to that
+      // field. If a treatment or price phrase appears AFTER that label, a
+      // separate amount must still be treated as a possible unsolicited price.
+      const adminTerms = [...prefix.matchAll(
+        new RegExp(CONTACT_OR_ADDRESS_CONTEXT.source, "giu")
+      )];
+      const lastAdmin = adminTerms[adminTerms.length - 1];
+      if (lastAdmin) {
+        const afterAdmin = prefix.slice(lastAdmin.index + lastAdmin[0].length);
+        if (!BARE_PRICE_CONTEXT.test(afterAdmin)) return false;
+      }
       if (NON_PRICE_NUMBER_SUFFIX.test(clause.slice(index + value.length))) return false;
       return true;
     });
