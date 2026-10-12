@@ -170,6 +170,8 @@ async function installApi(page, {
   authUser = STAFF_USER,
   initialVoucher = null,
   voucherWriteError = false,
+  verifiedFreeTemplateWindow = false,
+  freeTemplateSendReady = true,
 } = {}) {
   await stubRealtime(page);
 
@@ -350,6 +352,11 @@ async function installApi(page, {
       });
     }
 
+    const freeWindowMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-template-free-window$/);
+    if (freeWindowMatch && method === "GET") {
+      return fulfill(route, { verified: verifiedFreeTemplateWindow, sendReady: verifiedFreeTemplateWindow && freeTemplateSendReady, blockedReason: freeTemplateSendReady ? null : "zero_cost_previous_send_unreconciled" });
+    }
+
     const templateListMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-templates$/);
     if (templateListMatch && method === "GET") {
       const contactId = Number(templateListMatch[1]);
@@ -357,7 +364,7 @@ async function installApi(page, {
       const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
       const optedOut = Boolean(contact?.whatsapp_opt_out_at);
       return fulfill(route, {
-        billingAdvisory: { evidence: "no_ctwa_referral", reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
+        billingAdvisory: { evidence: verifiedFreeTemplateWindow ? "recent_free_entry_evidence" : "no_ctwa_referral", freeEntry: { verified: verifiedFreeTemplateWindow, sendReady: verifiedFreeTemplateWindow && freeTemplateSendReady }, reviewTokens: { "lead_follow_up::en_US": "test-review-token" }, reviewedAt: new Date().toISOString() },
         templates: [
           {
             id: "tpl-1",
@@ -942,6 +949,142 @@ test("manual Inbox reply sends the exact text without taking ownership", async (
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body).toEqual({
     text: "Test reply from staff",
   });
+  expectNoUnexpectedApi(apiState);
+});
+
+test("verified CTWA free window shows a compact green banner but still requires opt-in", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    verifiedFreeTemplateWindow: true,
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      whatsapp_opt_in_at: null,
+      whatsapp_opt_in_source: null,
+    })],
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const banner = page.getByText("Free-entry period verified", { exact: true });
+  await expect(banner).toBeVisible();
+  await expect(banner.locator("..").locator("..").locator("..")).toHaveClass(/bg-emerald-50/);
+  await expect(page.getByText("24h closed. Confirm opt-in before a template.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm opt-in & choose template" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Confirm opt-in & choose template" }).click();
+  const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
+  await expect(dialog.getByText("WhatsApp opt-in required")).toBeVisible();
+  await expect(dialog.getByText(/A recent free-entry billing receipt was found/)).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("verified free-entry banner allows the template picker with recorded opt-in", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    verifiedFreeTemplateWindow: true,
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      whatsapp_opt_in_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(),
+      whatsapp_opt_in_source: "Customer consented in WhatsApp",
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByText("Free-entry period verified")).toBeVisible();
+  await expect(page.getByText("24h closed. Templates may be free; check consent.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review consent & templates" })).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("verified CTWA remains green for Utility while marketing is opted out", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    verifiedFreeTemplateWindow: true,
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      whatsapp_opt_in_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(),
+      whatsapp_opt_in_source: "Customer requested service notifications",
+      whatsapp_marketing_opt_out_at: new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString(),
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const heading = page.getByText("Free-entry period verified", { exact: true });
+  await expect(heading).toBeVisible();
+  await expect(heading.locator("..").locator("..").locator("..")).toHaveClass(/bg-emerald-50/);
+  await expect(page.getByText("24h closed. Marketing blocked; check Utility templates.")).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("paused strict sending keeps CTWA evidence but never paints sending green", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    verifiedFreeTemplateWindow: true,
+    freeTemplateSendReady: false,
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      whatsapp_opt_in_at: oldInbound,
+      whatsapp_opt_in_source: "Customer requested updates",
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const heading = page.getByText("Free-entry verified · sending paused", { exact: true });
+  await expect(heading).toBeVisible();
+  await expect(heading.locator("..").locator("..").locator("..")).toHaveClass(/bg-amber-50/);
+  await expect(page.getByText("24h closed. Check the billing status before sending.")).toBeVisible();
+  await page.getByRole("button", { name: "Review consent & templates" }).click();
+  const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
+  await expect(dialog.getByText(/A recent free-entry billing receipt was found/)).toBeVisible();
+  await expect(dialog.getByText(/Free period verified, but sending is paused/)).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("unverified ad leads never get the green banner", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    verifiedFreeTemplateWindow: false,
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      source: "ctwa",
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Free-entry period verified")).toHaveCount(0);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("a verified free entry never paints an opted-out conversation green", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    verifiedFreeTemplateWindow: true,
+    initialConversations: [conversation({
+      latest_inbound_at: oldInbound,
+      latest_customer_message_at: oldInbound,
+      last_message_at: oldInbound,
+      whatsapp_opt_out_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      whatsapp_opt_in_at: null,
+      whatsapp_opt_in_source: null,
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByText("Customer opted out of WhatsApp messages", { exact: true })).toBeVisible();
+  await expect(page.getByText("Free-entry period verified")).toHaveCount(0);
   expectNoUnexpectedApi(apiState);
 });
 

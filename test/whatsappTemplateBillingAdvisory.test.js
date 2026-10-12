@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const whatsappZeroCostGuard = require("../src/services/whatsappZeroCostGuard");
 const {
   BILLING_ADVISORY_SQL, REVIEW_TTL_MS, describeEvidence,
   getTemplateBillingAdvisory, issueReviewToken, verifyReviewToken,
@@ -20,13 +21,26 @@ function reviewBody(advisory) {
 
 
 function fakeDatabase(rows) {
-  let calls = 0;
+  const queries = [];
   return {
-    get calls() { return calls; },
-    query: async (_sql, args) => {
-      calls++;
+    get calls() { return queries.length; },
+    queries,
+    query: async (sql, args) => {
+      queries.push({ sql, args });
+      const row = typeof rows === "function" ? rows() : rows;
+      if (sql === whatsappZeroCostGuard.VERIFIED_SESSION_WINDOW_SQL) {
+        return { rows: [{ verified: row?.has_recent_verified_free_entry === true }] };
+      }
+      if (sql === whatsappZeroCostGuard.SEVEN_DAY_PROOF_SQL) {
+        return { rows: [{ verified: row?.has_post_72h_proof === true }] };
+      }
+      if (sql.includes("AS eligible")) {
+        assert.equal(args[2], "60123456789");
+        return { rows: [{ eligible: row?.has_recent_verified_free_entry === true &&
+          row?.has_send_ready !== false }] };
+      }
       assert.equal(args[0], 85);
-      return { rows: [typeof rows === "function" ? rows() : rows] };
+      return { rows: [{ recipient: "60123456789", ...row }] };
     },
   };
 }
@@ -40,11 +54,59 @@ test("prioritizes verified Meta charges over a prior free-entry receipt", () => 
     has_ctwa_referral:true, has_recent_verified_free_entry:true,
     has_recent_billable_message:true,
   }), "recent_billable_message");
-  assert.match(BILLING_ADVISORY_SQL, /pricing_type='free_entry_point'/);
+  assert.match(whatsappZeroCostGuard.VERIFIED_WINDOW_SQL, /pricing_type='free_entry_point'/);
   assert.match(BILLING_ADVISORY_SQL, /billed\.billable=true/);
   assert.match(BILLING_ADVISORY_SQL, /m\.contact_id=\$1/);
   assert.match(BILLING_ADVISORY_SQL, /interval '7 days'/);
-  assert.match(BILLING_ADVISORY_SQL, /interval '71 hours'/);
+  assert.match(whatsappZeroCostGuard.VERIFIED_WINDOW_SQL, /\$1::integer - 1/);
+});
+
+test("manual billing advisory agrees with a proven seven-day free-entry window", async () => {
+  const sevenDayEnv = { ...env, WHATSAPP_FEP_7DAY_VERIFIED: "true" };
+  const db = fakeDatabase({
+    has_ctwa_referral: true,
+    has_recent_verified_free_entry: true,
+    has_post_72h_proof: true,
+    has_recent_billable_message: false,
+  });
+  const advisory = await getTemplateBillingAdvisory(85, {
+    database: db, now: reviewedAt, staffUsername: "admin",
+    env: sevenDayEnv, ...reviewOptions,
+  });
+  assert.equal(advisory.evidence, "recent_free_entry_evidence");
+  assert.equal(
+    db.queries.find(call => call.sql === whatsappZeroCostGuard.VERIFIED_WINDOW_SQL).args[0],
+    168
+  );
+
+  const charged = fakeDatabase({
+    has_ctwa_referral: true,
+    has_recent_verified_free_entry: true,
+    has_recent_billable_message: true,
+  });
+  const billed = await getTemplateBillingAdvisory(85, {
+    database: charged, now: reviewedAt, staffUsername: "admin",
+    env: sevenDayEnv, ...reviewOptions,
+  });
+  assert.equal(billed.evidence, "recent_billable_message");
+  assert.equal(charged.calls, 1, "Billed message takes precedence over an older free receipt");
+});
+
+test("unsettled previous pricing pauses sending but keeps proven free-entry evidence", async () => {
+  const db = fakeDatabase({
+    has_ctwa_referral: true,
+    has_recent_verified_free_entry: true,
+    has_recent_billable_message: false,
+    has_send_ready: false,
+  });
+  const advisory = await getTemplateBillingAdvisory(85, {
+    database: db, now: reviewedAt, staffUsername: "admin", env, ...reviewOptions,
+  });
+  assert.equal(advisory.evidence, "recent_free_entry_evidence");
+  assert.equal(advisory.freeEntry.verified, true);
+  assert.equal(advisory.freeEntry.sendReady, false);
+  assert.equal(advisory.freeEntry.blockedReason, "unresolved_pricing");
+  assert.ok(advisory.reviewTokens[selected.name+"::"+selected.language]);
 });
 
 test("signed billing reviews bind contact, staff, evidence, secret and expiration", () => {

@@ -81,6 +81,42 @@ const VERIFIED_WINDOW_SQL = `
   ) AS eligible
 `;
 
+// Evidence-only view: a verified Meta free-entry period can remain active
+// while strict protection pauses sending for an unsettled earlier message.
+// Never reuse this query alone to authorize a provider send.
+const VERIFIED_SESSION_WINDOW_SQL = `
+  SELECT EXISTS (
+    SELECT 1 FROM contacts c
+    ${sessionLateralSql({ contactAlias: "c", ceilingParam: "$1" })}
+    JOIN whatsapp_free_entry_referrals entry
+      ON entry.contact_id=c.id AND entry.origin_message_id=referral.origin_message_id
+      AND entry.source_type='ad'
+    JOIN messages origin ON origin.id=referral.origin_message_id
+      AND origin.contact_id=c.id AND origin.role='user'
+    JOIN LATERAL (
+      SELECT reply.id, reply.created_at, reply.whatsapp_message_id
+      FROM messages reply
+      WHERE reply.contact_id=c.id AND reply.role='assistant'
+        AND reply.whatsapp_message_id IS NOT NULL
+        AND reply.created_at>=origin.created_at
+        AND reply.created_at<origin.created_at+interval '24 hours'
+      ORDER BY reply.created_at,reply.id LIMIT 1
+    ) first_reply ON TRUE
+    JOIN whatsapp_free_entry_pricing_evidence priced
+      ON priced.wamid=first_reply.whatsapp_message_id
+      AND priced.pricing_type='free_entry_point'
+      AND priced.billable=false
+      AND priced.delivery_status IN ('sent','delivered','read')
+    WHERE c.channel='whatsapp'
+      AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$3::text
+      AND (NULLIF(BTRIM(entry.ctwa_clid),'') IS NOT NULL
+           OR NULLIF(BTRIM(entry.meta_ad_id),'') IS NOT NULL)
+      AND $2::timestamptz>=first_reply.created_at
+      AND $2::timestamptz<first_reply.created_at
+        + (($1::integer - ${SAFE_BUFFER_HOURS}) * interval '1 hour')
+  ) AS verified
+`;
+
 // Do NOT interpret an environment flag as seven-day billing proof on its own.
 // A post-72h, nonbillable, qualified follow-up from THIS clinic is required.
 // Meta permits the FIRST reply to a genuine Click-to-WhatsApp ad entry
@@ -289,6 +325,73 @@ async function preflightTemplate(to, { database = pool, now = new Date() } = {})
   } catch(error) {
     console.error("[WhatsApp free-only] Template preflight failed:",error);
     return deny("zero_cost_database_unavailable","WhatsApp pricing evidence cannot be verified.");
+  }
+}
+
+// Read-only signal for the Inbox. This is not a Meta price quote or permission
+// to send. Reuse the strict preflight when enabled, and otherwise require the
+// same verified CTWA/FEP receipts with the conservative expiry buffer.
+async function hasVerifiedFreeTemplateWindow(to, {
+  database = pool, now = new Date(), env = process.env,
+} = {}) {
+  if (enabled()) {
+    return (await preflightTemplate(to, { database, now })).allowed === true;
+  }
+  const recipient = String(to || "").replace(/\D/g, "");
+  const stamp = new Date(now);
+  if (recipient.length < 8 || !Number.isFinite(stamp.getTime())) return false;
+  try {
+    let ceiling = 72;
+    if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true") {
+      const proof = await database.query(SEVEN_DAY_PROOF_SQL);
+      if (proof.rows?.[0]?.verified === true) ceiling = 168;
+    }
+    const result = await database.query(VERIFIED_WINDOW_SQL,
+      [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
+    return result.rows?.[0]?.eligible === true;
+  } catch (error) {
+    console.warn("[WhatsApp free-only] Inbox preview could not be verified:", error?.message);
+    return false;
+  }
+}
+
+// Display status is not a dispatch verdict. Strict-mode gate holds, unresolved
+// previous sends and billing alarms must never erase valid CTWA window evidence.
+async function inspectFreeTemplateWindow(to, {
+  database = pool, now = new Date(), env = process.env,
+} = {}) {
+  const result = { verified: false, sendReady: false, blockedReason: null };
+  const recipient = String(to || "").replace(/\D/g, "");
+  const stamp = new Date(now);
+  if (recipient.length < 8 || !Number.isFinite(stamp.getTime())) return result;
+  try {
+    let ceiling = 72;
+    if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true") {
+      const proof = await database.query(SEVEN_DAY_PROOF_SQL);
+      if (proof.rows?.[0]?.verified === true) ceiling = 168;
+    }
+    const verified = await database.query(VERIFIED_SESSION_WINDOW_SQL,
+      [ceiling, stamp.toISOString(), recipient]);
+    if (verified.rows?.[0]?.verified !== true) return result;
+
+    let ready;
+    if (enabled()) {
+      ready = await preflightTemplate(to, { database, now });
+    } else {
+      const send = await database.query(VERIFIED_WINDOW_SQL,
+        [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
+      ready = send.rows?.[0]?.eligible === true
+        ? { allowed: true }
+        : { allowed: false, code: "unresolved_pricing" };
+    }
+    return {
+      verified: true,
+      sendReady: ready.allowed === true,
+      blockedReason: ready.allowed === true ? null : (ready.code || "sending_paused"),
+    };
+  } catch (error) {
+    console.warn("[WhatsApp free-entry] Preview unavailable:", error?.message);
+    return result;
   }
 }
 
@@ -523,6 +626,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,preflightTemplate,reserve,complete,perform,
-  authorizedCeilingHours,VERIFIED_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
+  blockedResult,configuredAccount,enabled,settings,preflightTemplate,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,perform,
+  authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };

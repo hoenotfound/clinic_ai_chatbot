@@ -26,6 +26,7 @@ const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
+
 const clinicConfig = require("../config/clinicConfig");
 const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
@@ -1094,6 +1095,37 @@ router.post("/:contactId/messages/delivery-statuses", async (req, res) => {
   } catch (err) {
     console.error("Failed to resync delivery statuses:", err);
     res.status(500).json({ error: "Something went wrong refreshing delivery statuses." });
+  }
+});
+
+// Inbox display only. A positive check is not a reservation, a Meta quote,
+// or permission to bypass template approval, consent, opt-out or billing checks.
+router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+    if (!await canAccessContact(req.user, contactId)) {
+      return res.status(403).json({ error: "Not authorized to access this conversation." });
+    }
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({ error: "WhatsApp only." });
+    }
+
+    // An ad label, ad click or opt-in alone is never sufficient proof.
+    // The actual send still rechecks consent and billing restrictions.
+    const advisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
+    const verified = advisory.evidence === "recent_free_entry_evidence";
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      verified,
+      sendReady: verified && advisory.freeEntry?.sendReady === true,
+      blockedReason: verified ? advisory.freeEntry?.blockedReason || null : null,
+    });
+  } catch (err) {
+    console.warn("WhatsApp free-entry status could not be verified:", err?.message);
+    return res.status(503).json({ error: "WhatsApp free-entry status unavailable." });
   }
 });
 
