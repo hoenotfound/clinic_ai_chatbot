@@ -456,6 +456,8 @@ function localizedPromotionFollowUp(value, language) {
 }
 
 function promotionFollowUpForCandidate(candidate, language = "en") {
+  // Never substitute a fixed promotional price/caption for an assessment-first follow-up.
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) return null;
   const recentInbound = Array.isArray(candidate.recent_inbound_messages)
     ? candidate.recent_inbound_messages.filter(
         (value) => typeof value === "string" && value.trim()
