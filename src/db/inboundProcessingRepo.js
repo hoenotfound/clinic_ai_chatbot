@@ -161,6 +161,10 @@ async function storeInboundClaim({
        WHERE contact_id IN (SELECT id FROM enforced_whatsapp_stop)
        RETURNING id
      )` : "";
+  // Use the original incoming quick-reply evidence embedded in the durable
+  // payload. This avoids adding a new query argument or relying on recovery.
+  const socialOptOutSource = `CASE WHEN NULLIF($5::jsonb ->> 'buttonPayload', '') IS NOT NULL
+             THEN 'customer_quick_reply' ELSE 'customer_message' END`;
   const socialStopCtes = socialStopScope ? `, enforced_social_stop AS (
        -- A social marketing/global opt-out is committed in the same SQL
        -- statement as its inbound message, before any reply-processing lease.
@@ -170,9 +174,9 @@ async function storeInboundClaim({
        SET social_opt_out_at = CASE WHEN $9::text = 'all'
              THEN now() ELSE social_opt_out_at END,
            social_opt_out_source = CASE WHEN $9::text = 'all'
-             THEN 'customer_message' ELSE social_opt_out_source END,
+             THEN ${socialOptOutSource} ELSE social_opt_out_source END,
            social_marketing_opt_out_at = now(),
-           social_marketing_opt_out_source = 'customer_message',
+           social_marketing_opt_out_source = ${socialOptOutSource},
            updated_at = now()
        WHERE id=$1 AND channel=$4::text
          AND $4::text IN ('facebook','instagram')
