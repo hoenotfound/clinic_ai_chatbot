@@ -344,6 +344,16 @@ async function recordButtonResponse({
       await client.query("ROLLBACK");
       return {handled:true,decision:parsed.decision,alreadyRecorded:true};
     }
+    // The customer may tap while our successful provider send is still
+    // persisting its WAMID. Defer inbound processing to durable recovery:
+    // never treat a genuine one-tap reply as an ordinary customer enquiry.
+    if (prompt && incoming?.role==="user" && incoming.whatsapp_message_id &&
+        !incoming.is_forwarded && !incoming.media_mime_type &&
+        prompt.status==="claimed" && !prompt.response_message_id &&
+        prompt.message_id && (!prompt.prompt_provider_id || !prompt.prompt_accepted_at)) {
+      await client.query("ROLLBACK");
+      return {handled:false,pending:true};
+    }
     if (!prompt || !incoming || incoming.role!=="user" || !incoming.whatsapp_message_id ||
         incoming.is_forwarded || incoming.media_mime_type || !prompt.message_id ||
         !["claimed","accepted"].includes(prompt.status) ||
@@ -385,10 +395,17 @@ async function recordButtonResponse({
         "UPDATE leads SET marketing_consent='opted_in',updated_at=now() WHERE id=$1 AND contact_id=$2",
         [leadId,contactId]);
     } else {
-      // Declining this prompt does not create consent and is not an all-channel STOP.
+      // A No tap is a contact-level MARKETING refusal, not a global WhatsApp
+      // STOP. Future leads must not be prompted again unless the customer
+      // later provides new, explicit affirmative permission.
       await client.query(
-        "UPDATE leads SET marketing_consent='opted_out',updated_at=now() WHERE id=$1 AND contact_id=$2",
-        [leadId,contactId]);
+        `UPDATE contacts SET whatsapp_marketing_opt_out_at=$2,
+         whatsapp_marketing_opt_out_source='customer_consent_button_decline',
+         updated_at=now() WHERE id=$1 AND channel='whatsapp'`,
+        [contactId,sentAt.toISOString()]);
+      await client.query(
+        "UPDATE leads SET marketing_consent='opted_out',updated_at=now() WHERE contact_id=$1",
+        [contactId]);
     }
     await client.query(
       `UPDATE whatsapp_consent_prompts SET response_message_id=$2,
