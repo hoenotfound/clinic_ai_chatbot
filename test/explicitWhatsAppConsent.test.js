@@ -65,3 +65,21 @@ test("consent in the chat remains voluntary and must name this business", () => 
     "Hi Neutro Sense TCM, 我想了解骨盆调理。",
   ]) assert.equal(explicitPromotionConsent(text, clinic), null, text);
 });
+
+test("negated follow-up consent never authorizes WhatsApp marketing", () => {
+  const rejected = [
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，不可以跟进我，有优惠也发我看看 😊",
+    "Hi Neutro Sense TCM, 不可以 WhatsApp 跟进我，有优惠也发给我看看",
+    "Hi Neutro Sense TCM, 不能跟进我，有优惠也发给我看看",
+    "Hi Neutro Sense TCM, 请勿跟进我，有优惠也发我看看",
+    "Hi Neutro Sense TCM, 可以跟进我，有优惠也发我看看，不过暂时不要发。",
+    "Hi Neutro Sense TCM, 别跟进我，有优惠也发我看看",
+  ];
+  for (const value of rejected) {
+    assert.equal(explicitPromotionConsent(value, clinic), null, value);
+  }
+  for (const value of [
+    "Hi～我想了解 Neutro Sense TCM 的骨盆调理。之后可以 WhatsApp 跟进我，有相关优惠也可以通知我 😊",
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊",
+  ]) assert.equal(explicitPromotionConsent(value, clinic)?.category, "MARKETING", value);
+});
