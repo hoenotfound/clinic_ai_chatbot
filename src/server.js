@@ -1020,7 +1020,11 @@ async function processIncomingMessage(
         ? guardAssessmentFirstPricingReply({
             channel, customerText: text, reply, flagged, language: mediaLanguage,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-            treatment: verifiedPriceService?.name || details?.treatment,
+            // Do not let Gemini's treatment guess create pricing permission.
+            // Direct and one-turn follow-up requests use only verified customer
+            // treatment evidence (same standard as promotional images).
+            treatment: verifiedPriceService?.name || null,
+            requireVerifiedTreatment: true,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
