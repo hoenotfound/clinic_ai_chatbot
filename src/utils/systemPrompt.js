@@ -10,6 +10,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
       generateFirstIntro: false,
       channel: "whatsapp",
       surface: "conversation",
+      commentText: "",
       publicReplyEnabled: true,
       privateReplyEnabled: true,
       metaAdContext: null,
@@ -24,6 +25,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     generateFirstIntro: optionsOrFirstMessage?.generateFirstIntro === true,
     channel: optionsOrFirstMessage?.channel || "whatsapp",
     surface: optionsOrFirstMessage?.surface || "conversation",
+    commentText: String(optionsOrFirstMessage?.commentText || ""),
     publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
@@ -149,6 +151,13 @@ function renderCompactService(service) {
   return `- ${promptContextText(service?.name, 180) || "Unnamed service"}${description ? `: ${description}` : ""}`;
 }
 
+function explicitConversationPriceRequest(conversationContext) {
+  const selected = conversationSelectedServices(conversationContext);
+  return hasExplicitPriceRequest(conversationContext?.currentCustomerText, {
+    treatment: selected.length === 1 ? selected[0].name : null,
+  });
+}
+
 function conversationServicesList(conversationContext, terms) {
   const selected = conversationSelectedServices(conversationContext);
   if (selected.length) {
@@ -157,7 +166,7 @@ function conversationServicesList(conversationContext, terms) {
         const description = promptContextText(service?.description, 1_600) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
         const duration = promptContextText(service?.duration, 300) || "Not configured";
-        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !hasExplicitPriceRequest(conversationContext?.currentCustomerText)) ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
+        return `- ${service.name}: ${description}${conversationContext?.futureFollowUpIntroduction === true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)) ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
       })
       .join("\n");
   }
@@ -166,14 +175,15 @@ function conversationServicesList(conversationContext, terms) {
   if (!configured.length) {
     return `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`;
   }
-  if (conversationContext?.promotionIntent === true && (config.automatedFollowUp?.assessmentFirstPricingEnabled !== true || hasExplicitPriceRequest(conversationContext?.currentCustomerText))) {
+  if ((conversationContext?.promotionIntent === true || explicitConversationPriceRequest(conversationContext)) &&
+      (config.automatedFollowUp?.assessmentFirstPricingEnabled !== true || explicitConversationPriceRequest(conversationContext))) {
     return [
       "- No single current service is established. The customer is asking about price/package/promotion information, so full configured service pricing is included for this turn.",
       ...configured.slice(0, 30).map((service) => {
         const description = promptContextText(service?.description, 1_200) || "No description configured.";
         const price = promptContextText(service?.priceRange, 500) || "Not configured";
         const duration = promptContextText(service?.duration, 300) || "Not configured";
-        return `- ${service.name}: ${description}${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "" : ` | Price: ${price}`} | Duration: ${duration}`;
+        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
       }),
     ].join("\n");
   }
@@ -313,7 +323,8 @@ function conversationPromotionsList(conversationContext) {
 
   const selected = conversationSelectedServices(conversationContext);
   if (!selected.length) {
-    if (conversationContext?.promotionIntent === true && (config.automatedFollowUp?.assessmentFirstPricingEnabled !== true || hasExplicitPriceRequest(conversationContext?.currentCustomerText))) {
+    if ((conversationContext?.promotionIntent === true || explicitConversationPriceRequest(conversationContext)) &&
+        (config.automatedFollowUp?.assessmentFirstPricingEnabled !== true || explicitConversationPriceRequest(conversationContext))) {
       return active
         .slice(0, 20)
         .flatMap((promotion) => promotionKnowledgeLines(promotion))
@@ -332,7 +343,8 @@ function conversationPromotionsList(conversationContext) {
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
 
-  if (conversationContext?.promotionIntent !== true || (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !hasExplicitPriceRequest(conversationContext?.currentCustomerText))) {
+  if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
+      (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
