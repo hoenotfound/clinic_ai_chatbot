@@ -847,3 +847,38 @@ test("runtime promotion resolver never sends graphics for a package explanation 
     assert.equal(result?.promotion?.name, "Pelvis Offer", customerText);
   }
 });
+
+test("package information does not activate automatic promotion media", async () => {
+  const promo = {
+    name: "Pelvic Offer", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/pelvis.jpg",
+    caption: "RM388",
+  };
+  const baseReply = base({
+    treatment: "骨盆调理", promotions: [promo],
+    priceQuery: true, packageQuery: true,
+  });
+  for (const customerText of [
+    "Please send me package details",
+    "Show me this treatment package",
+    "Can you send me the pelvic package details?",
+    "What are the package details?",
+    "Can I get details about package B?",
+    "可以发我骨盆配套介绍吗？",
+    "你们的配套内容是什么？",
+  ]) {
+    const result = await resolvePricePromotionForReply({
+      ...baseReply, customerText,
+    });
+    assert.equal(result, null, customerText);
+  }
+  for (const customerText of [
+    "你们有什么骨盆配套？", "骨盆套餐多少钱？", "Package B?",
+    "What packages are available?",
+  ]) {
+    const result = await resolvePricePromotionForReply({
+      ...baseReply, customerText,
+    });
+    assert.equal(result?.promotion?.name, "Pelvic Offer", customerText);
+  }
+});
