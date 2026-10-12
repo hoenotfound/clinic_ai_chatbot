@@ -350,6 +350,21 @@ async function sendText(contact, text, options = {}) {
   return result;
 }
 
+async function sendConsentButtons(contact, body, buttons, options = {}) {
+  if (channelOf(contact) !== "whatsapp") {
+    return { success:false, policyBlocked:true, error:"Consent buttons require WhatsApp." };
+  }
+  // Do not send a marketing opt-in request after the customer service window
+  // closes. Recheck both policy and the scheduler's exact conversation anchor.
+  const guard = await freeformGuard(contact,"service");
+  if (guard.blocked) return guard.blocked;
+  const cancelled = await preSendCancelled(options);
+  if (cancelled) return cancelled;
+  return whatsapp.sendInteractiveButtons(contact.whatsapp_number,body,buttons,{
+    currentMessageId:options.currentMessageId,
+  });
+}
+
 async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   const channel = channelOf(contact);
   const storedImageId = storedPromoImageId(imageUrl);
@@ -923,6 +938,7 @@ module.exports = {
   labelForChannel,
   rejectedError,
   sendText,
+  sendConsentButtons,
   sendImageByUrl,
   sendImageBuffer,
   sendStickerBuffer,
