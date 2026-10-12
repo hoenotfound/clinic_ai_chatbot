@@ -49,7 +49,7 @@ const {
   shouldGenerateLocalizedIntro,
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
-const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
+const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
@@ -1015,6 +1015,19 @@ async function processIncomingMessage(
       }
     }
 
+    // Preserve the useful original service explanation. If an eligible first
+    // treatment enquiry omits an assessment invitation, append just one
+    // invitation without replacing the answer or altering result-media intent.
+    if (!flagged && !marketingStopQuestion &&
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+      const invited = ensureFirstAssessmentInvitation({
+        isFirstMessage, customerText: text, reply, flagged, language: mediaLanguage,
+        serviceQuery, treatment: details?.treatment,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+      });
+      reply = invited.reply;
+    }
+
     // A marketing STOP must not become a price/promotion reply even if the
     // model adds unsolicited commercial copy. Preserve useful service answers.
     if (marketingStopQuestion && hasCommercialReplyContent(reply) && !flagged) {
@@ -1212,10 +1225,16 @@ async function processIncomingMessage(
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
     {
+      // Resolve only a service named in the customer's own words. This
+      // recovers missing model treatment/price flags without trusting an old
+      // CRM classification or a raw ad title to send optional pricing media.
+      const verifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+        ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases)
+        : null;
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
-        treatment: details?.treatment,
+        treatment: verifiedPriceService?.name || details?.treatment,
         customerText: text,
         conversationHistory: history,
         flagged,
