@@ -976,10 +976,11 @@ async function processIncomingMessage(
       }
     }
 
-    // This is the last assembled-text boundary before Meta/Neon outbound
-    // reservation. A valid FUTURE-offer opt-in is not a price request, even if
-    // the model or configured intro accidentally includes an offer. Preserve
-    // all AI intent fields and optional Before & After media eligibility.
+    // Last assembled-text boundary before Meta/Neon outbound reservation.
+    // An unrelated treatment refusal or ambiguous future marketing consent
+    // must NEVER allow unsolicited first-contact prices to slip through.
+    // Actual current price enquiries still bypass the guard. Preserve all AI
+    // intent fields, clinical escalation and Before & After media eligibility.
     if (!flagged) {
       const guardedOfferIntro = guardFutureOfferIntroductionReply({
         channel,
