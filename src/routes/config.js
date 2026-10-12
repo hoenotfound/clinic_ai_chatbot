@@ -419,6 +419,9 @@ function isAutomatedFollowUpConfig(value) {
         value.whatsappFreeOnly.activatedAt !== undefined &&
         (typeof value.whatsappFreeOnly.activatedAt !== "string" ||
          Number.isNaN(Date.parse(value.whatsappFreeOnly.activatedAt)))))) ||
+    (value.consentRequest !== undefined &&
+      (!isPlainObject(value.consentRequest) ||
+        typeof value.consentRequest.enabled !== "boolean")) ||
     (value.pricingReminder !== undefined &&
       (!isPlainObject(value.pricingReminder) ||
         typeof value.pricingReminder.enabled !== "boolean" ||
@@ -701,6 +704,19 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       : null,
   };
 
+  const requestedConsent=requested.consentRequest ?? current?.consentRequest ?? { enabled:false };
+  if (!isPlainObject(requestedConsent) || typeof requestedConsent.enabled !== "boolean") return null;
+  const consentEnabled=requestedConsent.enabled===true;
+  const consentRequest={
+    enabled:consentEnabled,
+    activatedAt:consentEnabled
+      ? current?.consentRequest?.enabled===true &&
+        typeof current.consentRequest.activatedAt==="string" &&
+        Number.isFinite(Date.parse(current.consentRequest.activatedAt))
+          ? current.consentRequest.activatedAt : new Date().toISOString()
+      : null,
+  };
+
   const requestedPricing = requested.pricingReminder;
   if (requestedPricing !== undefined &&
       (!isPlainObject(requestedPricing) ||
@@ -797,6 +813,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     additionalSteps,
     freeEntry,
     whatsappFreeOnly,
+    consentRequest,
     pricingReminder: { enabled: pricingEnabled, activatedAt: pricingActivation,
       socialActivatedAt: socialActivation,
       requirePricingInterest, sendBothPelvicPackages, enableSocialChannels },
