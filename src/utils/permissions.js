@@ -128,6 +128,7 @@ function presentUser(user) {
     permissions: effectivePermissions(user),
     features: {
       leadDistributionEnabled: clinicConfig.leadDistribution?.enabled === true,
+      assessmentVoucherTrackingEnabled: clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true,
     },
     businessProfile: {
       businessType: clinicConfig.businessType,

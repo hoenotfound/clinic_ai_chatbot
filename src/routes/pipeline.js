@@ -1,5 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
+const assessmentVoucherRepo = require("../db/assessmentVoucherRepo");
+const { hasCapability } = require("../utils/permissions");
 const analyticsRepo = require("../db/analyticsRepo");
 const aiCostAnalyticsRepo = require("../db/aiCostAnalyticsRepo");
 const metaAdsAnalyticsRepo = require("../db/metaAdsAnalyticsRepo");
@@ -12,6 +14,7 @@ const usersRepo = require("../db/usersRepo");
 const {
   getAccessibleContactIds,
   getAccessibleLeadIds,
+  canAccessLead,
 } = require("../utils/accessControl");
 const clinicConfig = require("../config/clinicConfig");
 const {
@@ -229,6 +232,42 @@ router.get("/analytics", async (req, res) => {
     });
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong loading analytics.");
+  }
+});
+
+// The assessment voucher is a staff-verified CRM event, not a discount
+// automatically granted when the AI invites someone for an assessment.
+router.get("/leads/:leadId/assessment-voucher", async (req, res) => {
+  try {
+    if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled !== true)
+      return res.status(404).json({ error: "Voucher tracking is not enabled." });
+    if (!(await canAccessLead(req.user, req.params.leadId)))
+      return res.status(404).json({ error: "Lead not found." });
+    const lead = await pipelineRepo.getLeadById(req.params.leadId);
+    if (!lead) return res.status(404).json({ error: "Lead not found." });
+    res.json(await assessmentVoucherRepo.getVoucher(lead.id));
+  } catch (err) {
+    handlePipelineError(res, err, "Something went wrong loading the assessment voucher.");
+  }
+});
+
+router.post("/leads/:leadId/assessment-voucher", async (req, res) => {
+  try {
+    if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled !== true)
+      return res.status(404).json({ error: "Voucher tracking is not enabled." });
+    if (!hasCapability(req.user, "manage_assigned_leads"))
+      return res.status(403).json({ error: "You cannot manage this lead." });
+    if (!(await canAccessLead(req.user, req.params.leadId)))
+      return res.status(404).json({ error: "Lead not found." });
+    const voucher = await assessmentVoucherRepo.transitionVoucher(
+      req.params.leadId, req.body || {}, req.session.username
+    );
+    if (!voucher) return res.status(404).json({ error: "Lead not found." });
+    res.json(voucher);
+  } catch (err) {
+    if (err instanceof assessmentVoucherRepo.VoucherValidationError)
+      return res.status(err.status).json({ error: err.message });
+    handlePipelineError(res, err, "Something went wrong updating the assessment voucher.");
   }
 });
 

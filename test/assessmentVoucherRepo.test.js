@@ -1,0 +1,124 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const voucher = require("../src/db/assessmentVoucherRepo");
+
+function fakeDatabase({ lead = { id: 7, appointment_status: "visited", treatment_interest: "骨盆调理" },
+  current = null } = {}) {
+  const calls = [];
+  let state = current;
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      if (sql.startsWith("SELECT id, appointment_status")) return { rows: lead ? [lead] : [] };
+      if (sql.startsWith("SELECT * FROM assessment_voucher_tracking")) return { rows: state ? [state] : [] };
+      if (sql.includes("INSERT INTO assessment_voucher_tracking")) {
+        state = { ...(state || {}), lead_id: 7, status: params[1],
+          assessed_at: params[1] === "eligible" ? new Date().toISOString() : (state?.assessed_at || null),
+          issued_at: params[1] === "issued" ? new Date().toISOString() : (state?.issued_at || null),
+          redeemed_at: params[1] === "redeemed" ? new Date().toISOString() : (state?.redeemed_at || null),
+          updated_at: new Date().toISOString(), updated_by: params[2],
+          redemption_note: params[3] || state?.redemption_note || null,
+          terms_note: params[4] || state?.terms_note || null,
+          expires_at: params[5] || state?.expires_at || null };
+        return { rows: [state] };
+      }
+      return { rows: [] };
+    },
+    release() { calls.push({ sql: "RELEASE" }); },
+  };
+  return { connect: async () => client, calls };
+}
+
+test("voucher lifecycle is staff-only, one-way, and recorded in lead activity", async()=>{
+  const db=fakeDatabase();
+  const eligible=await voucher.transitionVoucher(7,{status:"eligible"},"staff",db);
+  assert.equal(eligible.status,"eligible");
+  assert.equal(eligible.valueRm,100);
+  assert.equal(db.calls.some(x=>x.sql.includes("lead_activities")),true);
+  assert.equal(db.calls.filter(x=>x.sql==="COMMIT").length,1);
+  const issued=await voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true,termsNote:"Once per pelvic treatment, no stacking."},"staff",db);
+  assert.equal(issued.status,"issued");
+  assert.match(issued.termsNote,/no stacking/);
+  const redeemed=await voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:"Voucher redeemed once, no stacking."},"staff",db);
+  assert.equal(redeemed.status,"redeemed");
+  assert.equal(redeemed.redemptionNote,"Voucher redeemed once, no stacking.");
+  assert.equal(db.calls.filter(x=>x.sql==="COMMIT").length,3);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true,termsNote:"Once per pelvic treatment"},"staff",db),
+    err=>err.status===409);
+});
+
+test("voucher cannot be granted before verified pelvic assessment attendance", async()=>{
+  for (const lead of [
+    {id:7,appointment_status:"set",treatment_interest:"骨盆调理"},
+    {id:7,appointment_status:"visited",treatment_interest:"3D 小颜术"},
+    {id:7,appointment_status:"visited",treatment_interest:null},
+  ]) {
+    const db=fakeDatabase({lead});
+    await assert.rejects(voucher.transitionVoucher(7,{status:"eligible"},"staff",db),
+      err=>err.status===400);
+    assert.equal(db.calls.some(x=>x.sql.includes("INSERT INTO assessment_voucher_tracking")),false);
+    assert.ok(db.calls.some(x=>x.sql==="ROLLBACK"));
+  }
+});
+
+test("voucher issuance confirms terms and redemption requires an audit note", async()=>{
+  const eligible={status:"eligible",assessed_at:new Date().toISOString()};
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued"},"staff",fakeDatabase({current:eligible})),
+    err=>err.status===400);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true},"staff",fakeDatabase({current:eligible})),
+    err=>err.status===400);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"issued",termsConfirmed:true,termsNote:"Valid voucher",expiresAt:"2001-01-01T00:00:00Z"},"staff",fakeDatabase({current:eligible})),
+    err=>err.status===400);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:""},"staff",
+    fakeDatabase({current:{...eligible,status:"issued"}})),err=>err.status===400);
+  await assert.rejects(voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:"x".repeat(501)},"staff",
+    fakeDatabase({current:{...eligible,status:"issued"}})),err=>err.status===400);
+  assert.equal(voucher.validTransition("none","eligible"),true);
+  assert.equal(voucher.validTransition("none","redeemed"),false);
+  assert.equal(voucher.validTransition("issued","redeemed"),true);
+  assert.equal(voucher.validTransition("redeemed","voided"),false);
+  assert.equal(voucher.isPelvicLead("骨盆调理"),true);
+  assert.equal(voucher.isPelvicLead("徒手体态调理"),false);
+  assert.equal(voucher.publicVoucher(null).status,"not_verified");
+  const expired=fakeDatabase({current:{...eligible,status:"issued",expires_at:"2001-01-01T00:00:00Z"}});
+  await assert.rejects(voucher.transitionVoucher(7,{status:"redeemed",redemptionNote:"Used"},"staff",expired),
+    err=>err.status===409);
+});
+
+test("voucher is persisted in a new non-destructive versioned migration",()=>{
+  const file=fs.readFileSync(path.join(__dirname,"../src/db/migrations/066_assessment_voucher_tracking.sql"),"utf8");
+  assert.match(file,/CREATE TABLE IF NOT EXISTS assessment_voucher_tracking/);
+  assert.match(file,/REFERENCES leads\(id\) ON DELETE CASCADE/);
+  assert.match(file,/redeemed/);
+  assert.match(file,/terms_note TEXT/);
+  assert.match(file,/expires_at TIMESTAMPTZ/);
+});
+
+
+test("changed CRM appointment or treatment status blocks subsequent issuance/redemption without losing voucher history",async()=>{
+ const eligible={status:"eligible",assessed_at:"2026-10-12T00:00:00Z"};
+ for(const changedLead of [
+  {id:7,appointment_status:"set",treatment_interest:"骨盆调理"},
+  {id:7,appointment_status:"visited",treatment_interest:"3D 小颜术"},
+  {id:7,appointment_status:"cancelled",treatment_interest:"3D 小颜术"}
+ ]) {
+  for (const state of ["eligible","issued"]) {
+   const db=fakeDatabase({lead:changedLead,current:{...eligible,status:state}});
+   const target=state==="eligible"?"issued":"redeemed";
+   const payload=target==="issued"
+     ? {status:target,termsConfirmed:true,termsNote:"Staff confirmed no stacking"}
+     : {status:target,redemptionNote:"Voucher applied with staff approval"};
+   await assert.rejects(voucher.transitionVoucher(7,payload,"staff",db),err=>err.status===400);
+   assert.equal(db.calls.some(x=>x.sql.includes("INSERT INTO assessment_voucher_tracking")),false);
+   assert.ok(db.calls.some(x=>x.sql==="ROLLBACK"));
+  }
+ }
+ // Staff must retain a way to void invalidated vouchers without re-marking a visit.
+ const voided=await voucher.transitionVoucher(7,{status:"voided"},"staff",
+   fakeDatabase({lead:{id:7,appointment_status:"cancelled",treatment_interest:"3D 小颜术"},current:eligible}));
+ assert.equal(voided.status,"voided");
+});

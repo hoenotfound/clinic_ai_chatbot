@@ -6,6 +6,7 @@ import { useBusinessConfig } from "../../context/BusinessConfigContext";
 import { getBusinessTerminology } from "../../utils/businessTerminology";
 import ContactAvatar from "../ContactAvatar";
 import LeadAttributionPanel from "./LeadAttributionPanel";
+import AssessmentVoucherPanel from "./AssessmentVoucherPanel";
 import Spinner from "../Spinner";
 import {
   CONSENT_OPTIONS,
@@ -25,7 +26,7 @@ const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wi
 
 export default function LeadDrawer({ lead, stages, owners, services, now, noReplyHours, activityRefreshToken = 0, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
-  const { permissions } = useAuth();
+  const { permissions, user } = useAuth();
   const { config } = useBusinessConfig();
   const ui = getBusinessTerminology(config || {});
   const canManageLeads = permissions.manage_assigned_leads === true;
@@ -374,6 +375,18 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
               </div>
             )}
           </form>
+
+          {user?.features?.assessmentVoucherTrackingEnabled === true && (
+            <AssessmentVoucherPanel
+              lead={lead}
+              canManage={canManageLeads}
+              onToast={onToast}
+              onChanged={async () => {
+                try { setActivities(await api.listLeadActivities(lead.id)); }
+                catch (err) { onToast(err.message || "Couldn't refresh activity.", "error"); }
+              }}
+            />
+          )}
 
           <section className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h3 className="font-display text-base font-bold">Activity</h3>

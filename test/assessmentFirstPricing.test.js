@@ -95,7 +95,7 @@ test("promotion images now require a monetary price enquiry, not package browsin
   try {
     assert.equal(await resolvePricePromotionForReply(input),null);
     const bundle=await resolvePricePromotionForReply({...input,
-      customerText:"配套多少钱？",priceQuery:true});
+      customerText:"配套多少钱？",priceQuery:true,verifiedServiceFromText:"骨盆调理"});
     assert.equal(bundle?.packages?.[0]?.caption,"RM388");
   } finally {
     config.automatedFollowUp = existing;
@@ -209,7 +209,7 @@ test("short Malay 'berapa?' uses a verified service context, not a bare assumpti
   config.automatedFollowUp={...existing,assessmentFirstPricingEnabled:true};
   try{
     const args={
-      priceQuery:true,packageQuery:false,treatment:"3D 小颜术",customerText:"Berapa?",
+      priceQuery:true,packageQuery:false,treatment:"3D 小颜术",verifiedServiceFromText:"3D 小颜术",customerText:"Berapa?",
       contactId:44,textSendSucceeded:true,
       promotions:[{name:"3D First Trial",linkedService:"3D 小颜术",sendOnPriceQuery:true,
         imageUrl:"https://example.test/3d.jpg",caption:"RM488"}],
@@ -316,4 +316,222 @@ test("price image IDs configured as promotions are never recycled into price-fre
   assert.equal(isConfiguredPromotionPriceGraphic("/promo-images/34",promos),true);
   assert.equal(isConfiguredPromotionPriceGraphic("/api/config/result-media/image/11",promos),false);
   assert.equal(isConfiguredPromotionPriceGraphic("",promos),false);
+});
+
+
+test("Malaysian colloquial money questions are explicit while package exploration remains price-free", () => {
+  const { hasCustomerPriceEnquiry } = require("../src/utils/customerEnquiryEvidence");
+  for (const enquiry of [
+    "骨盆几钱？", "3D幾錢", "几多钱", "请问价位？", "PM 价钱",
+    "p.m. 价钱", "price pls", "berapa harga ya", "RM388?",
+  ]) {
+    assert.equal(hasExplicitPriceRequest(enquiry), true, enquiry);
+    assert.equal(hasCustomerPriceEnquiry(enquiry), true, enquiry);
+  }
+  for (const nonPrice of [
+    "几次会有效？", "几多疗程？", "我的预算 RM300", "价格不是问题",
+    "有什么配套？", "有优惠可以通知我", "how much longer to recover?",
+    "Do you have an RM100 voucher?",
+  ]) {
+    assert.equal(hasExplicitPriceRequest(nonPrice), false, nonPrice);
+  }
+});
+
+test("verified first service enquiry gets an assessment invite while keeping the reply and existing result eligibility", () => {
+  const { ensureFirstAssessmentInvitation } = require("../src/utils/initialOfferReplyGuard");
+  const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  const opts={isFirstMessage:true,services,serviceQuery:true,language:"zh",serviceAliases:[{alias:"3D",officialService:"3D 小颜术"},{alias:"骨盆",officialService:"骨盆调理"}]};
+  const text="我们是徒手调理，通常根据体态安排体验 😊";
+  const pelvis=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理"});
+  assert.equal(pelvis.appended,true);
+  const existingQuestion = ensureFirstAssessmentInvitation({...opts,reply:"骨盆护理主要关注腰臀和体态。你最困扰哪方面？",customerText:"想了解骨盆调理",treatment:"骨盆调理"});
+  assert.equal(existingQuestion.appended,true);
+  assert.equal((existingQuestion.reply.match(/[?？]/gu)||[]).length,1,"avoid repeating two questions");
+
+  assert.match(pelvis.reply,/我们是徒手调理/);
+  assert.match(pelvis.reply,/1对1/);
+  assert.match(pelvis.reply,/RM100/);
+  assert.equal(hasTreatmentPriceContent(pelvis.reply),false);
+  const face=ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解3D小颜术",treatment:"3D 小颜术"});
+  assert.equal(face.appended,true);
+  assert.match(face.reply,/1对1/);
+  assert.doesNotMatch(face.reply,/RM100|骨盆调理优惠券/);
+  const untouched=[
+    {...opts,isFirstMessage:false,customerText:"想了解骨盆调理",treatment:"骨盆调理"},
+    {...opts,customerText:"骨盆多少钱？",treatment:"骨盆调理"},
+    {...opts,customerText:"我想了解这个",serviceQuery:false,treatment:null},
+    {...opts,customerText:"我想了解骨盆调理",flagged:true,treatment:"骨盆调理"},
+    {...opts,customerText:"想了解骨盆和3D",treatment:"骨盆调理"},
+  ];
+  for(const input of untouched) assert.equal(ensureFirstAssessmentInvitation({...input,reply:text}).appended,false,JSON.stringify(input));
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"我想了解骨盆调理",serviceQuery:false,treatment:"骨盆调理"}).appended,true);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"我想了解这个",treatment:"骨盆调理"}).appended,false);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解骨盆调理",treatment:"骨盆调理",
+    verifiedAdService:"骨盆调理",}).appended,true);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"3D还是骨盆调理哪个好?",treatment:"骨盆调理",
+    verifiedAdService:"骨盆调理"}).appended,false,"mixed services cannot be resolved from ad alone");
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text,customerText:"想了解这个",treatment:"骨盆调理",
+    verifiedAdService:"骨盆调理"}).appended,true,"verified contextual ad service is eligible");
+  const alreadyInvited = ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估",customerText:"想了解骨盆调理",treatment:"骨盆调理"});
+  assert.equal(alreadyInvited.appended,true);
+  assert.match(alreadyInvited.reply,/RM100/);
+  assert.equal(ensureFirstAssessmentInvitation({...opts,reply:text+"\\n\\n你可以先做1对1评估，领取 RM100 优惠券",customerText:"想了解骨盆调理",treatment:"骨盆调理"}).appended,false);
+});
+
+test("AI missing the priceQuery flag cannot drop a verified treatment price graphic",async()=>{
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
+  const args={
+    priceQuery:false,packageQuery:false,
+    treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+    customerText:"骨盆几钱?",textSendSucceeded:true,contactId:81,
+    promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+  };
+  try{
+    const result=await resolvePricePromotionForReply(args);
+    assert.equal(result?.packages?.[0]?.caption,"RM388");
+    assert.equal(await resolvePricePromotionForReply({...args,verifiedServiceFromText:null}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"有什么配套？"}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",flagged:true}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",needsAttention:true}),null);
+    assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",textSendSucceeded:false}),null);
+  }finally{config.automatedFollowUp=old;}
+});
+
+
+test("standalone Malay/Chinese price follow-ups use only the immediately established service",async()=>{
+  const { isStandalonePriceQuestion }=require("../src/utils/customerEnquiryEvidence");
+  const { safeServiceFromCustomer }=require("../src/utils/initialOfferReplyGuard");
+  for(const q of ["berapa?", "Berapa ya?", "多少钱？", "几钱？", "price?", "how much?"]){
+    assert.equal(isStandalonePriceQuestion(q),true,q);
+  }
+  for(const q of ["berapa kali?", "berapa lama?", "how much longer?", "my budget RM300", "几多疗程", "any packages?"]){
+    assert.equal(isStandalonePriceQuestion(q),false,q);
+  }
+  const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  const known=safeServiceFromCustomer("我想了解骨盆调理",services,[]);
+  assert.equal(known?.name,"骨盆调理");
+  assert.equal(safeServiceFromCustomer("3D还是骨盆调理?",services,[{alias:"3D",officialService:"3D 小颜术"}]),null);
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
+  try{
+    const out=await resolvePricePromotionForReply({
+      priceQuery:false,packageQuery:false,treatment:known.name,verifiedServiceFromText:known.name,
+      customerText:"Berapa?",textSendSucceeded:true,contactId:3,
+      promotions:[{name:"Pelvic",linkedService:known.name,sendOnPriceQuery:true,
+        packages:[{name:"Package B",caption:"RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
+      wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.equal(out?.packages?.[0]?.caption,"RM288");
+    assert.equal(await resolvePricePromotionForReply({
+      priceQuery:false,packageQuery:false,treatment:known.name,verifiedServiceFromText:null,
+      customerText:"Berapa?",textSendSucceeded:true,contactId:3,
+      promotions:[{name:"Pelvic",linkedService:known.name,sendOnPriceQuery:true,
+        packages:[{name:"Package B",caption:"RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
+      wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+    }),null);
+  }finally{config.automatedFollowUp=old;}
+});
+
+
+test("price affordability remarks never enable assessment-first monetary media", async () => {
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old, assessmentFirstPricingEnabled:true};
+  const { hasCustomerPriceEnquiry }=require("../src/utils/customerEnquiryEvidence");
+  const offers=[{ name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    packages:[{name:"Package A",caption:"RM388",imageUrl:"https://example.test/pelvicA.jpg"}]}];
+  const base={
+    priceQuery:true,packageQuery:true,treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+    textSendSucceeded:true,contactId:301,promotions:offers,
+    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+  };
+  try {
+    for(const s of ["骨盆调理的价位太高了", "价位有点贵", "这个价格太贵了", "价格不是问题", "这个价位偏高", "harga mahal sangat"]) {
+      assert.equal(hasExplicitPriceRequest(s),false,s);
+      assert.equal(await resolvePricePromotionForReply({...base,customerText:s}),null,s);
+    }
+    for(const s of ["请问骨盆调理价位？", "价位？", "骨盆调理几钱？", "price pls", "骨盆调理多少钱？"]) {
+      assert.equal(hasExplicitPriceRequest(s),true,s);
+    }
+    assert.equal(hasCustomerPriceEnquiry("价位有点贵"),false,"affordability statements must not trigger promotional media");
+  } finally { config.automatedFollowUp=old; }
+});
+
+test("model priceQuery cannot select one image for ambiguous multi-treatment enquiries", async () => {
+  const old=config.automatedFollowUp;
+  config.automatedFollowUp={...old,assessmentFirstPricingEnabled:true};
+  const base={
+    priceQuery:true,packageQuery:true,treatment:"骨盆调理",verifiedServiceFromText:null,
+    textSendSucceeded:true,contactId:302,promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+    wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+  };
+  try {
+    for(const s of ["3D 和骨盆调理分别多少钱？","骨盆和9D什么价钱？"]) {
+      assert.equal(await resolvePricePromotionForReply({...base,customerText:s}),null,s);
+    }
+    assert.equal(await resolvePricePromotionForReply({...base,customerText:"骨盆调理多少钱？",verifiedServiceFromText:"3D 小颜术"}),null);
+    const yes=await resolvePricePromotionForReply({...base,customerText:"骨盆调理多少钱？",verifiedServiceFromText:"骨盆调理"});
+    assert.equal(yes?.packages?.length,1);
+  } finally { config.automatedFollowUp=old; }
+});
+
+test("first assessment invite is suppressed for independent clinical red flags despite clean Gemini flags", () => {
+  const {ensureFirstAssessmentInvitation}=require("../src/utils/initialOfferReplyGuard");
+  const args={isFirstMessage:true,flagged:false,reply:"骨盆调理可帮助改善整体体态。",services:[{name:"骨盆调理"}],
+    treatment:"骨盆调理",language:"zh"};
+  for(const customerText of ["我怀孕了，想了解骨盆调理","骨盆调理适合刚做完手术的人吗？","剖腹产后两周想了解骨盆调理", "骨盆调理会不会很痛？"]) {
+    const got=ensureFirstAssessmentInvitation({...args,customerText});
+    assert.equal(got.appended,false,customerText);
+    assert.doesNotMatch(got.reply,/到店完成评估|RM100/);
+  }
+  assert.equal(ensureFirstAssessmentInvitation({...args,customerText:"我想了解骨盆调理"}).appended,true);
+});
+
+
+test("assessment-first text guard never trusts Gemini treatment for a bare price question", () => {
+  const services=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  for (const [customerText,language] of [
+    ["Berapa?","ms"],
+    ["多少钱？","zh"],
+    ["How much?","en"],
+    ["价位？","zh"],
+    ["3D 和骨盆调理分别多少钱？","zh"],
+  ]) {
+    const guessedReply="骨盆调理 RM388，3D 小颜术 RM488";
+    const result=guardAssessmentFirstPricingReply({
+      customerText,reply:guessedReply,language,services,
+      treatment:null,requireVerifiedTreatment:true,
+    });
+    assert.equal(result.replaced,true,customerText);
+    assert.equal(hasTreatmentPriceContent(result.reply),false,customerText);
+    assert.doesNotMatch(result.reply,/RM388|RM488|优惠券|voucher|baucar/iu);
+    assert.match(result.reply,/哪一项疗程|rawatan yang mana|Which treatment/u);
+  }
+  for(const [customerText,language,treatment] of [
+    ["Berapa?","ms","骨盆调理"],
+    ["多少钱？","zh","骨盆调理"],
+    ["骨盆调理多少钱？","zh","骨盆调理"],
+    ["3D多少钱？","zh","3D 小颜术"],
+  ]) {
+    const reply=treatment==="骨盆调理"?"骨盆调理 RM388":"3D 小颜术 RM488";
+    assert.deepEqual(guardAssessmentFirstPricingReply({
+      customerText,reply,language,services,treatment,
+      requireVerifiedTreatment:true,
+    }),{reply,replaced:false},customerText);
+  }
+  const noPrice="需要中医师先做体态评估，才能知道什么方案适合你。";
+  assert.deepEqual(guardAssessmentFirstPricingReply({
+    customerText:"Berapa?",reply:noPrice,language:"ms",
+    treatment:null,requireVerifiedTreatment:true,
+  }),{reply:noPrice,replaced:false},"safe non-price explanations are preserved");
+});
+
+test("production assessment-first pricing guard uses only verified text-service resolution",()=>{
+  const server=fs.readFileSync(path.resolve(__dirname,"../src/server.js"),"utf8");
+  assert.match(server,/const verifiedPriceService = [\s\S]*?safeServiceFromCustomer\(text, clinicConfig\.services, clinicConfig\.serviceAliases\)/);
+  assert.match(server,/guardAssessmentFirstPricingReply\(\{[\s\S]*?treatment: verifiedPriceService\?\.name \|\| null,[\s\S]*?requireVerifiedTreatment: true,/);
+  assert.doesNotMatch(server,/guardAssessmentFirstPricingReply\(\{[\s\S]{0,400}treatment: verifiedPriceService\?\.name \|\| details\?\.treatment/);
 });
