@@ -345,3 +345,21 @@ test("package description requests stay informational across Chinese, English an
     assert.equal(hasCustomerPriceEnquiry(text), true, text);
   }
 });
+
+
+test("plain-language opt-outs never unlock immediate pricing media", () => {
+  for (const value of [
+    "No promotions please, just explain pelvic treatment",
+    "No promos thanks",
+    "No more offers please. How long does pelvic treatment take?",
+    "Don't send me promotions, can you explain how 3D works?",
+    "No discounts please, I only want service information",
+    "Stop promotions. Can you tell me about the treatment?",
+  ]) assert.equal(hasCustomerPriceEnquiry(value), false, value);
+  for (const value of [
+    "Any promotions for pelvic treatment?",
+    "No promotions available today?",
+    "What offers do you have?",
+    "No promotions please, but what is the price of pelvic treatment?",
+  ]) assert.equal(hasCustomerPriceEnquiry(value), true, value);
+});
