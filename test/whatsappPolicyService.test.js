@@ -417,3 +417,34 @@ test("a marketing STOP can include an independent service question, never a pric
   assert.equal(parse("不要再发优惠了，套餐多少钱？"), null);
   assert.equal(parse("不要再发优惠了，有优惠可以发我看看"), null);
 });
+
+
+test("marketing refusal with a separate explanatory question remains a STOP plus service request", () => {
+  for (const value of [
+    "No promotions please, just explain pelvic treatment",
+    "No more offers please. How long does pelvic treatment take?",
+    "Don't send me promotions, can you explain how 3D works?",
+    "Stop promotions. What time are you open?",
+    "No promos thanks",
+  ]) assert.equal(policy.classifyOptOutText(value), "marketing", value);
+  assert.equal(policy.extractQuestionAfterMarketingOptOut(
+    "No promotions please, just explain pelvic treatment"
+  ), "just explain pelvic treatment");
+  assert.equal(policy.extractQuestionAfterMarketingOptOut(
+    "No more offers please. How long does pelvic treatment take?"
+  ), "How long does pelvic treatment take?");
+  for (const value of [
+    "Any promotions for pelvic treatment?",
+    "No promotions available today?",
+    "What offers do you have?",
+  ]) assert.equal(policy.classifyOptOutText(value), null, value);
+  for (const channel of ["whatsapp", "facebook", "instagram"]) {
+    const result = policy.evaluateFreeformState({
+      channel,
+      social_marketing_opt_out_at: new Date("2026-10-12T02:00:00Z"),
+      whatsapp_marketing_opt_out_at: new Date("2026-10-12T02:00:00Z"),
+      latest_inbound_at: new Date("2026-10-12T02:01:00Z"),
+    }, new Date("2026-10-12T02:03:00Z"), { purpose: "marketing" });
+    assert.equal(result.code, "marketing_opted_out", channel);
+  }
+});
