@@ -87,6 +87,7 @@ async function reconcileAudit(inboundMessageId, db = pool) {
     `WITH totals AS (
        SELECT
          COUNT(*) FILTER (WHERE media_kind='result')::integer result_total,
+         COUNT(*) FILTER (WHERE media_kind='promotion')::integer promo_total,
          COUNT(*) FILTER (WHERE media_kind='result' AND status='sent'
              AND provider_delivery_status IN ('delivered','read'))::integer result_confirmed,
          COUNT(*) FILTER (WHERE media_kind='promotion' AND status='sent'
@@ -100,16 +101,20 @@ async function reconcileAudit(inboundMessageId, db = pool) {
        FROM whatsapp_result_media_queue WHERE inbound_message_id=$1
      )
      UPDATE result_media_decisions d SET
-       promotion_images_sent=totals.promo_confirmed,
+       promotion_images_sent=CASE WHEN totals.promo_total>0
+         THEN totals.promo_confirmed ELSE d.promotion_images_sent END,
        result_images_selected=GREATEST(d.result_images_selected,totals.result_total),
-       result_images_sent=totals.result_confirmed,
-       status=CASE WHEN totals.result_total=0 THEN d.status
+       result_images_sent=CASE WHEN totals.result_total>0
+         THEN totals.result_confirmed ELSE d.result_images_sent END,
+       status=CASE WHEN totals.result_total=0
+         THEN CASE WHEN d.status='deferred' THEN 'skipped' ELSE d.status END
          WHEN totals.active THEN 'deferred'
          WHEN totals.result_confirmed=totals.result_total THEN 'sent'
          WHEN totals.result_confirmed>0 THEN 'partial'
          WHEN totals.blocked THEN 'failed'
          ELSE 'skipped' END,
-       reason=CASE WHEN totals.result_total=0 THEN d.reason
+       reason=CASE WHEN totals.result_total=0
+         THEN CASE WHEN d.status='deferred' THEN 'promotion_media_only' ELSE d.reason END
          WHEN totals.active THEN 'awaiting_meta_delivery_receipt'
          WHEN totals.result_confirmed=totals.result_total THEN NULL
          WHEN totals.blocked THEN 'result_media_deferred_requires_review'
