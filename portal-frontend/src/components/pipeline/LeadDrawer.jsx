@@ -170,7 +170,10 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   async function handleSave(event) {
     event.preventDefault();
     if (!canManageLeads || dirtyFields.size === 0) return;
-    if ((form.appointmentStatus === "set" || selectedStage?.system_key === "appointment_set") && !form.appointmentAt) {
+    if (ui.conversionStageKeys?.set === "appointment_set" &&
+        (form.appointmentStatus === "set" || selectedStage?.system_key === "appointment_set") &&
+        ["appointmentStatus", "stageId", "appointmentAt"].some((key) => dirtyFields.has(key)) &&
+        !form.appointmentAt) {
       onToast("Please enter the confirmed appointment date and time.", "warning");
       return;
     }
@@ -336,7 +339,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                   </select>
                 </Field>
                 <Field label={ui.conversionDateTimeLabel}>
-                  <input className={inputClass} type="datetime-local" required={form.appointmentStatus === "set" || selectedStage?.system_key === "appointment_set"} value={form.appointmentAt} onChange={(event) => update("appointmentAt", event.target.value)} />
+                  <input className={inputClass} type="datetime-local" required={ui.conversionStageKeys?.set === "appointment_set" && (form.appointmentStatus === "set" || selectedStage?.system_key === "appointment_set")} value={form.appointmentAt} onChange={(event) => update("appointmentAt", event.target.value)} />
                 </Field>
                 <Field label="Next follow-up">
                   <input className={inputClass} type="datetime-local" value={form.nextFollowUpAt} onChange={(event) => update("nextFollowUpAt", event.target.value)} />
