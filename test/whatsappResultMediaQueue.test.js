@@ -73,6 +73,9 @@ test("when pricing confirms RM0, an image is accepted and its audit can be recon
     sender:async(_contact,_url,_caption,opts)=>{
       sendCount++;
       assert.equal(opts.currentMessageId,991);
+      assert.ok(db.calls.some(x=>x.sql.includes("SET message_id=$3") &&
+        x.params?.[2]===991),
+        "provider call must be preceded by a durable queue-to-message link");
       return {success:true,wamid:"wamid.verified"};
     },
   });
