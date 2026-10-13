@@ -6,8 +6,10 @@ on:
   push:
     branches: [main]
 
+# Replaced PR commits should cancel outdated checks, but each main push needs
+# an independent concurrency group so no pending main run is discarded.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
