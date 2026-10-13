@@ -637,8 +637,17 @@ function selectiveSlotAllowed(candidate, slotHours) {
   if (slotHours < 48) return true;
   if (String(candidate.lead_temperature || "").toLowerCase() === "cold") return false;
   return Boolean(candidate.treatment_interest || candidate.referral_treatment_interest ||
-    candidate.referral_ad_name || (candidate.recent_inbound_messages || [])
+    inferConfiguredServiceFromText(candidate.referral_ad_name) ||
+    (candidate.recent_inbound_messages || [])
       .some((message) => inferConfiguredServiceFromText(message)));
+}
+
+// Respect a customer's explicit choice to decide later instead of treating
+// their silence as permission for increasingly frequent marketing.
+function customerRequestedPause(candidate) {
+  const latest = String((candidate.recent_inbound_messages || [])[0] || "").trim();
+  if (!latest) return false;
+  return /(?:我考虑一下|我再(?:联系|通知|告诉|回复)|(?:等|待)我(?:安排|确认|看看)|有机会再联系|先不用|暂时不需要|不需要了|不用了|不方便过去|太远了|先忙|I(?:'ll| will) (?:confirm|let you know|contact you|get back)|let me (?:think|consider)|can I confirm (?:tomorrow|later)|not interested|too far away|saya (?:akan )?(?:confirm|hubungi) (?:nanti|kemudian)|tak berminat|terlalu jauh)/iu.test(latest);
 }
 
 async function run({ now = new Date() } = {}) {
@@ -663,6 +672,13 @@ async function run({ now = new Date() } = {}) {
     for (const candidate of allCandidates) {
       const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
       if (!slotHours) { result.skipped++; continue; }
+      if (customerRequestedPause(candidate)) {
+        result.skipped++;
+        await freeEntryReport.recordSkip(candidate.contact_id,
+          candidate.first_reply_message_id, slotHours, "customer_asked_to_decide_later")
+          .catch(() => {});
+        continue;
+      }
       if (!selectiveSlotAllowed(candidate, slotHours)) {
         result.skipped++;
         await freeEntryReport.recordSkip(candidate.contact_id,
@@ -702,4 +718,4 @@ function start() {
   return () => { clearInterval(timer); timer = null; };
 }
 
-module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start, SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage, resolveSafeTemplate, selectiveSlotAllowed };
+module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start, SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage, resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause };
