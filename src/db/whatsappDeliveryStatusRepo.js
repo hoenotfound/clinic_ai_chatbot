@@ -99,11 +99,12 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
              ELSE EXCLUDED.delivery_status
            END,
            pricing_category = CASE
-             WHEN whatsapp_free_entry_pricing_evidence.billable = true
-               AND EXCLUDED.billable IS DISTINCT FROM true
-               THEN whatsapp_free_entry_pricing_evidence.pricing_category
-             ELSE COALESCE(EXCLUDED.pricing_category,
-                    whatsapp_free_entry_pricing_evidence.pricing_category)
+             WHEN whatsapp_free_entry_pricing_evidence.pricing_category IS NOT NULL
+               AND EXCLUDED.pricing_category IS NOT NULL
+               AND whatsapp_free_entry_pricing_evidence.pricing_category <> EXCLUDED.pricing_category
+               THEN 'conflicting'
+             ELSE COALESCE(whatsapp_free_entry_pricing_evidence.pricing_category,
+                           EXCLUDED.pricing_category)
            END,
            updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus, item.pricingCategory]);
   }

@@ -6,10 +6,14 @@ Messages may incur Meta service charges after the monthly free allowance.
 This is NOT a Meta RM0 guarantee.
 
 A durable one-shot exception records the outbound message BEFORE calling Meta.
-Only provider-accepted WAMIDs bypass expected-charge alarms. Unknown sends
-cannot be retried with the same saved message. Chargeable templates,
-scheduled follow-ups, interactive marketing consent prompts, and all media
-still require the independently verified CTWA/FEP rules.
+Only provider-accepted WAMIDs with verified Meta pricing type `regular`,
+category `service`, and `billable=true` are exempted from the unexpected
+charge alarm. Missing, conflicting, or non-service pricing remains an alert.
+Unknown sends cannot be retried with the same saved message. Chargeable
+templates, staff-scheduled messages, automatic follow-ups, interactive
+marketing consent prompts, and all media still require the independently
+verified CTWA/FEP rules. A definitively rejected send may be retried through
+the original saved message ID; an accepted or ambiguous send must not replay.
 
 After merging and deployment, enable in Neutro Sense Tools > Automated
 Follow-up > WhatsApp while leaving Strict RM0 on. Send a new organic message

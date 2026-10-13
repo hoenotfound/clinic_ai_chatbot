@@ -246,6 +246,20 @@ test("preserves authoritative free-entry billing fields on delivery callbacks", 
   assert.equal(statuses[0].pricingBillable, false);
 });
 
+test("captures the Meta service billing category without guessing when absent", () => {
+  const events=parseStatusUpdates({entry:[{changes:[{value:{statuses:[
+    {id:"service.paid",status:"delivered",
+      pricing:{type:"regular",category:"service",billable:true}},
+    {id:"unclassified",status:"delivered",
+      pricing:{type:"regular",billable:true}},
+    {id:"marketing.paid",status:"sent",
+      pricing:{type:"regular",category:"marketing",billable:true}},
+  ]}}]}]});
+  assert.equal(events[0].pricingCategory,"service");
+  assert.equal(events[1].pricingCategory,null);
+  assert.equal(events[2].pricingCategory,"marketing");
+});
+
 test("parses template quick-reply button taps as ordinary inbound customer text", () => {
   const parsed = parseIncomingMessages({
     entry: [

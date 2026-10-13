@@ -119,6 +119,10 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
       CREATE TABLE whatsapp_free_entry_followup_attempts(id SERIAL PRIMARY KEY,message_id INTEGER);
       CREATE TABLE whatsapp_free_only_billing_alerts(wamid TEXT PRIMARY KEY,sent_at TIMESTAMPTZ);
       CREATE TABLE scheduled_messages(message_id INTEGER);
+      CREATE TABLE whatsapp_free_entry_pricing_evidence (
+        wamid TEXT PRIMARY KEY,pricing_type TEXT,billable BOOLEAN,
+        delivery_status TEXT,updated_at TIMESTAMPTZ DEFAULT now()
+      );
       INSERT INTO contacts VALUES(1,'whatsapp','60121234567');
       INSERT INTO messages(id,contact_id,role,created_at,whatsapp_message_id)
       VALUES(1,1,'user',now()-interval '2 minutes','wamid.inbound');
@@ -160,6 +164,33 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
       SELECT 1 FROM whatsapp_24h_service_reply_exceptions
       WHERE wamid='wamid.unknown' AND status='accepted') AS exempt`);
     assert.equal(none.rows[0].exempt,false);
+    // Verified ordinary service charges are expected, but marketing and
+    // unknown pricing categories must NOT be excluded from billing alarms.
+    await db.query(`
+      INSERT INTO whatsapp_free_entry_pricing_evidence
+        (wamid,pricing_type,billable,delivery_status,pricing_category)
+      VALUES('wamid.service','regular',true,'delivered','service')
+    `);
+    const serviceAlarm=await db.query(`
+      SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence p
+       WHERE p.billable=true AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+          WHERE ex.wamid=p.wamid AND ex.status='accepted'
+            AND p.pricing_type='regular' AND p.pricing_category='service'
+       )) AS tripped
+    `);
+    assert.equal(serviceAlarm.rows[0].tripped,false);
+    await db.query(`UPDATE whatsapp_free_entry_pricing_evidence
+      SET pricing_category='marketing' WHERE wamid='wamid.service'`);
+    const unexpected=await db.query(`
+      SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence p
+       WHERE p.billable=true AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+          WHERE ex.wamid=p.wamid AND ex.status='accepted'
+            AND p.pricing_type='regular' AND p.pricing_category='service'
+       )) AS tripped
+    `);
+    assert.equal(unexpected.rows[0].tripped,true);
   } finally {
     await db.query("RESET search_path").catch(()=>{});
     await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});

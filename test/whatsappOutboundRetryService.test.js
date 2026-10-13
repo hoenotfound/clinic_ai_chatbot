@@ -611,3 +611,15 @@ test("terminal retry defers durable staff attention instead of terminalizing whe
   assert.equal(calls.some((entry) => entry[0] === "defer"), true);
   assert.equal(calls.some((entry) => entry[0] === "failed"), false);
 });
+
+test("retries retain the original outbound message ID for strict service checks", () => {
+  const fs=require("node:fs");
+  const path=require("node:path");
+  const raw=fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappOutboundRetryService.js"),"utf8");
+  assert.match(raw,/currentMessageId:\s*row\.message_id/);
+  assert.match(raw,/if \(result\?\.ambiguous\)/);
+  const service=fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappZeroCostGuard.js"),"utf8");
+  assert.match(service,/zero_cost_service_reply_already_attempted/);
+});
