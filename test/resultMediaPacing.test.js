@@ -233,7 +233,9 @@ test("shared budget is enforced on the promotional batch before sending results"
     require("node:path").join(__dirname, "../src/server.js"), "utf8"
   );
   assert.match(server, /planPromotionMediaPacing\(promoBundle\.packages\)/);
-  assert.match(server, /for \(const promoPackage of pacedPromotions\.items\)/);
+  assert.match(server, /for \\(const promoPackage of \\(queuedPromotions \\? \\[\\] : pacedPromotions\\.items\\)\\)/);
+  assert.match(server, /kind:"promotion"/);
+  assert.match(server, /automaticPromoMediaSent \\+= queuedPromotionCount/);
   assert.match(server, /serviceAliases: clinicConfig\.serviceAliases/);
 });
 
