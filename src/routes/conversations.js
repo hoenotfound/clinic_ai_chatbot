@@ -11,6 +11,7 @@ const contactsRepo = require("../db/contactsRepo");
 const { pool } = require("../db/db");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const { recordStaffConfirmedBooking } = require("../services/staffBookingConfirmationService");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
@@ -2390,7 +2391,21 @@ router.post("/:contactId/messages", async (req, res) => {
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     }
 
+    // Staff may finalize a specific booking in chat. Only an unambiguous,
+    // dated confirmation accepted by the messaging provider may update CRM.
+    // Never turn an availability question or ambiguous send into a booking.
+    let bookingSyncWarning = null;
+    if (sendResult.success) {
+      try {
+        await recordStaffConfirmedBooking(preparedContact.id, text.trim(), { providerAccepted: true });
+      } catch (bookingSyncError) {
+        console.error("Failed to sync staff chat booking confirmation:", bookingSyncError);
+        bookingSyncWarning = "Appointment message sent, but booking could not be saved to CRM. Please confirm it in Pipeline.";
+      }
+    }
+
     res.status(201).json({
+      ...(bookingSyncWarning ? { bookingSyncWarning } : {}),
       ...finalMessage,
       delivery_error: publicDeliveryError(finalMessage.delivery_error),
       delivered: sendResult.success,
