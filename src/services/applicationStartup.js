@@ -26,6 +26,7 @@ const {
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
 const mediaStorage = require("./mediaStorageService");
+const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const {
   startCustomerDataLifecycle,
 } = require("./customerDataLifecycleService");
@@ -153,6 +154,7 @@ async function startApplication({
 
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
+    whatsappResultMediaQueue.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
