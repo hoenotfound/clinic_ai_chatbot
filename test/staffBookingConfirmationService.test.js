@@ -23,8 +23,6 @@ test("only explicit staff-confirmed full calendar appointments are eligible for 
     "预约已确认 17/10/2026 4点",
     "预约已确认 17/10/2026 4:00",
   ]) {
-    // 24-hour 4:00 is still a valid unambiguous 04:00 in the clinic database.
-    if (message.endsWith("4:00")) continue;
     assert.equal(parseStaffConfirmedSlot(message, NOW), null, message);
   }
 });
