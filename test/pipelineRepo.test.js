@@ -610,7 +610,7 @@ test("staff appointment status changes record structured activity metadata", asy
 
   await pipelineRepo.updateLead(
     90,
-    { appointmentStatus: "set" },
+    { appointmentStatus: "set", appointmentAt: "2026-10-17T08:00:00.000Z" },
     "staff@example.com"
   );
 
