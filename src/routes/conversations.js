@@ -890,6 +890,12 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
       return res.status(404).json({ error: "Message attachment not found." });
     }
 
+    // Preserve the original validation (416) before any signed redirect.
+    const requestedRange = normalizeSingleByteRange(req.headers.range);
+    if (!requestedRange.valid) {
+      return res.sendStatus(416);
+    }
+
     // Only historical MP4 Inbox playback can redirect directly to private R2.
     // Any disabled/unsupported/error case retains the original Render stream.
     if (await tryDirectInboxVideo({
@@ -898,11 +904,6 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
       res,
       storage: mediaStorage,
     })) return;
-
-    const requestedRange = normalizeSingleByteRange(req.headers.range);
-    if (!requestedRange.valid) {
-      return res.sendStatus(416);
-    }
 
     const media = await mediaStorage.openMediaStream(mediaRef.media_key, {
       range: requestedRange.range,

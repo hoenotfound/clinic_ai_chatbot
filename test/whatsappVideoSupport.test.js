@@ -74,12 +74,12 @@ test("Inbox uses authenticated stored-media streaming for received videos", () =
 test("historical Inbox videos defer their media source until a deliberate play action", () => {
   assert.match(inboxSource, /function OnDemandInboxVideo\(/);
   assert.match(inboxSource, /src=\{uploading \? src : undefined\}/);
-  assert.match(inboxSource, /activeSourceRef\.current !== src \|\| player\.error/);
+  assert.match(inboxSource, /activeSourceRef\.current !== playbackSrc \|\| player\.error/);
   assert.match(inboxSource, /player\.removeAttribute\("src"\)/);
   assert.match(inboxSource, /Retry video/);
   assert.match(inboxSource, /onError=\{\(\) =>/);
   assert.match(inboxSource, /preload=\{uploading \? "metadata" : "none"\}/);
-  assert.match(inboxSource, /player\.src = src;[\s\S]*?player\.play\(\)/);
+  assert.match(inboxSource, /player\.src = playbackSrc;[\s\S]*?player\.play\(\)/);
   assert.match(inboxSource, /aria-label="Play video"/);
   assert.match(inboxSource, /uploading=\{Boolean\(message\._uploading\)\}/);
   // The existing authenticated media URL and outbound video sends are unchanged.
