@@ -291,8 +291,18 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
       )
     ON CONFLICT(message_id) DO NOTHING RETURNING message_id
   `,[messageId,recipient,stamp.toISOString()]);
-  return Number(result.rows?.[0]?.message_id)===messageId
-    ? {allowed:true,reservationId:null,serviceReplyMessageId:messageId}
+  if (Number(result.rows?.[0]?.message_id)===messageId)
+    return {allowed:true,reservationId:null,serviceReplyMessageId:messageId};
+  // A prior service send may have reached Meta even if its WAMID never made
+  // it back to us. Never fall through to the independent CTWA gate and replay
+  // that same saved message after ON CONFLICT suppressed this attempt.
+  const prior=await database.query(`
+    SELECT 1 FROM whatsapp_24h_service_reply_exceptions
+    WHERE message_id=$1 LIMIT 1
+  `,[messageId]);
+  return prior.rows?.length
+    ? deny("zero_cost_service_reply_already_attempted",
+      "This service reply was already attempted. Check the original delivery before sending again.")
     : null;
 }
 async function complete24hServiceReply(messageId,result,database=pool) {
