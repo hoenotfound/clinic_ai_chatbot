@@ -1438,6 +1438,20 @@ test("signed R2 redirect streams video cross-origin without fetching Render vide
       renderRequests++;
       const pathname = new URL(route.request().url()).pathname;
       if (pathname.endsWith("/82/media")) throw new Error("Unplayed video requested");
+      // Chromium has intermittent failures with route.continue({ url })
+      // followed by a cross-origin 302. Fulfill the actual 302 in Chromium;
+      // WebKit must use a real network redirect because it rejects fulfilled
+      // 3xx responses. Both paths still stream from the separate HTTP server.
+      if (testInfo.project.name === "desktop-chromium") {
+        return route.fulfill({
+          status: 302,
+          headers: {
+            Location: `http://127.0.0.1:${server.address().port}/clip?X-Amz-Signature=fixture`,
+            "Cache-Control": "private, no-store",
+            "Referrer-Policy": "no-referrer",
+          },
+        });
+      }
       return route.continue({ url: redirectUrl });
     });
 
