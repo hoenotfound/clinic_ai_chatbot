@@ -1240,7 +1240,7 @@ test("optional compression can time out and send the valid original PNG", async 
 
 async function serveTinyVideo(route, body = SHORT_H264_MP4) {
   const rangeHeader = route.request().headers().range;
-  const match = /^bytes=(\\d+)-(\\d*)$/.exec(rangeHeader || "");
+  const match = /^bytes=([0-9]+)-([0-9]*)$/.exec(rangeHeader || "");
   const start = match ? Number(match[1]) : 0;
   const end = match && match[2] ? Math.min(Number(match[2]), body.length - 1) : body.length - 1;
   const bytes = body.subarray(start, end + 1);
