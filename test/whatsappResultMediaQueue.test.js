@@ -46,7 +46,7 @@ test("RM0 transient block postpones optional image without calling Meta or creat
   }));
   let sent = 0;
   await queue.runOne({
-    db,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    db,strictEnabled:()=>true,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
     sender:async()=>{sent++;throw Error("must not send");},
   });
   assert.equal(sent,0);
@@ -66,7 +66,7 @@ test("when pricing confirms RM0, an image is accepted and its audit can be recon
   mock(t,messagesRepo,"setWhatsappMessageId",async(id,wamid)=>{persisted={id,wamid};});
   let sendCount = 0;
   await queue.runOne({
-    db,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    db,strictEnabled:()=>true,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
     sender:async(_contact,_url,_caption,opts)=>{
       sendCount++;
       assert.equal(opts.currentMessageId,991);
@@ -147,7 +147,7 @@ test("confirmed billing alarm never calls the image sender",async t=>{
   }));
   let called=0;
   await queue.runOne({
-    db,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    db,strictEnabled:()=>true,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
     sender:async()=>{called++;return {success:true,wamid:"should-not-send"};},
   });
   assert.equal(called,0);
@@ -168,10 +168,24 @@ test("optional images yield to waiting customer text replies",async t=>{
   });
   let sent=false;
   await queue.runOne({
-    db,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    db,strictEnabled:()=>true,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
     sender:async()=>{sent=true;},
   });
   assert.equal(sent,false);
   assert.ok(db.calls.some(x=>x.sql.includes("SET status='pending'") &&
     x.params?.includes("priority_to_live_customer_reply")));
+});
+
+test("switching RM0 protection off never drains a previously queued strict-only image",async()=>{
+  const row=sample();
+  const db=fakeDb(row);
+  let sent=0;
+  await queue.runOne({
+    db,strictEnabled:()=>false,
+    eligibility:async()=>{ throw Error("must not evaluate image eligibility"); },
+    sender:async()=>{sent++;},
+  });
+  assert.equal(sent,0);
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
+    x.params?.includes("strict_rm0_switched_off_after_queue")));
 });
