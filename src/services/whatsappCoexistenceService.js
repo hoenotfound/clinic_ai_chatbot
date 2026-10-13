@@ -3,6 +3,7 @@ const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const { recordStaffConfirmedBooking } = require("./staffBookingConfirmationService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
@@ -154,6 +155,20 @@ async function finalizeBusinessAppEcho(persisted) {
       err
     );
   }
+  // Only fresh authenticated staff echoes may confirm a full, explicit slot.
+  // Provider echo already proves Meta accepted this outbound message.
+  if (persisted.isNew && !persisted.message.is_forwarded) {
+    try {
+      await recordStaffConfirmedBooking(
+        persisted.contact.id,
+        persisted.message.content,
+        { providerAccepted: true }
+      );
+    } catch (bookingError) {
+      console.error("Failed to sync staff echo booking confirmation:", bookingError);
+    }
+  }
+
 }
 
 function summarizePassiveSync(body) {

@@ -109,6 +109,8 @@ test("renovation conversion-ready persists project metadata without writing a cu
       "Cheras",
       "Condo kitchen cabinets; customer has floor plan and wants to renovate next month.",
       "quotation_discussion",
+      false,
+      false,
     ]);
 
     const leadUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE leads"));

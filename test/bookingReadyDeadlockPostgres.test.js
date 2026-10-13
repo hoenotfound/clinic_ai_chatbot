@@ -39,6 +39,7 @@ test(
           is_closed BOOLEAN NOT NULL DEFAULT false,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           temperature TEXT,
+          appointment_status TEXT NOT NULL DEFAULT 'none',
           temperature_locked BOOLEAN NOT NULL DEFAULT false,
           branch_name TEXT,
           treatment_interest TEXT,
