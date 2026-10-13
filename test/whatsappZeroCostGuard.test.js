@@ -216,3 +216,17 @@ test("strict switch requires acknowledged impact and reports blocked/billing sta
   assert.match(config,/acknowledgeImpact !== true/);
   assert.match(config,/freeOnlyGate:/);
 });
+
+test("freeform media preflight never substitutes template-only eligibility",async t=>{
+  mode(t);
+  const db=mockedDatabase({eligible:true});
+  const template=await guard.preflightTemplate("601130535053",{database:db});
+  const templateQuery=db.calls.find(x=>x.sql===guard.VERIFIED_WINDOW_SQL);
+  assert.equal(template.allowed,true);
+  assert.equal(templateQuery.params[5],"template");
+  db.calls.length=0;
+  const media=await guard.preflightFreeform("601130535053",{database:db});
+  const mediaQuery=db.calls.find(x=>x.sql===guard.VERIFIED_WINDOW_SQL);
+  assert.equal(media.allowed,true);
+  assert.equal(mediaQuery.params[5],"freeform");
+});
