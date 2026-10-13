@@ -18,6 +18,8 @@ test("only explicit staff-confirmed full calendar appointments are eligible for 
     "星期六，4点的时间你方便吗？",
     "预约已确认 星期六 下午4点",
     "Your appointment is not confirmed: 17/10/2026 4:00pm",
+    "Appointment confirmed? 17/10/2026 4:00pm",
+    "Your appointment confirmed 17/10/2026 4:00pm was cancelled",
     "待确认 17/10/2026 4:00pm 预约",
     "预约已确认 31/02/2027 4:00pm",
     "预约已确认 17/10/2026 4点",
