@@ -598,6 +598,9 @@ async function complete(reservationId,result, database=pool) {
            wamid=$3,updated_at=now()
          WHERE phone_number_id=$1 AND reservation_id=$2`,
         [account,reservationId,result.wamid]);
+      // The webhook may have beaten local finalization. Recheck its durable
+      // receipt without permitting an unverified send through the gate.
+      await reconcileConfirmedGate(database);
     } else if (definitelyRejected(result)) {
       await database.query(
         `UPDATE whatsapp_free_only_send_gate SET status='idle',
@@ -619,6 +622,59 @@ async function complete(reservationId,result, database=pool) {
   }
 }
 
+// Reconcile only a provider-confirmed, nonbillable reservation. A timeout,
+ // missing receipt, billed message, or UNKNOWN reservation must stay blocked.
+ // Re-running this query is safe across duplicate Meta webhooks and restarts.
+async function reconcileConfirmedGate(database = pool) {
+  if (!enabled()) return false;
+  const account = configuredAccount();
+  const activatedAt = Date.parse(settings()?.activatedAt || "");
+  if (!account || !Number.isFinite(activatedAt)) return false;
+  const proof = await database.query(`
+    WITH confirmed AS (
+      SELECT g.phone_number_id, g.reservation_id, g.status AS prior_status,
+             g.wamid, g.message_id, g.attempt_id, e.pricing_type, e.billable
+        FROM whatsapp_free_only_send_gate g
+        JOIN whatsapp_free_entry_pricing_evidence e ON e.wamid = g.wamid
+        JOIN messages m ON m.id = g.message_id
+                       AND m.whatsapp_message_id = g.wamid
+       WHERE g.phone_number_id = $1 AND g.status = 'awaiting_pricing'
+         AND e.pricing_type = 'free_entry_point' AND e.billable = false
+         AND e.delivery_status IN ('sent','delivered','read')
+         AND m.delivery_status IN ('sent','delivered','read')
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_free_entry_pricing_evidence alarm
+            WHERE alarm.billable = true AND alarm.updated_at >= $2::timestamptz
+         )
+       FOR UPDATE OF g
+    ), released AS (
+      UPDATE whatsapp_free_only_send_gate g
+         SET status = 'idle', reservation_id = NULL, wamid = NULL,
+             recipient = NULL, message_id = NULL, attempt_id = NULL,
+             updated_at = now()
+        FROM confirmed c
+       WHERE g.phone_number_id = c.phone_number_id
+         AND g.status = c.prior_status AND g.wamid = c.wamid
+         AND g.reservation_id IS NOT DISTINCT FROM c.reservation_id
+      RETURNING c.*
+    ), audit AS (
+      INSERT INTO whatsapp_free_only_reconciliations (
+        phone_number_id, reservation_id, prior_status, wamid,
+        message_id, attempt_id, actor, reason, verified_billing_hub,
+        provider_pricing_type, provider_billable, reconciled_at
+      )
+      SELECT phone_number_id, reservation_id, prior_status, wamid,
+             message_id, attempt_id, 'automatic_verified_receipt',
+             'Meta nonbillable free-entry receipt and accepted delivery',
+             true, pricing_type, billable, now()
+        FROM released
+      RETURNING id
+    )
+    SELECT count(*)::integer AS released FROM audit
+  `, [account, new Date(activatedAt).toISOString()]);
+  return Number(proof.rows?.[0]?.released || 0) > 0;
+}
+
 async function perform(to, operation, context = {}) {
   const check=await reserve(to,{ context });
   if (!check.allowed) return blockedResult(check);
@@ -634,6 +690,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,perform,
+  blockedResult,configuredAccount,enabled,settings,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
