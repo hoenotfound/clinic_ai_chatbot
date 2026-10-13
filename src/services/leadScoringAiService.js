@@ -32,9 +32,9 @@ function nextLeadScoringModelRetryAt(nowMs = Date.now(), cooldowns = modelCapaci
   return Number.isFinite(next) ? new Date(next).toISOString() : null;
 }
 function leadScoringThinkingLevel(model) {
-  // Gemini 3.8 and 3.7 reject "minimal"; 3.6 and 3.5 support it.
-  // Use the widely supported low level for unfamiliar models as well.
-  return /^gemini-3\\.(?:5|6)-flash(?:-lite)?(?:$|-)/i.test(String(model || ""))
+  // 3.8/3.7 Flash reject minimal, unlike 3.6 and 3.5 Flash.
+  const id = String(model || "").toLowerCase();
+  return id.startsWith("gemini-3.6-flash") || id.startsWith("gemini-3.5-flash")
     ? "minimal" : "low";
 }
 function recoverableGeminiKeySweep(error) {
@@ -42,8 +42,14 @@ function recoverableGeminiKeySweep(error) {
   const failures = Array.isArray(error.failures) ? error.failures : [];
   return failures.length > 0 && failures.every((failure) => {
     const message = String(failure?.message || "").toLowerCase();
-    if (/invalid|unauthorized|permission denied|authentication|api.?key.*(?:revoked|expired)|not found|unsupported|bad request|\\b400\\b|\\b401\\b|\\b403\\b|\\b404\\b/.test(message)) return false;
-    return /quota|rate.limit|resource exhausted|too many requests|temporar|unavailable|high demand|overload|timed? out|\\b429\\b|\\b500\\b|\\b502\\b|\\b503\\b|\\b504\\b|network|connection/.test(message);
+    const permanent = ["invalid", "unauthorized", "permission denied",
+      "authentication", "revoked", "expired", "not found", "unsupported",
+      "bad request", " 400", " 401", " 403", " 404"];
+    if (permanent.some((term) => message.includes(term))) return false;
+    return ["quota", "rate limit", "rate_limit", "resource exhausted",
+      "too many requests", "temporar", "unavailable", "high demand",
+      "overload", "timeout", "timed out", "429", "500", "502", "503",
+      "504", "network", "connection"].some((term) => message.includes(term));
   });
 }
 // Rehydrate a recently unavailable model from already durable AI usage
