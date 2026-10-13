@@ -68,3 +68,22 @@ test("explicit Meta rejection invalidates cached ID but does not resend", async 
   assert.equal(sent,1);
   assert.equal(invalidated,1);
 });
+
+test("pre-send cancellation prevents even a cache lookup and preserves the blocked send", async (t) => {
+  const oldEnv=process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED;
+  const original={resolve:cache.resolveMediaId,guard:policy.checkFreeformAllowed};
+  t.after(()=>{
+    if(oldEnv===undefined)delete process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED;
+    else process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED=oldEnv;
+    cache.resolveMediaId=original.resolve;policy.checkFreeformAllowed=original.guard;
+  });
+  process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED="true";
+  policy.checkFreeformAllowed=async()=>({allowed:true});
+  cache.resolveMediaId=async()=>{throw Error("Cache must not be called");};
+  const result=await messaging.sendVideoByStoredKey(
+    {id:3,channel:"whatsapp",whatsapp_number:"60123456789"},
+    "clients/demo/messages/follow-up-config/test.mp4","Caption",null,
+    {purpose:"follow_up",preSendCheck:async()=>false}
+  );
+  assert.equal(result.cancelled,true);
+});
