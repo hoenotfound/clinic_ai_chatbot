@@ -318,7 +318,14 @@ async function runOne({
 async function nextDelay(db=pool) {
   const result = await db.query(
     `SELECT LEAST(
-       (SELECT MIN(next_attempt_at) FROM whatsapp_result_media_queue WHERE status='pending'),
+       (SELECT MIN(q.next_attempt_at)
+        FROM whatsapp_result_media_queue q WHERE q.status='pending'
+          AND NOT EXISTS (
+            SELECT 1 FROM whatsapp_result_media_queue prior
+            WHERE prior.inbound_message_id=q.inbound_message_id
+              AND prior.sequence_no<q.sequence_no
+              AND prior.status NOT IN ('sent','skipped')
+          )),
        (SELECT MIN(claimed_at+interval '3 minutes')
          FROM whatsapp_result_media_queue WHERE status='processing')
      ) AS due_at`
