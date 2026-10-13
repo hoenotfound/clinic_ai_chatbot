@@ -6,6 +6,7 @@ const {
   isBriefAcceptance,
   hasSpecificStaffTimeOffer,
   isExplicitRescheduleOffer,
+  conflictsWithConfirmedSlot,
   createStaffAppointmentAcceptanceService,
 } = require("../src/services/staffAppointmentAcceptanceService");
 
@@ -14,6 +15,7 @@ function mockAcceptance({
   bookingStatus = "none",
   existing = false,
   staffAuthored = true,
+  appointmentAt = "2026-10-17T08:00:00.000Z",
 } = {}) {
   const queries = [];
   const events = [];
@@ -28,6 +30,7 @@ function mockAcceptance({
             return { rows: staffAuthored ? [{
               staff_message_id: 1475, staff_text: offerText,
               lead_id: 116, appointment_status: bookingStatus, old_stage_id: 3,
+              appointment_at: appointmentAt,
             }] : [] };
           }
           if (/INSERT INTO lead_activities/.test(sql)) return { rows: existing ? [] : [{ id: 999 }] };
@@ -100,6 +103,27 @@ test("non-staff or unspecific offers cannot become accepted booking evidence", a
   const refusal = mockAcceptance();
   assert.equal(await refusal.service(372, 1476, "No"), null);
   assert.equal(refusal.queries.length, 0);
+});
+
+test("new proposed time replaces a different confirmed slot, even without a change keyword", async () => {
+  assert.equal(
+    conflictsWithConfirmedSlot("星期六，4点的时间你方便吗？", "2026-10-17T07:30:00.000Z"),
+    true
+  );
+  assert.equal(
+    conflictsWithConfirmedSlot("星期六，4点的时间你方便吗？", "2026-10-17T08:00:00.000Z"),
+    false
+  );
+  assert.equal(
+    conflictsWithConfirmedSlot("17/10 3.30pm 可以吗?", "2026-10-17T08:00:00.000Z"),
+    true
+  );
+  const { service, queries } = mockAcceptance({
+    bookingStatus: "set",
+    appointmentAt: "2026-10-17T07:30:00.000Z",
+  });
+  await service(372, 1476, "Ok");
+  assert.ok(queries.some(({ sql }) => /UPDATE leads SET appointment_status = 'reschedule'/.test(sql)));
 });
 
 test("a clearly changed staff slot accepted by a booked customer becomes pending reschedule", async () => {
