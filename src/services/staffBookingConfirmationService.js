@@ -28,6 +28,10 @@ function parseStaffConfirmedSlot(message, now = new Date()) {
   const minute = clock ? Number(clock[2]) : chinese?.[2]
     ? chinese[2] === "半" ? 30 : Number(chinese[2].replace(/\s*分/, "")) : 0;
   const suffix = clock ? String(clock[3] || "") : "";
+  const hasDaypart = /上午|早上|下午|晚上|傍晚/u.test(text);
+  // "4:00" with no AM/PM is ambiguous. Only 13:00-23:59 and 00:xx
+  // are unambiguous 24-hour times in an ordinary clinic conversation.
+  if (clock && !suffix && !hasDaypart && hour >= 1 && hour <= 12) return null;
   if (/p\.?m/i.test(suffix) || /下午|晚上|傍晚/u.test(text)) {
     if (hour < 12) hour += 12;
   } else if (/a\.?m/i.test(suffix) || /上午|早上/u.test(text)) {
