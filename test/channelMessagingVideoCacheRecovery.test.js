@@ -136,3 +136,43 @@ test("cache wait cancellation never turns into a normal delivery", async(t)=>{
   assert.equal(r.cancelled,true);
   assert.equal(f.trace.filter(x=>x[0]==="send").length,0);
 });
+
+test("lost invalidation race uses another worker's refreshed ID without a third send", async (t) => {
+  const f = mockVideo(t, {results:[
+    {success:false,wamid:null,providerStatus:400,ambiguous:false,error:"Invalid media ID"},
+    {success:true,wamid:"wamid-refreshed-by-other"},
+  ]});
+  cache.invalidateIfRejected = async (resolved, result) => {
+    f.trace.push(["invalidation-lost-race", resolved.mediaId]);
+    return false; // Other worker already cleared the old ID and refreshed.
+  };
+  const r = await messaging.sendVideoByStoredKey(contact,key,"Caption",null,f.options);
+  assert.equal(r.wamid,"wamid-refreshed-by-other");
+  assert.deepEqual(f.trace.filter(x => x[0] === "send").map(x => x[1]),["old-id","new-id"]);
+  assert.equal(f.getLookups(),2);
+  assert.equal(f.trace.filter(x => x[0] === "send").length,2);
+});
+
+test("lost invalidation race never retries if cache still resolves the same rejected ID", async (t) => {
+  const f = mockVideo(t, {results:[
+    {success:false,wamid:null,providerStatus:400,ambiguous:false,error:"Invalid media ID"},
+  ]});
+  cache.invalidateIfRejected = async () => false;
+  cache.resolveMediaId = async () => ({
+    kind:"ready", mediaId:"old-id", cacheHit:true, phoneId:"123456",fingerprint:"a".repeat(64)
+  });
+  const r=await messaging.sendVideoByStoredKey(contact,key,"Caption",null,f.options);
+  assert.equal(r.success,false);
+  assert.equal(f.trace.filter(x=>x[0]==="send").length,1);
+});
+
+test("provider timeout does not retry even if another worker refreshed the cache", async (t)=>{
+  const f=mockVideo(t,{results:[
+    {success:false,wamid:null,ambiguous:true,unknown:true,error:"Invalid media ID",providerStatus:400}
+  ]});
+  cache.invalidateIfRejected=async()=>false;
+  const r=await messaging.sendVideoByStoredKey(contact,key,"Caption",null,f.options);
+  assert.equal(r.unknown,true);
+  assert.equal(f.trace.filter(x=>x[0]==="send").length,1);
+  assert.equal(f.getLookups(),1);
+});

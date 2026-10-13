@@ -56,7 +56,28 @@ function createCache({
       .update(JSON.stringify([videoKey, info.etag, info.bytes, mimeType]))
       .digest("hex");
     const flightKey = phoneId + ":" + fingerprint;
-    if (inFlight.has(flightKey)) return inFlight.get(flightKey);
+    // Only the immutable media upload is shared. Each recipient keeps their
+    // own eligibility result; one customer's cancellation cannot cancel others.
+    async function deliverToCaller(result) {
+      const check = uploadOptions.preSendCheck;
+      if (typeof check !== "function") return result;
+      try {
+        return (await check()) === true ? result : { kind: "cancelled" };
+      } catch (_) {
+        return { kind: "cancelled" };
+      }
+    }
+
+    const existingFlight = inFlight.get(flightKey);
+    if (existingFlight) {
+      const shared = await existingFlight;
+      if (shared?.kind === "ready") {
+        // This recipient reused an upload even when the first recipient did not.
+        measure(phoneId, "hit", info.bytes);
+        return deliverToCaller({ ...shared, cacheHit: true });
+      }
+      return deliverToCaller(shared);
+    }
 
     async function loadOrUpload() {
       try {
@@ -83,13 +104,8 @@ function createCache({
       }
       if (!claimed) {
         for (let attempt = 0; attempt < WAIT_ATTEMPTS; attempt += 1) {
-          // The sending worker may have been cancelled while waiting. Do not
-          // start an upload once the customer has replied or the window closed.
-          if (attempt % 4 === 0 && typeof uploadOptions.preSendCheck === "function") {
-            try {
-              if (await uploadOptions.preSendCheck() !== true) return { kind: "cancelled" };
-            } catch (_) { return { kind: "cancelled" }; }
-          }
+          // Recipient eligibility is checked independently after the shared
+          // upload resolves. Never use the initiating contact's check here.
           await sleep(WAIT_MS);
           try {
             const readyId = await repo.get(phoneId, fingerprint);
@@ -115,17 +131,6 @@ function createCache({
           return { kind: "bypass" };
         }
       }
-      if (typeof uploadOptions.preSendCheck === "function") {
-        try {
-          if (await uploadOptions.preSendCheck() !== true) {
-            await repo.release(phoneId, fingerprint, claimId);
-            return { kind: "cancelled" };
-          }
-        } catch (_) {
-          await repo.release(phoneId, fingerprint, claimId);
-          return { kind: "cancelled" };
-        }
-      }
 
       let buffer;
       try {
@@ -141,7 +146,8 @@ function createCache({
 
       let uploadedId;
       try {
-        uploadedId = await whatsappApi.uploadMedia(buffer, mimeType, filename, uploadOptions);
+        // Shared media preparation carries no individual message/recipient options.
+        uploadedId = await whatsappApi.uploadMedia(buffer, mimeType, filename);
       } catch (error) {
         try { await repo.release(phoneId, fingerprint, claimId); } catch (_) {}
         return { kind: "upload_failed" };
@@ -169,7 +175,7 @@ function createCache({
     const promise = loadOrUpload();
     inFlight.set(flightKey, promise);
     try {
-      return await promise;
+      return await deliverToCaller(await promise);
     } finally {
       if (inFlight.get(flightKey) === promise) inFlight.delete(flightKey);
     }

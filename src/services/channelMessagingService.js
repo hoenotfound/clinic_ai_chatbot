@@ -889,8 +889,12 @@ async function sendVideoByStoredKey(
       }
     );
     if (cachedVideo?.kind !== "ready") return result;
-    const invalidated = await whatsappVideoMediaCache.invalidateIfRejected(cachedVideo, result);
-    if (!invalidated || cachedVideo.cacheHit !== true) return result;
+    // Another worker may already have invalidated or refreshed this ID.
+    // A lost compare-and-swap does not mean the definite provider rejection
+    // is no longer recoverable: resolve again and require a *different* ID.
+    await whatsappVideoMediaCache.invalidateIfRejected(cachedVideo, result);
+    if (cachedVideo.cacheHit !== true ||
+        !whatsappVideoMediaCache.definitelyInvalidMediaId(result)) return result;
 
     // ONLY a definite Meta 4xx invalid-media rejection is safe to retry.
     // The first WhatsApp request was rejected, so no WAMID was accepted.

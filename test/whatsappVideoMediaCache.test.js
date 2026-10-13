@@ -189,22 +189,69 @@ test("abandoned cross-instance upload lease can be reclaimed after polling", asy
   assert.equal(calls.upload,1);
 });
 
-test("cache wait respects cancellation before any second upload", async () => {
-  let checked = 0;
-  const repo = { get:async()=>null, claim:async()=>false };
+test("same-flight recipients cannot cancel each other's shared upload", async () => {
+  const rows = new Map();
+  const stats = { uploads: 0, checksA: 0, checksB: 0 };
+  let unblock;
+  let uploadStarted;
+  const started = new Promise(resolve => { uploadStarted = resolve; });
+  const uploadHold = new Promise(resolve => { unblock = resolve; });
+  const repo = {
+    async get(key, hash) { return rows.get(key + hash)?.mediaId || null; },
+    async claim(key, hash, type, claim) { rows.set(key + hash, { claim }); return true; },
+    async save(key, hash, claim, mediaId) { rows.set(key + hash, { mediaId }); return true; },
+    async recordEvent() {},
+  };
+  const storage = {
+    isSharedFollowUpConfigKey: () => true,
+    getSharedFollowUpMediaInfo: async () => ({ mimeType: "video/mp4", bytes: 100, etag: "v1" }),
+    downloadMedia: async () => Buffer.from("common-clip"),
+  };
+  const api = {
+    async uploadMedia() {
+      stats.uploads++;
+      uploadStarted();
+      await uploadHold;
+      return "shared-upload-id";
+    },
+  };
+  const cache = createCache({
+    repo, mediaStorage: storage, whatsappApi: api, phoneNumberId: () => "123"
+  });
+  const opts = { videoKey: "messages/follow-up-config/a.mp4", mimeType: "video/mp4", filename: "a.mp4" };
+  let eligibleA = true;
+  const a = cache.resolveMediaId({
+    ...opts, uploadOptions: { preSendCheck: async () => { stats.checksA++; return eligibleA; } }
+  });
+  await started;
+  const b = cache.resolveMediaId({
+    ...opts, uploadOptions: { preSendCheck: async () => { stats.checksB++; return true; } }
+  });
+  eligibleA = false;
+  unblock();
+  const [forA, forB] = await Promise.all([a, b]);
+  assert.equal(forA.kind, "cancelled");
+  assert.equal(forB.kind, "ready");
+  assert.equal(forB.mediaId, "shared-upload-id");
+  assert.equal(forB.cacheHit, true);
+  assert.equal(stats.uploads, 1);
+  assert.equal(stats.checksA, 1);
+  assert.equal(stats.checksB, 1);
+});
+
+test("a cancelled cache waiter does not stop the underlying upload", async () => {
+  const repo = { get: async () => "existing-id", recordEvent() {} };
   const storage = {
     isSharedFollowUpConfigKey:()=>true,
     getSharedFollowUpMediaInfo:async()=>({mimeType:"video/mp4",bytes:1000,etag:"abc"}),
   };
-  const api = {uploadMedia:async()=>{throw Error("must not upload")}};
-  const waitCache = createCache({repo,mediaStorage:storage,whatsappApi:api,
-    sleep:async()=>{},phoneNumberId:()=>"123"});
-  const result=await waitCache.resolveMediaId({
+  const api = { uploadMedia: async () => { throw Error("must not upload"); } };
+  const cache = createCache({repo,mediaStorage:storage,whatsappApi:api,phoneNumberId:()=>"123"});
+  const result = await cache.resolveMediaId({
     videoKey:"messages/follow-up-config/a.mp4",mimeType:"video/mp4",
-    uploadOptions:{preSendCheck:async()=>{checked++;return false;}}
+    uploadOptions:{preSendCheck:async()=>false}
   });
   assert.equal(result.kind,"cancelled");
-  assert.equal(checked,1);
 });
 
 test("unknown and unrelated provider errors are never invalid media evidence", () => {
