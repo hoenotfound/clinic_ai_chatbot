@@ -235,6 +235,7 @@ async function runOne({
   db=pool,
   sender=channelMessaging.sendImageByUrl,
   eligibility=eligibleForOptionalImage,
+  strictEnabled=zeroCost.enabled,
 }={}) {
   await sweepStaleAndBlocked(db);
   const row = await claimNext(db);
@@ -242,6 +243,12 @@ async function runOne({
   let message = null;
   let providerResult = null;
   try {
+    // These jobs were created under Strict RM0. If the protection is switched
+    // off after queuing, do not release an old queued image without its proof.
+    if (!strictEnabled()) {
+      await closeItem(row,"cancelled","strict_rm0_switched_off_after_queue",{db});
+      return true;
+    }
     const contact = await eligibility(row,db);
     if (!contact) {
       await closeItem(row,"skipped","conversation_changed_or_staff_review",{db});
