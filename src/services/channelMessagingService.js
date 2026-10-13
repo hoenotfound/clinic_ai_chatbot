@@ -808,9 +808,10 @@ async function sendVideoByStoredKey(
   // Only shared clinic follow-up videos may use the cache. Patient-specific
   // Inbox attachments and non-WhatsApp channels always follow the old path.
   let cachedVideo = null;
-  if (channel === "whatsapp" &&
-      process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED === "true" &&
-      mediaStorage.isSharedFollowUpConfigKey(videoKey)) {
+  const cacheEligible = channel === "whatsapp" &&
+    process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED === "true" &&
+    mediaStorage.isSharedFollowUpConfigKey(videoKey);
+  if (cacheEligible) {
     try {
       cachedVideo = await whatsappVideoMediaCache.resolveMediaId({
         videoKey, mimeType: videoMimeType, filename: videoFilename,
@@ -868,9 +869,14 @@ async function sendVideoByStoredKey(
     }
     // A cross-instance cache waiter can take up to a claim lease; refresh
     // ordinary free-form eligibility rather than relying on an old 24h check.
-    const latestGuard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
-    if (latestGuard.blocked) return latestGuard.blocked;
-    cancelled = await preSendCancelled(optionsForPolicy(options, latestGuard.policy));
+    if (cacheEligible) {
+      const latestGuard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
+      if (latestGuard.blocked) return latestGuard.blocked;
+      cancelled = await preSendCancelled(optionsForPolicy(options, latestGuard.policy));
+    } else {
+      // Feature OFF: preserve the original video path and its policy checks.
+      cancelled = await preSendCancelled(sendOptions);
+    }
     if (cancelled) return cancelled;
     const result = await whatsapp.sendVideoById(
       contact.whatsapp_number,
