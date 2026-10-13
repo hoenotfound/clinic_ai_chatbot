@@ -1,5 +1,6 @@
 const messagesRepo = require("../db/messagesRepo");
 const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
+const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
@@ -94,6 +95,9 @@ function createWhatsAppDeliveryStatusService({
 
   async function storeDeliveryStatusUpdates(updates) {
     const stored = await repo.storeBatch(updates);
+    // Wake deferred result media immediately after durable Meta pricing is saved.
+    // This does not await image sending or slow webhook acknowledgement.
+    if (updates?.some(update => update?.pricingType)) whatsappResultMediaQueue.wake(0);
     // Never delay a webhook or drop persisted pricing evidence if Telegram
     // is unavailable. Durable alerts will be retried by recovery.
     if (updates?.some((update) => update?.pricingBillable === true)) {
