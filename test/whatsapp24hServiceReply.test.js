@@ -51,7 +51,8 @@ test("service lane needs a persisted message and cannot replay the same provider
       return {rows:[{message_id:args[0]}]};
     }
     if(sql.includes("SELECT 1 FROM whatsapp_24h_service_reply_exceptions"))
-      return {rows:rows.has(args[0])?[{exists:1}]:[]};
+      return {rows:rows.has(args[0]) && args[1]==="60121234567"
+        ?[{exists:1}]:[]};
     if(sql.includes("UPDATE whatsapp_24h_service_reply_exceptions")) {
       const row=rows.get(args[0]); if(row?.status==="reserved"){row.status=args[1];row.wamid=args[2];}
       return {rows:[]};
