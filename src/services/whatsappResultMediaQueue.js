@@ -11,6 +11,7 @@ const contactsRepo = require("../db/contactsRepo");
 const channelMessaging = require("./channelMessagingService");
 const zeroCost = require("./whatsappZeroCostGuard");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
+const aiReplyCancellation = require("./aiReplyCancellationService");
 const { getAiOwnedContact } = require("./automaticReplyGuard");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -23,6 +24,7 @@ const IDLE_MS = 15 * 60 * 1000;
 const TEMPORARY_BILLING_CODES = new Set([
   "zero_cost_previous_send_unreconciled",
   "zero_cost_unverified_free_entry",
+  "zero_cost_database_unavailable",
 ]);
 let worker = null;
 
@@ -133,6 +135,7 @@ async function eligibleForOptionalImage(row, db = pool) {
       contact.whatsapp_opt_out_at || contact.whatsapp_marketing_opt_out_at) {
     return null;
   }
+  if (aiReplyCancellation.hasPendingEcho(aiReplyCancellation.keyForContact(contact))) return null;
   const changed = await db.query(
     `SELECT EXISTS(
        SELECT 1 FROM messages newer
@@ -242,13 +245,18 @@ async function runOne({
       }
       return true;
     }
+    const cancellationKey = aiReplyCancellation.keyForContact(contact);
+    const cancellationEpoch = aiReplyCancellation.snapshot(cancellationKey);
     message = await conversationStore.appendMessageForContact(
       row.contact_id,"assistant",row.caption,null,null,row.image_url,
       null,{publish:false}
     );
     providerResult = await sender(contact,row.image_url,row.caption,{
       currentMessageId:message.id,
-      preSendCheck:async()=>Boolean(await eligibleForOptionalImage(row,db)),
+      preSendCheck:async()=>(
+        aiReplyCancellation.safeToSend(cancellationKey,cancellationEpoch) &&
+        Boolean(await eligibleForOptionalImage(row,db))
+      ),
     });
     if (providerResult?.success && providerResult.wamid) {
       await messagesRepo.setWhatsappMessageId(message.id,providerResult.wamid);
