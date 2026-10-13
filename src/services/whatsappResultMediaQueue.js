@@ -66,6 +66,19 @@ async function enqueue({ contactId, inboundMessageId, items, kind="result", sequ
 }
 
 async function reconcileAudit(inboundMessageId, db = pool) {
+  // If Meta's receipt arrives before the inbound handler writes its audit,
+  // create the audit seed first so accepted media can never be lost to a race.
+  await db.query(
+    `INSERT INTO result_media_decisions
+       (contact_id,inbound_message_id,status,reason,result_images_selected)
+     SELECT q.contact_id,$1,'deferred','awaiting_meta_free_billing',
+       (SELECT COUNT(*) FROM whatsapp_result_media_queue
+        WHERE inbound_message_id=$1 AND media_kind='result')
+     FROM whatsapp_result_media_queue q
+     WHERE q.inbound_message_id=$1 LIMIT 1
+     ON CONFLICT(inbound_message_id) DO NOTHING`,
+    [inboundMessageId]
+  );
   // Count only messages actually accepted by Meta, not attempts, uploads or
   // queued requests. This also repairs the initial deferred audit after restart.
   await db.query(
