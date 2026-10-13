@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_result_media_queue (
   contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
   inbound_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   sequence_no INTEGER NOT NULL CHECK (sequence_no BETWEEN 0 AND 4),
+  media_kind TEXT NOT NULL DEFAULT 'result' CHECK (media_kind IN ('result','promotion')),
   image_url TEXT NOT NULL,
   caption TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending'
