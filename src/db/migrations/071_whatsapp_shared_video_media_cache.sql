@@ -12,3 +12,17 @@ CREATE TABLE IF NOT EXISTS whatsapp_video_media_cache (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (phone_number_id, content_fingerprint)
 );
+
+-- Daily counters only: no patients, messages, object keys, tokens or media IDs.
+CREATE TABLE IF NOT EXISTS whatsapp_video_media_cache_daily_stats (
+  event_day DATE NOT NULL,
+  phone_number_id TEXT NOT NULL,
+  cache_hits BIGINT NOT NULL DEFAULT 0,
+  cache_misses BIGINT NOT NULL DEFAULT 0,
+  uploads BIGINT NOT NULL DEFAULT 0,
+  fallbacks BIGINT NOT NULL DEFAULT 0,
+  invalid_ids BIGINT NOT NULL DEFAULT 0,
+  recovered_sends BIGINT NOT NULL DEFAULT 0,
+  upload_bytes_avoided BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (event_day, phone_number_id)
+);

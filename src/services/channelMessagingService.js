@@ -821,6 +821,7 @@ async function sendVideoByStoredKey(
       console.warn("[WhatsApp video cache] Unexpected failure; using original upload");
     }
   }
+  if (cachedVideo?.kind === "cancelled") return preSendCancelled(sendOptions);
   if (cachedVideo?.kind === "download_failed") {
     return temporaryMediaFailure(channel, cachedVideo.error);
   }
@@ -841,7 +842,7 @@ async function sendVideoByStoredKey(
       console.error(`Failed to load follow-up video ${videoKey}:`, err);
       return temporaryMediaFailure(channel, err);
     }
-  
+
     if (!buffer?.length) {
       return {
         success: false,
@@ -864,7 +865,11 @@ async function sendVideoByStoredKey(
         error: "WhatsApp could not upload the follow-up video.",
       };
     }
-    cancelled = await preSendCancelled(sendOptions);
+    // A cross-instance cache waiter can take up to a claim lease; refresh
+    // ordinary free-form eligibility rather than relying on an old 24h check.
+    const latestGuard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
+    if (latestGuard.blocked) return latestGuard.blocked;
+    cancelled = await preSendCancelled(optionsForPolicy(options, latestGuard.policy));
     if (cancelled) return cancelled;
     const result = await whatsapp.sendVideoById(
       contact.whatsapp_number,
@@ -876,12 +881,55 @@ async function sendVideoByStoredKey(
         ...(options.requestId ? { requestId: options.requestId } : {}),
       }
     );
-    // A definite Meta media-ID rejection invalidates only future cache reuse.
-    // Do NOT retry this message: the Strict RM0 gate owns all send attempts.
-    if (cachedVideo?.kind === "ready") {
-      await whatsappVideoMediaCache.invalidateIfRejected(cachedVideo, result);
+    if (cachedVideo?.kind !== "ready") return result;
+    const invalidated = await whatsappVideoMediaCache.invalidateIfRejected(cachedVideo, result);
+    if (!invalidated || cachedVideo.cacheHit !== true) return result;
+
+    // ONLY a definite Meta 4xx invalid-media rejection is safe to retry.
+    // The first WhatsApp request was rejected, so no WAMID was accepted.
+    // Reuse the original send wrapper: it obtains a NEW Strict RM0 reservation.
+    // Never retry an uncertain timeout, accepted response or billing block.
+    const recoveryPolicy = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
+    if (recoveryPolicy.blocked) return recoveryPolicy.blocked;
+    const recoveryOptions = optionsForPolicy(options, recoveryPolicy.policy);
+    cancelled = await preSendCancelled(recoveryOptions);
+    if (cancelled) return cancelled;
+    let replacementId;
+    try {
+      const refreshed = await whatsappVideoMediaCache.resolveMediaId({
+        videoKey, mimeType: videoMimeType, filename: videoFilename,
+        uploadOptions: recoveryOptions,
+      });
+      if (refreshed.kind === "cancelled") return preSendCancelled(recoveryOptions);
+      if (refreshed.kind === "ready") {
+        replacementId = refreshed.mediaId;
+      } else if (refreshed.kind === "bypass") {
+        // Cache is unavailable: use the existing original upload path.
+        const raw = await mediaStorage.downloadMedia(videoKey, { maxBytes: 16 * 1024 * 1024 });
+        replacementId = raw?.length
+          ? await whatsapp.uploadMedia(raw, videoMimeType, videoFilename, options)
+          : null;
+      }
+    } catch (_) {
+      return result; // Preserve the first rejected outcome; do not invent success.
     }
-    return result;
+    if (!replacementId || replacementId === mediaId) return result;
+
+    // Recheck again after the video upload: no stale reply-window or staff state.
+    const finalPolicy = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
+    if (finalPolicy.blocked) return finalPolicy.blocked;
+    cancelled = await preSendCancelled(optionsForPolicy(options, finalPolicy.policy));
+    if (cancelled) return cancelled;
+    const recoveryResult = await whatsapp.sendVideoById(
+      contact.whatsapp_number, replacementId, caption, {
+        replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}),
+        ...(options.requestId ? { requestId: options.requestId } : {}),
+      }
+    );
+    if (recoveryResult.success) whatsappVideoMediaCache.recordRecovery(cachedVideo);
+    // One attempt only. Never recurse or resend after an ambiguous provider result.
+    return recoveryResult;
   }
 
   let captionSent = false;

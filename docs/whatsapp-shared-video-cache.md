@@ -8,9 +8,9 @@ Feature flag: `WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED=true` (default off).
 - Other images, voice notes, manually uploaded and contact-specific videos, Facebook/Instagram, and Inbox direct-R2 playback are unchanged.
 - Each lookup verifies the R2 object ETag, size and MIME and hashes its key/version with SHA-256. Neon stores that fingerprint, the sending WhatsApp phone-number ID, Meta media ID and expiration, but **no patient details, media bytes, object keys, token or signed URL**.
 - A Media ID is cached for at most 25 days, shorter than the typical 30-day expiry of uploaded WhatsApp media. Changing the object version or sending phone number creates a separate entry.
-- Database claims expire after 90 seconds. An in-process single-flight and DB claim reduce duplicate uploads, but if another uploader is stuck, the original upload path remains available.
+- Database upload claims expire after 35 seconds. Waiting workers poll for the saved ID, recheck cancellation periodically and can atomically recover abandoned claims. After bounded waiting, the original upload path remains the availability fallback. Even in this exceptional case, every actual WhatsApp send still passes Strict RM0.
 - The policy check, pre-send cancellation, `whatsapp.sendVideoById` Strict RM0 reservation, follow-up scheduling, provider-message tracking and delivery-status webhook stay authoritative.
-- If Meta unambiguously rejects a cached media ID as invalid, invalidate the cache entry **for future eligible sends only**. Never retry the same message after an unknown or timed-out send.
+- On a **definite** Meta 4xx invalid-video-media rejection of a reused ID, atomically invalidate the ID, revalidate consent/window/staff state, upload a replacement, and try **once** through a new Strict RM0 reservation. Never retry an unknown, timed-out, accepted or unverified send. All other errors preserve existing handling.
 - The feature is optional. If the cache database is unavailable or the feature is disabled, the original R2 download -> WhatsApp upload -> send path remains.
 
 ## Safe rollout
@@ -25,3 +25,17 @@ Feature flag: `WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED=true` (default off).
 ## Out of scope
 
 This does not affect R2 bucket public access or branding URLs; those require a separately reviewed security migration.
+
+## Daily performance monitoring
+
+Inspect privacy-safe aggregate counters in Neon:
+
+```sql
+SELECT event_day, cache_hits, cache_misses, uploads, fallbacks,
+       invalid_ids, recovered_sends,
+       ROUND(upload_bytes_avoided / 1048576.0, 2) AS estimated_meta_upload_mb_avoided
+FROM whatsapp_video_media_cache_daily_stats
+ORDER BY event_day DESC LIMIT 14;
+```
+
+The avoided bytes estimate counts the *original upload payload* skipped on cache hits, not Meta's actual invoice or total Render bandwidth. Metrics are best-effort and cannot authorize outbound sends. No patient-specific details are logged.

@@ -5,16 +5,18 @@ const storage = require("./mediaStorageService");
 const whatsapp = require("./whatsappService");
 
 const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
-const WAIT_ATTEMPTS = 12;
-const WAIT_MS = 500;
+const WAIT_ATTEMPTS = 36;
+const WAIT_MS = 1000; // 35s DB claim, plus one reclaim attempt if the uploader died.
 
 function definitelyInvalidMediaId(result) {
   if (!result || result.success !== false || result.ambiguous === true ||
-      result.policyBlocked === true || !(result.providerStatus >= 400 && result.providerStatus < 500)) {
-    return false;
-  }
+      result.unknown === true || result.policyBlocked === true ||
+      result.retryable === true || result.wamid ||
+      !(result.providerStatus >= 400 && result.providerStatus < 500)) return false;
+  // Avoid matching unrelated Graph errors such as "invalid recipient ID".
+  // Require a media-specific Meta error, not just any 400.
   const error = String(result.error || "").slice(0, 400);
-  return /(?:media|video|file|id).{0,70}(?:invalid|expired|not found|does not exist)|(?:invalid|expired|not found|does not exist).{0,70}(?:media|video|file|id)/i.test(error);
+  return /(?:media|video|file)(?:[ -]?id)?[\\s\\S]{0,70}(?:invalid|expired|not found|does not exist|unsupported)|(?:invalid|expired|not found|does not exist|unsupported)[\\s\\S]{0,70}(?:media|video|file)(?:[ -]?id)?/i.test(error);
 }
 
 function createCache({
@@ -25,6 +27,11 @@ function createCache({
   phoneNumberId = () => process.env.WHATSAPP_PHONE_NUMBER_ID,
 } = {}) {
   const inFlight = new Map();
+  function measure(phoneId, event, bytes = 0) {
+    if (!phoneId || typeof repo.recordEvent !== "function") return;
+    Promise.resolve().then(() => repo.recordEvent(phoneId, event, bytes))
+      .catch(() => console.warn("[WhatsApp video cache] Telemetry write unavailable"));
+  }
 
   async function resolveMediaId({ videoKey, mimeType, filename, uploadOptions = {} }) {
     const phoneId = String(phoneNumberId() || "").trim();
@@ -54,9 +61,14 @@ function createCache({
     async function loadOrUpload() {
       try {
         const reusableId = await repo.get(phoneId, fingerprint);
-        if (reusableId) return { kind: "ready", mediaId: reusableId, fingerprint, phoneId, cacheHit: true };
+        if (reusableId) {
+          measure(phoneId, "hit", info.bytes);
+          return { kind: "ready", mediaId: reusableId, fingerprint, phoneId, cacheHit: true };
+        }
+        measure(phoneId, "miss");
       } catch (error) {
         console.warn("[WhatsApp video cache] Read unavailable; using original upload");
+        measure(phoneId, "fallback");
         return { kind: "bypass" };
       }
 
@@ -66,20 +78,53 @@ function createCache({
         claimed = await repo.claim(phoneId, fingerprint, mimeType, claimId);
       } catch (error) {
         console.warn("[WhatsApp video cache] Claim unavailable; using original upload");
+        measure(phoneId, "fallback");
         return { kind: "bypass" };
       }
       if (!claimed) {
         for (let attempt = 0; attempt < WAIT_ATTEMPTS; attempt += 1) {
+          // The sending worker may have been cancelled while waiting. Do not
+          // start an upload once the customer has replied or the window closed.
+          if (attempt % 4 === 0 && typeof uploadOptions.preSendCheck === "function") {
+            try {
+              if (await uploadOptions.preSendCheck() !== true) return { kind: "cancelled" };
+            } catch (_) { return { kind: "cancelled" }; }
+          }
           await sleep(WAIT_MS);
           try {
             const readyId = await repo.get(phoneId, fingerprint);
-            if (readyId) return { kind: "ready", mediaId: readyId, fingerprint, phoneId, cacheHit: true };
-          } catch (error) {
+            if (readyId) {
+              measure(phoneId, "hit", info.bytes);
+              return { kind: "ready", mediaId: readyId, fingerprint, phoneId, cacheHit: true };
+            }
+            // After the 35-second lease, a dead worker can be recovered.
+            // claim() is atomic; exactly one waiting worker can take over.
+            if (attempt >= 34) {
+              claimed = await repo.claim(phoneId, fingerprint, mimeType, claimId);
+              if (claimed) break;
+            }
+          } catch (_) {
+            measure(phoneId, "fallback");
             return { kind: "bypass" };
           }
         }
-        // Never hold up a follow-up indefinitely because another uploader stalled.
-        return { kind: "bypass" };
+        if (!claimed) {
+          // Last-resort availability fallback. A hung provider should never
+          // block a customer's approved message indefinitely.
+          measure(phoneId, "fallback");
+          return { kind: "bypass" };
+        }
+      }
+      if (typeof uploadOptions.preSendCheck === "function") {
+        try {
+          if (await uploadOptions.preSendCheck() !== true) {
+            await repo.release(phoneId, fingerprint, claimId);
+            return { kind: "cancelled" };
+          }
+        } catch (_) {
+          await repo.release(phoneId, fingerprint, claimId);
+          return { kind: "cancelled" };
+        }
       }
 
       let buffer;
@@ -117,6 +162,7 @@ function createCache({
         console.warn("[WhatsApp video cache] Save unavailable; proceeding with uploaded media");
         try { await repo.release(phoneId, fingerprint, claimId); } catch (_) {}
       }
+      measure(phoneId, "upload");
       return { kind: "ready", mediaId: String(uploadedId), fingerprint, phoneId, cacheHit: false };
     }
 
@@ -132,15 +178,19 @@ function createCache({
   async function invalidateIfRejected(resolved, result) {
     if (resolved?.kind !== "ready" || !definitelyInvalidMediaId(result)) return false;
     try {
-      await repo.invalidate(resolved.phoneId, resolved.fingerprint, resolved.mediaId);
-      return true;
+      const changed = await repo.invalidate(resolved.phoneId, resolved.fingerprint, resolved.mediaId);
+      if (changed) measure(resolved.phoneId, "invalid");
+      return changed === true;
     } catch (error) {
       console.warn("[WhatsApp video cache] Invalidation unavailable");
       return false;
     }
   }
 
-  return { resolveMediaId, invalidateIfRejected };
+  function recordRecovery(resolved) {
+    if (resolved?.phoneId) measure(resolved.phoneId, "recovered");
+  }
+  return { resolveMediaId, invalidateIfRejected, recordRecovery };
 }
 
 module.exports = { ...createCache(), createCache, definitelyInvalidMediaId };
