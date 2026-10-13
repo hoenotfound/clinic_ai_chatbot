@@ -22,9 +22,24 @@ function mockedDatabase({eligible=true,billed=false,sevenDays=false,sessionVerif
   const calls=[];
   const state={status:"idle",reservation_id:null,wamid:null,recipient:null};
   const priced=new Map();
+  const audits=[];
   const query=async(sql,params=[])=>{
     calls.push({sql,params});
     if(sql==="BEGIN" || sql==="COMMIT" || sql==="ROLLBACK")return {rows:[]};
+    if(sql.includes("WITH confirmed AS (") && sql.includes("INSERT INTO whatsapp_free_only_reconciliations")){
+      const proof=priced.get(state.wamid);
+      const valid=state.status==="awaiting_pricing" &&
+        state.reservation_id && state.wamid &&
+        proof?.pricing_type==="free_entry_point" &&
+        proof.billable===false &&
+        ["sent","delivered","read"].includes(proof.delivery_status) &&
+        !billed;
+      if(valid){
+        audits.push({reservationId:state.reservation_id,wamid:state.wamid});
+        Object.assign(state,{status:"idle",reservation_id:null,wamid:null,recipient:null});
+      }
+      return {rows:[{released:valid?1:0}]};
+    }
     if(sql.includes("INSERT INTO whatsapp_free_only_send_gate"))return {rows:[]};
     if(sql.includes("FROM whatsapp_free_only_send_gate") && sql.includes("FOR UPDATE"))return {rows:[{...state}]};
     if(sql.includes("FROM whatsapp_free_only_send_gate"))return {rows:[{...state}]};
@@ -44,7 +59,7 @@ function mockedDatabase({eligible=true,billed=false,sevenDays=false,sessionVerif
     if(sql.includes("INSERT INTO whatsapp_free_only_block_events"))return {rows:[]};
     throw new Error("Unexpected SQL: "+sql);
   };
-  return {calls,state,priced,query,connect:async()=>({query,release(){}})};
+  return {calls,state,priced,audits,query,connect:async()=>({query,release(){}})};
 }
 
 test("when switch is off, sends are not changed and do not touch Neon",async t=>{
@@ -79,6 +94,7 @@ test("one account reserves a slot, second send is blocked until Meta confirms no
   const third=await guard.reserve("601130535053",{database:db});
   assert.equal(third.allowed,true);
   assert.notEqual(third.reservationId,first.reservationId);
+  assert.deepEqual(db.audits,[{reservationId:first.reservationId,wamid:"wamid.test"}]);
 });
 
 test("a Meta timeout or ambiguous network error is permanently held for review",async t=>{
