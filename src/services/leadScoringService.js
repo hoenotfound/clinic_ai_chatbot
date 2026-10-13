@@ -4,7 +4,7 @@ const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
-const { scoreLeadConversation, nextLeadScoringModelRetryAt } = require("./leadScoringAiService");
+const { scoreLeadConversation, nextLeadScoringModelRetryAt, restoreLeadScoringModelCooldowns } = require("./leadScoringAiService");
 const telegramAlerts = require("./telegramAlertService");
 
 // Retained for compatibility and short failure retries. The worker no longer
@@ -172,9 +172,12 @@ function createLeadScoringRunner({
   // mock scoring/repositories keep their prior deterministic behavior.
   getModelRetryAt = repository === leadScoringRepo && scoreConversation === scoreLeadConversation
     ? nextLeadScoringModelRetryAt : () => null,
+  restoreModelCooldowns = repository === leadScoringRepo && scoreConversation === scoreLeadConversation
+    ? restoreLeadScoringModelCooldowns : null,
   clock = Date.now,
 } = {}) {
   let sweepRunning = false;
+  let modelCooldownRestored = false;
 
   return async function runLeadScoring() {
     if (sweepRunning) return;
@@ -195,6 +198,15 @@ function createLeadScoringRunner({
 
     sweepRunning = true;
     try {
+      if (!modelCooldownRestored && typeof restoreModelCooldowns === "function") {
+        try {
+          await restoreModelCooldowns({ clock });
+          modelCooldownRestored = true;
+        } catch (error) {
+          // A metrics outage must not disable scoring or customer replies.
+          console.warn("[Lead scoring] Could not restore model cooldowns:", error);
+        }
+      }
       const candidates = await repository.findCandidates({
         ...settings,
         limit: LEAD_SCORING_BATCH_SIZE,
