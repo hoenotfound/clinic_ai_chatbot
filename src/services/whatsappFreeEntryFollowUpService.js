@@ -401,6 +401,23 @@ async function processCandidate(candidate, requested, template, now = new Date()
   let message = null;
   let acceptedWamid = null;
   try {
+    // The candidate page is a snapshot. Recheck stored media after claiming,
+    // including any manual/in-window video sent while this worker was waiting.
+    if (spec.mediaKey) {
+      const alreadySent = await pool.query(
+        `SELECT 1 FROM messages
+         WHERE contact_id=$1 AND role='assistant' AND media_key=$2
+           AND created_at >= $3::timestamptz
+           AND delivery_status IS DISTINCT FROM 'failed'
+           AND delivery_status IS DISTINCT FROM 'cancelled'
+         LIMIT 1`,
+        [candidate.contact_id, spec.mediaKey, candidate.first_inbound_at]
+      );
+      if (alreadySent.rows.length) {
+        await finish(attemptId, "cancelled", { error: "Media already sent in this ad conversation" });
+        return "media_already_sent";
+      }
+    }
     // Every value comes from a configured service/active clinic promotion;
     // never from AI-generated text or arbitrary customer-supplied URLs.
     // Upload image assets to Meta using the already validated public-config
