@@ -86,6 +86,8 @@ test("Postgres: free-only gate reconciles only durable Meta nonbillable pricing 
     assert.equal(audits[0].wamid, "wamid.proven");
     assert.equal(audits[0].provider_billable, false);
     assert.equal(audits[0].actor, "automatic_verified_receipt");
+    assert.equal(audits[0].verified_billing_hub, false,
+      "Meta webhook evidence must not impersonate manual Billing Hub verification");
     // A missing reservation id can never release a gate without an audit.
     await client.query(`UPDATE whatsapp_free_only_send_gate
        SET status='awaiting_pricing',wamid='wamid.proven',reservation_id=NULL`);
