@@ -277,7 +277,7 @@ async function logBlock(account, check, database = pool) {
 // Read-only scheduler preflight. Deliberately does not reserve or mark a slot
 // consumed. The final provider send must still call reserve() because a Meta
 // callback or another worker can change state immediately after this check.
-async function preflightTemplate(to, { database = pool, now = new Date() } = {}) {
+async function preflightTemplate(to, { database = pool, now = new Date(), kind = 'template' } = {}) {
   if (!enabled()) return { allowed: true };
   const account=configuredAccount();
   const recipient=String(to || "").replace(/\D/g,"");
@@ -318,14 +318,22 @@ async function preflightTemplate(to, { database = pool, now = new Date() } = {})
       return deny("zero_cost_billing_alarm","Meta reported a billable message after activation.");
     const ceiling=await authorizedCeilingHours({ database });
     const eligible=await database.query(VERIFIED_WINDOW_SQL,
-      [ceiling,stamp.toISOString(),recipient,null,null,"template"]);
+      [ceiling,stamp.toISOString(),recipient,null,null,kind === "freeform" ? "freeform" : "template"]);
     if (eligible.rows?.[0]?.eligible!==true)
-      return deny("zero_cost_unverified_free_entry","No active, fully proven free-entry template window.");
+      return deny("zero_cost_unverified_free_entry",kind === "freeform"
+        ? "No active, fully proven free-entry free-form window."
+        : "No active, fully proven free-entry template window.");
     return {allowed:true};
   } catch(error) {
     console.error("[WhatsApp free-only] Template preflight failed:",error);
     return deny("zero_cost_database_unavailable","WhatsApp pricing evidence cannot be verified.");
   }
+}
+
+// Optional ordinary media must satisfy the FREEFORM window, never the
+// separately authorized template-only window beyond 24 hours.
+async function preflightFreeform(to, options = {}) {
+  return preflightTemplate(to, { ...options, kind: 'freeform' });
 }
 
 // Read-only signal for the Inbox. This is not a Meta price quote or permission
@@ -626,6 +634,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,preflightTemplate,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,perform,
+  blockedResult,configuredAccount,enabled,settings,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
