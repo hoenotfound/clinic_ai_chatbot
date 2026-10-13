@@ -1463,7 +1463,9 @@ test("signed R2 redirect streams video cross-origin without fetching Render vide
     const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
     await expect.poll(() => player.evaluate((video) => video.readyState)).toBeGreaterThan(1);
     expect(renderRequests).toBeGreaterThanOrEqual(1);
-    expect(directRanges.length).toBeGreaterThan(0);
+    // A successful video decode alone does not prove that browsers preserve
+    // Range across the cross-origin redirect, which is essential for seeking.
+    expect(directRanges.some((range) => /^bytes=\\d+-/.test(range || ""))).toBe(true);
     expect(await player.getAttribute("src")).toBe("/api/conversations/101/messages/81/media");
     expectNoUnexpectedApi(apiState);
   } finally {
