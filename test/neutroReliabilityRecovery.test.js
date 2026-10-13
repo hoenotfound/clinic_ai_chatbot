@@ -37,6 +37,16 @@ test("Strict RM0 reconciles an accepted free receipt without weakening billable 
   assert.equal(calls, 1);
 });
 
+test("Strict RM0 automatic receipts and manual Billing Hub confirmations are distinct proof sources", () => {
+  const sql = zeroCost.VERIFIED_WINDOW_SQL;
+  assert.match(sql, /audit\.actor IN \('automatic_verified_receipt','evidence_reconciliation'\)/);
+  assert.match(sql, /audit\.verified_billing_hub=true/);
+  assert.match(sql, /audit\.provider_pricing_type='free_entry_point'/);
+  assert.match(sql, /audit\.provider_billable=false/);
+  assert.match(sql, /receipt\.wamid=audit\.wamid/);
+  assert.match(sql, /receipt\.delivery_status IN \('sent','delivered','read'\)/);
+});
+
 test("Strict RM0 disabled never reconciles or touches the database", async (t) => {
   const old = clinicConfig.automatedFollowUp;
   clinicConfig.automatedFollowUp = { ...old, whatsappFreeOnly: { enabled: false } };
