@@ -64,6 +64,7 @@ const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
+const pipelineRepo = require("./db/pipelineRepo");
 const {
   URGENT_SAFETY_REASON,
   checkKeywordTriggers,
@@ -935,7 +936,23 @@ async function processIncomingMessage(
         );
       }
 
+      // The CRM booking status is separate from chat text. Give the model the
+      // verified status so an accepted staff offer does not become a fabricated
+      // reservation, and a confirmed booking does not request confirmation again.
+      let bookingContext = null;
+      try {
+        const lead = await pipelineRepo.getActiveLeadForContact(contact.id);
+        if (lead) {
+          bookingContext = {
+            status: lead.appointment_status,
+            appointmentAt: lead.appointment_at,
+          };
+        }
+      } catch (bookingContextErr) {
+        console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
+      }
       const rawAiReply = await ai.getReply(replyHistory, {
+        bookingContext,
         contactId: contact.id,
         isFirstMessage,
         generateFirstIntro,
