@@ -82,6 +82,10 @@ function createWhatsAppDeliveryStatusService({
   publishContact = defaultPublishContact,
   sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
   queueTransientFailureRetry = whatsappOutboundRetry.queueDeliveryFailureRetry,
+  reconcileQueuedMediaDelivery = repo === repository
+    ? whatsappResultMediaQueue.reconcileProviderDelivery : async () => [],
+  isQueuedImageMessage = repo === repository
+    ? whatsappResultMediaQueue.isQueuedMessage : async () => false,
   sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
 } = {}) {
@@ -171,11 +175,16 @@ function createWhatsAppDeliveryStatusService({
       }
     }
 
+    // Only the durable delivery callback proves delivery, not Meta's API
+    // acceptance response. Update optional-image audit idempotently here.
+    await reconcileQueuedMediaDelivery(job.wamid);
+
     let transientRetryQueued = false;
     if (
       job.delivery_status === "failed" &&
       updatedMessage.delivery_status === "failed" &&
-      typeof queueTransientFailureRetry === "function"
+      typeof queueTransientFailureRetry === "function" &&
+      !(await isQueuedImageMessage(updatedMessage.id))
     ) {
       const queued = await queueTransientFailureRetry({
         messageId: updatedMessage.id,
