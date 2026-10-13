@@ -32,12 +32,14 @@ function isTemporaryBillingBlock(result) {
   return Boolean(result && TEMPORARY_BILLING_CODES.has(result.code || result.policyCode));
 }
 
-async function enqueue({ contactId, inboundMessageId, items }, db = pool) {
+async function enqueue({ contactId, inboundMessageId, items, kind="result", sequenceOffset=0 }, db = pool) {
   if (!zeroCost.enabled()) return false;
   if (!Number.isSafeInteger(contactId) || !Number.isSafeInteger(inboundMessageId) ||
-      !Array.isArray(items) || !items.length || items.length > 4 ||
+      !["result","promotion"].includes(kind) ||
+      !Number.isSafeInteger(sequenceOffset) || sequenceOffset<0 || sequenceOffset>4 ||
+      !Array.isArray(items) || !items.length || items.length + sequenceOffset > 5 ||
       items.some(item => !item || typeof item.imageUrl !== "string" ||
-        !item.imageUrl || typeof item.caption !== "string")) {
+        !item.imageUrl || item.caption != null && typeof item.caption !== "string")) {
     throw new Error("Invalid strict-RM0 result image plan");
   }
   const client = await db.connect();
@@ -46,10 +48,10 @@ async function enqueue({ contactId, inboundMessageId, items }, db = pool) {
     for (let index = 0; index < items.length; index++) {
       await client.query(
         `INSERT INTO whatsapp_result_media_queue
-           (contact_id,inbound_message_id,sequence_no,image_url,caption,next_attempt_at)
-         VALUES ($1,$2,$3,$4,$5,now()+interval '1 second')
+           (contact_id,inbound_message_id,sequence_no,media_kind,image_url,caption,next_attempt_at)
+         VALUES ($1,$2,$3,$4,$5,$6,now()+interval '1 second')
          ON CONFLICT(inbound_message_id,sequence_no) DO NOTHING`,
-        [contactId,inboundMessageId,index,items[index].imageUrl,items[index].caption]
+        [contactId,inboundMessageId,index+sequenceOffset,kind,items[index].imageUrl,items[index].caption||""]
       );
     }
     await client.query("COMMIT");
@@ -68,25 +70,30 @@ async function reconcileAudit(inboundMessageId, db = pool) {
   // queued requests. This also repairs the initial deferred audit after restart.
   await db.query(
     `WITH totals AS (
-       SELECT COUNT(*)::integer total,
-         COUNT(*) FILTER (WHERE status='sent')::integer accepted,
-         BOOL_OR(status IN ('pending','processing')) active,
-         BOOL_OR(status IN ('failed','unknown','cancelled')) blocked
+       SELECT
+         COUNT(*) FILTER (WHERE media_kind='result')::integer result_total,
+         COUNT(*) FILTER (WHERE media_kind='result' AND status='sent')::integer result_accepted,
+         COUNT(*) FILTER (WHERE media_kind='promotion' AND status='sent')::integer promo_accepted,
+         BOOL_OR(status IN ('pending','processing')) FILTER (WHERE media_kind='result') active,
+         BOOL_OR(status IN ('failed','unknown','cancelled')) FILTER (WHERE media_kind='result') blocked
        FROM whatsapp_result_media_queue WHERE inbound_message_id=$1
      )
      UPDATE result_media_decisions d SET
-       result_images_sent=GREATEST(d.result_images_sent, totals.accepted),
-       status=CASE WHEN totals.active THEN 'deferred'
-         WHEN totals.accepted=totals.total THEN 'sent'
-         WHEN totals.accepted>0 THEN 'partial'
+       promotion_images_sent=GREATEST(d.promotion_images_sent,totals.promo_accepted),
+       result_images_sent=GREATEST(d.result_images_sent,totals.result_accepted),
+       status=CASE WHEN totals.result_total=0 THEN d.status
+         WHEN totals.active THEN 'deferred'
+         WHEN totals.result_accepted=totals.result_total THEN 'sent'
+         WHEN totals.result_accepted>0 THEN 'partial'
          WHEN totals.blocked THEN 'failed'
          ELSE 'skipped' END,
-       reason=CASE WHEN totals.active THEN 'awaiting_meta_free_billing'
-         WHEN totals.accepted=totals.total THEN NULL
+       reason=CASE WHEN totals.result_total=0 THEN d.reason
+         WHEN totals.active THEN 'awaiting_meta_free_billing'
+         WHEN totals.result_accepted=totals.result_total THEN NULL
          WHEN totals.blocked THEN 'result_media_deferred_requires_review'
          ELSE 'duplicate_or_ineligible_result_media' END,
        updated_at=now()
-     FROM totals WHERE d.inbound_message_id=$1 AND totals.total>0`,
+     FROM totals WHERE d.inbound_message_id=$1`,
     [inboundMessageId]
   );
 }
