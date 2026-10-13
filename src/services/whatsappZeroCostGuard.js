@@ -306,9 +306,13 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
   // it back to us. Never fall through to the independent CTWA gate and replay
   // that same saved message after ON CONFLICT suppressed this attempt.
   const prior=await database.query(`
-    SELECT 1 FROM whatsapp_24h_service_reply_exceptions
-    WHERE message_id=$1 LIMIT 1
-  `,[messageId]);
+    SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+    JOIN messages original ON original.id=ex.message_id
+    JOIN contacts owner ON owner.id=original.contact_id
+    WHERE ex.message_id=$1
+      AND regexp_replace(owner.whatsapp_number,'[^0-9]','','g')=$2
+    LIMIT 1
+  `,[messageId,recipient]);
   return prior.rows?.length
     ? deny("zero_cost_service_reply_already_attempted",
       "This service reply was already attempted. Check the original delivery before sending again.")
