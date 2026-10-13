@@ -4,6 +4,7 @@ const { GoogleGenAI } = require("@google/genai");
 const clinicConfig = require("../config/clinicConfig");
 const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
+const { pool: scoringCooldownPool } = require("../db/db");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash";
@@ -29,6 +30,53 @@ function nextLeadScoringModelRetryAt(nowMs = Date.now(), cooldowns = modelCapaci
   if (PROVIDER !== "gemini" || leadScoringModelsReady(nowMs, cooldowns).length) return null;
   const next = Math.min(...scoringModelNames().map((model) => cooldowns.get(model) || Infinity));
   return Number.isFinite(next) ? new Date(next).toISOString() : null;
+}
+function leadScoringThinkingLevel(model) {
+  // Gemini 3.8 and 3.7 reject "minimal"; 3.6 and 3.5 support it.
+  // Use the widely supported low level for unfamiliar models as well.
+  return /^gemini-3\\.(?:5|6)-flash(?:-lite)?(?:$|-)/i.test(String(model || ""))
+    ? "minimal" : "low";
+}
+function recoverableGeminiKeySweep(error) {
+  if (error?.code !== "ALL_GEMINI_KEYS_FAILED") return false;
+  const failures = Array.isArray(error.failures) ? error.failures : [];
+  return failures.length > 0 && failures.every((failure) => {
+    const message = String(failure?.message || "").toLowerCase();
+    if (/invalid|unauthorized|permission denied|authentication|api.?key.*(?:revoked|expired)|not found|unsupported|bad request|\\b400\\b|\\b401\\b|\\b403\\b|\\b404\\b/.test(message)) return false;
+    return /quota|rate.limit|resource exhausted|too many requests|temporar|unavailable|high demand|overload|timed? out|\\b429\\b|\\b500\\b|\\b502\\b|\\b503\\b|\\b504\\b|network|connection/.test(message);
+  });
+}
+// Rehydrate a recently unavailable model from already durable AI usage
+// telemetry after Render restarts, without adding a database migration.
+async function restoreLeadScoringModelCooldowns({
+  database = scoringCooldownPool,
+  cooldowns = modelCapacityCooldownUntil,
+  clock = () => Date.now(),
+} = {}) {
+  if (PROVIDER !== "gemini") return 0;
+  const nowMs = clock();
+  const result = await database.query(`
+    SELECT model, MAX(created_at) FILTER
+      (WHERE status='failed' AND failure_kind='model_unavailable') AS failed_at,
+      MAX(created_at) FILTER (WHERE status='success') AS succeeded_at
+    FROM ai_usage_events
+    WHERE provider='gemini' AND purpose='lead_scoring'
+      AND model = ANY($1::text[])
+      AND created_at >= $2::timestamptz
+    GROUP BY model
+  `, [scoringModelNames(), new Date(nowMs - MODEL_CAPACITY_COOLDOWN_MS).toISOString()]);
+  let count = 0;
+  for (const row of result.rows || []) {
+    const failureAt = Date.parse(row.failed_at);
+    const succeededAt = Date.parse(row.succeeded_at);
+    if (!Number.isFinite(failureAt) || (Number.isFinite(succeededAt) && succeededAt >= failureAt)) continue;
+    const until = failureAt + MODEL_CAPACITY_COOLDOWN_MS;
+    if (until > nowMs && (cooldowns.get(row.model) || 0) < until) {
+      cooldowns.set(row.model, until);
+      count += 1;
+    }
+  }
+  return count;
 }
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
 const PROMPT_VERSION = "lead-temperature-v6-recovery-and-hesitation";
@@ -444,7 +492,7 @@ async function scoreWithGemini(input, {
                   maxOutputTokens: 700,
                   responseMimeType: "application/json",
                   responseJsonSchema: SCORE_JSON_SCHEMA,
-                  thinkingConfig: { thinkingLevel: "minimal" },
+                  thinkingConfig: { thinkingLevel: leadScoringThinkingLevel(model) },
                 },
               },
               {
@@ -488,6 +536,7 @@ async function scoreWithGemini(input, {
       // Timeouts / transient provider failures can also use a different
       // ready model, but should not poison the model's capacity cooldown.
       if (hasNextModel && (isTransientAiError(error) ||
+          recoverableGeminiKeySweep(error) ||
           ["GEMINI_GLOBAL_BUDGET_EXCEEDED", "ALL_GEMINI_KEYS_COOLING_DOWN"].includes(error?.code))) {
         unavailable = error;
         continue;
@@ -549,6 +598,9 @@ module.exports = {
   LEAD_SCORING_FALLBACK_RESERVE_MS,
   leadScoringModelsReady,
   nextLeadScoringModelRetryAt,
+  leadScoringThinkingLevel,
+  recoverableGeminiKeySweep,
+  restoreLeadScoringModelCooldowns,
   scoreWithGemini,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   LEAD_SCORING_GEMINI_RETRY_COUNT,
