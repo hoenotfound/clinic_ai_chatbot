@@ -159,3 +159,86 @@ test("unconfirmed appointment changes do not dismiss Booking Ready", async (t) =
   const result = await pipelineRepo.updateLead(23, { appointmentStatus: "reschedule" }, "staff");
   assert.equal(result.appointment_status, "reschedule");
 });
+
+
+test("moving to Appointment Set requires a verified date, even when drag-and-drop sends only stageId", async (t) => {
+  const saved = pool.connect;
+  t.after(() => { pool.connect = saved; });
+  let writes = 0;
+  pool.connect = async () => ({
+    query: async (sql) => {
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return {
+        rows: [{ id: 23, stage_id: 2, contact_id: 372, stage_name: "Contacted", system_key: "contacted",
+          appointment_status: "none", appointment_at: null }],
+      };
+      if (/FROM pipeline_stages WHERE id = \$1/.test(sql)) return {
+        rows: [{ id: 3, name: "Appointment Set", stage_type: "open", system_key: "appointment_set" }],
+      };
+      if (/UPDATE leads SET/.test(sql)) writes++;
+      return { rows: [] };
+    },
+    release() {},
+  });
+  await assert.rejects(
+    pipelineRepo.updateLead(23, { stageId: 3 }, "staff"),
+    /Enter the confirmed appointment date and time/
+  );
+  assert.equal(writes, 0);
+});
+
+test("rescheduling a confirmed clinic appointment clears the old date and exits booked stage", async (t) => {
+  const savedConnect = pool.connect;
+  const savedPublish = realtimeEvents.publish;
+  t.after(() => { pool.connect = savedConnect; realtimeEvents.publish = savedPublish; });
+  const calls = [];
+  const original = {
+    id: 53, contact_id: 372, stage_id: 3, stage_name: "Appointment Set",
+    system_key: "appointment_set", appointment_status: "set",
+    appointment_at: "2026-10-17T08:00:00.000Z", is_closed: false,
+  };
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return { rows: [original] };
+      if (/SELECT id FROM pipeline_stages WHERE system_key = 'contacted'/.test(sql)) return { rows: [{ id: 2 }] };
+      if (/FROM pipeline_stages WHERE id = \$1/.test(sql)) return {
+        rows: [{ id: 2, name: "Contacted", stage_type: "open", system_key: "contacted" }],
+      };
+      if (/UPDATE leads SET/.test(sql)) return { rows: [{ ...original,
+        stage_id: 2, appointment_status: "reschedule", appointment_at: null }] };
+      return { rows: [] };
+    },
+    release() {},
+  });
+  realtimeEvents.publish = () => {};
+  const updated = await pipelineRepo.updateLead(53, { appointmentStatus: "reschedule" }, "staff");
+  assert.equal(updated.appointment_status, "reschedule");
+  assert.equal(updated.appointment_at, null);
+  const write = calls.find(({ sql }) => /UPDATE leads SET/.test(sql));
+  assert.match(write.sql, /stage_id = /);
+  assert.match(write.sql, /appointment_at = /);
+  assert.ok(calls.some(({ sql }) => /INSERT INTO lead_stage_history/.test(sql)));
+});
+
+test("clearing appointment date alone cannot leave an empty confirmed booking", async (t) => {
+  const saved = pool.connect;
+  t.after(() => { pool.connect = saved; });
+  let writes = 0;
+  pool.connect = async () => ({
+    query: async (sql) => {
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return {
+        rows: [{ id: 53, contact_id: 372, stage_id: 3, stage_name: "Appointment Set",
+          system_key: "appointment_set", appointment_status: "set",
+          appointment_at: "2026-10-17T08:00:00.000Z" }],
+      };
+      if (/UPDATE leads SET/.test(sql)) writes++;
+      return { rows: [] };
+    },
+    release() {},
+  });
+  await assert.rejects(
+    pipelineRepo.updateLead(53, { appointmentAt: null }, "staff"),
+    /Enter the confirmed appointment date and time/
+  );
+  assert.equal(writes, 0);
+});
