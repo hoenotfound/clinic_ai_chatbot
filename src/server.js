@@ -1305,6 +1305,9 @@ async function processIncomingMessage(
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
           details,
+          // A genuinely new request to move an existing booking must still
+          // reach staff even when the CRM records the old slot as confirmed.
+          allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
         console.error(
