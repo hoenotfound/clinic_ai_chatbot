@@ -37,7 +37,9 @@ function fixture() {
     async invalidate(phone, hash, mediaId) {
       calls.invalidate += 1;
       const k = recordKey(phone, hash);
-      if (rows.get(k)?.mediaId === mediaId) rows.delete(k);
+      if (rows.get(k)?.mediaId !== mediaId) return false;
+      rows.delete(k);
+      return true;
     },
   };
   const storage = {
