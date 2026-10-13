@@ -7,6 +7,8 @@ const { buildSystemPrompt } = require("../src/utils/systemPrompt");
 const { pool } = require("../src/db/db");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const pipelineRepo = require("../src/db/pipelineRepo");
+const { normalizeReplyOptions } = require("../src/services/aiService");
+const { buildGeminiRequest } = require("../src/services/geminiService");
 
 test("AI history distinguishes accepted staff time offers from ordinary assistant messages", async (t) => {
   const previous = messagesRepo.getMessagePageForContact;
@@ -63,6 +65,19 @@ test("prompt separates accepted staff offers from confirmed CRM bookings", () =>
     bookingContext: { status: "cancelled", appointmentAt: null },
   });
   assert.match(cancelled, /Reschedule\/cancelled statuses supersede older appointment messages/);
+});
+
+test("booking context survives AI provider routing into the actual Gemini request", () => {
+  const context = { status: "set", appointmentAt: "2026-10-17T08:00:00.000Z" };
+  const options = normalizeReplyOptions({ bookingContext: context, channel: "whatsapp" });
+  assert.deepEqual(options.bookingContext, context);
+  const { request } = buildGeminiRequest(
+    [{ role: "user", content: "谢谢" }],
+    options,
+    "gemini-3.8-flash"
+  );
+  assert.match(request.config.systemInstruction, /Status: set/);
+  assert.match(request.config.systemInstruction, /17 Oct 2026/);
 });
 
 test("staff setting appointment status moves the contacted lead and clears only Booking Ready", async (t) => {
