@@ -21,6 +21,8 @@ const { randomUUID } = require("node:crypto");
 const channelMessaging = require("./channelMessagingService");
 const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
+const { pool } = require("../db/db");
+const { previouslySentVideo } = require("../utils/followUpVideoPolicy");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const pricingReminderService = require("./pricingReminderService");
 const whatsappConsentPromptService = require("./whatsappConsentPromptService");
@@ -1365,8 +1367,25 @@ async function sendCandidate(candidate) {
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       isConfiguredPromotionPriceGraphic(selectedFollowUpImage))
       ? "" : selectedFollowUpImage;
-  const effectiveVideoKey =
+  let effectiveVideoKey =
     !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
+
+  // Avoid sending a video that staff, an earlier follow-up or another
+  // automated system has already shared. Preserve the helpful text instead.
+  if (effectiveVideoKey &&
+      clinicConfig.automatedFollowUp?.videoDuplicateProtectionEnabled === true) {
+    try {
+      if (await previouslySentVideo({ database: pool,
+        contactId: candidate.contact_id, mediaKey: effectiveVideoKey })) {
+        console.info(`[Follow-up video] duplicate media suppressed, contact ${candidate.contact_id}, step ${stepIndex}`);
+        effectiveVideoKey = "";
+      }
+    } catch (error) {
+      // On database errors, never risk repeating the attachment.
+      console.warn("[Follow-up video] duplicate lookup failed; sending text only:", error?.message);
+      effectiveVideoKey = "";
+    }
+  }
   const effectiveVideoFilename =
     selectedVideoFilename || "follow-up-video.mp4";
 
@@ -1443,10 +1462,25 @@ async function sendCandidate(candidate) {
       return false;
     }
 
-    return followUpRepo.isClaimStillEligible({
+    const eligible = await followUpRepo.isClaimStillEligible({
       messageId: saved.id,
       contactId: candidate.contact_id,
     });
+    if (!eligible) return false;
+    if (durableVideoKey &&
+        clinicConfig.automatedFollowUp?.videoDuplicateProtectionEnabled === true) {
+      // A different worker/manual reply may have sent the same video after
+      // the initial check. Fail closed before a provider request is made.
+      try {
+        if (await previouslySentVideo({ database: pool,
+          contactId: candidate.contact_id, mediaKey: durableVideoKey,
+          excludeMessageId: saved.id })) return false;
+      } catch (error) {
+        console.warn("[Follow-up video] final duplicate check failed:", error?.message);
+        return false;
+      }
+    }
+    return true;
   };
 
   let sendResult;
