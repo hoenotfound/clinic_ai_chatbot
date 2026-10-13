@@ -8,8 +8,9 @@ const { pool: scoringCooldownPool } = require("../db/db");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash";
+// Background analysis must never inherit emergency customer-reply model rollbacks.
 const GEMINI_FALLBACK_MODEL = process.env.LEAD_SCORING_GEMINI_FALLBACK_MODEL
-  || process.env.GEMINI_MODEL || "gemini-3.8-flash";
+  || "gemini-3.8-flash";
 const MODEL_CAPACITY_COOLDOWN_MS = 5 * 60 * 1000;
 // Scoring is a background worker; unlike customer replies it needs a strict
 // global limit so fallback scoring cannot stall the sequential queue.
