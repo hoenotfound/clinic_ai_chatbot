@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { once } from "node:events";
 
 const STAFF_USER = {
   id: 2,
@@ -1381,7 +1383,7 @@ test("video compatibility fallback explicitly requests Render without preloading
 test("signed R2 redirect streams video cross-origin without fetching Render video bytes", async ({ page }, testInfo) => {
   const fixture = playbackFixture(testInfo);
   let renderRequests = 0;
-  const directRequests = [];
+  const directRanges = [];
   const apiState = await installApi(page, {
     initialMessagesByContact: new Map([[101, [
       { ...inboundMessage({ id: 81, content: "R2 history video" }),
@@ -1390,53 +1392,67 @@ test("signed R2 redirect streams video cross-origin without fetching Render vide
         media_mime_type: fixture.mime, has_media_attachment: true },
     ]]]),
   });
-  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
-    renderRequests += 1;
-    const url = new URL(route.request().url());
-    if (url.pathname.endsWith("/82/media")) throw new Error("Unplayed video requested");
-    return route.fulfill({
-      status: 302,
-      headers: {
-        location: "https://test.r2.cloudflarestorage.com/clip?X-Amz-Signature=fixture",
-        "cache-control": "private, no-store",
-        "referrer-policy": "no-referrer",
-      },
-      body: "",
-    });
-  });
-  await page.route("https://test.r2.cloudflarestorage.com/**", async (route) => {
-    directRequests.push(route.request().headers().range || null);
-    const rangeHeader = route.request().headers().range;
-    const match = /^bytes=([0-9]+)-([0-9]*)$/.exec(rangeHeader || "");
+
+  // Playwright route.fulfill rejects 302 responses, so use a real local HTTP
+  // server for the signed redirect and byte-range media. This exercises the
+  // actual cross-origin browser path in Chromium and iOS/iPad WebKit.
+  const server = createServer((req, res) => {
+    if (req.url?.startsWith("/redirect")) {
+      res.writeHead(302, {
+        Location: `http://127.0.0.1:${server.address().port}/clip?X-Amz-Signature=fixture`,
+        "Cache-Control": "private, no-store",
+        "Referrer-Policy": "no-referrer",
+      });
+      res.end();
+      return;
+    }
+    if (!req.url?.startsWith("/clip")) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    directRanges.push(req.headers.range || null);
+    const match = /^bytes=([0-9]+)-([0-9]*)$/.exec(req.headers.range || "");
     const start = match ? Number(match[1]) : 0;
     const end = match && match[2]
       ? Math.min(Number(match[2]), fixture.body.length - 1)
       : fixture.body.length - 1;
     const bytes = fixture.body.subarray(start, end + 1);
-    await route.fulfill({
-      status: match ? 206 : 200,
-      headers: {
-        "access-control-allow-origin": "http://127.0.0.1:4173",
-        "access-control-allow-methods": "GET, HEAD",
-        "access-control-allow-headers": "Range",
-        "access-control-expose-headers": "Content-Range, Accept-Ranges",
-        "content-type": fixture.mime,
-        "accept-ranges": "bytes",
-        "content-length": String(bytes.length),
-        ...(match ? { "content-range": `bytes ${start}-${end}/${fixture.body.length}` } : {}),
-      },
-      body: bytes,
+    res.writeHead(match ? 206 : 200, {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:4173",
+      "Access-Control-Allow-Methods": "GET, HEAD",
+      "Access-Control-Allow-Headers": "Range",
+      "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range",
+      "Content-Type": fixture.mime,
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(bytes.length),
+      ...(match ? { "Content-Range": `bytes ${start}-${end}/${fixture.body.length}` } : {}),
     });
+    res.end(bytes);
   });
-  await page.goto("/inbox");
-  await openInboxConversation(page);
-  expect(renderRequests).toBe(0);
-  expect(directRequests).toEqual([]);
-  await page.getByRole("button", { name: "Play video" }).first().click();
-  const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
-  await expect.poll(() => player.evaluate((video) => video.readyState)).toBeGreaterThan(1);
-  expect(renderRequests).toBeGreaterThanOrEqual(1);
-  expect(directRequests.length).toBeGreaterThan(0);
-  expect(await player.getAttribute("src")).toBe("/api/conversations/101/messages/81/media");
-  expectNoUnexpectedApi(apiState);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const redirectUrl = `http://127.0.0.1:${server.address().port}/redirect`;
+    await page.route("**/api/conversations/101/messages/*/media**", (route) => {
+      renderRequests++;
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname.endsWith("/82/media")) throw new Error("Unplayed video requested");
+      return route.continue({ url: redirectUrl });
+    });
+
+    await page.goto("/inbox");
+    await openInboxConversation(page);
+    expect(renderRequests).toBe(0);
+    expect(directRanges).toEqual([]);
+    await page.getByRole("button", { name: "Play video" }).first().click();
+    const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
+    await expect.poll(() => player.evaluate((video) => video.readyState)).toBeGreaterThan(1);
+    expect(renderRequests).toBeGreaterThanOrEqual(1);
+    expect(directRanges.length).toBeGreaterThan(0);
+    expect(await player.getAttribute("src")).toBe("/api/conversations/101/messages/81/media");
+    expectNoUnexpectedApi(apiState);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
