@@ -832,7 +832,6 @@ async function sendVideoByStoredKey(
 
   let buffer;
   if (cachedVideo?.kind !== "ready") {
-    let buffer;
     try {
       buffer = await mediaStorage.downloadMedia(videoKey, {
         maxBytes: 16 * 1024 * 1024,
