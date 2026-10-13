@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
-import { displayName } from "./pipelineUtils";
+import { displayName, toDateTimeInput, inputToIso } from "./pipelineUtils";
 
 export default function StageMoveDialog({ lead, stage, onCancel, onConfirm }) {
   const [lostReason, setLostReason] = useState(lead.lost_reason || "");
   const [estimatedValue, setEstimatedValue] = useState(lead.estimated_value ?? "");
+  const [appointmentAt, setAppointmentAt] = useState(toDateTimeInput(lead.appointment_at));
+  const isAppointment = stage.system_key === "appointment_set";
   const [saving, setSaving] = useState(false);
   const isLost = stage.stage_type === "lost";
   const isWon = stage.stage_type === "won";
@@ -19,12 +21,14 @@ export default function StageMoveDialog({ lead, stage, onCancel, onConfirm }) {
 
   async function handleConfirm() {
     if (isLost && !lostReason.trim()) return;
+    if (isAppointment && !inputToIso(appointmentAt)) return;
     setSaving(true);
     try {
       await onConfirm({
         stageId: Number(stage.id),
         ...(isLost ? { lostReason: lostReason.trim() } : {}),
         ...(isWon ? { estimatedValue: estimatedValue === "" ? null : Number(estimatedValue) } : {}),
+        ...(isAppointment ? { appointmentStatus: "set", appointmentAt: inputToIso(appointmentAt) } : {}),
       });
     } finally {
       setSaving(false);
@@ -49,6 +53,14 @@ export default function StageMoveDialog({ lead, stage, onCancel, onConfirm }) {
           </label>
         )}
 
+        {isAppointment && (
+          <label className="mt-5 block">
+            <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Confirmed appointment date and time</span>
+            <input autoFocus required type="datetime-local" value={appointmentAt} onChange={(event) => setAppointmentAt(event.target.value)} className="w-full rounded-xl border border-[var(--color-border)] px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20" />
+            <span className="mt-1.5 block text-xs text-[var(--color-text-muted)]">Only use this stage after the clinic has verified the slot.</span>
+          </label>
+        )}
+
         {isWon && (
           <label className="mt-5 block">
             <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Final value (RM)</span>
@@ -58,7 +70,7 @@ export default function StageMoveDialog({ lead, stage, onCancel, onConfirm }) {
 
         <div className="mt-6 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]">Cancel</button>
-          <button type="button" onClick={handleConfirm} disabled={saving || (isLost && !lostReason.trim())} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
+          <button type="button" onClick={handleConfirm} disabled={saving || (isLost && !lostReason.trim()) || (isAppointment && !inputToIso(appointmentAt))} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
             {saving && <Spinner className="h-4 w-4" />}
             Confirm move
           </button>
