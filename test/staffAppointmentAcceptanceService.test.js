@@ -10,15 +10,16 @@ const {
   createStaffAppointmentAcceptanceService,
 } = require("../src/services/staffAppointmentAcceptanceService");
 
-function mockAcceptance({
+function harness({
   offerText = "Hi 你好，星期六，4点的时间你方便吗？",
   bookingStatus = "none",
   existing = false,
   staffAuthored = true,
   appointmentAt = "2026-10-17T08:00:00.000Z",
+  attentionUpdated = true,
+  telegramStatus = "queued",
 } = {}) {
-  const queries = [];
-  const events = [];
+  const queries = [], events = [], alerts = [], pushes = [], wakes = [];
   const database = {
     async connect() {
       return {
@@ -34,9 +35,7 @@ function mockAcceptance({
             }] : [] };
           }
           if (/INSERT INTO lead_activities/.test(sql)) return { rows: existing ? [] : [{ id: 999 }] };
-          if (/UPDATE leads SET appointment_status = 'reschedule'/.test(sql)) return { rows: [{ stage_id: 2 }] };
-          if (/INSERT INTO lead_stage_history/.test(sql)) return { rows: [] };
-          if (/UPDATE contacts SET needs_attention/.test(sql)) return { rows: [{ id: 372 }] };
+          if (/UPDATE contacts SET needs_attention/.test(sql)) return { rows: attentionUpdated ? [{ id: 372 }] : [] };
           throw new Error("Unexpected SQL: " + sql);
         },
         release() {},
@@ -44,24 +43,31 @@ function mockAcceptance({
     },
   };
   return {
-    queries, events,
+    queries, events, alerts, pushes, wakes,
     service: createStaffAppointmentAcceptanceService({
       database,
+      lockContactAlertQueue: async (id, query) => {
+        queries.push({ sql: "TEST_ADVISORY_LOCK", params: [id] });
+      },
+      async sendBookingReadyAlert(input) {
+        alerts.push(input);
+        return { status: telegramStatus };
+      },
+      wakeAlertQueue(ms) { wakes.push(ms); },
+      sendWebPush(input) { pushes.push(input); },
       publish(type, payload) { events.push({ type, payload }); },
     }),
   };
 }
 
-test("accepts short Chinese/Malaysian acknowledgements, not refusals or price questions", () => {
-  for (const text of ["Ok", "好的 😊", "可以", "boleh", "yes"]) {
-    assert.equal(isBriefAcceptance(text), true, text);
-  }
+test("brief Malaysian acknowledgments exclude price questions and negations", () => {
+  for (const text of ["Ok", "好的 😊", "可以", "boleh", "yes"]) assert.equal(isBriefAcceptance(text), true, text);
   for (const text of ["Not ok", "不可以", "Ok, how much?", "可以改成星期日吗？", "yes but not Saturday"]) {
     assert.equal(isBriefAcceptance(text), false, text);
   }
 });
 
-test("only a specific staff date and time qualifies as an offered slot", () => {
+test("only specific date, time, scheduling question qualifies", () => {
   assert.equal(hasSpecificStaffTimeOffer("星期六，4点的时间你方便吗？"), true);
   assert.equal(hasSpecificStaffTimeOffer("17/10 3.30pm 可以吗?"), true);
   assert.equal(hasSpecificStaffTimeOffer("Saturday at 4pm works?"), true);
@@ -71,80 +77,84 @@ test("only a specific staff date and time qualifies as an offered slot", () => {
   assert.equal(isExplicitRescheduleOffer("星期六4点可以吗"), false);
 });
 
-test("Zanne: staff offered Saturday 4pm and customer Ok records pending agreement only", async () => {
-  const { service, queries, events } = mockAcceptance();
+test("Zanne: staff offered 4pm and customer Ok records a pending agreement and durable alert", async () => {
+  const { service, queries, events, alerts, pushes, wakes } = harness();
   const result = await service(372, 1476, "Ok");
   assert.equal(result.leadId, 116);
   assert.match(result.agreedTimeText, /4点/);
+  const select = queries.find(({ sql }) => /SELECT staff\.id AS/.test(sql));
+  assert.match(select.sql, /staff\.id = \(SELECT MAX\(previous\.id\)/);
+  assert.match(select.sql, /interval '24 hours'/);
+  assert.match(select.sql, /later\.id > staff\.id AND later\.id < inbound\.id/);
+  assert.match(select.sql, /staff\.sent_by_username IS NOT NULL/);
+  const lockIndex = queries.findIndex(({ sql }) => sql === "TEST_ADVISORY_LOCK");
+  const contactLockIndex = queries.findIndex(({ sql }) => /SELECT id FROM contacts WHERE/.test(sql));
+  assert.ok(lockIndex < contactLockIndex);
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
-  assert.equal(JSON.parse(activity.params[1]).inboundMessageId, 1476);
-  assert.equal(JSON.parse(activity.params[1]).staffMessageId, 1475);
-  assert.equal(JSON.parse(activity.params[1]).outcome, "staff_time_accepted");
-  const attention = queries.find(({ sql }) => /UPDATE contacts SET needs_attention/.test(sql));
-  assert.equal(attention.params[1], AGREED_TIME_REASON);
-  assert.match(attention.sql, /Booking ready:%/);
-  assert.match(attention.sql, /ai_review_items/);
+  const meta = JSON.parse(activity.params[1]);
+  assert.equal(meta.inboundMessageId, 1476);
+  assert.equal(meta.staffMessageId, 1475);
+  assert.equal(meta.outcome, "staff_time_accepted");
   assert.equal(queries.some(({ sql }) => /UPDATE leads SET/.test(sql)), false);
-  assert.equal(events.some(({ type }) => type === "conversation_changed"), true);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].messageId, 1476);
+  assert.equal(alerts[0].queueLockHeld, true);
+  assert.equal(alerts[0].transactionClient != null, true);
+  assert.equal(pushes.length, 1);
+  assert.deepEqual(wakes, [0]);
+  assert.ok(queries.some(({ sql }) => /UPDATE contacts SET/.test(sql)));
+  assert.ok(events.some(({ type }) => type === "conversation_changed"));
 });
 
-test("an inbound retry does not record duplicate agreements or update attention", async () => {
-  const { service, queries, events } = mockAcceptance({ existing: true });
-  assert.equal(await service(372, 1476, "Ok"), null);
-  assert.equal(queries.some(({ sql }) => /UPDATE contacts SET/.test(sql)), false);
-  assert.deepEqual(events, []);
-});
-
-test("non-staff or unspecific offers cannot become accepted booking evidence", async () => {
-  const missingStaff = mockAcceptance({ staffAuthored: false });
-  assert.equal(await missingStaff.service(372, 1476, "Ok"), null);
-  const noTime = mockAcceptance({ offerText: "星期六方便吗？" });
-  assert.equal(await noTime.service(372, 1476, "Ok"), null);
-  const refusal = mockAcceptance();
-  assert.equal(await refusal.service(372, 1476, "No"), null);
-  assert.equal(refusal.queries.length, 0);
-});
-
-test("new proposed time replaces a different confirmed slot, even without a change keyword", async () => {
-  assert.equal(
-    conflictsWithConfirmedSlot("星期六，4点的时间你方便吗？", "2026-10-17T07:30:00.000Z"),
-    true
-  );
-  assert.equal(
-    conflictsWithConfirmedSlot("星期六，4点的时间你方便吗？", "2026-10-17T08:00:00.000Z"),
-    false
-  );
-  assert.equal(
-    conflictsWithConfirmedSlot("17/10 3.30pm 可以吗?", "2026-10-17T08:00:00.000Z"),
-    true
-  );
-  const { service, queries } = mockAcceptance({
+test("confirmed original slot stays booked when staff offers and customer accepts a replacement", async () => {
+  const { service, queries, alerts } = harness({
     bookingStatus: "set",
     appointmentAt: "2026-10-17T07:30:00.000Z",
   });
-  await service(372, 1476, "Ok");
-  assert.ok(queries.some(({ sql }) => /UPDATE leads SET appointment_status = 'reschedule'/.test(sql)));
+  assert.equal(conflictsWithConfirmedSlot("星期六，4点的时间你方便吗？", "2026-10-17T07:30:00.000Z"), true);
+  const outcome = await service(372, 1476, "Ok");
+  assert.ok(outcome);
+  assert.equal(queries.some(({ sql }) => /UPDATE leads SET/.test(sql)), false);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].reason, /clinic should finalize/i);
 });
 
-test("a clearly changed staff slot accepted by a booked customer becomes pending reschedule", async () => {
-  const { service, queries } = mockAcceptance({
+test("explicit alternative offered by staff also preserves the original confirmed booking", async () => {
+  const { service, queries, alerts } = harness({
     offerText: "帮你改到星期六，4点的时间你方便吗？",
     bookingStatus: "set",
   });
-  const result = await service(372, 1476, "可以");
-  assert.ok(result);
-  const update = queries.find(({ sql }) => /UPDATE leads SET appointment_status = 'reschedule'/.test(sql));
-  assert.ok(update);
-  assert.match(update.sql, /appointment_at = NULL/);
-  assert.match(update.sql, /system_key = 'contacted'/);
-  const history = queries.find(({ sql }) => /INSERT INTO lead_stage_history/.test(sql));
-  assert.deepEqual(history.params, [116, 3, 2, "Automation"]);
-  assert.equal(queries.some(({ sql }) => /UPDATE contacts SET needs_attention/.test(sql)), true);
+  assert.ok(await service(372, 1476, "可以"));
+  assert.equal(queries.some(({ sql }) => /UPDATE leads SET/.test(sql)), false);
+  assert.equal(alerts.length, 1);
 });
 
-test("a routine staff confirmation of an already booked slot does not cancel it", async () => {
-  const { service, queries } = mockAcceptance({ bookingStatus: "set" });
+test("same confirmed time does not trigger an unnecessary booking alert", async () => {
+  const { service, alerts, pushes, queries } = harness({ bookingStatus: "set" });
   await service(372, 1476, "Ok");
+  assert.deepEqual(alerts, []);
+  assert.deepEqual(pushes, []);
   assert.equal(queries.some(({ sql }) => /UPDATE leads SET/.test(sql)), false);
-  assert.equal(queries.some(({ sql }) => /UPDATE contacts SET needs_attention/.test(sql)), false);
+});
+
+test("retries, missing staff and non-answers do not create duplicate events", async () => {
+  const duplicate = harness({ existing: true });
+  assert.equal(await duplicate.service(372, 1476, "Ok"), null);
+  assert.deepEqual(duplicate.alerts, []);
+  assert.equal(duplicate.queries.some(({ sql }) => /UPDATE contacts SET/.test(sql)), false);
+  const missing = harness({ staffAuthored: false });
+  assert.equal(await missing.service(372, 1476, "Ok"), null);
+  const noTime = harness({ offerText: "星期六方便吗？" });
+  assert.equal(await noTime.service(372, 1476, "Ok"), null);
+  const refusal = harness();
+  assert.equal(await refusal.service(372, 1476, "No"), null);
+  assert.deepEqual(refusal.queries, []);
+});
+
+test("clinical attention remains protected and cannot be replaced by a booking alert", async () => {
+  const { service, alerts, pushes, queries } = harness({ attentionUpdated: false });
+  await service(372, 1476, "Ok");
+  assert.deepEqual(alerts, []);
+  assert.deepEqual(pushes, []);
+  assert.ok(queries.some(({ sql }) => /ai_review_items/.test(sql)));
 });
