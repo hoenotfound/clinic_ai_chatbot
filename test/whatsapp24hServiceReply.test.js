@@ -50,6 +50,8 @@ test("service lane needs a persisted message and cannot replay the same provider
       rows.set(args[0],{status:"reserved"});
       return {rows:[{message_id:args[0]}]};
     }
+    if(sql.includes("SELECT 1 FROM whatsapp_24h_service_reply_exceptions"))
+      return {rows:rows.has(args[0])?[{exists:1}]:[]};
     if(sql.includes("UPDATE whatsapp_24h_service_reply_exceptions")) {
       const row=rows.get(args[0]); if(row?.status==="reserved"){row.status=args[1];row.wamid=args[2];}
       return {rows:[]};
@@ -65,7 +67,9 @@ test("service lane needs a persisted message and cannot replay the same provider
   const first=await guard.reserve24hServiceReply("60121234567",args);
   assert.equal(first.serviceReplyMessageId,100);
   assert.equal(first.reservationId,null);
-  assert.equal(await guard.reserve24hServiceReply("60121234567",args),null);
+  const duplicate=await guard.reserve24hServiceReply("60121234567",args);
+  assert.equal(duplicate.allowed,false);
+  assert.equal(duplicate.code,"zero_cost_service_reply_already_attempted");
   await guard.complete24hServiceReply(100,{success:true,wamid:"wamid.service"},db);
   assert.deepEqual(rows.get(100),{status:"accepted",wamid:"wamid.service"});
   assert.equal(calls.some(x=>x.sql.includes("DELETE FROM whatsapp_free_only_billing_alerts")),true);
