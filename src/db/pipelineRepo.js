@@ -509,6 +509,16 @@ async function updateLead(id, patch, actor) {
     } else if (lockChanged && changes.temperatureLocked) {
       changes.temperatureSource = "manual";
     }
+    // A staff-confirmed appointment status and the built-in Appointment Set
+    // stage must agree. Do not override custom, visited, or closed stages.
+    if (changes.appointmentStatus === "set" &&
+        !Object.hasOwn(changes, "stageId") &&
+        ["new", "contacted"].includes(current.system_key)) {
+      const appointmentStage = await client.query(
+        `SELECT id FROM pipeline_stages WHERE system_key = 'appointment_set' AND stage_type = 'open' LIMIT 1`
+      );
+      if (appointmentStage.rows[0]) changes.stageId = appointmentStage.rows[0].id;
+    }
     let nextStage = null;
     if (Object.hasOwn(changes, "stageId")) {
       nextStage = await getStageById(changes.stageId, client);
@@ -600,6 +610,37 @@ async function updateLead(id, patch, actor) {
   });
 
   if (updatedLead) {
+    // Do not dismiss general, clinical, or delivery alerts. A staff-confirmed
+    // CRM booking resolves ONLY the stale Booking Ready attention flag.
+    // Run after the lead transaction so we never take the contact lock while
+    // holding the lead lock (booking-ready outcomes use the opposite order).
+    if (updatedLead.contact_id && ["set", "visited"].includes(updatedLead.appointment_status)) {
+      try {
+        const cleared = await pool.query(
+          `UPDATE contacts c
+           SET needs_attention = false, attention_reason = NULL, updated_at = now()
+           WHERE c.id = $1 AND c.needs_attention = true
+             AND c.attention_reason LIKE 'Booking ready:%'
+             AND EXISTS (
+               SELECT 1 FROM leads l
+               WHERE l.id = $2 AND l.contact_id = c.id
+                 AND l.appointment_status IN ('set', 'visited')
+             )
+           RETURNING c.id`,
+          [updatedLead.contact_id, updatedLead.id]
+        );
+        if (cleared.rows[0]) {
+          realtimeEvents.publish("conversation_changed", {
+            contactId: updatedLead.contact_id,
+            reason: "booking_confirmed",
+          });
+        }
+      } catch (err) {
+        // CRM booking changes are already committed. Avoid failing the staff
+        // action over an Inbox attention-cleanup error.
+        console.error(`Could not clear Booking Ready attention for lead ${updatedLead.id}:`, err);
+      }
+    }
     publishPipelineChange(updatedLead.id, {
       refreshInbox: Object.hasOwn(patch, "ownerUsername"),
     });
