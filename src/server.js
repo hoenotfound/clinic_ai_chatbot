@@ -34,6 +34,8 @@ const {
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
+const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
+const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
@@ -1539,8 +1541,23 @@ async function processIncomingMessage(
               `Automatic result media eligible for ${resultBundle.service} via ${resultBundle.serviceQuerySource || resultBundle.triggerMode}; ${paced.items.length} result images after ${automaticPromoMediaSent} promo images.`
             );
           }
+          // Under Strict RM0, provider billing arrives asynchronously. Queue the
+          // optional images after the text reply instead of racing the account
+          // gate and generating a false delivery failure/Telegram alert.
+          // The durable worker rechecks AI ownership, safety, billing and
+          // duplicate protection before every actual provider send.
+          let queuedForBilling = false;
+          if (channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
+              paced.items.length && sendOutcome.sendResult.success) {
+            queuedForBilling = await whatsappResultMediaQueue.enqueue({
+              contactId: contact.id,
+              inboundMessageId: savedInbound.id,
+              items: paced.items,
+            });
+            if (queuedForBilling) auditReason = "awaiting_meta_free_billing";
+          }
           let resultImageIndex = 0;
-          for (const resultItem of paced.items) {
+          for (const resultItem of (queuedForBilling ? [] : paced.items)) {
             // Allow the customer to absorb a promotion before its optional
             // result example. We recheck ownership, safety and reply-window
             // conditions AFTER the gap, immediately before each provider send.
