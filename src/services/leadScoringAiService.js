@@ -3,7 +3,7 @@ const { createAnthropicClient } = require("./anthropicClient");
 const { GoogleGenAI } = require("@google/genai");
 const clinicConfig = require("../config/clinicConfig");
 const { generateGeminiContent } = require("./aiUsageService");
-const { runWithGeminiKeys } = require("./geminiKeyPool");
+const { runWithGeminiKeys, getOrderedGeminiCandidates, getCandidateCooldownUntilMs } = require("./geminiKeyPool");
 const { pool: scoringCooldownPool } = require("../db/db");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
@@ -64,7 +64,7 @@ async function restoreLeadScoringModelCooldowns({
   const nowMs = clock();
   const result = await database.query(`
     SELECT model, MAX(created_at) FILTER
-      (WHERE status='failed' AND failure_kind='model_unavailable') AS failed_at,
+      (WHERE status='failed' AND failure_kind IN ('model_unavailable','rate_limit','quota_exhausted')) AS failed_at,
       MAX(created_at) FILTER (WHERE status='success') AS succeeded_at
     FROM ai_usage_events
     WHERE provider='gemini' AND purpose='lead_scoring'
@@ -458,6 +458,53 @@ async function withTransientRetries(
   }
 }
 
+function isDeferrableScoringOutage(error) {
+  return error?.code === "GEMINI_MODEL_UNAVAILABLE"
+    || error?.code === "LEAD_SCORING_MODELS_COOLING_DOWN"
+    || error?.code === "ALL_GEMINI_KEYS_COOLING_DOWN"
+    || error?.code === "GEMINI_GLOBAL_BUDGET_EXCEEDED"
+    || isGeminiCapacityError(error)
+    || isTransientAiError(error)
+    || recoverableGeminiKeySweep(error);
+}
+function nextScoringRetryFromKeys(model, nowMs = Date.now()) {
+  const { available, cooling } = getOrderedGeminiCandidates(
+    process.env, nowMs, `model:${model}`);
+  if (available.length || !cooling.length) return null;
+  const next = Math.min(...cooling.map(getCandidateCooldownUntilMs).filter(x => x > nowMs));
+  return Number.isFinite(next) ? next : null;
+}
+function annotateDeferrableScoringOutage(error, {
+  model, clock = Date.now, cooldowns = modelCapacityCooldownUntil,
+} = {}) {
+  if (!isDeferrableScoringOutage(error)) return error;
+  const nowMs = clock();
+  const untilKeyReady = model ? nextScoringRetryFromKeys(model, nowMs) : null;
+  // Confirmed key-wide outages are not model-specific, but cooling the scoring
+  // model prevents the worker from burning a claim on the next immediate sweep.
+  if (model && (recoverableGeminiKeySweep(error) ||
+      error?.code === "ALL_GEMINI_KEYS_COOLING_DOWN" ||
+      getErrorStatus(error) === 429)) {
+    cooldowns.set(model, Math.max(
+      cooldowns.get(model) || 0,
+      untilKeyReady || (nowMs + MODEL_CAPACITY_COOLDOWN_MS)));
+  }
+  const retryAt = Math.max(
+    nowMs + 120_000,
+    untilKeyReady || 0,
+    ...scoringModelNames()
+      .map((name) => cooldowns.get(name) || 0)
+      .filter((until) => until > nowMs && until < nowMs + 24 * 60 * 60 * 1000)
+  );
+  error.deferLeadScoringRetry = true;
+  error.stopLeadScoringSweep = true;
+  error.nextRetryAt = new Date(Math.max(
+    retryAt,
+    error?.nextRetryAt instanceof Date ? error.nextRetryAt.getTime() : 0
+  ));
+  return error;
+}
+
 async function scoreWithGemini(input, {
   runWithKeys = runWithGeminiKeys,
   generate = generateGeminiContent,
@@ -537,16 +584,15 @@ async function scoreWithGemini(input, {
     } catch (error) {
       if (error?.code === "GEMINI_MODEL_UNAVAILABLE" || isGeminiCapacityError(error)) {
         cooldowns.set(model, clock() + MODEL_CAPACITY_COOLDOWN_MS);
-        unavailable = error;
+        unavailable = annotateDeferrableScoringOutage(error, { model, clock, cooldowns });
         continue;
       }
       // Timeouts / transient provider failures can also use a different
       // ready model, but should not poison the model's capacity cooldown.
-      if (hasNextModel && (isTransientAiError(error) ||
-          recoverableGeminiKeySweep(error) ||
-          ["GEMINI_GLOBAL_BUDGET_EXCEEDED", "ALL_GEMINI_KEYS_COOLING_DOWN"].includes(error?.code))) {
-        unavailable = error;
-        continue;
+      if (isDeferrableScoringOutage(error)) {
+        unavailable = annotateDeferrableScoringOutage(error, { model, clock, cooldowns });
+        if (hasNextModel) continue;
+        throw unavailable;
       }
       if (shouldStopLeadScoringSweep(error)) error.stopLeadScoringSweep = true;
       throw error;
@@ -555,8 +601,8 @@ async function scoreWithGemini(input, {
   const error = unavailable || new Error("Gemini lead scoring exceeded its total time budget.");
   if (!unavailable) error.code = "GEMINI_GLOBAL_BUDGET_EXCEEDED";
   error.stopLeadScoringSweep = true;
-  const next = nextLeadScoringModelRetryAt(clock(), cooldowns);
-  if (next) error.nextRetryAt = new Date(next);
+  if (isDeferrableScoringOutage(error))
+    annotateDeferrableScoringOutage(error, { clock, cooldowns });
   throw error;
 }
 
@@ -607,6 +653,7 @@ module.exports = {
   nextLeadScoringModelRetryAt,
   leadScoringThinkingLevel,
   recoverableGeminiKeySweep,
+  isDeferrableScoringOutage,
   restoreLeadScoringModelCooldowns,
   scoreWithGemini,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
