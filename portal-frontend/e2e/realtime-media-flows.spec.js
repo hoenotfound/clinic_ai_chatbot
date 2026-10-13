@@ -1416,7 +1416,7 @@ test("signed R2 redirect streams video cross-origin without fetching Render vide
     await route.fulfill({
       status: match ? 206 : 200,
       headers: {
-        "access-control-allow-origin": "https://localhost:4173",
+        "access-control-allow-origin": "http://127.0.0.1:4173",
         "access-control-allow-methods": "GET, HEAD",
         "access-control-allow-headers": "Range",
         "access-control-expose-headers": "Content-Range, Accept-Ranges",
