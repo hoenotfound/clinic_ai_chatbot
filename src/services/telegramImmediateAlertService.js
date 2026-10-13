@@ -13,6 +13,7 @@ const {
   temperatureLabel,
 } = require("./telegramAlertService");
 const { pool } = require("../db/db");
+const { staffWaitingOwnershipSql } = require("../db/staffWaitingEligibility");
 
 const IMMEDIATE_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
@@ -193,10 +194,7 @@ async function shouldSendImmediateAlert(
         AND waiting_message.contact_id = c.id
         AND waiting_message.role = 'user'
        WHERE c.id = $1
-         AND (c.mode = 'human' OR (
-           c.needs_attention = true
-           AND COALESCE(c.attention_reason, '') NOT LIKE 'AI review requested:%'
-         ))
+         AND ${staffWaitingOwnershipSql("waiting_message")}
          AND NOT EXISTS (
            SELECT 1
            FROM messages outbound
