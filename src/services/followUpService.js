@@ -1403,6 +1403,20 @@ async function sendCandidate(candidate) {
   let effectiveVideoKey =
     !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
 
+  // An absent or unconfigured video must never be described as if it were
+  // attached, even when an AI model or old fallback copy says otherwise.
+  if (clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled === true &&
+      !effectiveVideoKey && !promotionFollowUp && !originalHasPrice &&
+      stepIndex <= 2 &&
+      /(?:这段影片|这支影片|看视频|看看视频|视频发给|跟你分享.*视频|watch (?:the|this) video|here(?:'s| is) (?:the|a) video|attached video|video ini|tonton video)/iu.test(followUpMessage)) {
+    followUpMessage = textOnlyVideoFallback({
+      language,
+      serviceName: targetedMediaService || targetedService || candidate.treatment_interest,
+      stepIndex,
+    });
+    followUpMessageMode = "fixed";
+  }
+
   // Avoid sending a video that staff, an earlier follow-up or another
   // automated system has already shared. Preserve the helpful text instead.
   if (effectiveVideoKey &&
