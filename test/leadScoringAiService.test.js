@@ -427,3 +427,96 @@ test("Gemini scorer uses bounded alternate model after primary timeout, forwardi
   assert.ok(budget[0] + budget[1] <= LEAD_SCORING_GLOBAL_BUDGET_MS);
   assert.equal(cooldowns.size, 0, "timeouts should not poison model capacity");
 });
+
+test("Gemini thinking levels match 3.6, 3.7, 3.8 and unknown-model capabilities", () => {
+  const { leadScoringThinkingLevel } = require("../src/services/leadScoringAiService");
+  assert.equal(leadScoringThinkingLevel("gemini-3.6-flash"), "minimal");
+  assert.equal(leadScoringThinkingLevel("gemini-3.5-flash"), "minimal");
+  assert.equal(leadScoringThinkingLevel("gemini-3.7-flash"), "low");
+  assert.equal(leadScoringThinkingLevel("gemini-3.8-flash"), "low");
+  assert.equal(leadScoringThinkingLevel("gemini-unknown-model"), "low");
+});
+
+test("Gemini capacity fallback sends model-specific valid thinking settings", async () => {
+  const { scoreWithGemini } = require("../src/services/leadScoringAiService");
+  const configuredModels = [];
+  const output = await scoreWithGemini({
+    messages, lead: { lead_id: 9, contact_id: 44 },
+  }, {
+    cooldowns: new Map(),
+    makeClient: () => ({}),
+    runWithKeys: (operation) => operation("test-key", null, { signal: null }),
+    generate: async (_, request) => {
+      configuredModels.push([request.model, request.config.thinkingConfig.thinkingLevel]);
+      if (configuredModels.length === 1) {
+        const err = new Error("Gemini model overloaded");
+        err.status = 503;
+        throw err;
+      }
+      return { text: JSON.stringify({
+        temperature:"warm",confidence:"medium",reason:"Customer asked about booking.",
+        evidenceMessageIds:[12],summary,
+      }) };
+    },
+  });
+  assert.equal(output.provider,"gemini");
+  assert.deepEqual(configuredModels.map(x=>x[1]),["minimal","low"]);
+});
+
+test("Aggregated transient Gemini key failures fall back but auth/config failures do not", async () => {
+  const { recoverableGeminiKeySweep, scoreWithGemini } = require("../src/services/leadScoringAiService");
+  const temporary = { code:"ALL_GEMINI_KEYS_FAILED", failures:[
+    {message:"rate limit 429"}, {message:"503 service unavailable"},
+  ] };
+  const permanent = { code:"ALL_GEMINI_KEYS_FAILED", failures:[
+    {message:"Invalid API key 401"},
+  ] };
+  assert.equal(recoverableGeminiKeySweep(temporary),true);
+  assert.equal(recoverableGeminiKeySweep(permanent),false);
+  let calls=0;
+  const scored=await scoreWithGemini({ messages,lead:{lead_id:9,contact_id:44} },{
+    cooldowns:new Map(), runWithKeys:async (operation)=>{
+      calls+=1;
+      if(calls===1)throw temporary;
+      return operation("test-key",null,{signal:null});
+    },
+    makeClient:()=>({}),
+    generate:async()=>({text:JSON.stringify({
+      temperature:"warm",confidence:"medium",reason:"Interested in service.",
+      evidenceMessageIds:[10],summary,
+    })}),
+  });
+  assert.equal(calls,2);
+  assert.equal(scored.provider,"gemini");
+  calls=0;
+  await assert.rejects(()=>scoreWithGemini({
+    messages,lead:{lead_id:9,contact_id:44},
+  },{
+    cooldowns:new Map(),runWithKeys:async()=>{calls+=1;throw permanent;},
+  }),err=>err===permanent);
+  assert.equal(calls,1);
+});
+
+test("Restore Gemini model cooldown from durable usage telemetry on startup", async()=>{
+  const { restoreLeadScoringModelCooldowns,nextLeadScoringModelRetryAt,
+    GEMINI_FALLBACK_MODEL } = require("../src/services/leadScoringAiService");
+  const nowMs=Date.parse("2026-10-13T10:00:00Z");
+  const cooldowns=new Map();
+  const loaded=await restoreLeadScoringModelCooldowns({
+    cooldowns,clock:()=>nowMs,
+    database:{query:async (sql,params)=>{
+      assert.match(sql,/ai_usage_events/);
+      assert.ok(params[0].includes(GEMINI_MODEL));
+      return {rows:[
+        {model:GEMINI_MODEL,failed_at:"2026-10-13T09:57:00Z",succeeded_at:null},
+        {model:GEMINI_FALLBACK_MODEL,failed_at:"2026-10-13T09:58:00Z",
+          succeeded_at:"2026-10-13T09:59:00Z"},
+      ]};
+    }},
+  });
+  assert.equal(loaded,1);
+  assert.equal(cooldowns.get(GEMINI_MODEL),Date.parse("2026-10-13T10:02:00Z"));
+  assert.equal(cooldowns.has(GEMINI_FALLBACK_MODEL),false);
+  assert.equal(nextLeadScoringModelRetryAt(nowMs,cooldowns),null,
+    "healthy alternative remains available");
+});
