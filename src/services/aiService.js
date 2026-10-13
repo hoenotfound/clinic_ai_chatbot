@@ -648,6 +648,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
       privateReplyEnabled: true,
       metaAdContext: null,
       followUpContext: null,
+      bookingContext: null,
       contactId: null,
       leadId: null,
     };
@@ -663,6 +664,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
+    bookingContext: optionsOrFirstMessage?.bookingContext || null,
     contactId: optionsOrFirstMessage?.contactId || null,
     leadId: optionsOrFirstMessage?.leadId || null,
   };
