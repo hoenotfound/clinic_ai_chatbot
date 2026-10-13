@@ -80,6 +80,8 @@ function harness({ failDelivery = false } = {}) {
       escalation: { handoffMessage: "" },
     },
     reviewLeadTemperatureForMessage: async () => {},
+    recordStaffAppointmentAcceptance: async () => null,
+    pipelineRepo: { getActiveLeadForContact: async () => null },
     checkKeywordTriggers: triggers.checkKeywordTriggers,
     isUrgentSafetyMessage: triggers.isUrgentSafetyMessage,
     isActiveSafetyConcern: triggers.isActiveSafetyConcern,

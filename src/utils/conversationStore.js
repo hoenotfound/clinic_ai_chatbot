@@ -48,6 +48,10 @@ function aiContextTextForRow(row) {
   return `🎥 [Customer sent a video. The AI cannot inspect the video's visual or audio content. Customer caption: ${caption}]`;
 }
 
+// Prefix is applied only to authenticated outbound staff rows, never to customer text.
+// Keep the model role as assistant for Claude/Gemini conversation compatibility.
+const STAFF_HISTORY_PREFIX = "[Verified STAFF message] ";
+
 function aiVisibleRows(rows) {
   return (rows || []).filter(
     (row) =>
@@ -109,7 +113,9 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
 
   return rows.map((r, i) => {
     const media = photoMedia.get(i);
-    const contextText = aiContextTextForRow(r);
+    const contextText = r.role === "assistant" && r.sent_by_username
+      ? `${STAFF_HISTORY_PREFIX}${aiContextTextForRow(r)}`
+      : aiContextTextForRow(r);
     if (!media) return { role: r.role, content: contextText };
     return {
       role: r.role,

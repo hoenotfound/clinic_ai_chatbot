@@ -141,8 +141,8 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   const contactUpdate = calls[contactUpdateIndex];
   assert.match(allSql, /mode = 'ai'/i);
   assert.doesNotMatch(contactUpdate.sql, /attention_reason LIKE 'Booking ready:%'/i);
-  assert.doesNotMatch(allSql, /appointment_status/i);
-  assert.doesNotMatch(allSql, /stage_id\s*=/i);
+  assert.match(contactUpdate.sql, /appointment_status IN \('set', 'visited'\)/i);
+  assert.match(contactUpdate.sql, /\$9::boolean = false OR \$10::boolean = true/i);
 });
 
 test("Booking Ready waits for the durable alert insert before committing", async () => {
@@ -225,6 +225,8 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
     null,
     null,
     null,
+    true,
+    false,
   ]);
 
   const leadUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE leads"));

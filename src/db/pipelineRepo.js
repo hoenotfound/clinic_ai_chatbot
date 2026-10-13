@@ -1,5 +1,7 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const clinicConfig = require("../config/clinicConfig");
+const { PipelineValidationError } = require("../utils/pipelineValidation");
 const {
   isAllowedRuleTemperatureTransition,
 } = require("../utils/leadTemperatureTransitions");
@@ -380,7 +382,27 @@ async function createLead(data, actor) {
       throw err;
     }
 
-    const isClosed = stage.stage_type !== "open";
+    // Staff-created bookings must have a verified time and matching stage.
+    const isClinicBooking = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+    const bookingRequested = isClinicBooking &&
+      (data.appointmentStatus === "set" || stage.system_key === "appointment_set");
+    if (bookingRequested && !data.appointmentAt) {
+      throw new PipelineValidationError("Enter the confirmed appointment date and time before marking it as set.");
+    }
+    if (isClinicBooking && stage.system_key === "appointment_set" &&
+        data.appointmentStatus && data.appointmentStatus !== "set") {
+      throw new PipelineValidationError("An unconfirmed appointment cannot use the Appointment Set stage.");
+    }
+    let initialStage = stage;
+    if (isClinicBooking && data.appointmentStatus === "set" &&
+        ["new", "contacted"].includes(stage.system_key)) {
+      const bookedStage = await client.query(
+        `SELECT id, name, stage_type, system_key FROM pipeline_stages
+         WHERE system_key = 'appointment_set' AND stage_type = 'open' LIMIT 1`
+      );
+      if (bookedStage.rows[0]) initialStage = bookedStage.rows[0];
+    }
+    const isClosed = initialStage.stage_type !== "open";
     const result = await client.query(
       `INSERT INTO leads (
          contact_id, stage_id, temperature, temperature_source,
@@ -399,7 +421,7 @@ async function createLead(data, actor) {
        RETURNING *`,
       [
         data.contactId,
-        stage.id,
+        initialStage.id,
         data.temperature || "warm",
         data.temperatureLocked ? "manual" : "system",
         data.temperatureLocked === true,
@@ -409,7 +431,7 @@ async function createLead(data, actor) {
         data.estimatedValue ?? null,
         data.source || null,
         data.campaignName || null,
-        data.appointmentStatus || "none",
+        data.appointmentStatus || (isClinicBooking && initialStage.system_key === "appointment_set" ? "set" : "none"),
         data.appointmentAt || null,
         data.nextFollowUpAt || null,
         data.marketingConsent || "unknown",
@@ -427,9 +449,9 @@ async function createLead(data, actor) {
     await client.query(
       `INSERT INTO lead_stage_history (lead_id, from_stage_id, to_stage_id, changed_by)
        VALUES ($1, NULL, $2, $3)`,
-      [lead.id, stage.id, actor]
+      [lead.id, initialStage.id, actor]
     );
-    await addActivity(client, lead.id, "created", `Lead created in ${stage.name}.`, actor);
+    await addActivity(client, lead.id, "created", `Lead created in ${initialStage.name}.`, actor);
     return { lead, created: true };
   });
 
@@ -509,6 +531,30 @@ async function updateLead(id, patch, actor) {
     } else if (lockChanged && changes.temperatureLocked) {
       changes.temperatureSource = "manual";
     }
+    // A staff-confirmed appointment status and the built-in Appointment Set
+    // stage must agree. Do not override custom, visited, or closed stages.
+    const isClinicBooking = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+    if (isClinicBooking && changes.appointmentStatus === "set" &&
+        !Object.hasOwn(changes, "stageId") &&
+        ["new", "contacted"].includes(current.system_key)) {
+      const appointmentStage = await client.query(
+        `SELECT id FROM pipeline_stages WHERE system_key = 'appointment_set' AND stage_type = 'open' LIMIT 1`
+      );
+      if (appointmentStage.rows[0]) changes.stageId = appointmentStage.rows[0].id;
+    }
+    // Do not leave a lead in a confirmed booking stage after staff starts a
+    // reschedule/cancellation. Keeping stale appointment_at here would make
+    // the AI report the previous slot as the current confirmed booking.
+    if (isClinicBooking &&
+        ["none", "reschedule", "cancelled"].includes(changes.appointmentStatus)) {
+      changes.appointmentAt = null;
+      if (!Object.hasOwn(changes, "stageId") && current.system_key === "appointment_set") {
+        const contacted = await client.query(
+          `SELECT id FROM pipeline_stages WHERE system_key = 'contacted' AND stage_type = 'open' LIMIT 1`
+        );
+        if (contacted.rows[0]) changes.stageId = contacted.rows[0].id;
+      }
+    }
     let nextStage = null;
     if (Object.hasOwn(changes, "stageId")) {
       nextStage = await getStageById(changes.stageId, client);
@@ -533,7 +579,35 @@ async function updateLead(id, patch, actor) {
         if (nextStage.system_key === "visited" && !Object.hasOwn(changes, "appointmentStatus")) {
           changes.appointmentStatus = "visited";
         }
+        if (isClinicBooking && current.system_key === "appointment_set" &&
+            nextStage.stage_type === "open" &&
+            !["appointment_set", "visited"].includes(nextStage.system_key) &&
+            !Object.hasOwn(changes, "appointmentStatus")) {
+          changes.appointmentStatus = "reschedule";
+          changes.appointmentAt = null;
+        }
       }
+    }
+
+    // The pipeline move itself may mark an appointment as set. Require a real
+    // timestamp in the same operation or one previously recorded by staff.
+    // Do not reject unrelated edits to old historical leads with missing dates.
+    const enteringBookedStage = nextStage?.system_key === "appointment_set" &&
+      Number(nextStage.id) !== Number(current.stage_id);
+    const newConfirmation = changes.appointmentStatus === "set" &&
+      current.appointment_status !== "set";
+    const effectiveDate = Object.hasOwn(changes, "appointmentAt")
+      ? changes.appointmentAt : current.appointment_at;
+    const dateBeingCleared = Object.hasOwn(changes, "appointmentAt") && !changes.appointmentAt &&
+      (changes.appointmentStatus || current.appointment_status) === "set";
+    if (isClinicBooking && (enteringBookedStage || newConfirmation || dateBeingCleared) && !effectiveDate) {
+      throw new PipelineValidationError("Enter the confirmed appointment date and time before marking it as set.");
+    }
+    // A pending or cancelled booking cannot simultaneously be placed in the
+    // confirmed stage, even when a client sends an explicit conflicting patch.
+    if (isClinicBooking && nextStage?.system_key === "appointment_set" &&
+        ["none", "reschedule", "cancelled"].includes(changes.appointmentStatus)) {
+      throw new PipelineValidationError("An unconfirmed appointment cannot use the Appointment Set stage.");
     }
 
     const setters = [];
@@ -600,6 +674,39 @@ async function updateLead(id, patch, actor) {
   });
 
   if (updatedLead) {
+    // Do not dismiss general, clinical, or delivery alerts. A staff-confirmed
+    // CRM booking resolves ONLY the stale Booking Ready attention flag.
+    // Run after the lead transaction so we never take the contact lock while
+    // holding the lead lock (booking-ready outcomes use the opposite order).
+    const bookingChangeRequested = Object.hasOwn(patch, "appointmentStatus") || Object.hasOwn(patch, "stageId");
+    if (bookingChangeRequested && updatedLead.contact_id &&
+        ["set", "visited"].includes(updatedLead.appointment_status)) {
+      try {
+        const cleared = await pool.query(
+          `UPDATE contacts c
+           SET needs_attention = false, attention_reason = NULL, updated_at = now()
+           WHERE c.id = $1 AND c.needs_attention = true
+             AND c.attention_reason LIKE 'Booking ready:%'
+             AND EXISTS (
+               SELECT 1 FROM leads l
+               WHERE l.id = $2 AND l.contact_id = c.id
+                 AND l.appointment_status IN ('set', 'visited')
+             )
+           RETURNING c.id`,
+          [updatedLead.contact_id, updatedLead.id]
+        );
+        if (cleared.rows[0]) {
+          realtimeEvents.publish("conversation_changed", {
+            contactId: updatedLead.contact_id,
+            reason: "booking_confirmed",
+          });
+        }
+      } catch (err) {
+        // CRM booking changes are already committed. Avoid failing the staff
+        // action over an Inbox attention-cleanup error.
+        console.error(`Could not clear Booking Ready attention for lead ${updatedLead.id}:`, err);
+      }
+    }
     publishPipelineChange(updatedLead.id, {
       refreshInbox: Object.hasOwn(patch, "ownerUsername"),
     });

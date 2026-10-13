@@ -25,6 +25,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
+const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -64,6 +65,7 @@ const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
+const pipelineRepo = require("./db/pipelineRepo");
 const {
   URGENT_SAFETY_REASON,
   checkKeywordTriggers,
@@ -751,6 +753,17 @@ async function processIncomingMessage(
       }
     }
 
+    // Preserve a real customer acceptance of the latest verified STAFF offer
+    // before calling the model. It is a pending preference, NOT a booking.
+    let acceptedStaffOffer = null;
+    if (["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType)) {
+      try {
+        acceptedStaffOffer = await recordStaffAppointmentAcceptance(contact.id, savedInbound.id, text);
+      } catch (agreementError) {
+        console.error(`Could not record staff appointment acceptance for contact ${contact.id}:`, agreementError);
+      }
+    }
+
     const hasInterpretableText =
       mediaType !== "sticker" &&
       !(mediaType === "video" && !String(incoming.text || "").trim());
@@ -935,7 +948,24 @@ async function processIncomingMessage(
         );
       }
 
+      // The CRM booking status is separate from chat text. Give the model the
+      // verified status so an accepted staff offer does not become a fabricated
+      // reservation, and a confirmed booking does not request confirmation again.
+      let bookingContext = null;
+      try {
+        const lead = await pipelineRepo.getActiveLeadForContact(contact.id);
+        if (lead) {
+          bookingContext = {
+            status: lead.appointment_status,
+            appointmentAt: lead.appointment_at,
+            ...(acceptedStaffOffer ? { acceptedStaffOffer: acceptedStaffOffer.agreedTimeText } : {}),
+          };
+        }
+      } catch (bookingContextErr) {
+        console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
+      }
       const rawAiReply = await ai.getReply(replyHistory, {
+        bookingContext,
         contactId: contact.id,
         isFirstMessage,
         generateFirstIntro,
@@ -1275,6 +1305,9 @@ async function processIncomingMessage(
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
           details,
+          // A genuinely new request to move an existing booking must still
+          // reach staff even when the CRM records the old slot as confirmed.
+          allowReschedule: /(?:改期|改时间|改時間|换去|换到|換去|換到|重新预约|重新預約|调整时间|調整時間|reschedul|change\s+(?:my\s+)?(?:appointment|date|time|slot)|move\s+(?:my\s+)?appointment|ubah\s+(?:temujanji|masa)|tukar\s+(?:temujanji|masa))/iu.test(String(text || "")),
         });
       } catch (bookingOutcomeErr) {
         console.error(

@@ -4,6 +4,12 @@ const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 const clinicConfig = require("../config/clinicConfig");
+function clinicRescheduleHoldSql() {
+  // Keep the existing behaviour for non-clinic client profiles.
+  return ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType)
+    ? "COALESCE(latest_lead.appointment_status, 'none') <> 'reschedule'"
+    : "TRUE";
+}
 function reservePricingQuietSlot() {
   return clinicConfig.automatedFollowUp?.enabled === true &&
     clinicConfig.automatedFollowUp?.pricingReminder?.enabled === true;
@@ -154,6 +160,7 @@ async function claimIfStillEligible({
          OR (
            latest_lead.is_closed = false
            AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND ${clinicRescheduleHoldSql()}
            AND (
              COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
              OR (

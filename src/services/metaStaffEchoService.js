@@ -4,6 +4,7 @@ const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const metaCommentAutomationRepo = require("../db/metaCommentAutomationRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const { recordStaffConfirmedBooking } = require("./staffBookingConfirmationService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
@@ -162,6 +163,19 @@ async function finalizeStaffEcho(persisted) {
       err
     );
   }
+  // An authenticated staff echo with an unambiguous confirmed date/time may
+  // update CRM. Replayed webhook echoes do not repeat the transition.
+  if (persisted.isNew && !persisted.message.is_forwarded) {
+    try {
+      await recordStaffConfirmedBooking(
+        persisted.contact.id, persisted.message.content,
+        { providerAccepted: true }
+      );
+    } catch (bookingError) {
+      console.error("Failed to sync staff echo booking confirmation:", bookingError);
+    }
+  }
+
 }
 
 module.exports = {

@@ -1184,6 +1184,11 @@ export default function Inbox() {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       void refreshConversations();
+      if (result?.bookingSyncWarning) {
+        showToast(result.bookingSyncWarning, "warning");
+      } else if (result?.bookingSynced) {
+        showToast("Appointment confirmed and saved in Pipeline.", "success");
+      }
       if (result?.delivery_unknown === true) {
         showToast(
           "Message send could not be confirmed. Check WhatsApp before retrying to avoid sending it twice.",
