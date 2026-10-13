@@ -453,25 +453,15 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     }
 
     if (gate.status !== "idle") {
-      if (gate.status === "awaiting_pricing" && gate.wamid) {
-        const priced = (await client.query(
-          `SELECT pricing_type,billable,delivery_status
-           FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1`,
-          [gate.wamid])).rows[0];
-        if (priced?.pricing_type==="free_entry_point" && priced.billable===false &&
-            ["sent","delivered","read"].includes(priced.delivery_status)) {
-          await client.query(
-            `UPDATE whatsapp_free_only_send_gate SET status='idle',
-               reservation_id=NULL,wamid=NULL,recipient=NULL,
-               message_id=NULL,attempt_id=NULL,updated_at=now()
-             WHERE phone_number_id=$1`,[account]);
-        } else {
-          rejected=deny("zero_cost_previous_send_unreconciled",
-            "WhatsApp free-only blocked: another message is awaiting Meta's confirmed free billing.");
-        }
-      } else {
+      // The existing reservation row is locked by this transaction. Reuse the
+      // same evidence-backed, audited release used by webhook recovery rather
+      // than bypassing its reservation and account-wide billing checks.
+      const released = gate.status === "awaiting_pricing" && gate.wamid
+        ? await reconcileConfirmedGate(client)
+        : false;
+      if (!released) {
         rejected=deny("zero_cost_previous_send_unreconciled",
-          "WhatsApp free-only blocked: a previous or concurrent send has not been reconciled.");
+          "WhatsApp free-only blocked: another send is awaiting Meta's confirmed free billing.");
       }
     }
 
@@ -598,9 +588,12 @@ async function complete(reservationId,result, database=pool) {
            wamid=$3,updated_at=now()
          WHERE phone_number_id=$1 AND reservation_id=$2`,
         [account,reservationId,result.wamid]);
-      // The webhook may have beaten local finalization. Recheck its durable
-      // receipt without permitting an unverified send through the gate.
-      await reconcileConfirmedGate(database);
+      // A confirmed pricing webhook may have arrived before local finalization.
+      // Release only verified nonbillable reservations; never wait for this
+      // best-effort housekeeping query before returning provider acceptance.
+      Promise.resolve().then(() => reconcileConfirmedGate(database))
+        .catch((error) => console.error(
+          "[WhatsApp free-only] Deferred gate reconciliation failed:", error));
     } else if (definitelyRejected(result)) {
       await database.query(
         `UPDATE whatsapp_free_only_send_gate SET status='idle',
