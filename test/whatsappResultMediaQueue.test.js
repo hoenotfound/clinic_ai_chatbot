@@ -248,3 +248,53 @@ test("expiry during image upload cancels before Meta send",async t=>{
   assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
     x.params?.includes("optional_image_expired_during_upload")));
 });
+
+test("stale processing after Render restart is unknown and never blindly replayed",async t=>{
+  const contactsRepo=require("../src/db/contactsRepo");
+  const staff=[];
+  mock(t,contactsRepo,"setDeliveryAttention",async(id,reason)=>{
+    staff.push({id,reason});return {id};
+  });
+  const statements=[];
+  const db={async query(sql,params){
+    statements.push({sql,params});
+    if(sql.includes("RETURNING contact_id,inbound_message_id"))
+      return {rows:[{contact_id:443,inbound_message_id:1503}]};
+    if(sql.includes("RETURNING q.inbound_message_id"))
+      return {rows:[{inbound_message_id:1503}]};
+    return {rows:[]};
+  }};
+  await queue.sweepStaleAndBlocked(db);
+  assert.ok(statements.some(x=>x.sql.includes("status='unknown'") &&
+    x.sql.includes("worker_interrupted_provider_outcome_unknown")));
+  assert.ok(statements.some(x=>x.sql.includes("status='cancelled'") &&
+    x.sql.includes("earlier_image_not_sent")));
+  assert.equal(staff.length,1);
+  assert.equal(staff[0].id,443);
+});
+
+test("priority query yields only for unaccepted recent inbound text jobs",async t=>{
+  const row=sample(),db=fakeDb(row);
+  const original=db.query.bind(db);
+  db.query=async(sql,params)=>{
+    if(sql.includes("FROM inbound_processing_jobs j")){
+      assert.match(sql,/a\.outcome='accepted'/);
+      assert.match(sql,/interval '45 seconds'/);
+      return {rows:[{busy:false}]};
+    }
+    return original(sql,params);
+  };
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
+  mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
+  mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
+  mock(t,zeroCost,"preflightFreeform",async()=>({allowed:true}));
+  mock(t,conversationStore,"appendMessageForContact",async()=>({id:998}));
+  mock(t,messagesRepo,"setWhatsappMessageId",async()=>({id:998}));
+  let sends=0;
+  await queue.runOne({
+    db,strictEnabled:()=>true,
+    eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    sender:async()=>{sends++;return {success:true,wamid:"wamid.speed"};},
+  });
+  assert.equal(sends,1,"a finished reply does not hold the image queue");
+});
