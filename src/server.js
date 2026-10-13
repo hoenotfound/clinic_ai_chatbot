@@ -1357,13 +1357,24 @@ async function processIncomingMessage(
           whatsappZeroCostGuard.enabled() && pacedPromotions.items.length > 0 &&
           sendOutcome.sendResult.success;
         if (queuedPromotions) {
-          await whatsappResultMediaQueue.enqueue({
-            contactId:contact.id,
-            inboundMessageId:savedInbound.id,
-            items:pacedPromotions.items,
-            kind:"promotion",
-            sequenceOffset:0,
-          });
+          try {
+            await whatsappResultMediaQueue.enqueue({
+              contactId:contact.id,
+              inboundMessageId:savedInbound.id,
+              items:pacedPromotions.items,
+              kind:"promotion",
+              sequenceOffset:0,
+            });
+          } catch (queueError) {
+            // Optional media failures must not invalidate the already accepted
+            // AI text or cause a durable inbound job to replay that reply.
+            console.error("[Result queue] Could not schedule price graphics:",queueError);
+            await contactsRepo.setDeliveryAttention(contact.id,
+              "Automatic price image could not be queued. Please review this chat."
+            ).catch(()=>{});
+            await auditResultMediaEarlyExit("promotion_media_enqueue_failed");
+            return { wasFirstMessage, keywordReason };
+          }
           queuedPromotionCount = pacedPromotions.items.length;
           // The pacing limit counts planned graphics, not only images already
           // delivered. The audit separately counts actual Meta acceptance.
