@@ -4,7 +4,7 @@ const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
-const { scoreLeadConversation } = require("./leadScoringAiService");
+const { scoreLeadConversation, nextLeadScoringModelRetryAt } = require("./leadScoringAiService");
 const telegramAlerts = require("./telegramAlertService");
 
 // Retained for compatibility and short failure retries. The worker no longer
@@ -168,6 +168,10 @@ function createLeadScoringRunner({
     ? leadScoringFailureRecoveryRepo.recoverStaleTerminalProcessingFailures
     : null,
   scheduleWake = wakeLeadScoring,
+  // Injected in tests. Only real Gemini scoring enforces its model cooldown:
+  // mock scoring/repositories keep their prior deterministic behavior.
+  getModelRetryAt = repository === leadScoringRepo && scoreConversation === scoreLeadConversation
+    ? nextLeadScoringModelRetryAt : () => null,
   clock = Date.now,
 } = {}) {
   let sweepRunning = false;
@@ -200,6 +204,15 @@ function createLeadScoringRunner({
       for (const candidate of candidates) {
         const liveSettings = settingsGetter();
         if (!liveSettings || liveSettings.activatedAt !== settings.activatedAt) break;
+
+        const nextModelRetry = getModelRetryAt(clock());
+        if (nextModelRetry) {
+          const delay = delayUntilTelegramRetry(nextModelRetry, clock());
+          if (delay !== null) scheduleWake(delay + 250);
+          // Do not claim a lead while every Gemini model is cooling down.
+          // Claiming increments durable attempts, even when no API is called.
+          break;
+        }
 
         const claim = await repository.claimCandidate(candidate);
         if (!claim) continue;
@@ -279,7 +292,11 @@ function createLeadScoringRunner({
             !failure.terminal &&
             repository === leadScoringRepo
           ) {
-            wakeLeadScoring(leadScoringRepo.FAILED_RETRY_MINUTES * 60 * 1000);
+            const retryAfterCooldown = delayUntilTelegramRetry(err?.nextRetryAt, clock());
+            scheduleWake(Math.max(
+              leadScoringRepo.FAILED_RETRY_MINUTES * 60 * 1000,
+              retryAfterCooldown == null ? 0 : retryAfterCooldown + 250
+            ));
           }
 
           // A permanently failed AI score must not make the lead disappear from
