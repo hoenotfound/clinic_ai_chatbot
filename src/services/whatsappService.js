@@ -929,23 +929,27 @@ function parseStatusUpdates(body) {
     messageKind: "first_reply_text",
   });
  }
+ function mediaGuardContext(options={}) {
+   return { currentMessageId: options.currentMessageId,
+     messageKind: options.staffMedia === true ? "staff_media" : "media" };
+ }
  async function sendImage(to,url,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), mediaGuardContext(options));
  }
  async function sendImageById(to,id,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options), mediaGuardContext(options));
  }
  async function sendVideoById(to,id,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options), mediaGuardContext(options));
  }
  async function sendDocumentById(to,id,filename,caption,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options), mediaGuardContext(options));
  }
  async function sendStickerById(to,id,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options), mediaGuardContext(options));
  }
  async function sendVoiceById(to,id,options={}) {
-   return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options), { currentMessageId: options.currentMessageId });
+   return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options), mediaGuardContext(options));
  }
 
 module.exports = {

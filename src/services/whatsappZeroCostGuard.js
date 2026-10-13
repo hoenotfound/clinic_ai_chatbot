@@ -265,20 +265,25 @@ function settings() {
 }
 function enabled() { return settings().enabled === true; }
 function allow24hServiceReplies() { return enabled() && settings().allow24hServiceReplies === true; }
+function allow24hStaffMedia() { return enabled() && settings().allow24hStaffMedia === true; }
 
 // A separate, deliberately potentially paid lane for direct text replies.
 // A unique pre-send record prevents retries of an ambiguous provider request.
 async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={}}={}) {
-  if (!allow24hServiceReplies() || context.messageKind !== "first_reply_text" ||
-      context.currentFollowUpAttemptId != null) return null;
+  const isText=context.messageKind==="first_reply_text";
+  const isStaffMedia=context.messageKind==="staff_media";
+  if (!(isText && allow24hServiceReplies()) &&
+      !(isStaffMedia && allow24hStaffMedia())) return null;
+  if (context.currentFollowUpAttemptId != null) return null;
+  const sendKind=isStaffMedia ? "staff_media" : "text";
   const messageId=Number(context.currentMessageId);
   const recipient=String(to||"").replace(/\D/g,"");
   const stamp=new Date(now);
   if (!Number.isSafeInteger(messageId) || messageId<=0 || recipient.length<8 ||
       !Number.isFinite(stamp.getTime())) return null;
   const result=await database.query(`
-    INSERT INTO whatsapp_24h_service_reply_exceptions(message_id,contact_id,allowed_at)
-    SELECT m.id,c.id,$3::timestamptz
+    INSERT INTO whatsapp_24h_service_reply_exceptions(message_id,contact_id,allowed_at,send_kind)
+    SELECT m.id,c.id,$3::timestamptz,$4::text
     FROM messages m JOIN contacts c ON c.id=m.contact_id
     WHERE m.id=$1 AND m.role='assistant' AND c.channel='whatsapp'
       AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2
@@ -287,6 +292,11 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
       AND m.automated_follow_up_step IS NULL
       AND m.automated_follow_up_parent_message_id IS NULL
       AND m.pricing_reminder_anchor_id IS NULL
+      -- Only staff-authored, persisted media qualifies for this separate lane.
+      AND ($4::text='text' OR (
+        m.sent_by_username IS NOT NULL AND btrim(m.sent_by_username)<>''
+        AND m.media_mime_type IS NOT NULL AND m.media_mime_type<>''
+      ))
       AND NOT EXISTS(SELECT 1 FROM whatsapp_free_entry_followup_attempts a
                      WHERE a.message_id=m.id)
       AND NOT EXISTS(SELECT 1 FROM scheduled_messages scheduled
@@ -299,7 +309,7 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
           AND inbound.created_at<=m.created_at
       )
     ON CONFLICT(message_id) DO NOTHING RETURNING message_id
-  `,[messageId,recipient,stamp.toISOString()]);
+  `,[messageId,recipient,stamp.toISOString(),sendKind]);
   if (Number(result.rows?.[0]?.message_id)===messageId)
     return {allowed:true,reservationId:null,serviceReplyMessageId:messageId};
   // A prior service send may have reached Meta even if its WAMID never made
@@ -538,7 +548,8 @@ async function inspectFreeTemplateWindow(to, {
 
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
-  if (allow24hServiceReplies() && context.messageKind === "first_reply_text") {
+  if ((allow24hServiceReplies() && context.messageKind === "first_reply_text") ||
+      (allow24hStaffMedia() && context.messageKind === "staff_media")) {
     try {
       const permission=await reserve24hServiceReply(to,{database,now,context});
       if (permission) return permission;
@@ -839,6 +850,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
+  blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,allow24hStaffMedia,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };

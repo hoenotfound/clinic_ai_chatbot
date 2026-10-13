@@ -128,7 +128,8 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
         role TEXT,created_at TIMESTAMPTZ, whatsapp_message_id TEXT,
         whatsapp_template JSONB,is_automated_follow_up BOOLEAN,
         automated_follow_up_step INTEGER,automated_follow_up_parent_message_id INTEGER,
-        pricing_reminder_anchor_id INTEGER
+        pricing_reminder_anchor_id INTEGER,
+        sent_by_username TEXT,media_mime_type TEXT
       );
       CREATE TABLE whatsapp_free_entry_followup_attempts(id SERIAL PRIMARY KEY,message_id INTEGER);
       CREATE TABLE whatsapp_free_only_billing_alerts(wamid TEXT PRIMARY KEY,sent_at TIMESTAMPTZ);
@@ -159,6 +160,8 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
     `);
     await db.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/070_whatsapp_24h_service_reply_exceptions.sql"),"utf8"));
+    await db.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/071_whatsapp_24h_staff_media.sql"),"utf8"));
     const ctx=(id)=>({database:db,context:{messageKind:"first_reply_text",currentMessageId:id}});
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).allowed,true);
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).code,

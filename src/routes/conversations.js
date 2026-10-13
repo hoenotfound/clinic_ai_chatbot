@@ -564,7 +564,8 @@ function socialProviderSendOptions(message, contact, options = {}) {
     message?.id,
     contact?.channel
   );
-  const withCurrentMessage = { ...options, currentMessageId: message?.id };
+  // This adapter is invoked only from authenticated staff Inbox routes.
+  const withCurrentMessage = { ...options, currentMessageId: message?.id, staffMedia: true };
   return recorder
     ? { ...withCurrentMessage, onProviderMessageId: recorder }
     : withCurrentMessage;
@@ -2005,7 +2006,7 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
   const providerPromise = (async () => {
     if (normalizedImage) {
       return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, normalizedImage.buffer,
-        normalizedImage.mimeType, content || undefined, "image.jpg", { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings }));
+        normalizedImage.mimeType, content || undefined, "image.jpg", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
     }
     let preparedTemporaryMedia;
     try {
