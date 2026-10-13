@@ -578,7 +578,9 @@ async function updateLead(id, patch, actor) {
       current.appointment_status !== "set";
     const effectiveDate = Object.hasOwn(changes, "appointmentAt")
       ? changes.appointmentAt : current.appointment_at;
-    if (isClinicBooking && (enteringBookedStage || newConfirmation) && !effectiveDate) {
+    const dateBeingCleared = Object.hasOwn(changes, "appointmentAt") && !changes.appointmentAt &&
+      (changes.appointmentStatus || current.appointment_status) === "set";
+    if (isClinicBooking && (enteringBookedStage || newConfirmation || dateBeingCleared) && !effectiveDate) {
       throw new PipelineValidationError("Enter the confirmed appointment date and time before marking it as set.");
     }
     // A pending or cancelled booking cannot simultaneously be placed in the
