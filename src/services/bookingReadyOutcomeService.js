@@ -135,10 +135,8 @@ function createBookingReadyOutcomeService({
            AND (
              $9::boolean = false OR $10::boolean = true OR NOT EXISTS (
                SELECT 1 FROM leads l
-               JOIN pipeline_stages s ON s.id = l.stage_id
                WHERE l.contact_id = c.id AND l.is_closed = false
-                 AND (l.appointment_status IN ('set', 'visited')
-                      OR s.system_key IN ('appointment_set', 'visited'))
+                 AND l.appointment_status IN ('set', 'visited')
              )
            )
            AND (
