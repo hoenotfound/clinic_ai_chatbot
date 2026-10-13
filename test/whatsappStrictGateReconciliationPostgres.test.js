@@ -28,7 +28,7 @@ test("Postgres: free-only gate reconciles only durable Meta nonbillable pricing 
     await client.query("SET search_path TO " + schema);
     await client.query(`
       CREATE TABLE whatsapp_free_only_send_gate (
-        phone_number_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+        phone_number_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle',
         reservation_id TEXT, wamid TEXT, recipient TEXT,
         message_id INTEGER, attempt_id BIGINT, updated_at TIMESTAMPTZ DEFAULT now()
       );
@@ -132,7 +132,7 @@ test("Postgres: simultaneous strict reservations reconcile exactly once and perm
     await init.query("SET search_path TO " + schema);
     await init.query(`
       CREATE TABLE whatsapp_free_only_send_gate (
-        phone_number_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+        phone_number_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'idle',
         reservation_id TEXT, wamid TEXT, recipient TEXT,
         message_id INTEGER, attempt_id BIGINT, updated_at TIMESTAMPTZ DEFAULT now()
       );
