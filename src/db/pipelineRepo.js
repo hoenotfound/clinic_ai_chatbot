@@ -382,7 +382,27 @@ async function createLead(data, actor) {
       throw err;
     }
 
-    const isClosed = stage.stage_type !== "open";
+    // Staff-created bookings must have a verified time and matching stage.
+    const isClinicBooking = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+    const bookingRequested = isClinicBooking &&
+      (data.appointmentStatus === "set" || stage.system_key === "appointment_set");
+    if (bookingRequested && !data.appointmentAt) {
+      throw new PipelineValidationError("Enter the confirmed appointment date and time before marking it as set.");
+    }
+    if (isClinicBooking && stage.system_key === "appointment_set" &&
+        data.appointmentStatus && data.appointmentStatus !== "set") {
+      throw new PipelineValidationError("An unconfirmed appointment cannot use the Appointment Set stage.");
+    }
+    let initialStage = stage;
+    if (isClinicBooking && data.appointmentStatus === "set" &&
+        ["new", "contacted"].includes(stage.system_key)) {
+      const bookedStage = await client.query(
+        `SELECT id, name, stage_type, system_key FROM pipeline_stages
+         WHERE system_key = 'appointment_set' AND stage_type = 'open' LIMIT 1`
+      );
+      if (bookedStage.rows[0]) initialStage = bookedStage.rows[0];
+    }
+    const isClosed = initialStage.stage_type !== "open";
     const result = await client.query(
       `INSERT INTO leads (
          contact_id, stage_id, temperature, temperature_source,
@@ -401,7 +421,7 @@ async function createLead(data, actor) {
        RETURNING *`,
       [
         data.contactId,
-        stage.id,
+        initialStage.id,
         data.temperature || "warm",
         data.temperatureLocked ? "manual" : "system",
         data.temperatureLocked === true,
@@ -411,7 +431,7 @@ async function createLead(data, actor) {
         data.estimatedValue ?? null,
         data.source || null,
         data.campaignName || null,
-        data.appointmentStatus || "none",
+        data.appointmentStatus || (isClinicBooking && initialStage.system_key === "appointment_set" ? "set" : "none"),
         data.appointmentAt || null,
         data.nextFollowUpAt || null,
         data.marketingConsent || "unknown",
@@ -429,9 +449,9 @@ async function createLead(data, actor) {
     await client.query(
       `INSERT INTO lead_stage_history (lead_id, from_stage_id, to_stage_id, changed_by)
        VALUES ($1, NULL, $2, $3)`,
-      [lead.id, stage.id, actor]
+      [lead.id, initialStage.id, actor]
     );
-    await addActivity(client, lead.id, "created", `Lead created in ${stage.name}.`, actor);
+    await addActivity(client, lead.id, "created", `Lead created in ${initialStage.name}.`, actor);
     return { lead, created: true };
   });
 
