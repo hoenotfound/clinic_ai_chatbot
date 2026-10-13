@@ -1308,6 +1308,7 @@ async function processIncomingMessage(
     // price or available packages for one known configured service. Existing
     // safety/ownership gates remain unchanged.
     let automaticPromoMediaSent = 0;
+    let queuedPromotionCount = 0;
     let promotionImagesTruncated = false;
     // Promo sends can stop the post-reply sequence before the optional result
     // block is reached. Keep those exit reasons in the same staff-only audit.
@@ -1318,7 +1319,7 @@ async function processIncomingMessage(
           inboundMessageId: savedInbound.id,
           status: "skipped",
           reason,
-          promotionCount: automaticPromoMediaSent,
+          promotionCount: Math.max(0, automaticPromoMediaSent - queuedPromotionCount),
         });
       } catch (auditError) {
         console.warn(`[Result media] early audit failed for contact ${contact.id}:`, auditError);
@@ -1352,7 +1353,23 @@ async function processIncomingMessage(
       if (promoBundle) {
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
         promotionImagesTruncated = !!pacedPromotions.reason;
-        for (const promoPackage of pacedPromotions.items) {
+        const queuedPromotions = channel === "whatsapp" &&
+          whatsappZeroCostGuard.enabled() && pacedPromotions.items.length > 0 &&
+          sendOutcome.sendResult.success;
+        if (queuedPromotions) {
+          await whatsappResultMediaQueue.enqueue({
+            contactId:contact.id,
+            inboundMessageId:savedInbound.id,
+            items:pacedPromotions.items,
+            kind:"promotion",
+            sequenceOffset:0,
+          });
+          queuedPromotionCount = pacedPromotions.items.length;
+          // The pacing limit counts planned graphics, not only images already
+          // delivered. The audit separately counts actual Meta acceptance.
+          automaticPromoMediaSent += queuedPromotionCount;
+        }
+        for (const promoPackage of (queuedPromotions ? [] : pacedPromotions.items)) {
           const promoContact = await getAiOwnedContact(contact, {
             channel,
             from,
@@ -1553,6 +1570,8 @@ async function processIncomingMessage(
               contactId: contact.id,
               inboundMessageId: savedInbound.id,
               items: paced.items,
+              kind: "result",
+              sequenceOffset: queuedPromotionCount,
             });
             if (queuedForBilling) auditReason = "awaiting_meta_free_billing";
           }
@@ -1729,7 +1748,7 @@ async function processIncomingMessage(
             inboundMessageId: savedInbound.id,
             status: auditStatus,
             reason: finalAuditReason,
-            promotionCount: automaticPromoMediaSent,
+            promotionCount: Math.max(0,automaticPromoMediaSent - queuedPromotionCount),
             selectedCount: auditSelected,
             sentCount: auditSent,
           });
