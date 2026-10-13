@@ -1233,3 +1233,39 @@ test("optional compression can time out and send the valid original PNG", async 
   await expect.poll(() => apiState.mediaRequests.length).toBe(1);
   expectNoUnexpectedApi(apiState);
 });
+
+test("historical Inbox videos fetch no bytes before staff requests playback", async ({ page }) => {
+  const mediaGets = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      inboundMessage({ id: 1 }),
+      { ...inboundMessage({ id: 81, content: "Treatment explanation video" }),
+        media_mime_type: "video/mp4", has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Customer testimonial video" }),
+        media_mime_type: "video/mp4", has_media_attachment: true },
+    ]]]),
+  });
+
+  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+    mediaGets.push(new URL(route.request().url()).pathname);
+    await route.fulfill({ status: 200, contentType: "video/mp4", body: "test video bytes" });
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const videos = page.locator('section[aria-label="Conversation with Alex Customer"] video');
+  const play = page.getByRole("button", { name: "Play video" });
+  await expect(videos).toHaveCount(2);
+  await expect(play).toHaveCount(2);
+  await expect(videos.nth(0)).not.toHaveAttribute("src", /.+/);
+  await expect(videos.nth(1)).not.toHaveAttribute("src", /.+/);
+  await page.waitForTimeout(300);
+  expect(mediaGets).toEqual([]);
+
+  await play.first().click();
+  await expect(videos.nth(0)).toHaveAttribute("src", /\/api\/conversations\/101\/messages\/81\/media$/);
+  await expect.poll(() => mediaGets.some((path) => path.endsWith("/81/media"))).toBe(true);
+  expect(mediaGets.some((path) => path.endsWith("/82/media"))).toBe(false);
+  await expect(play).toHaveCount(1);
+  expectNoUnexpectedApi(apiState);
+});
