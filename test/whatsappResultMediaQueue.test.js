@@ -79,7 +79,7 @@ test("when pricing confirms RM0, an image is accepted and its audit can be recon
   assert.equal(sendCount,1);
   assert.deepEqual(persisted,{id:991,wamid:"wamid.verified"});
   assert.equal(db.calls.some(x=>x.sql.includes("SET status=$3") && x.params?.includes("sent")),true);
-  assert.equal(db.calls.some(x=>x.sql.includes("result_images_sent=totals.result_confirmed")),true);
+  assert.equal(db.calls.some(x=>x.sql.includes("THEN totals.result_confirmed ELSE d.result_images_sent END")),true);
 });
 
 test("queue writes all images transactionally, never inserting a failed delivery row",async t=>{
