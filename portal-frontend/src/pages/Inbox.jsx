@@ -3898,6 +3898,85 @@ function Spinner({ className = "" }) {
   );
 }
 
+// Staff videos must not download from Render simply because chat history is opened.
+// Keep the same authenticated media URL and start playback on the actual click,
+// including on iOS where an effect-triggered play() may be blocked.
+function OnDemandInboxVideo({ src, uploading = false }) {
+  const playerRef = useRef(null);
+  const activeSourceRef = useRef(null);
+  const [requested, setRequested] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  function startPlayback() {
+    const player = playerRef.current;
+    if (!player || !src) return;
+
+    // Only the browser interaction assigns the historical video's source.
+    // React must not bind it again during the following state update.
+    // This keeps one click working in iOS Safari without restarting the fetch.
+    if (activeSourceRef.current !== src || player.error) {
+      if (player.error) {
+        player.removeAttribute("src");
+        player.load(); // Clear the failed resource before a deliberate retry.
+      }
+      player.src = src;
+      activeSourceRef.current = src;
+    }
+    setRequested(true);
+    setLoadError(false);
+
+    const playAttempt = player.play();
+    if (playAttempt && typeof playAttempt.catch === "function") {
+      playAttempt.catch((err) => {
+        // Safari may require a second tap. Leave its native controls enabled.
+        if (err?.name === "NotAllowedError" || err?.name === "AbortError") return;
+        setLoadError(true);
+      });
+    }
+  }
+
+  return (
+    <div className="relative mb-1.5">
+      <video
+        ref={playerRef}
+        controls={uploading || requested}
+        preload={uploading ? "metadata" : "none"}
+        playsInline
+        src={uploading ? src : undefined}
+        onError={() => {
+          if (!uploading && requested) setLoadError(true);
+        }}
+        onPlaying={() => setLoadError(false)}
+        className="min-h-36 max-h-72 w-full max-w-full rounded-lg bg-black"
+      />
+      {!uploading && !requested && (
+        <button
+          type="button"
+          onClick={startPlayback}
+          aria-label="Play video"
+          className="absolute inset-0 flex items-center justify-center gap-2 rounded-lg bg-black/75 px-4 text-sm font-semibold text-white hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+        >
+          <span aria-hidden="true" className="text-2xl">▶</span>
+          Play video
+        </button>
+      )}
+      {!uploading && requested && loadError && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" role="alert">
+          <span>Video could not play. Please try again.</span>
+          <button
+            type="button"
+            onClick={startPlayback}
+            className="rounded-lg border border-current px-3 py-2 font-semibold"
+          >
+            Retry video
+          </button>
+        </div>
+      )}
+      {uploading && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
+    </div>
+  );
+}
+
 function MessageBubble({
   contactId,
   channel,
@@ -4147,16 +4226,11 @@ function MessageBubble({
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : isVideo && videoSrc ? (
-          <div className="relative mb-1.5">
-            <video
-              controls
-              preload="metadata"
-              playsInline
-              src={videoSrc}
-              className="max-h-72 w-full max-w-full rounded-lg bg-black"
-            />
-            {message._uploading && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
-          </div>
+          <OnDemandInboxVideo
+            key={`${contactId}-${message.id}`}
+            src={videoSrc}
+            uploading={Boolean(message._uploading)}
+          />
         ) : isDocument ? (
           <a
             href={storedMediaSrc || undefined}

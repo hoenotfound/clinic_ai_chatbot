@@ -67,5 +67,22 @@ test("stored video forwarding preserves the original MIME type", () => {
 test("Inbox uses authenticated stored-media streaming for received videos", () => {
   assert.match(inboxSource, /const isVideo = mediaMimeType\.startsWith\("video\/"\)/);
   assert.match(inboxSource, /api\.messageMediaUrl\(contactId, message\.id\)/);
-  assert.match(inboxSource, /isVideo[\s\S]*videoSrc[\s\S]*<video[\s\S]*controls[\s\S]*playsInline/);
+  assert.match(inboxSource, /function OnDemandInboxVideo[\s\S]*<video[\s\S]*playsInline/);
+  assert.match(inboxSource, /isVideo && videoSrc[\s\S]*<OnDemandInboxVideo/);
+});
+
+test("historical Inbox videos defer their media source until a deliberate play action", () => {
+  assert.match(inboxSource, /function OnDemandInboxVideo\(/);
+  assert.match(inboxSource, /src=\{uploading \? src : undefined\}/);
+  assert.match(inboxSource, /activeSourceRef\.current !== src \|\| player\.error/);
+  assert.match(inboxSource, /player\.removeAttribute\("src"\)/);
+  assert.match(inboxSource, /Retry video/);
+  assert.match(inboxSource, /onError=\{\(\) =>/);
+  assert.match(inboxSource, /preload=\{uploading \? "metadata" : "none"\}/);
+  assert.match(inboxSource, /player\.src = src;[\s\S]*?player\.play\(\)/);
+  assert.match(inboxSource, /aria-label="Play video"/);
+  assert.match(inboxSource, /uploading=\{Boolean\(message\._uploading\)\}/);
+  // The existing authenticated media URL and outbound video sends are unchanged.
+  assert.match(inboxSource, /api\.messageMediaUrl\(contactId, message\.id\)/);
+  assert.match(conversationsRouteSource, /mediaStorage\.openMediaStream\(mediaRef\.media_key/);
 });
