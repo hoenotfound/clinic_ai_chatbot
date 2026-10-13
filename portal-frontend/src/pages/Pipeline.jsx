@@ -529,7 +529,7 @@ export default function Pipeline() {
 
   async function requestStageMove(lead, stage) {
     if (!canManageLeads || Number(lead.stage_id) === Number(stage.id)) return;
-    if (stage.stage_type === "won" || stage.stage_type === "lost") {
+    if (stage.stage_type === "won" || stage.stage_type === "lost" || stage.system_key === "appointment_set") {
       setPendingMove({ lead, stage });
       return;
     }
