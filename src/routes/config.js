@@ -413,6 +413,8 @@ function isAutomatedFollowUpConfig(value) {
       typeof value.assessmentFirstPricingEnabled !== "boolean") ||
     (value.videoDuplicateProtectionEnabled !== undefined &&
       typeof value.videoDuplicateProtectionEnabled !== "boolean") ||
+    (value.videoAiCaptionsEnabled !== undefined &&
+      typeof value.videoAiCaptionsEnabled !== "boolean") ||
     (value.freeEntry !== undefined && !isFreeEntryFollowUpConfig(value.freeEntry)) ||
     (value.whatsappFreeOnly !== undefined &&
       (!isPlainObject(value.whatsappFreeOnly) ||
@@ -811,6 +813,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     assessmentFirstPricingEnabled,
     // Internal per-clinic safety setting; ordinary Tools saves preserve it.
     videoDuplicateProtectionEnabled: current?.videoDuplicateProtectionEnabled === true,
+    videoAiCaptionsEnabled: current?.videoAiCaptionsEnabled === true,
     triggerMode,
     quietHours,
     ...firstStep,

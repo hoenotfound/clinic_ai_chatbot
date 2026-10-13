@@ -42,3 +42,34 @@ test("normal follow-up safely downgrades a duplicate or unverified video to text
   assert.match(code, /excludeMessageId: saved\.id/);
   assert.match(code, /if \(!eligible\) return false/);
 });
+
+
+test("suppressed videos are replaced by truthful treatment-matched text in every language", () => {
+  const { textOnlyVideoFallback } = require("../src/utils/followUpVideoPolicy");
+  for (const language of ["zh", "en", "ms"]) {
+    for (const stepIndex of [1, 2]) {
+      const pelvic = textOnlyVideoFallback({
+        language, serviceName: "骨盆调理", stepIndex,
+      });
+      const facial = textOnlyVideoFallback({
+        language, serviceName: "3D 小颜术", stepIndex,
+      });
+      assert.ok(pelvic.length > 30);
+      assert.ok(facial.length > 30);
+      assert.notEqual(pelvic, facial);
+      assert.doesNotMatch(pelvic, /这段影片|请看视频|attached video|video attached|video ini/iu);
+      assert.doesNotMatch(facial, /这段影片|请看视频|attached video|video attached|video ini/iu);
+      assert.doesNotMatch(facial, /体态评估|body assessment/iu);
+    }
+  }
+});
+
+test("video-first follow-up supports Neutro AI captions, social safety checks and safe fallback", () => {
+  const code = fs.readFileSync(path.join(__dirname, "../src/services/followUpService.js"), "utf8");
+  assert.match(code, /videoAiCaptionsEnabled/);
+  assert.match(code, /textOnlyVideoFallback\(/);
+  assert.match(code, /social.+caption/iu);
+  assert.match(code, /duplicateBeforeSend/);
+  assert.match(code, /excludeMessageId: videoMessage\.id/);
+  assert.match(code, /mediaKey: sourceVideoKey/);
+});
