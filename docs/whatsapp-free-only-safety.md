@@ -39,21 +39,32 @@ WhatsApp messages, and temporary billing holds must not trigger a delivery
 failure Telegram alert.
 
 The worker wakes from saved Meta pricing receipts, also checking its short
-retry schedule. It checks the account-wide free-billing gate before preparing
-each image, then uses the unchanged atomic provider send guard. It preserves
+retry schedule. It verifies the **free-form 24-hour service window** and the
+account-wide free-billing gate (not the after-24-hour template window) before
+preparing each image, then uses the unchanged atomic provider send guard. It preserves
 image order, waits for each earlier image's own free-billing receipt, and
 maintains the existing duplicate/unknown media protection. New customer
 messages, clinical review, opt-out, staff takeover, or Business App pending
 echoes cancel remaining optional images.
 
-After two minutes without verifiable free billing, optional images stop
-retrying and a staff review flag is created. Provider-accepted or ambiguous
-attempts are NEVER replayed automatically, including across restarts. An
-interrupted provider send becomes `unknown` after three minutes and requires
-human reconciliation. The result media audit uses `deferred` while images
-are awaiting proof, and records the number actually accepted afterward.
+The two-minute lifetime is absolute from when each image was queued, not
+from the last retry. An image is checked again before the provider upload is
+finally sent, so an old item cannot be revived by a restart or late billing
+callback. Expired/unresolved images require staff review. Provider-accepted or
+ambiguous attempts are NEVER replayed automatically, including across
+restarts. Interrupted provider sends become `unknown` after three minutes
+and require reconciliation.
 
-The original text reply is not delayed by this worker; pictures may arrive a
+The result audit stays `deferred` until Meta reports an actual `delivered`
+or `read` status, rather than counting a provider API acceptance as customer
+delivery. Failed Meta callbacks reduce confirmed totals and stop subsequent
+images. The database CHECK constraint for `deferred` is added by migration 069,
+along with the queued-message delivery receipt state.
+
+Queued images give short-term priority to other inbound WhatsApp jobs that
+have not yet produced an accepted reply; completed customer replies do not
+keep media queued. The original text reply is not delayed by this worker;
+pictures may arrive a
 few seconds later depending on Meta callback latency and image upload time.
 The Strict RM0 account-wide send reservation still applies, including to
 unrelated conversations. The queue does not make a global reservation
