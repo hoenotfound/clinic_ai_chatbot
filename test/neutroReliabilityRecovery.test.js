@@ -25,7 +25,8 @@ test("Strict RM0 reconciles an accepted free receipt without weakening billable 
       assert.match(sql, /pricing_type = 'free_entry_point'/);
       assert.match(sql, /e.billable = false/);
       assert.match(sql, /alarm.billable = true/);
-      assert.match(sql, /m.whatsapp_message_id = g.wamid/);
+      assert.match(sql, /g.reservation_id IS NOT NULL/);
+      assert.doesNotMatch(sql, /JOIN messages m/); // Meta receipt can precede local link
       assert.match(sql, /FOR UPDATE OF g/);
       assert.match(sql, /INSERT INTO whatsapp_free_only_reconciliations/);
       assert.deepEqual(params, ["1408739622311791", "2026-10-13T03:34:05.624Z"]);
