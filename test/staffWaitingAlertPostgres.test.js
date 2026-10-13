@@ -37,6 +37,14 @@ test(
           created_at TIMESTAMPTZ NOT NULL
         );
 
+        CREATE TABLE contact_notes (
+          id BIGSERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id),
+          author TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL
+        );
+
         CREATE TABLE telegram_immediate_alerts (
           id INTEGER PRIMARY KEY,
           contact_id INTEGER NOT NULL REFERENCES contacts(id),
@@ -125,6 +133,14 @@ test(
           delivery_status TEXT,
           created_at TIMESTAMPTZ NOT NULL
         );
+        CREATE TABLE contact_notes (
+          id BIGSERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id),
+          author TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL
+        );
+
         CREATE TABLE telegram_immediate_alerts (
           id INTEGER PRIMARY KEY,
           contact_id INTEGER NOT NULL REFERENCES contacts(id),
@@ -142,7 +158,11 @@ test(
           (64, 'ai', true, 'Staff follow-up required'),
           (65, 'ai', true, 'AI review requested: awaiting extra information'),
           (66, 'ai', true, 'Historical appointment needs verification'),
-          (67, 'human', false, NULL);
+          (67, 'human', false, NULL),
+          (68, 'ai', true, 'Historical CRM appointment missing date'),
+          (69, 'ai', true, 'Historical CRM appointment missing date'),
+          (70, 'ai', true, 'Staff follow-up required'),
+          (71, 'ai', true, 'Staff follow-up required');
         INSERT INTO messages(id,contact_id,role,sent_by_username,is_automated_follow_up,delivery_status,created_at) VALUES
           (111,58,'user',NULL,false,NULL,now()-interval '12 days'),
           (112,58,'assistant',NULL,false,'delivered',now()-interval '12 days'+interval '15 seconds'),
@@ -158,7 +178,18 @@ test(
           (181,65,'user',NULL,false,NULL,now()-interval '13 minutes'),
           (191,66,'user',NULL,false,NULL,now()-interval '13 minutes'),
           (201,67,'user',NULL,false,NULL,now()-interval '13 minutes'),
-          (202,67,'assistant',NULL,false,'delivered',now()-interval '12 minutes');
+          (202,67,'assistant',NULL,false,'delivered',now()-interval '12 minutes'),
+          (211,68,'user',NULL,false,NULL,now()-interval '13 minutes'),
+          (221,69,'user',NULL,false,NULL,now()-interval '13 minutes'),
+          (222,69,'assistant',NULL,false,'delivered',now()-interval '12 minutes'),
+          (231,70,'user',NULL,false,NULL,now()-interval '3 days'),
+          (241,71,'user',NULL,false,NULL,now()-interval '13 minutes'),
+          (242,71,'assistant',NULL,false,'delivered',now()-interval '12 minutes');
+        INSERT INTO contact_notes(contact_id,author,content,created_at) VALUES
+          (58,'System audit','Historical booking consistency review',now()-interval '1 day'),
+          (66,'System audit','Historical booking outcome review',now()-interval '2 minutes'),
+          (68,'System audit','Historical booking outcome review',now()-interval '1 day'),
+          (69,'System audit','Historical booking consistency review',now()-interval '1 day');
       `);
       const query = client.query.bind(client);
       const pending = await findWaitingStaffOwnedConversations(
@@ -166,13 +197,14 @@ test(
       );
       assert.deepEqual(
         pending.map((row) => Number(row.contact_id)).sort((a, b) => a - b),
-        [60,61,63,64,67],
+        [59,60,61,62,63,64,67,68,70,71],
         "staff takeover remains eligible, while an AI reply or historical review does not create an alert"
       );
       for (const [contactId, messageId, expected] of [
-        [58,111,false], [59,121,false], [60,131,true], [61,141,true],
-        [62,151,false], [63,161,true], [64,171,true],
+        [58,111,false], [59,121,true], [60,131,true], [61,141,true],
+        [62,151,true], [63,161,true], [64,171,true],
         [65,181,false], [66,191,false], [67,201,true],
+        [68,211,true], [69,221,false], [70,231,true], [71,241,true],
       ]) {
         assert.equal(await isStillWaitingForStaff(contactId,messageId,query), expected,
           `queue revalidation for ${contactId}`);
@@ -182,11 +214,26 @@ test(
         }, query), expected, `Telegram send-time guard for ${contactId}`);
       }
 
-      // AI replied after selection: even an already-queued reminder is cancelled.
+      // An AI acknowledgement is not a staff resolution. Actionable attention
+      // remains active until staff resolves the underlying request.
       await client.query(`
         INSERT INTO messages(id,contact_id,role,sent_by_username,is_automated_follow_up,delivery_status,created_at)
         VALUES (132,60,'assistant',NULL,false,'delivered',now()-interval '1 minute');
       `);
+      assert.equal(await isStillWaitingForStaff(60,131,query),true);
+      assert.equal(await shouldSendImmediateAlert({
+        contact_id:60,event_key:"staff_waiting:60:131",alert_type:"staff_waiting"
+      },query),true);
+
+      // A subsequent customer message is actionable despite a prior
+      // historical booking audit; a normal AI reply closes only that new
+      // admin-flagged enquiry, without clearing the administrative flag.
+      assert.equal(await isStillWaitingForStaff(68,211,query),true);
+      assert.equal(await isStillWaitingForStaff(69,221,query),false);
+      // No blanket 48-hour expiry is permitted for unresolved staff tasks.
+      assert.equal(await isStillWaitingForStaff(70,231,query),true);
+      // The explicit staff resolution stops future waiting alerts.
+      await client.query("UPDATE contacts SET needs_attention=false WHERE id=60");
       assert.equal(await isStillWaitingForStaff(60,131,query),false);
       assert.equal(await shouldSendImmediateAlert({
         contact_id:60,event_key:"staff_waiting:60:131",alert_type:"staff_waiting"
