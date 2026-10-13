@@ -126,6 +126,7 @@ test("Postgres: simultaneous strict reservations reconcile exactly once and perm
     else process.env.WHATSAPP_FEP_7DAY_VERIFIED = oldSevenDay;
   });
   const init = await pool.connect();
+  let initReleased = false;
   try {
     await init.query("CREATE SCHEMA " + schema);
     await init.query("SET search_path TO " + schema);
@@ -157,6 +158,7 @@ test("Postgres: simultaneous strict reservations reconcile exactly once and perm
     `);
     await init.query("RESET search_path");
     init.release();
+    initReleased = true;
 
     // Only eligibility/operational logging are stubbed. The account lock,
     // update, and proof/audit CTE are actual concurrent PostgreSQL operations.
@@ -211,7 +213,7 @@ test("Postgres: simultaneous strict reservations reconcile exactly once and perm
       check.release();
     }
   } finally {
-    if (!init.released) {
+    if (!initReleased) {
       await init.query("RESET search_path").catch(() => {});
       init.release();
     }
