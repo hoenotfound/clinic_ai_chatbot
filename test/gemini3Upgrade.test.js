@@ -51,6 +51,12 @@ test("background Gemini tasks are isolated from the customer reply model overrid
     leadScoringSource,
     /LEAD_SCORING_GEMINI_MODEL \|\| process\.env\.GEMINI_MODEL/
   );
+  // Background fallback must stay independent of an emergency rollback of the
+  // customer reply GEMINI_MODEL environment variable.
+  assert.doesNotMatch(
+    leadScoringSource,
+    /LEAD_SCORING_GEMINI_FALLBACK_MODEL[\s\S]{0,80}process\.env\.GEMINI_MODEL/
+  );
   // Scoring has a dedicated 3.6 primary and a 3.8 fallback; 3.8 rejects
   // minimal thinking, so model-specific selection is mandatory.
   assert.match(
