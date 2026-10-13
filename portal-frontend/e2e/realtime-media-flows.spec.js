@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 const STAFF_USER = {
   id: 2,
@@ -24,6 +25,10 @@ const ONE_PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlQ0xkAAAAASUVORK5CYII=",
   "base64"
 );
+
+// Real 1.5-second H.264 Baseline, yuv420p, fast-start MP4 (ffmpeg generated).
+const SHORT_H264_MP4 = Buffer.from(readFileSync(new URL("./fixtures/tiny-h264-mp4.base64", import.meta.url), "utf8").trim(), "base64");
+const SHORT_VP8_WEBM = Buffer.from(readFileSync(new URL("./fixtures/tiny-vp8-webm.base64", import.meta.url), "utf8").trim(), "base64");
 
 const PROGRESSIVE_JPEG = Buffer.from(
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wgARCAAQABADASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAABv/EABUBAQEAAAAAAAAAAAAAAAAAAAEC/9oADAMBAAIQAxAAAAEQnQJqP//EABYQAQEBAAAAAAAAAAAAAAAAAAQAEf/aAAgBAQABBQIw4w4w45Mv/8QAFxEBAAMAAAAAAAAAAAAAAAAABQAhMf/aAAgBAwEBPwENzLn/xAAYEQACAwAAAAAAAAAAAAAAAAABAwACEf/aAAgBAgEBPwFbhUaZ/8QAFxABAQEBAAAAAAAAAAAAAAAAADEBEf/aAAgBAQAGPwKIjuv/xAAXEAADAQAAAAAAAAAAAAAAAAAAATER/9oACAEBAAE/IZiImEphiR//2gAMAwEAAgADAAAAEMf/xAAVEQEBAAAAAAAAAAAAAAAAAAAAEf/aAAgBAwEBPxC4/8QAGBEBAAMBAAAAAAAAAAAAAAAAAQARITH/2gAIAQIBAT8QYPQarwJ//8QAGRABAQADAQAAAAAAAAAAAAAAAQARIfHB/9oACAEBAAE/EODbvG4MfCDKpf/Z",
@@ -1231,5 +1236,108 @@ test("optional compression can time out and send the valid original PNG", async 
   await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled({ timeout: 3000 });
   await page.getByRole("button", { name: "Send message" }).click();
   await expect.poll(() => apiState.mediaRequests.length).toBe(1);
+  expectNoUnexpectedApi(apiState);
+});
+
+function playbackFixture(testInfo) {
+  // Linux Playwright Chromium does not ship the proprietary H.264 decoder.
+  // Use real VP8 WebM there; iPhone/iPad WebKit exercise the real H.264 MP4.
+  const chromium = testInfo.project.name === "desktop-chromium";
+  return chromium
+    ? { body: SHORT_VP8_WEBM, mime: "video/webm" }
+    : { body: SHORT_H264_MP4, mime: "video/mp4" };
+}
+
+async function serveTinyVideo(route, { body, mime }) {
+  const rangeHeader = route.request().headers().range;
+  const match = /^bytes=([0-9]+)-([0-9]*)$/.exec(rangeHeader || "");
+  const start = match ? Number(match[1]) : 0;
+  const end = match && match[2] ? Math.min(Number(match[2]), body.length - 1) : body.length - 1;
+  const bytes = body.subarray(start, end + 1);
+  await route.fulfill({
+    status: match ? 206 : 200,
+    headers: {
+      "content-type": mime,
+      "accept-ranges": "bytes",
+      "content-length": String(bytes.length),
+      ...(match ? { "content-range": `bytes ${start}-${end}/${body.length}` } : {}),
+    },
+    body: bytes,
+  });
+}
+
+test("historical Inbox videos fetch only when staff explicitly plays real video", async ({ page }, testInfo) => {
+  const fixture = playbackFixture(testInfo);
+  const mediaGets = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      inboundMessage({ id: 1 }),
+      { ...inboundMessage({ id: 81, content: "Treatment explanation video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Customer testimonial video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+    ]]]),
+  });
+
+  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+    mediaGets.push(new URL(route.request().url()).pathname);
+    await serveTinyVideo(route, fixture);
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const videos = page.locator('section[aria-label="Conversation with Alex Customer"] video');
+  const play = page.getByRole("button", { name: "Play video" });
+  await expect(videos).toHaveCount(2);
+  await expect(play).toHaveCount(2);
+  await expect(videos.nth(0)).not.toHaveAttribute("src", /.+/);
+  await expect(videos.nth(1)).not.toHaveAttribute("src", /.+/);
+  await page.waitForTimeout(300);
+  expect(mediaGets).toEqual([]);
+
+  await play.first().click();
+  await expect(videos.nth(0)).toHaveAttribute("src", "/api/conversations/101/messages/81/media");
+  await expect.poll(() => mediaGets.some((path) => path.endsWith("/81/media"))).toBe(true);
+  await expect.poll(() => videos.nth(0).evaluate((element) => element.readyState)).toBeGreaterThan(1);
+  await expect.poll(() => videos.nth(0).evaluate((element) => element.currentTime)).toBeGreaterThan(0);
+  await expect(videos.nth(0)).toHaveJSProperty("controls", true);
+  expect(mediaGets.some((path) => path.endsWith("/82/media"))).toBe(false);
+  await expect(videos.nth(1)).not.toHaveAttribute("src", /.+/);
+  await expect(play).toHaveCount(1);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("failed historical Inbox video shows Retry and does not fetch other videos", async ({ page }, testInfo) => {
+  const fixture = playbackFixture(testInfo);
+  let attempts = 0;
+  const requestedIds = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      { ...inboundMessage({ id: 81, content: "Video to retry" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Other video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+    ]]]),
+  });
+  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    requestedIds.push(pathname);
+    if (pathname.endsWith("/81/media") && attempts++ === 0) {
+      return route.fulfill({ status: 503, contentType: "text/plain", body: "temporary failure" });
+    }
+    return serveTinyVideo(route, fixture);
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  expect(requestedIds).toEqual([]);
+  await page.getByRole("button", { name: "Play video" }).first().click();
+  await expect(page.getByRole("button", { name: "Retry video" })).toBeVisible();
+  await page.getByRole("button", { name: "Retry video" }).click();
+  const first = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
+  await expect.poll(() => first.evaluate((element) => element.readyState)).toBeGreaterThan(1);
+  await expect(page.getByRole("button", { name: "Retry video" })).toHaveCount(0);
+  expect(requestedIds.filter((path) => path.endsWith("/81/media")).length).toBeGreaterThanOrEqual(2);
+  expect(requestedIds.some((path) => path.endsWith("/82/media"))).toBe(false);
   expectNoUnexpectedApi(apiState);
 });
