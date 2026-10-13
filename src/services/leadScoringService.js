@@ -289,8 +289,7 @@ function createLeadScoringRunner({
 
           if (
             failure &&
-            !failure.terminal &&
-            repository === leadScoringRepo
+            !failure.terminal
           ) {
             const retryAfterCooldown = delayUntilTelegramRetry(err?.nextRetryAt, clock());
             scheduleWake(Math.max(
