@@ -29,6 +29,36 @@ Use a conservative 72-hour ceiling with a one-hour buffer (last send before hour
 
 **First-reply exception and limitations:** Strict mode permits the one Meta-qualified first text reply for a genuine CTWA ad referral while its initial 24-hour service window is still open. It does **not** send initial images, templates or voice as bootstrap messages, nor permit direct/organic/unverified/expired referrals. The first reply's actual free billing is still confirmed **after** Meta accepts/delivers it. If Meta rejects it or unexpectedly marks it billable, later strict-mode sends remain blocked. This is risk-managed sending based on Meta's first-reply rules, not a contractual zero-charge guarantee. Subsequent text replies and approved templates must wait for Meta confirmation; they can be briefly delayed.
 
+### Optional image deferral (initial customer replies)
+
+While Strict RM0 is enabled, the customer-facing AI **text** is sent without
+waiting for Meta pricing. Automatically selected pricing graphics (only when
+the customer explicitly asked about price) and Before & After examples go into
+the ordered `whatsapp_result_media_queue` table. These are not failed
+WhatsApp messages, and temporary billing holds must not trigger a delivery
+failure Telegram alert.
+
+The worker wakes from saved Meta pricing receipts, also checking its short
+retry schedule. It checks the account-wide free-billing gate before preparing
+each image, then uses the unchanged atomic provider send guard. It preserves
+image order, waits for each earlier image's own free-billing receipt, and
+maintains the existing duplicate/unknown media protection. New customer
+messages, clinical review, opt-out, staff takeover, or Business App pending
+echoes cancel remaining optional images.
+
+After two minutes without verifiable free billing, optional images stop
+retrying and a staff review flag is created. Provider-accepted or ambiguous
+attempts are NEVER replayed automatically, including across restarts. An
+interrupted provider send becomes `unknown` after three minutes and requires
+human reconciliation. The result media audit uses `deferred` while images
+are awaiting proof, and records the number actually accepted afterward.
+
+The original text reply is not delayed by this worker; pictures may arrive a
+few seconds later depending on Meta callback latency and image upload time.
+The Strict RM0 account-wide send reservation still applies, including to
+unrelated conversations. The queue does not make a global reservation
+disappear or guarantee Meta will charge RM0.
+
 ### Temporary strict-policy deferrals do not consume follow-up slots
 
 The scheduler runs a read-only billing preflight before claiming a slot. If
