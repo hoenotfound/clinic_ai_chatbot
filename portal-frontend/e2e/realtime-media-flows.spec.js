@@ -1285,7 +1285,7 @@ test("historical Inbox videos fetch only when staff explicitly plays a real MP4"
   expect(mediaGets).toEqual([]);
 
   await play.first().click();
-  await expect(videos.nth(0)).toHaveAttribute("src", /\\/api\\/conversations\\/101\\/messages\\/81\\/media$/);
+  await expect(videos.nth(0)).toHaveAttribute("src", "/api/conversations/101/messages/81/media");
   await expect.poll(() => mediaGets.some((path) => path.endsWith("/81/media"))).toBe(true);
   await expect.poll(() => videos.nth(0).evaluate((element) => element.readyState)).toBeGreaterThan(1);
   await expect(videos.nth(0)).toHaveJSProperty("controls", true);
