@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
@@ -53,7 +57,8 @@ jobs:
         run: find src scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: npm test
 
-  portal-checks:
+  # Run frontend checks separately from the three browser suites.
+  portal-static:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -69,9 +74,50 @@ jobs:
       - run: npm audit --audit-level=moderate
       - run: npm run lint
       - run: npm run build
+
+  portal-playwright:
+    name: playwright-${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: desktop-chromium
+            browser: chromium
+          - project: ipad-landscape
+            browser: webkit
+          - project: iphone-portrait
+            browser: webkit
+    defaults:
+      run:
+        working-directory: portal-frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal-frontend/package-lock.json
+      - run: npm ci
       - name: Install Playwright test runner
         run: npm install --no-save @playwright/test@1.55.0
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
+      - name: Install required Playwright browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
       - name: Run Playwright smoke tests
-        run: npx playwright test
+        run: npx playwright test --project=${{ matrix.project }}
+
+  # Keep the existing required check name and enforce every browser result.
+  portal-checks:
+    if: ${{ always() }}
+    needs: [portal-static, portal-playwright]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require static checks and all browser suites
+        env:
+          STATIC_RESULT: ${{ needs.portal-static.result }}
+          PLAYWRIGHT_RESULT: ${{ needs.portal-playwright.result }}
+        run: |
+          echo "Portal static checks: $STATIC_RESULT"
+          echo "Playwright browser suites: $PLAYWRIGHT_RESULT"
+          test "$STATIC_RESULT" = success && test "$PLAYWRIGHT_RESULT" = success
