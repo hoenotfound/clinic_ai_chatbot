@@ -4,7 +4,7 @@ const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
-const { scoreLeadConversation } = require("./leadScoringAiService");
+const { scoreLeadConversation, nextLeadScoringModelRetryAt, restoreLeadScoringModelCooldowns } = require("./leadScoringAiService");
 const telegramAlerts = require("./telegramAlertService");
 
 // Retained for compatibility and short failure retries. The worker no longer
@@ -18,6 +18,70 @@ const STALE_RECOVERY_GRACE_MS = 5 * 1000;
 let leadScoringTimer = null;
 let inactivityTimer = null;
 let staleRecoveryTimer = null;
+
+// Delayed, durable scoring/Telegram retries must survive unrelated early
+// conversation_changed wakes. An adaptive worker only owns one next wake,
+// and wake(0) replaces it. Keep independent retry deadlines, rearming the
+// nearest timer after each one fires without losing later retry deadlines.
+function createPinnedWakeScheduler({
+  wake,
+  now = Date.now,
+  setTimeoutImpl = setTimeout,
+  clearTimeoutImpl = clearTimeout,
+} = {}) {
+  if (typeof wake !== "function") throw new TypeError("Pinned scheduler needs a wake function");
+  const deadlines = new Set();
+  let timer = null;
+  let nextDueAt = null;
+
+  function arm() {
+    if (timer) clearTimeoutImpl(timer);
+    timer = null;
+    nextDueAt = deadlines.size ? Math.min(...deadlines) : null;
+    if (nextDueAt === null) return;
+    timer = setTimeoutImpl(() => {
+      timer = null;
+      nextDueAt = null;
+      const current = now();
+      for (const dueAt of deadlines) if (dueAt <= current) deadlines.delete(dueAt);
+      // Arm the next independent deadline even if this wake causes a run
+      // to overlap a newly arriving customer message.
+      arm();
+      wake(0);
+    }, Math.max(0, nextDueAt - now()));
+    timer?.unref?.();
+  }
+
+  function schedule(delayMs) {
+    const delay = Number(delayMs);
+    if (!Number.isFinite(delay) || delay < 0) return false;
+    const dueAt = now() + Math.round(delay);
+    if (deadlines.has(dueAt)) return false;
+    deadlines.add(dueAt);
+    if (nextDueAt === null || dueAt < nextDueAt) arm();
+    return true;
+  }
+
+  function clear() {
+    if (timer) clearTimeoutImpl(timer);
+    timer = null;
+    nextDueAt = null;
+    deadlines.clear();
+  }
+
+  function state() {
+    return { nextDueAt, pendingCount: deadlines.size };
+  }
+
+  return { schedule, clear, state };
+}
+
+const pinnedLeadScoringWakes = createPinnedWakeScheduler({
+  wake: () => wakeLeadScoring(0),
+});
+function schedulePinnedLeadScoringWake(delayMs) {
+  return pinnedLeadScoringWakes.schedule(delayMs);
+}
 
 function isValidTimestamp(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
@@ -167,10 +231,19 @@ function createLeadScoringRunner({
   recoverStaleTerminalFailures = repository === leadScoringRepo
     ? leadScoringFailureRecoveryRepo.recoverStaleTerminalProcessingFailures
     : null,
-  scheduleWake = wakeLeadScoring,
+  // Every run-side schedule is a delayed retry: keep it independently pinned
+  // rather than letting a newer immediate activity wake cancel it.
+  scheduleWake = schedulePinnedLeadScoringWake,
+  // Injected in tests. Only real Gemini scoring enforces its model cooldown:
+  // mock scoring/repositories keep their prior deterministic behavior.
+  getModelRetryAt = repository === leadScoringRepo && scoreConversation === scoreLeadConversation
+    ? nextLeadScoringModelRetryAt : () => null,
+  restoreModelCooldowns = repository === leadScoringRepo && scoreConversation === scoreLeadConversation
+    ? restoreLeadScoringModelCooldowns : null,
   clock = Date.now,
 } = {}) {
   let sweepRunning = false;
+  let modelCooldownRestored = false;
 
   return async function runLeadScoring() {
     if (sweepRunning) return;
@@ -191,6 +264,15 @@ function createLeadScoringRunner({
 
     sweepRunning = true;
     try {
+      if (!modelCooldownRestored && typeof restoreModelCooldowns === "function") {
+        try {
+          await restoreModelCooldowns({ clock });
+          modelCooldownRestored = true;
+        } catch (error) {
+          // A metrics outage must not disable scoring or customer replies.
+          console.warn("[Lead scoring] Could not restore model cooldowns:", error);
+        }
+      }
       const candidates = await repository.findCandidates({
         ...settings,
         limit: LEAD_SCORING_BATCH_SIZE,
@@ -200,6 +282,15 @@ function createLeadScoringRunner({
       for (const candidate of candidates) {
         const liveSettings = settingsGetter();
         if (!liveSettings || liveSettings.activatedAt !== settings.activatedAt) break;
+
+        const nextModelRetry = getModelRetryAt(clock());
+        if (nextModelRetry) {
+          const delay = delayUntilTelegramRetry(nextModelRetry, clock());
+          if (delay !== null) scheduleWake(delay + 250);
+          // Do not claim a lead while every Gemini model is cooling down.
+          // Claiming increments durable attempts, even when no API is called.
+          break;
+        }
 
         const claim = await repository.claimCandidate(candidate);
         if (!claim) continue;
@@ -268,7 +359,10 @@ function createLeadScoringRunner({
             }
           }
         } catch (err) {
-          const failure = await repository.markScoreFailed(claim.id, err);
+          const failure = err?.deferLeadScoringRetry === true &&
+            typeof repository.markScoreDeferred === "function"
+            ? await repository.markScoreDeferred(claim.id, err)
+            : await repository.markScoreFailed(claim.id, err);
           console.error(
             `Lead scoring failed for lead ${candidate.lead_id}:`,
             err
@@ -276,10 +370,13 @@ function createLeadScoringRunner({
 
           if (
             failure &&
-            !failure.terminal &&
-            repository === leadScoringRepo
+            !failure.terminal
           ) {
-            wakeLeadScoring(leadScoringRepo.FAILED_RETRY_MINUTES * 60 * 1000);
+            const retryAfterCooldown = delayUntilTelegramRetry(err?.nextRetryAt, clock());
+            scheduleWake(Math.max(
+              leadScoringRepo.FAILED_RETRY_MINUTES * 60 * 1000,
+              retryAfterCooldown == null ? 0 : retryAfterCooldown + 250
+            ));
           }
 
           // A permanently failed AI score must not make the lead disappear from
@@ -451,6 +548,7 @@ function startLeadScoring() {
     return () => {
       clearInactivityTimer();
       clearStaleRecoveryTimer();
+      pinnedLeadScoringWakes.clear();
       leadScoringTimer.stop();
     };
   }
@@ -468,6 +566,7 @@ function startLeadScoring() {
   return () => {
     clearInactivityTimer();
     clearStaleRecoveryTimer();
+    pinnedLeadScoringWakes.clear();
     stopWorker();
   };
 }
@@ -499,6 +598,7 @@ module.exports = {
   STALE_RECOVERY_GRACE_MS,
   buildScoringFailureFallback,
   createLeadScoringRunner,
+  createPinnedWakeScheduler,
   delayUntilTelegramRetry,
   ensureConversationAnalysisActivation,
   getActiveSettings,

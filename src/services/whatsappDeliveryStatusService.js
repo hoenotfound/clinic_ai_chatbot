@@ -1,6 +1,7 @@
 const messagesRepo = require("../db/messagesRepo");
 const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
+const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
@@ -101,7 +102,14 @@ function createWhatsAppDeliveryStatusService({
     const stored = await repo.storeBatch(updates);
     // Wake deferred result media immediately after durable Meta pricing is saved.
     // This does not await image sending or slow webhook acknowledgement.
-    if (updates?.some(update => update?.pricingType)) whatsappResultMediaQueue.wake(0);
+    if (updates?.some(update => update?.pricingType)) {
+      whatsappResultMediaQueue.wake(0);
+      // The webhook can arrive minutes before another outbound send. Clear
+      // only proof-backed gates immediately, without waiting on Telegram.
+      Promise.resolve().then(() => whatsappZeroCostGuard.reconcileConfirmedGate())
+        .then((released) => { if (released) whatsappResultMediaQueue.wake(0); })
+        .catch((err) => logger.error("[WhatsApp free-only] Gate reconciliation failed:", err));
+    }
     // Never delay a webhook or drop persisted pricing evidence if Telegram
     // is unavailable. Durable alerts will be retried by recovery.
     if (updates?.some((update) => update?.pricingBillable === true)) {
@@ -347,6 +355,12 @@ function createWhatsAppDeliveryStatusService({
         await billingAlerts.flush();
       } catch (err) {
         logger.error("[WhatsApp free-only] Billing alert recovery failed:", err);
+      }
+      try {
+        const released = await whatsappZeroCostGuard.reconcileConfirmedGate();
+        if (released) whatsappResultMediaQueue.wake(0);
+      } catch (err) {
+        logger.error("[WhatsApp free-only] Recovery could not reconcile gate:", err);
       }
       const pendingBillingAlerts = await billingAlerts.pending();
       await maybePruneCompleted();

@@ -1025,6 +1025,7 @@ FOLLOW-UP SALES RULES:
 - Never invent or guess prices, promotions, availability, booking status, treatment results, medical advice, diagnosis, or business facts.
 - Do not use guaranteed or absolute treatment-result language.
 - A follow-up never confirms an appointment, slot, offer validity, or other staff-dependent action by itself.
+${Array.isArray(config.branches) && config.branches.filter((item) => String(item?.name || "").trim()).length === 1 ? "- This business has exactly ONE branch. Never ask which branch, outlet, 分行, 分店 or cawangan the customer prefers. When inviting a visit, refer to the one configured location or ask only which day/time suits them." : ""}
 ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- For this clinic, NEVER write a treatment, original, package, discounted or first-trial price in an unsolicited follow-up, even if pricing was discussed earlier. A relevant pelvic assessment invitation may mention only the RM100 voucher for attending, not a package price. Never claim the assessment or trial is free or that discounts can stack." : ""}
 
 DECIDE THE ACTION:

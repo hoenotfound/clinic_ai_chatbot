@@ -53,11 +53,26 @@ const VERIFIED_WINDOW_SQL = `
           AND earlier.created_at>=first_reply.created_at
           AND earlier.created_at<$2::timestamptz
           AND earlier.id IS DISTINCT FROM $4::integer
-          -- A prior unresolved message can be set aside only by an audited
-          -- operator who checked Meta Billing Hub for that exact send.
+          -- Manual Billing Hub verification and automatic Meta provider
+          -- receipt proof are DISTINCT. A provider callback alone never
+          -- impersonates an operator's Billing Hub inspection.
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_free_only_reconciliations audit
-            WHERE audit.message_id=earlier.id AND audit.verified_billing_hub=true
+            WHERE audit.message_id=earlier.id AND (
+              (audit.verified_billing_hub=true
+                AND audit.actor NOT IN ('automatic_verified_receipt','evidence_reconciliation'))
+              OR
+              (audit.actor IN ('automatic_verified_receipt','evidence_reconciliation')
+                AND audit.provider_pricing_type='free_entry_point'
+                AND audit.provider_billable=false
+                AND EXISTS (
+                  SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                  WHERE receipt.wamid=audit.wamid
+                    AND receipt.pricing_type='free_entry_point'
+                    AND receipt.billable=false
+                    AND receipt.delivery_status IN ('sent','delivered','read')
+                ))
+            )
           )
           AND (earlier.whatsapp_message_id IS NULL
             OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
@@ -74,7 +89,21 @@ const VERIFIED_WINDOW_SQL = `
           AND attempt.id IS DISTINCT FROM $5::bigint
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_free_only_reconciliations audit
-            WHERE audit.attempt_id=attempt.id AND audit.verified_billing_hub=true
+            WHERE audit.attempt_id=attempt.id AND (
+              (audit.verified_billing_hub=true
+                AND audit.actor NOT IN ('automatic_verified_receipt','evidence_reconciliation'))
+              OR
+              (audit.actor IN ('automatic_verified_receipt','evidence_reconciliation')
+                AND audit.provider_pricing_type='free_entry_point'
+                AND audit.provider_billable=false
+                AND EXISTS (
+                  SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                  WHERE receipt.wamid=audit.wamid
+                    AND receipt.pricing_type='free_entry_point'
+                    AND receipt.billable=false
+                    AND receipt.delivery_status IN ('sent','delivered','read')
+                ))
+            )
           )
           AND attempt.status IN ('sending','unknown')
       )
@@ -453,25 +482,15 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     }
 
     if (gate.status !== "idle") {
-      if (gate.status === "awaiting_pricing" && gate.wamid) {
-        const priced = (await client.query(
-          `SELECT pricing_type,billable,delivery_status
-           FROM whatsapp_free_entry_pricing_evidence WHERE wamid=$1`,
-          [gate.wamid])).rows[0];
-        if (priced?.pricing_type==="free_entry_point" && priced.billable===false &&
-            ["sent","delivered","read"].includes(priced.delivery_status)) {
-          await client.query(
-            `UPDATE whatsapp_free_only_send_gate SET status='idle',
-               reservation_id=NULL,wamid=NULL,recipient=NULL,
-               message_id=NULL,attempt_id=NULL,updated_at=now()
-             WHERE phone_number_id=$1`,[account]);
-        } else {
-          rejected=deny("zero_cost_previous_send_unreconciled",
-            "WhatsApp free-only blocked: another message is awaiting Meta's confirmed free billing.");
-        }
-      } else {
+      // The existing reservation row is locked by this transaction. Reuse the
+      // same evidence-backed, audited release used by webhook recovery rather
+      // than bypassing its reservation and account-wide billing checks.
+      const released = gate.status === "awaiting_pricing" && gate.wamid
+        ? await reconcileConfirmedGate(client)
+        : false;
+      if (!released) {
         rejected=deny("zero_cost_previous_send_unreconciled",
-          "WhatsApp free-only blocked: a previous or concurrent send has not been reconciled.");
+          "WhatsApp free-only blocked: another send is awaiting Meta's confirmed free billing.");
       }
     }
 
@@ -598,6 +617,12 @@ async function complete(reservationId,result, database=pool) {
            wamid=$3,updated_at=now()
          WHERE phone_number_id=$1 AND reservation_id=$2`,
         [account,reservationId,result.wamid]);
+      // A confirmed pricing webhook may have arrived before local finalization.
+      // Release only verified nonbillable reservations; never wait for this
+      // best-effort housekeeping query before returning provider acceptance.
+      Promise.resolve().then(() => reconcileConfirmedGate(database))
+        .catch((error) => console.error(
+          "[WhatsApp free-only] Deferred gate reconciliation failed:", error));
     } else if (definitelyRejected(result)) {
       await database.query(
         `UPDATE whatsapp_free_only_send_gate SET status='idle',
@@ -619,6 +644,61 @@ async function complete(reservationId,result, database=pool) {
   }
 }
 
+// Reconcile only a provider-confirmed, nonbillable reservation. A timeout,
+// missing receipt, billed message, or UNKNOWN reservation must stay blocked.
+// Never depend on messages.whatsapp_message_id being committed here: Meta can
+// deliver the pricing webhook before local outbound persistence finishes.
+// The gate's WAMID originates from a provider-accepted reservation, so joining
+// it to Meta's durable pricing evidence is the authoritative billing proof.
+// Re-running this query is safe across duplicate Meta webhooks and restarts.
+async function reconcileConfirmedGate(database = pool) {
+  if (!enabled()) return false;
+  const account = configuredAccount();
+  const activatedAt = Date.parse(settings()?.activatedAt || "");
+  if (!account || !Number.isFinite(activatedAt)) return false;
+  const proof = await database.query(`
+    WITH confirmed AS (
+      SELECT g.phone_number_id, g.reservation_id, g.status AS prior_status,
+             g.wamid, g.message_id, g.attempt_id, e.pricing_type, e.billable
+        FROM whatsapp_free_only_send_gate g
+        JOIN whatsapp_free_entry_pricing_evidence e ON e.wamid = g.wamid
+       WHERE g.phone_number_id = $1 AND g.status = 'awaiting_pricing'
+         AND g.reservation_id IS NOT NULL
+         AND e.pricing_type = 'free_entry_point' AND e.billable = false
+         AND e.delivery_status IN ('sent','delivered','read')
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_free_entry_pricing_evidence alarm
+            WHERE alarm.billable = true AND alarm.updated_at >= $2::timestamptz
+         )
+       FOR UPDATE OF g
+    ), released AS (
+      UPDATE whatsapp_free_only_send_gate g
+         SET status = 'idle', reservation_id = NULL, wamid = NULL,
+             recipient = NULL, message_id = NULL, attempt_id = NULL,
+             updated_at = now()
+        FROM confirmed c
+       WHERE g.phone_number_id = c.phone_number_id
+         AND g.status = c.prior_status AND g.wamid = c.wamid
+         AND g.reservation_id IS NOT DISTINCT FROM c.reservation_id
+      RETURNING c.*
+    ), audit AS (
+      INSERT INTO whatsapp_free_only_reconciliations (
+        phone_number_id, reservation_id, prior_status, wamid,
+        message_id, attempt_id, actor, reason, verified_billing_hub,
+        provider_pricing_type, provider_billable, reconciled_at
+      )
+      SELECT phone_number_id, reservation_id, prior_status, wamid,
+             message_id, attempt_id, 'automatic_verified_receipt',
+             'Automated Meta provider receipt; NOT manual Billing Hub inspection',
+             false, pricing_type, billable, now()
+        FROM released
+      RETURNING id
+    )
+    SELECT count(*)::integer AS released FROM audit
+  `, [account, new Date(activatedAt).toISOString()]);
+  return Number(proof.rows?.[0]?.released || 0) > 0;
+}
+
 async function perform(to, operation, context = {}) {
   const check=await reserve(to,{ context });
   if (!check.allowed) return blockedResult(check);
@@ -634,6 +714,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,perform,
+  blockedResult,configuredAccount,enabled,settings,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
