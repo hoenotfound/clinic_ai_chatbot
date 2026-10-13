@@ -19,6 +19,70 @@ let leadScoringTimer = null;
 let inactivityTimer = null;
 let staleRecoveryTimer = null;
 
+// Delayed, durable scoring/Telegram retries must survive unrelated early
+// conversation_changed wakes. An adaptive worker only owns one next wake,
+// and wake(0) replaces it. Keep independent retry deadlines, rearming the
+// nearest timer after each one fires without losing later retry deadlines.
+function createPinnedWakeScheduler({
+  wake,
+  now = Date.now,
+  setTimeoutImpl = setTimeout,
+  clearTimeoutImpl = clearTimeout,
+} = {}) {
+  if (typeof wake !== "function") throw new TypeError("Pinned scheduler needs a wake function");
+  const deadlines = new Set();
+  let timer = null;
+  let nextDueAt = null;
+
+  function arm() {
+    if (timer) clearTimeoutImpl(timer);
+    timer = null;
+    nextDueAt = deadlines.size ? Math.min(...deadlines) : null;
+    if (nextDueAt === null) return;
+    timer = setTimeoutImpl(() => {
+      timer = null;
+      nextDueAt = null;
+      const current = now();
+      for (const dueAt of deadlines) if (dueAt <= current) deadlines.delete(dueAt);
+      // Arm the next independent deadline even if this wake causes a run
+      // to overlap a newly arriving customer message.
+      arm();
+      wake(0);
+    }, Math.max(0, nextDueAt - now()));
+    timer?.unref?.();
+  }
+
+  function schedule(delayMs) {
+    const delay = Number(delayMs);
+    if (!Number.isFinite(delay) || delay < 0) return false;
+    const dueAt = now() + Math.round(delay);
+    if (deadlines.has(dueAt)) return false;
+    deadlines.add(dueAt);
+    if (nextDueAt === null || dueAt < nextDueAt) arm();
+    return true;
+  }
+
+  function clear() {
+    if (timer) clearTimeoutImpl(timer);
+    timer = null;
+    nextDueAt = null;
+    deadlines.clear();
+  }
+
+  function state() {
+    return { nextDueAt, pendingCount: deadlines.size };
+  }
+
+  return { schedule, clear, state };
+}
+
+const pinnedLeadScoringWakes = createPinnedWakeScheduler({
+  wake: () => wakeLeadScoring(0),
+});
+function schedulePinnedLeadScoringWake(delayMs) {
+  return pinnedLeadScoringWakes.schedule(delayMs);
+}
+
 function isValidTimestamp(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
@@ -167,7 +231,9 @@ function createLeadScoringRunner({
   recoverStaleTerminalFailures = repository === leadScoringRepo
     ? leadScoringFailureRecoveryRepo.recoverStaleTerminalProcessingFailures
     : null,
-  scheduleWake = wakeLeadScoring,
+  // Every run-side schedule is a delayed retry: keep it independently pinned
+  // rather than letting a newer immediate activity wake cancel it.
+  scheduleWake = schedulePinnedLeadScoringWake,
   // Injected in tests. Only real Gemini scoring enforces its model cooldown:
   // mock scoring/repositories keep their prior deterministic behavior.
   getModelRetryAt = repository === leadScoringRepo && scoreConversation === scoreLeadConversation
@@ -482,6 +548,7 @@ function startLeadScoring() {
     return () => {
       clearInactivityTimer();
       clearStaleRecoveryTimer();
+      pinnedLeadScoringWakes.clear();
       leadScoringTimer.stop();
     };
   }
@@ -499,6 +566,7 @@ function startLeadScoring() {
   return () => {
     clearInactivityTimer();
     clearStaleRecoveryTimer();
+    pinnedLeadScoringWakes.clear();
     stopWorker();
   };
 }
@@ -530,6 +598,7 @@ module.exports = {
   STALE_RECOVERY_GRACE_MS,
   buildScoringFailureFallback,
   createLeadScoringRunner,
+  createPinnedWakeScheduler,
   delayUntilTelegramRetry,
   ensureConversationAnalysisActivation,
   getActiveSettings,
