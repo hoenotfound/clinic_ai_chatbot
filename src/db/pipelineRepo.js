@@ -614,7 +614,9 @@ async function updateLead(id, patch, actor) {
     // CRM booking resolves ONLY the stale Booking Ready attention flag.
     // Run after the lead transaction so we never take the contact lock while
     // holding the lead lock (booking-ready outcomes use the opposite order).
-    if (updatedLead.contact_id && ["set", "visited"].includes(updatedLead.appointment_status)) {
+    const bookingChangeRequested = Object.hasOwn(patch, "appointmentStatus") || Object.hasOwn(patch, "stageId");
+    if (bookingChangeRequested && updatedLead.contact_id &&
+        ["set", "visited"].includes(updatedLead.appointment_status)) {
       try {
         const cleared = await pool.query(
           `UPDATE contacts c
