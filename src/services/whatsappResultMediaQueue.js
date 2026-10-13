@@ -157,6 +157,15 @@ async function reconcileProviderDelivery(wamid, db = pool) {
   return changed.rows;
 }
 
+async function isQueuedMessage(messageId, db = pool) {
+  if (!Number.isSafeInteger(Number(messageId))) return false;
+  const response = await db.query(
+    "SELECT 1 FROM whatsapp_result_media_queue WHERE message_id=$1 LIMIT 1",
+    [messageId]
+  );
+  return response.rowCount > 0;
+}
+
 function queueExpired(row, now = Date.now()) {
   const started = new Date(row?.created_at).getTime();
   return !Number.isFinite(started) || now - started >= MAX_BILLING_WAIT_MS;
@@ -456,5 +465,5 @@ function start() {
 
 module.exports={
   enqueue,runOne,start,wake,isTemporaryBillingBlock,
-  reconcileAudit,reconcileProviderDelivery,queueExpired,sweepStaleAndBlocked,MAX_BILLING_WAIT_MS,
+  reconcileAudit,reconcileProviderDelivery,isQueuedMessage,queueExpired,sweepStaleAndBlocked,MAX_BILLING_WAIT_MS,
 };
