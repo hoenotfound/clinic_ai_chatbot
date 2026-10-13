@@ -208,14 +208,18 @@ async function sweepStaleAndBlocked(db = pool) {
   }
 }
 
-async function runOne({ db=pool, sender=channelMessaging.sendImageByUrl }={}) {
+async function runOne({
+  db=pool,
+  sender=channelMessaging.sendImageByUrl,
+  eligibility=eligibleForOptionalImage,
+}={}) {
   await sweepStaleAndBlocked(db);
   const row = await claimNext(db);
   if (!row) return false;
   let message = null;
   let providerResult = null;
   try {
-    const contact = await eligibleForOptionalImage(row,db);
+    const contact = await eligibility(row,db);
     if (!contact) {
       await closeItem(row,"skipped","conversation_changed_or_staff_review",{db});
       return true;
