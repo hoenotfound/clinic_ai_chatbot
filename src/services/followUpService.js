@@ -1372,7 +1372,8 @@ async function sendCandidate(candidate) {
 
   // Avoid sending a video that staff, an earlier follow-up or another
   // automated system has already shared. Preserve the helpful text instead.
-  if (effectiveVideoKey) {
+  if (effectiveVideoKey &&
+      clinicConfig.automatedFollowUp?.videoDuplicateProtectionEnabled === true) {
     try {
       if (await previouslySentVideo({ database: pool,
         contactId: candidate.contact_id, mediaKey: effectiveVideoKey })) {
@@ -1466,7 +1467,8 @@ async function sendCandidate(candidate) {
       contactId: candidate.contact_id,
     });
     if (!eligible) return false;
-    if (durableVideoKey) {
+    if (durableVideoKey &&
+        clinicConfig.automatedFollowUp?.videoDuplicateProtectionEnabled === true) {
       // A different worker/manual reply may have sent the same video after
       // the initial check. Fail closed before a provider request is made.
       try {
