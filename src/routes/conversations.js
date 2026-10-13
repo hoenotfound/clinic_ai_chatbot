@@ -2145,8 +2145,8 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
           null,
           username,
           sourceMessage.media_url || null,
-          targetMediaKey
-            ? { mimeType: sourceMessage.media_mime_type }
+          (targetMediaKey || (sourceMessage.media_url && sourceMimeType.startsWith("image/")))
+            ? { mimeType: sourceMessage.media_mime_type || "image/jpeg" }
             : null,
           {
             isForwarded: true,
