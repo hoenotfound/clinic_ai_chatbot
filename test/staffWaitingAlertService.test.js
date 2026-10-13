@@ -59,7 +59,12 @@ test("waiting candidate uses the latest unanswered message but suppresses an alr
 
   assert.deepEqual(result, rows);
   assert.deepEqual(captured.params, [STAFF_WAITING_MINUTES, STAFF_WAITING_BATCH_SIZE]);
-  assert.match(captured.sql, /c\.mode = 'human' OR \(c\.needs_attention = true/);
+  assert.match(captured.sql, /c\\.mode = 'human'/);
+  assert.match(captured.sql, /c\\.needs_attention = true/);
+  assert.match(captured.sql, /NOT ILIKE 'Historical %'/);
+  assert.match(captured.sql, /ai_answer\\.sent_by_username IS NULL/);
+  assert.match(captured.sql, /ai_answer\\.is_automated_follow_up = false/);
+  assert.match(captured.sql, /48 hours/);
   assert.match(captured.sql, /latest_waiting\.created_at <=/);
   assert.match(captured.sql, /latest_waiting\.id AS waiting_since_message_id/);
   assert.match(captured.sql, /ORDER BY m\.created_at DESC, m\.id DESC/);
@@ -82,7 +87,12 @@ test("revalidation keeps Staff mode or outstanding attention eligible until a va
 
   assert.equal(waiting, true);
   assert.deepEqual(captured.params, [12, 45]);
-  assert.match(captured.sql, /c\.mode = 'human' OR \(c\.needs_attention = true/);
+  assert.match(captured.sql, /c\\.mode = 'human'/);
+  assert.match(captured.sql, /c\\.needs_attention = true/);
+  assert.match(captured.sql, /NOT ILIKE 'Historical %'/);
+  assert.match(captured.sql, /ai_answer\\.sent_by_username IS NULL/);
+  assert.match(captured.sql, /ai_answer\\.is_automated_follow_up = false/);
+  assert.match(captured.sql, /48 hours/);
   assert.match(captured.sql, /outbound\.role = 'assistant'/);
   assert.match(captured.sql, /outbound\.sent_by_username IS NOT NULL/);
   assert.match(captured.sql, /outbound\.is_automated_follow_up = false/);
