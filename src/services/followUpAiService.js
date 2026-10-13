@@ -29,7 +29,7 @@ function asksForNonexistentBranchChoice(message, branches = clinicConfig.branche
     .filter((branch) => String(branch?.name || "").trim());
   if (configured.length !== 1) return false;
   const text = String(message || "");
-  return /(?:哪.{0,12}(?:分行|分店)|(?:which|what)\s+(?:branch|outlet)|(?:branch|outlet)\s+(?:do\s+you|would\s+you|you\s+want)|cawangan\s+(?:mana|yang\s+mana))/iu.test(text);
+  return /(?:哪.{0,12}(?:分行|分店|门店|門店|店面|间店|間店|家店)|(?:分行|分店|门店|門店).{0,12}(?:哪.{0,5}(?:间|間|个|個|边|邊)|你(?:想|要)去哪)|(?:which|what)\s+(?:of\s+our\s+)?(?:branch|branches|outlet|outlets|location|locations)|(?:branch|outlet|location)\s+(?:do\s+you|would\s+you|you\s+want|suits?\s+you)|(?:which|where)\s+(?:one\s+of\s+our\s+)?(?:clinics?|stores?)\s+(?:would\s+you|do\s+you)|(?:cawangan|lokasi)\s+(?:yang\s+)?mana|mana\s+(?:satu\s+)?(?:cawangan|lokasi))/iu.test(text);
 }
 
 function cleanContent(value) {
