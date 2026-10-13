@@ -877,17 +877,20 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
       return res.status(400).json({ error: "Invalid contact or message id." });
     }
 
-    // The router is session-authenticated; also enforce lead-level access before
-    // reading an attachment or issuing a portable, time-limited capability URL.
-    if (!await canAccessContact(req.user, contactId)) {
-      return res.status(403).json({ error: "Not authorized to access this conversation." });
-    }
     const mediaRef = await messagesRepo.getMessageMediaReferenceForContact(
       contactId,
       messageId
     );
     if (!mediaRef) {
       return res.status(404).json({ error: "Message attachment not found." });
+    }
+
+    // Protect signed R2 and forced-Render delivery for opted-in MP4 playback.
+    // Other clinics and their audio, image and document access remain unchanged.
+    const mp4DirectMode = process.env.INBOX_DIRECT_R2_VIDEO_ENABLED === "true" &&
+      String(mediaRef.media_mime_type || "").split(";")[0].trim().toLowerCase() === "video/mp4";
+    if (mp4DirectMode && !await canAccessContact(req.user, contactId)) {
+      return res.status(403).json({ error: "Not authorized to access this conversation." });
     }
 
     // Preserve the original validation (416) before any signed redirect.

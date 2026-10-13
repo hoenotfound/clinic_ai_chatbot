@@ -59,8 +59,9 @@ test("direct signed R2 video is authorized by route, ownership-checked, and shor
   const route = source.slice(source.indexOf('router.get("/:contactId/messages/:messageId/media"'),
     source.indexOf('router.post("/:contactId/takeover"'));
   assert.ok(route.indexOf("canAccessContact(req.user, contactId)") >= 0);
-  assert.ok(route.indexOf("canAccessContact(req.user, contactId)") < route.indexOf("getMessageMediaReferenceForContact"));
-  assert.ok(route.indexOf("getMessageMediaReferenceForContact") < route.indexOf("tryDirectInboxVideo"));
+  assert.ok(route.indexOf("getMessageMediaReferenceForContact") < route.indexOf("canAccessContact(req.user, contactId)"));
+  assert.ok(route.indexOf("canAccessContact(req.user, contactId)") < route.indexOf("tryDirectInboxVideo"));
+  assert.match(route, /mp4DirectMode && !await canAccessContact/);
 });
 
 test("missing ownership, wrong R2 MIME, and empty objects retain Render fallback", async () => {

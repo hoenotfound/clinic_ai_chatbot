@@ -28,7 +28,10 @@ test("Inbox media HTTP route enforces staff access and ownership before signing,
   access.canAccessContact = async (user, contactId) => allowed && user?.username === "staff" && contactId === 101;
   messagesRepo.getMessageMediaReferenceForContact = async (contactId, messageId) => {
     lookups++;
-    return contactId === 101 && messageId === 81 ? mediaRef : null;
+    return contactId === 101 && messageId === 81 ? mediaRef :
+      contactId === 101 && messageId === 83
+        ? { media_key: "messages/101/old-audio.mp3", media_mime_type: "audio/mpeg" }
+        : null;
   };
   storage.isOwnedStoredMediaKey = () => true;
   storage.headMediaObject = async () => {
@@ -81,8 +84,19 @@ test("Inbox media HTTP route enforces staff access and ownership before signing,
 
   let r = await get("/101/messages/81/media");
   assert.equal(r.status, 403);
-  assert.equal(lookups, 0);
+  assert.equal(lookups, 1);
   assert.equal(signCalls, 0);
+
+  r = await get("/101/messages/81/media?delivery=proxy");
+  assert.equal(r.status, 403);
+  assert.equal(streams, 0);
+
+  // Audio remains on the original path with the same access behavior.
+  r = await get("/101/messages/83/media");
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), "abcdefghij");
+  assert.equal(signCalls, 0);
+  assert.equal(headCalls, 0);
 
   allowed = true;
   r = await get("/101/messages/82/media");
@@ -100,19 +114,20 @@ test("Inbox media HTTP route enforces staff access and ownership before signing,
   assert.equal(r.headers.get("referrer-policy"), "no-referrer");
   assert.equal(headCalls, 1);
   assert.equal(signCalls, 1);
-  assert.equal(streams, 0);
+  assert.equal(streams, 1); // The audio request was streamed unchanged.
 
   r = await get("/101/messages/81/media?delivery=proxy", { headers: { Range: "bytes=0-2" } });
   assert.equal(r.status, 206);
   assert.equal(r.headers.get("content-range"), "bytes 0-2/10");
   assert.equal(await r.text(), "abc");
   assert.equal(signCalls, 1);
-  assert.equal(streams, 1);
+  assert.equal(streams, 2);
 
   process.env.INBOX_DIRECT_R2_VIDEO_ENABLED = "false";
+  allowed = false; // No new permission gate for deployments without direct video.
   r = await get("/101/messages/81/media");
   assert.equal(r.status, 200);
   assert.equal(await r.text(), "abcdefghij");
   assert.equal(signCalls, 1);
-  assert.equal(streams, 2);
+  assert.equal(streams, 3);
 });
