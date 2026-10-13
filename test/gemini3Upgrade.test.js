@@ -51,9 +51,11 @@ test("background Gemini tasks are isolated from the customer reply model overrid
     leadScoringSource,
     /LEAD_SCORING_GEMINI_MODEL \|\| process\.env\.GEMINI_MODEL/
   );
+  // Scoring has a dedicated 3.6 primary and a 3.8 fallback; 3.8 rejects
+  // minimal thinking, so model-specific selection is mandatory.
   assert.match(
     leadScoringSource,
-    /thinkingConfig: \{ thinkingLevel: "minimal" \}/
+    /thinkingConfig: \{ thinkingLevel: leadScoringThinkingLevel\(model\) \}/
   );
 
   const translationSource = source("src/services/followUpTranslationService.js");
