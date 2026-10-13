@@ -125,7 +125,7 @@ async function closeItem(row, status, reason, {
   if (attention) {
     await contactsRepo.setDeliveryAttention(
       row.contact_id,
-      "Optional Before & After image was not sent. Please review this conversation."
+      "Optional WhatsApp image was not sent. Please review this conversation."
     ).catch(error => console.error("[Result queue] Staff attention failed:",error));
   }
 }
@@ -226,7 +226,7 @@ async function sweepStaleAndBlocked(db = pool) {
   }
   for (const row of stale.rows) {
     await contactsRepo.setDeliveryAttention(row.contact_id,
-      "Optional Before & After image outcome is unknown after a restart. Check Meta before retrying."
+      "Optional WhatsApp image outcome is unknown after a restart. Check Meta before retrying."
     ).catch(error=>console.error("[Result queue] Staff alert failed:",error));
   }
 }
