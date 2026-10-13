@@ -1,5 +1,7 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const clinicConfig = require("../config/clinicConfig");
+const { PipelineValidationError } = require("../utils/pipelineValidation");
 const {
   isAllowedRuleTemperatureTransition,
 } = require("../utils/leadTemperatureTransitions");
@@ -511,13 +513,27 @@ async function updateLead(id, patch, actor) {
     }
     // A staff-confirmed appointment status and the built-in Appointment Set
     // stage must agree. Do not override custom, visited, or closed stages.
-    if (changes.appointmentStatus === "set" &&
+    const isClinicBooking = ["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType);
+    if (isClinicBooking && changes.appointmentStatus === "set" &&
         !Object.hasOwn(changes, "stageId") &&
         ["new", "contacted"].includes(current.system_key)) {
       const appointmentStage = await client.query(
         `SELECT id FROM pipeline_stages WHERE system_key = 'appointment_set' AND stage_type = 'open' LIMIT 1`
       );
       if (appointmentStage.rows[0]) changes.stageId = appointmentStage.rows[0].id;
+    }
+    // Do not leave a lead in a confirmed booking stage after staff starts a
+    // reschedule/cancellation. Keeping stale appointment_at here would make
+    // the AI report the previous slot as the current confirmed booking.
+    if (isClinicBooking &&
+        ["none", "reschedule", "cancelled"].includes(changes.appointmentStatus)) {
+      changes.appointmentAt = null;
+      if (!Object.hasOwn(changes, "stageId") && current.system_key === "appointment_set") {
+        const contacted = await client.query(
+          `SELECT id FROM pipeline_stages WHERE system_key = 'contacted' AND stage_type = 'open' LIMIT 1`
+        );
+        if (contacted.rows[0]) changes.stageId = contacted.rows[0].id;
+      }
     }
     let nextStage = null;
     if (Object.hasOwn(changes, "stageId")) {
@@ -543,7 +559,33 @@ async function updateLead(id, patch, actor) {
         if (nextStage.system_key === "visited" && !Object.hasOwn(changes, "appointmentStatus")) {
           changes.appointmentStatus = "visited";
         }
+        if (isClinicBooking && current.system_key === "appointment_set" &&
+            nextStage.stage_type === "open" &&
+            !["appointment_set", "visited"].includes(nextStage.system_key) &&
+            !Object.hasOwn(changes, "appointmentStatus")) {
+          changes.appointmentStatus = "reschedule";
+          changes.appointmentAt = null;
+        }
       }
+    }
+
+    // The pipeline move itself may mark an appointment as set. Require a real
+    // timestamp in the same operation or one previously recorded by staff.
+    // Do not reject unrelated edits to old historical leads with missing dates.
+    const enteringBookedStage = nextStage?.system_key === "appointment_set" &&
+      Number(nextStage.id) !== Number(current.stage_id);
+    const newConfirmation = changes.appointmentStatus === "set" &&
+      current.appointment_status !== "set";
+    const effectiveDate = Object.hasOwn(changes, "appointmentAt")
+      ? changes.appointmentAt : current.appointment_at;
+    if (isClinicBooking && (enteringBookedStage || newConfirmation) && !effectiveDate) {
+      throw new PipelineValidationError("Enter the confirmed appointment date and time before marking it as set.");
+    }
+    // A pending or cancelled booking cannot simultaneously be placed in the
+    // confirmed stage, even when a client sends an explicit conflicting patch.
+    if (isClinicBooking && nextStage?.system_key === "appointment_set" &&
+        ["none", "reschedule", "cancelled"].includes(changes.appointmentStatus)) {
+      throw new PipelineValidationError("An unconfirmed appointment cannot use the Appointment Set stage.");
     }
 
     const setters = [];
