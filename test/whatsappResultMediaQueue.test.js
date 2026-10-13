@@ -115,3 +115,42 @@ test("queued sends retain crash safety and no initial reply delay",()=>{
   assert.match(server,/await whatsappResultMediaQueue.enqueue/);
   assert.ok(server.indexOf("await sendTrackedText(")<server.indexOf("await whatsappResultMediaQueue.enqueue("));
 });
+
+test("price graphics precede result examples, sharing one sequence without duplicates",async t=>{
+  mock(t,zeroCost,"enabled",()=>true);
+  const rows=[];
+  const db={async connect(){return {
+    async query(sql,params){
+      if(sql.includes("INSERT INTO whatsapp_result_media_queue")) rows.push(params);
+      return {rows:[]};
+    },release(){},
+  };}};
+  await queue.enqueue({contactId:443,inboundMessageId:1503,kind:"promotion",
+    items:[{imageUrl:"https://example.test/priceA",caption:"Package A"},
+           {imageUrl:"https://example.test/priceB",caption:"Package B"}]},db);
+  await queue.enqueue({contactId:443,inboundMessageId:1503,kind:"result",sequenceOffset:2,
+    items:[{imageUrl:"https://example.test/result",caption:"Result example"}]},db);
+  assert.deepEqual(rows.map(params=>params[2]),[0,1,2]);
+  assert.deepEqual(rows.map(params=>params[3]),["promotion","promotion","result"]);
+  assert.equal(new Set(rows.map(params=>params[2])).size,3);
+});
+
+test("confirmed billing alarm never calls the image sender",async t=>{
+  const row=sample();
+  const db=fakeDb(row);
+  const contactsRepo=require("../src/db/contactsRepo");
+  mock(t,contactsRepo,"setDeliveryAttention",async()=>null);
+  mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
+  mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
+  mock(t,zeroCost,"preflightTemplate",async()=>({
+    allowed:false,code:"zero_cost_billing_alarm",
+  }));
+  let called=0;
+  await queue.runOne({
+    db,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    sender:async()=>{called++;return {success:true,wamid:"should-not-send"};},
+  });
+  assert.equal(called,0);
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
+    x.params?.includes("cancelled")));
+});
