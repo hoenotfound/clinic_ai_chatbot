@@ -53,11 +53,26 @@ const VERIFIED_WINDOW_SQL = `
           AND earlier.created_at>=first_reply.created_at
           AND earlier.created_at<$2::timestamptz
           AND earlier.id IS DISTINCT FROM $4::integer
-          -- A prior unresolved message can be set aside only by an audited
-          -- operator who checked Meta Billing Hub for that exact send.
+          -- Manual Billing Hub verification and automatic Meta provider
+          -- receipt proof are DISTINCT. A provider callback alone never
+          -- impersonates an operator's Billing Hub inspection.
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_free_only_reconciliations audit
-            WHERE audit.message_id=earlier.id AND audit.verified_billing_hub=true
+            WHERE audit.message_id=earlier.id AND (
+              (audit.verified_billing_hub=true
+                AND audit.actor NOT IN ('automatic_verified_receipt','evidence_reconciliation'))
+              OR
+              (audit.actor IN ('automatic_verified_receipt','evidence_reconciliation')
+                AND audit.provider_pricing_type='free_entry_point'
+                AND audit.provider_billable=false
+                AND EXISTS (
+                  SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                  WHERE receipt.wamid=audit.wamid
+                    AND receipt.pricing_type='free_entry_point'
+                    AND receipt.billable=false
+                    AND receipt.delivery_status IN ('sent','delivered','read')
+                ))
+            )
           )
           AND (earlier.whatsapp_message_id IS NULL
             OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
@@ -74,7 +89,21 @@ const VERIFIED_WINDOW_SQL = `
           AND attempt.id IS DISTINCT FROM $5::bigint
           AND NOT EXISTS (
             SELECT 1 FROM whatsapp_free_only_reconciliations audit
-            WHERE audit.attempt_id=attempt.id AND audit.verified_billing_hub=true
+            WHERE audit.attempt_id=attempt.id AND (
+              (audit.verified_billing_hub=true
+                AND audit.actor NOT IN ('automatic_verified_receipt','evidence_reconciliation'))
+              OR
+              (audit.actor IN ('automatic_verified_receipt','evidence_reconciliation')
+                AND audit.provider_pricing_type='free_entry_point'
+                AND audit.provider_billable=false
+                AND EXISTS (
+                  SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                  WHERE receipt.wamid=audit.wamid
+                    AND receipt.pricing_type='free_entry_point'
+                    AND receipt.billable=false
+                    AND receipt.delivery_status IN ('sent','delivered','read')
+                ))
+            )
           )
           AND attempt.status IN ('sending','unknown')
       )
@@ -660,8 +689,8 @@ async function reconcileConfirmedGate(database = pool) {
       )
       SELECT phone_number_id, reservation_id, prior_status, wamid,
              message_id, attempt_id, 'automatic_verified_receipt',
-             'Meta nonbillable free-entry receipt and accepted delivery',
-             true, pricing_type, billable, now()
+             'Automated Meta provider receipt; NOT manual Billing Hub inspection',
+             false, pricing_type, billable, now()
         FROM released
       RETURNING id
     )
