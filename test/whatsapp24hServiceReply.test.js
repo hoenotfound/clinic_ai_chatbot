@@ -144,6 +144,10 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
     await guard.complete24hServiceReply(10,{success:true,wamid:"wamid.service"},db);
     const proof=await db.query("SELECT status,wamid FROM whatsapp_24h_service_reply_exceptions");
     assert.deepEqual(proof.rows,[{status:"accepted",wamid:"wamid.service"}]);
+    await db.query("DELETE FROM messages WHERE id=10");
+    const retained=await db.query(
+      "SELECT message_id,wamid,status FROM whatsapp_24h_service_reply_exceptions");
+    assert.deepEqual(retained.rows,[{message_id:null,wamid:"wamid.service",status:"accepted"}]);
     const none=await db.query(`SELECT EXISTS(
       SELECT 1 FROM whatsapp_24h_service_reply_exceptions
       WHERE wamid='wamid.unknown' AND status='accepted') AS exempt`);
