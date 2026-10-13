@@ -856,6 +856,19 @@ async function sendSocialVideoCompanion(
 ) {
   if (quietHoursStatus(new Date(), quietHours).active) return;
 
+  const protectVideo = clinicConfig.automatedFollowUp?.videoDuplicateProtectionEnabled === true;
+  if (protectVideo) {
+    try {
+      if (await previouslySentVideo({ database: pool, contactId, mediaKey: sourceVideoKey })) {
+        console.info(`[Social follow-up video] duplicate suppressed for contact ${contactId}`);
+        return;
+      }
+    } catch (error) {
+      console.warn("[Social follow-up video] duplicate check unavailable; skipping optional media:", error?.message);
+      return;
+    }
+  }
+
   // Save the configured private R2 object key directly. The companion message
   // references the same video, so retries and repeated recipients never create
   // additional permanent copies.
@@ -893,6 +906,7 @@ async function sendSocialVideoCompanion(
   publishConversationChange(videoMessage, "message");
 
   let videoResult;
+  let duplicateBeforeSend = false;
   try {
     const videoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
       videoMessage.id,
@@ -905,8 +919,21 @@ async function sendSocialVideoCompanion(
       filename || "service-video.mp4",
       {
         purpose: "marketing",
-        preSendCheck: async () =>
-          !quietHoursStatus(new Date(), quietHours).active,
+        preSendCheck: async () => {
+          if (quietHoursStatus(new Date(), quietHours).active) return false;
+          if (!protectVideo) return true;
+          try {
+            duplicateBeforeSend = await previouslySentVideo({
+              database: pool, contactId, mediaKey: sourceVideoKey,
+              excludeMessageId: videoMessage.id,
+            });
+            return !duplicateBeforeSend;
+          } catch (error) {
+            console.warn("[Social follow-up video] final check failed:", error?.message);
+            duplicateBeforeSend = true;
+            return false;
+          }
+        },
         ...(videoProviderRecorder
           ? { onProviderMessageId: videoProviderRecorder }
           : {}),
@@ -917,7 +944,8 @@ async function sendSocialVideoCompanion(
     videoResult = { success: false, wamid: null, externalMessageId: null };
   }
 
-  if (videoResult?.cancelled && !videoResult?.preSendCheckFailed) {
+  if (videoResult?.cancelled &&
+      (!videoResult?.preSendCheckFailed || duplicateBeforeSend)) {
     const discarded = await followUpRepo.discardUnsentSocialVideoCompanion({
       messageId: videoMessage.id,
       contactId,
