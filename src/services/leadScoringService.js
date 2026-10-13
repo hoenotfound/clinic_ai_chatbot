@@ -293,7 +293,10 @@ function createLeadScoringRunner({
             }
           }
         } catch (err) {
-          const failure = await repository.markScoreFailed(claim.id, err);
+          const failure = err?.deferLeadScoringRetry === true &&
+            typeof repository.markScoreDeferred === "function"
+            ? await repository.markScoreDeferred(claim.id, err)
+            : await repository.markScoreFailed(claim.id, err);
           console.error(
             `Lead scoring failed for lead ${candidate.lead_id}:`,
             err
