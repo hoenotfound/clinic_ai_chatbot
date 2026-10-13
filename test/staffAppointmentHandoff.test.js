@@ -242,3 +242,26 @@ test("clearing appointment date alone cannot leave an empty confirmed booking", 
   );
   assert.equal(writes, 0);
 });
+
+
+test("creating a lead directly in Appointment Set cannot bypass the date requirement", async (t) => {
+  const previous = pool.connect;
+  t.after(() => { pool.connect = previous; });
+  let inserts = 0;
+  pool.connect = async () => ({
+    query: async (sql) => {
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return { rows: [] };
+      if (/FROM pipeline_stages WHERE id = \$1/.test(sql)) return {
+        rows: [{ id: 3, name: "Appointment Set", stage_type: "open", system_key: "appointment_set" }],
+      };
+      if (/INSERT INTO leads/.test(sql)) inserts++;
+      return { rows: [] };
+    },
+    release() {},
+  });
+  await assert.rejects(
+    pipelineRepo.createLead({ contactId: 372, stageId: 3, appointmentStatus: "set" }, "staff"),
+    /Enter the confirmed appointment date and time/
+  );
+  assert.equal(inserts, 0);
+});
