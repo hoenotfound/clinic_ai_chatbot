@@ -821,7 +821,8 @@ async function sendVideoByStoredKey(
       console.warn("[WhatsApp video cache] Unexpected failure; using original upload");
     }
   }
-  if (cachedVideo?.kind === "cancelled") return preSendCancelled(sendOptions);
+  if (cachedVideo?.kind === "cancelled") return (await preSendCancelled(sendOptions)) ||
+    { success: false, wamid: null, externalMessageId: null, cancelled: true, error: null };
   if (cachedVideo?.kind === "download_failed") {
     return temporaryMediaFailure(channel, cachedVideo.error);
   }
@@ -895,12 +896,14 @@ async function sendVideoByStoredKey(
     cancelled = await preSendCancelled(recoveryOptions);
     if (cancelled) return cancelled;
     let replacementId;
+    let refreshed;
     try {
-      const refreshed = await whatsappVideoMediaCache.resolveMediaId({
+      refreshed = await whatsappVideoMediaCache.resolveMediaId({
         videoKey, mimeType: videoMimeType, filename: videoFilename,
         uploadOptions: recoveryOptions,
       });
-      if (refreshed.kind === "cancelled") return preSendCancelled(recoveryOptions);
+      if (refreshed.kind === "cancelled") return (await preSendCancelled(recoveryOptions)) ||
+        { success: false, wamid: null, externalMessageId: null, cancelled: true, error: null };
       if (refreshed.kind === "ready") {
         replacementId = refreshed.mediaId;
       } else if (refreshed.kind === "bypass") {
@@ -927,6 +930,9 @@ async function sendVideoByStoredKey(
         ...(options.requestId ? { requestId: options.requestId } : {}),
       }
     );
+    if (refreshed?.kind === "ready") {
+      await whatsappVideoMediaCache.invalidateIfRejected(refreshed, recoveryResult);
+    }
     if (recoveryResult.success) whatsappVideoMediaCache.recordRecovery(cachedVideo);
     // One attempt only. Never recurse or resend after an ambiguous provider result.
     return recoveryResult;

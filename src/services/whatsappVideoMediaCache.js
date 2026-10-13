@@ -16,7 +16,7 @@ function definitelyInvalidMediaId(result) {
   // Avoid matching unrelated Graph errors such as "invalid recipient ID".
   // Require a media-specific Meta error, not just any 400.
   const error = String(result.error || "").slice(0, 400);
-  return /(?:media|video|file)(?:[ -]?id)?[\\s\\S]{0,70}(?:invalid|expired|not found|does not exist|unsupported)|(?:invalid|expired|not found|does not exist|unsupported)[\\s\\S]{0,70}(?:media|video|file)(?:[ -]?id)?/i.test(error);
+  return /(?:media|video|file)(?:[ -]?id)?[\s\S]{0,70}(?:invalid|expired|not found|does not exist|unsupported)|(?:invalid|expired|not found|does not exist|unsupported)[\s\S]{0,70}(?:media|video|file)(?:[ -]?id)?/i.test(error);
 }
 
 function createCache({
