@@ -1,5 +1,6 @@
 const messagesRepo = require("../db/messagesRepo");
 const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
+const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
@@ -81,6 +82,10 @@ function createWhatsAppDeliveryStatusService({
   publishContact = defaultPublishContact,
   sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
   queueTransientFailureRetry = whatsappOutboundRetry.queueDeliveryFailureRetry,
+  reconcileQueuedMediaDelivery = repo === repository
+    ? whatsappResultMediaQueue.reconcileProviderDelivery : async () => [],
+  isQueuedImageMessage = repo === repository
+    ? whatsappResultMediaQueue.isQueuedMessage : async () => false,
   sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
 } = {}) {
@@ -94,6 +99,9 @@ function createWhatsAppDeliveryStatusService({
 
   async function storeDeliveryStatusUpdates(updates) {
     const stored = await repo.storeBatch(updates);
+    // Wake deferred result media immediately after durable Meta pricing is saved.
+    // This does not await image sending or slow webhook acknowledgement.
+    if (updates?.some(update => update?.pricingType)) whatsappResultMediaQueue.wake(0);
     // Never delay a webhook or drop persisted pricing evidence if Telegram
     // is unavailable. Durable alerts will be retried by recovery.
     if (updates?.some((update) => update?.pricingBillable === true)) {
@@ -167,11 +175,16 @@ function createWhatsAppDeliveryStatusService({
       }
     }
 
+    // Only the durable delivery callback proves delivery, not Meta's API
+    // acceptance response. Update optional-image audit idempotently here.
+    await reconcileQueuedMediaDelivery(job.wamid);
+
     let transientRetryQueued = false;
     if (
       job.delivery_status === "failed" &&
       updatedMessage.delivery_status === "failed" &&
-      typeof queueTransientFailureRetry === "function"
+      typeof queueTransientFailureRetry === "function" &&
+      !(await isQueuedImageMessage(updatedMessage.id))
     ) {
       const queued = await queueTransientFailureRetry({
         messageId: updatedMessage.id,

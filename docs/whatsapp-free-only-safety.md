@@ -29,6 +29,47 @@ Use a conservative 72-hour ceiling with a one-hour buffer (last send before hour
 
 **First-reply exception and limitations:** Strict mode permits the one Meta-qualified first text reply for a genuine CTWA ad referral while its initial 24-hour service window is still open. It does **not** send initial images, templates or voice as bootstrap messages, nor permit direct/organic/unverified/expired referrals. The first reply's actual free billing is still confirmed **after** Meta accepts/delivers it. If Meta rejects it or unexpectedly marks it billable, later strict-mode sends remain blocked. This is risk-managed sending based on Meta's first-reply rules, not a contractual zero-charge guarantee. Subsequent text replies and approved templates must wait for Meta confirmation; they can be briefly delayed.
 
+### Optional image deferral (initial customer replies)
+
+While Strict RM0 is enabled, the customer-facing AI **text** is sent without
+waiting for Meta pricing. Automatically selected pricing graphics (only when
+the customer explicitly asked about price) and Before & After examples go into
+the ordered `whatsapp_result_media_queue` table. These are not failed
+WhatsApp messages, and temporary billing holds must not trigger a delivery
+failure Telegram alert.
+
+The worker wakes from saved Meta pricing receipts, also checking its short
+retry schedule. It verifies the **free-form 24-hour service window** and the
+account-wide free-billing gate (not the after-24-hour template window) before
+preparing each image, then uses the unchanged atomic provider send guard. It preserves
+image order, waits for each earlier image's own free-billing receipt, and
+maintains the existing duplicate/unknown media protection. New customer
+messages, clinical review, opt-out, staff takeover, or Business App pending
+echoes cancel remaining optional images.
+
+The two-minute lifetime is absolute from when each image was queued, not
+from the last retry. An image is checked again before the provider upload is
+finally sent, so an old item cannot be revived by a restart or late billing
+callback. Expired/unresolved images require staff review. Provider-accepted or
+ambiguous attempts are NEVER replayed automatically, including across
+restarts. Interrupted provider sends become `unknown` after three minutes
+and require reconciliation.
+
+The result audit stays `deferred` until Meta reports an actual `delivered`
+or `read` status, rather than counting a provider API acceptance as customer
+delivery. Failed Meta callbacks reduce confirmed totals and stop subsequent
+images. The database CHECK constraint for `deferred` is added by migration 069,
+along with the queued-message delivery receipt state.
+
+Queued images give short-term priority to other inbound WhatsApp jobs that
+have not yet produced an accepted reply; completed customer replies do not
+keep media queued. The original text reply is not delayed by this worker;
+pictures may arrive a
+few seconds later depending on Meta callback latency and image upload time.
+The Strict RM0 account-wide send reservation still applies, including to
+unrelated conversations. The queue does not make a global reservation
+disappear or guarantee Meta will charge RM0.
+
 ### Temporary strict-policy deferrals do not consume follow-up slots
 
 The scheduler runs a read-only billing preflight before claiming a slot. If

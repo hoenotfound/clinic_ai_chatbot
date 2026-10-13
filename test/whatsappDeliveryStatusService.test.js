@@ -24,6 +24,8 @@ function harness({
   updateResult = null,
   existingMessage = null,
   queueTransientFailureRetry = async () => null,
+  reconcileQueuedMediaDelivery = async () => [],
+  isQueuedImageMessage = async () => false,
 } = {}) {
   const calls = [];
   const repo = {
@@ -80,6 +82,8 @@ function harness({
     publishContact,
     sendDeliveryFailureAlert,
     queueTransientFailureRetry,
+    reconcileQueuedMediaDelivery:async(wamid)=>{calls.push(["reconcileQueuedMediaDelivery",wamid]);return reconcileQueuedMediaDelivery(wamid);},
+    isQueuedImageMessage,
     sendUnmatchedFailureAlert: async ({ jobs }) => {
       calls.push(["sendUnmatchedFailureAlert", jobs.map((item) => item.id)]);
       return { status: "sent" };
@@ -321,4 +325,24 @@ test("unmatched completed provider failures are durably flagged and alerted once
     "sendUnmatchedFailureAlert", [1333]
   ]);
   assert.equal(calls.filter((call) => call[0] === "flagUnmatchedCompletedFailures").length, 2);
+});
+
+test("queued optional image failed callback updates audit but never triggers text retry",async()=>{
+  const statusJob=job({id:721,delivery_status:"failed",
+    error_code:"131000",error_message:"Provider failure"});
+  const updated={id:722,contact_id:443,
+    whatsapp_message_id:statusJob.wamid,delivery_status:"failed"};
+  const synced=[];
+  const retries=[];
+  const {calls,service}=harness({
+    claimed:[statusJob],updateResult:updated,
+    reconcileQueuedMediaDelivery:async(wamid)=>synced.push(wamid),
+    isQueuedImageMessage:async(id)=>id===722,
+    queueTransientFailureRetry:async(input)=>{retries.push(input);return {id:1};},
+  });
+  await service.processStoredDeliveryStatuses([{id:721}]);
+  assert.deepEqual(synced,[statusJob.wamid]);
+  assert.equal(retries.length,0,
+    "an accepted image that later fails must not be retried as an AI text");
+  assert.ok(calls.some(call=>call[0]==="markCompleted"));
 });

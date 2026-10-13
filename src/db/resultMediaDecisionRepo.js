@@ -21,11 +21,21 @@ async function recordDecision({
        promotion_images_sent, result_images_selected, result_images_sent
      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (inbound_message_id) DO UPDATE SET
-       status = EXCLUDED.status,
-       reason = EXCLUDED.reason,
-       promotion_images_sent = EXCLUDED.promotion_images_sent,
+       status = CASE
+         WHEN EXCLUDED.status='deferred'
+           AND result_media_decisions.status <> 'deferred'
+           AND result_media_decisions.reason IS DISTINCT FROM 'awaiting_meta_free_billing'
+           THEN result_media_decisions.status
+         ELSE EXCLUDED.status END,
+       reason = CASE
+         WHEN EXCLUDED.status='deferred'
+           AND result_media_decisions.status <> 'deferred'
+           AND result_media_decisions.reason IS DISTINCT FROM 'awaiting_meta_free_billing'
+           THEN result_media_decisions.reason
+         ELSE EXCLUDED.reason END,
+       promotion_images_sent = GREATEST(result_media_decisions.promotion_images_sent, EXCLUDED.promotion_images_sent),
        result_images_selected = EXCLUDED.result_images_selected,
-       result_images_sent = EXCLUDED.result_images_sent,
+       result_images_sent = GREATEST(result_media_decisions.result_images_sent, EXCLUDED.result_images_sent),
        updated_at = now()`,
     [contactId, inboundMessageId, status, reason,
       promotionCount, selectedCount, sentCount]

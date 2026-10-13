@@ -35,6 +35,8 @@ const {
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
+const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
+const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview } = require("./utils/aiReviewPolicy");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
@@ -1339,6 +1341,7 @@ async function processIncomingMessage(
     // price or available packages for one known configured service. Existing
     // safety/ownership gates remain unchanged.
     let automaticPromoMediaSent = 0;
+    let queuedPromotionCount = 0;
     let promotionImagesTruncated = false;
     // Promo sends can stop the post-reply sequence before the optional result
     // block is reached. Keep those exit reasons in the same staff-only audit.
@@ -1349,7 +1352,7 @@ async function processIncomingMessage(
           inboundMessageId: savedInbound.id,
           status: "skipped",
           reason,
-          promotionCount: automaticPromoMediaSent,
+          promotionCount: Math.max(0, automaticPromoMediaSent - queuedPromotionCount),
         });
       } catch (auditError) {
         console.warn(`[Result media] early audit failed for contact ${contact.id}:`, auditError);
@@ -1383,7 +1386,34 @@ async function processIncomingMessage(
       if (promoBundle) {
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
         promotionImagesTruncated = !!pacedPromotions.reason;
-        for (const promoPackage of pacedPromotions.items) {
+        const queuedPromotions = channel === "whatsapp" &&
+          whatsappZeroCostGuard.enabled() && pacedPromotions.items.length > 0 &&
+          sendOutcome.sendResult.success;
+        if (queuedPromotions) {
+          try {
+            await whatsappResultMediaQueue.enqueue({
+              contactId:contact.id,
+              inboundMessageId:savedInbound.id,
+              items:pacedPromotions.items,
+              kind:"promotion",
+              sequenceOffset:0,
+            });
+          } catch (queueError) {
+            // Optional media failures must not invalidate the already accepted
+            // AI text or cause a durable inbound job to replay that reply.
+            console.error("[Result queue] Could not schedule price graphics:",queueError);
+            await contactsRepo.setDeliveryAttention(contact.id,
+              "Automatic price image could not be queued. Please review this chat."
+            ).catch(()=>{});
+            await auditResultMediaEarlyExit("promotion_media_enqueue_failed");
+            return { wasFirstMessage, keywordReason };
+          }
+          queuedPromotionCount = pacedPromotions.items.length;
+          // The pacing limit counts planned graphics, not only images already
+          // delivered. The audit separately counts actual Meta acceptance.
+          automaticPromoMediaSent += queuedPromotionCount;
+        }
+        for (const promoPackage of (queuedPromotions ? [] : pacedPromotions.items)) {
           const promoContact = await getAiOwnedContact(contact, {
             channel,
             from,
@@ -1572,8 +1602,25 @@ async function processIncomingMessage(
               `Automatic result media eligible for ${resultBundle.service} via ${resultBundle.serviceQuerySource || resultBundle.triggerMode}; ${paced.items.length} result images after ${automaticPromoMediaSent} promo images.`
             );
           }
+          // Under Strict RM0, provider billing arrives asynchronously. Queue the
+          // optional images after the text reply instead of racing the account
+          // gate and generating a false delivery failure/Telegram alert.
+          // The durable worker rechecks AI ownership, safety, billing and
+          // duplicate protection before every actual provider send.
+          let queuedForBilling = false;
+          if (channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
+              paced.items.length && sendOutcome.sendResult.success) {
+            queuedForBilling = await whatsappResultMediaQueue.enqueue({
+              contactId: contact.id,
+              inboundMessageId: savedInbound.id,
+              items: paced.items,
+              kind: "result",
+              sequenceOffset: queuedPromotionCount,
+            });
+            if (queuedForBilling) auditReason = "awaiting_meta_free_billing";
+          }
           let resultImageIndex = 0;
-          for (const resultItem of paced.items) {
+          for (const resultItem of (queuedForBilling ? [] : paced.items)) {
             // Allow the customer to absorb a promotion before its optional
             // result example. We recheck ownership, safety and reply-window
             // conditions AFTER the gap, immediately before each provider send.
@@ -1745,7 +1792,7 @@ async function processIncomingMessage(
             inboundMessageId: savedInbound.id,
             status: auditStatus,
             reason: finalAuditReason,
-            promotionCount: automaticPromoMediaSent,
+            promotionCount: Math.max(0,automaticPromoMediaSent - queuedPromotionCount),
             selectedCount: auditSelected,
             sentCount: auditSent,
           });
