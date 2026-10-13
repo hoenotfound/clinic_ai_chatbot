@@ -10,10 +10,25 @@ const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash"
 const GEMINI_FALLBACK_MODEL = process.env.LEAD_SCORING_GEMINI_FALLBACK_MODEL
   || process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const MODEL_CAPACITY_COOLDOWN_MS = 5 * 60 * 1000;
+// Scoring is a background worker; unlike customer replies it needs a strict
+// global limit so fallback scoring cannot stall the sequential queue.
+const LEAD_SCORING_GLOBAL_BUDGET_MS = 18_000;
+const LEAD_SCORING_PRIMARY_BUDGET_MS = 8_000;
+const LEAD_SCORING_FALLBACK_RESERVE_MS = 6_500;
 const modelCapacityCooldownUntil = new Map();
-function leadScoringModelsReady(nowMs = Date.now()) {
-  return [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean))]
-    .filter((model) => (modelCapacityCooldownUntil.get(model) || 0) <= nowMs);
+function scoringModelNames() {
+  return [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean))];
+}
+function leadScoringModelsReady(nowMs = Date.now(), cooldowns = modelCapacityCooldownUntil) {
+  return scoringModelNames().filter((model) => (cooldowns.get(model) || 0) <= nowMs);
+}
+// Null means at least one model can run now. Only return a retry timestamp
+// when every model is cooling, allowing the caller to defer BEFORE claimCandidate
+// increments the durable scoring attempts.
+function nextLeadScoringModelRetryAt(nowMs = Date.now(), cooldowns = modelCapacityCooldownUntil) {
+  if (PROVIDER !== "gemini" || leadScoringModelsReady(nowMs, cooldowns).length) return null;
+  const next = Math.min(...scoringModelNames().map((model) => cooldowns.get(model) || Infinity));
+  return Number.isFinite(next) ? new Date(next).toISOString() : null;
 }
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
 const PROMPT_VERSION = "lead-temperature-v6-recovery-and-hesitation";
@@ -388,15 +403,39 @@ async function withTransientRetries(
   }
 }
 
-async function scoreWithGemini(input) {
+async function scoreWithGemini(input, {
+  runWithKeys = runWithGeminiKeys,
+  generate = generateGeminiContent,
+  makeClient = (apiKey) => new GoogleGenAI({ apiKey }),
+  clock = () => Date.now(),
+  cooldowns = modelCapacityCooldownUntil,
+} = {}) {
+  const startedAt = clock();
+  const models = leadScoringModelsReady(startedAt, cooldowns);
+  const coolingRetry = nextLeadScoringModelRetryAt(startedAt, cooldowns);
+  if (!models.length) {
+    const error = new Error("All configured lead-scoring Gemini models are cooling down.");
+    error.code = "LEAD_SCORING_MODELS_COOLING_DOWN";
+    error.nextRetryAt = coolingRetry ? new Date(coolingRetry) : null;
+    error.stopLeadScoringSweep = true;
+    throw error;
+  }
   let unavailable = null;
-  for (const model of leadScoringModelsReady()) {
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    const remainingMs = Math.max(0, LEAD_SCORING_GLOBAL_BUDGET_MS - (clock() - startedAt));
+    const hasNextModel = index < models.length - 1;
+    const modelBudgetMs = hasNextModel
+      ? Math.min(LEAD_SCORING_PRIMARY_BUDGET_MS,
+        Math.max(0, remainingMs - LEAD_SCORING_FALLBACK_RESERVE_MS))
+      : Math.min(12_000, remainingMs);
+    if (modelBudgetMs < 1_000) break;
     try {
-      const score = await runWithGeminiKeys(
-        async (apiKey) => {
-          const ai = new GoogleGenAI({ apiKey });
+      const score = await runWithKeys(
+        async (apiKey, _candidate, { signal = null } = {}) => {
+          const ai = makeClient(apiKey);
           try {
-            const response = await generateGeminiContent(
+            const response = await generate(
               ai,
               {
                 model,
@@ -408,8 +447,10 @@ async function scoreWithGemini(input) {
                   thinkingConfig: { thinkingLevel: "minimal" },
                 },
               },
-              { purpose: "lead_scoring", contactId: input.lead?.contact_id,
-                leadId: input.lead?.lead_id || input.lead?.id }
+              {
+                purpose: "lead_scoring", contactId: input.lead?.contact_id,
+                leadId: input.lead?.lead_id || input.lead?.id, signal,
+              }
             );
             return parseLeadScore(response.text, input.messages);
           } catch (error) {
@@ -423,12 +464,15 @@ async function scoreWithGemini(input) {
           healthScope: `model:${model}`,
           retryCount: LEAD_SCORING_GEMINI_RETRY_COUNT,
           smartRetry: true,
-          // Capacity is a model problem. Immediately try a different model
-          // rather than rotate the same request through several API keys.
           confirmModelUnavailableAcrossKeys: false,
+          // The shared key pool enforces the deadline and aborts the SDK call.
+          // Do not spend all the budget on a primary model if a fallback exists.
+          globalBudgetMs: modelBudgetMs,
+          preferredTimeoutMs: modelBudgetMs,
+          fallbackTimeoutMs: modelBudgetMs,
         }
       );
-      modelCapacityCooldownUntil.delete(model);
+      cooldowns.delete(model);
       return {
         ...score,
         provider: "gemini",
@@ -437,7 +481,14 @@ async function scoreWithGemini(input) {
       };
     } catch (error) {
       if (error?.code === "GEMINI_MODEL_UNAVAILABLE" || isGeminiCapacityError(error)) {
-        modelCapacityCooldownUntil.set(model, Date.now() + MODEL_CAPACITY_COOLDOWN_MS);
+        cooldowns.set(model, clock() + MODEL_CAPACITY_COOLDOWN_MS);
+        unavailable = error;
+        continue;
+      }
+      // Timeouts / transient provider failures can also use a different
+      // ready model, but should not poison the model's capacity cooldown.
+      if (hasNextModel && (isTransientAiError(error) ||
+          ["GEMINI_GLOBAL_BUDGET_EXCEEDED", "ALL_GEMINI_KEYS_COOLING_DOWN"].includes(error?.code))) {
         unavailable = error;
         continue;
       }
@@ -445,11 +496,11 @@ async function scoreWithGemini(input) {
       throw error;
     }
   }
-  // Both models are unavailable or cooling down. The existing durable lead
-  // scoring retry owns the next attempt, without altering customer replies.
-  const error = unavailable || new Error("All configured lead-scoring Gemini models are cooling down.");
-  if (!unavailable) error.code = "LEAD_SCORING_MODELS_COOLING_DOWN";
+  const error = unavailable || new Error("Gemini lead scoring exceeded its total time budget.");
+  if (!unavailable) error.code = "GEMINI_GLOBAL_BUDGET_EXCEEDED";
   error.stopLeadScoringSweep = true;
+  const next = nextLeadScoringModelRetryAt(clock(), cooldowns);
+  if (next) error.nextRetryAt = new Date(next);
   throw error;
 }
 
@@ -493,7 +544,12 @@ module.exports = {
   GEMINI_MODEL,
   GEMINI_FALLBACK_MODEL,
   MODEL_CAPACITY_COOLDOWN_MS,
+  LEAD_SCORING_GLOBAL_BUDGET_MS,
+  LEAD_SCORING_PRIMARY_BUDGET_MS,
+  LEAD_SCORING_FALLBACK_RESERVE_MS,
   leadScoringModelsReady,
+  nextLeadScoringModelRetryAt,
+  scoreWithGemini,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   LEAD_SCORING_GEMINI_RETRY_COUNT,
   PROMPT_VERSION,
