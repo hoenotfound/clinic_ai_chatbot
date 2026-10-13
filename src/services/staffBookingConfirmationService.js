@@ -6,7 +6,8 @@ const clinicConfig = require("../config/clinicConfig");
 // proposed time, "Ok", or a date without a year is never an auto-confirmation.
 function parseStaffConfirmedSlot(message, now = new Date()) {
   const text = String(message || "").trim();
-  if (!text || text.length > 500) return null;
+  if (!text || text.length > 500 || /[?？]/u.test(text)) return null;
+  if (/(?:cancelled|canceled|取消预约|取消預約|预约已取消|預約已取消)/iu.test(text)) return null;
   if (/(?:尚未|未|还没|還沒|不能|无法|無法|不)(?:.{0,5})(?:确认|確認|确定|確定|安排)|not\s+(?:yet\s+)?confirm|unconfirmed|pending|subject to confirmation/i.test(text)) {
     return null;
   }
