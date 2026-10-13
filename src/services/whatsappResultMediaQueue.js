@@ -10,6 +10,7 @@ const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
 const channelMessaging = require("./channelMessagingService");
 const zeroCost = require("./whatsappZeroCostGuard");
+const whatsappPolicy = require("./whatsappPolicyService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { getAiOwnedContact } = require("./automaticReplyGuard");
@@ -79,36 +80,86 @@ async function reconcileAudit(inboundMessageId, db = pool) {
      ON CONFLICT(inbound_message_id) DO NOTHING`,
     [inboundMessageId]
   );
-  // Count only messages actually accepted by Meta, not attempts, uploads or
-  // queued requests. This also repairs the initial deferred audit after restart.
+  // A Meta send acceptance is not a customer delivery. Only delivered/read
+  // receipts increment the confirmed-image totals. The audit stays deferred
+  // while accepted messages are still awaiting their delivery callbacks.
   await db.query(
     `WITH totals AS (
        SELECT
          COUNT(*) FILTER (WHERE media_kind='result')::integer result_total,
-         COUNT(*) FILTER (WHERE media_kind='result' AND status='sent')::integer result_accepted,
-         COUNT(*) FILTER (WHERE media_kind='promotion' AND status='sent')::integer promo_accepted,
-         BOOL_OR(status IN ('pending','processing')) FILTER (WHERE media_kind='result') active,
-         BOOL_OR(status IN ('failed','unknown','cancelled')) FILTER (WHERE media_kind='result') blocked
+         COUNT(*) FILTER (WHERE media_kind='result' AND status='sent'
+             AND provider_delivery_status IN ('delivered','read'))::integer result_confirmed,
+         COUNT(*) FILTER (WHERE media_kind='promotion' AND status='sent'
+             AND provider_delivery_status IN ('delivered','read'))::integer promo_confirmed,
+         BOOL_OR(status IN ('pending','processing')
+             OR (status='sent' AND provider_delivery_status
+                 IS DISTINCT FROM 'delivered' AND provider_delivery_status
+                 IS DISTINCT FROM 'read')) FILTER (WHERE media_kind='result') AS active,
+         BOOL_OR(status IN ('failed','unknown','cancelled')) FILTER
+             (WHERE media_kind='result') AS blocked
        FROM whatsapp_result_media_queue WHERE inbound_message_id=$1
      )
      UPDATE result_media_decisions d SET
-       promotion_images_sent=GREATEST(d.promotion_images_sent,totals.promo_accepted),
-       result_images_sent=GREATEST(d.result_images_sent,totals.result_accepted),
+       promotion_images_sent=totals.promo_confirmed,
+       result_images_selected=GREATEST(d.result_images_selected,totals.result_total),
+       result_images_sent=totals.result_confirmed,
        status=CASE WHEN totals.result_total=0 THEN d.status
          WHEN totals.active THEN 'deferred'
-         WHEN totals.result_accepted=totals.result_total THEN 'sent'
-         WHEN totals.result_accepted>0 THEN 'partial'
+         WHEN totals.result_confirmed=totals.result_total THEN 'sent'
+         WHEN totals.result_confirmed>0 THEN 'partial'
          WHEN totals.blocked THEN 'failed'
          ELSE 'skipped' END,
        reason=CASE WHEN totals.result_total=0 THEN d.reason
-         WHEN totals.active THEN 'awaiting_meta_free_billing'
-         WHEN totals.result_accepted=totals.result_total THEN NULL
+         WHEN totals.active THEN 'awaiting_meta_delivery_receipt'
+         WHEN totals.result_confirmed=totals.result_total THEN NULL
          WHEN totals.blocked THEN 'result_media_deferred_requires_review'
          ELSE 'duplicate_or_ineligible_result_media' END,
        updated_at=now()
      FROM totals WHERE d.inbound_message_id=$1`,
     [inboundMessageId]
   );
+}
+
+// Status callbacks can arrive before or after the image row is linked to
+// its provider WAMID. This method is idempotent and uses the canonical
+// messages.delivery_status after the durable delivery-status job has applied.
+async function reconcileProviderDelivery(wamid, db = pool) {
+  const id = String(wamid || "").trim();
+  if (!id) return [];
+  const changed = await db.query(
+    `UPDATE whatsapp_result_media_queue q
+     SET provider_delivery_status = CASE
+         WHEN m.delivery_status='failed' THEN 'failed'
+         WHEN q.provider_delivery_status='failed' THEN 'failed'
+         WHEN m.delivery_status='read' THEN 'read'
+         WHEN q.provider_delivery_status='read' THEN 'read'
+         WHEN m.delivery_status='delivered' THEN 'delivered'
+         WHEN q.provider_delivery_status='delivered' THEN 'delivered'
+         ELSE 'sent' END,
+       status=CASE WHEN m.delivery_status='failed' THEN 'failed' ELSE q.status END,
+       reason=CASE WHEN m.delivery_status='failed' THEN 'meta_delivery_failed'
+         ELSE q.reason END,
+       updated_at=now()
+     FROM messages m
+     WHERE m.whatsapp_message_id=$1 AND q.message_id=m.id
+       AND q.status IN ('sent','failed')
+       AND m.delivery_status IN ('sent','delivered','read','failed')
+     RETURNING q.inbound_message_id,q.status`,
+    [id]
+  );
+  for (const inboundId of new Set(changed.rows.map(row=>row.inbound_message_id))) {
+    await reconcileAudit(inboundId, db);
+  }
+  if (changed.rows.some(row=>row.status==='failed')) {
+    // A later failed receipt must also stop downstream images.
+    await sweepStaleAndBlocked(db);
+  }
+  return changed.rows;
+}
+
+function queueExpired(row, now = Date.now()) {
+  const started = new Date(row?.created_at).getTime();
+  return !Number.isFinite(started) || now - started >= MAX_BILLING_WAIT_MS;
 }
 
 async function closeItem(row, status, reason, {
@@ -131,7 +182,7 @@ async function closeItem(row, status, reason, {
 }
 
 async function postpone(row, code, db = pool) {
-  if (Date.now() - new Date(row.created_at).getTime() >= MAX_BILLING_WAIT_MS) {
+  if (queueExpired(row)) {
     await closeItem(row,"cancelled","meta_free_billing_not_confirmed",{
       db, attention: true,
     });
@@ -243,6 +294,12 @@ async function runOne({
   let message = null;
   let providerResult = null;
   try {
+    // Expiry is absolute from enqueue time, including Render restarts and
+    // worker backlogs. Never allow an expired item to reach Meta.
+    if (queueExpired(row)) {
+      await closeItem(row,"cancelled","optional_image_expired_before_send",{db,attention:true});
+      return true;
+    }
     // These jobs were created under Strict RM0. If the protection is switched
     // off after queuing, do not release an old queued image without its proof.
     if (!strictEnabled()) {
@@ -267,7 +324,11 @@ async function runOne({
          SELECT 1 FROM inbound_processing_jobs j
          WHERE j.channel='whatsapp' AND j.contact_id<>$1
            AND j.status IN ('pending','processing')
-           AND j.created_at>now()-interval '10 minutes'
+           AND j.created_at>now()-interval '45 seconds'
+           AND NOT EXISTS (
+             SELECT 1 FROM inbound_outbound_attempts a
+             WHERE a.processing_job_id=j.id AND a.outcome='accepted'
+           )
        ) AS busy`,
       [row.contact_id]
     );
@@ -277,7 +338,14 @@ async function runOne({
     }
     // Read-only check BEFORE inserting a message or uploading image bytes.
     // Actual provider send still reserves the serial RM0 gate atomically.
-    const ready = await zeroCost.preflightTemplate(contact.whatsapp_number,{database:db});
+    const policy = await whatsappPolicy.checkFreeformAllowed(contact,new Date(),{
+      purpose:"service",
+    });
+    if (!policy.allowed) {
+      await closeItem(row,"cancelled",policy.code || "outside_freeform_window",{db});
+      return true;
+    }
+    const ready = await zeroCost.preflightFreeform(contact.whatsapp_number,{database:db});
     if (!ready.allowed) {
       if (isTemporaryBillingBlock(ready)) {
         await postpone(row,ready.code,db);
@@ -294,16 +362,25 @@ async function runOne({
       row.contact_id,"assistant",row.caption,null,null,row.image_url,
       null,{publish:false}
     );
+    let finalExpiry = false;
     providerResult = await sender(contact,row.image_url,row.caption,{
       currentMessageId:message.id,
-      preSendCheck:async()=>(
-        aiReplyCancellation.safeToSend(cancellationKey,cancellationEpoch) &&
-        Boolean(await eligibleForOptionalImage(row,db))
-      ),
+      preSendCheck:async()=>{
+        if (queueExpired(row)) { finalExpiry=true; return false; }
+        if (!aiReplyCancellation.safeToSend(cancellationKey,cancellationEpoch)) return false;
+        if (!(await eligibleForOptionalImage(row,db))) return false;
+        const livePolicy=await whatsappPolicy.checkFreeformAllowed(contact,new Date(),{
+          purpose:"service",
+        });
+        return livePolicy.allowed === true;
+      },
     });
     if (providerResult?.success && providerResult.wamid) {
       await messagesRepo.setWhatsappMessageId(message.id,providerResult.wamid);
       await closeItem(row,"sent",null,{messageId:message.id,db});
+      // A fast delivered/read/failed callback may already have updated the
+      // message while the provider send was being linked locally.
+      await reconcileProviderDelivery(providerResult.wamid,db);
       realtimeEvents.publish("conversation_changed",{
         contactId:row.contact_id,messageId:message.id,reason:"message",
       });
@@ -314,7 +391,9 @@ async function runOne({
       if (!removed) {
         await closeItem(row,"unknown","unsent_record_could_not_be_removed",{messageId:message.id,db,attention:true});
       } else if (providerResult?.cancelled) {
-        await closeItem(row,"skipped","staff_cancelled_optional_image",{db});
+        await closeItem(row,finalExpiry?"cancelled":"skipped",
+          finalExpiry?"optional_image_expired_during_upload":"staff_cancelled_optional_image",
+          {db,attention:finalExpiry});
       } else {
         await postpone(row,providerResult.policyCode,db);
       }
@@ -377,5 +456,5 @@ function start() {
 
 module.exports={
   enqueue,runOne,start,wake,isTemporaryBillingBlock,
-  reconcileAudit,sweepStaleAndBlocked,MAX_BILLING_WAIT_MS,
+  reconcileAudit,reconcileProviderDelivery,queueExpired,sweepStaleAndBlocked,MAX_BILLING_WAIT_MS,
 };
