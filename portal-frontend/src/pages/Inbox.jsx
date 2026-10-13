@@ -3898,6 +3898,52 @@ function Spinner({ className = "" }) {
   );
 }
 
+// Staff videos must not download from Render simply because chat history is opened.
+// Keep the same authenticated media URL and start playback on the actual click,
+// including on iOS where an effect-triggered play() may be blocked.
+function OnDemandInboxVideo({ src, uploading = false }) {
+  const playerRef = useRef(null);
+  const [requested, setRequested] = useState(false);
+
+  function startPlayback() {
+    const player = playerRef.current;
+    if (!player || !src) return;
+    // Attach the source and start playback within the same user gesture.
+    // State also keeps native controls available if Safari requires another tap.
+    player.src = src;
+    setRequested(true);
+    const result = player.play();
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {});
+    }
+  }
+
+  return (
+    <div className="relative mb-1.5">
+      <video
+        ref={playerRef}
+        controls={uploading || requested}
+        preload={uploading ? "metadata" : "none"}
+        playsInline
+        src={uploading || requested ? src : undefined}
+        className="min-h-36 max-h-72 w-full max-w-full rounded-lg bg-black"
+      />
+      {!uploading && !requested && (
+        <button
+          type="button"
+          onClick={startPlayback}
+          aria-label="Play video"
+          className="absolute inset-0 flex items-center justify-center gap-2 rounded-lg bg-black/75 px-4 text-sm font-semibold text-white hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+        >
+          <span aria-hidden="true" className="text-2xl">▶</span>
+          Play video
+        </button>
+      )}
+      {uploading && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
+    </div>
+  );
+}
+
 function MessageBubble({
   contactId,
   channel,
@@ -4147,16 +4193,11 @@ function MessageBubble({
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : isVideo && videoSrc ? (
-          <div className="relative mb-1.5">
-            <video
-              controls
-              preload="metadata"
-              playsInline
-              src={videoSrc}
-              className="max-h-72 w-full max-w-full rounded-lg bg-black"
-            />
-            {message._uploading && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
-          </div>
+          <OnDemandInboxVideo
+            key={`${contactId}-${message.id}`}
+            src={videoSrc}
+            uploading={Boolean(message._uploading)}
+          />
         ) : isDocument ? (
           <a
             href={storedMediaSrc || undefined}
