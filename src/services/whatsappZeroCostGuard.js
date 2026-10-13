@@ -623,8 +623,12 @@ async function complete(reservationId,result, database=pool) {
 }
 
 // Reconcile only a provider-confirmed, nonbillable reservation. A timeout,
- // missing receipt, billed message, or UNKNOWN reservation must stay blocked.
- // Re-running this query is safe across duplicate Meta webhooks and restarts.
+// missing receipt, billed message, or UNKNOWN reservation must stay blocked.
+// Never depend on messages.whatsapp_message_id being committed here: Meta can
+// deliver the pricing webhook before local outbound persistence finishes.
+// The gate's WAMID originates from a provider-accepted reservation, so joining
+// it to Meta's durable pricing evidence is the authoritative billing proof.
+// Re-running this query is safe across duplicate Meta webhooks and restarts.
 async function reconcileConfirmedGate(database = pool) {
   if (!enabled()) return false;
   const account = configuredAccount();
@@ -636,12 +640,10 @@ async function reconcileConfirmedGate(database = pool) {
              g.wamid, g.message_id, g.attempt_id, e.pricing_type, e.billable
         FROM whatsapp_free_only_send_gate g
         JOIN whatsapp_free_entry_pricing_evidence e ON e.wamid = g.wamid
-        JOIN messages m ON m.id = g.message_id
-                       AND m.whatsapp_message_id = g.wamid
        WHERE g.phone_number_id = $1 AND g.status = 'awaiting_pricing'
+         AND g.reservation_id IS NOT NULL
          AND e.pricing_type = 'free_entry_point' AND e.billable = false
          AND e.delivery_status IN ('sent','delivered','read')
-         AND m.delivery_status IN ('sent','delivered','read')
          AND NOT EXISTS (
            SELECT 1 FROM whatsapp_free_entry_pricing_evidence alarm
             WHERE alarm.billable = true AND alarm.updated_at >= $2::timestamptz
