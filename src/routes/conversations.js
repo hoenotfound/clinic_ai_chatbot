@@ -19,6 +19,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
+const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService");
 const { prepareStoredInboxImage } = require("../services/inboxImagePreparationService");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
@@ -876,6 +877,11 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
       return res.status(400).json({ error: "Invalid contact or message id." });
     }
 
+    // The router is session-authenticated; also enforce lead-level access before
+    // reading an attachment or issuing a portable, time-limited capability URL.
+    if (!await canAccessContact(req.user, contactId)) {
+      return res.status(403).json({ error: "Not authorized to access this conversation." });
+    }
     const mediaRef = await messagesRepo.getMessageMediaReferenceForContact(
       contactId,
       messageId
@@ -883,6 +889,15 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
     if (!mediaRef) {
       return res.status(404).json({ error: "Message attachment not found." });
     }
+
+    // Only historical MP4 Inbox playback can redirect directly to private R2.
+    // Any disabled/unsupported/error case retains the original Render stream.
+    if (await tryDirectInboxVideo({
+      mediaRef,
+      query: req.query,
+      res,
+      storage: mediaStorage,
+    })) return;
 
     const requestedRange = normalizeSingleByteRange(req.headers.range);
     if (!requestedRange.valid) {

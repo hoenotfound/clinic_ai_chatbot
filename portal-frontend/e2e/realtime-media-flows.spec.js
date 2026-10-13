@@ -1341,3 +1341,38 @@ test("failed historical Inbox video shows Retry and does not fetch other videos"
   expect(requestedIds.some((path) => path.endsWith("/82/media"))).toBe(false);
   expectNoUnexpectedApi(apiState);
 });
+
+test("video compatibility fallback explicitly requests Render without preloading other videos", async ({ page }, testInfo) => {
+  const fixture = playbackFixture(testInfo);
+  const requests = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      { ...inboundMessage({ id: 81, content: "Historical video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Other video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+    ]]]),
+  });
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
+    const requestedUrl = new URL(route.request().url());
+    requests.push(requestedUrl);
+    if (requestedUrl.pathname.endsWith("/81/media") &&
+        requestedUrl.searchParams.get("delivery") !== "proxy") {
+      return route.fulfill({ status: 403, contentType: "text/plain", body: "signed link expired" });
+    }
+    return serveTinyVideo(route, fixture);
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  expect(requests).toHaveLength(0);
+  await page.getByRole("button", { name: "Play video" }).first().click();
+  await expect(page.getByRole("button", { name: "Use compatibility playback" })).toBeVisible();
+  await page.getByRole("button", { name: "Use compatibility playback" }).click();
+  const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
+  await expect.poll(() => player.evaluate((v) => v.readyState)).toBeGreaterThan(1);
+  await expect.poll(() => player.evaluate((v) => v.currentTime)).toBeGreaterThan(0);
+  expect(requests.some((url) => url.pathname.endsWith("/81/media") &&
+    url.searchParams.get("delivery") === "proxy")).toBe(true);
+  expect(requests.some((url) => url.pathname.endsWith("/82/media"))).toBe(false);
+  expectNoUnexpectedApi(apiState);
+});

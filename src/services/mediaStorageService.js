@@ -283,6 +283,17 @@ function createPresignedGetUrl(
   return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
+// Fast metadata-only check before allowing a browser to stream a message video.
+async function headMediaObject(key) {
+  const head = await sendR2(new HeadObjectCommand({
+    Bucket: getBucketName(), Key: key,
+  }), { timeoutMs: 5000 });
+  return {
+    bytes: Number(head.ContentLength),
+    mimeType: String(head.ContentType || "").split(";")[0].trim().toLowerCase(),
+  };
+}
+
 async function getSharedFollowUpMediaInfo(key) {
   if (!isSharedFollowUpConfigKey(key)) {
     throw new Error("Media key is not a shared follow-up object owned by this clinic.");
@@ -950,6 +961,7 @@ module.exports = {
   copyStoredMediaToMessage,
   copyStoredMediaToTemporary,
   createPresignedGetUrl,
+  headMediaObject,
   getSharedFollowUpMediaInfo,
   scheduleTemporaryMediaDelete,
   temporaryMediaPrefix,
