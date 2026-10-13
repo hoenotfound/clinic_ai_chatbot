@@ -176,3 +176,77 @@ test("provider timeout does not retry even if another worker refreshed the cache
   assert.equal(f.trace.filter(x=>x[0]==="send").length,1);
   assert.equal(f.getLookups(),1);
 });
+
+test("two concurrent customers share video upload but cancellation belongs to each recipient", async (t) => {
+  const f = mockVideo(t, { results: [] });
+  const rows = new Map();
+  let signalUploadStarted;
+  let finishUpload;
+  let signalSecondHead;
+  const uploadStarted = new Promise(resolve => { signalUploadStarted = resolve; });
+  const uploadGate = new Promise(resolve => { finishUpload = resolve; });
+  const secondHead = new Promise(resolve => { signalSecondHead = resolve; });
+  let headCalls = 0;
+  let uploadCount = 0;
+  const repo = {
+    async get(phoneId, fingerprint) { return rows.get(phoneId + fingerprint)?.mediaId || null; },
+    async claim(phoneId, fingerprint, mimeType, claim) {
+      rows.set(phoneId + fingerprint, { claim });
+      return true;
+    },
+    async save(phoneId, fingerprint, claim, mediaId) {
+      rows.set(phoneId + fingerprint, { mediaId });
+      return true;
+    },
+    async recordEvent() {},
+  };
+  const sharedStorage = {
+    isSharedFollowUpConfigKey: () => true,
+    async getSharedFollowUpMediaInfo() {
+      headCalls++;
+      if (headCalls === 2) signalSecondHead();
+      return { mimeType: "video/mp4", etag: "version-1", bytes: 12345 };
+    },
+    async downloadMedia() { return Buffer.from("shared-treatment-video"); },
+  };
+  const api = {
+    async uploadMedia() {
+      uploadCount++;
+      signalUploadStarted();
+      await uploadGate;
+      return "shared-meta-video";
+    },
+  };
+  cache.resolveMediaId = cache.createCache({
+    repo, mediaStorage: sharedStorage, whatsappApi: api,
+    phoneNumberId: () => "123456789",
+  }).resolveMediaId;
+  whatsapp.sendVideoById = async (to, mediaId) => {
+    f.trace.push(["sent-to", to, mediaId]);
+    return { success: true, wamid: "wamid-for-" + to };
+  };
+  const firstContact = { ...contact, id: 501, whatsapp_number: "60111111111" };
+  const secondContact = { ...contact, id: 502, whatsapp_number: "60222222222" };
+  let firstEligible = true;
+  const firstOptions = {
+    ...f.options, currentMessageId: 501,
+    preSendCheck: async () => firstEligible,
+  };
+  const secondOptions = {
+    ...f.options, currentMessageId: 502,
+    preSendCheck: async () => true,
+  };
+  const first = messaging.sendVideoByStoredKey(firstContact, key, "Caption A", null, firstOptions);
+  await uploadStarted;
+  const second = messaging.sendVideoByStoredKey(secondContact, key, "Caption B", null, secondOptions);
+  await secondHead;
+  firstEligible = false;
+  finishUpload();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(firstResult.cancelled, true);
+  assert.equal(secondResult.success, true);
+  assert.equal(secondResult.wamid, "wamid-for-60222222222");
+  assert.equal(uploadCount, 1, "Exactly one Meta upload across the two customers");
+  assert.deepEqual(f.trace.filter(x => x[0] === "sent-to"),
+    [["sent-to", "60222222222", "shared-meta-video"]]);
+});
