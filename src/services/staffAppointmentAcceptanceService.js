@@ -107,7 +107,7 @@ function createStaffAppointmentAcceptanceService({
           "       lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id, lead.appointment_at",
           "FROM messages inbound",
           "JOIN LATERAL (",
-          "  SELECT m.id, m.content, m.sent_by_username",
+          "  SELECT m.id, m.content, m.sent_by_username, m.created_at",
           "  FROM messages m",
           "  WHERE m.contact_id = inbound.contact_id AND m.id < inbound.id",
           "    AND m.role = 'assistant' AND m.is_automated_follow_up = false",
@@ -126,7 +126,11 @@ function createStaffAppointmentAcceptanceService({
           "  AND staff.id = (SELECT MAX(previous.id) FROM messages previous",
           "    WHERE previous.contact_id = inbound.contact_id AND previous.id < inbound.id)",
           "  AND inbound.created_at >= staff.created_at",
-          "  AND inbound.created_at <= staff.created_at + interval '24 hours' LIMIT 1",
+          "  AND inbound.created_at <= staff.created_at + interval '24 hours'",
+          "  AND NOT EXISTS (SELECT 1 FROM messages later",
+          "    WHERE later.contact_id = inbound.contact_id",
+          "      AND later.id > staff.id AND later.id < inbound.id)",
+          "LIMIT 1",
         ].join("\n"),
         [contactId, inboundMessageId]
       );
