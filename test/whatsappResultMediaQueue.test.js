@@ -154,3 +154,24 @@ test("confirmed billing alarm never calls the image sender",async t=>{
   assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
     x.params?.includes("cancelled")));
 });
+
+test("optional images yield to waiting customer text replies",async t=>{
+  const row=sample();
+  const db=fakeDb(row);
+  const query=db.query.bind(db);
+  db.query=async(sql,params)=>sql.includes("FROM inbound_processing_jobs j")
+    ? {rows:[{busy:true}]} : query(sql,params);
+  mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
+  mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
+  mock(t,zeroCost,"preflightTemplate",async()=>{
+    throw Error("billing preflight should not compete with urgent reply");
+  });
+  let sent=false;
+  await queue.runOne({
+    db,eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    sender:async()=>{sent=true;},
+  });
+  assert.equal(sent,false);
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status='pending'") &&
+    x.params?.includes("priority_to_live_customer_reply")));
+});
