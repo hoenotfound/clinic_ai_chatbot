@@ -519,6 +519,7 @@ async function scoreWithGemini(input, {
     const error = new Error("All configured lead-scoring Gemini models are cooling down.");
     error.code = "LEAD_SCORING_MODELS_COOLING_DOWN";
     error.nextRetryAt = coolingRetry ? new Date(coolingRetry) : null;
+    error.deferLeadScoringRetry = true;
     error.stopLeadScoringSweep = true;
     throw error;
   }
