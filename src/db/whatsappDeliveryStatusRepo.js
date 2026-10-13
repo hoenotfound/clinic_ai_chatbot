@@ -106,7 +106,10 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
     if (!account) continue;
     await query(
       `INSERT INTO whatsapp_free_only_billing_alerts (wamid,phone_number_id)
-       VALUES($1,$2) ON CONFLICT(wamid) DO NOTHING`,
+       SELECT $1,$2
+       WHERE NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+                        WHERE ex.wamid=$1 AND ex.status='accepted')
+       ON CONFLICT(wamid) DO NOTHING`,
       [item.wamid,account]
     );
   }

@@ -1,0 +1,19 @@
+# Optional 24-hour WhatsApp text service replies
+
+With Strict RM0 on, a separately enabled Tools option permits normal text
+replies to a provider-authored customer message no older than 23h58m.
+Messages may incur Meta service charges after the monthly free allowance.
+This is NOT a Meta RM0 guarantee.
+
+A durable one-shot exception records the outbound message BEFORE calling Meta.
+Only provider-accepted WAMIDs bypass expected-charge alarms. Unknown sends
+cannot be retried with the same saved message. Chargeable templates,
+scheduled follow-ups, interactive marketing consent prompts, and all media
+still require the independently verified CTWA/FEP rules.
+
+After merging and deployment, enable in Neutro Sense Tools > Automated
+Follow-up > WhatsApp while leaving Strict RM0 on. Send a new organic message
+and verify the reply, then check Billing Hub and strict follow-up blocks.
+
+Rollback by turning OFF the additional service-reply checkbox. No activation
+timestamp reset or manual database change is needed.
