@@ -8,7 +8,12 @@ This is NOT a Meta RM0 guarantee.
 A durable one-shot exception records the outbound message BEFORE calling Meta.
 Only provider-accepted WAMIDs with verified Meta pricing type `regular`,
 category `service`, and `billable=true` are exempted from the unexpected
-charge alarm. Missing, conflicting, or non-service pricing remains an alert.
+charge alarm. Missing, conflicting, or non-service pricing remains an alert. The
+billing-alert insertion records **every unexpected billable webhook**, including
+marketing, unclassified and amended pricing. It excludes a callback only when
+an accepted 24h service reply has matching persisted regular/service Meta proof.
+Callbacks that arrive before the provider acceptance record are initially
+queued, then cleared only after that matching proof is persisted.
 Unknown sends cannot be retried with the same saved message. Chargeable
 templates, staff-scheduled messages, automatic follow-ups, interactive
 marketing consent prompts, and all media still require the independently
