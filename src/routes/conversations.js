@@ -19,6 +19,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
+const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService");
 const { prepareStoredInboxImage } = require("../services/inboxImagePreparationService");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
@@ -884,10 +885,28 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
       return res.status(404).json({ error: "Message attachment not found." });
     }
 
+    // Protect signed R2 and forced-Render delivery for opted-in MP4 playback.
+    // Other clinics and their audio, image and document access remain unchanged.
+    const mp4DirectMode = process.env.INBOX_DIRECT_R2_VIDEO_ENABLED === "true" &&
+      String(mediaRef.media_mime_type || "").split(";")[0].trim().toLowerCase() === "video/mp4";
+    if (mp4DirectMode && !await canAccessContact(req.user, contactId)) {
+      return res.status(403).json({ error: "Not authorized to access this conversation." });
+    }
+
+    // Preserve the original validation (416) before any signed redirect.
     const requestedRange = normalizeSingleByteRange(req.headers.range);
     if (!requestedRange.valid) {
       return res.sendStatus(416);
     }
+
+    // Only historical MP4 Inbox playback can redirect directly to private R2.
+    // Any disabled/unsupported/error case retains the original Render stream.
+    if (await tryDirectInboxVideo({
+      mediaRef,
+      query: req.query,
+      res,
+      storage: mediaStorage,
+    })) return;
 
     const media = await mediaStorage.openMediaStream(mediaRef.media_key, {
       range: requestedRange.range,
