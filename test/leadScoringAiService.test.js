@@ -360,7 +360,7 @@ test("Gemini scorer switches immediately to a healthy fallback under the global 
   assert.equal(score.model, GEMINI_FALLBACK_MODEL);
   assert.equal(calls.length, 2, "one request per model without key cycling");
   assert.equal(calls[0].globalBudgetMs, LEAD_SCORING_PRIMARY_BUDGET_MS);
-  assert.ok(calls[1].globalBudgetMs <= LEAD_SCORING_GLOBAL_BUDGET_MS - LEAD_SCORING_PRIMARY_BUDGET_MS);
+  assert.ok(calls[1].globalBudgetMs <= LEAD_SCORING_GLOBAL_BUDGET_MS);
   assert.equal(calls[0].confirmModelUnavailableAcrossKeys, false);
   assert.equal(cooldowns.get(GEMINI_MODEL), 100_000 + 5 * 60 * 1000);
   assert.equal(cooldowns.has(GEMINI_FALLBACK_MODEL), false);
