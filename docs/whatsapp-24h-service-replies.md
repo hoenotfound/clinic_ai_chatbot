@@ -6,6 +6,10 @@ Messages may incur Meta service charges after the monthly free allowance.
 This is NOT a Meta RM0 guarantee.
 
 A durable one-shot exception records the outbound message BEFORE calling Meta.
+Staff Inbox images, videos, documents and forwards require a **separate** explicit
+24-hour media permission; see [staff-media policy](whatsapp-24h-staff-media.md).
+That opt-in never authorizes automated treatment imagery or follow-up sends.
+
 Only provider-accepted WAMIDs with verified Meta pricing type `regular`,
 category `service`, and `billable=true` are exempted from the unexpected
 charge alarm. Missing, conflicting, or non-service pricing remains an alert. The
