@@ -83,6 +83,7 @@ function normalizeOptions(reasonOrOptions) {
     reason: safeText(options.reason, 500) || defaults.reason,
     activityDescription: safeText(options.activityDescription, 1000) || defaults.activityDescription,
     details: normalizeBookingDetails(options.details || options),
+    allowReschedule: options.allowReschedule === true,
   };
 }
 
@@ -98,7 +99,7 @@ function createBookingReadyOutcomeService({
     reasonOrOptions = null
   ) {
     const capturedMessageId = safeMessageId(messageId);
-    const { reason, activityDescription, details } = normalizeOptions(reasonOrOptions);
+    const { reason, activityDescription, details, allowReschedule = false } = normalizeOptions(reasonOrOptions);
     const client = await database.connect();
     let contactUpdated = false;
     let leadId = null;
@@ -129,6 +130,17 @@ function createBookingReadyOutcomeService({
              updated_at = now()
          WHERE c.id = $2
            AND c.mode = 'ai'
+           -- The structured CRM state wins over stale AI outcome predictions.
+           -- A genuinely new explicit rescheduling request may still reach staff.
+           AND (
+             $9::boolean = false OR $10::boolean = true OR NOT EXISTS (
+               SELECT 1 FROM leads l
+               JOIN pipeline_stages s ON s.id = l.stage_id
+               WHERE l.contact_id = c.id AND l.is_closed = false
+                 AND (l.appointment_status IN ('set', 'visited')
+                      OR s.system_key IN ('appointment_set', 'visited'))
+             )
+           )
            AND (
              c.needs_attention = false
              OR c.attention_reason IS NULL
@@ -175,6 +187,8 @@ function createBookingReadyOutcomeService({
           details.projectLocation || null,
           details.projectSummary || null,
           details.nextStep || null,
+          getConversionProfile(clinicConfig).mode === "appointment",
+          allowReschedule,
         ]
       );
       contactUpdated = Boolean(contactResult.rows[0]);
