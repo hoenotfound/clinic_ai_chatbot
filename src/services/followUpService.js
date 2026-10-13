@@ -22,7 +22,7 @@ const channelMessaging = require("./channelMessagingService");
 const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
 const { pool } = require("../db/db");
-const { previouslySentVideo } = require("../utils/followUpVideoPolicy");
+const { previouslySentVideo, textOnlyVideoFallback } = require("../utils/followUpVideoPolicy");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const pricingReminderService = require("./pricingReminderService");
 const whatsappConsentPromptService = require("./whatsappConsentPromptService");
@@ -856,6 +856,19 @@ async function sendSocialVideoCompanion(
 ) {
   if (quietHoursStatus(new Date(), quietHours).active) return;
 
+  const protectVideo = clinicConfig.automatedFollowUp?.videoDuplicateProtectionEnabled === true;
+  if (protectVideo) {
+    try {
+      if (await previouslySentVideo({ database: pool, contactId, mediaKey: sourceVideoKey })) {
+        console.info(`[Social follow-up video] duplicate suppressed for contact ${contactId}`);
+        return;
+      }
+    } catch (error) {
+      console.warn("[Social follow-up video] duplicate check unavailable; skipping optional media:", error?.message);
+      return;
+    }
+  }
+
   // Save the configured private R2 object key directly. The companion message
   // references the same video, so retries and repeated recipients never create
   // additional permanent copies.
@@ -893,6 +906,7 @@ async function sendSocialVideoCompanion(
   publishConversationChange(videoMessage, "message");
 
   let videoResult;
+  let duplicateBeforeSend = false;
   try {
     const videoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
       videoMessage.id,
@@ -905,8 +919,21 @@ async function sendSocialVideoCompanion(
       filename || "service-video.mp4",
       {
         purpose: "marketing",
-        preSendCheck: async () =>
-          !quietHoursStatus(new Date(), quietHours).active,
+        preSendCheck: async () => {
+          if (quietHoursStatus(new Date(), quietHours).active) return false;
+          if (!protectVideo) return true;
+          try {
+            duplicateBeforeSend = await previouslySentVideo({
+              database: pool, contactId, mediaKey: sourceVideoKey,
+              excludeMessageId: videoMessage.id,
+            });
+            return !duplicateBeforeSend;
+          } catch (error) {
+            console.warn("[Social follow-up video] final check failed:", error?.message);
+            duplicateBeforeSend = true;
+            return false;
+          }
+        },
         ...(videoProviderRecorder
           ? { onProviderMessageId: videoProviderRecorder }
           : {}),
@@ -917,7 +944,8 @@ async function sendSocialVideoCompanion(
     videoResult = { success: false, wamid: null, externalMessageId: null };
   }
 
-  if (videoResult?.cancelled && !videoResult?.preSendCheckFailed) {
+  if (videoResult?.cancelled &&
+      (!videoResult?.preSendCheckFailed || duplicateBeforeSend)) {
     const discarded = await followUpRepo.discardUnsentSocialVideoCompanion({
       messageId: videoMessage.id,
       contactId,
@@ -1233,7 +1261,12 @@ async function sendCandidate(candidate) {
             stageName: aiContext.lead?.stage_name,
             branchName: aiContext.lead?.branch_name,
             appointmentStatus: aiContext.lead?.appointment_status,
-            instruction: step.aiInstruction,
+            instruction: [
+              step.aiInstruction,
+              clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled === true && selectedVideoKey
+                ? "A verified treatment-specific video may accompany your text. Write a short, relevant, safe caption, grounded in the actual concern. Do not claim a guaranteed outcome. For Messenger/Instagram, do not say the video has already been delivered; the attachment is sent separately."
+                : "No video is attached to this message. Never claim to be sharing or attaching a video, image, testimonial clip or result photo.",
+            ].filter(Boolean).join("\n").slice(0, 1000),
             channel: candidate.channel || "whatsapp",
             contactId: candidate.contact_id,
             leadId: aiContext.lead?.id || null,
@@ -1307,10 +1340,10 @@ async function sendCandidate(candidate) {
               }
               return;
             }
-          } else if (targetedMediaService) {
-            // Keep the exact configured caption paired with the selected
-            // service media. The model has approved sending, but its generated
-            // prose is intentionally ignored for this targeted attachment.
+          } else if (targetedMediaService &&
+              clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled !== true) {
+            // Preserve the original reviewed caption behavior for clinics
+            // that have not opted in to AI-personalized video captions.
             followUpMessageMode = "fixed";
           } else {
             followUpMessage = aiDecision.message;
@@ -1379,13 +1412,39 @@ async function sendCandidate(candidate) {
         contactId: candidate.contact_id, mediaKey: effectiveVideoKey })) {
         console.info(`[Follow-up video] duplicate media suppressed, contact ${candidate.contact_id}, step ${stepIndex}`);
         effectiveVideoKey = "";
+        followUpMessage = textOnlyVideoFallback({
+          language,
+          serviceName: targetedMediaService || targetedService || candidate.treatment_interest,
+          stepIndex,
+        });
+        followUpMessageMode = "fixed";
       }
     } catch (error) {
       // On database errors, never risk repeating the attachment.
       console.warn("[Follow-up video] duplicate lookup failed; sending text only:", error?.message);
       effectiveVideoKey = "";
+      followUpMessage = textOnlyVideoFallback({
+        language,
+        serviceName: targetedMediaService || targetedService || candidate.treatment_interest,
+        stepIndex,
+      });
+      followUpMessageMode = "fixed";
     }
   }
+  // With social channels the caption text is delivered first and the video
+  // is a separate optional message. Keep the text truthful if the media fails.
+  if (effectiveVideoKey &&
+      (contact.channel === "facebook" || contact.channel === "instagram") &&
+      clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled === true &&
+      /(?:视频|影片|片段|发给你看|分享给你|video|clip|watch this|sent you|lihat video|tonton video)/iu.test(followUpMessage)) {
+    followUpMessage = textOnlyVideoFallback({
+      language,
+      serviceName: targetedMediaService || targetedService || candidate.treatment_interest,
+      stepIndex,
+    });
+    followUpMessageMode = "fixed";
+  }
+
   const effectiveVideoFilename =
     selectedVideoFilename || "follow-up-video.mp4";
 
