@@ -102,3 +102,122 @@ test("Postgres: free-only gate reconciles only durable Meta nonbillable pricing 
     await client.end();
   }
 });
+
+test("Postgres: simultaneous strict reservations reconcile exactly once and permit only one new send", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async (t) => {
+  const { Pool } = require("pg");
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 3 });
+  const schema = "strict_concurrent_" + process.pid + "_" + Date.now();
+  const oldConfig = config.automatedFollowUp;
+  const oldAccount = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldSevenDay = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+  config.automatedFollowUp = {
+    ...(oldConfig || {}),
+    whatsappFreeOnly: { enabled: true, activatedAt: "2026-10-13T02:00:00.000Z" },
+  };
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "123456789";
+  delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+  t.after(() => {
+    config.automatedFollowUp = oldConfig;
+    if (oldAccount === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldAccount;
+    if (oldSevenDay === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+    else process.env.WHATSAPP_FEP_7DAY_VERIFIED = oldSevenDay;
+  });
+  const init = await pool.connect();
+  try {
+    await init.query("CREATE SCHEMA " + schema);
+    await init.query("SET search_path TO " + schema);
+    await init.query(`
+      CREATE TABLE whatsapp_free_only_send_gate (
+        phone_number_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+        reservation_id TEXT, wamid TEXT, recipient TEXT,
+        message_id INTEGER, attempt_id BIGINT, updated_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE whatsapp_free_entry_pricing_evidence (
+        wamid TEXT PRIMARY KEY, pricing_type TEXT NOT NULL, billable BOOLEAN,
+        delivery_status TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE whatsapp_free_only_reconciliations (
+        id BIGSERIAL PRIMARY KEY, phone_number_id TEXT NOT NULL,
+        reservation_id TEXT NOT NULL, prior_status TEXT NOT NULL,
+        wamid TEXT, message_id INTEGER, attempt_id BIGINT,
+        actor TEXT NOT NULL, reason TEXT NOT NULL, verified_billing_hub BOOLEAN NOT NULL,
+        provider_pricing_type TEXT, provider_billable BOOLEAN,
+        reconciled_at TIMESTAMPTZ NOT NULL
+      );
+      INSERT INTO whatsapp_free_only_send_gate
+        (phone_number_id,status,reservation_id,wamid,recipient,message_id)
+      VALUES ('123456789','awaiting_pricing','original-reservation','wamid.original',
+        '60110000000',55);
+      INSERT INTO whatsapp_free_entry_pricing_evidence
+        (wamid,pricing_type,billable,delivery_status)
+      VALUES ('wamid.original','free_entry_point',false,'read');
+    `);
+    await init.query("RESET search_path");
+    init.release();
+
+    // Only eligibility/operational logging are stubbed. The account lock,
+    // update, and proof/audit CTE are actual concurrent PostgreSQL operations.
+    const database = {
+      connect: async () => {
+        const client = await pool.connect();
+        await client.query("SET search_path TO " + schema);
+        return {
+          query: (sql, params) => {
+            if (sql === guard.VERIFIED_WINDOW_SQL) return Promise.resolve({
+              rows: [{ eligible: true }],
+            });
+            return client.query(sql, params);
+          },
+          release: async () => {
+            try { await client.query("RESET search_path"); }
+            finally { client.release(); }
+          },
+        };
+      },
+      query: async (sql, params) => {
+        if (sql.includes("INSERT INTO whatsapp_free_only_block_events")) {
+          return { rows: [] };
+        }
+        throw new Error("Unexpected nontransactional query: " + sql);
+      },
+    };
+    const [a, b] = await Promise.all([
+      guard.reserve("60111111111", { database }),
+      guard.reserve("60112222222", { database }),
+    ]);
+    assert.equal([a,b].filter(x => x.allowed).length, 1);
+    assert.equal([a,b].filter(x => !x.allowed).length, 1);
+    assert.equal([a,b].find(x => !x.allowed).code, "zero_cost_previous_send_unreconciled");
+    const check = await pool.connect();
+    try {
+      await check.query("SET search_path TO " + schema);
+      const gate = (await check.query(
+        "SELECT * FROM whatsapp_free_only_send_gate")).rows[0];
+      assert.equal(gate.status, "reserved");
+      assert.notEqual(gate.reservation_id, "original-reservation");
+      assert.equal((await check.query(
+        "SELECT COUNT(*)::integer AS count FROM whatsapp_free_only_reconciliations"
+      )).rows[0].count, 1);
+      const proof = (await check.query(
+        "SELECT actor,verified_billing_hub,wamid FROM whatsapp_free_only_reconciliations")).rows[0];
+      assert.equal(proof.actor, "automatic_verified_receipt");
+      assert.equal(proof.verified_billing_hub, false);
+      assert.equal(proof.wamid, "wamid.original");
+    } finally {
+      await check.query("RESET search_path");
+      check.release();
+    }
+  } finally {
+    if (!init.released) {
+      await init.query("RESET search_path").catch(() => {});
+      init.release();
+    }
+    const cleanup = await pool.connect();
+    try { await cleanup.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE"); }
+    finally { cleanup.release(); }
+    await pool.end();
+  }
+});
