@@ -14,7 +14,7 @@ Clinic: Neutro Sense TCM. Production Neon `clinic_config.data.automatedFollowUp`
 - Post-window `freeEntry.enabled=false` until after PR merge, deployment and review. `WHATSAPP_FEP_FOLLOWUPS_ENABLED=true` on Render is necessary but **insufficient** by itself; the Tools clinic switch must be enabled too.
 - Keep `WHATSAPP_FEP_7DAY_VERIFIED=false`; both 48h and 66h stages are below the conservative 72h deadline, with a safety buffer. The initial paid CTWA activation callback and subsequent Meta billing determine actual costs; never promise zero charges.
 - Clinic quiet hours 00:00-07:00, consent, opted-out, staff takeover, follow-up spacing, booking, patient deferral, clinical concerns and template approval safeguards are preserved.
-- The new repo utility prevents sending the **same stored R2 video** twice in seven days if staff or another follow-up already shared it; rechecks before provider send.
+- The new repo utility prevents sending the **same stored R2 video** twice in seven days if staff or another follow-up already shared it; rechecks before provider send. It is enabled specifically for Neutro through `videoDuplicateProtectionEnabled=true` in Neon and preserved on ordinary Tools saves; other clinic instances retain their current behavior.
 - New treatment-explanation assets for 3D, 9D and 3D+9D must be uploaded and explicitly assigned to the first step to meet the video requirement in full.
 - Current approved text templates provide useful general appointment and check-in messages; fully personalized per-concern post-window wording requires separately approved Meta template variants.
 
