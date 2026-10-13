@@ -37,13 +37,13 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         id INTEGER PRIMARY KEY, contact_id INTEGER, marketing_consent TEXT,
         is_closed BOOLEAN, appointment_status TEXT, stage_id INTEGER,
         started_message_id INTEGER,
-        created_at TIMESTAMPTZ, treatment_interest TEXT
+        created_at TIMESTAMPTZ, treatment_interest TEXT, temperature TEXT
       );
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY, contact_id INTEGER REFERENCES contacts(id),
         role TEXT, content TEXT, created_at TIMESTAMPTZ,
         whatsapp_message_id TEXT, sent_by_username TEXT, delivery_status TEXT,
-        whatsapp_template JSONB
+        whatsapp_template JSONB, media_key TEXT
       );
       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,

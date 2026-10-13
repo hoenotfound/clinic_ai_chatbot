@@ -13,6 +13,7 @@ const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
+const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateApprovedMedia, validateTemplateRules, enrichAutomatedTemplateSpec, prepareAutoPromotionMedia, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
 const {
   freeEntryEnabled,
@@ -52,6 +53,7 @@ const candidateSql = `
          last_inbound.created_at AS last_inbound_at,
          evidence.pricing_type AS evidence_type,
          lead.treatment_interest,
+         lead.temperature AS lead_temperature,
          lead.started_message_id AS lead_started_message_id,
          origin.id AS epoch_origin_message_id,
          latest_ad.treatment_interest AS referral_treatment_interest,
@@ -76,11 +78,18 @@ const candidateSql = `
             FROM whatsapp_free_entry_followup_attempts previous
             WHERE previous.first_reply_message_id=first_reply.id
               AND previous.status='accepted') AS accepted_extended_sends,
+         (SELECT COALESCE(array_agg(DISTINCT media.media_key), '{}')
+            FROM messages media
+            WHERE media.contact_id = c.id AND media.role = 'assistant'
+              AND media.created_at >= origin.created_at
+              AND NULLIF(media.media_key, '') IS NOT NULL
+              AND media.delivery_status IS DISTINCT FROM 'failed'
+              AND media.delivery_status IS DISTINCT FROM 'cancelled') AS previously_sent_media_keys,
          true AS source_is_ctwa
   FROM contacts c
   JOIN LATERAL (
     SELECT l.id, l.is_closed, l.appointment_status, l.marketing_consent, l.treatment_interest,
-           l.started_message_id,
+           l.temperature, l.started_message_id,
            s.stage_type, s.system_key
     FROM leads l
     LEFT JOIN pipeline_stages s ON s.id = l.stage_id
@@ -392,6 +401,23 @@ async function processCandidate(candidate, requested, template, now = new Date()
   let message = null;
   let acceptedWamid = null;
   try {
+    // The candidate page is a snapshot. Recheck stored media after claiming,
+    // including any manual/in-window video sent while this worker was waiting.
+    if (spec.mediaKey) {
+      const alreadySent = await pool.query(
+        `SELECT 1 FROM messages
+         WHERE contact_id=$1 AND role='assistant' AND media_key=$2
+           AND created_at >= $3::timestamptz
+           AND delivery_status IS DISTINCT FROM 'failed'
+           AND delivery_status IS DISTINCT FROM 'cancelled'
+         LIMIT 1`,
+        [candidate.contact_id, spec.mediaKey, candidate.first_inbound_at]
+      );
+      if (alreadySent.rows.length) {
+        await finish(attemptId, "cancelled", { error: "Media already sent in this ad conversation" });
+        return "media_already_sent";
+      }
+    }
     // Every value comes from a configured service/active clinic promotion;
     // never from AI-generated text or arbitrary customer-supplied URLs.
     // Upload image assets to Meta using the already validated public-config
@@ -586,6 +612,61 @@ async function processCandidate(candidate, requested, template, now = new Date()
   }
 }
 
+// Use only an approved variant of the customer's language after the 24h window.
+// Meta's existing English video templates use "en" rather than "en_US".
+function approvedInLanguage(catalog, name, language) {
+  const locales = language === "en_US" ? ["en_US", "en"] : [language];
+  return catalog.find((item) => item.name === name &&
+    locales.includes(item.language) && item.status === "APPROVED" &&
+    item.category === "MARKETING") || null;
+}
+
+function resolveSafeTemplate(candidate, slotHours, active, catalog) {
+  const preferred = selectTemplateSpec(candidate, slotHours, active);
+  if (!preferred) return null;
+  const usedNames = candidate.used_template_names || [];
+  const sentKeys = candidate.previously_sent_media_keys || [];
+  // A video already sent in any earlier or manual follow-up must not repeat.
+  // If a video has no approved variant in the customer's language, choose a
+  // distinct approved text template instead of silently switching to Chinese.
+  const alternatives = [preferred.templateName];
+  if (preferred.mediaKey) alternatives.push("ns_fu1_service_checkin", "ns_fu2_general_checkin");
+  for (const name of alternatives) {
+    if (usedNames.includes(name)) continue;
+    const isPreferred = name === preferred.templateName;
+    if (isPreferred && preferred.mediaKey && sentKeys.includes(preferred.mediaKey)) continue;
+    const template = approvedInLanguage(catalog, name, preferred.language);
+    if (!template) continue;
+    const base = isPreferred ? preferred : {
+      ...preferred, templateName: name, mediaKey: "", mediaUrl: "",
+      mediaSourceId: "", videoCodecVerified: false,
+    };
+    const spec = enrichAutomatedTemplateSpec({ ...base, language: template.language }, template);
+    if (spec && buildStaticMarketingTemplate(template,
+      materializeTemplateMediaSpec(spec), whatsappTemplates,
+      { allowUnuploadedMedia: true })) return { template, spec };
+  }
+  return null;
+}
+
+// Keep extra reminders selective; do not keep messaging cold/unknown leads.
+function selectiveSlotAllowed(candidate, slotHours) {
+  if (slotHours < 48) return true;
+  if (String(candidate.lead_temperature || "").toLowerCase() === "cold") return false;
+  return Boolean(candidate.treatment_interest || candidate.referral_treatment_interest ||
+    inferConfiguredServiceFromText(candidate.referral_ad_name) ||
+    (candidate.recent_inbound_messages || [])
+      .some((message) => inferConfiguredServiceFromText(message)));
+}
+
+// Respect a customer's explicit choice to decide later instead of treating
+// their silence as permission for increasingly frequent marketing.
+function customerRequestedPause(candidate) {
+  const latest = String((candidate.recent_inbound_messages || [])[0] || "").trim();
+  if (!latest) return false;
+  return /(?:我考虑一下|我再(?:联系|通知|告诉|回复)|(?:等|待)我(?:安排|确认|看看)|有机会再联系|先不用|暂时不需要|不需要了|不用了|不方便过去|太远了|先忙|I(?:'ll| will) (?:confirm|let you know|contact you|get back)|let me (?:think|consider)|can I confirm (?:tomorrow|later)|not interested|too far away|saya (?:akan )?(?:confirm|hubungi) (?:nanti|kemudian)|tak berminat|terlalu jauh)/iu.test(latest);
+}
+
 async function run({ now = new Date() } = {}) {
   if (running) return { skipped: true };
   const configured = settings();
@@ -608,35 +689,32 @@ async function run({ now = new Date() } = {}) {
     for (const candidate of allCandidates) {
       const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
       if (!slotHours) { result.skipped++; continue; }
-      const preferred = selectTemplateSpec(candidate, slotHours, active);
-      const matches = (locale) => catalog.templates.find((item) =>
-        item.name === preferred?.templateName && item.language === locale &&
-        item.status === "APPROVED" && item.category === "MARKETING"
-      );
-      const template = matches(preferred?.language) ||
-        matches(active.fallbackLanguage);
-      const spec = template && preferred
-        ? enrichAutomatedTemplateSpec({ ...preferred, language: template.language }, template)
-        : null;
-      if (template && candidate.used_template_names?.includes(template.name)) {
+      if (customerRequestedPause(candidate)) {
         result.skipped++;
         await freeEntryReport.recordSkip(candidate.contact_id,
-          candidate.first_reply_message_id, slotHours, "template_already_used_in_entry")
+          candidate.first_reply_message_id, slotHours, "customer_asked_to_decide_later")
           .catch(() => {});
         continue;
       }
-      if (!template || !spec ||
-          !buildStaticMarketingTemplate(template, materializeTemplateMediaSpec(spec), whatsappTemplates,
-            { allowUnuploadedMedia: true }) ||
-          !await validateApprovedMedia(template, spec)) {
+      if (!selectiveSlotAllowed(candidate, slotHours)) {
         result.skipped++;
-        const reason = template ? "unsupported_or_unavailable_media" : "approved_language_variant_missing";
+        await freeEntryReport.recordSkip(candidate.contact_id,
+          candidate.first_reply_message_id, slotHours, "low_interest_extra_followup")
+          .catch(() => {});
+        continue;
+      }
+      const resolved = resolveSafeTemplate(candidate, slotHours, active, catalog.templates);
+      if (!resolved || !await validateApprovedMedia(resolved.template, resolved.spec)) {
+        result.skipped++;
+        const reason = resolved ? "unsupported_or_unavailable_media" :
+          "no_distinct_approved_template_in_customer_language";
         await freeEntryReport.recordSkip(candidate.contact_id,
           candidate.first_reply_message_id, slotHours, reason).catch((error) =>
-            console.warn("[WhatsApp FEP] failed to record skip:", error?.message));
+          console.warn("[WhatsApp FEP] failed to record skip:", error?.message));
         console.warn("[WhatsApp FEP] skipped", candidate.contact_id, slotHours, reason);
         continue;
       }
+      const { template, spec } = resolved;
       const outcome = await processCandidate(candidate, active, template, now, spec);
       if (outcome === "accepted") result.accepted++;
       else result.skipped++;
@@ -657,4 +735,4 @@ function start() {
   return () => { clearInterval(timer); timer = null; };
 }
 
-module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start, SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql };
+module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start, SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage, resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause };
