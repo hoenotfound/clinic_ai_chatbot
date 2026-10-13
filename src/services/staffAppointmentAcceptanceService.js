@@ -1,5 +1,8 @@
 const { pool } = require("../db/db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const telegramAlertRepo = require("../db/telegramImmediateAlertRepo");
+const webPushNotifications = require("./webPushNotificationService");
 
 const AGREED_TIME_REASON =
   "Booking ready: customer accepted a staff-offered time; clinic should finalize the appointment.";
@@ -77,15 +80,26 @@ function conflictsWithConfirmedSlot(offerText, appointmentAt) {
   return hour !== Number(local.hour) || minute !== Number(local.minute);
 }
 
-function createStaffAppointmentAcceptanceService({ database = pool, publish = realtimeEvents.publish } = {}) {
+function createStaffAppointmentAcceptanceService({
+  database = pool,
+  publish = realtimeEvents.publish,
+  lockContactAlertQueue = telegramAlertRepo.lockContactAlertQueue,
+  sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
+  wakeAlertQueue = telegramImmediateAlerts.wakeImmediateAlertQueue,
+  sendWebPush = webPushNotifications.sendContactAlertBestEffort,
+} = {}) {
   return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
     if (!isBriefAcceptance(customerText)) return null;
     const client = await database.connect();
     let outcome = null;
+    let alertQueued = false;
+    let staffAlertUpdated = false;
     try {
       await client.query("BEGIN");
-      // Serialize acceptance decisions for the same contact across retries.
+      // Same lock order as Booking Ready/Telegram workers: advisory alert lock
+      // first, then the contact. No provider network calls while locked.
+      await lockContactAlertQueue(contactId, client.query.bind(client));
       await client.query("SELECT id FROM contacts WHERE id = $1 FOR UPDATE", [contactId]);
       const selected = await client.query(
         [
@@ -97,7 +111,7 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
           "  FROM messages m",
           "  WHERE m.contact_id = inbound.contact_id AND m.id < inbound.id",
           "    AND m.role = 'assistant' AND m.is_automated_follow_up = false",
-          "    AND m.created_at >= inbound.created_at - interval '14 days'",
+          "    AND m.created_at >= inbound.created_at - interval '24 hours'",
           "    AND COALESCE(m.delivery_status, 'pending') IN ('pending','sent','delivered','read')",
           "    AND m.whatsapp_message_id IS NOT NULL",
           "  ORDER BY m.id DESC LIMIT 1",
@@ -108,7 +122,11 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
           "  ORDER BY l.created_at DESC, l.id DESC LIMIT 1",
           ") lead ON true",
           "WHERE inbound.id = $2 AND inbound.contact_id = $1 AND inbound.role = 'user'",
-          "  AND staff.sent_by_username IS NOT NULL LIMIT 1",
+          "  AND staff.sent_by_username IS NOT NULL",
+          "  AND staff.id = (SELECT MAX(previous.id) FROM messages previous",
+          "    WHERE previous.contact_id = inbound.contact_id AND previous.id < inbound.id)",
+          "  AND inbound.created_at >= staff.created_at",
+          "  AND inbound.created_at <= staff.created_at + interval '24 hours' LIMIT 1",
         ].join("\n"),
         [contactId, inboundMessageId]
       );
@@ -137,46 +155,33 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
         [offer.lead_id, JSON.stringify(metadata), inboundMessageId]
       );
       if (inserted.rows.length) {
-        // A changed staff proposal supersedes an old booked slot, but does
-        // not confirm the replacement booking or cause a template send.
-        const reschedule = offer.appointment_status === "set" &&
+        // An acceptance is evidence of a pending alternative, never permission
+        // to overwrite a booked slot. Staff must confirm the replacement.
+        const changedConfirmedSlot = offer.appointment_status === "set" &&
           (isExplicitRescheduleOffer(offer.staff_text) ||
             conflictsWithConfirmedSlot(offer.staff_text, offer.appointment_at));
-        if (reschedule) {
-          const rescheduled = await client.query(
-            [
-              "UPDATE leads SET appointment_status = 'reschedule', appointment_at = NULL,",
-              "  stage_id = COALESCE((",
-              "    SELECT id FROM pipeline_stages",
-              "    WHERE system_key = 'contacted' AND stage_type = 'open' LIMIT 1",
-              "  ), stage_id), updated_at = now()",
-              "WHERE id = $1 AND appointment_status = 'set' RETURNING stage_id",
-            ].join("\n"),
-            [offer.lead_id]
-          );
-          if (rescheduled.rows[0] && Number(rescheduled.rows[0].stage_id) !== Number(offer.old_stage_id)) {
-            await client.query(
-              "INSERT INTO lead_stage_history (lead_id, from_stage_id, to_stage_id, changed_by) VALUES ($1, $2, $3, $4)",
-              [offer.lead_id, offer.old_stage_id, rescheduled.rows[0].stage_id, "Automation"]
-            );
-          }
-          await client.query(
-            "INSERT INTO lead_activities (lead_id, activity_type, description, actor, metadata) VALUES ($1, 'updated', $2, 'Automation', $3::jsonb)",
-            [offer.lead_id, "Staff-offered reschedule accepted; replacement slot requires confirmation.",
-              JSON.stringify({ ...metadata, outcome: "reschedule_pending" })]
-          );
-        }
-        if (offer.appointment_status !== "set" || reschedule) {
-          await client.query(
+        if (offer.appointment_status !== "set" || changedConfirmedSlot) {
+          const attentionUpdate = await client.query(
             [
               "UPDATE contacts SET needs_attention = true, attention_reason = $2, updated_at = now()",
               "WHERE id = $1 AND mode = 'ai'",
               "  AND (needs_attention = false OR attention_reason LIKE 'Booking ready:%')",
               "  AND NOT EXISTS (SELECT 1 FROM ai_review_items r WHERE r.contact_id = contacts.id",
               "    AND r.status = 'pending' AND r.category <> 'information')",
+              "RETURNING id",
             ].join("\n"),
             [contactId, AGREED_TIME_REASON]
           );
+          staffAlertUpdated = Boolean(attentionUpdate.rows[0]);
+          if (staffAlertUpdated) {
+            const queued = await sendBookingReadyAlert({
+              contactId, messageId: Number(inboundMessageId),
+              reason: AGREED_TIME_REASON,
+              details: { appointmentPreference: metadata.agreedTimeText },
+              transactionClient: client, queueLockHeld: true,
+            });
+            alertQueued = queued?.status === "queued";
+          }
         }
         outcome = { leadId: offer.lead_id, agreedTimeText: metadata.agreedTimeText };
       }
@@ -187,6 +192,8 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
     } finally {
       client.release();
     }
+    if (alertQueued) wakeAlertQueue(0);
+    if (staffAlertUpdated) sendWebPush({ contactId, type: "booking_ready" });
     if (outcome) {
       publish("pipeline_changed", { leadId: outcome.leadId });
       publish("conversation_changed", { contactId, reason: "staff_time_accepted" });
