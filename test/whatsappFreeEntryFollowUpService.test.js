@@ -87,3 +87,22 @@ test("extended candidate SQL checks previously sent follow-up videos from all ou
   assert.match(code, /usedNames\.includes\(name\)/);
   assert.match(code, /no_distinct_approved_template_in_customer_language/);
 });
+
+
+test("respect explicit deferral instead of automatically marketing to customers", () => {
+  assert.equal(worker.customerRequestedPause({
+    recent_inbound_messages: ["can I confirm tomorrow?"],
+  }), true);
+  assert.equal(worker.customerRequestedPause({
+    recent_inbound_messages: ["我考虑一下再告诉你"],
+  }), true);
+  assert.equal(worker.customerRequestedPause({
+    recent_inbound_messages: ["小腹凸，平时久坐"],
+  }), false);
+});
+
+test("video duplicate protection is rechecked after a follow-up slot is claimed", () => {
+  const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(code, /Media already sent in this ad conversation/);
+  assert.match(code, /WHERE contact_id=\$1 AND role='assistant' AND media_key=\$2/);
+});
