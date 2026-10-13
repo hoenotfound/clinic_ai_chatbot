@@ -10,7 +10,9 @@ function resultMediaAuditOutcome({
   const resolvedReason = promotionImagesTruncated
     ? (reason ? reason + ";promotion_image_budget" : "promotion_image_budget")
     : reason;
-  const status = sentCount > 0
+  const status = reason === "awaiting_meta_free_billing" && sentCount === 0
+    ? "deferred"
+    : sentCount > 0
     ? (resolvedReason ? "partial" : "sent")
     : (["provider_send_failed", "result_media_exception"].includes(reason)
       ? "failed" : "skipped");
