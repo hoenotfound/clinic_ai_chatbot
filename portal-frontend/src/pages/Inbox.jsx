@@ -3969,6 +3969,16 @@ function OnDemandInboxVideo({ src, uploading = false }) {
           Play video
         </button>
       )}
+      {!uploading && requested && !loadError && (
+        <button
+          type="button"
+          onClick={() => startPlayback()}
+          className="mt-2 rounded-lg border border-current px-3 py-2 text-xs font-semibold"
+          aria-label="Reload video"
+        >
+          Reload video
+        </button>
+      )}
       {!uploading && requested && loadError && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" role="alert">
           <span>Video could not play. Please try again.</span>

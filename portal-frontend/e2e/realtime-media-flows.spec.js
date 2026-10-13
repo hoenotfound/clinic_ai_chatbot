@@ -1281,7 +1281,7 @@ test("historical Inbox videos fetch only when staff explicitly plays real video"
     ]]]),
   });
 
-  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
     mediaGets.push(new URL(route.request().url()).pathname);
     await serveTinyVideo(route, fixture);
   });
@@ -1303,6 +1303,12 @@ test("historical Inbox videos fetch only when staff explicitly plays real video"
   await expect.poll(() => videos.nth(0).evaluate((element) => element.readyState)).toBeGreaterThan(1);
   await expect.poll(() => videos.nth(0).evaluate((element) => element.currentTime)).toBeGreaterThan(0);
   await expect(videos.nth(0)).toHaveJSProperty("controls", true);
+  // A long-paused/expired signed link can stall instead of emitting error.
+  // Explicit Reload must always renew the authenticated redirect on click.
+  await page.getByRole("button", { name: "Reload video" }).first().click();
+  await expect.poll(() => mediaGets.filter((path) => path.endsWith("/81/media")).length)
+    .toBeGreaterThanOrEqual(2);
+  await expect(videos.nth(0)).toHaveAttribute("src", /playbackAttempt=1/);
   expect(mediaGets.some((path) => path.endsWith("/82/media"))).toBe(false);
   await expect(videos.nth(1)).not.toHaveAttribute("src", /.+/);
   await expect(play).toHaveCount(1);
