@@ -51,10 +51,11 @@ function parseStaffConfirmedSlot(message, now = new Date()) {
 function createStaffBookingConfirmationService({
   pipeline = pipelineRepo,
   config = clinicConfig,
+  now = () => new Date(),
 } = {}) {
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
-    const appointmentAt = parseStaffConfirmedSlot(staffText);
+    const appointmentAt = parseStaffConfirmedSlot(staffText, now());
     if (!appointmentAt) return null;
     const lead = await pipeline.getActiveLeadForContact(contactId);
     if (!lead || lead.is_closed || ["visited", "cancelled"].includes(lead.appointment_status)) return null;
