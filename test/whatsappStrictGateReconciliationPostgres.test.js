@@ -36,6 +36,7 @@ test("Postgres: free-only gate reconciles only durable Meta nonbillable pricing 
         wamid TEXT PRIMARY KEY, pricing_type TEXT NOT NULL, billable BOOLEAN,
         delivery_status TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
       );
+      CREATE TABLE whatsapp_24h_service_reply_exceptions (wamid TEXT UNIQUE, status TEXT);
       CREATE TABLE whatsapp_free_only_reconciliations (
         id BIGSERIAL PRIMARY KEY, phone_number_id TEXT NOT NULL,
         reservation_id TEXT NOT NULL, prior_status TEXT NOT NULL,
@@ -142,6 +143,7 @@ test("Postgres: simultaneous strict reservations reconcile exactly once and perm
         wamid TEXT PRIMARY KEY, pricing_type TEXT NOT NULL, billable BOOLEAN,
         delivery_status TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
       );
+      CREATE TABLE whatsapp_24h_service_reply_exceptions (wamid TEXT UNIQUE, status TEXT);
       CREATE TABLE whatsapp_free_only_reconciliations (
         id BIGSERIAL PRIMARY KEY, phone_number_id TEXT NOT NULL,
         reservation_id TEXT NOT NULL, prior_status TEXT NOT NULL,
