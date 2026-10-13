@@ -453,3 +453,56 @@ test("long transcripts keep the newest complete messages", () => {
   ];
   assert.deepEqual(trimTranscript(messages).map((message) => message.id), [2, 3]);
 });
+
+test("model cooldown defers lead scoring BEFORE durable claim and does not consume an attempt", async () => {
+  const wakes = [];
+  const events = [];
+  const clock = () => 100_000;
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [candidate()],
+      claimCandidate: async () => {
+        events.push("claim");
+        throw new Error("a cooling model must never consume a durable attempt");
+      },
+    },
+    getModelRetryAt: () => new Date(clock() + 300_000).toISOString(),
+    scheduleWake: (delayMs) => wakes.push(delayMs),
+    clock,
+    flushConversationSummaries: async () => {
+      events.push("flush");
+      return { status: "completed", sent: 0 };
+    },
+  });
+  await run();
+  assert.deepEqual(events, ["flush"]);
+  assert.deepEqual(wakes, [300_250]);
+});
+
+test("model cooldown after a provider error schedules past both durable and model backoffs", async () => {
+  const wakes = [];
+  const now = 100_000;
+  const cooldown = now + 300_000;
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [candidate()],
+      claimCandidate: async () => ({ id: 99 }),
+      getTranscript: async () => [{ id: 44, role: "user", content: "Price?" }],
+      markScoreFailed: async () => ({ id: 99, lead_id: 7, attempts: 1, terminal: false }),
+    },
+    scoreConversation: async () => {
+      const error = new Error("temporarily unavailable");
+      error.stopLeadScoringSweep = true;
+      error.nextRetryAt = new Date(cooldown);
+      throw error;
+    },
+    getModelRetryAt: () => null,
+    scheduleWake: (delayMs) => wakes.push(delayMs),
+    clock: () => now,
+    flushConversationSummaries: async () => ({ status: "completed", sent: 0 }),
+  });
+  await run();
+  assert.deepEqual(wakes, [300_250]);
+});
