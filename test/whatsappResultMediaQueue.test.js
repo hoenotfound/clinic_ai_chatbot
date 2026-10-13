@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const zeroCost = require("../src/services/whatsappZeroCostGuard");
+const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const messagesRepo = require("../src/db/messagesRepo");
 const conversationStore = require("../src/utils/conversationStore");
 const queue = require("../src/services/whatsappResultMediaQueue");
@@ -39,9 +40,10 @@ function mock(t, target, name, replacement) {
 test("RM0 transient block postpones optional image without calling Meta or creating a failed message",async t=>{
   const row = sample();
   const db = fakeDb(row);
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
   mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
   mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
-  mock(t,zeroCost,"preflightTemplate",async()=>({
+  mock(t,zeroCost,"preflightFreeform",async()=>({
     allowed:false,code:"zero_cost_previous_send_unreconciled",
   }));
   let sent = 0;
@@ -58,9 +60,10 @@ test("RM0 transient block postpones optional image without calling Meta or creat
 test("when pricing confirms RM0, an image is accepted and its audit can be reconciled",async t=>{
   const row = sample();
   const db = fakeDb(row);
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
   mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
   mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
-  mock(t,zeroCost,"preflightTemplate",async()=>({allowed:true}));
+  mock(t,zeroCost,"preflightFreeform",async()=>({allowed:true}));
   mock(t,conversationStore,"appendMessageForContact",async()=>({id:991}));
   let persisted = null;
   mock(t,messagesRepo,"setWhatsappMessageId",async(id,wamid)=>{persisted={id,wamid};});
@@ -76,7 +79,7 @@ test("when pricing confirms RM0, an image is accepted and its audit can be recon
   assert.equal(sendCount,1);
   assert.deepEqual(persisted,{id:991,wamid:"wamid.verified"});
   assert.equal(db.calls.some(x=>x.sql.includes("SET status=$3") && x.params?.includes("sent")),true);
-  assert.equal(db.calls.some(x=>x.sql.includes("result_images_sent=GREATEST")),true);
+  assert.equal(db.calls.some(x=>x.sql.includes("result_images_sent=totals.result_confirmed")),true);
 });
 
 test("queue writes all images transactionally, never inserting a failed delivery row",async t=>{
@@ -140,9 +143,10 @@ test("confirmed billing alarm never calls the image sender",async t=>{
   const db=fakeDb(row);
   const contactsRepo=require("../src/db/contactsRepo");
   mock(t,contactsRepo,"setDeliveryAttention",async()=>null);
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
   mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
   mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
-  mock(t,zeroCost,"preflightTemplate",async()=>({
+  mock(t,zeroCost,"preflightFreeform",async()=>({
     allowed:false,code:"zero_cost_billing_alarm",
   }));
   let called=0;
@@ -161,9 +165,10 @@ test("optional images yield to waiting customer text replies",async t=>{
   const query=db.query.bind(db);
   db.query=async(sql,params)=>sql.includes("FROM inbound_processing_jobs j")
     ? {rows:[{busy:true}]} : query(sql,params);
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
   mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
   mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
-  mock(t,zeroCost,"preflightTemplate",async()=>{
+  mock(t,zeroCost,"preflightFreeform",async()=>{
     throw Error("billing preflight should not compete with urgent reply");
   });
   let sent=false;
@@ -188,4 +193,58 @@ test("switching RM0 protection off never drains a previously queued strict-only 
   assert.equal(sent,0);
   assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
     x.params?.includes("strict_rm0_switched_off_after_queue")));
+});
+
+test("ordinary 24h freeform window closing never passes a deferred photo",async t=>{
+  const row=sample(),db=fakeDb(row);
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({
+    allowed:false,code:"outside_customer_service_window",
+  }));
+  mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
+  mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
+  let preflight=0,sends=0;
+  mock(t,zeroCost,"preflightFreeform",async()=>{preflight++;return {allowed:true};});
+  await queue.runOne({
+    db,strictEnabled:()=>true,
+    eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    sender:async()=>{sends++;return {success:true,wamid:"never"};},
+  });
+  assert.equal(sends,0);
+  assert.equal(preflight,0);
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
+    x.params?.includes("outside_customer_service_window")));
+});
+
+test("absolute two-minute TTL stops a delayed image before provider call",async()=>{
+  const row={...sample(),created_at:new Date(Date.now()-121000).toISOString()};
+  const db=fakeDb(row);let sends=0;
+  await queue.runOne({
+    db,strictEnabled:()=>true,
+    eligibility:async()=>{throw Error("expired image must not proceed");},
+    sender:async()=>{sends++;},
+  });
+  assert.equal(sends,0);
+  assert.equal(queue.queueExpired(row),true);
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
+    x.params?.includes("optional_image_expired_before_send")));
+});
+
+test("expiry during image upload cancels before Meta send",async t=>{
+  const row=sample(),db=fakeDb(row);
+  mock(t,whatsappPolicy,"checkFreeformAllowed",async()=>({allowed:true}));
+  mock(t,messagesRepo,"wasMediaRecentlySent",async()=>false);
+  mock(t,messagesRepo,"hasUnconfirmedMediaDelivery",async()=>false);
+  mock(t,zeroCost,"preflightFreeform",async()=>({allowed:true}));
+  mock(t,conversationStore,"appendMessageForContact",async()=>({id:991}));
+  mock(t,messagesRepo,"deleteUnsentAssistantMessage",async()=>({id:991}));
+  await queue.runOne({db,strictEnabled:()=>true,
+    eligibility:async()=>({channel:"whatsapp",whatsapp_number:"60125023908"}),
+    sender:async(_contact,_url,_caption,options)=>{
+      row.created_at=new Date(Date.now()-121000).toISOString();
+      assert.equal(await options.preSendCheck(),false);
+      return {success:false,cancelled:true};
+    },
+  });
+  assert.ok(db.calls.some(x=>x.sql.includes("SET status=$3") &&
+    x.params?.includes("optional_image_expired_during_upload")));
 });
