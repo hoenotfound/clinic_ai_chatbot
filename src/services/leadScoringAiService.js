@@ -7,6 +7,14 @@ const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash";
+const GEMINI_FALLBACK_MODEL = process.env.LEAD_SCORING_GEMINI_FALLBACK_MODEL
+  || process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const MODEL_CAPACITY_COOLDOWN_MS = 5 * 60 * 1000;
+const modelCapacityCooldownUntil = new Map();
+function leadScoringModelsReady(nowMs = Date.now()) {
+  return [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean))]
+    .filter((model) => (modelCapacityCooldownUntil.get(model) || 0) <= nowMs);
+}
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
 const PROMPT_VERSION = "lead-temperature-v6-recovery-and-hesitation";
 const MAX_REASON_CHARS = 240;
@@ -310,12 +318,12 @@ function isGeminiCapacityError(error) {
     || (/\b503\b/.test(message) && /high demand|overload|unavailable|service unavailable/.test(message));
 }
 
-function createLeadScoringModelUnavailableError(error) {
-  const wrapped = new Error(`Gemini model ${GEMINI_MODEL} is temporarily unavailable.`);
+function createLeadScoringModelUnavailableError(error, model = GEMINI_MODEL) {
+  const wrapped = new Error(`Gemini model ${model} is temporarily unavailable.`);
   wrapped.code = "GEMINI_MODEL_UNAVAILABLE";
   wrapped.stopGeminiKeyRotation = true;
   wrapped.stopLeadScoringSweep = true;
-  wrapped.model = GEMINI_MODEL;
+  wrapped.model = model;
   wrapped.cause = error;
   return wrapped;
 }
@@ -381,60 +389,68 @@ async function withTransientRetries(
 }
 
 async function scoreWithGemini(input) {
-  let score;
-  try {
-    score = await runWithGeminiKeys(
-      async (apiKey) => {
-        const ai = new GoogleGenAI({ apiKey });
-        try {
-          const response = await generateGeminiContent(
-            ai,
-            {
-              model: GEMINI_MODEL,
-              contents: buildLeadScorePrompt(input),
-              config: {
-                maxOutputTokens: 700,
-                responseMimeType: "application/json",
-                responseJsonSchema: SCORE_JSON_SCHEMA,
-                thinkingConfig: { thinkingLevel: "minimal" },
+  let unavailable = null;
+  for (const model of leadScoringModelsReady()) {
+    try {
+      const score = await runWithGeminiKeys(
+        async (apiKey) => {
+          const ai = new GoogleGenAI({ apiKey });
+          try {
+            const response = await generateGeminiContent(
+              ai,
+              {
+                model,
+                contents: buildLeadScorePrompt(input),
+                config: {
+                  maxOutputTokens: 700,
+                  responseMimeType: "application/json",
+                  responseJsonSchema: SCORE_JSON_SCHEMA,
+                  thinkingConfig: { thinkingLevel: "minimal" },
+                },
               },
-            },
-            { purpose: "lead_scoring", contactId: input.lead?.contact_id, leadId: input.lead?.lead_id || input.lead?.id }
-          );
-          return parseLeadScore(response.text, input.messages);
-        } catch (error) {
-          // A 503/high-demand response is model capacity, not a bad key.
-          // Ask the shared key pool to confirm it with one other healthy key
-          // and then stop instead of hammering every key repeatedly.
-          if (isGeminiCapacityError(error)) {
-            throw createLeadScoringModelUnavailableError(error);
+              { purpose: "lead_scoring", contactId: input.lead?.contact_id,
+                leadId: input.lead?.lead_id || input.lead?.id }
+            );
+            return parseLeadScore(response.text, input.messages);
+          } catch (error) {
+            if (isGeminiCapacityError(error)) {
+              throw createLeadScoringModelUnavailableError(error, model);
+            }
+            throw error;
           }
-          throw error;
+        },
+        {
+          healthScope: `model:${model}`,
+          retryCount: LEAD_SCORING_GEMINI_RETRY_COUNT,
+          smartRetry: true,
+          // Capacity is a model problem. Immediately try a different model
+          // rather than rotate the same request through several API keys.
+          confirmModelUnavailableAcrossKeys: false,
         }
-      },
-      {
-        healthScope: `model:${GEMINI_MODEL}`,
-        retryCount: LEAD_SCORING_GEMINI_RETRY_COUNT,
-        smartRetry: true,
+      );
+      modelCapacityCooldownUntil.delete(model);
+      return {
+        ...score,
+        provider: "gemini",
+        model,
+        promptVersion: PROMPT_VERSION,
+      };
+    } catch (error) {
+      if (error?.code === "GEMINI_MODEL_UNAVAILABLE" || isGeminiCapacityError(error)) {
+        modelCapacityCooldownUntil.set(model, Date.now() + MODEL_CAPACITY_COOLDOWN_MS);
+        unavailable = error;
+        continue;
       }
-    );
-  } catch (error) {
-    // Background scoring already has a durable two-minute whole-job retry.
-    // Stop the current batch after provider/model-wide failures, including a
-    // confirmation attempt that ends in rate limiting or a network timeout,
-    // rather than spending requests on every remaining lead in the sweep.
-    if (shouldStopLeadScoringSweep(error)) {
-      error.stopLeadScoringSweep = true;
+      if (shouldStopLeadScoringSweep(error)) error.stopLeadScoringSweep = true;
+      throw error;
     }
-    throw error;
   }
-
-  return {
-    ...score,
-    provider: "gemini",
-    model: GEMINI_MODEL,
-    promptVersion: PROMPT_VERSION,
-  };
+  // Both models are unavailable or cooling down. The existing durable lead
+  // scoring retry owns the next attempt, without altering customer replies.
+  const error = unavailable || new Error("All configured lead-scoring Gemini models are cooling down.");
+  if (!unavailable) error.code = "LEAD_SCORING_MODELS_COOLING_DOWN";
+  error.stopLeadScoringSweep = true;
+  throw error;
 }
 
 async function scoreWithClaude(input) {
@@ -475,6 +491,9 @@ async function scoreLeadConversation(input) {
 
 module.exports = {
   GEMINI_MODEL,
+  GEMINI_FALLBACK_MODEL,
+  MODEL_CAPACITY_COOLDOWN_MS,
+  leadScoringModelsReady,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   LEAD_SCORING_GEMINI_RETRY_COUNT,
   PROMPT_VERSION,
