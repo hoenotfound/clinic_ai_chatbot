@@ -25,6 +25,7 @@ const {
   processClaimedBatch,
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
+const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -752,6 +753,17 @@ async function processIncomingMessage(
       }
     }
 
+    // Preserve a real customer acceptance of the latest verified STAFF offer
+    // before calling the model. It is a pending preference, NOT a booking.
+    let acceptedStaffOffer = null;
+    if (["aesthetic_clinic", "tcm_clinic"].includes(clinicConfig.businessType)) {
+      try {
+        acceptedStaffOffer = await recordStaffAppointmentAcceptance(contact.id, savedInbound.id, text);
+      } catch (agreementError) {
+        console.error(`Could not record staff appointment acceptance for contact ${contact.id}:`, agreementError);
+      }
+    }
+
     const hasInterpretableText =
       mediaType !== "sticker" &&
       !(mediaType === "video" && !String(incoming.text || "").trim());
@@ -946,6 +958,7 @@ async function processIncomingMessage(
           bookingContext = {
             status: lead.appointment_status,
             appointmentAt: lead.appointment_at,
+            ...(acceptedStaffOffer ? { acceptedStaffOffer: acceptedStaffOffer.agreedTimeText } : {}),
           };
         }
       } catch (bookingContextErr) {
