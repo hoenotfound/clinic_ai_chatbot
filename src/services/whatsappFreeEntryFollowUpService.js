@@ -89,7 +89,7 @@ const candidateSql = `
   FROM contacts c
   JOIN LATERAL (
     SELECT l.id, l.is_closed, l.appointment_status, l.marketing_consent, l.treatment_interest,
-           l.temperature, l.started_message_id,
+           to_jsonb(l)->>'temperature' AS temperature, l.started_message_id,
            s.stage_type, s.system_key
     FROM leads l
     LEFT JOIN pipeline_stages s ON s.id = l.stage_id
