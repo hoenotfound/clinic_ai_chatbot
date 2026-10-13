@@ -60,7 +60,8 @@ test("prompt separates accepted staff offers from confirmed CRM bookings", () =>
   assert.match(confirmed, /Status: set/);
   assert.match(confirmed, /17 Oct 2026/);
   assert.match(confirmed, /4:00 pm/i);
-  assert.match(confirmed, /Do not ask staff to confirm it again/);
+  assert.match(confirmed, /existing booking is confirmed in the CRM/);
+  assert.match(confirmed, /only a proposed replacement/);
   const cancelled = buildSystemPrompt({
     bookingContext: { status: "cancelled", appointmentAt: null },
   });
