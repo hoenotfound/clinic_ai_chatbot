@@ -26,7 +26,7 @@ function createCache({
 } = {}) {
   const inFlight = new Map();
 
-  async function resolveMediaId({ videoKey, mimeType, filename }) {
+  async function resolveMediaId({ videoKey, mimeType, filename, uploadOptions = {} }) {
     const phoneId = String(phoneNumberId() || "").trim();
     if (!/^\d+$/.test(phoneId) || !mediaStorage.isSharedFollowUpConfigKey(videoKey)) {
       return { kind: "bypass" };
@@ -96,7 +96,7 @@ function createCache({
 
       let uploadedId;
       try {
-        uploadedId = await whatsappApi.uploadMedia(buffer, mimeType, filename);
+        uploadedId = await whatsappApi.uploadMedia(buffer, mimeType, filename, uploadOptions);
       } catch (error) {
         try { await repo.release(phoneId, fingerprint, claimId); } catch (_) {}
         return { kind: "upload_failed" };
@@ -108,10 +108,14 @@ function createCache({
         return { kind: "upload_failed" };
       }
       try {
-        await repo.save(phoneId, fingerprint, claimId, String(uploadedId));
+        const saved = await repo.save(phoneId, fingerprint, claimId, String(uploadedId));
+        if (!saved) {
+          try { await repo.release(phoneId, fingerprint, claimId); } catch (_) {}
+        }
       } catch (error) {
         // Meta has the video. A cache write failure must not fail its first send.
         console.warn("[WhatsApp video cache] Save unavailable; proceeding with uploaded media");
+        try { await repo.release(phoneId, fingerprint, claimId); } catch (_) {}
       }
       return { kind: "ready", mediaId: String(uploadedId), fingerprint, phoneId, cacheHit: false };
     }
