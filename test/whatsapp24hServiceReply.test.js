@@ -80,14 +80,17 @@ test("service lane needs a persisted message and cannot replay the same provider
 test("service reply SQL excludes automated messages and requires recent provider-authored inbound",async t=>{
   serviceMode(t,true);
   let query="";
-  const db={async query(sql){query=sql;return {rows:[]};}};
+  const db={async query(sql){
+    if(sql.includes("INSERT INTO whatsapp_24h_service_reply_exceptions")) query=sql;
+    return {rows:[]};
+  }};
   await guard.reserve24hServiceReply("60121234567",{
     database:db,context:{messageKind:"first_reply_text",currentMessageId:234}
   });
   for(const snippet of [
     "m.whatsapp_template IS NULL","m.is_automated_follow_up IS NOT TRUE",
     "m.automated_follow_up_step IS NULL","m.pricing_reminder_anchor_id IS NULL",
-    "whatsapp_free_entry_followup_attempts","inbound.whatsapp_message_id IS NOT NULL",
+    "whatsapp_free_entry_followup_attempts","scheduled_messages","inbound.whatsapp_message_id IS NOT NULL",
     "interval '23 hours 58 minutes'","ON CONFLICT(message_id) DO NOTHING",
   ])assert.ok(query.includes(snippet),snippet);
   assert.ok(guard.VERIFIED_WINDOW_SQL.includes("whatsapp_24h_service_reply_exceptions"));
@@ -115,6 +118,7 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
       );
       CREATE TABLE whatsapp_free_entry_followup_attempts(id SERIAL PRIMARY KEY,message_id INTEGER);
       CREATE TABLE whatsapp_free_only_billing_alerts(wamid TEXT PRIMARY KEY,sent_at TIMESTAMPTZ);
+      CREATE TABLE scheduled_messages(message_id INTEGER);
       INSERT INTO contacts VALUES(1,'whatsapp','60121234567');
       INSERT INTO messages(id,contact_id,role,created_at,whatsapp_message_id)
       VALUES(1,1,'user',now()-interval '2 minutes','wamid.inbound');
@@ -131,13 +135,17 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
       INSERT INTO messages(id,contact_id,role,created_at)
       VALUES(15,1,'assistant',now()-interval '1 minute');
       INSERT INTO whatsapp_free_entry_followup_attempts(message_id) VALUES(15);
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES(16,1,'assistant',now()-interval '1 minute');
+      INSERT INTO scheduled_messages(message_id) VALUES(16);
     `);
     await db.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/070_whatsapp_24h_service_reply_exceptions.sql"),"utf8"));
     const ctx=(id)=>({database:db,context:{messageKind:"first_reply_text",currentMessageId:id}});
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).allowed,true);
-    assert.equal(await guard.reserve24hServiceReply("60121234567",ctx(10)),null);
-    for(const id of [11,12,13,14,15]) {
+    assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).code,
+      "zero_cost_service_reply_already_attempted");
+    for(const id of [11,12,13,14,15,16]) {
       assert.equal(await guard.reserve24hServiceReply("60121234567",ctx(id)),null,"blocked "+id);
     }
     assert.equal(await guard.reserve24hServiceReply("60129999999",ctx(10)),null);

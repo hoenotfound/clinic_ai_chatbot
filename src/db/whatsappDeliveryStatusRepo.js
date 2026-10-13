@@ -26,6 +26,7 @@ function normalizeUpdate(update) {
     errorMessage: cleanNullable(update?.errorMessage),
     pricingType: cleanNullable(update?.pricingType),
     pricingBillable: typeof update?.pricingBillable === "boolean" ? update.pricingBillable : null,
+    pricingCategory: cleanNullable(update?.pricingCategory)?.toLowerCase() || null,
   };
   normalized.eventKey = crypto
     .createHash("sha256")
@@ -37,6 +38,7 @@ function normalizeUpdate(update) {
       normalized.errorMessage || "",
       normalized.pricingType || "",
       String(normalized.pricingBillable ?? ""),
+      normalized.pricingCategory || "",
     ].join("\0"))
     .digest("hex");
   return normalized;
@@ -74,8 +76,8 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
   const withPricing = normalized.filter((item) => item.pricingType);
   for (const item of withPricing) {
     await query(`INSERT INTO whatsapp_free_entry_pricing_evidence
-       (wamid, pricing_type, billable, delivery_status)
-       VALUES ($1, $2, $3, $4)
+       (wamid, pricing_type, billable, delivery_status, pricing_category)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (wamid) DO UPDATE
        SET pricing_type = CASE
              WHEN whatsapp_free_entry_pricing_evidence.billable = true
@@ -96,7 +98,14 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
              WHEN whatsapp_free_entry_pricing_evidence.delivery_status = 'delivered' THEN 'delivered'
              ELSE EXCLUDED.delivery_status
            END,
-           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus]);
+           pricing_category = CASE
+             WHEN whatsapp_free_entry_pricing_evidence.billable = true
+               AND EXCLUDED.billable IS DISTINCT FROM true
+               THEN whatsapp_free_entry_pricing_evidence.pricing_category
+             ELSE COALESCE(EXCLUDED.pricing_category,
+                    whatsapp_free_entry_pricing_evidence.pricing_category)
+           END,
+           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus, item.pricingCategory]);
   }
   // Persist charge alerts independently of the short-lived delivery-status
   // queue. Repeated webhook callbacks cannot create duplicate alerts.
@@ -109,8 +118,9 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
        SELECT $1,$2
        WHERE NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                         WHERE ex.wamid=$1 AND ex.status='accepted')
+         AND $3='regular' AND $4='service'
        ON CONFLICT(wamid) DO NOTHING`,
-      [item.wamid,account]
+      [item.wamid,account,item.pricingType,item.pricingCategory]
     );
   }
   return result.rows;

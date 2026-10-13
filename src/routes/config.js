@@ -1423,10 +1423,14 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
       `SELECT COUNT(*)::integer AS total_billable,
          COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz
            AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
-             WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid AND ex.status='accepted'))::integer AS since_switch,
+             WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid AND ex.status='accepted'
+              AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+              AND whatsapp_free_entry_pricing_evidence.pricing_category='service'))::integer AS since_switch,
          COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz
            AND EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
-             WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid AND ex.status='accepted'))::integer AS allowed_service_charges,
+             WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid AND ex.status='accepted'
+              AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+              AND whatsapp_free_entry_pricing_evidence.pricing_category='service'))::integer AS allowed_service_charges,
          MAX(updated_at) AS most_recent_billable_at
        FROM whatsapp_free_entry_pricing_evidence WHERE billable=true`,
       [freeOnly.enabled === true && freeOnly.activatedAt
@@ -1447,7 +1451,11 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
              FROM whatsapp_free_only_billing_alerts alerts WHERE phone_number_id=$1
                AND observed_at >= $2::timestamptz
                AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
-                              WHERE ex.wamid=alerts.wamid AND ex.status='accepted')`,
+                              WHERE ex.wamid=alerts.wamid AND ex.status='accepted'
+                                AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                                  WHERE receipt.wamid=alerts.wamid AND receipt.billable=true
+                                    AND receipt.pricing_type='regular'
+                                    AND receipt.pricing_category='service'))`,
             [freeOnlyAccount,freeOnly.enabled === true && freeOnly.activatedAt
               ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]),
           db.query(require("../services/whatsappZeroCostGuard").SEVEN_DAY_PROOF_SQL),

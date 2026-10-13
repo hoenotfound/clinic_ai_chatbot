@@ -76,7 +76,14 @@ const VERIFIED_WINDOW_SQL = `
           )
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.message_id=earlier.id AND ex.status='accepted'
-                           AND ex.wamid=earlier.whatsapp_message_id)
+                           AND ex.wamid=earlier.whatsapp_message_id
+           AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence service_receipt
+             WHERE service_receipt.wamid=ex.wamid AND (
+               (service_receipt.pricing_type='regular'
+                 AND service_receipt.pricing_category='service' AND service_receipt.billable=true)
+               OR (service_receipt.pricing_type='free_customer_service'
+                 AND service_receipt.billable=false)
+             )))
           AND (earlier.whatsapp_message_id IS NULL
             OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
             OR priced.billable IS DISTINCT FROM false
@@ -282,6 +289,8 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
       AND m.pricing_reminder_anchor_id IS NULL
       AND NOT EXISTS(SELECT 1 FROM whatsapp_free_entry_followup_attempts a
                      WHERE a.message_id=m.id)
+      AND NOT EXISTS(SELECT 1 FROM scheduled_messages scheduled
+                     WHERE scheduled.message_id=m.id)
       AND EXISTS (
         SELECT 1 FROM messages inbound WHERE inbound.contact_id=c.id
           AND inbound.role='user' AND inbound.whatsapp_message_id IS NOT NULL
@@ -319,6 +328,10 @@ async function complete24hServiceReply(messageId,result,database=pool) {
       WHERE wamid=$1 AND sent_at IS NULL
         AND EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions
                    WHERE wamid=$1 AND status='accepted')
+        AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                   WHERE receipt.wamid=$1 AND receipt.billable=true
+                     AND receipt.pricing_type='regular'
+                     AND receipt.pricing_category='service')
     `,[result.wamid]);
   } catch(error) {
     // After provider acceptance, failing to record proof can only leave
@@ -417,7 +430,9 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
         WHERE billable=true AND updated_at>=$1::timestamptz
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
-                           AND ex.status='accepted')) AS tripped`,
+                           AND ex.status='accepted'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
       [new Date(activation).toISOString()]);
     if (billed.rows?.[0]?.tripped!==false)
       return deny("zero_cost_billing_alarm","Meta reported a billable message after activation.");
@@ -586,7 +601,9 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
           WHERE billable=true AND updated_at>=$1::timestamptz
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
-                           AND ex.status='accepted')) AS tripped`,
+                           AND ex.status='accepted'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
         [new Date(activation).toISOString()])).rows[0];
       if (alarm?.tripped!==false) {
         rejected=deny("zero_cost_billing_alarm",
@@ -759,7 +776,9 @@ async function reconcileConfirmedGate(database = pool) {
            SELECT 1 FROM whatsapp_free_entry_pricing_evidence alarm
             WHERE alarm.billable = true AND alarm.updated_at >= $2::timestamptz
               AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
-                             WHERE ex.wamid=alarm.wamid AND ex.status='accepted')
+                             WHERE ex.wamid=alarm.wamid AND ex.status='accepted'
+                               AND alarm.pricing_type='regular'
+                               AND alarm.pricing_category='service')
          )
        FOR UPDATE OF g
     ), released AS (

@@ -11,5 +11,8 @@ CREATE TABLE IF NOT EXISTS whatsapp_24h_service_reply_exceptions (
   wamid TEXT UNIQUE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE whatsapp_free_entry_pricing_evidence
+  ADD COLUMN IF NOT EXISTS pricing_category TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_whatsapp_24h_service_reply_contact
   ON whatsapp_24h_service_reply_exceptions(contact_id,allowed_at DESC);

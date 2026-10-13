@@ -59,7 +59,9 @@ async function reconcile({ actor, reservationId, reason, confirmedBillingHub }, 
         WHERE billable=true AND updated_at >= $1::timestamptz
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
-                           AND ex.status='accepted')) AS tripped`,
+                           AND ex.status='accepted'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
       [activatedAt])).rows[0];
     if (alarm?.tripped !== false) throw new ReconcileError("billing_alarm_active",
       "Meta reported a billable message. Do not reset this reservation while the billing alarm is active.");

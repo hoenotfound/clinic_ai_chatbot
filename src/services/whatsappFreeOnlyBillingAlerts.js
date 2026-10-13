@@ -24,7 +24,11 @@ async function flush({ database=pool, send=postTelegramMessage, env=process.env 
          AND observed_at<now()-interval '15 seconds'
          AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                         WHERE ex.wamid=whatsapp_free_only_billing_alerts.wamid
-                          AND ex.status='accepted') AND
+                          AND ex.status='accepted'
+                          AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                            WHERE receipt.wamid=ex.wamid AND receipt.billable=true
+                              AND receipt.pricing_type='regular'
+                              AND receipt.pricing_category='service')) AND
          (lease_until IS NULL OR lease_until<now())
        ORDER BY observed_at ASC LIMIT 5 FOR UPDATE SKIP LOCKED
      )
@@ -80,7 +84,11 @@ async function pending({ database=pool, env=process.env }={}) {
          AND sent_at IS NULL
          AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                         WHERE ex.wamid=whatsapp_free_only_billing_alerts.wamid
-                          AND ex.status='accepted')) AS pending`,[account,since]
+                          AND ex.status='accepted'
+                          AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                            WHERE receipt.wamid=ex.wamid AND receipt.billable=true
+                              AND receipt.pricing_type='regular'
+                              AND receipt.pricing_category='service'))) AS pending`,[account,since]
   );
   return r.rows?.[0]?.pending === true;
 }

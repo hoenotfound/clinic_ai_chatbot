@@ -903,6 +903,8 @@ function parseStatusUpdates(body) {
             ...(status.pricing?.type ? {
               pricingType: String(status.pricing.type),
               pricingBillable: typeof status.pricing.billable === "boolean" ? status.pricing.billable : null,
+              pricingCategory: typeof status.pricing.category === "string"
+                ? status.pricing.category.toLowerCase() : null,
             } : {}),
           });
         }

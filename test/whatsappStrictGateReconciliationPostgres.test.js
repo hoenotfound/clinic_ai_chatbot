@@ -34,6 +34,7 @@ test("Postgres: free-only gate reconciles only durable Meta nonbillable pricing 
       );
       CREATE TABLE whatsapp_free_entry_pricing_evidence (
         wamid TEXT PRIMARY KEY, pricing_type TEXT NOT NULL, billable BOOLEAN,
+        pricing_category TEXT,
         delivery_status TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
       );
       CREATE TABLE whatsapp_24h_service_reply_exceptions (wamid TEXT UNIQUE, status TEXT);
@@ -141,6 +142,7 @@ test("Postgres: simultaneous strict reservations reconcile exactly once and perm
       );
       CREATE TABLE whatsapp_free_entry_pricing_evidence (
         wamid TEXT PRIMARY KEY, pricing_type TEXT NOT NULL, billable BOOLEAN,
+        pricing_category TEXT,
         delivery_status TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT now()
       );
       CREATE TABLE whatsapp_24h_service_reply_exceptions (wamid TEXT UNIQUE, status TEXT);

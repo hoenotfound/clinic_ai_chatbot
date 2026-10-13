@@ -2027,7 +2027,7 @@ test("Critical WhatsApp billing alarms remain visible outside collapsed diagnost
   await expect(page.getByRole("alert")).toContainText("WhatsApp billing alarm");
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText("All WhatsApp sends are blocked");
+  await expect(page.getByRole("alert")).toContainText("Verified free-entry sends are blocked");
 });
 
 test("Saving pricing changes opens invalid Follow-up 2 and keeps the unsaved edit", async ({ page }) => {
