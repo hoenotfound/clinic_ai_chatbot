@@ -34,7 +34,7 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
       const selected = await client.query(
         [
           "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
-          "       lead.id AS lead_id, lead.appointment_status",
+          "       lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id",
           "FROM messages inbound",
           "JOIN LATERAL (",
           "  SELECT m.id, m.content, m.sent_by_username",
@@ -47,7 +47,7 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
           "  ORDER BY m.id DESC LIMIT 1",
           ") staff ON true",
           "JOIN LATERAL (",
-          "  SELECT l.id, l.appointment_status FROM leads l",
+          "  SELECT l.id, l.appointment_status, l.stage_id FROM leads l",
           "  WHERE l.contact_id = inbound.contact_id AND l.is_closed = false",
           "  ORDER BY l.created_at DESC, l.id DESC LIMIT 1",
           ") lead ON true",
@@ -86,17 +86,23 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
         const reschedule = offer.appointment_status === "set" &&
           isExplicitRescheduleOffer(offer.staff_text);
         if (reschedule) {
-          await client.query(
+          const rescheduled = await client.query(
             [
               "UPDATE leads SET appointment_status = 'reschedule', appointment_at = NULL,",
               "  stage_id = COALESCE((",
               "    SELECT id FROM pipeline_stages",
               "    WHERE system_key = 'contacted' AND stage_type = 'open' LIMIT 1",
               "  ), stage_id), updated_at = now()",
-              "WHERE id = $1 AND appointment_status = 'set'",
+              "WHERE id = $1 AND appointment_status = 'set' RETURNING stage_id",
             ].join("\n"),
             [offer.lead_id]
           );
+          if (rescheduled.rows[0] && Number(rescheduled.rows[0].stage_id) !== Number(offer.old_stage_id)) {
+            await client.query(
+              "INSERT INTO lead_stage_history (lead_id, from_stage_id, to_stage_id, changed_by) VALUES ($1, $2, $3, $4)",
+              [offer.lead_id, offer.old_stage_id, rescheduled.rows[0].stage_id, "Automation"]
+            );
+          }
           await client.query(
             "INSERT INTO lead_activities (lead_id, activity_type, description, actor, metadata) VALUES ($1, 'updated', $2, 'Automation', $3::jsonb)",
             [offer.lead_id, "Staff-offered reschedule accepted; replacement slot requires confirmation.",
@@ -109,6 +115,8 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
               "UPDATE contacts SET needs_attention = true, attention_reason = $2, updated_at = now()",
               "WHERE id = $1 AND mode = 'ai'",
               "  AND (needs_attention = false OR attention_reason LIKE 'Booking ready:%')",
+              "  AND NOT EXISTS (SELECT 1 FROM ai_review_items r WHERE r.contact_id = contacts.id",
+              "    AND r.status = 'pending' AND r.category <> 'information')",
             ].join("\n"),
             [contactId, AGREED_TIME_REASON]
           );
