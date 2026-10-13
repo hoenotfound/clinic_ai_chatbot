@@ -38,7 +38,7 @@ const DEFAULT_FOLLOW_UP = {
   freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
   consentRequest: { enabled:false },
-  whatsappFreeOnly: { enabled: false },
+  whatsappFreeOnly: { enabled: false, allow24hServiceReplies: false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -198,7 +198,10 @@ function normalizeFollowUpSettings(value = {}) {
         ? value.freeEntry.slotsHours.map(Number)
         : [26, 50, 74, 98, 122, 162],
     },
-    whatsappFreeOnly: { enabled: value?.whatsappFreeOnly?.enabled === true },
+    whatsappFreeOnly: {
+      enabled: value?.whatsappFreeOnly?.enabled === true,
+      allow24hServiceReplies: value?.whatsappFreeOnly?.allow24hServiceReplies === true,
+    },
     consentRequest: { enabled: value?.consentRequest?.enabled === true },
     pricingReminder: {
       enabled:value?.pricingReminder?.enabled === true,
@@ -897,7 +900,12 @@ export default function Tools() {
             })),
             slotsHours: Array.isArray(form.freeEntry?.slotsHours) ? form.freeEntry.slotsHours : [26,50,74,98,122,162],
           },
-          whatsappFreeOnly: { enabled: form.whatsappFreeOnly?.enabled === true, acknowledgeImpact: freeOnlyImpactConfirmed },
+          whatsappFreeOnly: {
+             enabled: form.whatsappFreeOnly?.enabled === true,
+             allow24hServiceReplies: form.whatsappFreeOnly?.enabled === true && form.whatsappFreeOnly?.allow24hServiceReplies === true,
+             acknowledgeImpact: freeOnlyImpactConfirmed,
+             acknowledgeServiceReplyCharges: form.whatsappFreeOnly?.allow24hServiceReplies === true,
+           },
           consentRequest: { enabled:form.consentRequest?.enabled === true },
           pricingReminder: {
             enabled:form.pricingReminder?.enabled === true,
@@ -2176,8 +2184,8 @@ function FollowUpTool({
         )}
         {freeEntryStatus?.freeOnlyEnabled && Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0 && (
           <p role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
-            WhatsApp billing alarm: Meta reported a billable callback since strict free-only mode was enabled.
-            All WhatsApp sends are blocked until staff investigate in Meta Billing Hub and reset the safeguard.
+            WhatsApp billing alarm: Meta reported an unexpected billable callback since strict protection was enabled.
+            Verified free-entry sends are blocked until staff investigate. Optional 24-hour service replies can still be sent and may be billed.
             Open WhatsApp templates for the audit details.
           </p>
         )}
@@ -3008,11 +3016,10 @@ function FollowUpTool({
               <div>
                 <h3 className="text-sm font-semibold">WhatsApp Free Messaging Only</h3>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                  Strict free-only safety switch for ALL WhatsApp sends, including AI replies,
-                  staff Inbox messages, attachments, templates and scheduled follow-ups.
-                  Only send inside an already-confirmed Meta free-entry period, capped at 71 hours.
-                  An ad click, an open 24-hour reply window, or remaining monthly free allowance
-                  alone are not accepted as proof of free delivery.
+                  Strict free-only safety for templates, attachments and scheduled follow-ups.
+                  Without the optional service-reply permission below, ordinary customer text
+                  replies are also blocked unless the Meta free-entry period is verified.
+                  An open 24-hour window does not guarantee free delivery.
                 </p>
               </div>
               <Switch
@@ -3020,17 +3027,39 @@ function FollowUpTool({
                 ariaLabel="Block potentially paid WhatsApp sends"
                 onChange={() => setForm((current) => ({
                   ...current,
-                  whatsappFreeOnly: { enabled: current.whatsappFreeOnly?.enabled !== true },
+                  whatsappFreeOnly: {
+                    ...current.whatsappFreeOnly,
+                    enabled: current.whatsappFreeOnly?.enabled !== true,
+                  },
                 }))}
               />
             </div>
             <p className="mt-2 text-[11px] leading-5 text-amber-700">
               {form.whatsappFreeOnly?.enabled
-                ? "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
+                ? form.whatsappFreeOnly?.allow24hServiceReplies
+                  ? "Strict protection ON with 24-hour text replies allowed: normal replies may be billed, but templates, media and follow-ups still require proven free-entry billing."
+                  : "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
                 : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
               Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
-              A billable callback after activation trips the account-wide stop until you investigate and deliberately reset this switch.
+              Unexpected billable callbacks after activation stop strict template sending.
+              An explicitly allowed 24-hour service reply can be billed and is shown separately below.
             </p>
+            {form.whatsappFreeOnly?.enabled === true && (
+              <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
+                <input type="checkbox"
+                  checked={form.whatsappFreeOnly?.allow24hServiceReplies === true}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    whatsappFreeOnly: {
+                      ...current.whatsappFreeOnly,
+                      allow24hServiceReplies: event.target.checked,
+                    },
+                  }))}/>
+                Allow normal text replies inside the latest customer's 24-hour window, including direct/organic leads.
+                These replies may incur Meta service-message charges after the monthly allowance.
+                Scheduled follow-ups, templates, consent prompts and media still require verified free billing.
+              </label>
+            )}
             {form.whatsappFreeOnly?.enabled === true &&
               !freeOnlyAlreadyEnabled ? (
               <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
@@ -3094,9 +3123,10 @@ function FollowUpTool({
                     : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     Free-only safeguard: {freeEntryStatus.freeOnlyEnabled ? "ON" : "OFF"}
                     {" · "}Account-wide billable Meta callbacks: {freeEntryStatus.billingSafety?.total_billable ?? "unknown"}
-                    {" · "}Since free-only enabled: {freeEntryStatus.billingSafety?.since_switch ?? "unknown"}
+                    {" · "}Unexpected since strict enabled: {freeEntryStatus.billingSafety?.since_switch ?? "unknown"}
+                    {" · "}Permitted 24h service charges: {freeEntryStatus.billingSafety?.allowed_service_charges ?? "unknown"}
                     {Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
-                      ? " · BILLING ALARM: all WhatsApp sends are blocked until investigated and the switch is reset."
+                      ? " · BILLING ALARM: strict free-entry sends are blocked until investigated; permitted 24h text replies may continue."
                       : ""}
                   </div>
                   {freeEntryStatus.freeOnlyEnabled && !freeEntryStatus.telegramBillingAlertsEnabled ? (

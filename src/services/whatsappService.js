@@ -900,9 +900,13 @@ function parseStatusUpdates(body) {
             errorCode: firstError?.code ?? null,
             errorTitle: firstError?.title || null,
             errorMessage: firstError?.error_data?.details || firstError?.message || null,
-            ...(status.pricing?.type ? {
-              pricingType: String(status.pricing.type),
+            ...(status.pricing?.type || status.pricing?.billable === true ? {
+              // Meta may send billable=true without a type/category. Keep
+              // it as unknown pricing, never as a verified free response.
+              pricingType: status.pricing?.type ? String(status.pricing.type) : "unknown",
               pricingBillable: typeof status.pricing.billable === "boolean" ? status.pricing.billable : null,
+              pricingCategory: typeof status.pricing.category === "string"
+                ? status.pricing.category.toLowerCase() : null,
             } : {}),
           });
         }

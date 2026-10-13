@@ -24,8 +24,12 @@ function normalizeUpdate(update) {
     errorCode: cleanNullable(update?.errorCode),
     errorTitle: cleanNullable(update?.errorTitle),
     errorMessage: cleanNullable(update?.errorMessage),
-    pricingType: cleanNullable(update?.pricingType),
+    // An explicitly billable webhook without a type is still billing evidence.
+    // Do not drop it just because the provider omitted classification fields.
+    pricingType: cleanNullable(update?.pricingType) ||
+      (update?.pricingBillable === true ? "unknown" : null),
     pricingBillable: typeof update?.pricingBillable === "boolean" ? update.pricingBillable : null,
+    pricingCategory: cleanNullable(update?.pricingCategory)?.toLowerCase() || null,
   };
   normalized.eventKey = crypto
     .createHash("sha256")
@@ -37,6 +41,7 @@ function normalizeUpdate(update) {
       normalized.errorMessage || "",
       normalized.pricingType || "",
       String(normalized.pricingBillable ?? ""),
+      normalized.pricingCategory || "",
     ].join("\0"))
     .digest("hex");
   return normalized;
@@ -74,8 +79,8 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
   const withPricing = normalized.filter((item) => item.pricingType);
   for (const item of withPricing) {
     await query(`INSERT INTO whatsapp_free_entry_pricing_evidence
-       (wamid, pricing_type, billable, delivery_status)
-       VALUES ($1, $2, $3, $4)
+       (wamid, pricing_type, billable, delivery_status, pricing_category)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (wamid) DO UPDATE
        SET pricing_type = CASE
              WHEN whatsapp_free_entry_pricing_evidence.billable = true
@@ -96,17 +101,38 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
              WHEN whatsapp_free_entry_pricing_evidence.delivery_status = 'delivered' THEN 'delivered'
              ELSE EXCLUDED.delivery_status
            END,
-           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus]);
+           pricing_category = CASE
+             WHEN whatsapp_free_entry_pricing_evidence.pricing_category IS NOT NULL
+               AND EXCLUDED.pricing_category IS NOT NULL
+               AND whatsapp_free_entry_pricing_evidence.pricing_category <> EXCLUDED.pricing_category
+               THEN 'conflicting'
+             ELSE COALESCE(whatsapp_free_entry_pricing_evidence.pricing_category,
+                           EXCLUDED.pricing_category)
+           END,
+           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus, item.pricingCategory]);
   }
-  // Persist charge alerts independently of the short-lived delivery-status
-  // queue. Repeated webhook callbacks cannot create duplicate alerts.
+  // Queue every unexpected billable callback (marketing, unclassified, and
+  // conflicting categories included). Exempt ONLY an accepted 24h text
+  // service reply whose persisted Meta receipt proves regular/service billing.
+  // Using the durable receipt handles webhook-before-acceptance and later
+  // category corrections. The UNIQUE wamid and ON CONFLICT make it idempotent.
   for (const item of withPricing) {
     if (item.pricingBillable !== true) continue;
     const account = String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
     if (!account) continue;
     await query(
       `INSERT INTO whatsapp_free_only_billing_alerts (wamid,phone_number_id)
-       VALUES($1,$2) ON CONFLICT(wamid) DO NOTHING`,
+       SELECT $1,$2
+       WHERE NOT EXISTS(
+         SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+         JOIN whatsapp_free_entry_pricing_evidence receipt
+           ON receipt.wamid=ex.wamid
+         WHERE ex.wamid=$1 AND ex.status='accepted'
+           AND receipt.billable=true
+           AND receipt.pricing_type='regular'
+           AND receipt.pricing_category='service'
+       )
+       ON CONFLICT(wamid) DO NOTHING`,
       [item.wamid,account]
     );
   }

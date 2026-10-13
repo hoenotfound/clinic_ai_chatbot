@@ -419,6 +419,8 @@ function isAutomatedFollowUpConfig(value) {
     (value.whatsappFreeOnly !== undefined &&
       (!isPlainObject(value.whatsappFreeOnly) ||
        typeof value.whatsappFreeOnly.enabled !== "boolean" ||
+       (value.whatsappFreeOnly.allow24hServiceReplies !== undefined &&
+        typeof value.whatsappFreeOnly.allow24hServiceReplies !== "boolean") ||
        (value.whatsappFreeOnly.activatedAt !== null &&
         value.whatsappFreeOnly.activatedAt !== undefined &&
         (typeof value.whatsappFreeOnly.activatedAt !== "string" ||
@@ -697,12 +699,16 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   // Require deliberate confirmation at the API layer, not only a UI warning.
   if (freeOnlyEnabled && current?.whatsappFreeOnly?.enabled !== true &&
       requested.whatsappFreeOnly?.acknowledgeImpact !== true) return null;
+  const allowReplies=freeOnlyEnabled && requestedFreeOnly.allow24hServiceReplies === true;
+  if (allowReplies && current?.whatsappFreeOnly?.allow24hServiceReplies !== true &&
+      requestedFreeOnly.acknowledgeServiceReplyCharges !== true) return null;
   // Re-saving unrelated Tools settings cannot reset the billing alarm.
   const sameFreeOnlyRun = freeOnlyEnabled && current?.whatsappFreeOnly?.enabled === true &&
     typeof current.whatsappFreeOnly.activatedAt === "string" &&
     Number.isFinite(Date.parse(current.whatsappFreeOnly.activatedAt));
   const whatsappFreeOnly = {
     enabled: freeOnlyEnabled,
+    allow24hServiceReplies: allowReplies,
     activatedAt: freeOnlyEnabled
       ? sameFreeOnlyRun ? current.whatsappFreeOnly.activatedAt : new Date().toISOString()
       : null,
@@ -1415,7 +1421,16 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
     // Monitor the whole WhatsApp account, including staff and AI replies.
     const billing = await require("../db/db").pool.query(
       `SELECT COUNT(*)::integer AS total_billable,
-         COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz)::integer AS since_switch,
+         COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz
+           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+             WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid AND ex.status='accepted'
+              AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+              AND whatsapp_free_entry_pricing_evidence.pricing_category='service'))::integer AS since_switch,
+         COUNT(*) FILTER (WHERE updated_at >= $1::timestamptz
+           AND EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+             WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid AND ex.status='accepted'
+              AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+              AND whatsapp_free_entry_pricing_evidence.pricing_category='service'))::integer AS allowed_service_charges,
          MAX(updated_at) AS most_recent_billable_at
        FROM whatsapp_free_entry_pricing_evidence WHERE billable=true`,
       [freeOnly.enabled === true && freeOnly.activatedAt
@@ -1433,8 +1448,14 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
              GROUP BY reason ORDER BY MAX(last_at) DESC LIMIT 8`,[freeOnlyAccount]),
           db.query(`SELECT COUNT(*) FILTER (WHERE sent_at IS NULL)::integer AS pending,
              COUNT(*)::integer AS total
-             FROM whatsapp_free_only_billing_alerts WHERE phone_number_id=$1
-               AND observed_at >= $2::timestamptz`,
+             FROM whatsapp_free_only_billing_alerts alerts WHERE phone_number_id=$1
+               AND observed_at >= $2::timestamptz
+               AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+                              WHERE ex.wamid=alerts.wamid AND ex.status='accepted'
+                                AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                                  WHERE receipt.wamid=alerts.wamid AND receipt.billable=true
+                                    AND receipt.pricing_type='regular'
+                                    AND receipt.pricing_category='service'))`,
             [freeOnlyAccount,freeOnly.enabled === true && freeOnly.activatedAt
               ? freeOnly.activatedAt : "9999-01-01T00:00:00Z"]),
           db.query(require("../services/whatsappZeroCostGuard").SEVEN_DAY_PROOF_SQL),
@@ -1443,6 +1464,7 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
     return res.json({
       ...report,
       freeOnlyEnabled: freeOnly.enabled === true,
+      allow24hServiceReplies: freeOnly.allow24hServiceReplies === true,
       billingSafety: billing.rows[0],
       freeOnlyGate: gate.rows[0] || { status: "idle" },
       recentBlocks: blocked.rows,

@@ -519,6 +519,7 @@ async function runWhatsappOutboundRetryQueue({
         row.message_content,
         {
           purpose: "service",
+          currentMessageId: row.message_id,
           preSendCheck,
         }
       );

@@ -74,6 +74,16 @@ const VERIFIED_WINDOW_SQL = `
                 ))
             )
           )
+          AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+                         WHERE ex.message_id=earlier.id AND ex.status='accepted'
+                           AND ex.wamid=earlier.whatsapp_message_id
+           AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence service_receipt
+             WHERE service_receipt.wamid=ex.wamid AND (
+               (service_receipt.pricing_type='regular'
+                 AND service_receipt.pricing_category='service' AND service_receipt.billable=true)
+               OR (service_receipt.pricing_type='free_customer_service'
+                 AND service_receipt.billable=false)
+             )))
           AND (earlier.whatsapp_message_id IS NULL
             OR priced.wamid IS NULL OR priced.pricing_type<>'free_entry_point'
             OR priced.billable IS DISTINCT FROM false
@@ -254,6 +264,95 @@ function settings() {
   return clinicConfig.automatedFollowUp?.whatsappFreeOnly || {};
 }
 function enabled() { return settings().enabled === true; }
+function allow24hServiceReplies() { return enabled() && settings().allow24hServiceReplies === true; }
+
+// A separate, deliberately potentially paid lane for direct text replies.
+// A unique pre-send record prevents retries of an ambiguous provider request.
+async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={}}={}) {
+  if (!allow24hServiceReplies() || context.messageKind !== "first_reply_text" ||
+      context.currentFollowUpAttemptId != null) return null;
+  const messageId=Number(context.currentMessageId);
+  const recipient=String(to||"").replace(/\D/g,"");
+  const stamp=new Date(now);
+  if (!Number.isSafeInteger(messageId) || messageId<=0 || recipient.length<8 ||
+      !Number.isFinite(stamp.getTime())) return null;
+  const result=await database.query(`
+    INSERT INTO whatsapp_24h_service_reply_exceptions(message_id,contact_id,allowed_at)
+    SELECT m.id,c.id,$3::timestamptz
+    FROM messages m JOIN contacts c ON c.id=m.contact_id
+    WHERE m.id=$1 AND m.role='assistant' AND c.channel='whatsapp'
+      AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2
+      AND m.whatsapp_message_id IS NULL AND m.whatsapp_template IS NULL
+      AND m.is_automated_follow_up IS NOT TRUE
+      AND m.automated_follow_up_step IS NULL
+      AND m.automated_follow_up_parent_message_id IS NULL
+      AND m.pricing_reminder_anchor_id IS NULL
+      AND NOT EXISTS(SELECT 1 FROM whatsapp_free_entry_followup_attempts a
+                     WHERE a.message_id=m.id)
+      AND NOT EXISTS(SELECT 1 FROM scheduled_messages scheduled
+                     WHERE scheduled.message_id=m.id)
+      AND EXISTS (
+        SELECT 1 FROM messages inbound WHERE inbound.contact_id=c.id
+          AND inbound.role='user' AND inbound.whatsapp_message_id IS NOT NULL
+          AND inbound.created_at<=$3::timestamptz
+          AND inbound.created_at>$3::timestamptz-interval '23 hours 58 minutes'
+          AND inbound.created_at<=m.created_at
+      )
+    ON CONFLICT(message_id) DO NOTHING RETURNING message_id
+  `,[messageId,recipient,stamp.toISOString()]);
+  if (Number(result.rows?.[0]?.message_id)===messageId)
+    return {allowed:true,reservationId:null,serviceReplyMessageId:messageId};
+  // A prior service send may have reached Meta even if its WAMID never made
+  // it back to us. Never fall through to the independent CTWA gate and replay
+  // that same saved message after ON CONFLICT suppressed this attempt.
+  const prior=await database.query(`
+    SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+    JOIN messages original ON original.id=ex.message_id
+    JOIN contacts owner ON owner.id=original.contact_id
+    WHERE ex.message_id=$1
+      AND regexp_replace(owner.whatsapp_number,'[^0-9]','','g')=$2
+    LIMIT 1
+  `,[messageId,recipient]);
+  return prior.rows?.length
+    ? deny("zero_cost_service_reply_already_attempted",
+      "This service reply was already attempted. Check the original delivery before sending again.")
+    : null;
+}
+async function complete24hServiceReply(messageId,result,database=pool) {
+  const accepted=result?.success === true && typeof result.wamid==="string" && !!result.wamid;
+  try {
+    // Only a verified provider rejection is provably safe to retry. A
+    // timeout, 5xx or missing receipt could have created a real Meta send.
+    if (definitelyRejected(result)) {
+      await database.query(`
+        DELETE FROM whatsapp_24h_service_reply_exceptions
+        WHERE message_id=$1 AND status='reserved' AND wamid IS NULL
+      `,[messageId]);
+      return;
+    }
+    await database.query(`
+      UPDATE whatsapp_24h_service_reply_exceptions
+      SET status=$2, wamid=CASE WHEN $2='accepted' THEN $3 ELSE NULL END,
+          updated_at=now()
+      WHERE message_id=$1 AND status='reserved'
+    `,[messageId,accepted?"accepted":"unknown",accepted?result.wamid:null]);
+    if (accepted) await database.query(`
+      DELETE FROM whatsapp_free_only_billing_alerts
+      WHERE wamid=$1 AND sent_at IS NULL
+        AND EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions
+                   WHERE wamid=$1 AND status='accepted')
+        AND EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence receipt
+                   WHERE receipt.wamid=$1 AND receipt.billable=true
+                     AND receipt.pricing_type='regular'
+                     AND receipt.pricing_category='service')
+    `,[result.wamid]);
+  } catch(error) {
+    // After provider acceptance, failing to record proof can only leave
+    // the strict template gate more conservative, never more permissive.
+    console.error("[WhatsApp 24h service] Failed to record provider result:",error);
+  }
+}
+
 function deny(code, message) { return { allowed: false, code, message }; }
 function blockedResult(check) {
   return {
@@ -341,7 +440,12 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
     }
     const billed=await database.query(
       `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
-        WHERE billable=true AND updated_at>=$1::timestamptz) AS tripped`,
+        WHERE billable=true AND updated_at>=$1::timestamptz
+          AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+                         WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
+                           AND ex.status='accepted'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
       [new Date(activation).toISOString()]);
     if (billed.rows?.[0]?.tripped!==false)
       return deny("zero_cost_billing_alarm","Meta reported a billable message after activation.");
@@ -434,6 +538,16 @@ async function inspectFreeTemplateWindow(to, {
 
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
+  if (allow24hServiceReplies() && context.messageKind === "first_reply_text") {
+    try {
+      const permission=await reserve24hServiceReply(to,{database,now,context});
+      if (permission) return permission;
+    } catch(error) {
+      console.error("[WhatsApp 24h service] Authorization failed:",error);
+      return deny("zero_cost_database_unavailable",
+        "24-hour customer reply verification is unavailable.");
+    }
+  }
   const account = configuredAccount();
   const recipient = String(to || "").replace(/\D/g,"");
   const config = settings();
@@ -497,7 +611,12 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     if (!rejected) {
       const alarm=(await client.query(
         `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
-          WHERE billable=true AND updated_at>=$1::timestamptz) AS tripped`,
+          WHERE billable=true AND updated_at>=$1::timestamptz
+          AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+                         WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
+                           AND ex.status='accepted'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
+                           AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
         [new Date(activation).toISOString()])).rows[0];
       if (alarm?.tripped!==false) {
         rejected=deny("zero_cost_billing_alarm",
@@ -669,6 +788,10 @@ async function reconcileConfirmedGate(database = pool) {
          AND NOT EXISTS (
            SELECT 1 FROM whatsapp_free_entry_pricing_evidence alarm
             WHERE alarm.billable = true AND alarm.updated_at >= $2::timestamptz
+              AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
+                             WHERE ex.wamid=alarm.wamid AND ex.status='accepted'
+                               AND alarm.pricing_type='regular'
+                               AND alarm.pricing_category='service')
          )
        FOR UPDATE OF g
     ), released AS (
@@ -706,14 +829,16 @@ async function perform(to, operation, context = {}) {
   try {
     result=await operation();
   } catch (error) {
-    await complete(check.reservationId,{ success:false,ambiguous:true });
+    if (check.serviceReplyMessageId) await complete24hServiceReply(check.serviceReplyMessageId,{success:false,ambiguous:true});
+    else await complete(check.reservationId,{success:false,ambiguous:true});
     throw error;
   }
-  await complete(check.reservationId,result);
+  if (check.serviceReplyMessageId) await complete24hServiceReply(check.serviceReplyMessageId,result);
+  else await complete(check.reservationId,result);
   return result;
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
+  blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
