@@ -252,6 +252,22 @@ async function runOne({
       await closeItem(row,"skipped","duplicate_or_unconfirmed_media",{db});
       return true;
     }
+    // Optional images are lower priority than live WhatsApp customer replies.
+    // Never take the account-wide RM0 reservation while another inbound
+    // conversation is waiting for its primary AI text reply.
+    const liveReplies = await db.query(
+      `SELECT EXISTS(
+         SELECT 1 FROM inbound_processing_jobs j
+         WHERE j.channel='whatsapp' AND j.contact_id<>$1
+           AND j.status IN ('pending','processing')
+           AND j.created_at>now()-interval '10 minutes'
+       ) AS busy`,
+      [row.contact_id]
+    );
+    if (liveReplies.rows[0]?.busy === true) {
+      await postpone(row,"priority_to_live_customer_reply",db);
+      return true;
+    }
     // Read-only check BEFORE inserting a message or uploading image bytes.
     // Actual provider send still reserves the serial RM0 gate atomically.
     const ready = await zeroCost.preflightTemplate(contact.whatsapp_number,{database:db});
