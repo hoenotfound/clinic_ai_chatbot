@@ -224,7 +224,10 @@ test("every follow-up discovery and final claim uses the category-aware gate", (
 test("staff-waiting reminders exclude AI-only reviews, which have their own accurate alert", () => {
   const waiting = source("src/services/staffWaitingAlertService.js");
   const telegram = source("src/services/telegramImmediateAlertService.js");
-  assert.match(waiting, /NOT LIKE 'AI review requested:%'/);
+  const eligibility = source("src/db/staffWaitingEligibility.js");
+  assert.match(eligibility, /NOT LIKE 'AI review requested:%'/);
+  assert.match(waiting, /staffWaitingOwnershipSql/);
+  assert.match(telegram, /staffWaitingOwnershipSql/);
   assert.match(telegram, /Staff Question to Review \(AI Active\)/);
   assert.match(telegram, /no Return to AI action is needed/);
   assert.match(telegram, /type === "ai_review"/);
