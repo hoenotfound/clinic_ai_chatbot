@@ -6,6 +6,7 @@ const whatsapp = require("./whatsappService");
 const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
 const mediaStorage = require("./mediaStorageService");
+const whatsappVideoMediaCache = require("./whatsappVideoMediaCache");
 const audioConvert = require("./audioConvertService");
 const messagingPolicy = require("./whatsappPolicyService");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
@@ -804,32 +805,57 @@ async function sendVideoByStoredKey(
   let cancelled = await preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
 
-  let buffer;
-  try {
-    buffer = await mediaStorage.downloadMedia(videoKey, {
-      maxBytes: 16 * 1024 * 1024,
-    });
-  } catch (err) {
-    console.error(`Failed to load follow-up video ${videoKey}:`, err);
-    return temporaryMediaFailure(channel, err);
+  // Only shared clinic follow-up videos may use the cache. Patient-specific
+  // Inbox attachments and non-WhatsApp channels always follow the old path.
+  let cachedVideo = null;
+  if (channel === "whatsapp" &&
+      process.env.WHATSAPP_VIDEO_MEDIA_CACHE_ENABLED === "true" &&
+      mediaStorage.isSharedFollowUpConfigKey(videoKey)) {
+    try {
+      cachedVideo = await whatsappVideoMediaCache.resolveMediaId({
+        videoKey, mimeType: videoMimeType, filename: videoFilename,
+      });
+    } catch (error) {
+      // Cache failures are optional: preserve the previously working send path.
+      console.warn("[WhatsApp video cache] Unexpected failure; using original upload");
+    }
   }
-
-  if (!buffer?.length) {
+  if (cachedVideo?.kind === "download_failed") {
+    return temporaryMediaFailure(channel, cachedVideo.error);
+  }
+  if (cachedVideo?.kind === "upload_failed") {
     return {
-      success: false,
-      wamid: null,
-      externalMessageId: null,
-      error: "The configured follow-up video is missing. Please upload it again.",
+      success: false, wamid: null, externalMessageId: null,
+      error: "WhatsApp could not upload the follow-up video.",
     };
   }
 
+  let buffer;
+  if (cachedVideo?.kind !== "ready") {
+    let buffer;
+    try {
+      buffer = await mediaStorage.downloadMedia(videoKey, {
+        maxBytes: 16 * 1024 * 1024,
+      });
+    } catch (err) {
+      console.error(`Failed to load follow-up video ${videoKey}:`, err);
+      return temporaryMediaFailure(channel, err);
+    }
+  
+    if (!buffer?.length) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        error: "The configured follow-up video is missing. Please upload it again.",
+      };
+    }
+  }
+
   if (channel === "whatsapp") {
-    const mediaId = await whatsapp.uploadMedia(
-      buffer,
-      videoMimeType,
-      videoFilename,
-      options
-    );
+    const mediaId = cachedVideo?.kind === "ready"
+      ? cachedVideo.mediaId
+      : await whatsapp.uploadMedia(buffer, videoMimeType, videoFilename, options);
     if (!mediaId) {
       return {
         success: false,
@@ -840,7 +866,7 @@ async function sendVideoByStoredKey(
     }
     cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
-    return whatsapp.sendVideoById(
+    const result = await whatsapp.sendVideoById(
       contact.whatsapp_number,
       mediaId,
       caption,
@@ -850,6 +876,12 @@ async function sendVideoByStoredKey(
         ...(options.requestId ? { requestId: options.requestId } : {}),
       }
     );
+    // A definite Meta media-ID rejection invalidates only future cache reuse.
+    // Do NOT retry this message: the Strict RM0 gate owns all send attempts.
+    if (cachedVideo?.kind === "ready") {
+      await whatsappVideoMediaCache.invalidateIfRejected(cachedVideo, result);
+    }
+    return result;
   }
 
   let captionSent = false;
