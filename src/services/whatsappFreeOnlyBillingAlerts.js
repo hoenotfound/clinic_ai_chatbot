@@ -41,7 +41,7 @@ async function flush({ database=pool, send=postTelegramMessage, env=process.env 
       await send({
         token:env.TELEGRAM_BOT_TOKEN,chatId:env.TELEGRAM_CHAT_ID,
         text: "🚨 DA Chatbot WhatsApp FREE-ONLY BILLING ALARM\n"+
-          "Meta reported a billable WhatsApp message. All strict-mode sends are blocked.\n"+
+          "Meta reported an unexpected billable WhatsApp message. Strict free-entry sends are blocked; permitted 24-hour service replies may continue and may be charged.\n"+
           "Message: "+String(item.wamid).slice(0,100)+"\n"+
           "Review Meta Billing Hub and Neon evidence before resetting the switch. "+
           "A charge may already have occurred."
