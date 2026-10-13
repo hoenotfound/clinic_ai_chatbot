@@ -321,6 +321,15 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
 async function complete24hServiceReply(messageId,result,database=pool) {
   const accepted=result?.success === true && typeof result.wamid==="string" && !!result.wamid;
   try {
+    // Only a verified provider rejection is provably safe to retry. A
+    // timeout, 5xx or missing receipt could have created a real Meta send.
+    if (definitelyRejected(result)) {
+      await database.query(`
+        DELETE FROM whatsapp_24h_service_reply_exceptions
+        WHERE message_id=$1 AND status='reserved' AND wamid IS NULL
+      `,[messageId]);
+      return;
+    }
     await database.query(`
       UPDATE whatsapp_24h_service_reply_exceptions
       SET status=$2, wamid=CASE WHEN $2='accepted' THEN $3 ELSE NULL END,

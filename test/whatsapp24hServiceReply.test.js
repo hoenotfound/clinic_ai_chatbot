@@ -57,6 +57,10 @@ test("service lane needs a persisted message and cannot replay the same provider
       const row=rows.get(args[0]); if(row?.status==="reserved"){row.status=args[1];row.wamid=args[2];}
       return {rows:[]};
     }
+    if(sql.includes("DELETE FROM whatsapp_24h_service_reply_exceptions")) {
+      if(rows.get(args[0])?.status==="reserved")rows.delete(args[0]);
+      return {rows:[]};
+    }
     if(sql.includes("DELETE FROM whatsapp_free_only_billing_alerts"))return {rows:[]};
     throw new Error("Unexpected SQL");
   }};
@@ -76,6 +80,15 @@ test("service lane needs a persisted message and cannot replay the same provider
   assert.equal(calls.some(x=>x.sql.includes("DELETE FROM whatsapp_free_only_billing_alerts")),true);
   await guard.complete24hServiceReply(100,{success:false,ambiguous:true},db);
   assert.equal(rows.get(100).status,"accepted");
+  const otherArgs={database:db,context:{messageKind:"first_reply_text",currentMessageId:101}};
+  assert.equal((await guard.reserve24hServiceReply("60121234567",otherArgs)).allowed,true);
+  await guard.complete24hServiceReply(101,{success:false,providerStatus:400,providerRejected:true},db);
+  assert.equal(rows.has(101),false,"definite Meta 4xx may release the one-shot reservation");
+  assert.equal((await guard.reserve24hServiceReply("60121234567",otherArgs)).allowed,true);
+  await guard.complete24hServiceReply(101,{success:false,ambiguous:true},db);
+  assert.equal(rows.get(101)?.status,"unknown","ambiguous sends stay reserved");
+  assert.equal((await guard.reserve24hServiceReply("60121234567",otherArgs)).code,
+    "zero_cost_service_reply_already_attempted");
 });
 
 test("service reply SQL excludes automated messages and requires recent provider-authored inbound",async t=>{
