@@ -3016,11 +3016,10 @@ function FollowUpTool({
               <div>
                 <h3 className="text-sm font-semibold">WhatsApp Free Messaging Only</h3>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                  Strict free-only safety switch for ALL WhatsApp sends, including AI replies,
-                  staff Inbox messages, attachments, templates and scheduled follow-ups.
-                  Only send inside an already-confirmed Meta free-entry period, capped at 71 hours.
-                  An ad click, an open 24-hour reply window, or remaining monthly free allowance
-                  alone are not accepted as proof of free delivery.
+                  Strict free-only safety for templates, attachments and scheduled follow-ups.
+                  Without the optional service-reply permission below, ordinary customer text
+                  replies are also blocked unless the Meta free-entry period is verified.
+                  An open 24-hour window does not guarantee free delivery.
                 </p>
               </div>
               <Switch
@@ -3037,7 +3036,9 @@ function FollowUpTool({
             </div>
             <p className="mt-2 text-[11px] leading-5 text-amber-700">
               {form.whatsappFreeOnly?.enabled
-                ? "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
+                ? form.whatsappFreeOnly?.allow24hServiceReplies
+                  ? "Strict protection ON with 24-hour text replies allowed: normal replies may be billed, but templates, media and follow-ups still require proven free-entry billing."
+                  : "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
                 : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
               Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
               Unexpected billable callbacks after activation stop strict template sending.
