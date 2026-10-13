@@ -14,7 +14,8 @@ function hasSpecificStaffTimeOffer(value) {
   const text = String(value || "");
   const date = /(?:\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b)/iu;
   const time = /(?:\b(?:[01]?\d|2[0-3])[:：.][0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b|\b(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?)\b|(?:[一二三四五六七八九十]|\d{1,2})\s*[点點](?:半|[0-5]?\d\s*分)?)/iu;
-  return date.test(text) && time.test(text);
+  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|预约|預約|安排|时间你|時間你|works?\??|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
+  return date.test(text) && time.test(text) && isSchedulingOffer.test(text);
 }
 
 function isExplicitRescheduleOffer(value) {
