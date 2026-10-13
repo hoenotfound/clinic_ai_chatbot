@@ -376,6 +376,16 @@ async function runOne({
       row.contact_id,"assistant",row.caption,null,null,row.image_url,
       null,{publish:false}
     );
+    // Link the placeholder BEFORE contacting Meta. A delivery callback may
+    // arrive before provider persistence completes; it must still be
+    // recognized as optional media, never fed to the text-retry worker.
+    const linked = await db.query(
+      `UPDATE whatsapp_result_media_queue SET message_id=$3,updated_at=now()
+       WHERE id=$1 AND lease_token=$2 AND status='processing'
+       RETURNING id`,
+      [row.id,row.lease_token,message.id]
+    );
+    if (linked.rowCount!==1) throw new Error("Lost optional-image send lease");
     let finalExpiry = false;
     providerResult = await sender(contact,row.image_url,row.caption,{
       currentMessageId:message.id,
