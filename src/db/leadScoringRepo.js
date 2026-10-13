@@ -459,8 +459,8 @@ async function markScoreFailed(scoreId, error) {
 // A provider-wide rate limit or capacity outage is not a failed classification.
 // Restore the claimed attempt atomically so a prolonged 429/503 outage cannot
 // exhaust MAX_ATTEMPTS, while preserving the normal two-minute retry backoff.
-async function markScoreDeferred(scoreId, error) {
-  const result = await pool.query(
+async function markScoreDeferred(scoreId, error, database = pool) {
+  const result = await database.query(
     `UPDATE lead_temperature_scores
      SET status = 'failed',
          attempts = GREATEST(0, attempts - 1),
