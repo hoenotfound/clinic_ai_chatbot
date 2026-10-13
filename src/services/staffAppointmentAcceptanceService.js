@@ -22,6 +22,61 @@ function isExplicitRescheduleOffer(value) {
   return /(?:改(?:到|成|去|为|為|时间|時間)|换(?:去|到|成|时间|時間)|調整|调整|改期|改约|改約|reschedul|change\s+(?:the\s+)?(?:date|time|slot)|another\s+(?:date|time|slot)|tukar\s+(?:masa|tarikh)|ubah\s+(?:masa|tarikh))/iu.test(String(value || ""));
 }
 
+
+function conflictsWithConfirmedSlot(offerText, appointmentAt) {
+  if (!appointmentAt) return false;
+  const saved = new Date(appointmentAt);
+  if (!Number.isFinite(saved.getTime())) return false;
+  const local = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kuala_Lumpur", weekday: "long",
+      day: "2-digit", month: "2-digit", hour: "2-digit",
+      minute: "2-digit", hour12: false,
+    }).formatToParts(saved).map((part) => [part.type, part.value])
+  );
+  const offer = String(offerText || "").toLowerCase();
+  const calendar = offer.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-]\d{2,4})?\b/);
+  if (calendar && (Number(calendar[1]) !== Number(local.day) ||
+      Number(calendar[2]) !== Number(local.month))) return true;
+  const weekdays = [
+    /(?:星期日|星期天|周日|周天|週日|週天|sunday|ahad)/iu,
+    /(?:星期一|周一|週一|monday|isnin)/iu,
+    /(?:星期二|周二|週二|tuesday|selasa)/iu,
+    /(?:星期三|周三|週三|wednesday|rabu)/iu,
+    /(?:星期四|周四|週四|thursday|khamis)/iu,
+    /(?:星期五|周五|週五|friday|jumaat)/iu,
+    /(?:星期六|周六|週六|saturday|sabtu)/iu,
+  ];
+  const namedDay = weekdays.findIndex((expression) => expression.test(offer));
+  const savedDay = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+    .indexOf(String(local.weekday || "").toLowerCase());
+  if (namedDay >= 0 && savedDay >= 0 && namedDay !== savedDay) return true;
+
+  const numbered = offer.match(/\b(\d{1,2})[:：.](\d{2})\s*(a\.?m\.?|p\.?m\.?)?/iu);
+  const chinese = numbered ? null : offer.match(/(\d{1,2})\s*[点點]\s*(半|\d{1,2}\s*分)?/iu);
+  const meridian = numbered || chinese ? null : offer.match(/\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+  const parsed = numbered || chinese || meridian;
+  if (!parsed) return false;
+  let hour = Number(parsed[1]);
+  let minute = numbered ? Number(numbered[2])
+    : chinese && chinese[2] ? (chinese[2] === "半" ? 30 : Number(chinese[2].replace(/\s*分/, ""))) : 0;
+  if (!Number.isInteger(hour) || hour > 23 || hour < 0 || minute > 59) return false;
+  const ampm = numbered ? String(numbered[3] || "")
+    : meridian ? String(meridian[2] || "") : "";
+  if (/p\.?m/i.test(ampm) || /下午|傍晚|晚上|晚间|晚間/u.test(offer)) {
+    if (hour < 12) hour += 12;
+  } else if (/a\.?m/i.test(ampm) || /早上|上午/u.test(offer)) {
+    if (hour === 12) hour = 0;
+  } else if (hour > 0 && hour <= 7) {
+    // Ordinary Malaysian clinic opening hours make "4点" mean 4 PM.
+    hour += 12;
+  } else if (hour === 8 || hour === 9) {
+    // Could be morning or evening. Never reschedule on an ambiguous time.
+    return false;
+  }
+  return hour !== Number(local.hour) || minute !== Number(local.minute);
+}
+
 function createStaffAppointmentAcceptanceService({ database = pool, publish = realtimeEvents.publish } = {}) {
   return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
@@ -35,7 +90,7 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
       const selected = await client.query(
         [
           "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
-          "       lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id",
+          "       lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id, lead.appointment_at",
           "FROM messages inbound",
           "JOIN LATERAL (",
           "  SELECT m.id, m.content, m.sent_by_username",
@@ -48,7 +103,7 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
           "  ORDER BY m.id DESC LIMIT 1",
           ") staff ON true",
           "JOIN LATERAL (",
-          "  SELECT l.id, l.appointment_status, l.stage_id FROM leads l",
+          "  SELECT l.id, l.appointment_status, l.stage_id, l.appointment_at FROM leads l",
           "  WHERE l.contact_id = inbound.contact_id AND l.is_closed = false",
           "  ORDER BY l.created_at DESC, l.id DESC LIMIT 1",
           ") lead ON true",
@@ -85,7 +140,8 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
         // A changed staff proposal supersedes an old booked slot, but does
         // not confirm the replacement booking or cause a template send.
         const reschedule = offer.appointment_status === "set" &&
-          isExplicitRescheduleOffer(offer.staff_text);
+          (isExplicitRescheduleOffer(offer.staff_text) ||
+            conflictsWithConfirmedSlot(offer.staff_text, offer.appointment_at));
         if (reschedule) {
           const rescheduled = await client.query(
             [
@@ -141,6 +197,6 @@ function createStaffAppointmentAcceptanceService({ database = pool, publish = re
 const recordStaffAppointmentAcceptance = createStaffAppointmentAcceptanceService();
 module.exports = {
   AGREED_TIME_REASON, isBriefAcceptance, hasSpecificStaffTimeOffer,
-  isExplicitRescheduleOffer, createStaffAppointmentAcceptanceService,
+  isExplicitRescheduleOffer, conflictsWithConfirmedSlot, createStaffAppointmentAcceptanceService,
   recordStaffAppointmentAcceptance,
 };
