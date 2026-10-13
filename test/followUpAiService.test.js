@@ -507,3 +507,65 @@ test("package selection context excludes old follow-up cycles and messages outsi
   const scoped = scopePackageSelectionConversation(messages, 4);
   assert.deepEqual(scoped.map((message) => message.id), [3, 4]);
 });
+
+test("single Neutro branch regenerates invented branch choice and retains useful invitation", async (t) => {
+  const previous = config.branches;
+  config.branches = [{ name:"Petaling Jaya" }];
+  t.after(() => { config.branches = previous; });
+  const drafts = [
+    { action:"send", message:"你想去我们哪一间分行？", reason:"Invite",topic:"Body care" },
+    { action:"send", message:"我们只有 PJ 一家店 😊 你星期六方便来做体态评估吗？", reason:"Invite",topic:"Body care" },
+  ];
+  let calls = 0;
+  let secondInstruction = "";
+  aiService.getReplyWithEnv = async (_, options) => {
+    if(calls===1) secondInstruction=options.followUpContext.avoidMessage;
+    return JSON.stringify(drafts[calls++]);
+  };
+  const result=await generatePersonalizedFollowUp({
+    conversation:[{id:11,role:"user",content:"想了解骨盆调理"}],
+    triggerMessageId:11,stepNumber:3,treatmentInterest:"骨盆调理",
+    channel:"whatsapp",
+  });
+  assert.equal(calls,2);
+  assert.match(secondInstruction,/only one branch/);
+  assert.equal(result.action,"send");
+  assert.match(result.message,/PJ 一家店/);
+});
+
+test("single branch skips after two invalid Malay branch-choice drafts, without sending", async(t)=>{
+  const previous = config.branches;
+  config.branches = [{ name:"Petaling Jaya" }];
+  t.after(() => { config.branches = previous; });
+  let calls=0;
+  aiService.getReplyWithEnv = async () => {
+    calls+=1;
+    return JSON.stringify({action:"send",message:"Cawangan mana yang sesuai untuk awak?",
+      topic:"Assessment",reason:"Ask location"});
+  };
+  const result=await generatePersonalizedFollowUp({
+    conversation:[{id:11,role:"user",content:"Boleh tahu rawatan pelvis?"}],
+    triggerMessageId:11,stepNumber:3,
+  });
+  assert.equal(calls,2);
+  assert.equal(result.action,"skip");
+  assert.equal(result.reason,"single_branch_invalid_location_choice");
+});
+
+test("single branch allows a normal English address question without regeneration",async(t)=>{
+  const previous=config.branches;
+  config.branches=[{name:"Petaling Jaya"}];
+  t.after(()=>{config.branches=previous;});
+  let calls=0;
+  aiService.getReplyWithEnv=async()=>{
+    calls+=1;
+    return JSON.stringify({action:"send",message:"Would Saturday at our PJ clinic suit you?",
+      reason:"Offer an assessment",topic:"Pelvic care"});
+  };
+  const result=await generatePersonalizedFollowUp({
+    conversation:[{id:11,role:"user",content:"Where is your clinic?"}],
+    triggerMessageId:11,stepNumber:3,
+  });
+  assert.equal(result.action,"send");
+  assert.equal(calls,1);
+});

@@ -22,6 +22,16 @@ const CUSTOMER_PROMO_CONFIRMATION_PATTERN =
 const SCHEDULING_CONTEXT_PATTERN =
   /(appointment|book(?:ing)?|slot|availability|available|date|time|branch|location|address|hours?|open|close|预约|预[订定]|时[间段]|几点|几时|分店|地点|地址|营业|开门|关门|temujanji|janji temu|slot|masa|pukul|cawangan|lokasi|alamat|buka|tutup)/iu;
 
+// Prevent invented branch choices in a single-location clinic even when a
+// generated follow-up ignores the system prompt. Regenerate once, then skip.
+function asksForNonexistentBranchChoice(message, branches = clinicConfig.branches) {
+  const configured = (Array.isArray(branches) ? branches : [])
+    .filter((branch) => String(branch?.name || "").trim());
+  if (configured.length !== 1) return false;
+  const text = String(message || "");
+  return /(?:哪.{0,12}(?:分行|分店|门店|門店|店面|间店|間店|家店)|(?:分行|分店|门店|門店).{0,12}(?:哪.{0,5}(?:间|間|个|個|边|邊)|你(?:想|要)去哪)|(?:which|what)\s+(?:of\s+our\s+)?(?:branch|branches|outlet|outlets|location|locations)|(?:branch|outlet|location)\s+(?:do\s+you|would\s+you|you\s+want|suits?\s+you)|(?:which|where)\s+(?:one\s+of\s+our\s+)?(?:clinics?|stores?)\s+(?:would\s+you|do\s+you)|(?:cawangan|lokasi)\s+(?:yang\s+)?mana|mana\s+(?:satu\s+)?(?:cawangan|lokasi))/iu.test(text);
+}
+
 function cleanContent(value) {
   return String(value || "")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
@@ -505,6 +515,13 @@ async function generatePersonalizedFollowUp({
 
     const result = parseFollowUpAiResult(raw);
     if (result.action !== "send") return result;
+    if (asksForNonexistentBranchChoice(result.message)) {
+      if (attempt === 0) {
+        avoidMessage = "This clinic has only one branch. Do not ask which branch/outlet to visit. Rewrite using the configured location or ask only for a suitable day/time. Rejected draft: " + result.message.slice(0, 300);
+        continue;
+      }
+      return { action: "skip", message: "", reason: "single_branch_invalid_location_choice", topic: result.topic || "" };
+    }
     if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true && hasTreatmentPriceContent(result.message)) {
       // Retry once with explicit guidance, without removing the rest of the
       // customer's useful conversation context. Never send the first draft.
@@ -538,6 +555,7 @@ module.exports = {
   isSubstantiallySimilar,
   needsSchedulingContext,
   previousFollowUps,
+  asksForNonexistentBranchChoice,
   recentConfiguredServiceNames,
   renderConversation,
   scopePackageSelectionConversation,
