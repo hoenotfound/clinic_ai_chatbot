@@ -59,6 +59,11 @@ test("one-branch follow-up rejects requests for nonexistent branches without aff
   assert.equal(followUp.asksForNonexistentBranchChoice("你想了解哪一间分行？", one), true);
   assert.equal(followUp.asksForNonexistentBranchChoice("Which branch would you like?", one), true);
   assert.equal(followUp.asksForNonexistentBranchChoice("Cawangan mana yang sesuai?", one), true);
+  assert.equal(followUp.asksForNonexistentBranchChoice("想去哪个门店比较方便？", one), true);
+  assert.equal(followUp.asksForNonexistentBranchChoice("你要找哪一间店？", one), true);
+  assert.equal(followUp.asksForNonexistentBranchChoice("Which of our locations would you prefer?", one), true);
+  assert.equal(followUp.asksForNonexistentBranchChoice("Lokasi yang mana sesuai?", one), true);
+  assert.equal(followUp.asksForNonexistentBranchChoice("PJ 分行的地址是什么？", one), false);
   assert.equal(followUp.asksForNonexistentBranchChoice("Would Saturday at PJ work?", one), false);
   assert.equal(followUp.asksForNonexistentBranchChoice("Which branch?", [{ name: "PJ" }, { name: "KL" }]), false);
 });
