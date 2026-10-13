@@ -456,6 +456,24 @@ async function markScoreFailed(scoreId, error) {
   };
 }
 
+// A provider-wide rate limit or capacity outage is not a failed classification.
+// Restore the claimed attempt atomically so a prolonged 429/503 outage cannot
+// exhaust MAX_ATTEMPTS, while preserving the normal two-minute retry backoff.
+async function markScoreDeferred(scoreId, error) {
+  const result = await pool.query(
+    `UPDATE lead_temperature_scores
+     SET status = 'failed',
+         attempts = GREATEST(0, attempts - 1),
+         error_text = $2,
+         updated_at = now()
+     WHERE id = $1 AND status = 'processing'
+     RETURNING id, lead_id, through_message_id, attempts`,
+    [scoreId, String(error?.message || error || "AI provider temporarily unavailable.").slice(0, 1000)]
+  );
+  const row = result.rows[0] || null;
+  return row ? { ...row, terminal: false, deferred: true } : null;
+}
+
 async function markScoreCancelled(scoreId) {
   await pool.query(
     `UPDATE lead_temperature_scores
@@ -475,5 +493,6 @@ module.exports = {
   findTerminalFailuresNeedingAlert,
   getTranscript,
   markScoreCancelled,
+  markScoreDeferred,
   markScoreFailed,
 };
