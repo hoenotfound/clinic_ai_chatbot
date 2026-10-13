@@ -506,3 +506,42 @@ test("model cooldown after a provider error schedules past both durable and mode
   await run();
   assert.deepEqual(wakes, [300_250]);
 });
+
+test("repeated Gemini 429 outages defer scoring without consuming attempts or creating terminal alerts", async () => {
+  const now = 100_000;
+  const retries = [];
+  const saved = [];
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [candidate()],
+      claimCandidate: async () => ({ id: 201, attempts: 1 }),
+      getTranscript: async () => [{ id: 44, role: "user", content: "Price?" }],
+      markScoreDeferred: async (id, err) => {
+        saved.push({ id, code: err.code });
+        return { id, lead_id: 7, attempts: 0, terminal: false, deferred: true };
+      },
+      markScoreFailed: async () => assert.fail("temporary provider outage must not spend an attempt"),
+    },
+    scoreConversation: async () => {
+      const err = new Error("All API keys are rate limited (429).");
+      err.code = "ALL_GEMINI_KEYS_FAILED";
+      err.stopLeadScoringSweep = true;
+      err.deferLeadScoringRetry = true;
+      err.nextRetryAt = new Date(now + 300_000);
+      throw err;
+    },
+    getModelRetryAt: () => null,
+    scheduleWake: (ms) => retries.push(ms),
+    clock: () => now,
+    queueConversationSummary: async () => assert.fail("no terminal Telegram summary"),
+    flushConversationSummaries: async () => ({ status: "completed", sent: 0 }),
+  });
+  await run();
+  await run();
+  assert.deepEqual(saved, [
+    { id: 201, code: "ALL_GEMINI_KEYS_FAILED" },
+    { id: 201, code: "ALL_GEMINI_KEYS_FAILED" },
+  ]);
+  assert.deepEqual(retries, [300_250, 300_250]);
+});
