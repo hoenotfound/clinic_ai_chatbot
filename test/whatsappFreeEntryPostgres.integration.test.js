@@ -46,7 +46,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         whatsapp_template JSONB, media_key TEXT,
         is_automated_follow_up BOOLEAN, automated_follow_up_step INTEGER,
         automated_follow_up_parent_message_id INTEGER,
-        pricing_reminder_anchor_id INTEGER
+        pricing_reminder_anchor_id INTEGER,
+        sent_by_username TEXT,media_mime_type TEXT
       );
       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,

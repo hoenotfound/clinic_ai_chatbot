@@ -2188,7 +2188,7 @@ function FollowUpTool({
         {freeEntryStatus?.freeOnlyEnabled && Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0 && (
           <p role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
             WhatsApp billing alarm: Meta reported an unexpected billable callback since strict protection was enabled.
-            Verified free-entry sends are blocked until staff investigate. Optional 24-hour service replies can still be sent and may be billed.
+            Verified free-entry sends are blocked until staff investigate. Optional 24-hour text replies and authorized staff media may still be sent and may be billed.
             Open WhatsApp templates for the audit details.
           </p>
         )}
@@ -3144,7 +3144,7 @@ function FollowUpTool({
                     {" · "}Unexpected since strict enabled: {freeEntryStatus.billingSafety?.since_switch ?? "unknown"}
                     {" · "}Permitted 24h service charges: {freeEntryStatus.billingSafety?.allowed_service_charges ?? "unknown"}
                     {Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
-                      ? " · BILLING ALARM: strict free-entry sends are blocked until investigated; permitted 24h text replies may continue."
+                      ? " · BILLING ALARM: strict free-entry sends are blocked until investigated; permitted 24h text replies and staff media may continue."
                       : ""}
                   </div>
                   {freeEntryStatus.freeOnlyEnabled && !freeEntryStatus.telegramBillingAlertsEnabled ? (
