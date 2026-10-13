@@ -520,3 +520,45 @@ test("Restore Gemini model cooldown from durable usage telemetry on startup", as
   assert.equal(nextLeadScoringModelRetryAt(nowMs,cooldowns),null,
     "healthy alternative remains available");
 });
+
+test("prolonged 429 across primary and fallback becomes deferred, never a terminal scoring error", async () => {
+  const { scoreWithGemini, GEMINI_MODEL, GEMINI_FALLBACK_MODEL } =
+    require("../src/services/leadScoringAiService");
+  const rateLimited = new Error("Every Gemini key is rate limited");
+  rateLimited.code = "ALL_GEMINI_KEYS_FAILED";
+  rateLimited.failures = [{ label:"test-key", message:"429 rate limit RESOURCE_EXHAUSTED" }];
+  const cooldowns = new Map();
+  let calls = 0;
+  let nowMs = 100_000;
+  const opts = {
+    cooldowns, clock:()=>nowMs,
+    runWithKeys: async () => { calls += 1; throw rateLimited; },
+  };
+  await assert.rejects(() => scoreWithGemini({
+    lead:{lead_id:10,contact_id:22}, messages,
+  }, opts), (err) => {
+    assert.equal(err.code,"ALL_GEMINI_KEYS_FAILED");
+    assert.equal(err.stopLeadScoringSweep,true);
+    assert.equal(err.deferLeadScoringRetry,true);
+    assert.ok(err.nextRetryAt.getTime() >= nowMs + 120_000);
+    return true;
+  });
+  assert.equal(calls,2,"each eligible scoring model gets one capacity attempt");
+  assert.ok(cooldowns.get(GEMINI_MODEL)>nowMs);
+  assert.ok(cooldowns.get(GEMINI_FALLBACK_MODEL)>nowMs);
+  await assert.rejects(() => scoreWithGemini({
+    lead:{lead_id:10,contact_id:22},messages,
+  }, opts), (err) => {
+    assert.equal(err.code,"LEAD_SCORING_MODELS_COOLING_DOWN");
+    assert.equal(err.deferLeadScoringRetry,true);
+    return true;
+  });
+  assert.equal(calls,2,"model cooldown makes no additional API calls");
+});
+
+test("an emergency customer reply model override cannot replace the dedicated scoring fallback", () => {
+  const src = require("node:fs").readFileSync(
+    require("node:path").join(__dirname,"../src/services/leadScoringAiService.js"),"utf8");
+  assert.match(src,/LEAD_SCORING_GEMINI_FALLBACK_MODEL/);
+  assert.doesNotMatch(src,/LEAD_SCORING_GEMINI_FALLBACK_MODEL\s*\|\|\s*process\.env\.GEMINI_MODEL/);
+});
