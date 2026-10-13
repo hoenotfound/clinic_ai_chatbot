@@ -1319,7 +1319,8 @@ test("failed historical Inbox video shows Retry and does not fetch other videos"
         media_mime_type: fixture.mime, has_media_attachment: true },
     ]]]),
   });
-  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+  // Signed-link refresh adds a query parameter; the fixture must intercept it.
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     requestedIds.push(pathname);
     if (pathname.endsWith("/81/media") && attempts++ === 0) {
@@ -1374,5 +1375,68 @@ test("video compatibility fallback explicitly requests Render without preloading
   expect(requests.some((url) => url.pathname.endsWith("/81/media") &&
     url.searchParams.get("delivery") === "proxy")).toBe(true);
   expect(requests.some((url) => url.pathname.endsWith("/82/media"))).toBe(false);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("signed R2 redirect streams video cross-origin without fetching Render video bytes", async ({ page }, testInfo) => {
+  const fixture = playbackFixture(testInfo);
+  let renderRequests = 0;
+  const directRequests = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      { ...inboundMessage({ id: 81, content: "R2 history video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Unplayed history video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+    ]]]),
+  });
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
+    renderRequests += 1;
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/82/media")) throw new Error("Unplayed video requested");
+    return route.fulfill({
+      status: 302,
+      headers: {
+        location: "https://test.r2.cloudflarestorage.com/clip?X-Amz-Signature=fixture",
+        "cache-control": "private, no-store",
+        "referrer-policy": "no-referrer",
+      },
+      body: "",
+    });
+  });
+  await page.route("https://test.r2.cloudflarestorage.com/**", async (route) => {
+    directRequests.push(route.request().headers().range || null);
+    const rangeHeader = route.request().headers().range;
+    const match = /^bytes=([0-9]+)-([0-9]*)$/.exec(rangeHeader || "");
+    const start = match ? Number(match[1]) : 0;
+    const end = match && match[2]
+      ? Math.min(Number(match[2]), fixture.body.length - 1)
+      : fixture.body.length - 1;
+    const bytes = fixture.body.subarray(start, end + 1);
+    await route.fulfill({
+      status: match ? 206 : 200,
+      headers: {
+        "access-control-allow-origin": "https://localhost:4173",
+        "access-control-allow-methods": "GET, HEAD",
+        "access-control-allow-headers": "Range",
+        "access-control-expose-headers": "Content-Range, Accept-Ranges",
+        "content-type": fixture.mime,
+        "accept-ranges": "bytes",
+        "content-length": String(bytes.length),
+        ...(match ? { "content-range": `bytes ${start}-${end}/${fixture.body.length}` } : {}),
+      },
+      body: bytes,
+    });
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  expect(renderRequests).toBe(0);
+  expect(directRequests).toEqual([]);
+  await page.getByRole("button", { name: "Play video" }).first().click();
+  const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
+  await expect.poll(() => player.evaluate((video) => video.readyState)).toBeGreaterThan(1);
+  expect(renderRequests).toBeGreaterThanOrEqual(1);
+  expect(directRequests.length).toBeGreaterThan(0);
+  expect(await player.getAttribute("src")).toBe("/api/conversations/101/messages/81/media");
   expectNoUnexpectedApi(apiState);
 });
