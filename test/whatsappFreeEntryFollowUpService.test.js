@@ -54,3 +54,36 @@ test("worker has durable attempt, marketing and billed-message safety guards", (
   assert.match(code, /checkTemplateAllowed|sendApprovedTemplate/);
   assert.match(code, /item.category === "MARKETING"/);
 });
+
+
+test("extended WhatsApp templates never change the customer's chosen language", () => {
+  const catalog = [
+    { name: "ns_fu3_face_feedback", language: "zh_CN", status: "APPROVED", category: "MARKETING" },
+    { name: "ns_fu3_face_feedback", language: "en", status: "APPROVED", category: "MARKETING" },
+    { name: "ns_fu2_general_checkin", language: "ms", status: "APPROVED", category: "MARKETING" },
+  ];
+  assert.equal(worker.approvedInLanguage(catalog, "ns_fu3_face_feedback", "en_US")?.language, "en");
+  assert.equal(worker.approvedInLanguage(catalog, "ns_fu3_face_feedback", "ms"), null);
+  assert.equal(worker.approvedInLanguage(catalog, "ns_fu2_general_checkin", "ms")?.language, "ms");
+});
+
+test("extra WhatsApp reminders are selective without losing the first invitation", () => {
+  const interested = {
+    lead_temperature: "warm", treatment_interest: "骨盆调理",
+  };
+  assert.equal(worker.selectiveSlotAllowed(interested, 36), true);
+  assert.equal(worker.selectiveSlotAllowed(interested, 48), true);
+  assert.equal(worker.selectiveSlotAllowed(interested, 66), true);
+  assert.equal(worker.selectiveSlotAllowed({ ...interested, lead_temperature: "cold" }, 48), false);
+  assert.equal(worker.selectiveSlotAllowed({ lead_temperature: "warm" }, 66), false);
+  assert.equal(worker.selectiveSlotAllowed({ lead_temperature: "warm" }, 36), true);
+});
+
+test("extended candidate SQL checks previously sent follow-up videos from all outbound messages", () => {
+  const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(code, /AS previously_sent_media_keys/);
+  assert.match(code, /media\.created_at >= origin\.created_at/);
+  assert.match(code, /sentKeys\.includes\(preferred\.mediaKey\)/);
+  assert.match(code, /usedNames\.includes\(name\)/);
+  assert.match(code, /no_distinct_approved_template_in_customer_language/);
+});
