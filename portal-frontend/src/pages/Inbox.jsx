@@ -3904,23 +3904,32 @@ function Spinner({ className = "" }) {
 function OnDemandInboxVideo({ src, uploading = false }) {
   const playerRef = useRef(null);
   const activeSourceRef = useRef(null);
+  const playbackAttemptRef = useRef(0);
   const [requested, setRequested] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const canUseRenderFallback = !uploading && src?.startsWith("/api/conversations/");
 
-  function startPlayback() {
+  function startPlayback(useRenderFallback = false) {
     const player = playerRef.current;
     if (!player || !src) return;
 
-    // Only the browser interaction assigns the historical video's source.
-    // React must not bind it again during the following state update.
-    // This keeps one click working in iOS Safari without restarting the fetch.
-    if (activeSourceRef.current !== src || player.error) {
+    // A fresh browser gesture renews a possibly expired signed redirect. Staff
+    // can explicitly force the original authenticated Render stream on error.
+    // Leave the first click exactly as in Phase 1 for iOS Safari/PWA.
+    const retrying = activeSourceRef.current !== null;
+    const attempt = retrying ? ++playbackAttemptRef.current : 0;
+    const separator = src.includes("?") ? "&" : "?";
+    const playbackSrc = canUseRenderFallback && (retrying || useRenderFallback)
+      ? `${src}${separator}${useRenderFallback ? "delivery=proxy&" : ""}playbackAttempt=${attempt}`
+      : src;
+    // The source is assigned only in response to the staff member's click.
+    if (activeSourceRef.current !== playbackSrc || player.error) {
       if (player.error) {
         player.removeAttribute("src");
         player.load(); // Clear the failed resource before a deliberate retry.
       }
-      player.src = src;
-      activeSourceRef.current = src;
+      player.src = playbackSrc;
+      activeSourceRef.current = playbackSrc;
     }
     setRequested(true);
     setLoadError(false);
@@ -3952,7 +3961,7 @@ function OnDemandInboxVideo({ src, uploading = false }) {
       {!uploading && !requested && (
         <button
           type="button"
-          onClick={startPlayback}
+          onClick={() => startPlayback()}
           aria-label="Play video"
           className="absolute inset-0 flex items-center justify-center gap-2 rounded-lg bg-black/75 px-4 text-sm font-semibold text-white hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
         >
@@ -3960,16 +3969,35 @@ function OnDemandInboxVideo({ src, uploading = false }) {
           Play video
         </button>
       )}
+      {!uploading && requested && !loadError && (
+        <button
+          type="button"
+          onClick={() => startPlayback()}
+          className="mt-2 rounded-lg border border-current px-3 py-2 text-xs font-semibold"
+          aria-label="Reload video"
+        >
+          Reload video
+        </button>
+      )}
       {!uploading && requested && loadError && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" role="alert">
           <span>Video could not play. Please try again.</span>
           <button
             type="button"
-            onClick={startPlayback}
+            onClick={() => startPlayback()}
             className="rounded-lg border border-current px-3 py-2 font-semibold"
           >
             Retry video
           </button>
+          {canUseRenderFallback && (
+            <button
+              type="button"
+              onClick={() => startPlayback(true)}
+              className="rounded-lg border border-current px-3 py-2 font-semibold"
+            >
+              Use compatibility playback
+            </button>
+          )}
         </div>
       )}
       {uploading && <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}

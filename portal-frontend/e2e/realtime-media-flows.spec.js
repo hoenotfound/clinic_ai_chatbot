@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { once } from "node:events";
 
 const STAFF_USER = {
   id: 2,
@@ -1279,7 +1281,7 @@ test("historical Inbox videos fetch only when staff explicitly plays real video"
     ]]]),
   });
 
-  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
     mediaGets.push(new URL(route.request().url()).pathname);
     await serveTinyVideo(route, fixture);
   });
@@ -1301,6 +1303,12 @@ test("historical Inbox videos fetch only when staff explicitly plays real video"
   await expect.poll(() => videos.nth(0).evaluate((element) => element.readyState)).toBeGreaterThan(1);
   await expect.poll(() => videos.nth(0).evaluate((element) => element.currentTime)).toBeGreaterThan(0);
   await expect(videos.nth(0)).toHaveJSProperty("controls", true);
+  // A long-paused/expired signed link can stall instead of emitting error.
+  // Explicit Reload must always renew the authenticated redirect on click.
+  await page.getByRole("button", { name: "Reload video" }).first().click();
+  await expect.poll(() => mediaGets.filter((path) => path.endsWith("/81/media")).length)
+    .toBeGreaterThanOrEqual(2);
+  await expect(videos.nth(0)).toHaveAttribute("src", /playbackAttempt=1/);
   expect(mediaGets.some((path) => path.endsWith("/82/media"))).toBe(false);
   await expect(videos.nth(1)).not.toHaveAttribute("src", /.+/);
   await expect(play).toHaveCount(1);
@@ -1319,7 +1327,8 @@ test("failed historical Inbox video shows Retry and does not fetch other videos"
         media_mime_type: fixture.mime, has_media_attachment: true },
     ]]]),
   });
-  await page.route("**/api/conversations/101/messages/*/media", async (route) => {
+  // Signed-link refresh adds a query parameter; the fixture must intercept it.
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     requestedIds.push(pathname);
     if (pathname.endsWith("/81/media") && attempts++ === 0) {
@@ -1340,4 +1349,143 @@ test("failed historical Inbox video shows Retry and does not fetch other videos"
   expect(requestedIds.filter((path) => path.endsWith("/81/media")).length).toBeGreaterThanOrEqual(2);
   expect(requestedIds.some((path) => path.endsWith("/82/media"))).toBe(false);
   expectNoUnexpectedApi(apiState);
+});
+
+test("video compatibility fallback explicitly requests Render without preloading other videos", async ({ page }, testInfo) => {
+  const fixture = playbackFixture(testInfo);
+  const requests = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      { ...inboundMessage({ id: 81, content: "Historical video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Other video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+    ]]]),
+  });
+  await page.route("**/api/conversations/101/messages/*/media**", async (route) => {
+    const requestedUrl = new URL(route.request().url());
+    requests.push(requestedUrl);
+    if (requestedUrl.pathname.endsWith("/81/media") &&
+        requestedUrl.searchParams.get("delivery") !== "proxy") {
+      return route.fulfill({ status: 403, contentType: "text/plain", body: "signed link expired" });
+    }
+    return serveTinyVideo(route, fixture);
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  expect(requests).toHaveLength(0);
+  await page.getByRole("button", { name: "Play video" }).first().click();
+  await expect(page.getByRole("button", { name: "Use compatibility playback" })).toBeVisible();
+  await page.getByRole("button", { name: "Use compatibility playback" }).click();
+  const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
+  await expect.poll(() => player.evaluate((v) => v.readyState)).toBeGreaterThan(1);
+  await expect.poll(() => player.evaluate((v) => v.currentTime)).toBeGreaterThan(0);
+  expect(requests.some((url) => url.pathname.endsWith("/81/media") &&
+    url.searchParams.get("delivery") === "proxy")).toBe(true);
+  expect(requests.some((url) => url.pathname.endsWith("/82/media"))).toBe(false);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("signed R2 redirect streams video cross-origin without fetching Render video bytes", async ({ page }, testInfo) => {
+  const fixture = playbackFixture(testInfo);
+  let renderRequests = 0;
+  const directRanges = [];
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [
+      { ...inboundMessage({ id: 81, content: "R2 history video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+      { ...inboundMessage({ id: 82, content: "Unplayed history video" }),
+        media_mime_type: fixture.mime, has_media_attachment: true },
+    ]]]),
+  });
+
+  // Playwright route.fulfill rejects 302 responses, so use a real local HTTP
+  // server for the signed redirect and byte-range media. This exercises the
+  // actual cross-origin browser path in Chromium and iOS/iPad WebKit.
+  const server = createServer((req, res) => {
+    if (req.url?.startsWith("/redirect")) {
+      res.writeHead(302, {
+        Location: `http://127.0.0.1:${server.address().port}/clip?X-Amz-Signature=fixture`,
+        "Cache-Control": "private, no-store",
+        "Referrer-Policy": "no-referrer",
+      });
+      res.end();
+      return;
+    }
+    if (!req.url?.startsWith("/clip")) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    directRanges.push(req.headers.range || null);
+    const match = /^bytes=([0-9]+)-([0-9]*)$/.exec(req.headers.range || "");
+    const start = match ? Number(match[1]) : 0;
+    const end = match && match[2]
+      ? Math.min(Number(match[2]), fixture.body.length - 1)
+      : fixture.body.length - 1;
+    const bytes = fixture.body.subarray(start, end + 1);
+    res.writeHead(match ? 206 : 200, {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:4173",
+      "Access-Control-Allow-Methods": "GET, HEAD",
+      "Access-Control-Allow-Headers": "Range",
+      "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range",
+      "Content-Type": fixture.mime,
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(bytes.length),
+      ...(match ? { "Content-Range": `bytes ${start}-${end}/${fixture.body.length}` } : {}),
+    });
+    res.end(bytes);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const redirectUrl = `http://127.0.0.1:${server.address().port}/redirect`;
+    await page.route("**/api/conversations/101/messages/*/media**", (route) => {
+      renderRequests++;
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname.endsWith("/82/media")) throw new Error("Unplayed video requested");
+      // Chromium has intermittent failures with route.continue({ url })
+      // followed by a cross-origin 302. Fulfill the actual 302 in Chromium;
+      // WebKit must use a real network redirect because it rejects fulfilled
+      // 3xx responses. Both paths still stream from the separate HTTP server.
+      if (testInfo.project.name === "desktop-chromium") {
+        return route.fulfill({
+          status: 302,
+          headers: {
+            Location: `http://127.0.0.1:${server.address().port}/clip?X-Amz-Signature=fixture`,
+            "Cache-Control": "private, no-store",
+            "Referrer-Policy": "no-referrer",
+          },
+        });
+      }
+      return route.continue({ url: redirectUrl });
+    });
+
+    await page.goto("/inbox");
+    await openInboxConversation(page);
+    expect(renderRequests).toBe(0);
+    expect(directRanges).toEqual([]);
+    await page.getByRole("button", { name: "Play video" }).first().click();
+    const player = page.locator('section[aria-label="Conversation with Alex Customer"] video').first();
+    await expect.poll(() => player.evaluate((video) => video.readyState)).toBeGreaterThan(1);
+    expect(renderRequests).toBeGreaterThanOrEqual(1);
+    // Short files may be fetched entirely (not with Range) by iPad WebKit.
+    // Independently confirm that the signed media endpoint supports 206 and
+    // that the browser can seek after receiving the cross-origin redirect.
+    const rangeResponse = await fetch(`http://127.0.0.1:${server.address().port}/clip?X-Amz-Signature=fixture`, {
+      headers: { Range: "bytes=0-2" },
+    });
+    expect(rangeResponse.status).toBe(206);
+    expect(rangeResponse.headers.get("content-range")).toBe(`bytes 0-2/${fixture.body.length}`);
+    expect((await rangeResponse.arrayBuffer()).byteLength).toBe(3);
+    await player.evaluate((video) => {
+      video.pause();
+      video.currentTime = 0.5;
+    });
+    await expect.poll(() => player.evaluate((video) => video.currentTime)).toBeGreaterThan(0.25);
+    expect(await player.getAttribute("src")).toBe("/api/conversations/101/messages/81/media");
+    expectNoUnexpectedApi(apiState);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
