@@ -322,3 +322,108 @@ test("persistent transient errors stop after the configured retries", async () =
   assert.equal(attempts, 4);
   assert.deepEqual(sleeps, GEMINI_TRANSIENT_RETRY_DELAYS_MS);
 });
+
+test("Gemini scorer switches immediately to a healthy fallback under the global time budget", async () => {
+  const {
+    scoreWithGemini, GEMINI_FALLBACK_MODEL,
+    LEAD_SCORING_GLOBAL_BUDGET_MS,
+    LEAD_SCORING_PRIMARY_BUDGET_MS,
+  } = require("../src/services/leadScoringAiService");
+  const cooldowns = new Map();
+  const calls = [];
+  const score = await scoreWithGemini({
+    messages, lead: { lead_id: 9, contact_id: 44 },
+  }, {
+    cooldowns, clock: () => 100_000,
+    makeClient: (apiKey) => ({ apiKey }),
+    runWithKeys: async (operation, options) => {
+      calls.push(options);
+      return operation("test-key", null, { signal: { aborted: false } });
+    },
+    generate: async (client, request, opts) => {
+      assert.equal(client.apiKey, "test-key");
+      assert.equal(opts.purpose, "lead_scoring");
+      assert.ok(opts.signal);
+      if (request.model === GEMINI_MODEL) {
+        const error = new Error("model currently experiencing high demand");
+        error.status = 503;
+        throw error;
+      }
+      return { text: JSON.stringify({
+        temperature: "warm", confidence: "medium",
+        reason: "Asked for a service quotation.",
+        evidenceMessageIds: [10], summary,
+      }) };
+    },
+  });
+  assert.equal(score.provider, "gemini");
+  assert.equal(score.model, GEMINI_FALLBACK_MODEL);
+  assert.equal(calls.length, 2, "one request per model without key cycling");
+  assert.equal(calls[0].globalBudgetMs, LEAD_SCORING_PRIMARY_BUDGET_MS);
+  assert.ok(calls[1].globalBudgetMs <= LEAD_SCORING_GLOBAL_BUDGET_MS - LEAD_SCORING_PRIMARY_BUDGET_MS);
+  assert.equal(calls[0].confirmModelUnavailableAcrossKeys, false);
+  assert.equal(cooldowns.get(GEMINI_MODEL), 100_000 + 5 * 60 * 1000);
+  assert.equal(cooldowns.has(GEMINI_FALLBACK_MODEL), false);
+});
+
+test("Gemini scorer defers without calling models when all are cooling", async () => {
+  const {
+    scoreWithGemini, GEMINI_FALLBACK_MODEL,
+    nextLeadScoringModelRetryAt, leadScoringModelsReady,
+  } = require("../src/services/leadScoringAiService");
+  const cooldowns = new Map([
+    [GEMINI_MODEL, 400_000], [GEMINI_FALLBACK_MODEL, 410_000],
+  ]);
+  assert.deepEqual(leadScoringModelsReady(200_000, cooldowns), []);
+  assert.equal(nextLeadScoringModelRetryAt(200_000, cooldowns),
+    new Date(400_000).toISOString());
+  await assert.rejects(() => scoreWithGemini({
+    messages, lead: { lead_id: 9, contact_id: 44 },
+  }, {
+    cooldowns, clock: () => 200_000,
+    runWithKeys: () => { throw new Error("No API call during cooldown"); },
+  }), (err) =>
+    err.code === "LEAD_SCORING_MODELS_COOLING_DOWN"
+      && err.stopLeadScoringSweep === true
+      && err.nextRetryAt.getTime() === 400_000
+  );
+  assert.equal(leadScoringModelsReady(405_000, cooldowns).length, 1);
+});
+
+test("Gemini scorer uses bounded alternate model after primary timeout, forwarding abort signals", async () => {
+  const {
+    scoreWithGemini, GEMINI_FALLBACK_MODEL,
+    LEAD_SCORING_GLOBAL_BUDGET_MS,
+  } = require("../src/services/leadScoringAiService");
+  let nowMs = 200_000;
+  let calls = 0;
+  const budget = [];
+  const cooldowns = new Map();
+  const scored = await scoreWithGemini({ messages, lead: { lead_id: 9, contact_id: 44 } }, {
+    clock: () => nowMs, cooldowns,
+    makeClient: () => ({}),
+    runWithKeys: async (operation, options) => {
+      budget.push(options.globalBudgetMs);
+      calls += 1;
+      if (calls === 1) {
+        nowMs += options.globalBudgetMs;
+        const error = new Error("Gemini aborted after timeout");
+        error.code = "AI_TIMEOUT";
+        throw error;
+      }
+      return operation("test-key", null, { signal: { aborted: false } });
+    },
+    generate: async (_client, request, opts) => {
+      assert.equal(request.model, GEMINI_FALLBACK_MODEL);
+      assert.ok(opts.signal);
+      return { text: JSON.stringify({
+        temperature: "warm", confidence: "medium",
+        reason: "Asked about the service.", evidenceMessageIds: [10], summary,
+      }) };
+    },
+  });
+  assert.equal(scored.model, GEMINI_FALLBACK_MODEL);
+  assert.equal(calls, 2);
+  assert.ok(budget[0] + budget[1] <= LEAD_SCORING_GLOBAL_BUDGET_MS);
+  assert.equal(cooldowns.size, 0, "timeouts should not poison model capacity");
+});
