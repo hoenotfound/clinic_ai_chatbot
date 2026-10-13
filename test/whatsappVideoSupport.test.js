@@ -67,7 +67,8 @@ test("stored video forwarding preserves the original MIME type", () => {
 test("Inbox uses authenticated stored-media streaming for received videos", () => {
   assert.match(inboxSource, /const isVideo = mediaMimeType\.startsWith\("video\/"\)/);
   assert.match(inboxSource, /api\.messageMediaUrl\(contactId, message\.id\)/);
-  assert.match(inboxSource, /isVideo[\s\S]*videoSrc[\s\S]*<video[\s\S]*controls[\s\S]*playsInline/);
+  assert.match(inboxSource, /function OnDemandInboxVideo[\s\S]*<video[\s\S]*playsInline/);
+  assert.match(inboxSource, /isVideo && videoSrc[\s\S]*<OnDemandInboxVideo/);
 });
 
 test("historical Inbox videos defer their media source until a deliberate play action", () => {
