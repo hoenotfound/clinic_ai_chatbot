@@ -814,6 +814,7 @@ async function sendVideoByStoredKey(
     try {
       cachedVideo = await whatsappVideoMediaCache.resolveMediaId({
         videoKey, mimeType: videoMimeType, filename: videoFilename,
+        uploadOptions: options,
       });
     } catch (error) {
       // Cache failures are optional: preserve the previously working send path.
