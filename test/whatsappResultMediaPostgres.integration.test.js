@@ -90,6 +90,24 @@ test("Postgres: original result audit constraint, migration, receipt states and 
     audit = (await client.query("SELECT status,result_images_sent FROM result_media_decisions WHERE inbound_message_id=20")).rows[0];
     assert.equal(audit.status,"sent");
     assert.equal(audit.result_images_sent,1);
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role) VALUES(30,1,'user');
+      INSERT INTO messages(id,contact_id,role,whatsapp_message_id,delivery_status)
+        VALUES(31,1,'assistant','wamid.promo.1','delivered');
+      INSERT INTO whatsapp_result_media_queue
+        (contact_id,inbound_message_id,sequence_no,media_kind,image_url,caption,status,message_id)
+        VALUES(1,30,0,'promotion','https://example.test/promo','Promo','sent',31);
+    `);
+    await imageQueue.reconcileAudit(30,client);
+    await imageQueue.reconcileProviderDelivery("wamid.promo.1",client);
+    const promoOnly=(await client.query(
+      "SELECT status,reason,promotion_images_sent,result_images_sent FROM result_media_decisions WHERE inbound_message_id=30"
+    )).rows[0];
+    assert.equal(promoOnly.status,"skipped",
+      "a promo-only queue is not an indefinitely deferred result image decision");
+    assert.equal(promoOnly.promotion_images_sent,1);
+    assert.equal(promoOnly.result_images_sent,0);
+
     await imageQueue.reconcileProviderDelivery("wamid.image.2",client);
     assert.equal((await client.query("SELECT COUNT(*)::int AS total FROM result_media_decisions WHERE inbound_message_id=20")).rows[0].total,1,
       "callback replay remains idempotent");
