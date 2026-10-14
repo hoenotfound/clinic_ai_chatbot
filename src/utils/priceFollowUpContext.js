@@ -13,7 +13,7 @@ const {
 // A generic "packages?" or consent to future promotions is not sufficient.
 // Do not treat "how much longer", "how much time", etc. as a price question.
 const REFERENTIAL_PRICE_QUESTION =
-  /(?:^(?:这个|這個|那个|那個|这个配套|這個配套|这项|這項|它|这个疗程|這個療程|这套|這套).{0,18}(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價格|费用|費用)|\b(?:how\s+much\s+(?:is|does|for|would)\s+(?:it|this|that|the\s+(?:one|package|treatment))|(?:what(?:'s| is)\s+(?:the\s+)?(?:price|cost)\s+(?:for|of)\s+(?:it|this|that))|(?:price|cost)\s+(?:of|for)\s+(?:this|that|it))\b|\b(?:berapa\s+(?:harga|kos)\s+(?:ini|itu|nya)|harga\s+(?:yang\s+)?(?:ini|itu|tersebut)\s+berapa)\b)/iu;
+  /(?:^(?:这个|這個|那个|那個|这项|這項|那项|那項|它|这套|這套|那套|那套|(?:这个|這個|那个|那個)(?:配套|套餐|疗程|療程|项目|項目|护理|護理|服务|服務))\s*(?:的)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價格|费用|費用)|\b(?:how\s+much\s+(?:is|does|for|would)\s+(?:it|this|that|the\s+(?:one|package|treatment))|(?:what(?:'s| is)\s+(?:the\s+)?(?:price|cost)\s+(?:for|of)\s+(?:it|this|that))|(?:price|cost)\s+(?:of|for)\s+(?:this|that|it))\b|\b(?:berapa\s+(?:harga|kos)\s+(?:ini|itu|nya)|harga\s+(?:yang\s+)?(?:ini|itu|tersebut)\s+berapa)\b)/iu;
 const TOPIC_RESET =
   /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|换话题|換話題|不(?:想|要|用|需要).{0,15}(?:价|價|钱|錢|配套)|别.{0,12}(?:报价|報價)|(?:stop|unsubscribe|opt\s*out)|\b(?:instead|rather|switch|another\s+treatment|different\s+treatment|not\s+interested|do\s+not\s+want|don't\s+want|tak\s+nak|tidak\s+mahu)\b)/iu;
 const STAFF_MESSAGE = /^\[Verified STAFF message\]/u;
@@ -94,6 +94,14 @@ function resolveVerifiedPriceFollowUpService({
       // is a clearly related package discussion, not an unrelated subject.
       const options = currentPricePackageOptions(named.name, promotions);
       if (!options.length || !currentMatchesPromotion(current, options, promotions)) return null;
+      // Only a standalone price follow-up, an explicit reference to "this/
+      // that" treatment, or a named package can inherit the earlier service.
+      // A new unconfigured subject ("按摩多少钱?", "massage price?") is a new
+      // enquiry, not permission to quote the previous pelvic treatment.
+      const namesCurrentPackage = findMentionedPromotionPackages(options, current).length > 0;
+      if (!isStandalonePriceQuestion(current) &&
+          !isContextualPriceReference(current) &&
+          !namesCurrentPackage) return null;
       if (bridging.some((bridge) =>
         !PACKAGE_BRIDGE.test(bridge) ||
         !findMentionedPromotionPackages(options, bridge).length
