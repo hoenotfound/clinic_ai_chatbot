@@ -2132,6 +2132,21 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
     }
   }
 
+  // Historical URL-only image rows can predate media_mime_type. The stored
+  // send path already treats media_url as an image, so persist the same
+  // conservative image classification on the forwarded staff row. This lets
+  // the Strict RM0 staff-media guard audit the row without authorizing any new
+  // media source or automated path.
+  const legacyUrlImage =
+    !targetMediaKey &&
+    Boolean(sourceMessage.media_url) &&
+    (!sourceMimeType || sourceMimeType.startsWith("image/"));
+  const forwardedMimeType = targetMediaKey
+    ? sourceMessage.media_mime_type
+    : legacyUrlImage
+      ? (sourceMessage.media_mime_type || "image/jpeg")
+      : null;
+
   let prepared;
   try {
     prepared = await telegramImmediateAlertRepo.withContactAlertLock(
@@ -2145,9 +2160,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
           null,
           username,
           sourceMessage.media_url || null,
-          (targetMediaKey || (sourceMessage.media_url && sourceMimeType.startsWith("image/")))
-            ? { mimeType: sourceMessage.media_mime_type || "image/jpeg" }
-            : null,
+          forwardedMimeType ? { mimeType: forwardedMimeType } : null,
           {
             isForwarded: true,
             mediaKey: targetMediaKey,
@@ -2178,6 +2191,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
     contact_id: saved.contact_id,
     content: forwardedContent,
     media_key: targetMediaKey,
+    media_mime_type: forwardedMimeType || sourceMessage.media_mime_type,
     media_base64: null,
     delivery_error: null,
     reply_to_provider_message_id: null,
