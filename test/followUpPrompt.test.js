@@ -22,7 +22,9 @@ test("AI follow-up prompt keeps the decision contract while using compact busine
   assert.match(prompt, /Do not skip just because several initial messages/);
   assert.match(prompt, /Current relevant promotion:/);
   assert.match(prompt, /PROMOTION AUTHORITY:/);
-  assert.match(prompt, /send \| skip \| human_review/);
+  assert.match(prompt, /send \| skip \| stop_sequence \| human_review/);
+  assert.match(prompt, /Use "stop_sequence" when the conversation has ended/);
+  assert.match(prompt, /Never return "skip" for these conditions/);
   assert.match(prompt, /Keep it low pressure\./);
   assert.match(prompt, /Earlier follow-up/);
   assert.match(prompt, /Messages labeled STAFF were manually sent/i);
