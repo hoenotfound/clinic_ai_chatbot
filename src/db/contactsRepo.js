@@ -617,11 +617,15 @@ async function takeOver(id, staffUsername) {
      ), takeover AS (
        UPDATE contacts c
        SET mode = 'human', takeover_by = $1, takeover_at = now(),
-           needs_attention = EXISTS (
+           -- Taking ownership is not resolving a failed or unknown send.
+           -- Keep existing delivery, booking, safety and clinical attention
+           -- until a confirmed reply or an explicit staff resolution.
+           needs_attention = c.needs_attention OR EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
-           ) OR COALESCE(c.attention_reason LIKE 'AI review requested:%', false),
+           ),
            attention_reason = CASE
+             WHEN c.needs_attention THEN COALESCE(c.attention_reason, 'Staff review required.')
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason
              WHEN EXISTS (
                SELECT 1 FROM ai_review_items r
@@ -1155,11 +1159,36 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
          c.attention_reason LIKE 'Delivery failed:%'
          OR c.attention_reason LIKE 'Delivery unconfirmed:%'
        )
+       -- A historical failed photo or reply must not keep a *newly*
+       -- answered customer episode flagged forever. A provider-accepted,
+       -- direct reply later than the failure resolves that episode; an
+       -- unsubmitted draft, older reply, follow-up, or unknown send does not.
        AND NOT EXISTS (
-         SELECT 1 FROM messages m
-         WHERE m.contact_id = c.id
-           AND m.role = 'assistant'
-           AND m.delivery_status IN ('failed', 'unknown')
+         SELECT 1 FROM messages failed
+         WHERE failed.contact_id = c.id
+           AND failed.role = 'assistant'
+           AND failed.delivery_status IN ('failed', 'unknown')
+           AND failed.created_at >= COALESCE((
+             SELECT MAX(inbound.created_at)
+             FROM messages inbound
+             WHERE inbound.contact_id = c.id AND inbound.role = 'user'
+           ), '-infinity'::timestamptz)
+           AND NOT EXISTS (
+             SELECT 1 FROM messages reply
+             WHERE reply.contact_id = c.id
+               AND reply.role = 'assistant'
+               AND reply.is_automated_follow_up IS NOT TRUE
+               AND reply.whatsapp_message_id IS NOT NULL
+               AND (
+                 reply.delivery_status IN ('pending', 'sent', 'delivered', 'read')
+                 OR (
+                   c.channel IN ('facebook', 'instagram')
+                   AND reply.delivery_status IS NULL
+                 )
+               )
+               AND (reply.created_at, reply.id) >
+                   (failed.created_at, failed.id)
+           )
        )
      RETURNING *`,
     [id]
