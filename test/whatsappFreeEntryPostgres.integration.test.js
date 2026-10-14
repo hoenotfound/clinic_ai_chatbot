@@ -475,6 +475,22 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     const list = () => worker.listCandidates(settings, client);
     const eligible = await list();
     assert.equal(eligible.length,1,"eligible CTWA lead appears in candidate queue");
+    await client.query(`
+      INSERT INTO follow_up_ai_decisions
+        (contact_id,trigger_message_id,follow_up_step,action,reason)
+      VALUES (1,11,1,'skip','sequence_stop: Customer will contact us later')
+    `);
+    assert.equal((await list()).length,0,
+      "terminal conversation stop blocks even verified 48h/66h templates");
+    await client.query(`
+      UPDATE follow_up_ai_decisions
+      SET reason='step_skip: Initial introduction was already covered'
+      WHERE contact_id=1 AND trigger_message_id=11
+    `);
+    assert.equal((await list()).length,1,
+      "a step-only skip must not prevent eligible approved templates");
+    await client.query("DELETE FROM follow_up_ai_decisions WHERE contact_id=1");
+
     await client.query(`INSERT INTO messages
       (id,contact_id,role,content,created_at,sent_by_username,whatsapp_message_id)
       VALUES (15,1,'assistant','automated follow-up',now()-interval '8 hours',
