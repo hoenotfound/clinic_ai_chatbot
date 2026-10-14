@@ -29,6 +29,7 @@ const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmen
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
+const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -1069,9 +1070,9 @@ async function processIncomingMessage(
       }
     }
 
-    // A short "berapa?" or "多少钱?" can refer only to the immediately
-    // previous customer treatment enquiry, never a stale CRM/ad classification.
-    // Require exactly one independently verified configured service.
+    // The current customer's explicit treatment is authoritative. A
+    // service-free follow-up price question may reuse only recent customer-
+    // named context, never the AI's inferred service or a Meta ad label.
     const clarifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveClarifiedPriceService({
           customerText: text, conversationHistory: history,
@@ -1079,12 +1080,12 @@ async function processIncomingMessage(
         }) : null;
     const verifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
-        (isStandalonePriceQuestion(text)
-          ? safeServiceFromCustomer(
-              customerMessages.at(-2)?.content,
-              clinicConfig.services, clinicConfig.serviceAliases
-            )
-          : null)
+        resolveVerifiedPriceFollowUpService({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+        })
       : null;
 
     let reply = isFirstMessage && !flagged && !generateFirstIntro
@@ -1122,8 +1123,8 @@ async function processIncomingMessage(
             channel, customerText: text, reply, flagged, language: mediaLanguage,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             // Do not let Gemini's treatment guess create pricing permission.
-            // Direct and one-turn follow-up requests use only verified customer
-            // treatment evidence (same standard as promotional images).
+            // Short price follow-ups use only the verified customer-named
+            // treatment, with bounded history and topic-change safeguards.
             treatment: verifiedPriceService?.name || null,
             clarifiedPriceService,
             requireVerifiedTreatment: true,
