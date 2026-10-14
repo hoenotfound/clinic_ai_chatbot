@@ -2,6 +2,7 @@
 
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
 const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
+const { isContextualPriceReference } = require("./priceFollowUpContext");
 const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
@@ -55,7 +56,8 @@ function requestedPricePackages(packages, customerText, conversationHistory = []
   const candidates = Array.isArray(packages) ? packages : [];
   const direct = findMentionedPromotionPackages(candidates, customerText);
   if (direct.length) return direct;
-  if (!isStandalonePriceQuestion(customerText)) return candidates;
+  if (!isStandalonePriceQuestion(customerText) &&
+      !isContextualPriceReference(customerText)) return candidates;
 
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
   const current = String(customerText || "").trim();
@@ -99,7 +101,16 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     if (evidence.some((entry) => entry.ambiguous)) return null;
     const unique = [...new Set(evidence.map((entry) => entry.price).filter(Boolean))];
     if (unique.length !== 1) return null;
-    result.push({ name: String(option.name).trim(), title: String(option.title || "").trim(), price: unique[0] });
+    const localizedCaptions = [option.caption, ...translations]
+      .filter((value) => typeof value === "string" && value.trim());
+    const afterVoucher = localizedCaptions.some((copy) =>
+      /(?:优惠后|優惠後|after\s+(?:the\s+)?voucher|selepas\s+baucar)/iu.test(copy) &&
+      /(?:优惠券|優惠券|voucher|baucar)/iu.test(copy)
+    );
+    result.push({
+      name: String(option.name).trim(), title: String(option.title || "").trim(),
+      price: unique[0], afterVoucher,
+    });
   }
   return result;
 }
@@ -147,11 +158,21 @@ function ensureVerifiedPriceReply({
   const entries = prices.map((item) =>
     `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
   ).join("\n");
+  const voucherPackages = prices.filter((price) => price.afterVoucher)
+    .map((price) => price.name === "Main offer" ? treatment : price.name);
+  const voucherNames = voucherPackages.join(", ");
+  const voucherNote = voucherPackages.length
+    ? (locale.startsWith("ms")
+      ? `Harga ${voucherNames} adalah selepas baucar. Kelayakan dan ketersediaan baucar tertakluk kepada pengesahan pusat; tiada diskaun tambahan dijanjikan.`
+      : locale.startsWith("en")
+        ? `The ${voucherNames} price is after applying the voucher, subject to eligibility and availability. Our centre can confirm the voucher terms; additional discounts are not guaranteed.`
+        : `${voucherNames} 的上述价格为使用优惠券后的价格，须符合领取及使用条件；优惠券是否还有名额及能否叠加其他优惠，请以门店确认为准。`)
+    : "";
   const quote = locale.startsWith("ms")
-    ? `Untuk ${treatment}, harga promosi terkini ialah:\n${entries}\n\nSyarat baucar atau gabungan diskaun perlu disahkan oleh pihak pusat ya 😊`
+    ? `Untuk ${treatment}, harga promosi terkini ialah:\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`
     : locale.startsWith("en")
-      ? `The current ${treatment} package prices are:\n${entries}\n\nOur centre can confirm voucher terms and whether discounts can be combined 😊`
-      : `${treatment}目前的配套价格是：\n${entries}\n\n优惠券的使用条件以及是否能与其他优惠叠加，可以让门店帮你确认哦 😊`;
+      ? `The current ${treatment} package prices are:\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`
+      : `${treatment}目前的配套价格是：\n${entries}${voucherNote ? "\n\n" + voucherNote : ""} 😊`;
   // A clinical/suitability question may need staff input. Do not reproduce
   // potentially unsafe model claims about pain, pregnancy or eligibility;
   // quote verified prices independently without authorizing marketing media.
