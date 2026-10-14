@@ -156,8 +156,57 @@ test("mixed clinical and pricing questions verify text but never permit sales me
     assert.equal(text.restored,true);
     assert.match(text.reply,/RM488/u);
     assert.doesNotMatch(text.reply,/RM999|绝对不会痛/u);
+    assert.match(text.reply,/会不会痛|中医师|完全无痛/u);
+    assert.match(text.reply,/每个人的感受/u);
     assert.equal(await priceImages({
       ...opts,verifiedServiceFromText:"9D 逆龄抗衰",
     }),null);
   });
+});
+
+
+test("English and Malay clinical pricing questions get safe acknowledgement but no promotional images",async()=>{
+  await withAssessmentFirst(async()=>{
+    const samples=[
+      {customerText:"How much for 9D? Will it hurt?",language:"en",
+        clinical:/experiences vary|pain-free treatment/u},
+      {customerText:"9D harga berapa? Sakit tak?",language:"ms",
+        clinical:/setiap orang berbeza|bebas sakit/u},
+      {customerText:"9D多少钱？怀孕可以做吗？",language:"zh",
+        clinical:/中医师.*评估/u},
+    ];
+    for(const sample of samples){
+      const opts={
+        customerText:sample.customerText,treatment:"9D 逆龄抗衰",
+        reply:"9D只需RM999，保证无痛又安全。",
+        language:sample.language,
+      };
+      const text=priceText(opts);
+      assert.equal(text.restored,true,sample.customerText);
+      assert.match(text.reply,/RM488/u,sample.customerText);
+      assert.match(text.reply,sample.clinical,sample.customerText);
+      assert.doesNotMatch(text.reply,/RM999|保证无痛又安全/u,sample.customerText);
+      assert.equal(await priceImages({
+        ...opts,verifiedServiceFromText:"9D 逆龄抗衰",
+      }),null,sample.customerText);
+    }
+    const neutral=priceText({customerText:"9D多少钱？",treatment:"9D 逆龄抗衰",
+      reply:"9D 护理价格想了解吗？"});
+    assert.match(neutral.reply,/RM488/u);
+    assert.doesNotMatch(neutral.reply,/每个人的感受|痛|中医师先了解实际情况/u);
+  });
+});
+
+test("missing verified price still acknowledges relevant clinical concerns without inventing a price",()=>{
+  const result=priceText({
+    customerText:"9D多少钱？做的时候会不会很痛？",
+    treatment:"9D 逆龄抗衰",
+    reply:"9D只需 RM999，保证不痛。",
+    promotions:[],
+    language:"zh",
+  });
+  assert.equal(result.restored,true);
+  assert.match(result.reply,/价格需要由门店|价格需要由门店帮你确认/u);
+  assert.match(result.reply,/每个人的感受/u);
+  assert.doesNotMatch(result.reply,/RM999|RM488|保证不痛/u);
 });
