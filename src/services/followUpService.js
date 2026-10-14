@@ -2,6 +2,7 @@ const clinicConfig = require("../config/clinicConfig");
 const { hasTreatmentPriceContent, assessmentFirstInvitation } = require("../utils/initialOfferReplyGuard");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
+const policyHoldRepo = require("../db/whatsappFollowUpPolicyHoldRepo");
 const contactsRepo = require("../db/contactsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -19,6 +20,7 @@ const {
 } = require("../utils/activePromotion");
 const { randomUUID } = require("node:crypto");
 const channelMessaging = require("./channelMessagingService");
+const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
 const { pool } = require("../db/db");
@@ -1112,6 +1114,36 @@ function enforceAssessmentFirstFollowUpCopy({
   };
 }
 
+// Policy denials without a Meta provider request are not delivery failures.
+// Ambiguous one-shot reservations and programming/context errors require staff review.
+const POSTPONABLE_POLICY_CODES = new Set([
+  "zero_cost_unverified_free_entry",
+  "zero_cost_previous_send_unreconciled",
+  "zero_cost_billing_alarm",
+  "zero_cost_database_unavailable",
+  "zero_cost_configuration_invalid",
+  "policy_state_unavailable",
+  "outside_customer_service_window",
+  "marketing_opted_out",
+  "opted_out",
+  "no_customer_message",
+]);
+function policyHoldDelaySeconds(code) {
+  if (code === "zero_cost_previous_send_unreconciled" ||
+      code === "zero_cost_database_unavailable" ||
+      code === "policy_state_unavailable") return 180;
+  return 600;
+}
+async function deferPolicyCandidate(candidate, stepIndex, code) {
+  return policyHoldRepo.defer({
+    contactId: candidate.contact_id,
+    triggerMessageId: candidate.trigger_message_id,
+    stepIndex,
+    reason: code,
+    delaySeconds: policyHoldDelaySeconds(code),
+  });
+}
+
 async function sendCandidate(candidate) {
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
@@ -1125,6 +1157,22 @@ async function sendCandidate(candidate) {
   // A sweep can begin just before quiet hours start. Re-check before claiming
   // so we never create an outbound row that should simply wait until morning.
   if (quietHoursStatus(new Date(), settings.quietHours).active) return;
+
+  // Don't spend AI tokens or create a failed Inbox message when the strict
+  // free-only gate cannot yet authorize this contact. The hold is reversible,
+  // expires into a bounded later check and does not consume a follow-up step.
+  // With the explicit 24-hour opt-in, the final DB-backed sender authorizes
+  // the ordinary service window instead.
+  if (candidate.channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
+      !whatsappZeroCostGuard.allow24hAutoFollowUps()) {
+    const eligible = await whatsappZeroCostGuard.preflightFreeform(candidate.whatsapp_number);
+    if (!eligible.allowed) {
+      await deferPolicyCandidate(candidate, stepIndex,
+        POSTPONABLE_POLICY_CODES.has(eligible.code)
+          ? eligible.code : "zero_cost_preflight_unavailable");
+      return;
+    }
+  }
 
   const language = detectConversationLanguage([
     ...(candidate.recent_inbound_messages || []),
@@ -1583,6 +1631,7 @@ async function sendCandidate(candidate) {
         purpose: "marketing",
         preSendCheck: finalPreSendCheck,
         currentMessageId: saved.id,
+        autoFollowUp: true,
       };
       sendResult = effectiveVideoKey
         ? await channelMessaging.sendVideoByStoredKey(
@@ -1610,6 +1659,22 @@ async function sendCandidate(candidate) {
     sendResult = { success: false, wamid: null, externalMessageId: null };
   }
 
+  // These specific policy rejections occur BEFORE Meta receives anything.
+  // Delete only a provably unsent claim, then defer without a misleading
+  // delivery-failure alert. Never discard an ambiguous/previously attempted
+  // service reply: its provider status might be unknown.
+  if (channel === "whatsapp" && sendResult?.policyBlocked === true &&
+      POSTPONABLE_POLICY_CODES.has(sendResult?.policyCode)) {
+    const discarded = await followUpRepo.discardUnsentClaim({
+      messageId: saved.id, contactId: candidate.contact_id,
+    });
+    if (discarded) {
+      await deferPolicyCandidate(candidate,stepIndex,sendResult.policyCode);
+      publishConversationChange(discarded, "message_cancelled");
+      return;
+    }
+  }
+
   // A failed final database verification happens before any provider call.
   // It is safe to discard the unsent claim and retry eligibility on a later sweep.
   if (sendResult?.cancelled) {
@@ -1621,7 +1686,12 @@ async function sendCandidate(candidate) {
     return;
   }
 
-  const deliveryError = deliveryErrorFor(channel, sendResult, rejectedError);
+  const uncertainSend = channel === "whatsapp" &&
+    (sendResult?.ambiguous === true || sendResult?.unknown === true ||
+      sendResult?.policyCode === "zero_cost_service_reply_already_attempted");
+  const deliveryError = uncertainSend
+    ? (sendResult?.error || "WhatsApp delivery is unconfirmed; check Meta before retrying.")
+    : deliveryErrorFor(channel, sendResult, rejectedError);
   let finalMessage = saved;
   if (sendResult?.wamid) {
     // WhatsApp keeps using its asynchronous WAMID delivery-status pipeline.
@@ -1631,7 +1701,7 @@ async function sendCandidate(candidate) {
     finalMessage =
       (await messagesRepo.setDeliveryStatusById(
         saved.id,
-        "failed",
+        uncertainSend ? "unknown" : "failed",
         deliveryError
       )) || saved;
   } else if (isSocial) {
@@ -1651,10 +1721,19 @@ async function sendCandidate(candidate) {
   if (!sendResult?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      `Delivery failed: ${deliveryError}`,
+      `${uncertainSend ? "Delivery unconfirmed" : "Delivery failed"}: Automated follow-up #${saved.id} (step ${stepIndex}, ${durableVideoKey ? "video" : effectiveImageUrl ? "image" : "text"}): ${deliveryError}`,
       saved.id
     );
     return;
+  }
+
+  // Clear any prior temporary hold only AFTER provider acceptance.
+  if (channel === "whatsapp" && candidate.policy_retry_at) {
+    policyHoldRepo.clear({
+      contactId: candidate.contact_id,
+      triggerMessageId: candidate.trigger_message_id,
+      stepIndex,
+    }).catch(err => console.warn("[Follow-up] Could not clear policy hold:",err.message));
   }
 
   // The successful text/WhatsApp follow-up is enough to move a new lead to
@@ -1870,7 +1949,15 @@ realtimeEvents.subscribe("pipeline_changed", () => {
 });
 
 realtimeEvents.subscribe("config_changed", (payload) => {
-  if (payload?.keys?.some((key) => ["automatedFollowUp", "promotions"].includes(key))) wakeAutomatedFollowUps(0);
+  if (payload?.keys?.includes("automatedFollowUp")) {
+    // An operator may have enabled the potentially billable 24h lane. Wake
+    // existing holds as soon as saved settings change, but re-verify policy.
+    policyHoldRepo.releaseAll()
+      .catch(err => console.warn("[Follow-up] Policy hold wake failed:",err.message))
+      .finally(() => wakeAutomatedFollowUps(0));
+  } else if (payload?.keys?.includes("promotions")) {
+    wakeAutomatedFollowUps(0);
+  }
 });
 
 module.exports = {

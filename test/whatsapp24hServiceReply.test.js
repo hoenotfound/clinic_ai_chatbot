@@ -131,8 +131,8 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
         whatsapp_template JSONB,is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
         automated_follow_up_step INTEGER NOT NULL DEFAULT 1,
         automated_follow_up_parent_message_id INTEGER,
-        pricing_reminder_anchor_id INTEGER,
-        sent_by_username TEXT,media_mime_type TEXT
+        pricing_reminder_anchor_id INTEGER, automated_follow_up_for_message_id INTEGER,
+        sent_by_username TEXT,media_mime_type TEXT,media_url TEXT,media_key TEXT
       );
       CREATE TABLE whatsapp_free_entry_followup_attempts(id SERIAL PRIMARY KEY,message_id INTEGER);
       CREATE TABLE whatsapp_free_only_billing_alerts(wamid TEXT PRIMARY KEY,sent_at TIMESTAMPTZ);

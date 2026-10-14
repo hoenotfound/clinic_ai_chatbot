@@ -38,7 +38,7 @@ const DEFAULT_FOLLOW_UP = {
   freeEntry: { enabled: false, templateName: "", language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 74, 98, 122, 162], templateRules: [] },
   pricingReminder: { enabled:false,requirePricingInterest:true,sendBothPelvicPackages:false,enableSocialChannels:false },
   consentRequest: { enabled:false },
-  whatsappFreeOnly: { enabled: false, allow24hServiceReplies: false },
+  whatsappFreeOnly: { enabled: false, allow24hServiceReplies: false, allow24hAutoFollowUps: false },
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -202,6 +202,7 @@ function normalizeFollowUpSettings(value = {}) {
       enabled: value?.whatsappFreeOnly?.enabled === true,
       allow24hServiceReplies: value?.whatsappFreeOnly?.allow24hServiceReplies === true,
       allow24hStaffMedia: value?.whatsappFreeOnly?.allow24hStaffMedia === true,
+      allow24hAutoFollowUps: value?.whatsappFreeOnly?.allow24hAutoFollowUps === true,
     },
     consentRequest: { enabled: value?.consentRequest?.enabled === true },
     pricingReminder: {
@@ -908,6 +909,8 @@ export default function Tools() {
              acknowledgeServiceReplyCharges: form.whatsappFreeOnly?.allow24hServiceReplies === true,
              allow24hStaffMedia: form.whatsappFreeOnly?.enabled === true && form.whatsappFreeOnly?.allow24hStaffMedia === true,
              acknowledgeStaffMediaCharges: form.whatsappFreeOnly?.allow24hStaffMedia === true,
+             allow24hAutoFollowUps: form.whatsappFreeOnly?.enabled === true && form.whatsappFreeOnly?.allow24hAutoFollowUps === true,
+             acknowledgeAutoFollowUpCharges: form.whatsappFreeOnly?.allow24hAutoFollowUps === true,
            },
           consentRequest: { enabled:form.consentRequest?.enabled === true },
           pricingReminder: {
@@ -3020,7 +3023,7 @@ function FollowUpTool({
                 <h3 className="text-sm font-semibold">WhatsApp Free Messaging Only</h3>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                   Strict protection for templates, automation and unverified free-entry sends.
-                  Optional 24-hour text and staff-media permissions below are independent.
+                  Optional 24-hour text, staff-media and automated-follow-up permissions below are independent.
                   An open 24-hour window does not guarantee free delivery.
                 </p>
               </div>
@@ -3038,7 +3041,9 @@ function FollowUpTool({
             </div>
             <p className="mt-2 text-[11px] leading-5 text-amber-700">
               {form.whatsappFreeOnly?.enabled
-                ? form.whatsappFreeOnly?.allow24hServiceReplies && form.whatsappFreeOnly?.allow24hStaffMedia
+                ? form.whatsappFreeOnly?.allow24hAutoFollowUps
+                  ? "Strict protection ON with opted-in 24-hour automated follow-ups: text and configured videos/images may incur Meta charges. Only verified customer windows qualify; templates, pricing reminders, consent prompts, and unrelated automation remain guarded."
+                  : form.whatsappFreeOnly?.allow24hServiceReplies && form.whatsappFreeOnly?.allow24hStaffMedia
                   ? "Strict protection ON with 24-hour text replies and staff media allowed: these staff sends may be billed; templates and automated follow-ups still need proven free-entry billing."
                   : form.whatsappFreeOnly?.allow24hServiceReplies
                     ? "Strict protection ON with 24-hour text replies allowed: replies may be billed. Staff media remains blocked unless its separate opt-in is enabled; templates and automated follow-ups still need proven free-entry billing."
@@ -3048,7 +3053,7 @@ function FollowUpTool({
                 : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
               Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
               Unexpected billable callbacks after activation stop strict template sending.
-              Explicitly allowed 24-hour text or staff-media sends can be billed and are shown separately below.
+              Explicitly allowed 24-hour text, staff-media and automated follow-up sends can be billed and are shown separately below.
             </p>
             {form.whatsappFreeOnly?.enabled === true && (
               <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
@@ -3063,7 +3068,7 @@ function FollowUpTool({
                   }))}/>
                 Allow normal text replies inside the latest customer's 24-hour window, including direct/organic leads.
                 These replies may incur Meta service-message charges after the monthly allowance.
-                Automated follow-ups, templates, consent prompts and automated media still require verified free billing.
+                Automated follow-ups require their own opt-in below; templates, consent prompts and other automated media still require verified free billing.
               </label>
             )}
             {form.whatsappFreeOnly?.enabled === true && (
@@ -3079,7 +3084,26 @@ function FollowUpTool({
                   }))}/>
                 Allow staff-sent WhatsApp images, videos, documents, voice messages and forwards
                 inside the customer's verified 24-hour window. Meta may charge for these messages.
-                Automated before/after media, follow-ups, pricing reminders and templates remain protected.
+                Automated before/after media, follow-ups (unless separately enabled), pricing reminders and templates remain protected.
+              </label>
+            )}
+            {form.whatsappFreeOnly?.enabled === true && (
+              <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
+                <input type="checkbox"
+                  checked={form.whatsappFreeOnly?.allow24hAutoFollowUps === true}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    whatsappFreeOnly: {
+                      ...current.whatsappFreeOnly,
+                      allow24hAutoFollowUps: event.target.checked,
+                    },
+                  }))}/>
+                Allow ONLY the configured 2h/6h/20h automated WhatsApp follow-ups,
+                including treatment and testimonial videos, during a verified recent
+                customer 24-hour reply window (23h58m safety limit).
+                Direct/organic leads qualify, but Meta may charge for these messages.
+                This is not guaranteed RM0. Out-of-window messages, templates,
+                pricing reminders, and other automatic media remain protected.
               </label>
             )}
             {form.whatsappFreeOnly?.enabled === true &&
