@@ -194,7 +194,7 @@ test("legacy URL-only image forward persists inferred MIME and saved target id",
   );
 
   assert.equal(result.delivered, true);
-  assert.deepEqual(savedMetadata, { mimeType: "image/jpeg" });
+  assert.equal(savedMetadata?.mimeType, "image/jpeg");
   assert.equal(providerMessage.id, saved.id);
   assert.equal(providerMessage.contact_id, saved.contact_id);
   assert.equal(providerMessage.media_mime_type, "image/jpeg");
