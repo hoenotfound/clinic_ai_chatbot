@@ -346,7 +346,8 @@ async function sendTrackedText(
         contact.id,
         sendResult.ambiguous
           ? `Delivery unconfirmed: ${errorText}`
-          : `Delivery failed: ${errorText}`
+          : `Delivery failed: ${errorText}`,
+        saved.id
       );
 
       // Do not extend the customer-delivery path for readiness telemetry.
