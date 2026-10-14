@@ -1072,7 +1072,7 @@ async function recordAiDecisionIfStillEligible({
            ),
            updated_at = now()
        FROM inserted_decision
-       WHERE inserted_${terminalFollowUpDecisionSql("decision")}
+       WHERE inserted_decision.action = 'human_review'
          AND c.id = inserted_decision.contact_id
        RETURNING c.id
      )
