@@ -398,6 +398,53 @@ test(
       assert.equal((await repo.setDeliveryAttentionState(
         49,'Delivery failed: current episode photo',query,1015)).id,49);
 
+      // A newer failed photo now owns the delivery attention, while an old
+      // failed image belongs to a previous customer turn. Webhooks can
+      // arrive out of order: the older callback must neither relink the
+      // visible warning nor overwrite its more recent reason.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES(50);
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES(1020,50,'assistant',now()-interval '2 hours','failed',
+               'https://example.invalid/old.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES(1021,50,'user',now()-interval '1 hour');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES(1022,50,'assistant',now()-interval '10 minutes','failed',
+               'https://example.invalid/new.jpg');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        50,'Delivery failed: current photo',query,1022)).id,50);
+      let anchored = (await client.query(
+        'SELECT delivery_attention_message_id,attention_reason FROM contacts WHERE id=50'
+      )).rows[0];
+      assert.equal(anchored.delivery_attention_message_id,1022);
+      assert.equal(anchored.attention_reason,'Delivery failed: current photo');
+      assert.equal(await repo.setDeliveryAttentionState(
+        50,'Delivery failed: stale old photo callback',query,1020),null);
+      anchored=(await client.query(
+        'SELECT delivery_attention_message_id,attention_reason FROM contacts WHERE id=50'
+      )).rows[0];
+      assert.equal(anchored.delivery_attention_message_id,1022,
+        "older out-of-order callback must not steal the active warning");
+      assert.equal(anchored.attention_reason,'Delivery failed: current photo');
+      // Independent of episode retirement, the latest callback must win
+      // even when both failed attempts belong to the same customer turn.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES(1023,50,'assistant',now()-interval '5 minutes','failed',
+               'https://example.invalid/newer.jpg');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        50,'Delivery failed: newer photo',query,1023)).id,50);
+      assert.equal(await repo.setDeliveryAttentionState(
+        50,'Delivery failed: older current-episode photo',query,1022),null);
+      anchored=(await client.query(
+        'SELECT delivery_attention_message_id,attention_reason FROM contacts WHERE id=50'
+      )).rows[0];
+      assert.equal(anchored.delivery_attention_message_id,1023);
+      assert.equal(anchored.attention_reason,'Delivery failed: newer photo');
+
       // A completed provider failure can lose its matching message later.
       // Flag it once after a grace period, but exclude known message/evidence
       // records and preserve the flagged row through ordinary pruning.
