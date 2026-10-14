@@ -111,7 +111,7 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
       INSERT INTO whatsapp_free_entry_followup_attempts(message_id) VALUES(18);
     `);
     for(const version of ["070_whatsapp_24h_service_reply_exceptions.sql",
-      "071_whatsapp_24h_staff_media.sql"])await db.query(
+      "072_whatsapp_24h_staff_media.sql"])await db.query(
       fs.readFileSync(path.join(__dirname,"../src/db/migrations",version),"utf8"));
     const ctx=id=>({database:db,context:{
       messageKind:"staff_media",currentMessageId:id}});
