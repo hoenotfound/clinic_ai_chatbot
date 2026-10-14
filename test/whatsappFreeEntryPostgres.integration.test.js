@@ -49,6 +49,10 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         pricing_reminder_anchor_id INTEGER,
         media_mime_type TEXT
       );
+      CREATE TABLE follow_up_ai_decisions (
+        id BIGSERIAL PRIMARY KEY, contact_id INTEGER, trigger_message_id INTEGER,
+        follow_up_step INTEGER, action TEXT, reason TEXT, created_at TIMESTAMPTZ DEFAULT now()
+      );
       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,
         channel TEXT, meta_source_type TEXT, ctwa_clid TEXT, meta_ad_id TEXT
