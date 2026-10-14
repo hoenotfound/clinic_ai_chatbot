@@ -937,6 +937,7 @@ async function sendVideoByStoredKey(
       contact.whatsapp_number, replacementId, caption, {
         replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}),
+        ...(options.staffMedia === true ? { staffMedia: true } : {}),
         ...(options.requestId ? { requestId: options.requestId } : {}),
       }
     );
