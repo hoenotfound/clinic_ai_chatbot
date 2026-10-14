@@ -177,6 +177,81 @@ test("free introductory assessment and experience are a verified clinic-specific
   }
 });
 
+test("short introductory-experience fee question carries only immediate customer-owned free-offer context", async () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+  const original = config.automatedFollowUp;
+  config.automatedFollowUp = {
+    ...original, assessmentFirstPricingEnabled: true,
+    complimentaryAssessmentExperienceEnabled: true,
+  };
+  const intro = { role: "user", content: "我想了解1对1体态评估 + 体验" };
+  const bot = { role: "assistant", content: "我们中医师会先帮你安排1对1的体态评估+体验 😊" };
+  const short = { role: "user", content: "体验收费吗？" };
+  const safeHistory = [intro, bot, short];
+  try {
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true), false,
+      "a service-free fee question cannot be treated as free without conversation context");
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true, safeHistory), true);
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true, safeHistory.slice(0, 2)), true,
+      "callers that exclude the current inbound message are supported");
+    const answer = ensureVerifiedPriceReply({
+      customerText: short.content, reply: "The price needs confirmation",
+      treatment: "骨盆调理", language: "zh", conversationHistory: safeHistory,
+    });
+    assert.equal(answer.restored, true);
+    assert.match(answer.reply, /1对1体态评估 \+ 体验是免费的/u);
+    assert.doesNotMatch(answer.reply, /RM288|RM388|确认价格/u);
+
+    assert.equal(await resolvePricePromotionForReply({
+      customerText: short.content, treatment: "骨盆调理",
+      verifiedServiceFromText: "骨盆调理", conversationHistory: safeHistory,
+      priceQuery: true, textSendSucceeded: true, contactId: 33,
+      promotions: [{ name: "骨盆调理", linkedService: "骨盆调理", sendOnPriceQuery: true,
+        packages: [{ name: "Package B", imageUrl: "https://example.test/b.jpg",
+          caption: "现在只需 RM288" }] }],
+      wasPromoRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+    }), null, "the short free-fee question must not authorize treatment promotion graphics");
+
+    const notFree = [
+      [intro, { role: "assistant", content: "[Verified STAFF message] 体验细节" }, short],
+      [intro, { role: "assistant", content: "3D First Trial RM488" }, short],
+      [{ role: "user", content: "3D First Trial 小颜术体验" }, bot, short],
+      [intro, bot, { role: "user", content: "想了解9D体验" }, bot, short],
+      [intro, bot, { role: "user", content: "换个话题" }, short],
+      [{ role: "assistant", content: "1对1体态评估 + 体验" }, short],
+    ];
+    for (const history of notFree) {
+      assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true, history), false,
+        JSON.stringify(history));
+    }
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, false, safeHistory), false);
+    assert.equal(isComplimentaryAssessmentFeeQuestion("3D First Trial多少钱？", true, safeHistory), false);
+    assert.equal(isComplimentaryAssessmentFeeQuestion("体态评估+3D正式疗程多少钱？", true, safeHistory), false);
+    assert.equal(isComplimentaryAssessmentFeeQuestion("可以预约免费体验下周五吗？", true, safeHistory), false);
+  } finally {
+    config.automatedFollowUp = original;
+  }
+});
+
+test("pelvic invitation uses an actual line break, not a visible backslash-n", () => {
+  const { assessmentFirstInvitation } = require("../src/utils/initialOfferReplyGuard");
+  const before = config.automatedFollowUp;
+  config.automatedFollowUp = { ...before, complimentaryAssessmentExperienceEnabled: true };
+  try {
+    const reply = assessmentFirstInvitation({
+      treatment: "骨盆调理", customerText: "我对骨盆有兴趣", language: "zh",
+      services: [{ name: "骨盆调理" }],
+    });
+    assert.match(reply, /😊\n到店完成评估 \+ 体验/u);
+    assert.equal(reply.includes("\\n"), false);
+    assert.doesNotMatch(reply, /RM288|RM388/u);
+  } finally {
+    config.automatedFollowUp = before;
+  }
+});
+
 test("runtime resolves the verified free fee without weakening clinical or staff handoff", () => {
   const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
   const start = server.indexOf("const verifiedFreeIntroFee =");
