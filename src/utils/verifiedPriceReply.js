@@ -6,6 +6,8 @@ const { isContextualPriceReference } = require("./priceFollowUpContext");
 const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
+const clinicConfig = require("../config/clinicConfig");
+const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("./complimentaryAssessmentExperience");
 
 // A voucher, discount, original price or bare amount is never a sale price.
 // "After voucher" has priority over a separate pre-voucher promo price.
@@ -181,6 +183,15 @@ function ensureVerifiedPriceReply({
   resultMedia = [], conversationHistory = [], language = "zh",
 } = {}) {
   const original = String(reply || "").trim();
+  // The clinic explicitly offers the introductory assessment + experience
+  // free of charge. A normal service price fallback must never turn this
+  // administrative question into a "please confirm the fee" response.
+  if (isComplimentaryAssessmentFeeQuestion(
+    customerText,
+    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true
+  )) {
+    return { reply: complimentaryAssessmentFeeReply(language), restored: true };
+  }
   if (!original || !treatment ||
       !(hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
