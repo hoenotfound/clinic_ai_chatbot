@@ -49,8 +49,13 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
         id integer PRIMARY KEY, contact_id integer NOT NULL REFERENCES contacts(id),
         role text NOT NULL, created_at timestamptz NOT NULL,
         sent_by_username text, is_automated_follow_up boolean DEFAULT false,
-        delivery_status text, whatsapp_message_id text
+        delivery_status text, whatsapp_message_id text,
+        whatsapp_template jsonb, pricing_reminder_anchor_id integer,
+        automated_follow_up_for_message_id integer,
+        automated_follow_up_parent_message_id integer,
+        media_key text, media_url text, media_base64 text, media_mime_type text
       );
+      CREATE TABLE scheduled_messages(message_id integer);
       CREATE TABLE ai_review_items (
         id bigserial PRIMARY KEY, contact_id integer, inbound_message_id integer,
         summary text, status text, created_at timestamptz DEFAULT now()
@@ -166,6 +171,76 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
     `);
     assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(397)).needs_attention,
       false, "a genuine provider echo may resolve delivery attention");
+
+    // Failed media remains an actionable attachment task, even when a
+    // staff member later replies with plain text. Retrying the *same*
+    // failed media row and getting provider acceptance resolves that task.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1553,397,'user',now()+interval '6 seconds');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_mime_type,media_key)
+      VALUES (1554,397,'assistant',now()+interval '7 seconds','failed','image/png','asset-failed');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,sent_by_username)
+      VALUES (1555,397,'assistant',now()+interval '8 seconds','read',
+              'wamid.staff1555','admin');
+      UPDATE contacts SET needs_attention=true,
+        attention_reason='Delivery failed: image could not be sent'
+      WHERE id=397;
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(397), null,
+      "a later text reply cannot silently dismiss a failed image");
+    await client.query(`
+      UPDATE messages SET delivery_status='read',whatsapp_message_id='wamid.retried1554'
+      WHERE id=1554;
+    `);
+    assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(397)).needs_attention,
+      false, "successfully retrying the failed photo resolves delivery-only attention");
+
+    // Opening a staff-owned conversation is not enough to resolve its
+    // routine waiting reason, and AI acknowledgements do not clear it.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1556,397,'user',now()+interval '9 seconds');
+      UPDATE contacts SET mode='human', takeover_by='admin', needs_attention=true,
+        attention_reason='New message — conversation is staff-owned.'
+      WHERE id=397;
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,sent_by_username)
+      VALUES (1557,397,'assistant',now()+interval '10 seconds','pending',
+              'wamid.ai1557',NULL);
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(397), null,
+      "a prior AI acknowledgement cannot resolve staff-owned waiting");
+    // Marketing and scheduled messages must not count as replies.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,sent_by_username,whatsapp_template)
+      VALUES (1558,397,'assistant',now()+interval '11 seconds','pending',
+              'wamid.template1558','admin','{"name":"marketing"}'::jsonb);
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,sent_by_username)
+      VALUES (1559,397,'assistant',now()+interval '12 seconds','pending',
+              'wamid.schedule1559','admin');
+      INSERT INTO scheduled_messages(message_id) VALUES (1559);
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(397), null,
+      "marketing templates and scheduled messages do not resolve waiting");
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,sent_by_username)
+      VALUES (1560,397,'assistant',now()+interval '13 seconds','pending',
+              'wamid.staff1560','admin');
+    `);
+    assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(397)).needs_attention,
+      false, "an accepted personal staff reply resolves routine staff waiting");
+
+    // Preserve safety/booking tasks even when a staff reply is accepted.
+    await client.query(`
+      UPDATE contacts SET needs_attention=true, attention_reason='Urgent clinical review'
+      WHERE id=397;
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(397), null);
 
     // An unrelated earlier failure must never replace a booking-ready warning.
     await client.query(`
