@@ -86,7 +86,7 @@ test("promotion images now require a monetary price enquiry, not package browsin
     priceQuery:false,packageQuery:true,treatment:"骨盆调理",
     customerText:"有什么配套？",textSendSucceeded:true,contactId:18,
     promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
-      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"现在只需 RM388"}]}],
     wasPromoRecentlySent:async()=>false,
     hasUnconfirmedMediaDelivery:async()=>false,
   };
@@ -386,12 +386,12 @@ test("AI missing the priceQuery flag cannot drop a verified treatment price grap
     treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
     customerText:"骨盆几钱?",textSendSucceeded:true,contactId:81,
     promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
-      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"现在只需 RM388"}]}],
     wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
   };
   try{
     const result=await resolvePricePromotionForReply(args);
-    assert.equal(result?.packages?.[0]?.caption,"RM388");
+    assert.equal(result?.packages?.[0]?.caption,"现在只需 RM388");
     assert.equal(await resolvePricePromotionForReply({...args,verifiedServiceFromText:null}),null);
     assert.equal(await resolvePricePromotionForReply({...args,customerText:"有什么配套？"}),null);
     assert.equal(await resolvePricePromotionForReply({...args,customerText:"骨盆多少钱",flagged:true}),null);
@@ -421,15 +421,15 @@ test("standalone Malay/Chinese price follow-ups use only the immediately establi
       priceQuery:false,packageQuery:false,treatment:known.name,verifiedServiceFromText:known.name,
       customerText:"Berapa?",textSendSucceeded:true,contactId:3,
       promotions:[{name:"Pelvic",linkedService:known.name,sendOnPriceQuery:true,
-        packages:[{name:"Package B",caption:"RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
+        packages:[{name:"Package B",caption:"现在只需 RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
       wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
     });
-    assert.equal(out?.packages?.[0]?.caption,"RM288");
+    assert.equal(out?.packages?.[0]?.caption,"现在只需 RM288");
     assert.equal(await resolvePricePromotionForReply({
       priceQuery:false,packageQuery:false,treatment:known.name,verifiedServiceFromText:null,
       customerText:"Berapa?",textSendSucceeded:true,contactId:3,
       promotions:[{name:"Pelvic",linkedService:known.name,sendOnPriceQuery:true,
-        packages:[{name:"Package B",caption:"RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
+        packages:[{name:"Package B",caption:"现在只需 RM288",imageUrl:"https://example.test/pelvicB.jpg"}]}],
       wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
     }),null);
   }finally{config.automatedFollowUp=old;}
@@ -441,7 +441,7 @@ test("price affordability remarks never enable assessment-first monetary media",
   config.automatedFollowUp={...old, assessmentFirstPricingEnabled:true};
   const { hasCustomerPriceEnquiry }=require("../src/utils/customerEnquiryEvidence");
   const offers=[{ name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
-    packages:[{name:"Package A",caption:"RM388",imageUrl:"https://example.test/pelvicA.jpg"}]}];
+    packages:[{name:"Package A",caption:"现在只需 RM388",imageUrl:"https://example.test/pelvicA.jpg"}]}];
   const base={
     priceQuery:true,packageQuery:true,treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
     textSendSucceeded:true,contactId:301,promotions:offers,
@@ -465,7 +465,7 @@ test("model priceQuery cannot select one image for ambiguous multi-treatment enq
   const base={
     priceQuery:true,packageQuery:true,treatment:"骨盆调理",verifiedServiceFromText:null,
     textSendSucceeded:true,contactId:302,promotions:[{name:"Pelvis",linkedService:"骨盆调理",sendOnPriceQuery:true,
-      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"RM388"}]}],
+      packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"现在只需 RM388"}]}],
     wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
   };
   try {
