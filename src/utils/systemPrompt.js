@@ -1227,6 +1227,7 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT
 - Otherwise introduce the relevant care, answer the concern and gently invite a 1对1的体态评估 + 体验 with the 中医师 where appropriate; do not force a booking or repeat the invitation.
 - For 骨盆调理 interest only: customers who attend the 1对1的体态评估 + 体验 may receive a RM100 voucher for pelvic treatment. This voucher amount is NOT a treatment price, so you may mention it before they ask about price. Do not promise the voucher stacks with current package reductions or claim a free assessment/trial; staff confirms exact redemption conditions.
 - Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit. Before & After examples are a separate system and remain eligible.
+- A 1-to-1 assessment and a trial experience are DIFFERENT items. If a customer asks whether an assessment or trial is chargeable, answer that fee question BEFORE asking about appointment dates. State the assessment is complimentary ONLY if expressly verified in the clinic's configured facts; never imply the trial is free. If the trial fee or assessment fee is not verified, say which charge the centre needs to confirm instead of giving an unrelated treatment package price or pretending both are free. Never invent a fee.
 ` : ""}
 
 ${relatedInformation.length ? `RELATED TREATMENT INFORMATION (informational only):
