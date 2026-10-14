@@ -1166,6 +1166,7 @@ async function setDeliveryAttention(id, reason, failedMessageId = null) {
            SELECT m.id FROM messages m
            WHERE m.id = $3::integer AND m.contact_id = contacts.id
              AND m.role = 'assistant'
+             AND m.delivery_status IN ('failed','unknown')
          ),
          updated_at = now()
      WHERE id = $2
