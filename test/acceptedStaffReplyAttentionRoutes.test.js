@@ -30,7 +30,7 @@ test("successful media send reconciles attention only after saving provider outc
 });
 
 test("accepted plain Inbox reply reconciles staff waiting immediately on all channels", () => {
-  const textRoute = section('router.post("/:contactId/messages",', 'router.post("/:contactId/messages/');
+  const textRoute = section('router.post("/:contactId/messages",', 'function handleImageUpload(');
   assert.match(textRoute, /const finalMessage = await persistSendOutcome\(/);
   assert.match(textRoute,
     /\} else \{\s*await reconcileAcceptedStaffReplyAttention\(preparedContact\.id\);\s*await markLeadContacted/);
