@@ -26,6 +26,7 @@ function harness({
   queueTransientFailureRetry = async () => null,
   reconcileQueuedMediaDelivery = async () => [],
   isQueuedImageMessage = async () => false,
+  reconcileAcceptedReplyAttention = async () => null,
 } = {}) {
   const calls = [];
   const repo = {
@@ -84,6 +85,10 @@ function harness({
     queueTransientFailureRetry,
     reconcileQueuedMediaDelivery:async(wamid)=>{calls.push(["reconcileQueuedMediaDelivery",wamid]);return reconcileQueuedMediaDelivery(wamid);},
     isQueuedImageMessage,
+    reconcileAcceptedReplyAttention: async (contactId) => {
+      calls.push(["reconcileAcceptedReplyAttention", contactId]);
+      return reconcileAcceptedReplyAttention(contactId);
+    },
     sendUnmatchedFailureAlert: async ({ jobs }) => {
       calls.push(["sendUnmatchedFailureAlert", jobs.map((item) => item.id)]);
       return { status: "sent" };
@@ -121,6 +126,24 @@ test("live durable status is claimed, applied, published and completed with its 
   ));
   assert.equal(calls.some((call) => call[0] === "setDeliveryAttentionState"), false);
   assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
+});
+
+test("read status callback repairs an earlier Inbox cleanup failure without resending", async () => {
+  const completed = job({ id: 81, delivery_status: "read" });
+  const { calls, service } = harness({
+    claimed: [completed],
+    updateResult: {
+      id: 810, contact_id: 81, delivery_status: "read",
+      whatsapp_message_id: completed.wamid,
+    },
+    reconcileAcceptedReplyAttention: async (id) => ({ id }),
+  });
+  await service.processStoredDeliveryStatuses([{ id: completed.id }]);
+  assert.ok(calls.some((call) =>
+    call[0] === "reconcileAcceptedReplyAttention" && call[1] === 81));
+  assert.ok(calls.some((call) => call[0] === "publishContact" && call[1] === 81));
+  assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
+  assert.ok(calls.some((call) => call[0] === "markCompleted"));
 });
 
 test("callback that beats local WAMID persistence stays retryable under the same lease", async () => {
