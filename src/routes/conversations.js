@@ -245,6 +245,22 @@ async function timedMediaStage(timings, stage, work, database = false) {
   }
 }
 
+// A successful provider send is not proof of delivery, but it *is* the first
+// point at which a routine Staff-owned or resolved-delivery attention flag may
+// be safely reconciled. Run after the provider ID is persisted; never let an
+// Inbox cleanup failure turn an already accepted send into an HTTP 500.
+// Pending clinical, booking and unresolved-media tasks are guarded in SQL.
+async function reconcileAcceptedStaffReplyAttention(contactId) {
+  try {
+    return await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contactId);
+  } catch (error) {
+    console.error("Failed to reconcile accepted staff-reply attention:", {
+      contactId, error,
+    });
+    return null;
+  }
+}
+
 async function finishInboxMediaSend(saved, sendResult, contact, username, timings) {
   const errorText = deliveryErrorForSend(sendResult, sendResult.error || rejectedErrorFor(contact));
   timings.contactId = contact.id;
@@ -271,6 +287,7 @@ async function finishInboxMediaSend(saved, sendResult, contact, username, timing
       "Provider send completed, but its delivery state could not be fully persisted. Please verify this conversation before retrying.", timings);
   }
   if (sendResult.success) {
+    await reconcileAcceptedStaffReplyAttention(contact.id);
     await timedMediaStage(timings, "pipelineMs", () => markLeadContacted(contact.id, username, sendResult), true);
   } else {
     await flagInboxMediaAttention(contact.id,
@@ -1730,7 +1747,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     );
 
     if (sendResult.success) {
-      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(preparedContact.id).catch(() => {});
+      await reconcileAcceptedStaffReplyAttention(preparedContact.id);
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(
@@ -1936,7 +1953,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     );
 
     if (sendResult.success) {
-      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(sendContact.id);
+      await reconcileAcceptedStaffReplyAttention(sendContact.id);
       await markLeadContacted(sendContact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(
@@ -2216,6 +2233,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
   );
 
   if (sendResult.success) {
+    await reconcileAcceptedStaffReplyAttention(preparedContact.id);
     await markLeadContacted(preparedContact.id, username, sendResult);
   } else {
     const deliveryUnknown =
@@ -2422,6 +2440,7 @@ router.post("/:contactId/messages", async (req, res) => {
         `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     } else {
+      await reconcileAcceptedStaffReplyAttention(preparedContact.id);
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     }
 
@@ -3292,7 +3311,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     );
     try {
       if (sendResult.success) {
-        await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(currentContact.id);
+        await reconcileAcceptedStaffReplyAttention(currentContact.id);
         await markLeadContacted(currentContact.id, req.session.username, sendResult);
       } else {
         await contactsRepo.setDeliveryAttention(
