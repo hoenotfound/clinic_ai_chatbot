@@ -51,7 +51,7 @@ function failedMediaSql(alias) {
 // let other older failed media poison that alert after the newer send recovers.
 // Historic delivery_status rows are not edited; the existing explicit staff
 // dismissal timestamp remains authoritative for all messages before it.
-function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
+function unresolvedFailedOutboundSql(messageAlias, contactAlias, { ignoreUnlinkedHistoricalMedia = false } = {}) {
   const m = checkedAlias(messageAlias);
   const c = checkedAlias(contactAlias);
   const deliveryReason = `(
@@ -92,7 +92,7 @@ function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
             -- actually answers the most recent newer customer turn. Merely
             -- receiving another customer message does not count as recovery.
             NOT ${deliveryReason}
-            AND NOT EXISTS (
+            AND ${ignoreUnlinkedHistoricalMedia ? "FALSE" : `NOT EXISTS (
               SELECT 1 FROM messages reply_to_new_turn
               WHERE reply_to_new_turn.contact_id = ${m}.contact_id
                 AND ${acceptedDirectReplySql("reply_to_new_turn")}
@@ -114,7 +114,7 @@ function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
                     AND (unanswered_after_reply.created_at, unanswered_after_reply.id) >
                         (reply_to_new_turn.created_at, reply_to_new_turn.id)
                 )
-            )
+            )`}
           )
         )
       )
