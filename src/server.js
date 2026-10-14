@@ -1623,6 +1623,7 @@ async function processIncomingMessage(
             promotionCount: automaticPromoMediaSent,
             items: resultBundle.items,
             allowRelatedPriceProof: resultBundle.allowRelatedPriceProof === true,
+            completedPriceClarification: Boolean(clarifiedPriceService),
           });
           auditSelected = paced.items.length;
           auditReason = paced.reason;
