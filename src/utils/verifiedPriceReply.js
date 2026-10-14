@@ -115,6 +115,30 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
   return result;
 }
 
+// A price should never replace a customer’s question about pain, safety or
+// suitability. Use a short, deterministic acknowledgement instead of
+// repeating unverified clinical assurances from the model draft.
+function clinicalPricingAcknowledgement(customerText, language = "zh") {
+  if (!hasClinicalMediaRisk(customerText)) return "";
+  const pain = /(?:会不会痛|會不會痛|会痛吗|會痛嗎|痛不痛|疼不疼|疼痛|\b(?:pain|painful|hurt|sakit)\b)/iu.test(
+    String(customerText || "")
+  );
+  const locale = String(language || "").toLowerCase();
+  if (locale.startsWith("ms")) {
+    return pain
+      ? "Tentang rasa sakit, pengalaman setiap orang berbeza. Pihak pusat boleh semak kesesuaian dan tahap keselesaan bersama anda dahulu; kami tidak boleh menjanjikan rawatan ini bebas sakit."
+      : "Tentang keadaan dan kesesuaian rawatan, pihak pusat perlu menilai situasi anda dahulu sebelum memberi nasihat khusus.";
+  }
+  if (locale.startsWith("en")) {
+    return pain
+      ? "Regarding pain or discomfort, experiences vary. Our practitioner can discuss comfort and suitability after learning about your situation; we cannot guarantee a pain-free treatment."
+      : "Regarding your health or treatment-suitability concern, our practitioner needs to understand your situation before giving individual guidance.";
+  }
+  return pain
+    ? "至于会不会痛，每个人的感受都可能不同哦。建议先让中医师了解你的情况、评估是否适合，再向你说明护理过程，不能保证完全无痛。"
+    : "关于你提到的身体情况或是否适合，建议先让中医师了解实际情况再评估，不能单凭聊天直接保证安全或效果哦。";
+}
+
 function nonPriceExplanation(reply) {
   const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
   const kept = clauses.map((line) => line.trim()).filter((line) =>
@@ -153,7 +177,9 @@ function ensureVerifiedPriceReply({
       : locale.startsWith("en")
         ? "Our centre needs to confirm the current treatment price."
         : "这项疗程的最新价格需要由门店帮你确认哦。";
-    return { reply: safeInfo ? safeInfo + "\n\n" + confirm : confirm, restored: true };
+    const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
+    const parts = [safeInfo, confirm, acknowledgement].filter(Boolean);
+    return { reply: parts.join("\n\n"), restored: true };
   }
   const entries = prices.map((item) =>
     `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
@@ -177,7 +203,8 @@ function ensureVerifiedPriceReply({
   // potentially unsafe model claims about pain, pregnancy or eligibility;
   // quote verified prices independently without authorizing marketing media.
   const explanation = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
-  return { reply: explanation ? explanation + "\n\n" + quote : quote, restored: true };
+  const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
+  return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }
 
-module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, ensureVerifiedPriceReply };
+module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply };
