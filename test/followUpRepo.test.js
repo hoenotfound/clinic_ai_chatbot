@@ -16,7 +16,7 @@ test("AI generation lease advances ordinary skips but honors terminal decisions"
   assert.match(source, /follow_up_ai_decisions decision/);
   assert.match(source, /decision\.trigger_message_id = anchor\.id/);
   assert.match(source, /terminalFollowUpDecisionSql\("decision"\)/);
-  assert.match(source, /d\.action = 'skip'/);
+  assert.match(source, /continuableFollowUpSkipSql\("d"\)/);
   assert.match(source, /decision\.follow_up_step = \$3 - 1/);
 });
 
