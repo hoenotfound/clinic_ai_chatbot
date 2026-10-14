@@ -78,9 +78,11 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY,contact_id INTEGER REFERENCES contacts(id),
         role TEXT,created_at TIMESTAMPTZ,whatsapp_message_id TEXT,
-        whatsapp_template JSONB,is_automated_follow_up BOOLEAN,
-        automated_follow_up_step INTEGER,automated_follow_up_parent_message_id INTEGER,
-        pricing_reminder_anchor_id INTEGER,sent_by_username TEXT,media_mime_type TEXT
+        whatsapp_template JSONB,is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
+        automated_follow_up_step INTEGER NOT NULL DEFAULT 1,
+        automated_follow_up_parent_message_id INTEGER,
+        pricing_reminder_anchor_id INTEGER,sent_by_username TEXT,media_mime_type TEXT,
+        delivery_status TEXT
       );
       CREATE TABLE whatsapp_free_entry_followup_attempts(
         id SERIAL PRIMARY KEY,message_id INTEGER);
@@ -106,6 +108,8 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
         (16,1,'assistant',now()-interval '2 minutes','image/png','admin'),
         (17,2,'assistant',now()-interval '2 minutes','image/png','admin'),
         (18,1,'assistant',now()-interval '2 minutes','image/png','admin');
+      -- Reproduce the old failed staff photo in Neutro's production database.
+      UPDATE messages SET delivery_status='failed' WHERE id=10;
       UPDATE messages SET is_automated_follow_up=true WHERE id=15;
       INSERT INTO scheduled_messages(message_id) VALUES(16);
       INSERT INTO whatsapp_free_entry_followup_attempts(message_id) VALUES(18);
@@ -115,6 +119,13 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
       fs.readFileSync(path.join(__dirname,"../src/db/migrations",version),"utf8"));
     const ctx=id=>({database:db,context:{
       messageKind:"staff_media",currentMessageId:id}});
+    // The real messages schema defaults step=1 for ALL messages, not just
+    // automated follow-ups. This would fail before the production fix.
+    const legacy=await db.query(
+      "SELECT automated_follow_up_step,is_automated_follow_up,delivery_status FROM messages WHERE id=10");
+    assert.deepEqual(legacy.rows,[{
+      automated_follow_up_step:1,is_automated_follow_up:false,delivery_status:"failed",
+    }]);
     const first=await guard.reserve24hServiceReply("60121234567",ctx(10));
     assert.equal(first.allowed,true,"ordinary staff photo allowed");
     const one=await db.query("SELECT send_kind,status FROM whatsapp_24h_service_reply_exceptions");
