@@ -120,7 +120,7 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
 // repeating unverified clinical assurances from the model draft.
 function clinicalPricingAcknowledgement(customerText, language = "zh") {
   if (!hasClinicalMediaRisk(customerText)) return "";
-  const pain = /(?:会不会痛|會不會痛|会痛吗|會痛嗎|痛不痛|疼不疼|疼痛|\b(?:pain\w*|hurt\w*|discomfort|uncomfortable|sakit)\b)/iu.test(
+  const pain = /(?:会不会很痛|會不會很痛|会不会痛|會不會痛|会痛吗|會痛嗎|痛不痛|疼不疼|疼痛|\b(?:pain\w*|hurt\w*|discomfort|uncomfortable|sakit)\b)/iu.test(
     String(customerText || "")
   );
   const locale = String(language || "").toLowerCase();
