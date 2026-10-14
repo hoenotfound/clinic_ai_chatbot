@@ -289,7 +289,10 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
       AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2
       AND m.whatsapp_message_id IS NULL AND m.whatsapp_template IS NULL
       AND m.is_automated_follow_up IS NOT TRUE
-      AND m.automated_follow_up_step IS NULL
+      -- Production messages.automated_follow_up_step is NOT NULL DEFAULT 1
+      -- even for ordinary customer and manually sent messages. Step alone
+      -- cannot establish automation; use the explicit automation flag,
+      -- parent link, scheduled-message and follow-up-attempt records.
       AND m.automated_follow_up_parent_message_id IS NULL
       AND m.pricing_reminder_anchor_id IS NULL
       -- Only staff-authored, persisted media qualifies for this separate lane.

@@ -103,10 +103,12 @@ test("service reply SQL excludes automated messages and requires recent provider
   });
   for(const snippet of [
     "m.whatsapp_template IS NULL","m.is_automated_follow_up IS NOT TRUE",
-    "m.automated_follow_up_step IS NULL","m.pricing_reminder_anchor_id IS NULL",
+    "m.automated_follow_up_parent_message_id IS NULL","m.pricing_reminder_anchor_id IS NULL",
     "whatsapp_free_entry_followup_attempts","scheduled_messages","inbound.whatsapp_message_id IS NOT NULL",
     "interval '23 hours 58 minutes'","ON CONFLICT(message_id) DO NOTHING",
   ])assert.ok(query.includes(snippet),snippet);
+  assert.equal(query.includes("m.automated_follow_up_step IS NULL"),false,
+    "Production defaults the step to 1 even for ordinary messages");
   assert.ok(guard.VERIFIED_WINDOW_SQL.includes("whatsapp_24h_service_reply_exceptions"));
   const templateCode=fs.readFileSync(path.join(__dirname,"../src/services/whatsappTemplateService.js"),"utf8");
   assert.match(templateCode,/messageKind:\s*"template"/);
@@ -126,8 +128,9 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY,contact_id INTEGER REFERENCES contacts(id),
         role TEXT,created_at TIMESTAMPTZ, whatsapp_message_id TEXT,
-        whatsapp_template JSONB,is_automated_follow_up BOOLEAN,
-        automated_follow_up_step INTEGER,automated_follow_up_parent_message_id INTEGER,
+        whatsapp_template JSONB,is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
+        automated_follow_up_step INTEGER NOT NULL DEFAULT 1,
+        automated_follow_up_parent_message_id INTEGER,
         pricing_reminder_anchor_id INTEGER,
         sent_by_username TEXT,media_mime_type TEXT
       );
@@ -163,6 +166,8 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
     await db.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/072_whatsapp_24h_staff_media.sql"),"utf8"));
     const ctx=(id)=>({database:db,context:{messageKind:"first_reply_text",currentMessageId:id}});
+    const ordinary=await db.query("SELECT automated_follow_up_step,is_automated_follow_up FROM messages WHERE id=10");
+    assert.deepEqual(ordinary.rows,[{automated_follow_up_step:1,is_automated_follow_up:false}]);
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).allowed,true);
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).code,
       "zero_cost_service_reply_already_attempted");
