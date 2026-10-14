@@ -42,6 +42,7 @@ test("contact 433 historical failed Before & After cannot poison a new staff rep
         needs_attention boolean DEFAULT false,
         attention_reason text,
         delivery_attention_dismissed_at timestamptz,
+        delivery_attention_message_id integer,
         is_unread boolean DEFAULT false,
         updated_at timestamptz DEFAULT now()
       );
