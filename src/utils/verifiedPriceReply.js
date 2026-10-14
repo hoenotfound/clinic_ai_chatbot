@@ -31,7 +31,7 @@ function priceEvidence(copy) {
     const start = match.index, finish = start + match[0].length;
     for (let i = start; i < finish; i++) covered.add(i);
   }
-  remaining = [...normalized].map((char, i) => covered.has(i) ? " " : char).join("");
+  remaining = normalized.split("").map((char, i) => covered.has(i) ? " " : char).join("");
   remaining = remaining.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
   if (remaining.match(MONEY)) return { price: null, ambiguous: true };
   return { price: "RM" + distinct[0], ambiguous: false };
@@ -100,6 +100,15 @@ function ensureVerifiedPriceReply({
 
   const prices = verifiedPricesForService(treatment, promotions, customerText);
   const locale = String(language || "").toLowerCase();
+  if (!prices) {
+    const safeInfo = nonPriceExplanation(original);
+    const confirm = locale.startsWith("ms")
+      ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
+      : locale.startsWith("en")
+        ? "Our centre needs to confirm the current treatment price."
+        : "这项疗程的最新价格需要由门店帮你确认哦。";
+    return { reply: safeInfo ? safeInfo + "\n\n" + confirm : confirm, restored: true };
+  }
   const entries = prices.map((item) =>
     `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
   ).join("\n");
