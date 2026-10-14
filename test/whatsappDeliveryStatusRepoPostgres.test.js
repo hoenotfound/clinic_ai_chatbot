@@ -445,6 +445,43 @@ test(
       assert.equal(anchored.delivery_attention_message_id,1023);
       assert.equal(anchored.attention_reason,'Delivery failed: newer photo');
 
+      // Two different failed messages can have the IDENTICAL Meta error
+      // text. The second is a new task even when the reason string matches.
+      // A replay of the same message+reason, or an older callback after the
+      // newer warning is active, must still be a no-op.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES (51);
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES
+          (1030,51,'assistant',now()-interval '20 minutes','failed',
+           'https://example.invalid/same-error-a.jpg'),
+          (1031,51,'assistant',now()-interval '10 minutes','failed',
+           'https://example.invalid/same-error-b.jpg');
+      `);
+      const identicalReason = 'Delivery failed: WhatsApp reported delivery as failed.';
+      assert.equal((await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1030)).id,51);
+      assert.equal((await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1031)).id,51,
+        "the same error text on a newer message must update the task anchor");
+      let sameErrorTask = (await client.query(
+        "SELECT needs_attention,attention_reason,delivery_attention_message_id FROM contacts WHERE id=51"
+      )).rows[0];
+      assert.equal(sameErrorTask.needs_attention,true);
+      assert.equal(sameErrorTask.attention_reason,identicalReason);
+      assert.equal(sameErrorTask.delivery_attention_message_id,1031);
+      assert.equal(await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1031),null,
+        "the exact same message+reason callback is idempotent");
+      assert.equal(await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1030),null,
+        "a late older callback cannot steal the anchor when reasons match");
+      sameErrorTask = (await client.query(
+        "SELECT attention_reason,delivery_attention_message_id FROM contacts WHERE id=51"
+      )).rows[0];
+      assert.equal(sameErrorTask.delivery_attention_message_id,1031);
+      assert.equal(sameErrorTask.attention_reason,identicalReason);
+
       // A completed provider failure can lose its matching message later.
       // Flag it once after a grace period, but exclude known message/evidence
       // records and preserve the flagged row through ordinary pruning.
