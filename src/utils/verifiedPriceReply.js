@@ -1,26 +1,80 @@
 "use strict";
 
-const { getActivePromotions, promotionPackages } = require("./activePromotion");
+const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
-const { hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
+const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
 
-const SALE_PRICE_LINE =
-  /(?:优惠后|優惠後|现在只需|現在只需|仅需|僅需|只需|现价|現價|特价|特價|促销价|促銷價|first[\s-]*trial|now\s+only|after\s+(?:the\s+)?voucher|harga\s+promosi|selepas\s+baucar)/iu;
+// A voucher, discount, original price or bare amount is never a sale price.
+// "After voucher" has priority over a separate pre-voucher promo price.
+const FINAL_SALE = /(?:优惠后(?:仅需|只需)?|優惠後(?:僅需|只需)?|after\s+(?:the\s+)?voucher(?:,?\s*only)?|selepas\s+baucar(?:,?\s*hanya)?)\s*[:：]?\s*(?:RM|MYR)\s*([1-9]\d{1,4})(?!\d)/giu;
+const DIRECT_SALE = /(?:现在只需|現在只需|现在仅需|現在僅需|只需要|只需|仅需|僅需|优惠价|優惠價|现价|現價|特价|特價|促销价|促銷價|组合体验价(?:只需)?|組合體驗價(?:只需)?|组合限时优惠|組合限時優惠|first[\s-]*trial(?:\s+price)?|trial\s+price|(?:current\s+)?(?:promo|promotional|special|offer|sale)\s+price|now\s+only|harga\s+promosi|harga\s+tawaran|sekarang\s+hanya)\s*[:：]?\s*(?:RM|MYR)\s*([1-9]\d{1,4})(?!\d)/giu;
+const MONEY = /\b(?:RM|MYR)\s*\d{2,5}\b/giu;
+const ORIGINAL = /(?:原价(?:优惠)?|原價(?:優惠)?|original\s+price|harga\s+asal|normal\s+price)\s*[:：]?\s*(?:RM|MYR)\s*\d{2,5}\b/giu;
+const VOUCHER_AFTER = /(?:RM|MYR)\s*\d{2,5}\b\s*(?:voucher|coupon|off|discount|baucar|优惠券|優惠券|折扣券|抵用券|折扣)/giu;
+const VOUCHER_BEFORE = /(?:voucher|coupon|baucar|优惠券|優惠券|折扣券|抵用券|折扣)\s*(?:worth\s*)?(?:RM|MYR)\s*\d{2,5}\b/giu;
 
-function configuredOfferPrice(caption) {
-  const normalized = String(caption || "").normalize("NFKC")
-    .replace(/[\uFE0F\u20E3]/gu, "");
-  const line = normalized.split(/[\n。]/u)
-    .filter((part) => SALE_PRICE_LINE.test(part))
-    .findLast((part) => /\b(?:RM|MYR)\s*\d{2,5}\b/iu.test(part));
-  if (!line) return null;
-  const matches = [...line.matchAll(/\b(?:RM|MYR)\s*(\d{2,5})\b/giu)];
-  // Prefer only an explicitly marked offer price. Never mistake an RM100
-  // voucher or an original-price amount for the price being quoted.
-  const amount = matches.at(-1)?.[1];
-  return amount ? `RM${amount}` : null;
+function priceEvidence(copy) {
+  const normalized = String(copy || "").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu, "");
+  const finalMatches = [...normalized.matchAll(FINAL_SALE)];
+  const directMatches = [...normalized.matchAll(DIRECT_SALE)];
+  const preferred = finalMatches.length ? finalMatches : directMatches;
+  const distinct = [...new Set(preferred.map((m) => m[1]))];
+  if (distinct.length !== 1) return { price: null, ambiguous: preferred.length > 0 };
+  let remaining = normalized;
+  const claims = [...finalMatches, ...directMatches].sort((a, b) => b.index - a.index);
+  // Overlapping phrases may produce nested matches. Blank them from right
+  // to left without shifting source offsets.
+  const covered = new Set();
+  for (const match of claims) {
+    const start = match.index, finish = start + match[0].length;
+    for (let i = start; i < finish; i++) covered.add(i);
+  }
+  remaining = [...normalized].map((char, i) => covered.has(i) ? " " : char).join("");
+  remaining = remaining.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
+  if (remaining.match(MONEY)) return { price: null, ambiguous: true };
+  return { price: "RM" + distinct[0], ambiguous: false };
+}
+
+function configuredOfferPrice(copy) {
+  return priceEvidence(copy).price;
+}
+
+function verifiedPricesForService(treatment, promotions, customerText = "") {
+  const matching = getActivePromotions(promotions).filter((promotion) =>
+    promotion?.sendOnPriceQuery === true &&
+    String(promotion.linkedService || "").trim() === treatment
+  );
+  if (matching.length !== 1 || findAmbiguousPromotionPackageTerm(matching[0])) return null;
+  const options = promotionPackages(matching[0]);
+  if (!options.length || options.length > 4) return null;
+  const requested = findMentionedPromotionPackages(options, customerText);
+  if (requested.length > 1) return null;
+  const selected = requested.length === 1 ? requested : options;
+  const result = [];
+  for (const option of selected) {
+    if (!String(option.name || "").trim()) return null;
+    const translations = Object.values(option.mediaTranslations || [])
+      .map((item) => typeof item === "string" ? item : item?.caption);
+    const sources = [option.caption, option.followUpMessage, ...translations]
+      .filter((source) => String(source || "").trim());
+    const evidence = sources.map(priceEvidence);
+    if (evidence.some((entry) => entry.ambiguous)) return null;
+    const unique = [...new Set(evidence.map((entry) => entry.price).filter(Boolean))];
+    if (unique.length !== 1) return null;
+    result.push({ name: String(option.name).trim(), title: String(option.title || "").trim(), price: unique[0] });
+  }
+  return result;
+}
+
+function nonPriceExplanation(reply) {
+  const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
+  const kept = clauses.map((line) => line.trim()).filter((line) =>
+    line && !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
+    !/(?:[价價][钱錢格位]|收费|收費|费用|費用|原价|原價|优惠|優惠|折扣|voucher|discount|\b(?:price|pricing|cost|harga|promosi)\b)/iu.test(line)
+  );
+  return kept.slice(0, 3).join("\n").slice(0, 340).trim();
 }
 
 // If Gemini ignores an already verified price question, reply using active
@@ -32,7 +86,7 @@ function ensureVerifiedPriceReply({
   resultMedia = [], conversationHistory = [], language = "zh",
 } = {}) {
   const original = String(reply || "").trim();
-  if (!original || !treatment || hasTreatmentPriceContent(original) ||
+  if (!original || !treatment ||
       hasClinicalMediaRisk(customerText) ||
       !(hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
@@ -44,34 +98,18 @@ function ensureVerifiedPriceReply({
         customerText, conversationHistory, services, serviceAliases, resultMedia,
       })) return { reply: original, restored: false };
 
-  const promotionsForService = getActivePromotions(promotions).filter((promotion) =>
-    promotion?.sendOnPriceQuery === true &&
-    String(promotion.linkedService || "").trim() === treatment
-  );
-  // Multiple active offers or missing prices must be handled by staff, not
-  // resolved through arbitrary package selection or inferred discounts.
-  if (promotionsForService.length !== 1) return { reply: original, restored: false };
-  const options = promotionPackages(promotionsForService[0]);
-  if (!options.length || options.length > 4) return { reply: original, restored: false };
-  const prices = options.map((option) => ({
-    name: String(option.name || "").trim(),
-    title: String(option.title || "").trim(),
-    price: configuredOfferPrice(option.caption),
-  }));
-  if (prices.some((item) => !item.name || !item.price)) {
-    return { reply: original, restored: false };
-  }
-
+  const prices = verifiedPricesForService(treatment, promotions, customerText);
   const locale = String(language || "").toLowerCase();
   const entries = prices.map((item) =>
-    `• ${item.name}${item.title ? `（${item.title}）` : ""}：${item.price}`
+    `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
   ).join("\n");
   const quote = locale.startsWith("ms")
     ? `Untuk ${treatment}, harga promosi terkini ialah:\n${entries}\n\nSyarat baucar atau gabungan diskaun perlu disahkan oleh pihak pusat ya 😊`
     : locale.startsWith("en")
       ? `The current ${treatment} package prices are:\n${entries}\n\nOur centre can confirm voucher terms and whether discounts can be combined 😊`
       : `${treatment}目前的配套价格是：\n${entries}\n\n优惠券的使用条件以及是否能与其他优惠叠加，可以让门店帮你确认哦 😊`;
-  return { reply: quote, restored: true };
+  const explanation = nonPriceExplanation(original);
+  return { reply: explanation ? explanation + "\n\n" + quote : quote, restored: true };
 }
 
-module.exports = { configuredOfferPrice, ensureVerifiedPriceReply };
+module.exports = { configuredOfferPrice, verifiedPricesForService, nonPriceExplanation, ensureVerifiedPriceReply };
