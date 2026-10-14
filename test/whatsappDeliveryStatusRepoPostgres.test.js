@@ -33,6 +33,7 @@ test(
           id SERIAL PRIMARY KEY,
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,
+          delivery_attention_dismissed_at TIMESTAMPTZ,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE TABLE messages (
