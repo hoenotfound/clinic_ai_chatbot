@@ -6,6 +6,7 @@ const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
+const { acceptedDirectReplySql, failedMediaSql, unresolvedFailedOutboundSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
@@ -617,11 +618,15 @@ async function takeOver(id, staffUsername) {
      ), takeover AS (
        UPDATE contacts c
        SET mode = 'human', takeover_by = $1, takeover_at = now(),
-           needs_attention = EXISTS (
+           -- Taking ownership is not resolving a failed or unknown send.
+           -- Keep existing delivery, booking, safety and clinical attention
+           -- until a confirmed reply or an explicit staff resolution.
+           needs_attention = c.needs_attention OR EXISTS (
              SELECT 1 FROM ai_review_items r
              WHERE r.contact_id = c.id AND r.status = 'pending'
-           ) OR COALESCE(c.attention_reason LIKE 'AI review requested:%', false),
+           ),
            attention_reason = CASE
+             WHEN c.needs_attention THEN COALESCE(c.attention_reason, 'Staff review required.')
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN c.attention_reason
              WHEN EXISTS (
                SELECT 1 FROM ai_review_items r
@@ -763,8 +768,8 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            WHERE r.contact_id = contacts.id AND r.status = 'pending'
          ) OR EXISTS (
            SELECT 1 FROM messages m
-           WHERE m.contact_id = contacts.id AND m.role = 'assistant'
-             AND m.delivery_status IN ('failed', 'unknown')
+           WHERE m.contact_id = contacts.id
+               AND ${unresolvedFailedOutboundSql("m", "contacts")}
          ) OR (
            -- A manual reply does not confirm an appointment was booked.
            -- Keep Booking Ready flagged until staff explicitly dismisses it.
@@ -784,8 +789,8 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            -- delivery failures take precedence over AI review summaries.
            WHEN EXISTS (
              SELECT 1 FROM messages m
-             WHERE m.contact_id = contacts.id AND m.role = 'assistant'
-               AND m.delivery_status IN ('failed', 'unknown')
+             WHERE m.contact_id = contacts.id
+               AND ${unresolvedFailedOutboundSql("m", "contacts")}
            ) THEN CASE
              WHEN attention_reason LIKE 'Delivery failed:%'
                OR attention_reason LIKE 'Delivery unconfirmed:%'
@@ -967,8 +972,8 @@ async function dismissAttentionAndReviews(id) {
              THEN true
              WHEN EXISTS (
                SELECT 1 FROM messages m
-               WHERE m.contact_id = c.id AND m.role = 'assistant'
-                 AND m.delivery_status IN ('failed', 'unknown')
+               WHERE m.contact_id = c.id
+                  AND ${unresolvedFailedOutboundSql("m", "c")}
              ) THEN true
              ELSE false
            END,
@@ -980,10 +985,22 @@ async function dismissAttentionAndReviews(id) {
              THEN c.attention_reason
              WHEN EXISTS (
                SELECT 1 FROM messages m
-               WHERE m.contact_id = c.id AND m.role = 'assistant'
-                 AND m.delivery_status IN ('failed', 'unknown')
+               WHERE m.contact_id = c.id
+                  AND ${unresolvedFailedOutboundSql("m", "c")}
              ) THEN 'Delivery failed: One or more outbound messages need staff review.'
              ELSE NULL
+           END,
+           delivery_attention_dismissed_at = CASE
+             -- Only an explicit attention dismissal acknowledges failed
+             -- media; regular staff sends must never do so implicitly.
+             WHEN NOT EXISTS (SELECT 1 FROM resolved)
+               AND (
+                 c.attention_reason LIKE 'Delivery failed:%'
+                 OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+                 OR c.attention_reason = 'New message — conversation is staff-owned.'
+               )
+             THEN clock_timestamp()
+             ELSE c.delivery_attention_dismissed_at
            END,
            updated_at = now()
        FROM locked WHERE c.id = locked.id
@@ -1128,10 +1145,10 @@ async function setDeliveryAttention(id, reason) {
   return updated;
 }
 
-// Clears only a delivery attention flag and only when no failed or unconfirmed
-// outbound messages remain. Keeping both conditions in the same SQL statement
-// prevents a successful retry from clearing a newer keyword, handoff, or
-// staff-owned-message warning that arrived while the retry was in progress.
+// Clear only a reply-resolved delivery or routine staff-owned attention flag.
+// Real booking, safety, AI-review and clinical tasks still require deliberate
+// staff resolution. Keep failed media actionable even after later text replies.
+// The SQL tests the latest customer turn atomically to avoid stale-send races.
 async function clearDeliveryAttentionIfNoFailedMessages(id) {
   const result = await pool.query(
     `UPDATE contacts c
@@ -1154,12 +1171,41 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
        AND (
          c.attention_reason LIKE 'Delivery failed:%'
          OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+         OR (
+           c.mode = 'human'
+           AND c.attention_reason = 'New message — conversation is staff-owned.'
+         )
        )
-       AND NOT EXISTS (
-         SELECT 1 FROM messages m
-         WHERE m.contact_id = c.id
-           AND m.role = 'assistant'
-           AND m.delivery_status IN ('failed', 'unknown')
+       AND EXISTS (
+         SELECT 1 FROM messages reply
+         WHERE reply.contact_id = c.id
+           AND ${acceptedDirectReplySql("reply")}
+           -- Staff-owned waiting is only resolved by a *staff* response,
+           -- not an AI acknowledgement or a follow-up generated before
+           -- the manual takeover.
+           AND (
+             c.attention_reason IS DISTINCT FROM
+               'New message — conversation is staff-owned.'
+             OR reply.sent_by_username IS NOT NULL
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM messages inbound
+             WHERE inbound.contact_id = c.id
+               AND inbound.role = 'user'
+               AND (inbound.created_at, inbound.id) >
+                   (reply.created_at, reply.id)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM messages failed
+             WHERE failed.contact_id = c.id
+               AND ${unresolvedFailedOutboundSql("failed", "c")}
+               -- Newer failed sends cannot be hidden by an earlier reply.
+               -- Older failed media also remains an actionable attachment.
+               AND (
+                 (failed.created_at, failed.id) > (reply.created_at, reply.id)
+                 OR ${failedMediaSql("failed")}
+               )
+           )
        )
      RETURNING *`,
     [id]

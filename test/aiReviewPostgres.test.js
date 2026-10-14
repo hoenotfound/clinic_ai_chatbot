@@ -26,12 +26,18 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
       CREATE TABLE contacts (id integer primary key, mode text default 'ai', takeover_by text, takeover_at timestamptz,
         is_unread boolean default false,
         needs_attention boolean default false, attention_reason text,
+        delivery_attention_dismissed_at timestamptz,
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
         role text, content text, delivery_status text, sent_by_username text,
         is_automated_follow_up boolean NOT NULL DEFAULT false,
         whatsapp_message_id text,
+        whatsapp_template jsonb, pricing_reminder_anchor_id integer,
+        automated_follow_up_for_message_id integer,
+        automated_follow_up_parent_message_id integer,
+        media_key text,media_url text,media_base64 text,media_mime_type text,
         created_at timestamptz not null default now());
+      CREATE TABLE scheduled_messages(message_id integer);
       CREATE TABLE outbound_message_evidence (
         message_id integer primary key references messages(id), accepted boolean not null,
         origin text

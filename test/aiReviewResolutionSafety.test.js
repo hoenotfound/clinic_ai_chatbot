@@ -42,13 +42,22 @@ test("resolving the last individual review preserves a failed delivery", {
         mode text not null default 'ai',
         needs_attention boolean not null default false,
         attention_reason text,
+        delivery_attention_dismissed_at timestamptz,
         updated_at timestamptz default now()
       );
+      CREATE TABLE scheduled_messages(message_id integer);
       CREATE TABLE messages (
         id integer primary key,
         contact_id integer references contacts(id),
         role text not null,
-        delivery_status text
+        created_at timestamptz default now(),
+        delivery_status text,
+        is_automated_follow_up boolean default false,
+        whatsapp_message_id text,
+        whatsapp_template jsonb, pricing_reminder_anchor_id integer,
+        automated_follow_up_for_message_id integer,
+        automated_follow_up_parent_message_id integer,
+        media_key text,media_url text,media_base64 text,media_mime_type text
       );
     `);
     await client.query(fs.readFileSync(path.join(__dirname,

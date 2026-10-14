@@ -1,4 +1,5 @@
 const messagesRepo = require("../db/messagesRepo");
+const contactsRepo = require("../db/contactsRepo");
 const billingAlerts = require("./whatsappFreeOnlyBillingAlerts");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
@@ -87,6 +88,11 @@ function createWhatsAppDeliveryStatusService({
     ? whatsappResultMediaQueue.reconcileProviderDelivery : async () => [],
   isQueuedImageMessage = repo === repository
     ? whatsappResultMediaQueue.isQueuedMessage : async () => false,
+  // A successful status callback also repairs a prior best-effort Inbox
+  // attention cleanup failure. The shared SQL guards old failed media,
+  // templates, newer customer turns and protected clinical/booking tasks.
+  reconcileAcceptedReplyAttention = repo === repository
+    ? contactsRepo.clearDeliveryAttentionIfNoFailedMessages : async () => null,
   sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
 } = {}) {
@@ -152,9 +158,16 @@ function createWhatsAppDeliveryStatusService({
     const attentionReason = `Delivery failed: ${reason}`;
     const updatedContact = await repo.setDeliveryAttentionState(
       updatedMessage.contact_id,
-      attentionReason
+      attentionReason,
+      undefined,
+      updatedMessage.id
     );
-    if (updatedContact) publishContactSafely(updatedMessage.contact_id);
+    // A replayed callback may have been superseded by a newer accepted reply,
+    // or a protected clinical/booking attention reason already exists. Keep
+    // its message-level failure record, but do not re-alert or log an open
+    // delivery task that the database deliberately refused to create.
+    if (!updatedContact) return null;
+    publishContactSafely(updatedMessage.contact_id);
     return { reason, attentionReason };
   }
 
@@ -186,6 +199,25 @@ function createWhatsAppDeliveryStatusService({
     // Only the durable delivery callback proves delivery, not Meta's API
     // acceptance response. Update optional-image audit idempotently here.
     await reconcileQueuedMediaDelivery(job.wamid);
+
+    // Post-acceptance recovery: if Inbox cleanup failed after the original
+    // staff/AI send, a subsequent provider callback can resolve its delivery
+    // attention. This never creates or resends a message, and an accepted
+    // marketing template / automated follow-up cannot clear customer work.
+    if (
+      ["sent", "delivered", "read"].includes(job.delivery_status) &&
+      ["sent", "delivered", "read"].includes(updatedMessage.delivery_status)
+    ) {
+      try {
+        const cleared = await reconcileAcceptedReplyAttention(updatedMessage.contact_id);
+        if (cleared) publishContactSafely(updatedMessage.contact_id);
+      } catch (error) {
+        logger.error(
+          `Could not reconcile accepted WhatsApp reply attention for contact ${updatedMessage.contact_id}:`,
+          error
+        );
+      }
+    }
 
     let transientRetryQueued = false;
     if (
