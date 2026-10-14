@@ -191,6 +191,9 @@ test("free introductory experience cannot be confused with a paid first trial or
   }
   assert.equal(isComplimentaryAssessmentFeeQuestion("体态评估和体验收费吗？", false), false);
   assert.equal(isComplimentaryAssessmentFeeQuestion("我想了解体态评估和体验", true), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("Can I book the free posture assessment + experience next Friday?", true), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("可以预约免费的体态评估和体验吗？", true), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("Is the 1-on-1 posture assessment + experience free?", true), true);
 });
 
 test("assessment-first prompt names the free experience only for opted-in clinic config", () => {
