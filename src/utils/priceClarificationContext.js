@@ -22,15 +22,17 @@ function resolveClarifiedPriceService({
   if (!currentText || currentText.length > 90 ||
       DECLINED_OR_NEW_TOPIC.test(currentText)) return null;
 
-  // History passed to the AI ends at the customer turn being answered.
+  // Preserve media turns when checking consecutive customer messages.
   // Require a strict user -> assistant clarification -> user sequence.
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
-    .filter((entry) => (entry?.role === "user" || entry?.role === "assistant") &&
-      typeof entry?.content === "string" && entry.content.trim());
+    .filter((entry) => entry?.role === "user" || entry?.role === "assistant");
   if (turns.length < 3) return null;
   const [earlier, clarification, current] = turns.slice(-3);
   if (earlier.role !== "user" || clarification.role !== "assistant" ||
       current.role !== "user" ||
+      typeof earlier.content !== "string" ||
+      typeof clarification.content !== "string" ||
+      typeof current.content !== "string" ||
       current.content.trim() !== currentText ||
       !hasExplicitPriceRequest(earlier.content)) return null;
 
