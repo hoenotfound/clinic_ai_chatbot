@@ -1,5 +1,6 @@
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 const { normalizeQuietHours, quietHoursStatus } = require("../utils/quietHours");
@@ -142,7 +143,7 @@ function buildScheduleSql(settings) {
       ))
       AND NOT EXISTS (SELECT 1 FROM follow_up_ai_decisions d
         WHERE d.contact_id = c.id AND d.trigger_message_id = anchor.id
-          AND d.action = 'human_review')
+          AND ${terminalFollowUpDecisionSql("d")})
   ), scheduled AS (
     SELECT current_state.*, ${due} AS due_at
     FROM current_state
