@@ -1033,7 +1033,8 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? "- For this
 
 DECIDE THE ACTION:
 - Use "send" when there is a genuine unresolved point and a short follow-up could help the customer continue.
-- Use "skip" when the customer clearly declined, asked not to be contacted, already completed the next step, the conversation naturally ended, or another follow-up would be pushy/redundant.
+- Use "skip" ONLY to omit this particular step while a DIFFERENT step would still be welcome (for example, an introduction already covered this step but a distinct testimonial video could help). Skipping one step does not stop later steps.
+- Use "stop_sequence" when the conversation has ended, the customer declined or deferred, asked to decide/contact us later, said the location is too far, is not interested, said to stop contacting them, already completed the next step, or a further reminder would feel pushy. This ends all remaining automatic follow-ups for this conversation, including ancillary reminders. Never return "skip" for these conditions.
 - Use "human_review" for safety/medical suitability issues, complaints/refunds, explicit human requests, conflicting/uncertain business-specific facts, or anything requiring staff judgment.
 
 HUMAN-REVIEW TRIGGERS:
@@ -1059,7 +1060,7 @@ IMPORTANT AUTHORITY RULE:
 
 RETURN ONLY ONE VALID JSON OBJECT:
 {
-  "action": "send | skip | human_review",
+  "action": "send | skip | stop_sequence | human_review",
   "message": "customer-facing message when action is send, otherwise empty string",
   "reason": "short internal reason for the decision",
   "topic": "short current topic/service when clearly known, otherwise empty string"
