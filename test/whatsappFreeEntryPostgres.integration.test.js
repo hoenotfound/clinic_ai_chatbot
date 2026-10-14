@@ -49,6 +49,10 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         pricing_reminder_anchor_id INTEGER,
         media_mime_type TEXT
       );
+      CREATE TABLE follow_up_ai_decisions (
+        id BIGSERIAL PRIMARY KEY, contact_id INTEGER, trigger_message_id INTEGER,
+        follow_up_step INTEGER, action TEXT, reason TEXT, created_at TIMESTAMPTZ DEFAULT now()
+      );
       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,
         channel TEXT, meta_source_type TEXT, ctwa_clid TEXT, meta_ad_id TEXT
@@ -471,6 +475,22 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     const list = () => worker.listCandidates(settings, client);
     const eligible = await list();
     assert.equal(eligible.length,1,"eligible CTWA lead appears in candidate queue");
+    await client.query(`
+      INSERT INTO follow_up_ai_decisions
+        (contact_id,trigger_message_id,follow_up_step,action,reason)
+      VALUES (1,11,1,'skip','sequence_stop: Customer will contact us later')
+    `);
+    assert.equal((await list()).length,0,
+      "terminal conversation stop blocks even verified 48h/66h templates");
+    await client.query(`
+      UPDATE follow_up_ai_decisions
+      SET reason='step_skip: Initial introduction was already covered'
+      WHERE contact_id=1 AND trigger_message_id=11
+    `);
+    assert.equal((await list()).length,1,
+      "a step-only skip must not prevent eligible approved templates");
+    await client.query("DELETE FROM follow_up_ai_decisions WHERE contact_id=1");
+
     await client.query(`INSERT INTO messages
       (id,contact_id,role,content,created_at,sent_by_username,whatsapp_message_id)
       VALUES (15,1,'assistant','automated follow-up',now()-interval '8 hours',

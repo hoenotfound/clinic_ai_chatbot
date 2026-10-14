@@ -7,7 +7,7 @@ const { pool } = require("../src/db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../src/db/conversationLock");
 const followUpRepo = require("../src/db/followUpRepo");
 
-test("AI generation lease respects durable sequence cancellation decisions", () => {
+test("AI generation lease advances ordinary skips but honors terminal decisions", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "..", "src/db/followUpAiLeaseRepo.js"),
     "utf8"
@@ -15,7 +15,9 @@ test("AI generation lease respects durable sequence cancellation decisions", () 
 
   assert.match(source, /follow_up_ai_decisions decision/);
   assert.match(source, /decision\.trigger_message_id = anchor\.id/);
-  assert.match(source, /decision\.action IN \('skip', 'human_review'\)/);
+  assert.match(source, /terminalFollowUpDecisionSql\("decision"\)/);
+  assert.match(source, /continuableFollowUpSkipSql\("d"\)/);
+  assert.match(source, /decision\.follow_up_step = \$3 - 1/);
 });
 
 test("automated follow-up inserts take the conversation scoring lock and re-check staff attention", async (t) => {

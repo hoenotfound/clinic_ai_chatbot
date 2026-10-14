@@ -1,4 +1,4 @@
-const VALID_FOLLOW_UP_ACTIONS = new Set(["send", "skip", "human_review"]);
+const VALID_FOLLOW_UP_ACTIONS = new Set(["send", "skip", "stop_sequence", "human_review"]);
 const MAX_FOLLOW_UP_MESSAGE_LENGTH = 1000;
 const MAX_FOLLOW_UP_REASON_LENGTH = 400;
 const MAX_FOLLOW_UP_TOPIC_LENGTH = 200;
@@ -80,7 +80,7 @@ function parseFollowUpAiResult(raw) {
     }
   }
 
-  if ((action === "skip" || action === "human_review") && !reason) {
+  if ((action === "skip" || action === "stop_sequence" || action === "human_review") && !reason) {
     throw invalidResponse(`AI follow-up ${action} action requires an internal reason.`);
   }
 

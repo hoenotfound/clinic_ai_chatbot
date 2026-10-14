@@ -69,7 +69,7 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         channel TEXT
       );
       CREATE TABLE follow_up_ai_decisions (
-        contact_id INTEGER, trigger_message_id INTEGER, action TEXT
+        contact_id INTEGER, trigger_message_id INTEGER, action TEXT, reason TEXT
       );
     `);
 
