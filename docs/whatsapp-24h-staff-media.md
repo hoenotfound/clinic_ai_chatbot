@@ -15,7 +15,7 @@ videos from follow-ups, consent prompts, scheduled sends, templates, and
 conversations without a recent provider-authored customer message. These
 retain the original Strict RM0 CTWA/FEP authorization.
 
-Migration 071 adds `send_kind` to the existing durable one-shot exception
+Migration 072 adds `send_kind` to the existing durable one-shot exception
 records; pre-existing rows default to `text`. Staff media is recorded as
 `staff_media` and retains the same provider WAMID, billing categorization,
 duplicate suppression and ambiguous-send protection. Only definitely
