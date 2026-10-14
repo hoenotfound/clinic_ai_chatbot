@@ -174,6 +174,7 @@ test("legacy URL-only image forward persists inferred MIME and saved target id",
     rejectedErrorFor: () => "rejected",
     persistSendOutcome: async message => ({ ...message, delivery_status: "pending" }),
     markLeadContacted: async () => {},
+    reconcileAcceptedStaffReplyAttention: async () => {},
     contactsRepo: { setDeliveryAttention: async () => {} },
     publicDeliveryError: error => error,
   };
