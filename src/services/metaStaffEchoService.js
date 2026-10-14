@@ -146,6 +146,17 @@ async function finalizeStaffEcho(persisted) {
     reason: "message",
   });
 
+  // The provider-authenticated staff echo is a real accepted reply. Reconcile
+  // only a delivery-only or routine staff-waiting attention reason, using the
+  // same latest-inbound and failed-media guards as the Inbox send route.
+  // This is idempotent for webhook replays; pending clinical and booking
+  // reviews cannot be dismissed by an unrelated staff message.
+  try {
+    await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(persisted.contact.id);
+  } catch (attentionError) {
+    console.error("Could not reconcile staff-echo delivery attention:", attentionError);
+  }
+
   try {
     const actor = persisted.message.sent_by_username || "Meta";
     await pipelineRepo.ensureLeadForContact(
