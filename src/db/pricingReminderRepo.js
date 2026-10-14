@@ -1,4 +1,5 @@
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const MINUTES_AFTER_TESTIMONIAL = 5;
@@ -151,7 +152,7 @@ WITH eligible AS (
    AND NOT EXISTS (
      SELECT 1 FROM follow_up_ai_decisions d
      WHERE d.contact_id=c.id AND d.trigger_message_id=anchor.id
-       AND d.action IN ('skip','human_review')
+       AND ${terminalFollowUpDecisionSql("d")}
    )
 )
 SELECT * FROM eligible
@@ -243,7 +244,7 @@ async function claim({ candidate, offer, activatedAt, triggerMode }) {
           = COALESCE($11::text,'')
        AND NOT EXISTS (SELECT 1 FROM follow_up_ai_decisions d
          WHERE d.contact_id=$1 AND d.trigger_message_id=$2
-           AND d.action IN ('skip','human_review'))
+           AND ${terminalFollowUpDecisionSql("d")})
        AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.contact_id=$1
          AND m.role='assistant'
          AND m.delivery_status IS DISTINCT FROM 'cancelled'
@@ -308,7 +309,7 @@ async function isClaimStillEligible({
          AND NOT EXISTS(SELECT 1 FROM pricing_reminder_decisions d
            WHERE d.anchor_id=$3)
          AND NOT EXISTS(SELECT 1 FROM follow_up_ai_decisions d
-           WHERE d.contact_id=$2 AND d.trigger_message_id=$3 AND d.action IN ('skip','human_review'))
+           WHERE d.contact_id=$2 AND d.trigger_message_id=$3 AND ${terminalFollowUpDecisionSql("d")})
          AND NOT EXISTS (
            SELECT 1 FROM (
              SELECT l.is_closed,l.appointment_status,s.stage_type,s.system_key
