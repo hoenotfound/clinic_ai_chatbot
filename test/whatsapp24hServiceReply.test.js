@@ -161,7 +161,7 @@ test("Postgres: 24h organic text allowed, old, unverified, follow-up and templat
     await db.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/070_whatsapp_24h_service_reply_exceptions.sql"),"utf8"));
     await db.query(fs.readFileSync(path.join(__dirname,
-      "../src/db/migrations/071_whatsapp_24h_staff_media.sql"),"utf8"));
+      "../src/db/migrations/072_whatsapp_24h_staff_media.sql"),"utf8"));
     const ctx=(id)=>({database:db,context:{messageKind:"first_reply_text",currentMessageId:id}});
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).allowed,true);
     assert.equal((await guard.reserve24hServiceReply("60121234567",ctx(10))).code,
