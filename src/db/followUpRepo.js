@@ -1,6 +1,6 @@
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
-const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
+const { terminalFollowUpDecisionSql, continuableFollowUpSkipSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -212,7 +212,7 @@ async function findCandidates({
          SELECT
            GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
          COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
-           WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'), 0)) AS max_step,
+           WHERE d.trigger_message_id = anchor.id AND ${continuableFollowUpSkipSql("d")}), 0)) AS max_step,
            BOOL_OR(
              follow_up.delivery_status IN ('failed', 'unknown')
              OR (
@@ -238,7 +238,7 @@ async function findCandidates({
          SELECT decision.created_at, decision.id
          FROM follow_up_ai_decisions decision
          WHERE decision.trigger_message_id = anchor.id
-           AND decision.action = 'skip'
+           AND ${continuableFollowUpSkipSql("decision")}
            AND decision.follow_up_step = progress.max_step
        ) sequence_event
        ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
@@ -421,7 +421,7 @@ async function getNextCandidateDueAt({
          SELECT
            GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
          COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
-           WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'), 0)) AS max_step,
+           WHERE d.trigger_message_id = anchor.id AND ${continuableFollowUpSkipSql("d")}), 0)) AS max_step,
            BOOL_OR(
              follow_up.delivery_status IN ('failed', 'unknown')
              OR (
@@ -447,7 +447,7 @@ async function getNextCandidateDueAt({
          SELECT decision.created_at, decision.id
          FROM follow_up_ai_decisions decision
          WHERE decision.trigger_message_id = anchor.id
-           AND decision.action = 'skip'
+           AND ${continuableFollowUpSkipSql("decision")}
            AND decision.follow_up_step = progress.max_step
        ) sequence_event
        ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
@@ -653,7 +653,7 @@ async function saveIfStillEligible({
        SELECT
          GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
          COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
-           WHERE d.trigger_message_id = $2 AND d.action = 'skip'), 0)) AS max_step,
+           WHERE d.trigger_message_id = $2 AND ${continuableFollowUpSkipSql("d")}), 0)) AS max_step,
          BOOL_OR(
            follow_up.delivery_status IN ('failed', 'unknown')
            OR (
@@ -678,7 +678,7 @@ async function saveIfStillEligible({
          SELECT decision.created_at, decision.id
          FROM follow_up_ai_decisions decision
          WHERE decision.trigger_message_id = $2
-           AND decision.action = 'skip'
+           AND ${continuableFollowUpSkipSql("decision")}
            AND decision.follow_up_step = $5 - 1
        ) sequence_event
        ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
@@ -941,7 +941,7 @@ async function recordAiDecisionIfStillEligible({
        SELECT
          GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
          COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
-           WHERE d.trigger_message_id = $2 AND d.action = 'skip'), 0)) AS max_step,
+           WHERE d.trigger_message_id = $2 AND ${continuableFollowUpSkipSql("d")}), 0)) AS max_step,
          BOOL_OR(
            follow_up.delivery_status IN ('failed', 'unknown')
            OR (
@@ -966,7 +966,7 @@ async function recordAiDecisionIfStillEligible({
          SELECT decision.created_at, decision.id
          FROM follow_up_ai_decisions decision
          WHERE decision.trigger_message_id = $2
-           AND decision.action = 'skip'
+           AND ${continuableFollowUpSkipSql("decision")}
            AND decision.follow_up_step = $3 - 1
        ) sequence_event
        ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
