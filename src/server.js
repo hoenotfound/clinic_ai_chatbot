@@ -346,7 +346,8 @@ async function sendTrackedText(
         contact.id,
         sendResult.ambiguous
           ? `Delivery unconfirmed: ${errorText}`
-          : `Delivery failed: ${errorText}`
+          : `Delivery failed: ${errorText}`,
+        saved.id
       );
 
       // Do not extend the customer-delivery path for readiness telemetry.
@@ -1490,7 +1491,8 @@ async function processIncomingMessage(
             );
             await contactsRepo.setDeliveryAttention(
               contact.id,
-              `Delivery failed: ${publicDeliveryError(promoError)}`
+              `Delivery failed: ${publicDeliveryError(promoError)}`,
+              savedPromo.id
             );
             await auditResultMediaEarlyExit("promotion_delivery_failed");
             return { wasFirstMessage, keywordReason };
@@ -1713,7 +1715,8 @@ async function processIncomingMessage(
               );
               await contactsRepo.setDeliveryAttention(
                 contact.id,
-                `Delivery failed: ${publicDeliveryError(resultError)}`
+                `Delivery failed: ${publicDeliveryError(resultError)}`,
+                savedResult.id
               );
               return { wasFirstMessage, keywordReason };
             }
@@ -1748,7 +1751,8 @@ async function processIncomingMessage(
                 contact.id,
                 `Delivery failed: ${publicDeliveryError(
                   pendingResultError || pendingResultSend.error
-                )}`
+                )}`,
+                pendingResultMessage.id
               );
             }
             pendingResultMessage = null;

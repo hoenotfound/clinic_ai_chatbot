@@ -207,7 +207,7 @@ async function finishAttention(
   if (!prepared) return false;
 
   try {
-    await contacts.setDeliveryAttention(row.contact_id, attentionReason);
+    await contacts.setDeliveryAttention(row.contact_id, attentionReason, row.message_id);
   } catch (err) {
     console.error(
       `Failed to persist delivery attention for WhatsApp retry ${row.id}; deferring attention recovery:`,
@@ -248,7 +248,7 @@ async function recoverAttentionOnly(
     row.last_error || "Delivery failed and requires staff review."
   ).slice(0, 1000);
   try {
-    await contacts.setDeliveryAttention(row.contact_id, reason);
+    await contacts.setDeliveryAttention(row.contact_id, reason, row.message_id);
   } catch (err) {
     console.error(
       `Failed to recover delivery attention for WhatsApp retry ${row.id}:`,

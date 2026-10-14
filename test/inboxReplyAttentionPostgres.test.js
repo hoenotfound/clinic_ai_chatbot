@@ -27,6 +27,7 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
         updated_at timestamptz DEFAULT now(), created_at timestamptz DEFAULT now(),
         needs_attention boolean DEFAULT false, attention_reason text,
         delivery_attention_dismissed_at timestamptz,
+        delivery_attention_message_id integer,
         is_unread boolean DEFAULT false, needs_follow_up boolean DEFAULT false,
         whatsapp_opt_in_at timestamptz, whatsapp_opt_in_source text,
         whatsapp_opt_out_at timestamptz, whatsapp_opt_out_source text,

@@ -841,7 +841,8 @@ async function sendSocialImageCompanion(contact, contactId, parentMessageId, ima
   if (!imageResult?.success) {
     await contactsRepo.setDeliveryAttention(
       contactId,
-      `Delivery failed: ${imageError}`
+      `Delivery failed: ${imageError}`,
+      imageMessage.id
     );
   }
 }
@@ -979,7 +980,8 @@ async function sendSocialVideoCompanion(
   if (!videoResult?.success) {
     await contactsRepo.setDeliveryAttention(
       contactId,
-      `Delivery failed: ${videoError}`
+      `Delivery failed: ${videoError}`,
+      videoMessage.id
     );
   }
 }
@@ -1649,7 +1651,8 @@ async function sendCandidate(candidate) {
   if (!sendResult?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      `Delivery failed: ${deliveryError}`
+      `Delivery failed: ${deliveryError}`,
+      saved.id
     );
     return;
   }
@@ -1689,7 +1692,8 @@ async function recoverInterruptedFollowUps() {
     try {
       await contactsRepo.setDeliveryAttention(
         message.contact_id,
-        `Delivery unconfirmed: ${message.delivery_error}`
+        `Delivery unconfirmed: ${message.delivery_error}`,
+        message.id
       );
     } catch (err) {
       console.error(

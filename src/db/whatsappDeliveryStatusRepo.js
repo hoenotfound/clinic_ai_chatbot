@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { pool } = require("./db");
-const { acceptedDirectReplySql, failedMediaSql } = require("../utils/deliveryReplyAttentionSql");
+const { unresolvedFailedOutboundSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SUPPORTED_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
 
@@ -310,7 +310,9 @@ async function setDeliveryAttentionState(
 ) {
   const result = await query(
     `UPDATE contacts
-     SET needs_attention = true, attention_reason = $1, updated_at = now()
+     SET needs_attention = true, attention_reason = $1,
+         delivery_attention_message_id = $3::integer,
+         updated_at = now()
      WHERE id = $2
        AND (
          needs_attention = false
@@ -318,9 +320,16 @@ async function setDeliveryAttentionState(
          OR attention_reason LIKE 'Delivery failed:%'
          OR attention_reason LIKE 'Delivery unconfirmed:%'
        )
+       -- The same provider error text can describe two different failed
+       -- outbound messages. A matching reason alone is NOT a replay when
+       -- the failed message ID changed. Compare both parts of the task key.
        AND (
          needs_attention IS DISTINCT FROM true
          OR attention_reason IS DISTINCT FROM $1
+         OR (
+           $3::integer IS NOT NULL
+           AND delivery_attention_message_id IS DISTINCT FROM $3::integer
+         )
        )
        -- An out-of-order failed callback for an old *text* message must not
        -- reopen a conversation already answered with a newer accepted direct
@@ -333,24 +342,32 @@ async function setDeliveryAttentionState(
            SELECT 1 FROM messages failed
            WHERE failed.id = $3::integer
              AND failed.contact_id = contacts.id
-             AND failed.role = 'assistant'
              AND failed.delivery_status = 'failed'
-             -- Recovered callbacks for a message staff explicitly dismissed
-             -- must not recreate an old task or send another Telegram alert.
-             AND (
-               contacts.delivery_attention_dismissed_at IS NULL
-               OR failed.created_at > contacts.delivery_attention_dismissed_at
-             )
-             AND (
-               ${failedMediaSql("failed")}
-               OR NOT EXISTS (
-                 SELECT 1 FROM messages newer_reply
-                 WHERE newer_reply.contact_id = failed.contact_id
-                   AND ${acceptedDirectReplySql("newer_reply")}
-                   AND (newer_reply.created_at, newer_reply.id) >
-                       (failed.created_at, failed.id)
-               )
-             )
+             -- Use the same dismissal, customer-episode and accepted-reply
+             -- safeguards as Staff Assist. An out-of-order callback for
+             -- historical media may not resurrect a routine alert, but
+             -- explicitly open delivery warnings remain protected.
+             AND ${unresolvedFailedOutboundSql("failed", "contacts")}
+         )
+       )
+       -- Provider webhooks arrive out of order. Once another, newer failed
+       -- attempt owns the delivery warning, replaying an older callback
+       -- must not steal the task anchor or its human-readable reason.
+       AND (
+         $3::integer IS NULL
+         OR contacts.needs_attention IS DISTINCT FROM TRUE
+         OR NOT (
+           contacts.attention_reason LIKE 'Delivery failed:%'
+           OR contacts.attention_reason LIKE 'Delivery unconfirmed:%'
+         )
+         OR contacts.delivery_attention_message_id IS NULL
+         OR NOT EXISTS (
+           SELECT 1 FROM messages active_attempt
+           JOIN messages callback_attempt ON callback_attempt.id = $3::integer
+           WHERE active_attempt.id = contacts.delivery_attention_message_id
+             AND active_attempt.contact_id = contacts.id
+             AND (active_attempt.created_at, active_attempt.id) >
+                 (callback_attempt.created_at, callback_attempt.id)
          )
        )
      RETURNING id`,

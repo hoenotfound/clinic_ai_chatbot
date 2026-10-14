@@ -171,7 +171,7 @@ async function processScheduledMessage(item) {
 
   if (!sendResult.success) {
     await scheduledRepo.markFailed(item.id, errorText);
-    await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+    await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`, saved.id);
     publishScheduleChange(contact.id);
     return;
   }

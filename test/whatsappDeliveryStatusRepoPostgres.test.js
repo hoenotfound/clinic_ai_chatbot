@@ -34,6 +34,7 @@ test(
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,
           delivery_attention_dismissed_at TIMESTAMPTZ,
+        delivery_attention_message_id integer,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE TABLE messages (
@@ -339,6 +340,147 @@ test(
       `);
       assert.equal((await repo.setDeliveryAttentionState(
         46,'Delivery failed: new photo callback',query,1008)).id,46);
+
+      // A late media callback from a PREVIOUS customer turn is a historical
+      // failed attempt, not a new attention task. Contact #433 had this shape:
+      // failed image, newer inbound, and a later real staff reply.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES (47),(48),(49);
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES (1009,47,'assistant',now()-interval '1 hour','failed',
+                'https://example.invalid/old-photo.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES (1010,47,'user',now()-interval '30 minutes');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                             whatsapp_message_id)
+        VALUES (1011,47,'assistant',now()-interval '15 minutes','read',
+                'wamid.staff-old47');
+      `);
+      assert.equal(await repo.setDeliveryAttentionState(
+        47,'Delivery failed: obsolete historical image',query,1009),null,
+        "a replayed failure from an older episode cannot reopen new attention");
+      assert.equal((await client.query(
+        'SELECT needs_attention FROM contacts WHERE id=47'
+      )).rows[0].needs_attention,false);
+      assert.equal((await client.query(
+        'SELECT delivery_status FROM messages WHERE id=1009'
+      )).rows[0].delivery_status,'failed',
+        "old media failure audit remains unchanged");
+
+      // A deliberately still-open delivery warning is NOT dismissed by a
+      // newer customer message. Its callback remains eligible for recovery.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES (1012,48,'assistant',now()-interval '1 hour','failed',
+                'https://example.invalid/unresolved.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES (1013,48,'user',now()-interval '30 minutes');
+        UPDATE contacts SET needs_attention=true,
+          attention_reason='Delivery failed: explicitly under staff review'
+        WHERE id=48;
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        48,'Delivery failed: old media under review',query,1012)).id,48);
+
+      // If the attachment failed in the CURRENT episode, it must be
+      // surfaced regardless of a later successfully accepted staff text.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES (1014,49,'user',now()-interval '1 hour');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES (1015,49,'assistant',now()-interval '55 minutes','failed',
+                'https://example.invalid/new-photo.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                             whatsapp_message_id)
+        VALUES (1016,49,'assistant',now()-interval '50 minutes','read',
+                'wamid.staff-new49');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        49,'Delivery failed: current episode photo',query,1015)).id,49);
+
+      // A newer failed photo now owns the delivery attention, while an old
+      // failed image belongs to a previous customer turn. Webhooks can
+      // arrive out of order: the older callback must neither relink the
+      // visible warning nor overwrite its more recent reason.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES(50);
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES(1020,50,'assistant',now()-interval '2 hours','failed',
+               'https://example.invalid/old.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES(1021,50,'user',now()-interval '1 hour');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES(1022,50,'assistant',now()-interval '10 minutes','failed',
+               'https://example.invalid/new.jpg');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        50,'Delivery failed: current photo',query,1022)).id,50);
+      let anchored = (await client.query(
+        'SELECT delivery_attention_message_id,attention_reason FROM contacts WHERE id=50'
+      )).rows[0];
+      assert.equal(anchored.delivery_attention_message_id,1022);
+      assert.equal(anchored.attention_reason,'Delivery failed: current photo');
+      assert.equal(await repo.setDeliveryAttentionState(
+        50,'Delivery failed: stale old photo callback',query,1020),null);
+      anchored=(await client.query(
+        'SELECT delivery_attention_message_id,attention_reason FROM contacts WHERE id=50'
+      )).rows[0];
+      assert.equal(anchored.delivery_attention_message_id,1022,
+        "older out-of-order callback must not steal the active warning");
+      assert.equal(anchored.attention_reason,'Delivery failed: current photo');
+      // Independent of episode retirement, the latest callback must win
+      // even when both failed attempts belong to the same customer turn.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES(1023,50,'assistant',now()-interval '5 minutes','failed',
+               'https://example.invalid/newer.jpg');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        50,'Delivery failed: newer photo',query,1023)).id,50);
+      assert.equal(await repo.setDeliveryAttentionState(
+        50,'Delivery failed: older current-episode photo',query,1022),null);
+      anchored=(await client.query(
+        'SELECT delivery_attention_message_id,attention_reason FROM contacts WHERE id=50'
+      )).rows[0];
+      assert.equal(anchored.delivery_attention_message_id,1023);
+      assert.equal(anchored.attention_reason,'Delivery failed: newer photo');
+
+      // Two different failed messages can have the IDENTICAL Meta error
+      // text. The second is a new task even when the reason string matches.
+      // A replay of the same message+reason, or an older callback after the
+      // newer warning is active, must still be a no-op.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES (51);
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES
+          (1030,51,'assistant',now()-interval '20 minutes','failed',
+           'https://example.invalid/same-error-a.jpg'),
+          (1031,51,'assistant',now()-interval '10 minutes','failed',
+           'https://example.invalid/same-error-b.jpg');
+      `);
+      const identicalReason = 'Delivery failed: WhatsApp reported delivery as failed.';
+      assert.equal((await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1030)).id,51);
+      assert.equal((await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1031)).id,51,
+        "the same error text on a newer message must update the task anchor");
+      let sameErrorTask = (await client.query(
+        "SELECT needs_attention,attention_reason,delivery_attention_message_id FROM contacts WHERE id=51"
+      )).rows[0];
+      assert.equal(sameErrorTask.needs_attention,true);
+      assert.equal(sameErrorTask.attention_reason,identicalReason);
+      assert.equal(sameErrorTask.delivery_attention_message_id,1031);
+      assert.equal(await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1031),null,
+        "the exact same message+reason callback is idempotent");
+      assert.equal(await repo.setDeliveryAttentionState(
+        51,identicalReason,query,1030),null,
+        "a late older callback cannot steal the anchor when reasons match");
+      sameErrorTask = (await client.query(
+        "SELECT attention_reason,delivery_attention_message_id FROM contacts WHERE id=51"
+      )).rows[0];
+      assert.equal(sameErrorTask.delivery_attention_message_id,1031);
+      assert.equal(sameErrorTask.attention_reason,identicalReason);
 
       // A completed provider failure can lose its matching message later.
       // Flag it once after a grace period, but exclude known message/evidence
