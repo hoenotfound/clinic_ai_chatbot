@@ -34,6 +34,7 @@ test(
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,
           delivery_attention_dismissed_at TIMESTAMPTZ,
+        delivery_attention_message_id integer,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE TABLE messages (
