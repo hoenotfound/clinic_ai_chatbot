@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const { pool } = require("./db");
-const { acceptedDirectReplySql, failedMediaSql } = require("../utils/deliveryReplyAttentionSql");
+const { unresolvedFailedOutboundSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SUPPORTED_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
 
@@ -333,24 +333,12 @@ async function setDeliveryAttentionState(
            SELECT 1 FROM messages failed
            WHERE failed.id = $3::integer
              AND failed.contact_id = contacts.id
-             AND failed.role = 'assistant'
              AND failed.delivery_status = 'failed'
-             -- Recovered callbacks for a message staff explicitly dismissed
-             -- must not recreate an old task or send another Telegram alert.
-             AND (
-               contacts.delivery_attention_dismissed_at IS NULL
-               OR failed.created_at > contacts.delivery_attention_dismissed_at
-             )
-             AND (
-               ${failedMediaSql("failed")}
-               OR NOT EXISTS (
-                 SELECT 1 FROM messages newer_reply
-                 WHERE newer_reply.contact_id = failed.contact_id
-                   AND ${acceptedDirectReplySql("newer_reply")}
-                   AND (newer_reply.created_at, newer_reply.id) >
-                       (failed.created_at, failed.id)
-               )
-             )
+             -- Use the same dismissal, customer-episode and accepted-reply
+             -- safeguards as Staff Assist. An out-of-order callback for
+             -- historical media may not resurrect a routine alert, but
+             -- explicitly open delivery warnings remain protected.
+             AND ${unresolvedFailedOutboundSql("failed", "contacts")}
          )
        )
      RETURNING id`,
