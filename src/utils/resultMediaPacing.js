@@ -24,17 +24,24 @@ function planPromotionMediaPacing(packages = []) {
   };
 }
 
-function planResultMediaPacing({ customerText, promotionCount = 0, items = [], allowRelatedPriceProof = false } = {}) {
+function planResultMediaPacing({
+  customerText, promotionCount = 0, items = [], allowRelatedPriceProof = false,
+  completedPriceClarification = false,
+} = {}) {
   const promotions = Number.isSafeInteger(promotionCount)
     ? Math.max(0, promotionCount)
     : 0;
   const results = Array.isArray(items) ? items : [];
   if (!results.length) return { items: [], reason: "no_eligible_result_media" };
 
-  if (hasCustomerPriceEnquiry(customerText) &&
+  // When a customer answers our "Which treatment price?" question with just
+  // "骨盆", the present message alone no longer looks like a price question.
+  // Keep the same price-first pacing as their original enquiry, rather than
+  // adding a Before & After image after both promotional price graphics.
+  if ((hasCustomerPriceEnquiry(customerText) || completedPriceClarification === true) &&
       !EXPLICIT_TREATMENT_INTEREST.test(String(customerText || "")) &&
       !EXPLICIT_RESULT_IMAGE_REQUEST.test(String(customerText || "")) &&
-      !(allowRelatedPriceProof === true && promotions === 0)) {
+      !(allowRelatedPriceProof === true && promotions === 0 && completedPriceClarification !== true)) {
     return { items: [], reason: "promotion_price_priority" };
   }
 

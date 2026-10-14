@@ -129,6 +129,277 @@ test("assessment-first prompt hides package prices unless the current customer a
   }
 });
 
+test("free introductory assessment and experience are a verified clinic-specific fee answer", async () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+  const { assessmentFirstInvitation } = require("../src/utils/initialOfferReplyGuard");
+  const original = config.automatedFollowUp;
+  config.automatedFollowUp = {
+    ...original,
+    assessmentFirstPricingEnabled: true,
+    complimentaryAssessmentExperienceEnabled: true,
+  };
+  try {
+    const questions = [
+      ["体态评估和体验这个是否收费？请问多少？", "zh", /1对1体态评估 \+ 体验是免费的/u],
+      ["Is the 1-on-1 posture assessment + experience free?", "en", /assessment \+ introductory experience is free/iu],
+      ["Penilaian postur + sesi pengalaman percuma ke?", "ms", /adalah percuma/iu],
+    ];
+    for (const [customerText, language, expected] of questions) {
+      assert.equal(isComplimentaryAssessmentFeeQuestion(customerText, true), true);
+      const result = ensureVerifiedPriceReply({
+        customerText, reply: "Our centre will confirm the fee",
+        treatment: null, language, promotions: [], services: [],
+      });
+      assert.equal(result.restored, true);
+      assert.match(result.reply, expected);
+      assert.doesNotMatch(result.reply, /RM288|RM388|RM488|RM688/u);
+      assert.equal(await resolvePricePromotionForReply({
+        customerText, treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
+        promotions: [{ name: "Pelvis", linkedService: "骨盆调理",
+          sendOnPriceQuery: true, packages: [
+            { name: "Package A", imageUrl: "https://example.test/a.jpg", caption: "现在只需 RM388" }
+          ] }],
+        textSendSucceeded: true, contactId: 1,
+        wasPromoRecentlySent: async () => false,
+        hasUnconfirmedMediaDelivery: async () => false,
+      }), null);
+    }
+    const invite = assessmentFirstInvitation({
+      treatment: "骨盆调理", customerText: "骨盆调理", language: "zh",
+      services: [{ name: "骨盆调理" }],
+    });
+    assert.match(invite, /免费.*1对1的体态评估 \+ 体验/u);
+    assert.match(invite, /RM100/u);
+    assert.doesNotMatch(invite, /RM288|RM388/u);
+  } finally {
+    config.automatedFollowUp = original;
+  }
+});
+
+test("short introductory-experience fee question carries only immediate customer-owned free-offer context", async () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+  const original = config.automatedFollowUp;
+  config.automatedFollowUp = {
+    ...original, assessmentFirstPricingEnabled: true,
+    complimentaryAssessmentExperienceEnabled: true,
+  };
+  const intro = { role: "user", content: "我想了解1对1体态评估 + 体验" };
+  const bot = { role: "assistant", content: "我们中医师会先帮你安排1对1的体态评估+体验 😊" };
+  const short = { role: "user", content: "体验收费吗？" };
+  const safeHistory = [intro, bot, short];
+  try {
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true), false,
+      "a service-free fee question cannot be treated as free without conversation context");
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true, safeHistory), true);
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true, safeHistory.slice(0, 2)), true,
+      "callers that exclude the current inbound message are supported");
+    const answer = ensureVerifiedPriceReply({
+      customerText: short.content, reply: "The price needs confirmation",
+      treatment: "骨盆调理", language: "zh", conversationHistory: safeHistory,
+    });
+    assert.equal(answer.restored, true);
+    assert.match(answer.reply, /1对1体态评估 \+ 体验是免费的/u);
+    assert.doesNotMatch(answer.reply, /RM288|RM388|确认价格/u);
+
+    assert.equal(await resolvePricePromotionForReply({
+      customerText: short.content, treatment: "骨盆调理",
+      verifiedServiceFromText: "骨盆调理", conversationHistory: safeHistory,
+      priceQuery: true, textSendSucceeded: true, contactId: 33,
+      promotions: [{ name: "骨盆调理", linkedService: "骨盆调理", sendOnPriceQuery: true,
+        packages: [{ name: "Package B", imageUrl: "https://example.test/b.jpg",
+          caption: "现在只需 RM288" }] }],
+      wasPromoRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+    }), null, "the short free-fee question must not authorize treatment promotion graphics");
+
+    const pelvicInterest = { role: "user", content: "我对骨盆调理有兴趣" };
+    const botInvitation = { role: "assistant", content:
+      "可以先让中医师做免费的1对1体态评估 + 体验 😊 你平日还是周末方便？" };
+    assert.equal(isComplimentaryAssessmentFeeQuestion(
+      short.content, true, [pelvicInterest, botInvitation, short]
+    ), true, "a bot's immediate verified free intro invitation also establishes context");
+    assert.equal(isComplimentaryAssessmentFeeQuestion(
+      short.content, true, [pelvicInterest, botInvitation]
+    ), true);
+    assert.equal(isComplimentaryAssessmentFeeQuestion(
+      short.content, true, [{ role: "user", content: "3D First Trial 体验价钱" }, botInvitation, short]
+    ), false, "a customer's paid First Trial topic must not become a free offer");
+
+    const notFree = [
+      [intro, { role: "assistant", content: "[Verified STAFF message] 体验细节" }, short],
+      [intro, { role: "assistant", content: "3D First Trial RM488" }, short],
+      [{ role: "user", content: "3D First Trial 小颜术体验" }, bot, short],
+      [intro, bot, { role: "user", content: "想了解9D体验" }, bot, short],
+      [intro, bot, { role: "user", content: "换个话题" }, short],
+      [{ role: "assistant", content: "1对1体态评估 + 体验" }, short],
+    ];
+    for (const history of notFree) {
+      assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, true, history), false,
+        JSON.stringify(history));
+    }
+    assert.equal(isComplimentaryAssessmentFeeQuestion(short.content, false, safeHistory), false);
+    assert.equal(isComplimentaryAssessmentFeeQuestion("3D First Trial多少钱？", true, safeHistory), false);
+    assert.equal(isComplimentaryAssessmentFeeQuestion("体态评估+3D正式疗程多少钱？", true, safeHistory), false);
+    assert.equal(isComplimentaryAssessmentFeeQuestion("可以预约免费体验下周五吗？", true, safeHistory), false);
+  } finally {
+    config.automatedFollowUp = original;
+  }
+});
+
+test("natural Chinese and English follow-up questions resolve only the verified introductory free experience", async () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+  const before = config.automatedFollowUp;
+  config.automatedFollowUp = {
+    ...before, assessmentFirstPricingEnabled: true,
+    complimentaryAssessmentExperienceEnabled: true,
+  };
+  const customer = { role: "user", content: "我对骨盆调理有兴趣" };
+  const assistant = { role: "assistant", content: "中医师会先帮你做免费的1对1体态评估 + 体验 😊" };
+  const feeQuestions = [
+    ["那体验收费吗？", "zh"],
+    ["体验是免费的吗？", "zh"],
+    ["那这个体验是不是免费的？", "zh"],
+    ["Is the experience free?", "en"],
+    ["Does the experience cost money?", "en"],
+    ["Is this introductory experience free?", "en"],
+    ["Will the experience cost money?", "en"],
+    ["Experience free?", "en"],
+    ["Sesi pengalaman percuma ke?", "ms"],
+  ];
+  try {
+    for (const [question, language] of feeQuestions) {
+      const history = [customer, assistant, { role: "user", content: question }];
+      assert.equal(isComplimentaryAssessmentFeeQuestion(question, true), false,
+        "Do not assume an unqualified experience is free: " + question);
+      assert.equal(isComplimentaryAssessmentFeeQuestion(question, true, history), true, question);
+      assert.equal(isComplimentaryAssessmentFeeQuestion(question, true, history.slice(0, -1)), true,
+        "History may omit the current turn: " + question);
+      const reply = ensureVerifiedPriceReply({
+        customerText: question, conversationHistory: history,
+        reply: "The centre needs to confirm this price",
+        treatment: null, language, services: [], promotions: [],
+      });
+      assert.equal(reply.restored, true, question);
+      assert.match(reply.reply, language === "zh" ? /免费/u :
+        language === "ms" ? /percuma/iu : /\bfree\b/iu, question);
+      assert.doesNotMatch(reply.reply, /RM288|RM388|RM488/u);
+
+      const graphic = await resolvePricePromotionForReply({
+        customerText: question, conversationHistory: history,
+        treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
+        priceQuery: true, textSendSucceeded: true, contactId: 338,
+        promotions: [{
+          name: "骨盆调理套餐", linkedService: "骨盆调理", sendOnPriceQuery: true,
+          packages: [{ name: "Package B", imageUrl: "https://example.test/b.jpg",
+            caption: "现在只需 RM288" }],
+        }],
+        wasPromoRecentlySent: async () => false,
+        hasUnconfirmedMediaDelivery: async () => false,
+      });
+      assert.equal(graphic, null, "Free experience fee must not send paid promotion graphics");
+    }
+    const disallowed = [
+      "Can I book the free experience next Friday?",
+      "可以预约免费体验下周五吗？",
+      "3D First Trial 多少钱？",
+      "Is the 3D First Trial experience free?",
+    ];
+    for (const q of disallowed) assert.equal(
+      isComplimentaryAssessmentFeeQuestion(q, true, [customer, assistant, { role: "user", content: q }]),
+      false, "Should not intercept booking or paid treatment request: " + q
+    );
+    for (const q of feeQuestions.map(([text]) => text)) {
+      assert.equal(isComplimentaryAssessmentFeeQuestion(q, false,
+        [customer, assistant, { role: "user", content: q }]), false,
+      "Non-opted-in clinics must never assume free service");
+      assert.equal(isComplimentaryAssessmentFeeQuestion(q, true,
+        [customer, { role: "assistant", content: "[Verified STAFF message] " + assistant.content },
+          { role: "user", content: q }]), false, "Staff takeover must not enable free policy");
+      assert.equal(isComplimentaryAssessmentFeeQuestion(q, true,
+        [{ role: "user", content: "3D First Trial多少钱" }, assistant,
+          { role: "user", content: q }]), false, "Paid treatment context is not a free intro");
+    }
+  } finally {
+    config.automatedFollowUp = before;
+  }
+});
+
+test("pelvic invitation uses an actual line break, not a visible backslash-n", () => {
+  const { assessmentFirstInvitation } = require("../src/utils/initialOfferReplyGuard");
+  const before = config.automatedFollowUp;
+  config.automatedFollowUp = { ...before, complimentaryAssessmentExperienceEnabled: true };
+  try {
+    const reply = assessmentFirstInvitation({
+      treatment: "骨盆调理", customerText: "我对骨盆有兴趣", language: "zh",
+      services: [{ name: "骨盆调理" }],
+    });
+    assert.match(reply, /😊\n到店完成评估 \+ 体验/u);
+    assert.equal(reply.includes("\\n"), false);
+    assert.doesNotMatch(reply, /RM288|RM388/u);
+  } finally {
+    config.automatedFollowUp = before;
+  }
+});
+
+test("runtime resolves the verified free fee without weakening clinical or staff handoff", () => {
+  const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const start = server.indexOf("const verifiedFreeIntroFee =");
+  const finish = server.indexOf("if (!flagged && isUnanswerableCustomerReply", start);
+  assert.ok(start > 0 && finish > start);
+  const gate = server.slice(start, finish);
+  assert.match(gate, /complimentaryAssessmentExperienceEnabled === true/);
+  assert.match(gate, /!isExplicitStaffRequest\(text\)/);
+  assert.match(gate, /!hasClinicalMediaRisk\(text\)/);
+  assert.match(gate, /reviewRequired && reviewType === "information"/);
+  assert.match(gate, /complimentaryAssessmentFeeReply\(mediaLanguage\)/);
+  assert.doesNotMatch(gate, /reviewType === "clinical"/);
+});
+
+test("free introductory experience cannot be confused with a paid first trial or package", () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  for (const message of [
+    "3D first trial多少钱？",
+    "9D 体验多少钱？",
+    "骨盆调理 Package B 多少钱？",
+    "完整疗程多少钱？",
+    "3D 体态评估和正式疗程多少钱？",
+    "Package A assessment + experience price?",
+  ]) {
+    assert.equal(isComplimentaryAssessmentFeeQuestion(message, true), false, message);
+  }
+  assert.equal(isComplimentaryAssessmentFeeQuestion("体态评估和体验收费吗？", false), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("我想了解体态评估和体验", true), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("Can I book the free posture assessment + experience next Friday?", true), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("可以预约免费的体态评估和体验吗？", true), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("Is the 1-on-1 posture assessment + experience free?", true), true);
+});
+
+test("assessment-first prompt names the free experience only for opted-in clinic config", () => {
+  const saved = config.automatedFollowUp;
+  try {
+    config.automatedFollowUp = {
+      ...saved, assessmentFirstPricingEnabled: true,
+      complimentaryAssessmentExperienceEnabled: true,
+    };
+    const enabled = buildSystemPrompt({ channel: "whatsapp" });
+    assert.match(enabled, /complete introductory 1对1的体态评估 \+ 体验 is FREE/u);
+    const { buildFollowUpPrompt } = require("../src/utils/systemPrompt");
+    const followUp = buildFollowUpPrompt({ followUpContext: { stepNumber: 3, treatmentInterest: "骨盆调理" } });
+    assert.match(followUp, /introductory 1对1体态评估 \+ 体验 IS free/u);
+    assert.match(enabled, /Do not send package graphics unless current-price request was explicit/u);
+    config.automatedFollowUp = { ...saved, assessmentFirstPricingEnabled: true,
+      complimentaryAssessmentExperienceEnabled: false };
+    const disabled = buildSystemPrompt({ channel: "whatsapp" });
+    assert.doesNotMatch(disabled, /complete introductory 1对1的体态评估 \+ 体验 is FREE/u);
+  } finally {
+    config.automatedFollowUp = saved;
+  }
+});
+
+
 test("runtime has independent fail-closed checks for scheduled pricing and static promotion paths",()=>{
   const root=path.resolve(__dirname,"../src");
   const pricing=fs.readFileSync(path.join(root,"services/pricingReminderService.js"),"utf8");
@@ -147,7 +418,8 @@ test("saving Follow-up Tools cannot erase assessment-first or re-enable automati
   const { prepareConfigUpdatePayload } = require("../src/routes/config");
   const step = {
     enabled:true,triggerMode:"all",activatedAt:"2026-10-10T00:00:00Z",
-    assessmentFirstPricingEnabled:true,delayMinutes:120,message:"Follow up safely",
+    assessmentFirstPricingEnabled:true,complimentaryAssessmentExperienceEnabled:true,
+    delayMinutes:120,message:"Follow up safely",
     translations:{en:"Follow up safely",ms:"Follow up safely",zh:"Follow up safely"},
     imageUrl:"",videoKey:"",serviceOverrides:[],additionalSteps:[],
     quietHours:{enabled:true,start:"00:00",end:"07:00"},
@@ -160,11 +432,16 @@ test("saving Follow-up Tools cannot erase assessment-first or re-enable automati
   },current);
   assert.equal(saved.ok,true,JSON.stringify(saved));
   assert.equal(saved.updates.automatedFollowUp.assessmentFirstPricingEnabled,true);
+  assert.equal(saved.updates.automatedFollowUp.complimentaryAssessmentExperienceEnabled,true);
   assert.equal(saved.updates.automatedFollowUp.pricingReminder.enabled,false);
   const malicious=prepareConfigUpdatePayload({
     automatedFollowUp:{...step,assessmentFirstPricingEnabled:false},
   },current);
   assert.equal(malicious.ok,false);
+  const clinicFactTamper=prepareConfigUpdatePayload({
+    automatedFollowUp:{...step,complimentaryAssessmentExperienceEnabled:false},
+  },current);
+  assert.equal(clinicFactTamper.ok,false,"Follow-up Tools cannot silently revoke clinic-confirmed free assessment + experience");
 
   const legacy=prepareConfigUpdatePayload({
     automatedFollowUp:{...step,assessmentFirstPricingEnabled:false},

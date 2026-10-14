@@ -4,6 +4,7 @@ const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedSer
 const { verifiedPricesForService, requestedPricePackages } = require("./verifiedPriceReply");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
+const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
@@ -68,6 +69,13 @@ async function resolvePricePromotionForReply({
   hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
 }) {
+  // Questions about the separately verified FREE introductory experience
+  // are not a request for paid treatment price graphics.
+  if (isComplimentaryAssessmentFeeQuestion(
+    customerText,
+    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+    conversationHistory
+  )) return null;
   const clarificationService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
     ? resolveClarifiedPriceService({
         customerText, conversationHistory, services, serviceAliases,
@@ -119,11 +127,13 @@ async function resolvePricePromotionForReply({
     // same independently verified active package options. Any conflicting,
     // missing or ambiguous amount suppresses ALL optional price graphics.
     const verified = verifiedPricesForService(
-      treatment, promotions, customerText, conversationHistory
+      treatment, promotions, customerText, conversationHistory,
+      { clarifiedPriceService: clarificationService }
     );
     if (!verified?.length) return null;
     const requested = requestedPricePackages(
-      genericBundle.packages, customerText, conversationHistory
+      genericBundle.packages, customerText, conversationHistory,
+      { clarifiedPriceService: clarificationService, treatment }
     );
     const approved = new Set(verified.map((option) => option.name));
     if (approved.size !== requested.length ||

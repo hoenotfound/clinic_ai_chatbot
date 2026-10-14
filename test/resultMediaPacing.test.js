@@ -19,6 +19,33 @@ test("price-only enquiry prioritizes two pricing graphics over optional proof", 
   }
 });
 
+test("a verified service-only answer to our price clarification does not add result photos", () => {
+  assert.deepEqual(planResultMediaPacing({
+    customerText: "骨盆", completedPriceClarification: true,
+    promotionCount: 2, items: images,
+  }), { items: [], reason: "promotion_price_priority" });
+  assert.deepEqual(planResultMediaPacing({
+    customerText: "Pelvic", completedPriceClarification: true,
+    promotionCount: 2, items: images,
+  }), { items: [], reason: "promotion_price_priority" });
+  assert.deepEqual(planResultMediaPacing({
+    customerText: "骨盆", completedPriceClarification: true,
+    promotionCount: 0, allowRelatedPriceProof: true, items: images,
+  }), { items: [], reason: "promotion_price_priority" });
+
+  // Without verified prior price context, treatment enquiry images are
+  // independently eligible as before.
+  assert.deepEqual(planResultMediaPacing({
+    customerText: "骨盆", completedPriceClarification: false,
+    promotionCount: 0, items: images,
+  }).items, images);
+  // An actual new results request remains independently eligible.
+  assert.deepEqual(planResultMediaPacing({
+    customerText: "骨盆，我还想看效果图", completedPriceClarification: true,
+    promotionCount: 2, items: images,
+  }).items, images.slice(0, 1));
+});
+
 test("independent treatment interest permits one proof after two promotions", () => {
   for (const customerText of [combinedEnquiry, "我想了解骨盆调理疗程，也想看看优惠", "I'm interested in the pelvic treatment and want to know the price"]) {
     const p = planResultMediaPacing({ customerText, promotionCount: 2, items: images });

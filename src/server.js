@@ -41,7 +41,8 @@ const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
-const { categorizeAiReview } = require("./utils/aiReviewPolicy");
+const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
+const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {
   resolveResultMediaForReply,
@@ -1060,6 +1061,24 @@ async function processIncomingMessage(
         }
       }
 
+      // The clinic has already verified this administrative fee: the
+      // introductory posture assessment + experience is free. Do not escalate
+      // a model's stale "centre needs to confirm" answer to staff. Preserve
+      // all clinical/safety and explicit human-request handoffs.
+      const verifiedFreeIntroFee = isComplimentaryAssessmentFeeQuestion(
+        text,
+        clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+        history
+      ) && !urgentSafety && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !hasClinicalMediaRisk(text);
+      if (verifiedFreeIntroFee &&
+          (!flagged || (reviewRequired && reviewType === "information"))) {
+        aiReply = complimentaryAssessmentFeeReply(mediaLanguage);
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+      }
       // Do not permit a model to smuggle an inability-to-answer apology
       // through a nominally normal outcome.
       if (!flagged && isUnanswerableCustomerReply(aiReply, text)) {
@@ -1623,6 +1642,7 @@ async function processIncomingMessage(
             promotionCount: automaticPromoMediaSent,
             items: resultBundle.items,
             allowRelatedPriceProof: resultBundle.allowRelatedPriceProof === true,
+            completedPriceClarification: Boolean(clarifiedPriceService),
           });
           auditSelected = paced.items.length;
           auditReason = paced.reason;

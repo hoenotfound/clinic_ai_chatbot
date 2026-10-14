@@ -411,6 +411,8 @@ function isAutomatedFollowUpConfig(value) {
     !value.additionalSteps.every(isFollowUpStep) ||
     (value.assessmentFirstPricingEnabled !== undefined &&
       typeof value.assessmentFirstPricingEnabled !== "boolean") ||
+    (value.complimentaryAssessmentExperienceEnabled !== undefined &&
+      typeof value.complimentaryAssessmentExperienceEnabled !== "boolean") ||
     (value.videoDuplicateProtectionEnabled !== undefined &&
       typeof value.videoDuplicateProtectionEnabled !== "boolean") ||
     (value.videoAiCaptionsEnabled !== undefined &&
@@ -639,6 +641,11 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       typeof requested.assessmentFirstPricingEnabled !== "boolean") return null;
   if (requested.assessmentFirstPricingEnabled !== undefined &&
       requested.assessmentFirstPricingEnabled !== (current?.assessmentFirstPricingEnabled === true)) return null;
+  // Clinic-owned service fact, not a Tools toggle. Do not permit form saves
+  // to reset or override the approved complimentary introductory experience.
+  if (requested.complimentaryAssessmentExperienceEnabled !== undefined &&
+      requested.complimentaryAssessmentExperienceEnabled !==
+        (current?.complimentaryAssessmentExperienceEnabled === true)) return null;
   const assessmentFirstPricingEnabled = current?.assessmentFirstPricingEnabled === true;
   const triggerMode = requested.triggerMode;
   const quietHours = normalizeQuietHours(requested.quietHours);
@@ -829,6 +836,8 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   return {
     enabled,
     assessmentFirstPricingEnabled,
+    complimentaryAssessmentExperienceEnabled:
+      current?.complimentaryAssessmentExperienceEnabled === true,
     // Internal per-clinic safety setting; ordinary Tools saves preserve it.
     videoDuplicateProtectionEnabled: current?.videoDuplicateProtectionEnabled === true,
     videoAiCaptionsEnabled: current?.videoAiCaptionsEnabled === true,

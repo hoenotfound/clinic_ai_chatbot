@@ -11,6 +11,7 @@ const {
   isContextualAdServiceEnquiry,
 } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const clinicConfig = require("../config/clinicConfig");
 
 // A final outbound boundary for a first WhatsApp message without a current
 // price enquiry. Consent detection must not control unsolicited price safety.
@@ -242,6 +243,13 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
   const locale = String(language || "").toLowerCase();
   const zh = locale.startsWith("zh") || (!locale && /[\u3400-\u9fff]/u.test(customerText));
   const ms = locale.startsWith("ms");
+  if (isPelvis && clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true) {
+    return zh
+      ? "可以先免费来做中医师1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"
+      : ms
+        ? "Penilaian postur 1-ke-1 bersama sesi pengalaman pengenalan adalah percuma 😊 Selepas hadir, anda juga boleh menerima baucar RM100 untuk rawatan pelvis (tertakluk kepada syarat pusat). Hari biasa atau hujung minggu lebih sesuai?"
+        : "Our 1-on-1 posture assessment + introductory experience is free 😊 After attending, you may also receive an RM100 pelvic-treatment voucher (subject to the centre's conditions). Would weekdays or weekends suit you?";
+  }
   if (isPelvis) {
     return zh
       ? "可以先让中医师帮你做一个1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"

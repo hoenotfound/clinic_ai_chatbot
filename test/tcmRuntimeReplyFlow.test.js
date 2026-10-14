@@ -7,7 +7,8 @@ const vm = require("node:vm");
 const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } =
   require("../src/utils/tcmServiceReviewReply");
 const triggers = require("../src/utils/attentionTriggers");
-const { categorizeAiReview } = require("../src/utils/aiReviewPolicy");
+const { categorizeAiReview, hasClinicalMediaRisk } = require("../src/utils/aiReviewPolicy");
+const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 
 // Execute the actual production handler and tracked text-sending functions,
@@ -114,6 +115,9 @@ function harness({ failDelivery = false } = {}) {
     bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply,
     getAiOwnedContact: async (contact) => state.mode === "ai" ? contact : null,
     categorizeAiReview,
+    hasClinicalMediaRisk,
+    isComplimentaryAssessmentFeeQuestion,
+    complimentaryAssessmentFeeReply,
     inboundProcessingRepo: incomingRepo,
     channelMessaging: {
       sendText: async (contact, text, options) => {

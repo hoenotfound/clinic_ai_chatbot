@@ -95,6 +95,82 @@ test("A past price question, ordinary consultation, staff reply, refusal or ambi
   for (const history of blocks) assert.equal(resolve(history), null, JSON.stringify(history));
 });
 
+test("specific Package B price survives the bot's immediate which-treatment clarification", async () => {
+  const history = [
+    { role: "user", content: "Can I have Package B price?" },
+    { role: "assistant", content: "Which treatment would you like the price for?" },
+    { role: "user", content: "骨盆" },
+  ];
+  assert.equal(resolve(history), "骨盆调理");
+  const reply = ensureVerifiedPriceReply({
+    customerText: "骨盆", conversationHistory: history,
+    reply: "欢迎预约体态评估～", treatment: "骨盆调理",
+    clarifiedPriceService: resolve(history), services, serviceAliases,
+    promotions, resultMedia: [], language: "en",
+  });
+  assert.equal(reply.restored, true);
+  assert.match(reply.reply, /Package B.*RM288/su);
+  assert.doesNotMatch(reply.reply, /Package A|RM388/u);
+
+  await withAssessmentFirst(async () => {
+    const shared = {
+      customerText: "骨盆", conversationHistory: history,
+      treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
+      priceQuery: false, packageQuery: false, flagged: false,
+      bookingReady: false, keywordReason: false, needsAttention: false,
+      textSendSucceeded: true, promotions, services, serviceAliases,
+      resultMedia: [], contactId: 397, language: "en",
+      wasPromoRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+    };
+    assert.deepEqual(
+      (await resolvePricePromotionForReply(shared))?.packages.map((p) => p.name),
+      ["Package B"]
+    );
+    assert.equal(await resolvePricePromotionForReply({
+      ...shared, hasUnconfirmedMediaDelivery: async () => true,
+    }), null);
+    assert.equal(await resolvePricePromotionForReply({
+      ...shared, textSendSucceeded: false,
+    }), null);
+    assert.equal(await resolvePricePromotionForReply({
+      ...shared, conversationHistory: [
+        { role: "user", content: "Can I have Package B price?" },
+        { role: "assistant", content: "[Verified STAFF message] Which treatment would you like the price for?" },
+        { role: "user", content: "骨盆" },
+      ],
+    }), null);
+  });
+});
+
+test("generic price clarification still shows both packages, but ordinary package details do not unlock pricing", async () => {
+  const history = [
+    { role: "user", content: "多少钱？" },
+    { role: "assistant", content: clarification },
+    { role: "user", content: "骨盆" },
+  ];
+  const reply = ensureVerifiedPriceReply({
+    customerText: "骨盆", conversationHistory: history,
+    reply: "欢迎预约～", treatment: "骨盆调理",
+    clarifiedPriceService: resolve(history), services, serviceAliases,
+    promotions, resultMedia: [], language: "zh",
+  });
+  assert.match(reply.reply, /Package A.*RM388/su);
+  assert.match(reply.reply, /Package B.*RM288/su);
+
+  const details = [
+    { role: "user", content: "Package B 包含什么？" },
+    { role: "assistant", content: "请问你想了解哪一项疗程？" },
+    { role: "user", content: "骨盆" },
+  ];
+  assert.equal(resolve(details), null);
+  assert.equal(ensureVerifiedPriceReply({
+    customerText: "骨盆", conversationHistory: details, reply: "欢迎了解 😊",
+    treatment: "骨盆调理", clarifiedPriceService: null,
+    services, serviceAliases, promotions, resultMedia: [],
+  }).restored, false);
+});
+
 test("AI prompt exposes active pelvic prices only for a verified completed clarification", () => {
   const snapshot = JSON.parse(JSON.stringify(config));
   try {
