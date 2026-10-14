@@ -26,7 +26,8 @@ const SHORT_ENGLISH_EXPERIENCE_FEE =
 const STAFF_MESSAGE = /^\[Verified STAFF message\]/u;
 
 function recentIntroAssessmentContext(customerText, conversationHistory) {
-  if (![SHORT_EXPERIENCE_FEE, SHORT_CHINESE_EXPERIENCE_FEE, SHORT_ENGLISH_EXPERIENCE_FEE]\n    .some((pattern) => pattern.test(customerText))) return false;
+  if (![SHORT_EXPERIENCE_FEE, SHORT_CHINESE_EXPERIENCE_FEE, SHORT_ENGLISH_EXPERIENCE_FEE]
+    .some((pattern) => pattern.test(customerText))) return false;
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
     .filter((entry) => entry?.role === "user" || entry?.role === "assistant");
   if (!turns.length) return false;
