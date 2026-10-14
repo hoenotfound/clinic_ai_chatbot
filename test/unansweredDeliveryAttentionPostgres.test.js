@@ -44,6 +44,7 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
         takeover_by text, takeover_at timestamptz,
         needs_attention boolean DEFAULT false, attention_reason text,
         delivery_attention_dismissed_at timestamptz,
+        delivery_attention_message_id integer,
         is_unread boolean DEFAULT false, updated_at timestamptz DEFAULT now()
       );
       CREATE TABLE messages (
