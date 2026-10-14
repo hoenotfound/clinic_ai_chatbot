@@ -60,7 +60,7 @@ test("explicit package selection returns only that package",()=>{
   assert.deepEqual(verifiedPricesForService("骨盆调理",promotions,"我想知道 B配套 多少钱")?.map(p=>p.name),["Package B"]);
   assert.deepEqual(verifiedPricesForService("骨盆调理",promotions,"Package A price?")?.map(p=>p.name),["Package A"]);
   assert.deepEqual(verifiedPricesForService("骨盆调理",promotions,"调整骨盆")?.map(p=>p.name),["Package A","Package B"]);
-  assert.equal(verifiedPricesForService("骨盆调理",promotions,"Package A and Package B prices"),null);
+  assert.deepEqual(verifiedPricesForService("骨盆调理",promotions,"Package A and Package B prices")?.map(p=>p.name),["Package A","Package B"]);
   assert.match(ensureVerifiedPriceReply({...base,customerText:"骨盆调理 B配套多少钱?"}).reply,/RM288/u);
   assert.doesNotMatch(ensureVerifiedPriceReply({...base,customerText:"骨盆调理 B配套多少钱?"}).reply,/RM388/u);
 });
