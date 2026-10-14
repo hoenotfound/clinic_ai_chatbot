@@ -26,6 +26,7 @@ function recentIntroAssessmentContext(customerText, conversationHistory) {
   if (turns.at(-1)?.role === "user" &&
       String(turns.at(-1)?.content || "").normalize("NFKC").trim() === customerText) turns.pop();
   let sawAssistant = false;
+  let previousAssistant = null;
   let previousUser = null;
   for (let i = turns.length - 1; i >= 0; i--) {
     const turn = turns[i];
@@ -34,18 +35,21 @@ function recentIntroAssessmentContext(customerText, conversationHistory) {
           FULL_TREATMENT.test(String(turn.content || ""))) return false;
       if (sawAssistant) return false;
       sawAssistant = true;
+      previousAssistant = String(turn.content || "").normalize("NFKC").trim();
       continue;
     }
     previousUser = String(turn.content || "").normalize("NFKC").trim();
     break;
   }
-  // A prior customer must have explicitly named the combined free offer.
-  // "3D First Trial + assessment" is not independent evidence of a free
-  // treatment, even if the current question abbreviates it to "experience".
-  return Boolean(previousUser &&
-    ASSESSMENT.test(previousUser) &&
-    INTRO_EXPERIENCE.test(previousUser) &&
-    !FULL_TREATMENT.test(previousUser));
+  // The customer either explicitly named the combined free offer, OR the bot
+  // immediately offered that exact verified introduction in reply to a real
+  // customer. Never infer a free paid trial from a treatment advert, an old
+  // conversation, a staff turn, or any 3D/9D/First Trial/package context.
+  return Boolean(previousUser && !FULL_TREATMENT.test(previousUser) && (
+    (ASSESSMENT.test(previousUser) && INTRO_EXPERIENCE.test(previousUser)) ||
+    (previousAssistant && ASSESSMENT.test(previousAssistant) &&
+      INTRO_EXPERIENCE.test(previousAssistant))
+  ));
 }
 
 function isComplimentaryAssessmentFeeQuestion(
