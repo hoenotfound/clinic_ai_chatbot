@@ -150,3 +150,39 @@ test("conditional voucher price is not promised to be unconditional or stackable
     ["user","B配套多少钱？"]);
   assert.doesNotMatch(textReply("B配套多少钱？",bTurns).reply,/优惠券后的价格/u);
 });
+
+
+test("unconfigured or newly named treatments do not inherit an earlier pelvic price",async()=>{
+  const histories=[
+    history(["user","我想了解骨盆调理"],["assistant","好的"]),
+    history(["user","我想了解骨盆调理"],["assistant","好的"],
+      ["user","我想知道 B配套包括什么"],["assistant","我们可以介绍配套"]),
+  ];
+  const otherPriceQuestions=[
+    "按摩多少钱？","这个按摩多少钱？","肩颈按摩多少钱？",
+    "How much for a massage?","massage price?","Facial massage cost?",
+    "Harga urutan berapa?","这个面部护理多少钱？",
+  ];
+  for(const prefix of histories){
+    for(const text of otherPriceQuestions){
+      const turns=[...prefix,{role:"user",content:text}];
+      assert.equal(resolved(text,turns),null,text);
+      const result=textReply(text,turns);
+      assert.doesNotMatch(result.reply,/RM388|RM288|Package A|Package B/u,text);
+      assert.equal(await media(text,turns,"骨盆调理"),null,text);
+    }
+  }
+});
+
+test("short referential price questions still resolve the explicitly discussed service",async()=>{
+  const cases=["这个多少钱？","那个多少钱？","这个配套多少钱？",
+    "How much is it?","What is the price for that?","Harga ini berapa?"];
+  for(const text of cases){
+    const turns=history(["user","我想了解骨盆调理 B配套"],["assistant","好的"],
+      ["user",text]);
+    assert.equal(resolved(text,turns),"骨盆调理",text);
+    const quote=textReply(text,turns);
+    assert.match(quote.reply,/Package B.*RM288/su,text);
+    assert.doesNotMatch(quote.reply,/Package A.*RM388/su,text);
+  }
+});
