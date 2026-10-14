@@ -202,7 +202,9 @@ test("assessment-first prompt names the free experience only for opted-in clinic
     };
     const enabled = buildSystemPrompt({ channel: "whatsapp" });
     assert.match(enabled, /complete introductory 1对1的体态评估 \+ 体验 is FREE/u);
-    assert.match(enabled, /introductory 1对1体态评估 \+ 体验 IS free/u);
+    const { buildFollowUpPrompt } = require("../src/utils/systemPrompt");
+    const followUp = buildFollowUpPrompt({ followUpContext: { stepNumber: 3, treatmentInterest: "骨盆调理" } });
+    assert.match(followUp, /introductory 1对1体态评估 \+ 体验 IS free/u);
     assert.match(enabled, /Do not send package graphics unless current-price request was explicit/u);
     config.automatedFollowUp = { ...saved, assessmentFirstPricingEnabled: true,
       complimentaryAssessmentExperienceEnabled: false };
