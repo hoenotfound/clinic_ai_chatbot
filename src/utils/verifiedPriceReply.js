@@ -9,9 +9,10 @@ const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedSer
 // A voucher, discount, original price or bare amount is never a sale price.
 // "After voucher" has priority over a separate pre-voucher promo price.
 const FINAL_SALE = /(?:优惠后(?:仅需|只需)?|優惠後(?:僅需|只需)?|after\s+(?:the\s+)?voucher(?:,?\s*only)?|selepas\s+baucar(?:,?\s*hanya)?)\s*[:：]?\s*(?:RM|MYR)\s*([1-9]\d{1,4})(?!\d)/giu;
-const DIRECT_SALE = /(?:现在只需|現在只需|现在仅需|現在僅需|只需要|只需|仅需|僅需|优惠价|優惠價|现价|現價|特价|特價|促销价|促銷價|组合体验价(?:只需)?|組合體驗價(?:只需)?|组合限时优惠|組合限時優惠|first[\s-]*trial(?:\s+price)?|trial\s+price|(?:current\s+)?(?:promo|promotional|special|offer|sale)\s+price|now\s+only|harga\s+promosi|harga\s+tawaran|sekarang\s+hanya)\s*[:：]?\s*(?:RM|MYR)\s*([1-9]\d{1,4})(?!\d)/giu;
+const DIRECT_SALE = /(?:现在只需|現在只需|现在仅需|現在僅需|只需要|只需|仅需|僅需|优惠价|優惠價|现价|現價|特价|特價|促销价|促銷價|组合体验价(?:只需)?|組合體驗價(?:只需)?|组合限时优惠|組合限時優惠|limited[\s-]*time\s+combo\s+offer|promosi\s+kombo[^\n:：]{0,60}|first[\s-]*trial(?:\s+price)?|trial\s+price|(?:current\s+)?(?:promo|promotional|special|offer|sale)\s+price|now\s+only|harga\s+promosi|harga\s+tawaran|sekarang\s+hanya)\s*[:：]?\s*(?:RM|MYR)\s*([1-9]\d{1,4})(?!\d)/giu;
 const MONEY = /\b(?:RM|MYR)\s*\d{2,5}\b/giu;
-const ORIGINAL = /(?:原价(?:优惠)?|原價(?:優惠)?|original\s+price|harga\s+asal|normal\s+price)\s*[:：]?\s*(?:RM|MYR)\s*\d{2,5}\b/giu;
+const BARE_SALE = /^[ \t]*(?:💎[ \t]*)?(?:RM|MYR)[ \t]*([1-9]\d{1,4})[ \t]*(?:[.!。！])?$/gmi;
+const ORIGINAL = /(?:原价(?:优惠)?|原價(?:優惠)?|original\s+price|harga\s+asal|normal\s+price)\s*[:：]?\s*(?:RM|MYR)\s*(?:\d{1,3},)?\d{2,5}\b/giu;
 const VOUCHER_AFTER = /(?:RM|MYR)\s*\d{2,5}\b\s*(?:voucher|coupon|off|discount|baucar|优惠券|優惠券|折扣券|抵用券|折扣)/giu;
 const VOUCHER_BEFORE = /(?:voucher|coupon|baucar|优惠券|優惠券|折扣券|抵用券|折扣)\s*(?:worth\s*)?(?:RM|MYR)\s*\d{2,5}\b/giu;
 
@@ -19,11 +20,16 @@ function priceEvidence(copy) {
   const normalized = String(copy || "").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu, "");
   const finalMatches = [...normalized.matchAll(FINAL_SALE)];
   const directMatches = [...normalized.matchAll(DIRECT_SALE)];
-  const preferred = finalMatches.length ? finalMatches : directMatches;
+  const bareMatches = /(?:限时优惠|限時優惠|limited[\s-]*time\s+offer|promosi\s+masa\s+terhad)/iu.test(normalized)
+    ? [...normalized.matchAll(BARE_SALE)] : [];
+  const preferred = finalMatches.length ? finalMatches : (directMatches.length ? directMatches : bareMatches);
   const distinct = [...new Set(preferred.map((m) => m[1]))];
-  if (distinct.length !== 1) return { price: null, ambiguous: preferred.length > 0 };
+  if (distinct.length !== 1) {
+    const unlabeled = normalized.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
+    return { price: null, ambiguous: preferred.length > 0 || Boolean(unlabeled.match(MONEY)) };
+  }
   let remaining = normalized;
-  const claims = [...finalMatches, ...directMatches].sort((a, b) => b.index - a.index);
+  const claims = [...finalMatches, ...directMatches, ...bareMatches].sort((a, b) => b.index - a.index);
   // Overlapping phrases may produce nested matches. Blank them from right
   // to left without shifting source offsets.
   const covered = new Set();
@@ -55,9 +61,11 @@ function verifiedPricesForService(treatment, promotions, customerText = "") {
   const result = [];
   for (const option of selected) {
     if (!String(option.name || "").trim()) return null;
-    const translations = Object.values(option.mediaTranslations || [])
+    const translations = Object.values(option.mediaTranslations || {})
       .map((item) => typeof item === "string" ? item : item?.caption);
-    const sources = [option.caption, option.followUpMessage, ...translations]
+    const followUpTranslations = Object.values(option.followUpTranslations || {})
+      .map((item) => typeof item === "string" ? item : item?.message);
+    const sources = [option.caption, option.followUpMessage, ...translations, ...followUpTranslations]
       .filter((source) => String(source || "").trim());
     const evidence = sources.map(priceEvidence);
     if (evidence.some((entry) => entry.ambiguous)) return null;
