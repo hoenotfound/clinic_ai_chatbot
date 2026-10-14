@@ -9,9 +9,12 @@ function harness({ attachment = "saved", providerAccepted = true } = {}) {
   const source = fs.readFileSync(require.resolve("../src/routes/conversations"), "utf8");
   const start = source.indexOf('router.post("/:contactId/media",');
   const end = source.indexOf('\nrouter.post(', start + 1);
+  const helperStart = source.indexOf("function socialProviderSendOptions(");
+  const helperEnd = source.indexOf("async function sendStoredMessage(", helperStart);
   let handler;
   const attention = [];
   let attachCalls = 0;
+  let providerOptions = null;
   const contact = { id: 85, channel: "whatsapp", mode: "ai" };
   const saved = { id: 90, contact_id: 85, has_media_attachment: false };
   const sandbox = {
@@ -37,17 +40,24 @@ function harness({ attachment = "saved", providerAccepted = true } = {}) {
         return { ...saved, has_media_attachment: true, media_mime_type: "image/jpeg" };
       },
     },
-    socialProviderSendOptions: (_, __, options) => options,
+    messagesRepo: { socialProviderAliasRecorder: () => null },
     mediaStorage: { uploadMedia: async () => "contacts/85/photo-baseline.jpg", isR2RequestTimeoutError: () => false },
-    channelMessaging: { sendImageBuffer: async () => ({ success: providerAccepted, wamid: providerAccepted ? "wamid.accepted" : null }) },
+    channelMessaging: { sendImageBuffer: async (_contact, _buffer, _mime, _caption, _filename, options) => {
+      providerOptions = options;
+      return { success: providerAccepted, wamid: providerAccepted ? "wamid.accepted" : null };
+    } },
     realtimeEvents: { publish() {} },
     flagInboxMediaAttention: async (_, reason) => attention.push(reason),
     finishInboxMediaSend: async (message, result) => ({ ...message, delivery_status: result.success ? "pending" : "failed" }),
     publicDeliveryError: error => error,
   };
-  vm.runInNewContext(source.slice(start, end), sandbox);
+  vm.runInNewContext(
+    source.slice(helperStart, helperEnd) + source.slice(start, end),
+    sandbox
+  );
   return {
     attention, attachCalls: () => attachCalls,
+    providerOptions: () => providerOptions,
     async send() {
       let response;
       let status;
@@ -67,6 +77,8 @@ test("accepted manual photo with a saved lightweight attachment does not flag de
   assert.equal(response.has_media_attachment, true);
   assert.equal(Object.hasOwn(response, "media_key"), false);
   assert.equal(h.attachCalls(), 1);
+  assert.equal(h.providerOptions().currentMessageId, 90);
+  assert.equal(h.providerOptions().staffMedia, true);
   assert.deepEqual(h.attention, []);
 });
 
