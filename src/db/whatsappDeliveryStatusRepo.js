@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { pool } = require("./db");
+const { acceptedDirectReplySql, failedMediaSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SUPPORTED_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
 
@@ -304,7 +305,8 @@ async function findMessageByWamid(wamid, query = pool.query.bind(pool)) {
 async function setDeliveryAttentionState(
   contactId,
   reason,
-  query = pool.query.bind(pool)
+  query = pool.query.bind(pool),
+  failedMessageId = null
 ) {
   const result = await query(
     `UPDATE contacts
@@ -320,8 +322,33 @@ async function setDeliveryAttentionState(
          needs_attention IS DISTINCT FROM true
          OR attention_reason IS DISTINCT FROM $1
        )
+       -- An out-of-order failed callback for an old *text* message must not
+       -- reopen a conversation already answered with a newer accepted direct
+       -- reply. Failed attachments remain actionable even after later text.
+       -- Keep the predicate in this durable UPDATE to close the race with
+       -- a concurrent Inbox send/retry and to cover recovered callbacks.
+       AND (
+         $3::integer IS NULL
+         OR EXISTS (
+           SELECT 1 FROM messages failed
+           WHERE failed.id = $3::integer
+             AND failed.contact_id = contacts.id
+             AND failed.role = 'assistant'
+             AND failed.delivery_status = 'failed'
+             AND (
+               ${failedMediaSql("failed")}
+               OR NOT EXISTS (
+                 SELECT 1 FROM messages newer_reply
+                 WHERE newer_reply.contact_id = failed.contact_id
+                   AND ${acceptedDirectReplySql("newer_reply")}
+                   AND (newer_reply.created_at, newer_reply.id) >
+                       (failed.created_at, failed.id)
+               )
+             )
+         )
+       )
      RETURNING id`,
-    [reason, contactId]
+    [reason, contactId, failedMessageId]
   );
   return result.rows[0] || null;
 }
