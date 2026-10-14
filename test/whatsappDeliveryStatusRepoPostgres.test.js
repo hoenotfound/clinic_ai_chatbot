@@ -318,6 +318,28 @@ test(
       assert.equal(await repo.setDeliveryAttentionState(
         45,'Delivery failed: already retried',query,1005),null);
 
+      // Dismissed old failure callbacks must not reopen a Telegram/Inbox
+      // warning, even if the provider delivers them after staff dismissal.
+      await client.query(`
+        INSERT INTO contacts(id,delivery_attention_dismissed_at) VALUES (46,now());
+        INSERT INTO messages(id,contact_id,created_at,delivery_status,media_key,media_mime_type)
+        VALUES (1007,46,now()-interval '2 hours','failed','old-photo','image/jpeg');
+      `);
+      assert.equal(await repo.setDeliveryAttentionState(
+        46,'Delivery failed: old photo callback',query,1007),null);
+      assert.equal((await client.query(
+        'SELECT needs_attention FROM contacts WHERE id=46'
+      )).rows[0].needs_attention,false);
+
+      // A fresh provider failure after that acknowledgement is still urgent.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,created_at,delivery_status,media_key,media_mime_type)
+        VALUES (1008,46,clock_timestamp()+interval '1 second',
+          'failed','new-photo','image/jpeg');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        46,'Delivery failed: new photo callback',query,1008)).id,46);
+
       // A completed provider failure can lose its matching message later.
       // Flag it once after a grace period, but exclude known message/evidence
       // records and preserve the flagged row through ordinary pruning.
