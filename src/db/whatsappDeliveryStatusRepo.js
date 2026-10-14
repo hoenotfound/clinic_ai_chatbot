@@ -310,7 +310,9 @@ async function setDeliveryAttentionState(
 ) {
   const result = await query(
     `UPDATE contacts
-     SET needs_attention = true, attention_reason = $1, updated_at = now()
+     SET needs_attention = true, attention_reason = $1,
+         delivery_attention_message_id = $3::integer,
+         updated_at = now()
      WHERE id = $2
        AND (
          needs_attention = false
@@ -339,6 +341,26 @@ async function setDeliveryAttentionState(
              -- historical media may not resurrect a routine alert, but
              -- explicitly open delivery warnings remain protected.
              AND ${unresolvedFailedOutboundSql("failed", "contacts")}
+         )
+       )
+       -- Provider webhooks arrive out of order. Once another, newer failed
+       -- attempt owns the delivery warning, replaying an older callback
+       -- must not steal the task anchor or its human-readable reason.
+       AND (
+         $3::integer IS NULL
+         OR contacts.needs_attention IS DISTINCT FROM TRUE
+         OR NOT (
+           contacts.attention_reason LIKE 'Delivery failed:%'
+           OR contacts.attention_reason LIKE 'Delivery unconfirmed:%'
+         )
+         OR contacts.delivery_attention_message_id IS NULL
+         OR NOT EXISTS (
+           SELECT 1 FROM messages active_attempt
+           JOIN messages callback_attempt ON callback_attempt.id = $3::integer
+           WHERE active_attempt.id = contacts.delivery_attention_message_id
+             AND active_attempt.contact_id = contacts.id
+             AND (active_attempt.created_at, active_attempt.id) >
+                 (callback_attempt.created_at, callback_attempt.id)
          )
        )
      RETURNING id`,
