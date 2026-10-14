@@ -124,5 +124,79 @@ test("URL and normalized-buffer forwards pass Inbox deadlines to the fresh provi
     assert.equal((await h.send()).delivered, true);
     assert.equal(options.inboxMediaTimings.requestId, "test-request");
     assert.equal(options.inboxMediaTimings.target, 2);
+    assert.equal(options.currentMessageId, 90);
+    assert.equal(options.staffMedia, true);
   }
+});
+
+test("legacy URL-only image forward persists inferred MIME and saved target id", async () => {
+  const start = source.indexOf("async function forwardOtherStoredMessage(");
+  const end = source.indexOf('\nrouter.post("/:contactId/messages/:messageId/forward"', start);
+  let savedMetadata = null;
+  let providerMessage = null;
+  const saved = {
+    id: 191,
+    contact_id: 2,
+    content: "",
+    media_mime_type: "image/jpeg",
+    is_forwarded: true,
+  };
+  const sandbox = {
+    console: { info() {}, warn() {}, error() {} },
+    Date,
+    verboseInboxMediaLogs: () => false,
+    whatsappPolicy: {
+      manualStaffPurpose: () => "staff",
+      checkFreeformAllowed: async () => ({ allowed: true }),
+    },
+    telegramImmediateAlertRepo: {
+      withContactAlertLock: async (_id, work) => work(),
+    },
+    prepareStaffSend: async contact => contact,
+    finalizeStaffSendState: async () => null,
+    conversationStore: {
+      appendMessageForContact: async (...args) => {
+        savedMetadata = args[6];
+        return saved;
+      },
+    },
+    mediaStorage: {
+      copyStoredMediaToMessage: async () => { throw new Error("unexpected copy"); },
+      downloadMedia: async () => { throw new Error("unexpected download"); },
+      uploadMedia: async () => { throw new Error("unexpected upload"); },
+      deleteMedia: async () => {},
+    },
+    sendStoredMessage: async (_contact, message) => {
+      providerMessage = message;
+      return { success: true, wamid: "wamid.legacy" };
+    },
+    deliveryErrorForSend: () => null,
+    rejectedErrorFor: () => "rejected",
+    persistSendOutcome: async message => ({ ...message, delivery_status: "pending" }),
+    markLeadContacted: async () => {},
+    contactsRepo: { setDeliveryAttention: async () => {} },
+    publicDeliveryError: error => error,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(source.slice(start, end), sandbox);
+
+  const result = await sandbox.forwardOtherStoredMessage(
+    {
+      id: 7,
+      media_key: null,
+      media_url: "https://legacy.example/photo.jpg",
+      media_mime_type: null,
+      content: "📷 [Customer sent a photo]",
+      media_filename: null,
+    },
+    { id: 2, channel: "whatsapp" },
+    "staff"
+  );
+
+  assert.equal(result.delivered, true);
+  assert.equal(savedMetadata?.mimeType, "image/jpeg");
+  assert.equal(providerMessage.id, saved.id);
+  assert.equal(providerMessage.contact_id, saved.contact_id);
+  assert.equal(providerMessage.media_mime_type, "image/jpeg");
+  assert.equal(providerMessage.media_url, "https://legacy.example/photo.jpg");
 });

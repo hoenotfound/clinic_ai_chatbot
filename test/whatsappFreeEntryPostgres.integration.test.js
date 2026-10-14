@@ -46,7 +46,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         whatsapp_template JSONB, media_key TEXT,
         is_automated_follow_up BOOLEAN, automated_follow_up_step INTEGER,
         automated_follow_up_parent_message_id INTEGER,
-        pricing_reminder_anchor_id INTEGER
+        pricing_reminder_anchor_id INTEGER,
+        media_mime_type TEXT
       );
       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,
@@ -63,6 +64,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       "../src/db/migrations/059_whatsapp_free_only_safety.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/070_whatsapp_24h_service_reply_exceptions.sql"), "utf8"));
+    await client.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/072_whatsapp_24h_staff_media.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/056_whatsapp_free_entry_skips.sql"), "utf8"));
     await client.query(`

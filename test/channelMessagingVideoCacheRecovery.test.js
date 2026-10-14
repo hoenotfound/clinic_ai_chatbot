@@ -57,7 +57,7 @@ function mockVideo(t, { results, allowed = () => true, preSendCheck = async () =
   };
   cache.recordRecovery = () => trace.push(["recovered"]);
   whatsapp.sendVideoById = async (to, mediaId, caption, options) => {
-    trace.push(["send", mediaId, caption, options?.currentMessageId]);
+    trace.push(["send", mediaId, caption, options?.currentMessageId, options?.staffMedia === true]);
     return results.shift();
   };
   storage.downloadMedia = async () => { throw new Error("Never download cached video"); };
@@ -249,4 +249,24 @@ test("two concurrent customers share video upload but cancellation belongs to ea
   assert.equal(uploadCount, 1, "Exactly one Meta upload across the two customers");
   assert.deepEqual(f.trace.filter(x => x[0] === "sent-to"),
     [["sent-to", "60222222222", "shared-meta-video"]]);
+});
+
+test("cached shared-video recovery preserves staff media authorization on both sends", async (t) => {
+  const f = mockVideo(t, {
+    results: [
+      { success: false, wamid: null, providerStatus: 400, ambiguous: false, error: "Invalid media ID" },
+      { success: true, wamid: "wamid-staff-recovered" },
+    ],
+  });
+  const result = await messaging.sendVideoByStoredKey(contact, key, "Staff follow-up", null, {
+    ...f.options,
+    staffMedia: true,
+  });
+  assert.equal(result.success, true);
+  const sends = f.trace.filter(entry => entry[0] === "send");
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends.map(entry => entry[1]), ["old-id", "new-id"]);
+  assert.deepEqual(sends.map(entry => entry[4]), [true, true],
+    "Both guarded attempts must carry staffMedia; cached retry must not silently lose it");
+  assert.equal(f.getGuards() >= 3, true);
 });

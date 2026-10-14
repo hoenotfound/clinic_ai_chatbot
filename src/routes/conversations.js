@@ -564,7 +564,8 @@ function socialProviderSendOptions(message, contact, options = {}) {
     message?.id,
     contact?.channel
   );
-  const withCurrentMessage = { ...options, currentMessageId: message?.id };
+  // This adapter is invoked only from authenticated staff Inbox routes.
+  const withCurrentMessage = { ...options, currentMessageId: message?.id, staffMedia: true };
   return recorder
     ? { ...withCurrentMessage, onProviderMessageId: recorder }
     : withCurrentMessage;
@@ -2005,7 +2006,7 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
   const providerPromise = (async () => {
     if (normalizedImage) {
       return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, normalizedImage.buffer,
-        normalizedImage.mimeType, content || undefined, "image.jpg", { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings }));
+        normalizedImage.mimeType, content || undefined, "image.jpg", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
     }
     let preparedTemporaryMedia;
     try {
@@ -2131,6 +2132,21 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
     }
   }
 
+  // Historical URL-only image rows can predate media_mime_type. The stored
+  // send path already treats media_url as an image, so persist the same
+  // conservative image classification on the forwarded staff row. This lets
+  // the Strict RM0 staff-media guard audit the row without authorizing any new
+  // media source or automated path.
+  const legacyUrlImage =
+    !targetMediaKey &&
+    Boolean(sourceMessage.media_url) &&
+    (!sourceMimeType || sourceMimeType.startsWith("image/"));
+  const forwardedMimeType = targetMediaKey
+    ? sourceMessage.media_mime_type
+    : legacyUrlImage
+      ? (sourceMessage.media_mime_type || "image/jpeg")
+      : null;
+
   let prepared;
   try {
     prepared = await telegramImmediateAlertRepo.withContactAlertLock(
@@ -2144,9 +2160,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
           null,
           username,
           sourceMessage.media_url || null,
-          targetMediaKey
-            ? { mimeType: sourceMessage.media_mime_type }
-            : null,
+          forwardedMimeType ? { mimeType: forwardedMimeType } : null,
           {
             isForwarded: true,
             mediaKey: targetMediaKey,
@@ -2177,6 +2191,7 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
     contact_id: saved.contact_id,
     content: forwardedContent,
     media_key: targetMediaKey,
+    media_mime_type: forwardedMimeType || sourceMessage.media_mime_type,
     media_base64: null,
     delivery_error: null,
     reply_to_provider_message_id: null,
