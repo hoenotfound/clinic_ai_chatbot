@@ -1202,14 +1202,57 @@ async function setDeliveryAttention(id, reason, failedMessageId = null) {
   const updated = result.rows[0] || null;
   if (updated) publishContactChange(updated.id);
 
-  // A delivery failure is worth surfacing even when a more important human
-  // attention reason is already protecting the contact row from being replaced.
-  notifyTelegram(
-    telegramImmediateAlerts.sendDeliveryFailureAlert({ contactId: id, reason }),
-    "delivery failure",
-    id
-  );
-  notifyWebPush(id, "delivery_failure");
+  // A higher-priority booking/clinical/AI-review warning can prevent an
+  // actionable delivery failure from replacing the contact attention flag.
+  // Such failures still warrant Telegram/Web Push. But a failed attempt
+  // superseded by a newer message, an accepted reply, or an explicit staff
+  // dismissal must not send a stale notification when its UPDATE was refused.
+  let shouldNotify = true;
+  if (!updated && safeMessageId !== null) {
+    try {
+      const state = await pool.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM contacts c
+           JOIN messages failed ON failed.contact_id = c.id
+           WHERE c.id = $1 AND failed.id = $2::integer
+             AND ${unresolvedFailedOutboundSql("failed", "c")}
+             AND NOT (
+               c.needs_attention IS TRUE
+               AND (
+                 c.attention_reason LIKE 'Delivery failed:%'
+                 OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+               )
+               AND c.delivery_attention_message_id IS NOT NULL
+               AND EXISTS (
+                 SELECT 1 FROM messages active_attempt
+                 WHERE active_attempt.id = c.delivery_attention_message_id
+                   AND active_attempt.contact_id = c.id
+                   AND (active_attempt.created_at, active_attempt.id) >
+                       (failed.created_at, failed.id)
+               )
+             )
+         ) AS actionable`,
+        [id, safeMessageId]
+      );
+      shouldNotify = state.rows[0]?.actionable === true;
+    } catch (error) {
+      // If read-only notification reconciliation is unavailable, preserve
+      // the old best-effort escalation behavior rather than changing the
+      // outbound send result or silently hiding a real clinical escalation.
+      console.error(
+        `Could not verify delivery failure notification for contact ${id} message ${safeMessageId}:`,
+        error
+      );
+    }
+  }
+  if (shouldNotify) {
+    notifyTelegram(
+      telegramImmediateAlerts.sendDeliveryFailureAlert({ contactId: id, reason }),
+      "delivery failure",
+      id
+    );
+    notifyWebPush(id, "delivery_failure");
+  }
 
   return updated;
 }
