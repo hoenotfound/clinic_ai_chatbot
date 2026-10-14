@@ -1067,7 +1067,8 @@ async function processIncomingMessage(
       // all clinical/safety and explicit human-request handoffs.
       const verifiedFreeIntroFee = isComplimentaryAssessmentFeeQuestion(
         text,
-        clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true
+        clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+        history
       ) && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !hasClinicalMediaRisk(text);
       if (verifiedFreeIntroFee &&
