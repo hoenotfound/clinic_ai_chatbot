@@ -152,9 +152,16 @@ function createWhatsAppDeliveryStatusService({
     const attentionReason = `Delivery failed: ${reason}`;
     const updatedContact = await repo.setDeliveryAttentionState(
       updatedMessage.contact_id,
-      attentionReason
+      attentionReason,
+      undefined,
+      updatedMessage.id
     );
-    if (updatedContact) publishContactSafely(updatedMessage.contact_id);
+    // A replayed callback may have been superseded by a newer accepted reply,
+    // or a protected clinical/booking attention reason already exists. Keep
+    // its message-level failure record, but do not re-alert or log an open
+    // delivery task that the database deliberately refused to create.
+    if (!updatedContact) return null;
+    publishContactSafely(updatedMessage.contact_id);
     return { reason, attentionReason };
   }
 
