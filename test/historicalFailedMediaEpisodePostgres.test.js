@@ -60,7 +60,8 @@ test("contact 433 historical failed Before & After cannot poison a new staff rep
       CREATE TABLE ai_review_items (
         id serial PRIMARY KEY, contact_id integer,
         inbound_message_id integer, summary text, status text,
-        created_at timestamptz DEFAULT now()
+        created_at timestamptz DEFAULT now(),
+        resolved_at timestamptz
       );
 
       INSERT INTO contacts (id,mode,needs_attention,is_unread)
