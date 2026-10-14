@@ -1159,35 +1159,35 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
          c.attention_reason LIKE 'Delivery failed:%'
          OR c.attention_reason LIKE 'Delivery unconfirmed:%'
        )
-       -- A historical failed photo or reply must not keep a *newly*
-       -- answered customer episode flagged forever. A provider-accepted,
-       -- direct reply later than the failure resolves that episode; an
-       -- unsubmitted draft, older reply, follow-up, or unknown send does not.
-       AND NOT EXISTS (
-         SELECT 1 FROM messages failed
-         WHERE failed.contact_id = c.id
-           AND failed.role = 'assistant'
-           AND failed.delivery_status IN ('failed', 'unknown')
-           AND failed.created_at >= COALESCE((
-             SELECT MAX(inbound.created_at)
-             FROM messages inbound
-             WHERE inbound.contact_id = c.id AND inbound.role = 'user'
-           ), '-infinity'::timestamptz)
+       -- Clear delivery-only attention only when a *direct* reply was
+       -- accepted after BOTH the latest customer turn and any later failed/
+       -- unknown attempts. A historical failure stays in the audit but
+       -- cannot poison a newly answered conversation. A late accepted reply
+       -- to an older customer turn must never clear a newer unanswered one.
+       AND EXISTS (
+         SELECT 1 FROM messages reply
+         WHERE reply.contact_id = c.id
+           AND reply.role = 'assistant'
+           AND reply.is_automated_follow_up IS NOT TRUE
+           AND reply.whatsapp_message_id IS NOT NULL
+           AND (
+             reply.delivery_status IN ('pending', 'sent', 'delivered', 'read')
+             OR (c.channel IN ('facebook', 'instagram') AND reply.delivery_status IS NULL)
+           )
            AND NOT EXISTS (
-             SELECT 1 FROM messages reply
-             WHERE reply.contact_id = c.id
-               AND reply.role = 'assistant'
-               AND reply.is_automated_follow_up IS NOT TRUE
-               AND reply.whatsapp_message_id IS NOT NULL
-               AND (
-                 reply.delivery_status IN ('pending', 'sent', 'delivered', 'read')
-                 OR (
-                   c.channel IN ('facebook', 'instagram')
-                   AND reply.delivery_status IS NULL
-                 )
-               )
-               AND (reply.created_at, reply.id) >
-                   (failed.created_at, failed.id)
+             SELECT 1 FROM messages inbound
+             WHERE inbound.contact_id = c.id
+               AND inbound.role = 'user'
+               AND (inbound.created_at, inbound.id) >
+                   (reply.created_at, reply.id)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM messages failed
+             WHERE failed.contact_id = c.id
+               AND failed.role = 'assistant'
+               AND failed.delivery_status IN ('failed', 'unknown')
+               AND (failed.created_at, failed.id) >
+                   (reply.created_at, reply.id)
            )
        )
      RETURNING *`,
