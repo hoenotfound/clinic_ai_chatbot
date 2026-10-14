@@ -117,3 +117,53 @@ test("mixed-language pelvic price question gets both quotes and images with thes
     assert.deepEqual(media?.packages.map((p) => p.name), ["Package A", "Package B"]);
   });
 });
+
+test("explicit 3D First Trial price request returns RM488 and only the matching 3D graphic", async () => {
+  await duringAssessmentFirst(async () => {
+    const current = "3D First Trial 多少钱？";
+    const service = safeServiceFromCustomer(current, services, serviceAliases)?.name;
+    assert.equal(service, "3D 小颜术");
+    assert.equal(hasExplicitPriceRequest(current), true);
+
+    const restored = ensureVerifiedPriceReply({
+      customerText: current, reply: "可以先来做免费评估体验 😊",
+      treatment: service, promotions, services, serviceAliases,
+      resultMedia: [], language: "zh",
+    });
+    assert.equal(restored.restored, true);
+    assert.match(restored.reply, /3D 小颜术.*RM488/su);
+    assert.doesNotMatch(restored.reply, /RM288|RM388|RM1,288|9D/u);
+
+    const shared = {
+      customerText: current, treatment: service, verifiedServiceFromText: service,
+      priceQuery: false, packageQuery: false, flagged: false, bookingReady: false,
+      keywordReason: false, needsAttention: false,
+      promotions, services, serviceAliases, resultMedia: [],
+      textSendSucceeded: true, contactId: 338, language: "zh",
+      wasPromoRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+    };
+    const media = await resolvePricePromotionForReply(shared);
+    assert.equal(media?.packages?.length, 1);
+    assert.equal(media.packages[0].imageUrl, "https://example.test/promo-images/32");
+    assert.equal(media.packages[0].name, "3D 小颜术 First Trial");
+    assert.ok(media.packages[0].caption, "the matching media must have a caption");
+    assert.equal(await resolvePricePromotionForReply({
+      ...shared, textSendSucceeded: false,
+    }), null, "provider-rejected text cannot trigger an independent promotion graphic");
+    assert.equal(await resolvePricePromotionForReply({
+      ...shared, wasPromoRecentlySent: async () => true,
+    }), null, "do not resend a duplicate graphic");
+    assert.equal(await resolvePricePromotionForReply({
+      ...shared, hasUnconfirmedMediaDelivery: async () => true,
+    }), null, "unknown delivery blocks duplicate-media retries");
+
+    for (const message of ["想了解3D小颜术", "3D First Trial 是做什么的？", "3D 有什么优惠？"]) {
+      const currentService = safeServiceFromCustomer(message, services, serviceAliases)?.name;
+      assert.equal(await resolvePricePromotionForReply({
+        ...shared, customerText: message, treatment: currentService,
+        verifiedServiceFromText: currentService,
+      }), null, "no unsolicited price graphics: " + message);
+    }
+  });
+});
