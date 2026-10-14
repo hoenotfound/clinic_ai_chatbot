@@ -96,7 +96,7 @@ test("promotion images now require a monetary price enquiry, not package browsin
     assert.equal(await resolvePricePromotionForReply(input),null);
     const bundle=await resolvePricePromotionForReply({...input,
       customerText:"配套多少钱？",priceQuery:true,verifiedServiceFromText:"骨盆调理"});
-    assert.equal(bundle?.packages?.[0]?.caption,"RM388");
+    assert.equal(bundle?.packages?.[0]?.caption,"现在只需 RM388");
   } finally {
     config.automatedFollowUp = existing;
   }
@@ -212,7 +212,7 @@ test("short Malay 'berapa?' uses a verified service context, not a bare assumpti
       priceQuery:true,packageQuery:false,treatment:"3D 小颜术",verifiedServiceFromText:"3D 小颜术",customerText:"Berapa?",
       contactId:44,textSendSucceeded:true,
       promotions:[{name:"3D First Trial",linkedService:"3D 小颜术",sendOnPriceQuery:true,
-        imageUrl:"https://example.test/3d.jpg",caption:"RM488"}],
+        imageUrl:"https://example.test/3d.jpg",caption:"现在只需 RM488"}],
       wasPromoRecentlySent:async()=>false,
       hasUnconfirmedMediaDelivery:async()=>false,
     };
