@@ -327,7 +327,7 @@ function stripUnsolicitedTreatmentPrice(reply) {
 function guardAssessmentFirstPricingReply({
   customerText, reply, flagged = false, language = "en",
   services = [], serviceAliases = [], treatment = null,
-  requireVerifiedTreatment = false,
+  requireVerifiedTreatment = false, clarifiedPriceService = null,
   resultMedia = [], conversationHistory = [],
 } = {}) {
   const original = String(reply || "");
@@ -364,7 +364,8 @@ function guardAssessmentFirstPricingReply({
     });
     return { reply: [clarification, invitation].filter(Boolean).join("\n"), replaced: true };
   }
-  const priceAsked = hasExplicitPriceRequest(customerText, { treatment });
+  const priceAsked = hasExplicitPriceRequest(customerText, { treatment }) ||
+    (Boolean(treatment) && clarifiedPriceService === treatment);
   if (priceAsked && (!requireVerifiedTreatment || Boolean(treatment))) {
     return { reply: original, replaced: false };
   }

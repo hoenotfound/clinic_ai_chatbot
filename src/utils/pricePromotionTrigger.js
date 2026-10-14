@@ -1,7 +1,9 @@
 const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
 const clinicConfig = require("../config/clinicConfig");
-const { relatedPricingConflict } = require("./relatedServicePolicy");
+const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
+const { verifiedPricesForService, requestedPricePackages } = require("./verifiedPriceReply");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
@@ -66,18 +68,26 @@ async function resolvePricePromotionForReply({
   hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
 }) {
+  const clarificationService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+    ? resolveClarifiedPriceService({
+        customerText, conversationHistory, services, serviceAliases,
+      }) : null;
+  const verifiedClarification = Boolean(treatment) &&
+    clarificationService === treatment && verifiedServiceFromText === treatment;
+  const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
+    verifiedClarification;
   if (
     // A verified monetary question is sufficient for opted-in clinics even
     // when the LLM under-classifies priceQuery. Keep all media safety checks.
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? (!treatment || !verifiedServiceFromText || verifiedServiceFromText !== treatment ||
-          !hasExplicitPriceRequest(customerText, { treatment }))
+          !verifiedPriceRequest)
       : (priceQuery !== true && packageQuery !== true)) ||
     !(hasCustomerPriceEnquiry(customerText) ||
       (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-        isContextualBarePriceQuestion(customerText, treatment))) ||
+        (isContextualBarePriceQuestion(customerText, treatment) || verifiedClarification))) ||
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-      !hasExplicitPriceRequest(customerText, { treatment })) ||
+      !verifiedPriceRequest) ||
     hasClinicalMediaRisk(customerText) ||
     !treatment ||
     flagged ||
@@ -91,7 +101,10 @@ async function resolvePricePromotionForReply({
 
   if (relatedPricingConflict({
     customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
-  })) return null;
+  }) || (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+    unpricedRelatedPrimary({
+      customerText, conversationHistory, services, serviceAliases, resultMedia,
+    }))) return null;
 
   const genericBundle = getPricePromotionBundle(
     promotions,
@@ -100,29 +113,42 @@ async function resolvePricePromotionForReply({
   );
   if (!genericBundle) return null;
 
-  const mentionedPackages = findMentionedPromotionPackages(
-    genericBundle.packages,
-    customerText
-  );
-  if (mentionedPackages.length > 1) return null;
-
-  const recentContext = mentionedPackages.length === 0
-    ? recentCustomerPackageContext(
-        genericBundle.packages,
-        conversationHistory,
-        customerText
-      )
-    : { packages: [], ambiguous: false };
-  if (recentContext.ambiguous) return null;
-
-  // Customer wording is authoritative. Never let a model-only package guess
-  // narrow a generic service enquiry to one arbitrary package.
-  const contextualPackage =
-    mentionedPackages[0] || recentContext.packages[0] || null;
-  const selectedOption = contextualPackage?.name || null;
-  const bundle = selectedOption
-    ? getPricePromotionBundle(promotions, treatment, selectedOption)
-    : genericBundle;
+  let bundle;
+  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+    // The price graphic and the actual text quote must be sourced from the
+    // same independently verified active package options. Any conflicting,
+    // missing or ambiguous amount suppresses ALL optional price graphics.
+    const verified = verifiedPricesForService(
+      treatment, promotions, customerText, conversationHistory
+    );
+    if (!verified?.length) return null;
+    const requested = requestedPricePackages(
+      genericBundle.packages, customerText, conversationHistory
+    );
+    const approved = new Set(verified.map((option) => option.name));
+    if (approved.size !== requested.length ||
+        requested.some((option) => !approved.has(option.name))) return null;
+    bundle = { ...genericBundle, packages: requested };
+  } else {
+    // Preserve the original fail-closed policy for clients that do not use
+    // assessment-first pricing. Multiple named packages still need review.
+    const mentionedPackages = findMentionedPromotionPackages(
+      genericBundle.packages, customerText
+    );
+    if (mentionedPackages.length > 1) return null;
+    const recentContext = mentionedPackages.length === 0
+      ? recentCustomerPackageContext(
+          genericBundle.packages, conversationHistory, customerText
+        )
+      : { packages: [], ambiguous: false };
+    if (recentContext.ambiguous) return null;
+    const contextualPackage =
+      mentionedPackages[0] || recentContext.packages[0] || null;
+    const selectedOption = contextualPackage?.name || null;
+    bundle = selectedOption
+      ? getPricePromotionBundle(promotions, treatment, selectedOption)
+      : genericBundle;
+  }
   if (!bundle) return null;
 
   // Missing verification must never mean permission to retry a possibly
