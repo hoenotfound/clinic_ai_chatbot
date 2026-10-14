@@ -94,18 +94,25 @@ function buildScheduleSql(settings) {
       ORDER BY created_at DESC, id DESC LIMIT 1
     ) anchor ON true
     LEFT JOIN LATERAL (
-      SELECT MAX(m.automated_follow_up_step) AS max_step,
+      SELECT GREATEST(COALESCE(MAX(m.automated_follow_up_step), 0),
+        COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
+          WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'), 0)) AS max_step,
         BOOL_OR(m.delivery_status IN ('failed','unknown')
           OR (m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL)) AS blocked
       FROM messages m WHERE m.contact_id = c.id AND m.is_automated_follow_up = true
         AND m.automated_follow_up_for_message_id = anchor.id
     ) progress ON true
     LEFT JOIN LATERAL (
-      SELECT m.created_at FROM messages m
-      WHERE m.contact_id = c.id AND m.is_automated_follow_up = true
-        AND m.automated_follow_up_for_message_id = anchor.id
-        AND m.automated_follow_up_step = progress.max_step
-      ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+      SELECT event.created_at FROM (
+        SELECT m.created_at, m.id FROM messages m
+        WHERE m.contact_id = c.id AND m.is_automated_follow_up = true
+          AND m.automated_follow_up_for_message_id = anchor.id
+          AND m.automated_follow_up_step = progress.max_step
+        UNION ALL
+        SELECT d.created_at, d.id FROM follow_up_ai_decisions d
+        WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'
+          AND d.follow_up_step = progress.max_step
+      ) event ORDER BY event.created_at DESC, event.id DESC LIMIT 1
     ) prev ON true
     LEFT JOIN LATERAL (
       SELECT l.id, l.treatment_interest, l.is_closed, l.appointment_status,
@@ -135,7 +142,7 @@ function buildScheduleSql(settings) {
       ))
       AND NOT EXISTS (SELECT 1 FROM follow_up_ai_decisions d
         WHERE d.contact_id = c.id AND d.trigger_message_id = anchor.id
-          AND d.action IN ('skip','human_review'))
+          AND d.action = 'human_review')
   ), scheduled AS (
     SELECT current_state.*, ${due} AS due_at
     FROM current_state
