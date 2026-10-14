@@ -811,6 +811,19 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            END
            ELSE NULL
          END,
+         delivery_attention_message_id = CASE
+           WHEN EXISTS (
+             SELECT 1 FROM messages m
+             WHERE m.contact_id = contacts.id
+               AND ${unresolvedFailedOutboundSql("m", "contacts")}
+           ) THEN (
+             SELECT m.id FROM messages m
+             WHERE m.contact_id = contacts.id
+               AND ${unresolvedFailedOutboundSql("m", "contacts")}
+             ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+           )
+           ELSE NULL
+         END,
          is_unread = false,
          updated_at = now()
      WHERE id = $1
@@ -857,7 +870,11 @@ async function setAttention(
 ) {
   const result = await pool.query(
     `UPDATE contacts c
-     SET needs_attention = $1, attention_reason = $2, updated_at = now()
+     SET needs_attention = $1, attention_reason = $2,
+         -- A different staff/clinical reason must not inherit a former
+         -- delivery attempt's message anchor.
+         delivery_attention_message_id = NULL,
+         updated_at = now()
      WHERE c.id = $3
      RETURNING c.*,
        (SELECT m.id FROM messages m
@@ -1002,6 +1019,16 @@ async function dismissAttentionAndReviews(id) {
              THEN clock_timestamp()
              ELSE c.delivery_attention_dismissed_at
            END,
+           delivery_attention_message_id = CASE
+             WHEN NOT EXISTS (SELECT 1 FROM resolved)
+               AND (
+                 c.attention_reason LIKE 'Delivery failed:%'
+                 OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+                 OR c.attention_reason = 'New message — conversation is staff-owned.'
+               )
+             THEN NULL
+             ELSE c.delivery_attention_message_id
+           END,
            updated_at = now()
        FROM locked WHERE c.id = locked.id
        RETURNING c.*
@@ -1038,8 +1065,8 @@ async function resolveAiReviewItem(contactId, reviewId) {
              WHEN EXISTS (SELECT 1 FROM remaining) THEN true
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN EXISTS (
                SELECT 1 FROM messages m
-               WHERE m.contact_id = c.id AND m.role = 'assistant'
-                 AND m.delivery_status IN ('failed', 'unknown')
+               WHERE m.contact_id = c.id
+                   AND ${unresolvedFailedOutboundSql("m", "c")}
              )
              ELSE c.needs_attention
            END,
@@ -1054,12 +1081,23 @@ async function resolveAiReviewItem(contactId, reviewId) {
              WHEN c.attention_reason LIKE 'AI review requested:%'
                AND EXISTS (
                  SELECT 1 FROM messages m
-                 WHERE m.contact_id = c.id AND m.role = 'assistant'
-                   AND m.delivery_status IN ('failed', 'unknown')
+                 WHERE m.contact_id = c.id
+                   AND ${unresolvedFailedOutboundSql("m", "c")}
                )
              THEN 'Delivery failed: One or more outbound messages need staff review.'
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN NULL
              ELSE c.attention_reason
+           END,
+           delivery_attention_message_id = CASE
+             WHEN c.attention_reason LIKE 'AI review requested:%'
+               AND NOT EXISTS (SELECT 1 FROM remaining)
+             THEN (
+               SELECT m.id FROM messages m
+               WHERE m.contact_id = c.id
+                 AND ${unresolvedFailedOutboundSql("m", "c")}
+               ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+             )
+             ELSE c.delivery_attention_message_id
            END,
            updated_at = now()
        FROM locked
@@ -1116,10 +1154,20 @@ async function clearTemporaryAiAttention(id) {
   return updated;
 }
 
-async function setDeliveryAttention(id, reason) {
+async function setDeliveryAttention(id, reason, failedMessageId = null) {
+  const safeMessageId = Number.isSafeInteger(Number(failedMessageId)) &&
+    Number(failedMessageId) > 0 ? Number(failedMessageId) : null;
   const result = await pool.query(
     `UPDATE contacts
-     SET needs_attention = true, attention_reason = $1, updated_at = now()
+     SET needs_attention = true, attention_reason = $1,
+         -- Only link a real outbound attempt owned by this same contact.
+         -- Legacy/policy warnings with no message stay conservatively unlinked.
+         delivery_attention_message_id = (
+           SELECT m.id FROM messages m
+           WHERE m.id = $3::integer AND m.contact_id = contacts.id
+             AND m.role = 'assistant'
+         ),
+         updated_at = now()
      WHERE id = $2
        AND (
          needs_attention = false
@@ -1128,7 +1176,7 @@ async function setDeliveryAttention(id, reason) {
          OR attention_reason LIKE 'Delivery unconfirmed:%'
        )
      RETURNING *`,
-    [reason, id]
+    [reason, id, safeMessageId]
   );
   const updated = result.rows[0] || null;
   if (updated) publishContactChange(updated.id);
@@ -1165,6 +1213,7 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
            FROM ai_review_items r
            WHERE r.contact_id = c.id AND r.status = 'pending'
          ), '') ELSE NULL END,
+         delivery_attention_message_id = NULL,
          updated_at = now()
      WHERE c.id = $1
        AND c.needs_attention = true
