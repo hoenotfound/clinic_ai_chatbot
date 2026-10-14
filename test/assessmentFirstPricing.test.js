@@ -214,6 +214,19 @@ test("short introductory-experience fee question carries only immediate customer
       hasUnconfirmedMediaDelivery: async () => false,
     }), null, "the short free-fee question must not authorize treatment promotion graphics");
 
+    const pelvicInterest = { role: "user", content: "我对骨盆调理有兴趣" };
+    const botInvitation = { role: "assistant", content:
+      "可以先让中医师做免费的1对1体态评估 + 体验 😊 你平日还是周末方便？" };
+    assert.equal(isComplimentaryAssessmentFeeQuestion(
+      short.content, true, [pelvicInterest, botInvitation, short]
+    ), true, "a bot's immediate verified free intro invitation also establishes context");
+    assert.equal(isComplimentaryAssessmentFeeQuestion(
+      short.content, true, [pelvicInterest, botInvitation]
+    ), true);
+    assert.equal(isComplimentaryAssessmentFeeQuestion(
+      short.content, true, [{ role: "user", content: "3D First Trial 体验价钱" }, botInvitation, short]
+    ), false, "a customer's paid First Trial topic must not become a free offer");
+
     const notFree = [
       [intro, { role: "assistant", content: "[Verified STAFF message] 体验细节" }, short],
       [intro, { role: "assistant", content: "3D First Trial RM488" }, short],
