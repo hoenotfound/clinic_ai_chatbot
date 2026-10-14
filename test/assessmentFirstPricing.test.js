@@ -248,6 +248,85 @@ test("short introductory-experience fee question carries only immediate customer
   }
 });
 
+test("natural Chinese and English follow-up questions resolve only the verified introductory free experience", async () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+  const before = config.automatedFollowUp;
+  config.automatedFollowUp = {
+    ...before, assessmentFirstPricingEnabled: true,
+    complimentaryAssessmentExperienceEnabled: true,
+  };
+  const customer = { role: "user", content: "我对骨盆调理有兴趣" };
+  const assistant = { role: "assistant", content: "中医师会先帮你做免费的1对1体态评估 + 体验 😊" };
+  const feeQuestions = [
+    ["那体验收费吗？", "zh"],
+    ["体验是免费的吗？", "zh"],
+    ["那这个体验是不是免费的？", "zh"],
+    ["Is the experience free?", "en"],
+    ["Does the experience cost money?", "en"],
+    ["Is this introductory experience free?", "en"],
+    ["Will the experience cost money?", "en"],
+    ["Experience free?", "en"],
+    ["Sesi pengalaman percuma ke?", "ms"],
+  ];
+  try {
+    for (const [question, language] of feeQuestions) {
+      const history = [customer, assistant, { role: "user", content: question }];
+      assert.equal(isComplimentaryAssessmentFeeQuestion(question, true), false,
+        "Do not assume an unqualified experience is free: " + question);
+      assert.equal(isComplimentaryAssessmentFeeQuestion(question, true, history), true, question);
+      assert.equal(isComplimentaryAssessmentFeeQuestion(question, true, history.slice(0, -1)), true,
+        "History may omit the current turn: " + question);
+      const reply = ensureVerifiedPriceReply({
+        customerText: question, conversationHistory: history,
+        reply: "The centre needs to confirm this price",
+        treatment: null, language, services: [], promotions: [],
+      });
+      assert.equal(reply.restored, true, question);
+      assert.match(reply.reply, language === "zh" ? /免费/u :
+        language === "ms" ? /percuma/iu : /\bfree\b/iu, question);
+      assert.doesNotMatch(reply.reply, /RM288|RM388|RM488/u);
+
+      const graphic = await resolvePricePromotionForReply({
+        customerText: question, conversationHistory: history,
+        treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
+        priceQuery: true, textSendSucceeded: true, contactId: 338,
+        promotions: [{
+          name: "骨盆调理套餐", linkedService: "骨盆调理", sendOnPriceQuery: true,
+          packages: [{ name: "Package B", imageUrl: "https://example.test/b.jpg",
+            caption: "现在只需 RM288" }],
+        }],
+        wasPromoRecentlySent: async () => false,
+        hasUnconfirmedMediaDelivery: async () => false,
+      });
+      assert.equal(graphic, null, "Free experience fee must not send paid promotion graphics");
+    }
+    const disallowed = [
+      "Can I book the free experience next Friday?",
+      "可以预约免费体验下周五吗？",
+      "3D First Trial 多少钱？",
+      "Is the 3D First Trial experience free?",
+    ];
+    for (const q of disallowed) assert.equal(
+      isComplimentaryAssessmentFeeQuestion(q, true, [customer, assistant, { role: "user", content: q }]),
+      false, "Should not intercept booking or paid treatment request: " + q
+    );
+    for (const q of feeQuestions.map(([text]) => text)) {
+      assert.equal(isComplimentaryAssessmentFeeQuestion(q, false,
+        [customer, assistant, { role: "user", content: q }]), false,
+      "Non-opted-in clinics must never assume free service");
+      assert.equal(isComplimentaryAssessmentFeeQuestion(q, true,
+        [customer, { role: "assistant", content: "[Verified STAFF message] " + assistant.content },
+          { role: "user", content: q }]), false, "Staff takeover must not enable free policy");
+      assert.equal(isComplimentaryAssessmentFeeQuestion(q, true,
+        [{ role: "user", content: "3D First Trial多少钱" }, assistant,
+          { role: "user", content: q }]), false, "Paid treatment context is not a free intro");
+    }
+  } finally {
+    config.automatedFollowUp = before;
+  }
+});
+
 test("pelvic invitation uses an actual line break, not a visible backslash-n", () => {
   const { assessmentFirstInvitation } = require("../src/utils/initialOfferReplyGuard");
   const before = config.automatedFollowUp;
