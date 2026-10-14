@@ -272,7 +272,7 @@ async function sweepStaleAndBlocked(db = pool) {
          lease_token=NULL,claimed_at=NULL,updated_at=now()
        WHERE status='processing'
          AND claimed_at<now()-($1::integer*interval '1 millisecond')
-       RETURNING contact_id,inbound_message_id,message_id`
+       RETURNING contact_id,inbound_message_id,message_id`,
     [UNKNOWN_AFTER_MS]
   );
   const cancelled = await db.query(
