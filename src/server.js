@@ -28,6 +28,7 @@ const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeSe
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
   RESULT_MEDIA_SEND_SPACING_MS,
@@ -1069,6 +1070,11 @@ async function processIncomingMessage(
     // A short "berapa?" or "多少钱?" can refer only to the immediately
     // previous customer treatment enquiry, never a stale CRM/ad classification.
     // Require exactly one independently verified configured service.
+    const clarifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? resolveClarifiedPriceService({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        }) : null;
     const verifiedPriceService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
         (isStandalonePriceQuestion(text)
@@ -1117,6 +1123,7 @@ async function processIncomingMessage(
             // Direct and one-turn follow-up requests use only verified customer
             // treatment evidence (same standard as promotional images).
             treatment: verifiedPriceService?.name || null,
+            clarifiedPriceService,
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
           })
