@@ -1,6 +1,6 @@
 "use strict";
 
-const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const {
   getActivePromotions, promotionPackages, findMentionedPromotionPackages,
@@ -53,7 +53,8 @@ function resolveVerifiedPriceFollowUpService({
   promotions = [],
 } = {}) {
   const current = String(customerText || "").trim();
-  if (!current || current.length > 115 || !hasExplicitPriceRequest(current) ||
+  if (!current || current.length > 115 ||
+      !(hasExplicitPriceRequest(current) || isStandalonePriceQuestion(current)) ||
       TOPIC_RESET.test(current) || BROAD_PRICE_QUESTION.test(current)) return null;
 
   const candidates = serviceCandidates(services, serviceAliases);
