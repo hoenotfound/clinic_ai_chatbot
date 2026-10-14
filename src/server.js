@@ -29,6 +29,7 @@ const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmen
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
+const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
   RESULT_MEDIA_SEND_SPACING_MS,
@@ -1132,6 +1133,24 @@ async function processIncomingMessage(
         console.warn("[Reply guard] Replaced unsolicited treatment price before sending.");
         reply = finalOfferGuard.reply;
       }
+    }
+
+    // A real price question must receive an amount even when the model tries
+    // to move straight to the assessment. Use only this verified treatment's
+    // active configured packages, never a guessed amount or stacked voucher.
+    if (!flagged && !marketingStopQuestion &&
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+      const priced = ensureVerifiedPriceReply({
+        customerText: text, reply, treatment: verifiedPriceService?.name || null,
+        clarifiedPriceService, services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
+        resultMedia: clinicConfig.resultMedia, conversationHistory: history,
+        language: mediaLanguage,
+      });
+      if (priced.restored) {
+        console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
+      }
+      reply = priced.reply;
     }
 
     // Preserve the useful original service explanation. If an eligible first
