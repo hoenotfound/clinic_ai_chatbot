@@ -65,6 +65,14 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         trigger_message_id integer, follow_up_step integer, action text,
         reason text, topic text
       );
+      CREATE TABLE whatsapp_follow_up_policy_holds (
+        contact_id INTEGER NOT NULL,
+        trigger_message_id INTEGER NOT NULL,
+        follow_up_step INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        retry_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY(contact_id,trigger_message_id,follow_up_step)
+      );
       INSERT INTO contacts (
         id, channel, whatsapp_number, mode, takeover_by, takeover_at,
         needs_attention, attention_reason
