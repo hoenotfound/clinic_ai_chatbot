@@ -28,6 +28,8 @@ test("first staff reply claims a synthetic AI handoff without changing Staff mod
   assert.match(calls[0].sql, /INSERT INTO follow_up_ai_decisions/);
   assert.match(calls[0].sql, /anchor\.sent_by_username IS NULL/);
   assert.match(calls[0].sql, /Cancelled because clinic staff claimed this AI handoff/);
+  assert.match(calls[0].sql, /DO UPDATE SET reason = EXCLUDED.reason/);
+  assert.match(calls[0].sql, /WHERE follow_up_ai_decisions.action = 'skip'/);
   assert.deepEqual(calls[0].params, ["caden", 42, AI_HANDOFF_OWNER]);
   assert.equal(published[0].payload.reason, "staff_claimed_ai_handoff");
 });
