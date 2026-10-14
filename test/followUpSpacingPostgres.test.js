@@ -280,7 +280,7 @@ test(
           now() - interval '21 hours', 'wamid.anchor.51', 'sent');
         INSERT INTO follow_up_ai_decisions
           (contact_id, trigger_message_id, follow_up_step, action, reason, created_at)
-        VALUES (5, 51, 1, 'skip', 'First response already had multiple result photos',
+        VALUES (5, 51, 1, 'skip', 'step_skip: First response already had multiple result photos',
           now() - interval '19 hours');
       `);
       const postSkip = await followUpRepo.findCandidates({
@@ -302,7 +302,7 @@ test(
 
       const nextSkip = await followUpRepo.recordAiDecisionIfStillEligible({
         contactId: 5, triggerMessageId: 51, stepIndex: 2,
-        action: "skip", reason: "No separate testimonial available",
+        action: "skip", reason: "step_skip: No separate testimonial available",
         delayMinutes: 360, previousDelayMinutes: 120,
         triggerMode: "all", activatedAt,
       });
@@ -317,6 +317,54 @@ test(
         triggerMode: "all", activatedAt, limit: 25,
       });
       assert.equal(Number(thirdCandidates.find((item) => Number(item.contact_id) === 5)?.next_follow_up_step), 3);
+
+      // Once FU1 has already been skipped, a later staff takeover must replace
+      // that row with a terminal cancellation, not ignore the conflict.
+      const overridden = await contactsRepo.takeOver(5, "staff1");
+      assert.equal(overridden.mode, "human");
+      const stopped = await client.query(`
+        SELECT reason FROM follow_up_ai_decisions
+        WHERE contact_id = 5 AND trigger_message_id = 51 AND follow_up_step = 1
+      `);
+      assert.match(stopped.rows[0].reason, /^Cancelled because clinic staff/);
+      await client.query(`
+        UPDATE contacts SET mode = 'ai', takeover_by = NULL, takeover_at = NULL
+        WHERE id = 5
+      `);
+      const noRevival = await followUpRepo.findCandidates({
+        delayMinutes: [120, 360, 1200],
+        triggerMode: "all", activatedAt, limit: 25,
+      });
+      assert.equal(noRevival.some((c) => Number(c.contact_id) === 5), false);
+
+      // Historical skip rows predate the step-only prefix. They must never
+      // restart on deployment just because the new sequence code is enabled.
+      await client.query(`
+        INSERT INTO contacts (id, channel, whatsapp_number)
+        VALUES (6, 'whatsapp', '60119876543');
+        INSERT INTO messages (id,contact_id,role,content,created_at)
+        VALUES (60,6,'user','I will decide later',now()-interval '9 hours');
+        INSERT INTO messages (id,contact_id,role,content,created_at,
+          whatsapp_message_id,delivery_status)
+        VALUES (61,6,'assistant','Okay, take your time',
+          now()-interval '8 hours','wamid.anchor.61','sent');
+        INSERT INTO follow_up_ai_decisions
+          (contact_id,trigger_message_id,follow_up_step,action,reason,created_at)
+        VALUES (6,61,1,'skip','Customer said they will contact us later',
+          now()-interval '6 hours');
+      `);
+      const legacyStopped = await followUpRepo.findCandidates({
+        delayMinutes: [120,360,1200],
+        triggerMode: "all", activatedAt, limit: 25,
+      });
+      assert.equal(legacyStopped.some((c) => Number(c.contact_id) === 6), false);
+      const noLegacyLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 6, triggerMessageId: 61, stepIndex: 2,
+        leaseToken: "legacy-decline-must-stop", delayMinutes: 360,
+        previousDelayMinutes: 120, triggerMode: "all", activatedAt,
+      });
+      assert.equal(noLegacyLease, null);
+
 
       await client.query(`
         INSERT INTO contacts (
