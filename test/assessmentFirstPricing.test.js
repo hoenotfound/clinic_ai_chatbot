@@ -129,15 +129,90 @@ test("assessment-first prompt hides package prices unless the current customer a
   }
 });
 
-test("assessment-first prompt treats assessment and trial charges separately", () => {
-  const source = require("node:fs").readFileSync(
-    require("node:path").join(__dirname, "../src/utils/systemPrompt.js"), "utf8"
-  );
-  assert.match(source, /A 1-to-1 assessment and a trial experience are DIFFERENT items/);
-  assert.match(source, /answer that fee question BEFORE asking about appointment dates/);
-  assert.match(source, /never imply the trial is free/);
-  assert.match(source, /Do not send package graphics unless current-price request was explicit/);
+test("free introductory assessment and experience are a verified clinic-specific fee answer", async () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+  const { assessmentFirstInvitation } = require("../src/utils/initialOfferReplyGuard");
+  const original = config.automatedFollowUp;
+  config.automatedFollowUp = {
+    ...original,
+    assessmentFirstPricingEnabled: true,
+    complimentaryAssessmentExperienceEnabled: true,
+  };
+  try {
+    const questions = [
+      ["体态评估和体验这个是否收费？请问多少？", "zh", /1对1体态评估 \+ 体验是免费的/u],
+      ["Is the 1-on-1 posture assessment + experience free?", "en", /assessment \+ introductory experience is free/iu],
+      ["Penilaian postur + sesi pengalaman percuma ke?", "ms", /adalah percuma/iu],
+    ];
+    for (const [customerText, language, expected] of questions) {
+      assert.equal(isComplimentaryAssessmentFeeQuestion(customerText, true), true);
+      const result = ensureVerifiedPriceReply({
+        customerText, reply: "Our centre will confirm the fee",
+        treatment: null, language, promotions: [], services: [],
+      });
+      assert.equal(result.restored, true);
+      assert.match(result.reply, expected);
+      assert.doesNotMatch(result.reply, /RM288|RM388|RM488|RM688/u);
+      assert.equal(await resolvePricePromotionForReply({
+        customerText, treatment: "骨盆调理", verifiedServiceFromText: "骨盆调理",
+        promotions: [{ name: "Pelvis", linkedService: "骨盆调理",
+          sendOnPriceQuery: true, packages: [
+            { name: "Package A", imageUrl: "https://example.test/a.jpg", caption: "现在只需 RM388" }
+          ] }],
+        textSendSucceeded: true, contactId: 1,
+        wasPromoRecentlySent: async () => false,
+        hasUnconfirmedMediaDelivery: async () => false,
+      }), null);
+    }
+    const invite = assessmentFirstInvitation({
+      treatment: "骨盆调理", customerText: "骨盆调理", language: "zh",
+      services: [{ name: "骨盆调理" }],
+    });
+    assert.match(invite, /免费.*1对1的体态评估 \+ 体验/u);
+    assert.match(invite, /RM100/u);
+    assert.doesNotMatch(invite, /RM288|RM388/u);
+  } finally {
+    config.automatedFollowUp = original;
+  }
 });
+
+test("free introductory experience cannot be confused with a paid first trial or package", () => {
+  const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
+  for (const message of [
+    "3D first trial多少钱？",
+    "9D 体验多少钱？",
+    "骨盆调理 Package B 多少钱？",
+    "完整疗程多少钱？",
+    "3D 体态评估和正式疗程多少钱？",
+    "Package A assessment + experience price?",
+  ]) {
+    assert.equal(isComplimentaryAssessmentFeeQuestion(message, true), false, message);
+  }
+  assert.equal(isComplimentaryAssessmentFeeQuestion("体态评估和体验收费吗？", false), false);
+  assert.equal(isComplimentaryAssessmentFeeQuestion("我想了解体态评估和体验", true), false);
+});
+
+test("assessment-first prompt names the free experience only for opted-in clinic config", () => {
+  const saved = config.automatedFollowUp;
+  try {
+    config.automatedFollowUp = {
+      ...saved, assessmentFirstPricingEnabled: true,
+      complimentaryAssessmentExperienceEnabled: true,
+    };
+    const enabled = buildSystemPrompt({ channel: "whatsapp" });
+    assert.match(enabled, /complete introductory 1对1的体态评估 \+ 体验 is FREE/u);
+    assert.match(enabled, /introductory 1对1体态评估 \+ 体验 IS free/u);
+    assert.match(enabled, /Do not send package graphics unless current-price request was explicit/u);
+    config.automatedFollowUp = { ...saved, assessmentFirstPricingEnabled: true,
+      complimentaryAssessmentExperienceEnabled: false };
+    const disabled = buildSystemPrompt({ channel: "whatsapp" });
+    assert.doesNotMatch(disabled, /complete introductory 1对1的体态评估 \+ 体验 is FREE/u);
+  } finally {
+    config.automatedFollowUp = saved;
+  }
+});
+
 
 test("runtime has independent fail-closed checks for scheduled pricing and static promotion paths",()=>{
   const root=path.resolve(__dirname,"../src");
