@@ -43,8 +43,10 @@ let running = false;
 let timer = null;
 
 // A fresh Meta pricing callback on the first real business response is required.
-// Ad attribution alone is not sufficient billing proof. Do not backfill leads:
-// clinicConfig.automatedFollowUp.freeEntry.activatedAt is the cutover boundary.
+// Ad attribution alone is not sufficient billing proof. A narrow pre-activation
+// grace period may include already consented, verified-free CTWA leads whose
+// first reply happened shortly before this feature was enabled. No catch-up
+// sends occur outside the normal per-slot due windows.
 const candidateSql = `
   SELECT c.id AS contact_id, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,
          origin.created_at AS first_inbound_at,
@@ -181,7 +183,11 @@ const candidateSql = `
           )
         )
     )
-    AND first_reply.created_at >= $1::timestamptz
+    -- Admit at most 24 hours of verified, consented CTWA leads preceding the
+    -- feature activation. The usual future 48h/66h slot windows still apply.
+    AND first_reply.created_at >= $1::timestamptz - interval '24 hours'
+    AND (first_reply.created_at >= $1::timestamptz
+      OR c.whatsapp_opt_in_at <= $1::timestamptz)
     AND first_reply.created_at > now() - interval '7 days'
     -- Later customer replies are allowed; restart silence only after
     -- a genuine business response to the latest inbound WhatsApp message.
