@@ -30,6 +30,17 @@ test("requires a reason for skip and human review", () => {
   );
 });
 
+test("supports a distinct terminal stop decision and requires a reason", () => {
+  const decision = parseFollowUpAiResult(JSON.stringify({
+    action: "stop_sequence", message: "", reason: "Customer wants to decide later", topic: "",
+  }));
+  assert.equal(decision.action, "stop_sequence");
+  assert.equal(decision.reason, "Customer wants to decide later");
+  assert.throws(() => parseFollowUpAiResult(JSON.stringify({
+    action: "stop_sequence", message: "", reason: "", topic: "",
+  })), (err) => err.code === "INVALID_AI_RESPONSE");
+});
+
 test("rejects unstructured or internally leaked follow-up output", () => {
   assert.throws(
     () => parseFollowUpAiResult("Just send a reminder"),
