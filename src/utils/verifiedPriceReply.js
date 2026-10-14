@@ -188,7 +188,8 @@ function ensureVerifiedPriceReply({
   // administrative question into a "please confirm the fee" response.
   if (isComplimentaryAssessmentFeeQuestion(
     customerText,
-    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true
+    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+    conversationHistory
   )) {
     return { reply: complimentaryAssessmentFeeReply(language), restored: true };
   }
