@@ -148,7 +148,8 @@ test("explicit 3D First Trial price request returns RM488 and only the matching 
     const media = await resolvePricePromotionForReply(shared);
     assert.equal(media?.packages?.length, 1);
     assert.equal(media.packages[0].imageUrl, "https://example.test/promo-images/32");
-    assert.equal(media.packages[0].name, "3D 小颜术 First Trial");
+    assert.equal(media.packages[0].name, "Main offer");
+    assert.equal(media.title, "3D 小颜术 First Trial");
     assert.ok(media.packages[0].caption, "the matching media must have a caption");
     assert.equal(await resolvePricePromotionForReply({
       ...shared, textSendSucceeded: false,
