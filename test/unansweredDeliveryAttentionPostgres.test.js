@@ -124,6 +124,32 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
     const answered = await contacts.clearDeliveryAttentionIfNoFailedMessages(397);
     assert.equal(answered.needs_attention, false);
 
+    // A new inbound without a failed send can still be unanswered. A late
+    // cleanup callback for an older retry, or an automated follow-up, must not
+    // make that new customer enquiry disappear from the staff attention list.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status)
+      VALUES (1548,397,'user',now()+interval '1 second',NULL);
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,is_automated_follow_up)
+      VALUES (1549,397,'assistant',now()+interval '2 seconds','pending',
+              'wamid.followup1549',true);
+      UPDATE contacts SET needs_attention=true,
+        attention_reason='Delivery failed: latest customer still unanswered'
+      WHERE id=397;
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(397), null,
+      "a previous accepted reply or automated follow-up does not answer the new customer");
+
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,is_automated_follow_up)
+      VALUES (1550,397,'assistant',now()+interval '3 seconds','pending',
+              'wamid.staff1550',false);
+    `);
+    assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(397)).needs_attention,
+      false, "a newer directly accepted staff reply closes the current episode");
+
     // An unrelated earlier failure must never replace a booking-ready warning.
     await client.query(`
       UPDATE contacts SET needs_attention=true,
