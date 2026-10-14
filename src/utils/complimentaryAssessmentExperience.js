@@ -30,7 +30,8 @@ function recentIntroAssessmentContext(customerText, conversationHistory) {
   for (let i = turns.length - 1; i >= 0; i--) {
     const turn = turns[i];
     if (turn.role === "assistant") {
-      if (STAFF_MESSAGE.test(String(turn.content || "").trim())) return false;
+      if (STAFF_MESSAGE.test(String(turn.content || "").trim()) ||
+          FULL_TREATMENT.test(String(turn.content || ""))) return false;
       if (sawAssistant) return false;
       sawAssistant = true;
       continue;
