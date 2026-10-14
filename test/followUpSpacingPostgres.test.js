@@ -115,6 +115,14 @@ test(
           UNIQUE (trigger_message_id, follow_up_step)
         );
 
+        CREATE TABLE whatsapp_follow_up_policy_holds (
+        contact_id INTEGER NOT NULL,
+        trigger_message_id INTEGER NOT NULL,
+        follow_up_step INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        retry_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY(contact_id,trigger_message_id,follow_up_step)
+      );
         INSERT INTO contacts (
           id, channel, whatsapp_number, needs_attention
         ) VALUES (
@@ -213,6 +221,28 @@ test(
         "UPDATE messages SET created_at = now() - interval '7 hours' WHERE id = 12"
       );
 
+      // A temporary strict billing hold must remove the due candidate from
+      // the immediate sweep and make the worker sleep until the held retry.
+      await client.query(`
+        INSERT INTO whatsapp_follow_up_policy_holds
+          (contact_id,trigger_message_id,follow_up_step,reason,retry_at)
+        VALUES(1,11,2,'zero_cost_previous_send_unreconciled',
+          now()+interval '5 minutes')
+      `);
+      const withheld = await followUpRepo.findCandidates({
+        delayMinutes: delays,triggerMode: "all",activatedAt,limit: 25,
+      });
+      assert.deepEqual(withheld, []);
+      const heldDue = await followUpRepo.getNextCandidateDueAt({
+        delayMinutes: delays,triggerMode: "all",activatedAt,
+      });
+      const holdWait = (new Date(heldDue).getTime() - Date.now()) / 60000;
+      assert.ok(holdWait > 4.8 && holdWait < 5.2,
+        `held follow-up should retry in about five minutes, got ${holdWait}`);
+      await client.query(`
+        UPDATE whatsapp_follow_up_policy_holds SET retry_at=now()-interval '1 second'
+        WHERE contact_id=1 AND trigger_message_id=11 AND follow_up_step=2
+      `);
       const dueCandidates = await followUpRepo.findCandidates({
         delayMinutes: delays,
         triggerMode: "all",
