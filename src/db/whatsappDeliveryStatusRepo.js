@@ -335,6 +335,12 @@ async function setDeliveryAttentionState(
              AND failed.contact_id = contacts.id
              AND failed.role = 'assistant'
              AND failed.delivery_status = 'failed'
+             -- Recovered callbacks for a message staff explicitly dismissed
+             -- must not recreate an old task or send another Telegram alert.
+             AND (
+               contacts.delivery_attention_dismissed_at IS NULL
+               OR failed.created_at > contacts.delivery_attention_dismissed_at
+             )
              AND (
                ${failedMediaSql("failed")}
                OR NOT EXISTS (
