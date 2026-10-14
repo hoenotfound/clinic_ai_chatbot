@@ -1,6 +1,7 @@
 const config = require("../config/clinicConfig");
 const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
+const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const {
   findMentionedPromotionPackages,
   getActivePromotions,
@@ -450,6 +451,10 @@ function buildConversationPromptContext(
     relevantServiceNames,
     serviceSource,
     currentCustomerText,
+    clarifiedPriceService: resolveClarifiedPriceService({
+      customerText: currentCustomerText, conversationHistory: messages,
+      services, serviceAliases: aliases,
+    }),
     schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText) || MAP_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
     promotionIntent: currentPromotionIntent || carriedPromotionIntent,
