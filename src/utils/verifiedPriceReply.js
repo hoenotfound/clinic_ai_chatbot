@@ -136,7 +136,7 @@ function ensureVerifiedPriceReply({
   const prices = verifiedPricesForService(treatment, promotions, customerText, conversationHistory);
   const locale = String(language || "").toLowerCase();
   if (!prices) {
-    const safeInfo = nonPriceExplanation(original);
+    const safeInfo = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
       : locale.startsWith("en")
