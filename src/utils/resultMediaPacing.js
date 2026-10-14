@@ -41,7 +41,7 @@ function planResultMediaPacing({
   if ((hasCustomerPriceEnquiry(customerText) || completedPriceClarification === true) &&
       !EXPLICIT_TREATMENT_INTEREST.test(String(customerText || "")) &&
       !EXPLICIT_RESULT_IMAGE_REQUEST.test(String(customerText || "")) &&
-      !(allowRelatedPriceProof === true && promotions === 0)) {
+      !(allowRelatedPriceProof === true && promotions === 0 && completedPriceClarification !== true)) {
     return { items: [], reason: "promotion_price_priority" };
   }
 
