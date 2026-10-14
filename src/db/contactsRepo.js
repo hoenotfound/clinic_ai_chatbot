@@ -6,7 +6,7 @@ const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
-const { acceptedDirectReplySql, failedMediaSql } = require("../utils/deliveryReplyAttentionSql");
+const { acceptedDirectReplySql, failedMediaSql, unresolvedFailedOutboundSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
@@ -768,8 +768,8 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            WHERE r.contact_id = contacts.id AND r.status = 'pending'
          ) OR EXISTS (
            SELECT 1 FROM messages m
-           WHERE m.contact_id = contacts.id AND m.role = 'assistant'
-             AND m.delivery_status IN ('failed', 'unknown')
+           WHERE m.contact_id = contacts.id
+               AND ${unresolvedFailedOutboundSql("m", "contacts")}
          ) OR (
            -- A manual reply does not confirm an appointment was booked.
            -- Keep Booking Ready flagged until staff explicitly dismisses it.
@@ -789,8 +789,8 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            -- delivery failures take precedence over AI review summaries.
            WHEN EXISTS (
              SELECT 1 FROM messages m
-             WHERE m.contact_id = contacts.id AND m.role = 'assistant'
-               AND m.delivery_status IN ('failed', 'unknown')
+             WHERE m.contact_id = contacts.id
+               AND ${unresolvedFailedOutboundSql("m", "contacts")}
            ) THEN CASE
              WHEN attention_reason LIKE 'Delivery failed:%'
                OR attention_reason LIKE 'Delivery unconfirmed:%'
@@ -972,8 +972,8 @@ async function dismissAttentionAndReviews(id) {
              THEN true
              WHEN EXISTS (
                SELECT 1 FROM messages m
-               WHERE m.contact_id = c.id AND m.role = 'assistant'
-                 AND m.delivery_status IN ('failed', 'unknown')
+               WHERE m.contact_id = c.id
+                  AND ${unresolvedFailedOutboundSql("m", "c")}
              ) THEN true
              ELSE false
            END,
@@ -985,10 +985,22 @@ async function dismissAttentionAndReviews(id) {
              THEN c.attention_reason
              WHEN EXISTS (
                SELECT 1 FROM messages m
-               WHERE m.contact_id = c.id AND m.role = 'assistant'
-                 AND m.delivery_status IN ('failed', 'unknown')
+               WHERE m.contact_id = c.id
+                  AND ${unresolvedFailedOutboundSql("m", "c")}
              ) THEN 'Delivery failed: One or more outbound messages need staff review.'
              ELSE NULL
+           END,
+           delivery_attention_dismissed_at = CASE
+             -- Only an explicit attention dismissal acknowledges failed
+             -- media; regular staff sends must never do so implicitly.
+             WHEN NOT EXISTS (SELECT 1 FROM resolved)
+               AND (
+                 c.attention_reason LIKE 'Delivery failed:%'
+                 OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+                 OR c.attention_reason = 'New message — conversation is staff-owned.'
+               )
+             THEN clock_timestamp()
+             ELSE c.delivery_attention_dismissed_at
            END,
            updated_at = now()
        FROM locked WHERE c.id = locked.id
@@ -1186,8 +1198,7 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
            AND NOT EXISTS (
              SELECT 1 FROM messages failed
              WHERE failed.contact_id = c.id
-               AND failed.role = 'assistant'
-               AND failed.delivery_status IN ('failed', 'unknown')
+               AND ${unresolvedFailedOutboundSql("failed", "c")}
                -- Newer failed sends cannot be hidden by an earlier reply.
                -- Older failed media also remains an actionable attachment.
                AND (
