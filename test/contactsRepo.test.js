@@ -354,6 +354,31 @@ test("temporary AI outage attention does not clear a newer staff reason", async 
   assert.equal(updated, null);
 });
 
+test("direct delivery warnings link only a validated failed assistant message", async (t) => {
+  const originalQuery = pool.query;
+  const originalAlert = telegramImmediateAlerts.sendDeliveryFailureAlert;
+  t.after(() => {
+    pool.query = originalQuery;
+    telegramImmediateAlerts.sendDeliveryFailureAlert = originalAlert;
+  });
+  pool.query = async (sql, params) => {
+    assert.match(sql, /delivery_attention_message_id = \(/);
+    assert.match(sql, /m\.delivery_status IN \('failed','unknown'\)/);
+    assert.match(sql, /m\.contact_id = contacts\.id/);
+    assert.match(sql, /active_attempt\.created_at, active_attempt\.id/);
+    assert.deepEqual(params, ["Delivery failed: an image was rejected", 99, 5003]);
+    return { rows: [{ id: 99, needs_attention: true,
+      delivery_attention_message_id: 5003 }] };
+  };
+  telegramImmediateAlerts.sendDeliveryFailureAlert = async () => ({
+    status: "queued",
+  });
+  const alert = await contactsRepo.setDeliveryAttention(
+    99, "Delivery failed: an image was rejected", 5003
+  );
+  assert.equal(alert.delivery_attention_message_id, 5003);
+});
+
 test("delivery failures alert Telegram even when a higher-priority attention reason prevents replacing the contact flag", async (t) => {
   const originalQuery = pool.query;
   const originalAlert = telegramImmediateAlerts.sendDeliveryFailureAlert;
