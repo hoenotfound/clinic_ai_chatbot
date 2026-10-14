@@ -423,6 +423,8 @@ function isAutomatedFollowUpConfig(value) {
         typeof value.whatsappFreeOnly.allow24hServiceReplies !== "boolean") ||
        (value.whatsappFreeOnly.allow24hStaffMedia !== undefined &&
         typeof value.whatsappFreeOnly.allow24hStaffMedia !== "boolean") ||
+       (value.whatsappFreeOnly.allow24hAutoFollowUps !== undefined &&
+        typeof value.whatsappFreeOnly.allow24hAutoFollowUps !== "boolean") ||
        (value.whatsappFreeOnly.activatedAt !== null &&
         value.whatsappFreeOnly.activatedAt !== undefined &&
         (typeof value.whatsappFreeOnly.activatedAt !== "string" ||
@@ -707,6 +709,9 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const allowStaffMedia=freeOnlyEnabled && requestedFreeOnly.allow24hStaffMedia === true;
   if (allowStaffMedia && current?.whatsappFreeOnly?.allow24hStaffMedia !== true &&
       requestedFreeOnly.acknowledgeStaffMediaCharges !== true) return null;
+  const allowAutoFollowUps=freeOnlyEnabled && requestedFreeOnly.allow24hAutoFollowUps === true;
+  if (allowAutoFollowUps && current?.whatsappFreeOnly?.allow24hAutoFollowUps !== true &&
+      requestedFreeOnly.acknowledgeAutoFollowUpCharges !== true) return null;
   // Re-saving unrelated Tools settings cannot reset the billing alarm.
   const sameFreeOnlyRun = freeOnlyEnabled && current?.whatsappFreeOnly?.enabled === true &&
     typeof current.whatsappFreeOnly.activatedAt === "string" &&
@@ -715,6 +720,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     enabled: freeOnlyEnabled,
     allow24hServiceReplies: allowReplies,
     allow24hStaffMedia: allowStaffMedia,
+    allow24hAutoFollowUps: allowAutoFollowUps,
     activatedAt: freeOnlyEnabled
       ? sameFreeOnlyRun ? current.whatsappFreeOnly.activatedAt : new Date().toISOString()
       : null,
@@ -1472,6 +1478,7 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
       freeOnlyEnabled: freeOnly.enabled === true,
       allow24hServiceReplies: freeOnly.allow24hServiceReplies === true,
       allow24hStaffMedia: freeOnly.allow24hStaffMedia === true,
+      allow24hAutoFollowUps: freeOnly.allow24hAutoFollowUps === true,
       billingSafety: billing.rows[0],
       freeOnlyGate: gate.rows[0] || { status: "idle" },
       recentBlocks: blocked.rows,
