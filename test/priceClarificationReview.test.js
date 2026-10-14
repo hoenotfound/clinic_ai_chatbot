@@ -15,11 +15,13 @@ const promotions = [
       imageUrl:"https://example.test/b" },
   ]},
   { name:"3D First Trial",linkedService:"3D 小颜术",sendOnPriceQuery:true,
-    caption:"Treatment explanation",followUpMessage:"💎只需 RM 4️⃣8️⃣8️⃣ (原价 RM1288)",imageUrl:"https://example.test/3d" },
+    caption:"Treatment explanation",followUpMessage:"💎只需 RM 4️⃣8️⃣8️⃣ (原价 RM1288)",
+    followUpTranslations:{en:"🎊 Limited-time offer\n💎 RM 4️⃣8️⃣8️⃣\n(Original price RM1,288)",ms:"🎊 Promosi masa terhad\n💎 RM488\n(Harga asal RM1,288)"},imageUrl:"https://example.test/3d" },
   { name:"9D First Trial",linkedService:"9D 逆龄抗衰",sendOnPriceQuery:true,
     caption:"Treatment explanation",followUpMessage:"💎只需要 RM 4️⃣8️⃣8️⃣ (原价 RM888)",imageUrl:"https://example.test/9d" },
   { name:"Combination",linkedService:"3D + 9D 组合",sendOnPriceQuery:true,
-    caption:"✨ 9D + 3D 组合限时优惠: RM688",followUpMessage:"组合体验价只需 RM688",imageUrl:"https://example.test/combo" },
+    caption:"✨ 9D + 3D 组合限时优惠: RM688",followUpMessage:"组合体验价只需 RM688",
+    mediaTranslations:{en:{caption:"✨ 9D + 3D Limited-Time Combo Offer: RM688"},ms:{caption:"✨ Promosi Kombo 9D + 3D Masa Terhad: RM688"}},imageUrl:"https://example.test/combo" },
 ];
 const services = [ { name:"骨盆调理" },{ name:"3D 小颜术" } ];
 const aliases = [{ alias:"骨盆",officialService:"骨盆调理" },{ alias:"骨盆调整",officialService:"骨盆调理" }];
@@ -83,6 +85,9 @@ test("conflicting clinic sources cause staff confirmation rather than a guessed 
   assert.equal(result.restored,true);
   assert.match(result.reply,/门店/u);
   assert.doesNotMatch(result.reply,/RM999|RM388|RM288/u);
+  const translatedConflict=JSON.parse(JSON.stringify(promotions));
+  translatedConflict[2].followUpTranslations={en:"🎊 Limited-time offer\\n💎 RM999\\n(Original price RM888)"};
+  assert.equal(verifiedPricesForService("9D 逆龄抗衰",translatedConflict),null);
   const missing=ensureVerifiedPriceReply({...base,promotions:[]});
   assert.equal(missing.restored,true);
   assert.doesNotMatch(missing.reply,/RM999/u);
