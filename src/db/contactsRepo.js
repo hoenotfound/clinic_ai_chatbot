@@ -769,7 +769,7 @@ async function clearStaffAssistStateIfUnchanged(contact) {
          ) OR EXISTS (
            SELECT 1 FROM messages m
            WHERE m.contact_id = contacts.id
-               AND ${unresolvedFailedOutboundSql("m", "contacts")}
+               AND ${unresolvedFailedOutboundSql("m", "contacts", { ignoreUnlinkedHistoricalMedia: true })}
          ) OR (
            -- A manual reply does not confirm an appointment was booked.
            -- Keep Booking Ready flagged until staff explicitly dismisses it.
@@ -790,7 +790,7 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            WHEN EXISTS (
              SELECT 1 FROM messages m
              WHERE m.contact_id = contacts.id
-               AND ${unresolvedFailedOutboundSql("m", "contacts")}
+               AND ${unresolvedFailedOutboundSql("m", "contacts", { ignoreUnlinkedHistoricalMedia: true })}
            ) THEN CASE
              WHEN attention_reason LIKE 'Delivery failed:%'
                OR attention_reason LIKE 'Delivery unconfirmed:%'
@@ -815,11 +815,11 @@ async function clearStaffAssistStateIfUnchanged(contact) {
            WHEN EXISTS (
              SELECT 1 FROM messages m
              WHERE m.contact_id = contacts.id
-               AND ${unresolvedFailedOutboundSql("m", "contacts")}
+               AND ${unresolvedFailedOutboundSql("m", "contacts", { ignoreUnlinkedHistoricalMedia: true })}
            ) THEN (
              SELECT m.id FROM messages m
              WHERE m.contact_id = contacts.id
-               AND ${unresolvedFailedOutboundSql("m", "contacts")}
+               AND ${unresolvedFailedOutboundSql("m", "contacts", { ignoreUnlinkedHistoricalMedia: true })}
              ORDER BY m.created_at DESC, m.id DESC LIMIT 1
            )
            ELSE NULL
@@ -1066,7 +1066,7 @@ async function resolveAiReviewItem(contactId, reviewId) {
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN EXISTS (
                SELECT 1 FROM messages m
                WHERE m.contact_id = c.id
-                   AND ${unresolvedFailedOutboundSql("m", "c")}
+                   AND ${unresolvedFailedOutboundSql("m", "c", { ignoreUnlinkedHistoricalMedia: true })}
              )
              ELSE c.needs_attention
            END,
@@ -1082,7 +1082,7 @@ async function resolveAiReviewItem(contactId, reviewId) {
                AND EXISTS (
                  SELECT 1 FROM messages m
                  WHERE m.contact_id = c.id
-                   AND ${unresolvedFailedOutboundSql("m", "c")}
+                   AND ${unresolvedFailedOutboundSql("m", "c", { ignoreUnlinkedHistoricalMedia: true })}
                )
              THEN 'Delivery failed: One or more outbound messages need staff review.'
              WHEN c.attention_reason LIKE 'AI review requested:%' THEN NULL
@@ -1094,7 +1094,7 @@ async function resolveAiReviewItem(contactId, reviewId) {
              THEN (
                SELECT m.id FROM messages m
                WHERE m.contact_id = c.id
-                 AND ${unresolvedFailedOutboundSql("m", "c")}
+                 AND ${unresolvedFailedOutboundSql("m", "c", { ignoreUnlinkedHistoricalMedia: true })}
                ORDER BY m.created_at DESC, m.id DESC LIMIT 1
              )
              ELSE c.delivery_attention_message_id
