@@ -177,6 +177,20 @@ test("free introductory assessment and experience are a verified clinic-specific
   }
 });
 
+test("runtime resolves the verified free fee without weakening clinical or staff handoff", () => {
+  const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const start = server.indexOf("const verifiedFreeIntroFee =");
+  const finish = server.indexOf("if (!flagged && isUnanswerableCustomerReply", start);
+  assert.ok(start > 0 && finish > start);
+  const gate = server.slice(start, finish);
+  assert.match(gate, /complimentaryAssessmentExperienceEnabled === true/);
+  assert.match(gate, /!isExplicitStaffRequest\(text\)/);
+  assert.match(gate, /!hasClinicalMediaRisk\(text\)/);
+  assert.match(gate, /reviewRequired && reviewType === "information"/);
+  assert.match(gate, /complimentaryAssessmentFeeReply\(mediaLanguage\)/);
+  assert.doesNotMatch(gate, /reviewType === "clinical"/);
+});
+
 test("free introductory experience cannot be confused with a paid first trial or package", () => {
   const { isComplimentaryAssessmentFeeQuestion } = require("../src/utils/complimentaryAssessmentExperience");
   for (const message of [
