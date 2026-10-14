@@ -38,10 +38,19 @@ test(
         CREATE TABLE messages (
           id SERIAL PRIMARY KEY,
           contact_id INTEGER NOT NULL,
+          role TEXT DEFAULT 'assistant',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           whatsapp_message_id TEXT UNIQUE,
           delivery_status TEXT,
-          delivery_error TEXT
+          delivery_error TEXT,
+          is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
+          whatsapp_template JSONB,
+          pricing_reminder_anchor_id INTEGER,
+          automated_follow_up_for_message_id INTEGER,
+          automated_follow_up_parent_message_id INTEGER,
+          media_key TEXT,media_url TEXT,media_base64 TEXT,media_mime_type TEXT
         );
+        CREATE TABLE scheduled_messages(message_id INTEGER);
         CREATE TABLE outbound_message_evidence (
           message_id INTEGER,
           provider_message_id TEXT
@@ -263,6 +272,50 @@ test(
         needs_attention: true,
         attention_reason: "AI handoff: urgent review",
       });
+
+      // Late provider failures must not reopen a resolved text conversation.
+      // The callback can be processed many minutes after a separate staff
+      // reply, so base the decision on the actual failed message timestamp.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES(43),(44),(45);
+        INSERT INTO messages(id,contact_id,created_at,delivery_status)
+          VALUES (1001,43,now()-interval '10 minutes','failed');
+        INSERT INTO messages(id,contact_id,created_at,delivery_status,
+                             whatsapp_message_id)
+          VALUES (1002,43,now()-interval '5 minutes','read','wamid.new1002');
+      `);
+      assert.equal(await repo.setDeliveryAttentionState(
+        43,'Delivery failed: obsolete text',query,1001),null);
+      assert.equal((await client.query(
+        'SELECT needs_attention FROM contacts WHERE id=43'
+      )).rows[0].needs_attention,false);
+
+      // A failed photo must stay actionable even after a later text reply.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,created_at,delivery_status,
+                             media_key,media_mime_type)
+        VALUES (1003,44,now()-interval '10 minutes','failed','photo-1','image/png');
+        INSERT INTO messages(id,contact_id,created_at,delivery_status,
+                             whatsapp_message_id)
+        VALUES (1004,44,now()-interval '5 minutes','read','wamid.new1004');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        44,'Delivery failed: image',query,1003)).id,44);
+
+      // No newer accepted direct reply: the text failure must be visible.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,created_at,delivery_status)
+        VALUES (1005,45,now()-interval '10 minutes','failed');
+        INSERT INTO messages(id,contact_id,created_at,delivery_status,
+                             whatsapp_message_id,whatsapp_template)
+        VALUES (1006,45,now()-interval '5 minutes','read',
+                'wamid.marketing1006','{"name":"marketing"}'::jsonb);
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        45,'Delivery failed: unanswered text',query,1005)).id,45);
+      await client.query("UPDATE messages SET delivery_status='read' WHERE id=1005");
+      assert.equal(await repo.setDeliveryAttentionState(
+        45,'Delivery failed: already retried',query,1005),null);
 
       // A completed provider failure can lose its matching message later.
       // Flag it once after a grace period, but exclude known message/evidence
