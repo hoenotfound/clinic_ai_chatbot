@@ -234,7 +234,8 @@ test("saving Follow-up Tools cannot erase assessment-first or re-enable automati
   const { prepareConfigUpdatePayload } = require("../src/routes/config");
   const step = {
     enabled:true,triggerMode:"all",activatedAt:"2026-10-10T00:00:00Z",
-    assessmentFirstPricingEnabled:true,delayMinutes:120,message:"Follow up safely",
+    assessmentFirstPricingEnabled:true,complimentaryAssessmentExperienceEnabled:true,
+    delayMinutes:120,message:"Follow up safely",
     translations:{en:"Follow up safely",ms:"Follow up safely",zh:"Follow up safely"},
     imageUrl:"",videoKey:"",serviceOverrides:[],additionalSteps:[],
     quietHours:{enabled:true,start:"00:00",end:"07:00"},
@@ -247,11 +248,16 @@ test("saving Follow-up Tools cannot erase assessment-first or re-enable automati
   },current);
   assert.equal(saved.ok,true,JSON.stringify(saved));
   assert.equal(saved.updates.automatedFollowUp.assessmentFirstPricingEnabled,true);
+  assert.equal(saved.updates.automatedFollowUp.complimentaryAssessmentExperienceEnabled,true);
   assert.equal(saved.updates.automatedFollowUp.pricingReminder.enabled,false);
   const malicious=prepareConfigUpdatePayload({
     automatedFollowUp:{...step,assessmentFirstPricingEnabled:false},
   },current);
   assert.equal(malicious.ok,false);
+  const clinicFactTamper=prepareConfigUpdatePayload({
+    automatedFollowUp:{...step,complimentaryAssessmentExperienceEnabled:false},
+  },current);
+  assert.equal(clinicFactTamper.ok,false,"Follow-up Tools cannot silently revoke clinic-confirmed free assessment + experience");
 
   const legacy=prepareConfigUpdatePayload({
     automatedFollowUp:{...step,assessmentFirstPricingEnabled:false},
