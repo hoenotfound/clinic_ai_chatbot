@@ -1,7 +1,7 @@
 "use strict";
 
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
-const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
 const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
@@ -47,7 +47,37 @@ function configuredOfferPrice(copy) {
   return priceEvidence(copy).price;
 }
 
-function verifiedPricesForService(treatment, promotions, customerText = "") {
+// Resolve package choices once for both the customer-facing text and any
+// optional promotional images. Multiple explicitly named packages are valid.
+// Carry a package from history only for a standalone price follow-up; a new
+// treatment-price question must not inherit an older package preference.
+function requestedPricePackages(packages, customerText, conversationHistory = []) {
+  const candidates = Array.isArray(packages) ? packages : [];
+  const direct = findMentionedPromotionPackages(candidates, customerText);
+  if (direct.length) return direct;
+  if (!isStandalonePriceQuestion(customerText)) return candidates;
+
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const current = String(customerText || "").trim();
+  let skippedCurrent = false;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const entry = history[i];
+    if (entry?.role !== "user") continue;
+    if (!skippedCurrent && typeof entry.content === "string" &&
+        entry.content.trim() === current) {
+      skippedCurrent = true;
+      continue;
+    }
+    // An intervening photo or unsupported message never grants a stale
+    // package selection. Only the immediately previous customer text counts.
+    if (typeof entry.content !== "string") return candidates;
+    const previous = findMentionedPromotionPackages(candidates, entry.content);
+    return previous.length ? previous : candidates;
+  }
+  return candidates;
+}
+
+function verifiedPricesForService(treatment, promotions, customerText = "", conversationHistory = []) {
   const matching = getActivePromotions(promotions).filter((promotion) =>
     promotion?.sendOnPriceQuery === true &&
     String(promotion.linkedService || "").trim() === treatment
@@ -55,9 +85,7 @@ function verifiedPricesForService(treatment, promotions, customerText = "") {
   if (matching.length !== 1 || findAmbiguousPromotionPackageTerm(matching[0])) return null;
   const options = promotionPackages(matching[0]);
   if (!options.length || options.length > 4) return null;
-  const requested = findMentionedPromotionPackages(options, customerText);
-  if (requested.length > 1) return null;
-  const selected = requested.length === 1 ? requested : options;
+  const selected = requestedPricePackages(options, customerText, conversationHistory);
   const result = [];
   for (const option of selected) {
     if (!String(option.name || "").trim()) return null;
@@ -95,7 +123,6 @@ function ensureVerifiedPriceReply({
 } = {}) {
   const original = String(reply || "").trim();
   if (!original || !treatment ||
-      hasClinicalMediaRisk(customerText) ||
       !(hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
       relatedPricingConflict({
@@ -106,7 +133,7 @@ function ensureVerifiedPriceReply({
         customerText, conversationHistory, services, serviceAliases, resultMedia,
       })) return { reply: original, restored: false };
 
-  const prices = verifiedPricesForService(treatment, promotions, customerText);
+  const prices = verifiedPricesForService(treatment, promotions, customerText, conversationHistory);
   const locale = String(language || "").toLowerCase();
   if (!prices) {
     const safeInfo = nonPriceExplanation(original);
@@ -125,8 +152,11 @@ function ensureVerifiedPriceReply({
     : locale.startsWith("en")
       ? `The current ${treatment} package prices are:\n${entries}\n\nOur centre can confirm voucher terms and whether discounts can be combined 😊`
       : `${treatment}目前的配套价格是：\n${entries}\n\n优惠券的使用条件以及是否能与其他优惠叠加，可以让门店帮你确认哦 😊`;
-  const explanation = nonPriceExplanation(original);
+  // A clinical/suitability question may need staff input. Do not reproduce
+  // potentially unsafe model claims about pain, pregnancy or eligibility;
+  // quote verified prices independently without authorizing marketing media.
+  const explanation = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
   return { reply: explanation ? explanation + "\n\n" + quote : quote, restored: true };
 }
 
-module.exports = { configuredOfferPrice, verifiedPricesForService, nonPriceExplanation, ensureVerifiedPriceReply };
+module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, ensureVerifiedPriceReply };
