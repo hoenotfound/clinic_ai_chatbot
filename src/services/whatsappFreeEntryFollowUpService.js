@@ -12,6 +12,7 @@ const messagesRepo = require("../db/messagesRepo");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateApprovedMedia, validateTemplateRules, enrichAutomatedTemplateSpec, prepareAutoPromotionMedia, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
@@ -219,6 +220,16 @@ const candidateSql = `
         )
         AND (staff_reply.created_at, staff_reply.id) >
           (first_reply.created_at, first_reply.id)
+    )
+    -- A conversation-level stop from the AI also blocks later free-entry
+    -- marketing templates. Step-only skips remain eligible.
+    AND NOT EXISTS (
+      SELECT 1 FROM follow_up_ai_decisions d
+      JOIN messages decision_anchor ON decision_anchor.id = d.trigger_message_id
+        AND decision_anchor.contact_id = c.id
+      WHERE d.contact_id = c.id
+        AND decision_anchor.created_at >= origin.created_at
+        AND ${terminalFollowUpDecisionSql("d")}
     )
     AND ($2::integer IS NULL OR c.id = $2::integer)
     -- Only take due, unclaimed slots. Completed/old contacts cannot fill the
