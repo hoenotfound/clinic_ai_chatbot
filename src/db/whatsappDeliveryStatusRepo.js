@@ -320,9 +320,16 @@ async function setDeliveryAttentionState(
          OR attention_reason LIKE 'Delivery failed:%'
          OR attention_reason LIKE 'Delivery unconfirmed:%'
        )
+       -- The same provider error text can describe two different failed
+       -- outbound messages. A matching reason alone is NOT a replay when
+       -- the failed message ID changed. Compare both parts of the task key.
        AND (
          needs_attention IS DISTINCT FROM true
          OR attention_reason IS DISTINCT FROM $1
+         OR (
+           $3::integer IS NOT NULL
+           AND delivery_attention_message_id IS DISTINCT FROM $3::integer
+         )
        )
        -- An out-of-order failed callback for an old *text* message must not
        -- reopen a conversation already answered with a newer accepted direct
