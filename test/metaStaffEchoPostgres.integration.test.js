@@ -69,6 +69,7 @@ test(
           action TEXT NOT NULL,
           reason TEXT,
           topic TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           UNIQUE (trigger_message_id, follow_up_step)
         );
       `);
