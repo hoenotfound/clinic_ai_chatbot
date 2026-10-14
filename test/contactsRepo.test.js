@@ -364,7 +364,8 @@ test("delivery failures alert Telegram even when a higher-priority attention rea
 
   pool.query = async (sql, params) => {
     assert.match(sql, /attention_reason LIKE 'Delivery failed:%'/);
-    assert.deepEqual(params, ["Delivery failed: Meta rejected the message.", 12]);
+    assert.deepEqual(params, ["Delivery failed: Meta rejected the message.", 12, null]);
+    assert.match(sql, /delivery_attention_message_id/);
     return { rows: [] };
   };
 
