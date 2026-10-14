@@ -18,6 +18,8 @@ test("AI follow-up prompt keeps the decision contract while using compact busine
   assert.match(prompt, /CURRENT FOLLOW-UP BUSINESS CONTEXT:/);
   assert.match(prompt, /FOLLOW-UP STEP:/);
   assert.match(prompt, /Step: 2/);
+  assert.match(prompt, /Before & After photos.*NOT by themselves.*redundant/);
+  assert.match(prompt, /Do not skip just because several initial messages/);
   assert.match(prompt, /Current relevant promotion:/);
   assert.match(prompt, /PROMOTION AUTHORITY:/);
   assert.match(prompt, /send \| skip \| human_review/);
