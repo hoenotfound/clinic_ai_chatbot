@@ -2188,7 +2188,7 @@ function FollowUpTool({
         {freeEntryStatus?.freeOnlyEnabled && Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0 && (
           <p role="alert" className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-700">
             WhatsApp billing alarm: Meta reported an unexpected billable callback since strict protection was enabled.
-            Verified free-entry sends are blocked until staff investigate. Optional 24-hour text replies and authorized staff media may still be sent and may be billed.
+            Verified free-entry sends are blocked until staff investigate. Any 24-hour exception currently enabled in Tools (text replies and/or staff media) may still be sent and may be billed.
             Open WhatsApp templates for the audit details.
           </p>
         )}
@@ -3038,13 +3038,17 @@ function FollowUpTool({
             </div>
             <p className="mt-2 text-[11px] leading-5 text-amber-700">
               {form.whatsappFreeOnly?.enabled
-                ? form.whatsappFreeOnly?.allow24hServiceReplies
-                  ? "Strict protection ON with 24-hour text replies allowed: replies may be billed. Staff media requires its separate opt-in; templates and automated follow-ups still need proven free-entry billing."
-                  : "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
+                ? form.whatsappFreeOnly?.allow24hServiceReplies && form.whatsappFreeOnly?.allow24hStaffMedia
+                  ? "Strict protection ON with 24-hour text replies and staff media allowed: these staff sends may be billed; templates and automated follow-ups still need proven free-entry billing."
+                  : form.whatsappFreeOnly?.allow24hServiceReplies
+                    ? "Strict protection ON with 24-hour text replies allowed: replies may be billed. Staff media remains blocked unless its separate opt-in is enabled; templates and automated follow-ups still need proven free-entry billing."
+                    : form.whatsappFreeOnly?.allow24hStaffMedia
+                      ? "Strict protection ON with 24-hour staff media allowed: staff-sent media may be billed. Ordinary text replies remain blocked unless their separate opt-in is enabled; templates and automated follow-ups still need proven free-entry billing."
+                      : "Free-only ON (save to apply): messages without proven free billing will be blocked, even ordinary customer replies and staff media. A first TEXT reply to a real, recent Click-to-WhatsApp ad can open a free-entry window; subsequent sends must await Meta billing proof. This is not a Meta billing cap or an absolute RM0 guarantee."
                 : "Free-only OFF: existing Meta billing rules apply. Turn on and save to block any unverified WhatsApp outbound send."}
               Meta pricing confirmations arrive after delivery, so check the live billing evidence below.
               Unexpected billable callbacks after activation stop strict template sending.
-              An explicitly allowed 24-hour service reply can be billed and is shown separately below.
+              Explicitly allowed 24-hour text or staff-media sends can be billed and are shown separately below.
             </p>
             {form.whatsappFreeOnly?.enabled === true && (
               <label className="mt-3 flex items-start gap-2 text-xs font-medium text-amber-800">
@@ -3144,7 +3148,7 @@ function FollowUpTool({
                     {" · "}Unexpected since strict enabled: {freeEntryStatus.billingSafety?.since_switch ?? "unknown"}
                     {" · "}Permitted 24h service charges: {freeEntryStatus.billingSafety?.allowed_service_charges ?? "unknown"}
                     {Number(freeEntryStatus.billingSafety?.since_switch || 0) > 0
-                      ? " · BILLING ALARM: strict free-entry sends are blocked until investigated; permitted 24h text replies and staff media may continue."
+                      ? " · BILLING ALARM: strict free-entry sends are blocked until investigated; any enabled 24h text/staff-media exceptions may continue."
                       : ""}
                   </div>
                   {freeEntryStatus.freeOnlyEnabled && !freeEntryStatus.telegramBillingAlertsEnabled ? (
