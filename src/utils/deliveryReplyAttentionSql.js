@@ -39,18 +39,28 @@ function failedMediaSql(alias) {
     OR ${m}.media_mime_type IS NOT NULL)`;
 }
 
-// An explicit Inbox dismissal acknowledges earlier failures without rewriting
-// the provider audit. A failed attachment remains actionable throughout its
-// customer-message episode: later text in the same episode cannot clear it.
-// But after the customer sends a NEW message, the old attachment cannot
-// interfere with routine Staff Assist for that new episode when there is no
-// explicitly open delivery-failure attention reason. Keep an explicit delivery
-// warning protected across episodes until staff deliberately dismisses it.
-// Failed text can also be superseded by a newer provider-accepted direct reply.
-// Share these rules with draft cleanup and post-send reconciliation.
+// A delivery alert is an individual task. A failed image in the latest
+// customer-message episode remains actionable even if a staff text follows.
+// Old photos require a direct provider-accepted reply to a *newer* customer
+// turn before they stop blocking unlinked attention. Explicit delivery alerts
+// never disappear through a new inbound or an unrelated text: an anchored
+// alert protects its particular failed message, and a legacy alert (NULL
+// anchor) stays conservative until staff dismisses it.
+// 
+// When an alert is anchored to a DIFFERENT failure in a newer episode, do not
+// let other older failed media poison that alert after the newer send recovers.
+// Historic delivery_status rows are not edited; the existing explicit staff
+// dismissal timestamp remains authoritative for all messages before it.
 function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
   const m = checkedAlias(messageAlias);
   const c = checkedAlias(contactAlias);
+  const deliveryReason = `(
+    ${c}.needs_attention IS TRUE
+    AND (
+      ${c}.attention_reason LIKE 'Delivery failed:%'
+      OR ${c}.attention_reason LIKE 'Delivery unconfirmed:%'
+    )
+  )`;
   return `(${m}.role = 'assistant'
     AND ${m}.delivery_status IN ('failed', 'unknown')
     AND (
@@ -61,13 +71,13 @@ function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
       (
         ${failedMediaSql(m)}
         AND (
-          -- An already-flagged delivery task must not disappear merely
-          -- because another customer message arrived.
+          -- A specifically flagged failed image remains open until retry or
+          -- explicit dismissal, regardless of later customer messages.
           (
-            ${c}.needs_attention IS TRUE
+            ${deliveryReason}
             AND (
-              ${c}.attention_reason LIKE 'Delivery failed:%'
-              OR ${c}.attention_reason LIKE 'Delivery unconfirmed:%'
+              ${c}.delivery_attention_message_id = ${m}.id
+              OR ${c}.delivery_attention_message_id IS NULL
             )
           )
           OR NOT EXISTS (
@@ -76,6 +86,35 @@ function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
               AND later_customer.role = 'user'
               AND (later_customer.created_at, later_customer.id) >
                   (${m}.created_at, ${m}.id)
+          )
+          OR (
+            -- Unlinked historical media remains relevant until someone
+            -- actually answers the most recent newer customer turn. Merely
+            -- receiving another customer message does not count as recovery.
+            NOT ${deliveryReason}
+            AND NOT EXISTS (
+              SELECT 1 FROM messages reply_to_new_turn
+              WHERE reply_to_new_turn.contact_id = ${m}.contact_id
+                AND ${acceptedDirectReplySql("reply_to_new_turn")}
+                AND (reply_to_new_turn.created_at, reply_to_new_turn.id) >
+                    (${m}.created_at, ${m}.id)
+                AND EXISTS (
+                  SELECT 1 FROM messages newer_customer
+                  WHERE newer_customer.contact_id = ${m}.contact_id
+                    AND newer_customer.role = 'user'
+                    AND (newer_customer.created_at, newer_customer.id) >
+                        (${m}.created_at, ${m}.id)
+                    AND (newer_customer.created_at, newer_customer.id) <
+                        (reply_to_new_turn.created_at, reply_to_new_turn.id)
+                )
+                AND NOT EXISTS (
+                  SELECT 1 FROM messages unanswered_after_reply
+                  WHERE unanswered_after_reply.contact_id = ${m}.contact_id
+                    AND unanswered_after_reply.role = 'user'
+                    AND (unanswered_after_reply.created_at, unanswered_after_reply.id) >
+                        (reply_to_new_turn.created_at, reply_to_new_turn.id)
+                )
+            )
           )
         )
       )
