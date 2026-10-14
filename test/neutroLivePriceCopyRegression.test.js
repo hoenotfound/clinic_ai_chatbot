@@ -13,6 +13,8 @@ const { safeServiceFromCustomer } = require("../src/utils/initialOfferReplyGuard
 
 const services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }, { name: "9D 逆龄抗衰" }];
 const serviceAliases = [
+  { alias: "3D", officialService: "3D 小颜术" },
+  { alias: "9D", officialService: "9D 逆龄抗衰" },
   { alias: "Pelvic", officialService: "骨盆调理" },
   { alias: "Pelvis", officialService: "骨盆调理" },
   { alias: "骨盆", officialService: "骨盆调理" },
