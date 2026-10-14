@@ -63,7 +63,7 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
       CREATE TABLE follow_up_ai_decisions (
         id bigserial PRIMARY KEY, contact_id integer,
         trigger_message_id integer, follow_up_step integer, action text,
-        reason text, topic text
+        reason text, topic text, created_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE TABLE whatsapp_follow_up_policy_holds (
         contact_id INTEGER NOT NULL,

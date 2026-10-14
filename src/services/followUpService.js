@@ -23,6 +23,7 @@ const channelMessaging = require("./channelMessagingService");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
+const { normalizeFollowUpDecision } = require("../utils/followUpDecisionSql");
 const { pool } = require("../db/db");
 const { previouslySentVideo, textOnlyVideoFallback } = require("../utils/followUpVideoPolicy");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
@@ -1341,14 +1342,15 @@ async function sendCandidate(candidate) {
               );
               followUpMessageMode = "ai_fallback";
             } else {
+              const persistedDecision = normalizeFollowUpDecision(aiDecision);
               let recorded = null;
               try {
                 recorded = await followUpRepo.recordAiDecisionIfStillEligible({
                   contactId: candidate.contact_id,
                   triggerMessageId: candidate.trigger_message_id,
                   stepIndex,
-                  action: aiDecision.action,
-                  reason: aiDecision.reason,
+                  action: persistedDecision.action,
+                  reason: persistedDecision.reason,
                   topic: aiDecision.topic,
                   delayMinutes: step.delayMinutes,
                   previousDelayMinutes:

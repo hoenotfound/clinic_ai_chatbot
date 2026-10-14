@@ -3,6 +3,7 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { CONSENT_SCOPE, CONSENT_CATEGORY } = require("../utils/whatsappConsentPrompt");
 
 const DUE_AFTER_THIRD_MINUTES = 15;
@@ -87,7 +88,7 @@ WHERE c.channel='whatsapp' AND c.whatsapp_number IS NOT NULL
       OR p.retry_after>$3::timestamptz OR p.attempts>=3))
  AND NOT EXISTS(SELECT 1 FROM follow_up_ai_decisions d
   WHERE d.contact_id=c.id AND d.trigger_message_id=anchor.id
-   AND d.action IN ('skip','human_review'))
+   AND ${terminalFollowUpDecisionSql("d")})
  AND NOT EXISTS(SELECT 1 FROM messages price
   WHERE price.contact_id=c.id AND price.pricing_reminder_anchor_id=anchor.id
     AND (price.whatsapp_message_id IS NULL OR price.delivery_status IN ('unknown','failed','cancelled')))

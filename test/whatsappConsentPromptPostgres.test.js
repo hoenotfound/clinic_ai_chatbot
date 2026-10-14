@@ -44,7 +44,7 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
       );
       CREATE TABLE outbound_message_evidence(message_id INTEGER,origin TEXT);
       CREATE TABLE ai_review_items(contact_id INTEGER,status TEXT,category TEXT);
-      CREATE TABLE follow_up_ai_decisions(contact_id INTEGER,trigger_message_id INTEGER,action TEXT);
+      CREATE TABLE follow_up_ai_decisions(contact_id INTEGER,trigger_message_id INTEGER,action TEXT,reason TEXT);
       CREATE TABLE pricing_reminder_decisions(anchor_id INTEGER PRIMARY KEY);
       CREATE TABLE whatsapp_marketing_consent_events(
         id BIGSERIAL PRIMARY KEY, contact_id INTEGER, lead_id INTEGER, source TEXT,

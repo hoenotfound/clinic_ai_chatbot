@@ -56,6 +56,27 @@ test("worker has durable attempt, marketing and billed-message safety guards", (
 });
 
 
+test("pre-activation CTWA grace remains limited to verified consenting leads", () => {
+  const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(code, /first_reply\.created_at >= \$1::timestamptz - interval '24 hours'/);
+  assert.match(code, /c\.whatsapp_opt_in_at <= \$1::timestamptz/);
+  assert.match(code, /evidence\.pricing_type = 'free_entry_point'/);
+  assert.match(code, /evidence\.billable = false/);
+  assert.match(code, /now\(\) >= last_inbound\.created_at \+ interval '24 hours'/);
+  assert.match(code, /now\(\) < first_reply\.created_at \+ \(slot\.hours \+ 12\)/);
+});
+
+test("extended marketing candidates respect terminal stop and legacy decline decisions", () => {
+  const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(code, /NOT EXISTS \(\s*SELECT 1 FROM follow_up_ai_decisions d/);
+  assert.match(code, /decision_anchor\.created_at >= origin\.created_at/);
+  assert.match(code, /terminalFollowUpDecisionSql\("d"\)/);
+  // Candidate discovery is repeated inside both the atomic claim and final
+  // pre-send check so staff or customer state changes prevent stale sends.
+  assert.match(code, /const fresh = \(await listCandidates\(active, client, candidate\.contact_id\)\)\[0\]/);
+  assert.match(code, /await listCandidates\(liveActive, pool, candidate\.contact_id/);
+});
+
 test("extended WhatsApp templates never change the customer's chosen language", () => {
   const catalog = [
     { name: "ns_fu3_face_feedback", language: "zh_CN", status: "APPROVED", category: "MARKETING" },

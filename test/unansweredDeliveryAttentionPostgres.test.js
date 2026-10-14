@@ -66,7 +66,8 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
       CREATE TABLE follow_up_ai_decisions (
         id bigserial PRIMARY KEY, contact_id integer, trigger_message_id integer,
         follow_up_step integer, action text, reason text, topic text,
-        UNIQUE(trigger_message_id, follow_up_step)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (trigger_message_id, follow_up_step)
       );
       INSERT INTO contacts(id, channel, mode, needs_attention, attention_reason, is_unread)
       VALUES (397, 'whatsapp', 'ai', true, 'Delivery failed: strict free-entry', true);

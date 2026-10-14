@@ -12,6 +12,7 @@ const messagesRepo = require("../db/messagesRepo");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { quietHoursStatus } = require("../utils/quietHours");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { selectTemplateSpec, buildStaticMarketingTemplate, materializeTemplateMediaSpec, validateApprovedMedia, validateTemplateRules, enrichAutomatedTemplateSpec, prepareAutoPromotionMedia, SUPPORTED_LANGUAGES } = require("../utils/freeEntryTemplateSelection");
@@ -43,8 +44,10 @@ let running = false;
 let timer = null;
 
 // A fresh Meta pricing callback on the first real business response is required.
-// Ad attribution alone is not sufficient billing proof. Do not backfill leads:
-// clinicConfig.automatedFollowUp.freeEntry.activatedAt is the cutover boundary.
+// Ad attribution alone is not sufficient billing proof. A narrow pre-activation
+// grace period may include already consented, verified-free CTWA leads whose
+// first reply happened shortly before this feature was enabled. No catch-up
+// sends occur outside the normal per-slot due windows.
 const candidateSql = `
   SELECT c.id AS contact_id, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,
          origin.created_at AS first_inbound_at,
@@ -181,7 +184,11 @@ const candidateSql = `
           )
         )
     )
-    AND first_reply.created_at >= $1::timestamptz
+    -- Admit at most 24 hours of verified, consented CTWA leads preceding the
+    -- feature activation. The usual future 48h/66h slot windows still apply.
+    AND first_reply.created_at >= $1::timestamptz - interval '24 hours'
+    AND (first_reply.created_at >= $1::timestamptz
+      OR c.whatsapp_opt_in_at <= $1::timestamptz)
     AND first_reply.created_at > now() - interval '7 days'
     -- Later customer replies are allowed; restart silence only after
     -- a genuine business response to the latest inbound WhatsApp message.
@@ -213,6 +220,16 @@ const candidateSql = `
         )
         AND (staff_reply.created_at, staff_reply.id) >
           (first_reply.created_at, first_reply.id)
+    )
+    -- A conversation-level stop from the AI also blocks later free-entry
+    -- marketing templates. Step-only skips remain eligible.
+    AND NOT EXISTS (
+      SELECT 1 FROM follow_up_ai_decisions d
+      JOIN messages decision_anchor ON decision_anchor.id = d.trigger_message_id
+        AND decision_anchor.contact_id = c.id
+      WHERE d.contact_id = c.id
+        AND decision_anchor.created_at >= origin.created_at
+        AND ${terminalFollowUpDecisionSql("d")}
     )
     AND ($2::integer IS NULL OR c.id = $2::integer)
     -- Only take due, unclaimed slots. Completed/old contacts cannot fill the

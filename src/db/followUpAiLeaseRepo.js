@@ -1,5 +1,6 @@
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
+const { terminalFollowUpDecisionSql, continuableFollowUpSkipSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -113,7 +114,9 @@ async function claimIfStillEligible({
        LIMIT 1
      ), progress AS (
        SELECT
-         MAX(follow_up.automated_follow_up_step) AS max_step,
+         GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
+         COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
+           WHERE d.trigger_message_id = $2 AND ${continuableFollowUpSkipSql("d")}), 0)) AS max_step,
          BOOL_OR(
            follow_up.delivery_status IN ('failed', 'unknown')
            OR (follow_up.delivery_status IS NULL AND follow_up.whatsapp_message_id IS NULL)
@@ -123,13 +126,22 @@ async function claimIfStillEligible({
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
      ), previous_follow_up AS (
-       SELECT follow_up.created_at
-       FROM messages follow_up, anchor
+       SELECT sequence_event.created_at
+       FROM (
+         SELECT follow_up.created_at, follow_up.id
+         FROM messages follow_up, anchor
        WHERE follow_up.contact_id = $1
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
          AND follow_up.automated_follow_up_step = $3 - 1
-       ORDER BY follow_up.created_at DESC, follow_up.id DESC
+         UNION ALL
+         SELECT decision.created_at, decision.id
+         FROM follow_up_ai_decisions decision
+         WHERE decision.trigger_message_id = $2
+           AND ${continuableFollowUpSkipSql("decision")}
+           AND decision.follow_up_step = $3 - 1
+       ) sequence_event
+       ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
        LIMIT 1
      ), latest_lead AS (
        SELECT l.id, l.is_closed, l.appointment_status, s.stage_type, s.system_key
@@ -175,7 +187,7 @@ async function claimIfStillEligible({
          FROM follow_up_ai_decisions decision
          WHERE decision.contact_id = c.id
            AND decision.trigger_message_id = anchor.id
-           AND decision.action IN ('skip', 'human_review')
+           AND ${terminalFollowUpDecisionSql("decision")}
        )
        AND anchor.created_at >= $8::timestamptz
        AND CASE
