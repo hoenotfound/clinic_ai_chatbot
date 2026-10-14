@@ -123,7 +123,8 @@ test("conflicting, missing, and mistranslated prices all suppress optional graph
     for (const mutation of [
       p=>{p[0].packages[0].mediaTranslations.en.caption="Now only RM999";},
       p=>{p[0].packages[0].caption="优惠后 RM388 / RM288";},
-      p=>{p[0].packages[0].caption="No verified sale price";},
+      p=>{p[0].packages[0].caption="No verified sale price";
+        p[0].packages[0].mediaTranslations.en.caption="No price configured";},
     ]) {
       const bad=JSON.parse(JSON.stringify(promotions));
       mutation(bad);
@@ -136,6 +137,7 @@ test("conflicting, missing, and mistranslated prices all suppress optional graph
     // A verified B-only request is still allowed if unrelated A is invalid.
     const bad=JSON.parse(JSON.stringify(promotions));
     bad[0].packages[0].caption="No verified sale price";
+    bad[0].packages[0].mediaTranslations.en.caption="No price configured";
     const customerText="骨盆调理 B配套多少钱？";
     assert.match(priceText({promotions:bad,customerText}).reply,/RM288/u);
     assert.deepEqual((await priceImages({promotions:bad,customerText}))
