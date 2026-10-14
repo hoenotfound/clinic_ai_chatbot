@@ -280,6 +280,27 @@ test(
       assert.equal(stillUnresolved.contact.needs_attention, true);
       assert.equal(stillUnresolved.contact.attention_reason,
         "AI handed off this conversation.");
+      // Do not erase an unresolved media/booking task just because a staff
+      // echo arrived while the CRM contact was AI-owned.
+      await client.query(`UPDATE contacts SET mode='ai',takeover_by=NULL,
+        needs_attention=true,attention_reason='Delivery failed: before-and-after photo'
+        WHERE id=$1`,[contactId]);
+      const retainedPhoto=await metaStaffEchoRepo.persistStaffEchoIfNew(
+        contactId,"A staff text reply","instagram:ig-preserve-media",
+        "Instagram","AI handoff",client
+      );
+      assert.equal(retainedPhoto.contact.needs_attention,true);
+      assert.equal(retainedPhoto.contact.attention_reason,
+        "Delivery failed: before-and-after photo");
+      await client.query(`UPDATE contacts SET needs_attention=true,
+        attention_reason='Booking ready: appointment needs confirmation'
+        WHERE id=$1`,[contactId]);
+      const booking=await metaStaffEchoRepo.persistStaffEchoIfNew(
+        contactId,"Checking appointment","instagram:ig-preserve-booking",
+        "Instagram","AI handoff",client
+      );
+      assert.equal(booking.contact.needs_attention,true);
+      assert.match(booking.contact.attention_reason,/^Booking ready:/);
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client
