@@ -1,6 +1,6 @@
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
-const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
+const { terminalFollowUpDecisionSql, continuableFollowUpSkipSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
 const { normalizeQuietHours, quietHoursStatus } = require("../utils/quietHours");
@@ -97,7 +97,7 @@ function buildScheduleSql(settings) {
     LEFT JOIN LATERAL (
       SELECT GREATEST(COALESCE(MAX(m.automated_follow_up_step), 0),
         COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
-          WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'), 0)) AS max_step,
+          WHERE d.trigger_message_id = anchor.id AND ${continuableFollowUpSkipSql("d")}), 0)) AS max_step,
         BOOL_OR(m.delivery_status IN ('failed','unknown')
           OR (m.delivery_status IS NULL AND m.whatsapp_message_id IS NULL)) AS blocked
       FROM messages m WHERE m.contact_id = c.id AND m.is_automated_follow_up = true
@@ -111,7 +111,7 @@ function buildScheduleSql(settings) {
           AND m.automated_follow_up_step = progress.max_step
         UNION ALL
         SELECT d.created_at, d.id FROM follow_up_ai_decisions d
-        WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'
+        WHERE d.trigger_message_id = anchor.id AND ${continuableFollowUpSkipSql("d")}
           AND d.follow_up_step = progress.max_step
       ) event ORDER BY event.created_at DESC, event.id DESC LIMIT 1
     ) prev ON true
