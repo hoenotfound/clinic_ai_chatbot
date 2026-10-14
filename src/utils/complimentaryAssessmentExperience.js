@@ -24,7 +24,7 @@ function recentIntroAssessmentContext(customerText, conversationHistory) {
   if (!turns.length) return false;
   // Some callers include the current inbound turn; others supply prior turns.
   if (turns.at(-1)?.role === "user" &&
-      String(turns.at(-1)?.content || "").trim() === customerText) turns.pop();
+      String(turns.at(-1)?.content || "").normalize("NFKC").trim() === customerText) turns.pop();
   let sawAssistant = false;
   let previousUser = null;
   for (let i = turns.length - 1; i >= 0; i--) {
