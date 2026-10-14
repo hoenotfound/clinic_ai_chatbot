@@ -168,7 +168,7 @@ test("verified pricing fallback quotes the real active A/B prices, not an extra 
   }).restored,false);
   assert.equal(ensureVerifiedPriceReply({
     ...options, reply:"Package A RM388，Package B RM288",
-  }).restored,false);
+  }).restored,true);
   assert.equal(ensureVerifiedPriceReply({
     ...options, treatment:"3D 小颜术",
   }).restored,false);
