@@ -22,7 +22,7 @@ const promotions = [
     caption:"✨ 9D + 3D 组合限时优惠: RM688",followUpMessage:"组合体验价只需 RM688",imageUrl:"https://example.test/combo" },
 ];
 const services = [ { name:"骨盆调理" },{ name:"3D 小颜术" } ];
-const aliases = [{ alias:"骨盆调整",officialService:"骨盆调理" }];
+const aliases = [{ alias:"骨盆",officialService:"骨盆调理" },{ alias:"骨盆调整",officialService:"骨盆调理" }];
 const konny = [
   {role:"user",content:"想大概了解价钱"},
   {role:"assistant",content:"请问你想了解哪一项疗程的价格呢？我可以帮你确认 😊"},
