@@ -1169,11 +1169,10 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
          WHERE reply.contact_id = c.id
            AND reply.role = 'assistant'
            AND reply.is_automated_follow_up IS NOT TRUE
-           AND reply.whatsapp_message_id IS NOT NULL
-           AND (
-             reply.delivery_status IN ('pending', 'sent', 'delivered', 'read')
-             OR (c.channel IN ('facebook', 'instagram') AND reply.delivery_status IS NULL)
-           )
+           -- Keep identical acceptance semantics to Inbox Unreplied,
+           -- including real WhatsApp Business App/Meta echoes with NULL
+           -- delivery status and an actual provider message ID.
+           AND ${acceptedNormalOutboundSql("reply")}
            AND NOT EXISTS (
              SELECT 1 FROM messages inbound
              WHERE inbound.contact_id = c.id
