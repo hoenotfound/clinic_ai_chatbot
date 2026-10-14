@@ -1,5 +1,6 @@
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -186,7 +187,7 @@ async function claimIfStillEligible({
          FROM follow_up_ai_decisions decision
          WHERE decision.contact_id = c.id
            AND decision.trigger_message_id = anchor.id
-           AND decision.action = 'human_review'
+           AND ${terminalFollowUpDecisionSql("decision")}
        )
        AND anchor.created_at >= $8::timestamptz
        AND CASE
