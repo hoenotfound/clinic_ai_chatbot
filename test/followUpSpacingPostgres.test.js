@@ -266,6 +266,58 @@ test(
       assert.ok(claim);
       assert.equal(Number(claim.automated_follow_up_step), 2);
 
+      // An ordinary AI skip records step 1 as complete without claiming a
+      // WhatsApp send. The next step can still be evaluated independently.
+      await client.query(`
+        INSERT INTO contacts (id, channel, whatsapp_number, needs_attention)
+        VALUES (5, 'whatsapp', '60115556677', false);
+        INSERT INTO messages (id, contact_id, role, content, created_at)
+        VALUES (50, 5, 'user', 'Interested in pelvis treatment',
+          now() - interval '22 hours');
+        INSERT INTO messages (id, contact_id, role, content, created_at,
+          whatsapp_message_id, delivery_status)
+        VALUES (51, 5, 'assistant', 'Introduction and results',
+          now() - interval '21 hours', 'wamid.anchor.51', 'sent');
+        INSERT INTO follow_up_ai_decisions
+          (contact_id, trigger_message_id, follow_up_step, action, reason, created_at)
+        VALUES (5, 51, 1, 'skip', 'First response already had multiple result photos',
+          now() - interval '19 hours');
+      `);
+      const postSkip = await followUpRepo.findCandidates({
+        delayMinutes: [120, 360, 1200],
+        triggerMode: "all", activatedAt, limit: 25,
+      });
+      assert.equal(Number(postSkip.find((item) => Number(item.contact_id) === 5)?.next_follow_up_step), 2);
+
+      const postSkipLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 5, triggerMessageId: 51, stepIndex: 2,
+        leaseToken: "post-skip-step-two", delayMinutes: 360,
+        previousDelayMinutes: 120, triggerMode: "all", activatedAt,
+      });
+      assert.ok(postSkipLease);
+      await followUpAiLeaseRepo.release({
+        contactId: 5, triggerMessageId: 51, stepIndex: 2,
+        leaseToken: "post-skip-step-two",
+      });
+
+      const nextSkip = await followUpRepo.recordAiDecisionIfStillEligible({
+        contactId: 5, triggerMessageId: 51, stepIndex: 2,
+        action: "skip", reason: "No separate testimonial available",
+        delayMinutes: 360, previousDelayMinutes: 120,
+        triggerMode: "all", activatedAt,
+      });
+      assert.ok(nextSkip);
+      await client.query(`
+        UPDATE follow_up_ai_decisions
+        SET created_at = now() - interval '15 hours'
+        WHERE contact_id = 5 AND trigger_message_id = 51 AND follow_up_step = 2
+      `);
+      const thirdCandidates = await followUpRepo.findCandidates({
+        delayMinutes: [120, 360, 1200],
+        triggerMode: "all", activatedAt, limit: 25,
+      });
+      assert.equal(Number(thirdCandidates.find((item) => Number(item.contact_id) === 5)?.next_follow_up_step), 3);
+
       await client.query(`
         INSERT INTO contacts (
           id, channel, whatsapp_number, needs_attention
