@@ -926,12 +926,12 @@ function parseStatusUpdates(body) {
  async function sendMessage(to,text,options={}) {
    return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), {
     currentMessageId: options.currentMessageId,
-    messageKind: "first_reply_text",
+    messageKind: options.autoFollowUp === true ? "auto_followup_text" : "first_reply_text",
   });
  }
  function mediaGuardContext(options={}) {
    return { currentMessageId: options.currentMessageId,
-     messageKind: options.staffMedia === true ? "staff_media" : "media" };
+     messageKind: options.autoFollowUp === true ? "auto_followup_media" : options.staffMedia === true ? "staff_media" : "media" };
  }
  async function sendImage(to,url,caption,options={}) {
    return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), mediaGuardContext(options));
