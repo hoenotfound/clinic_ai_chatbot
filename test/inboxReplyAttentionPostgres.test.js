@@ -26,6 +26,7 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
         takeover_by text, takeover_at timestamptz,
         updated_at timestamptz DEFAULT now(), created_at timestamptz DEFAULT now(),
         needs_attention boolean DEFAULT false, attention_reason text,
+        delivery_attention_dismissed_at timestamptz,
         is_unread boolean DEFAULT false, needs_follow_up boolean DEFAULT false,
         whatsapp_opt_in_at timestamptz, whatsapp_opt_in_source text,
         whatsapp_opt_out_at timestamptz, whatsapp_opt_out_source text,
@@ -37,8 +38,13 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
         role text, content text, media_url text,
         created_at timestamptz DEFAULT now(), source_created_at timestamptz,
         whatsapp_message_id text, delivery_status text,
-        is_automated_follow_up boolean DEFAULT false
+        is_automated_follow_up boolean DEFAULT false,
+        whatsapp_template jsonb, pricing_reminder_anchor_id integer,
+        automated_follow_up_for_message_id integer,
+        automated_follow_up_parent_message_id integer,
+        media_key text,media_base64 text,media_mime_type text
       );
+      CREATE TABLE scheduled_messages(message_id integer);
       CREATE TABLE ai_review_items (
         id serial PRIMARY KEY, contact_id integer,
         inbound_message_id integer, summary text, category text,
