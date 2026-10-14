@@ -28,6 +28,11 @@ test("a verified service-only answer to our price clarification does not add res
     customerText: "Pelvic", completedPriceClarification: true,
     promotionCount: 2, items: images,
   }), { items: [], reason: "promotion_price_priority" });
+  assert.deepEqual(planResultMediaPacing({
+    customerText: "骨盆", completedPriceClarification: true,
+    promotionCount: 0, allowRelatedPriceProof: true, items: images,
+  }), { items: [], reason: "promotion_price_priority" });
+
   // Without verified prior price context, treatment enquiry images are
   // independently eligible as before.
   assert.deepEqual(planResultMediaPacing({
