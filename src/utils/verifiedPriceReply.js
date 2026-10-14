@@ -52,10 +52,30 @@ function configuredOfferPrice(copy) {
 // optional promotional images. Multiple explicitly named packages are valid.
 // Carry a package from history only for a standalone price follow-up; a new
 // treatment-price question must not inherit an older package preference.
-function requestedPricePackages(packages, customerText, conversationHistory = []) {
+function requestedPricePackages(packages, customerText, conversationHistory = [], {
+  clarifiedPriceService = null, treatment = null,
+} = {}) {
   const candidates = Array.isArray(packages) ? packages : [];
   const direct = findMentionedPromotionPackages(candidates, customerText);
   if (direct.length) return direct;
+
+  // "Package B price?" -> "Which treatment?" -> "骨盆" remains one
+  // explicit price request. Only a separately verified immediate clarification
+  // can carry the package choice over to a service-only customer answer.
+  if (clarifiedPriceService && clarifiedPriceService === treatment) {
+    const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+      .filter((entry) => entry?.role === "user" || entry?.role === "assistant");
+    const earlier = turns.at(-3);
+    if (earlier?.role === "user" &&
+        hasExplicitPriceRequest(earlier.content) &&
+        turns.at(-2)?.role === "assistant" &&
+        turns.at(-1)?.role === "user" &&
+        String(turns.at(-1)?.content || "").trim() === String(customerText || "").trim()) {
+      const selected = findMentionedPromotionPackages(candidates, earlier.content);
+      if (selected.length) return selected;
+    }
+  }
+
   if (!isStandalonePriceQuestion(customerText) &&
       !isContextualPriceReference(customerText)) return candidates;
 
@@ -79,7 +99,9 @@ function requestedPricePackages(packages, customerText, conversationHistory = []
   return candidates;
 }
 
-function verifiedPricesForService(treatment, promotions, customerText = "", conversationHistory = []) {
+function verifiedPricesForService(treatment, promotions, customerText = "", conversationHistory = [], {
+  clarifiedPriceService = null,
+} = {}) {
   const matching = getActivePromotions(promotions).filter((promotion) =>
     promotion?.sendOnPriceQuery === true &&
     String(promotion.linkedService || "").trim() === treatment
@@ -87,7 +109,9 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
   if (matching.length !== 1 || findAmbiguousPromotionPackageTerm(matching[0])) return null;
   const options = promotionPackages(matching[0]);
   if (!options.length || options.length > 4) return null;
-  const selected = requestedPricePackages(options, customerText, conversationHistory);
+  const selected = requestedPricePackages(options, customerText, conversationHistory, {
+    clarifiedPriceService, treatment,
+  });
   const result = [];
   for (const option of selected) {
     if (!String(option.name || "").trim()) return null;
@@ -168,7 +192,9 @@ function ensureVerifiedPriceReply({
         customerText, conversationHistory, services, serviceAliases, resultMedia,
       })) return { reply: original, restored: false };
 
-  const prices = verifiedPricesForService(treatment, promotions, customerText, conversationHistory);
+  const prices = verifiedPricesForService(treatment, promotions, customerText, conversationHistory, {
+    clarifiedPriceService,
+  });
   const locale = String(language || "").toLowerCase();
   if (!prices) {
     const safeInfo = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
