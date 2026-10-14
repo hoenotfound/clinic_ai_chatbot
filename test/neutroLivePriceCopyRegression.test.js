@@ -20,7 +20,6 @@ const serviceAliases = [
 const promotions = [{
   name: "骨盆调理套餐", linkedService: "骨盆调理",
   sendOnPriceQuery: true,
-  validFrom: "2026-10-01", validUntil: "2026-10-31",
   packages: [
     {
       name: "Package A", title: "尊享护理配套",
@@ -49,7 +48,7 @@ const promotions = [{
   ],
 }, {
   name: "3D 小颜术 First Trial", linkedService: "3D 小颜术",
-  sendOnPriceQuery: true, validFrom: "2026-10-01", validUntil: "2026-10-31",
+  sendOnPriceQuery: true,
   caption: "【中医小颜术】是一项中医的治疗项目",
   imageUrl: "https://example.test/promo-images/32",
   followUpMessage: "🎊 限时优惠 🥳\n💎只需 RM 4️⃣8️⃣8️⃣\n( 原价 RM888)",
@@ -59,7 +58,7 @@ const promotions = [{
   },
 }, {
   name: "9D 逆龄抗衰 First Trial", linkedService: "9D 逆龄抗衰",
-  sendOnPriceQuery: true, validFrom: "2026-10-01", validUntil: "2026-10-31",
+  sendOnPriceQuery: true,
   caption: "先让你了解一下 9D 逆龄抗衰精雕",
   imageUrl: "https://example.test/promo-images/21",
   followUpMessage: "🎊 限时优惠 🥳\n💎只需要 RM 4️⃣8️⃣8️⃣\n( 原价 RM1,288)",
@@ -77,7 +76,8 @@ async function duringAssessmentFirst(callback) {
 }
 
 test("actual style of October multilingual promo copy supports independently verified prices", () => {
-  // The validity date in this test is 14 Oct 2026, not the test runner clock.
+  // Use a fixed date for the active-promotion check, but keep the fixture
+  // independent of the live October expiry so future CI stays deterministic.
   const date = new Date("2026-10-14T09:00:00Z");
   const { getActivePromotions } = require("../src/utils/activePromotion");
   const offers = getActivePromotions(promotions, date);
