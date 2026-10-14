@@ -39,12 +39,15 @@ function failedMediaSql(alias) {
     OR ${m}.media_mime_type IS NOT NULL)`;
 }
 
-// An explicit Inbox dismissal acknowledges earlier failed attempts without
-// mutating the message audit. An unresolved media attachment remains actionable
-// until that dismissal or an accepted retry of the attachment itself; a failed
-// text already superseded by an accepted direct reply is no longer an open task.
-// Share the predicate with the Staff Assist draft cleanup so it cannot
-// resurrect old failures after a later customer message.
+// An explicit Inbox dismissal acknowledges earlier failures without rewriting
+// the provider audit. A failed attachment remains actionable throughout its
+// customer-message episode: later text in the same episode cannot clear it.
+// But after the customer sends a NEW message, the old attachment cannot
+// interfere with routine Staff Assist for that new episode when there is no
+// explicitly open delivery-failure attention reason. Keep an explicit delivery
+// warning protected across episodes until staff deliberately dismisses it.
+// Failed text can also be superseded by a newer provider-accepted direct reply.
+// Share these rules with draft cleanup and post-send reconciliation.
 function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
   const m = checkedAlias(messageAlias);
   const c = checkedAlias(contactAlias);
@@ -55,13 +58,36 @@ function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
       OR ${m}.created_at > ${c}.delivery_attention_dismissed_at
     )
     AND (
-      ${failedMediaSql(m)}
-      OR NOT EXISTS (
-        SELECT 1 FROM messages accepted_later_reply
-        WHERE accepted_later_reply.contact_id = ${m}.contact_id
-          AND ${acceptedDirectReplySql("accepted_later_reply")}
-          AND (accepted_later_reply.created_at, accepted_later_reply.id) >
-              (${m}.created_at, ${m}.id)
+      (
+        ${failedMediaSql(m)}
+        AND (
+          -- An already-flagged delivery task must not disappear merely
+          -- because another customer message arrived.
+          (
+            ${c}.needs_attention IS TRUE
+            AND (
+              ${c}.attention_reason LIKE 'Delivery failed:%'
+              OR ${c}.attention_reason LIKE 'Delivery unconfirmed:%'
+            )
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM messages later_customer
+            WHERE later_customer.contact_id = ${m}.contact_id
+              AND later_customer.role = 'user'
+              AND (later_customer.created_at, later_customer.id) >
+                  (${m}.created_at, ${m}.id)
+          )
+        )
+      )
+      OR (
+        NOT ${failedMediaSql(m)}
+        AND NOT EXISTS (
+          SELECT 1 FROM messages accepted_later_reply
+          WHERE accepted_later_reply.contact_id = ${m}.contact_id
+            AND ${acceptedDirectReplySql("accepted_later_reply")}
+            AND (accepted_later_reply.created_at, accepted_later_reply.id) >
+                (${m}.created_at, ${m}.id)
+        )
       )
     )
   )`;
