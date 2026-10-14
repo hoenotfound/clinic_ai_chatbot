@@ -150,6 +150,23 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
     assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(397)).needs_attention,
       false, "a newer directly accepted staff reply closes the current episode");
 
+    // Provider echoes from the WhatsApp Business App can carry a real
+    // provider ID with NULL delivery status. Inbox Unreplied treats these as
+    // accepted, so the delivery-attention cleanup must use the same rule.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status)
+      VALUES (1551,397,'user',now()+interval '4 seconds',NULL);
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,is_automated_follow_up)
+      VALUES (1552,397,'assistant',now()+interval '5 seconds',NULL,
+              'wamid.business-app1552',false);
+      UPDATE contacts SET needs_attention=true,
+        attention_reason='Delivery failed: previous reply'
+      WHERE id=397;
+    `);
+    assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(397)).needs_attention,
+      false, "a genuine provider echo may resolve delivery attention");
+
     // An unrelated earlier failure must never replace a booking-ready warning.
     await client.query(`
       UPDATE contacts SET needs_attention=true,
