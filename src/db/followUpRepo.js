@@ -209,7 +209,9 @@ async function findCandidates({
        ) anchor ON true
        LEFT JOIN LATERAL (
          SELECT
-           MAX(follow_up.automated_follow_up_step) AS max_step,
+           GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
+         COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
+           WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'), 0)) AS max_step,
            BOOL_OR(
              follow_up.delivery_status IN ('failed', 'unknown')
              OR (
@@ -223,14 +225,23 @@ async function findCandidates({
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
        LEFT JOIN LATERAL (
-         SELECT follow_up.created_at
+         SELECT sequence_event.created_at
+       FROM (
+         SELECT follow_up.created_at, follow_up.id
          FROM messages follow_up
          WHERE follow_up.contact_id = c.id
            AND follow_up.is_automated_follow_up = true
            AND follow_up.automated_follow_up_for_message_id = anchor.id
            AND follow_up.automated_follow_up_step = progress.max_step
-         ORDER BY follow_up.created_at DESC, follow_up.id DESC
-         LIMIT 1
+         UNION ALL
+         SELECT decision.created_at, decision.id
+         FROM follow_up_ai_decisions decision
+         WHERE decision.trigger_message_id = anchor.id
+           AND decision.action = 'skip'
+           AND decision.follow_up_step = progress.max_step
+       ) sequence_event
+       ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
+       LIMIT 1
        ) previous_follow_up ON true
        LEFT JOIN LATERAL (
          SELECT retry_at
@@ -280,7 +291,7 @@ async function findCandidates({
            FROM follow_up_ai_decisions decision
            WHERE decision.contact_id = c.id
              AND decision.trigger_message_id = anchor.id
-             AND decision.action IN ('skip', 'human_review')
+             AND decision.action = 'human_review'
          )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
@@ -407,7 +418,9 @@ async function getNextCandidateDueAt({
        ) anchor ON true
        LEFT JOIN LATERAL (
          SELECT
-           MAX(follow_up.automated_follow_up_step) AS max_step,
+           GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
+         COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
+           WHERE d.trigger_message_id = anchor.id AND d.action = 'skip'), 0)) AS max_step,
            BOOL_OR(
              follow_up.delivery_status IN ('failed', 'unknown')
              OR (
@@ -421,14 +434,23 @@ async function getNextCandidateDueAt({
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
        LEFT JOIN LATERAL (
-         SELECT follow_up.created_at
+         SELECT sequence_event.created_at
+       FROM (
+         SELECT follow_up.created_at, follow_up.id
          FROM messages follow_up
          WHERE follow_up.contact_id = c.id
            AND follow_up.is_automated_follow_up = true
            AND follow_up.automated_follow_up_for_message_id = anchor.id
            AND follow_up.automated_follow_up_step = progress.max_step
-         ORDER BY follow_up.created_at DESC, follow_up.id DESC
-         LIMIT 1
+         UNION ALL
+         SELECT decision.created_at, decision.id
+         FROM follow_up_ai_decisions decision
+         WHERE decision.trigger_message_id = anchor.id
+           AND decision.action = 'skip'
+           AND decision.follow_up_step = progress.max_step
+       ) sequence_event
+       ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
+       LIMIT 1
        ) previous_follow_up ON true
        LEFT JOIN LATERAL (
          SELECT retry_at
@@ -477,7 +499,7 @@ async function getNextCandidateDueAt({
            FROM follow_up_ai_decisions decision
            WHERE decision.contact_id = c.id
              AND decision.trigger_message_id = anchor.id
-             AND decision.action IN ('skip', 'human_review')
+             AND decision.action = 'human_review'
          )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
@@ -628,7 +650,9 @@ async function saveIfStillEligible({
        LIMIT 1
      ), progress AS (
        SELECT
-         MAX(follow_up.automated_follow_up_step) AS max_step,
+         GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
+         COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
+           WHERE d.trigger_message_id = $2 AND d.action = 'skip'), 0)) AS max_step,
          BOOL_OR(
            follow_up.delivery_status IN ('failed', 'unknown')
            OR (
@@ -641,13 +665,22 @@ async function saveIfStillEligible({
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
      ), previous_follow_up AS (
-       SELECT follow_up.created_at
-       FROM messages follow_up, anchor
+       SELECT sequence_event.created_at
+       FROM (
+         SELECT follow_up.created_at, follow_up.id
+         FROM messages follow_up, anchor
        WHERE follow_up.contact_id = $1
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
          AND follow_up.automated_follow_up_step = $5 - 1
-       ORDER BY follow_up.created_at DESC, follow_up.id DESC
+         UNION ALL
+         SELECT decision.created_at, decision.id
+         FROM follow_up_ai_decisions decision
+         WHERE decision.trigger_message_id = $2
+           AND decision.action = 'skip'
+           AND decision.follow_up_step = $5 - 1
+       ) sequence_event
+       ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
        LIMIT 1
      )
      INSERT INTO messages (
@@ -710,7 +743,7 @@ async function saveIfStillEligible({
          FROM follow_up_ai_decisions decision
          WHERE decision.contact_id = c.id
            AND decision.trigger_message_id = anchor.id
-           AND decision.action IN ('skip', 'human_review')
+           AND decision.action = 'human_review'
        )
        AND anchor.created_at >= $9::timestamptz
        AND CASE
@@ -905,7 +938,9 @@ async function recordAiDecisionIfStillEligible({
        LIMIT 1
      ), progress AS (
        SELECT
-         MAX(follow_up.automated_follow_up_step) AS max_step,
+         GREATEST(COALESCE(MAX(follow_up.automated_follow_up_step), 0),
+         COALESCE((SELECT MAX(d.follow_up_step) FROM follow_up_ai_decisions d
+           WHERE d.trigger_message_id = $2 AND d.action = 'skip'), 0)) AS max_step,
          BOOL_OR(
            follow_up.delivery_status IN ('failed', 'unknown')
            OR (
@@ -918,13 +953,22 @@ async function recordAiDecisionIfStillEligible({
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
      ), previous_follow_up AS (
-       SELECT follow_up.created_at
-       FROM messages follow_up, anchor
+       SELECT sequence_event.created_at
+       FROM (
+         SELECT follow_up.created_at, follow_up.id
+         FROM messages follow_up, anchor
        WHERE follow_up.contact_id = $1
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
          AND follow_up.automated_follow_up_step = $3 - 1
-       ORDER BY follow_up.created_at DESC, follow_up.id DESC
+         UNION ALL
+         SELECT decision.created_at, decision.id
+         FROM follow_up_ai_decisions decision
+         WHERE decision.trigger_message_id = $2
+           AND decision.action = 'skip'
+           AND decision.follow_up_step = $3 - 1
+       ) sequence_event
+       ORDER BY sequence_event.created_at DESC, sequence_event.id DESC
        LIMIT 1
      ), latest_lead AS (
        SELECT
@@ -981,7 +1025,7 @@ async function recordAiDecisionIfStillEligible({
            FROM follow_up_ai_decisions existing
            WHERE existing.contact_id = c.id
              AND existing.trigger_message_id = anchor.id
-             AND existing.action IN ('skip', 'human_review')
+             AND existing.action = 'human_review'
          )
          AND anchor.created_at >= $9::timestamptz
          AND CASE
@@ -1111,7 +1155,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
            FROM follow_up_ai_decisions decision
            WHERE decision.contact_id = c.id
              AND decision.trigger_message_id = anchor.id
-             AND decision.action IN ('skip', 'human_review')
+             AND decision.action = 'human_review'
          )
          AND claim.delivery_status IS NULL
          AND claim.whatsapp_message_id IS NULL
