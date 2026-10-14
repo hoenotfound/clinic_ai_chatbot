@@ -245,7 +245,7 @@ function assessmentFirstInvitation({ treatment, customerText, language = "en", s
   const ms = locale.startsWith("ms");
   if (isPelvis && clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true) {
     return zh
-      ? "可以先免费来做中医师1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"
+      ? "可以先免费来做中医师1对1的体态评估 + 体验，了解实际情况后再决定适合的调理方式 😊\n到店完成评估 + 体验，还可以领取 RM100 骨盆调理疗程优惠券，具体使用条件可由门店确认。你比较方便平日还是周末来呢？"
       : ms
         ? "Penilaian postur 1-ke-1 bersama sesi pengalaman pengenalan adalah percuma 😊 Selepas hadir, anda juga boleh menerima baucar RM100 untuk rawatan pelvis (tertakluk kepada syarat pusat). Hari biasa atau hujung minggu lebih sesuai?"
         : "Our 1-on-1 posture assessment + introductory experience is free 😊 After attending, you may also receive an RM100 pelvic-treatment voucher (subject to the centre's conditions). Would weekdays or weekends suit you?";
