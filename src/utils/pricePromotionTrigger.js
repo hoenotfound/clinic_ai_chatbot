@@ -4,6 +4,7 @@ const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedSer
 const { verifiedPricesForService, requestedPricePackages } = require("./verifiedPriceReply");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
+const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
@@ -68,6 +69,12 @@ async function resolvePricePromotionForReply({
   hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
 }) {
+  // Questions about the separately verified FREE introductory experience
+  // are not a request for paid treatment price graphics.
+  if (isComplimentaryAssessmentFeeQuestion(
+    customerText,
+    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true
+  )) return null;
   const clarificationService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
     ? resolveClarifiedPriceService({
         customerText, conversationHistory, services, serviceAliases,
