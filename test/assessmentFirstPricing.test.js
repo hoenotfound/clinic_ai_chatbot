@@ -129,6 +129,16 @@ test("assessment-first prompt hides package prices unless the current customer a
   }
 });
 
+test("assessment-first prompt treats assessment and trial charges separately", () => {
+  const source = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "../src/utils/systemPrompt.js"), "utf8"
+  );
+  assert.match(source, /A 1-to-1 assessment and a trial experience are DIFFERENT items/);
+  assert.match(source, /answer that fee question BEFORE asking about appointment dates/);
+  assert.match(source, /never imply the trial is free/);
+  assert.match(source, /Do not send package graphics unless current-price request was explicit/);
+});
+
 test("runtime has independent fail-closed checks for scheduled pricing and static promotion paths",()=>{
   const root=path.resolve(__dirname,"../src");
   const pricing=fs.readFileSync(path.join(root,"services/pricingReminderService.js"),"utf8");
