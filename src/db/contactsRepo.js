@@ -613,7 +613,11 @@ async function takeOver(id, staffUsername) {
          'Cancelled because clinic staff took over this conversation.',
          NULL
        FROM current_contact, anchor
-       ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
+       ON CONFLICT (trigger_message_id, follow_up_step) DO UPDATE
+          SET reason = EXCLUDED.reason,
+              topic = NULL,
+              created_at = now()
+          WHERE follow_up_ai_decisions.action = 'skip'
        RETURNING id
      ), takeover AS (
        UPDATE contacts c
