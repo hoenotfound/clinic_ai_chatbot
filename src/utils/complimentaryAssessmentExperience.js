@@ -15,10 +15,18 @@ const FULL_TREATMENT = /(?:\b(?:3\s*d|9\s*d|first\s*trial|full\s*(?:session|trea
 // advertisement, model inference, staff statement or an older treatment topic.
 const INTRO_EXPERIENCE = /(?:体验|體驗|\b(?:introductory\s+)?experience\b|\bsesi\s+(?:pengalaman|pengenalan)\b)/iu;
 const SHORT_EXPERIENCE_FEE = /^(?:(?:请问|請問|那个|那個|这个|這個|这次|這次|the|this|that)\s*){0,2}(?:体验|體驗|experience|sesi\s+(?:pengalaman|pengenalan))\s*(?:这个|這個|的|是)?\s*(?:收费|收費|费用|費用|多少钱|多少錢|价钱|價錢|价格|價格|免费|免費|要钱|要錢|要付|(?:is\s+it\s+)?(?:free|complimentary|chargeable|paid)|(?:cost|price|fee|charges?)|harga|bayar|berbayar|percuma|gratis)\s*(?:吗|嗎|呢|啊|呀|不|吗?|ke|tak|kah|[?？。!！])*\s*$/iu;
+// Customers frequently ask the same fee question in spoken Chinese or English
+// rather than the terse "体验收费吗？" form above. These are deliberately
+// anchored fee QUESTIONS about the experience, not booking requests or
+// blanket consent to receive offers. Context verification happens below.
+const SHORT_CHINESE_EXPERIENCE_FEE =
+  /^(?:(?:请问|請問|那|那么|那麼|所以|这个|這個|那个|那個|这次|這次)\s*){0,3}(?:体验|體驗)\s*(?:是|是不是|是否|要|需要|会|會|有|有没有|有沒有)?\s*(?:免费|免費|收费|收費|要钱|要錢|付费|付費|要付费|要付費|多少钱|多少錢|价钱|價錢|价格|價格|费用|費用)\s*(?:的)?\s*(?:吗|嗎|呢|呀|啊|不|[?？。!！])*\s*$/iu;
+const SHORT_ENGLISH_EXPERIENCE_FEE =
+  /^(?:(?:is|are)\s+(?:(?:the|this|that|your|our)\s+)?(?:(?:introductory|intro)\s+)?experience\s+(?:free|complimentary|chargeable|paid)|(?:does|do|will|would)\s+(?:(?:the|this|that|your|our)\s+)?(?:(?:introductory|intro)\s+)?experience\s+(?:cost\s+(?:anything|money)|(?:have|require)\s+(?:a\s+)?(?:fee|charge|payment))|(?:(?:the|this|that|your|our)\s+)?(?:(?:introductory|intro)\s+)?experience\s+(?:free|complimentary|chargeable|paid|cost\s+(?:anything|money)))\s*[?？.!！]*\s*$/iu;
 const STAFF_MESSAGE = /^\[Verified STAFF message\]/u;
 
 function recentIntroAssessmentContext(customerText, conversationHistory) {
-  if (!SHORT_EXPERIENCE_FEE.test(customerText)) return false;
+  if (![SHORT_EXPERIENCE_FEE, SHORT_CHINESE_EXPERIENCE_FEE, SHORT_ENGLISH_EXPERIENCE_FEE]\n    .some((pattern) => pattern.test(customerText))) return false;
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
     .filter((entry) => entry?.role === "user" || entry?.role === "assistant");
   if (!turns.length) return false;
