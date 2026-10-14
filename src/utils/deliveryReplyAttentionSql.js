@@ -39,4 +39,36 @@ function failedMediaSql(alias) {
     OR ${m}.media_mime_type IS NOT NULL)`;
 }
 
-module.exports = { acceptedDirectReplySql, failedMediaSql };
+// An explicit Inbox dismissal acknowledges earlier failed attempts without
+// mutating the message audit. An unresolved media attachment remains actionable
+// until that dismissal or an accepted retry of the attachment itself; a failed
+// text already superseded by an accepted direct reply is no longer an open task.
+// Share the predicate with the Staff Assist draft cleanup so it cannot
+// resurrect old failures after a later customer message.
+function unresolvedFailedOutboundSql(messageAlias, contactAlias) {
+  const m = checkedAlias(messageAlias);
+  const c = checkedAlias(contactAlias);
+  return `(${m}.role = 'assistant'
+    AND ${m}.delivery_status IN ('failed', 'unknown')
+    AND (
+      ${c}.delivery_attention_dismissed_at IS NULL
+      OR ${m}.created_at > ${c}.delivery_attention_dismissed_at
+    )
+    AND (
+      ${failedMediaSql(m)}
+      OR NOT EXISTS (
+        SELECT 1 FROM messages accepted_later_reply
+        WHERE accepted_later_reply.contact_id = ${m}.contact_id
+          AND ${acceptedDirectReplySql("accepted_later_reply")}
+          AND (accepted_later_reply.created_at, accepted_later_reply.id) >
+              (${m}.created_at, ${m}.id)
+      )
+    )
+  )`;
+}
+
+module.exports = {
+  acceptedDirectReplySql,
+  failedMediaSql,
+  unresolvedFailedOutboundSql,
+};
