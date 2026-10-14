@@ -340,6 +340,63 @@ test(
       assert.equal((await repo.setDeliveryAttentionState(
         46,'Delivery failed: new photo callback',query,1008)).id,46);
 
+      // A late media callback from a PREVIOUS customer turn is a historical
+      // failed attempt, not a new attention task. Contact #433 had this shape:
+      // failed image, newer inbound, and a later real staff reply.
+      await client.query(`
+        INSERT INTO contacts(id) VALUES (47),(48),(49);
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES (1009,47,'assistant',now()-interval '1 hour','failed',
+                'https://example.invalid/old-photo.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES (1010,47,'user',now()-interval '30 minutes');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                             whatsapp_message_id)
+        VALUES (1011,47,'assistant',now()-interval '15 minutes','read',
+                'wamid.staff-old47');
+      `);
+      assert.equal(await repo.setDeliveryAttentionState(
+        47,'Delivery failed: obsolete historical image',query,1009),null,
+        "a replayed failure from an older episode cannot reopen new attention");
+      assert.equal((await client.query(
+        'SELECT needs_attention FROM contacts WHERE id=47'
+      )).rows[0].needs_attention,false);
+      assert.equal((await client.query(
+        'SELECT delivery_status FROM messages WHERE id=1009'
+      )).rows[0].delivery_status,'failed',
+        "old media failure audit remains unchanged");
+
+      // A deliberately still-open delivery warning is NOT dismissed by a
+      // newer customer message. Its callback remains eligible for recovery.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES (1012,48,'assistant',now()-interval '1 hour','failed',
+                'https://example.invalid/unresolved.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES (1013,48,'user',now()-interval '30 minutes');
+        UPDATE contacts SET needs_attention=true,
+          attention_reason='Delivery failed: explicitly under staff review'
+        WHERE id=48;
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        48,'Delivery failed: old media under review',query,1012)).id,48);
+
+      // If the attachment failed in the CURRENT episode, it must be
+      // surfaced regardless of a later successfully accepted staff text.
+      await client.query(`
+        INSERT INTO messages(id,contact_id,role,created_at)
+        VALUES (1014,49,'user',now()-interval '1 hour');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+        VALUES (1015,49,'assistant',now()-interval '55 minutes','failed',
+                'https://example.invalid/new-photo.jpg');
+        INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                             whatsapp_message_id)
+        VALUES (1016,49,'assistant',now()-interval '50 minutes','read',
+                'wamid.staff-new49');
+      `);
+      assert.equal((await repo.setDeliveryAttentionState(
+        49,'Delivery failed: current episode photo',query,1015)).id,49);
+
       // A completed provider failure can lose its matching message later.
       // Flag it once after a grace period, but exclude known message/evidence
       // records and preserve the flagged row through ordinary pruning.
