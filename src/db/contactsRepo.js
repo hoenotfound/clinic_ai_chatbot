@@ -6,6 +6,7 @@ const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
+const { acceptedDirectReplySql, failedMediaSql } = require("../utils/deliveryReplyAttentionSql");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
@@ -1132,10 +1133,10 @@ async function setDeliveryAttention(id, reason) {
   return updated;
 }
 
-// Clears only a delivery attention flag and only when no failed or unconfirmed
-// outbound messages remain. Keeping both conditions in the same SQL statement
-// prevents a successful retry from clearing a newer keyword, handoff, or
-// staff-owned-message warning that arrived while the retry was in progress.
+// Clear only a reply-resolved delivery or routine staff-owned attention flag.
+// Real booking, safety, AI-review and clinical tasks still require deliberate
+// staff resolution. Keep failed media actionable even after later text replies.
+// The SQL tests the latest customer turn atomically to avoid stale-send races.
 async function clearDeliveryAttentionIfNoFailedMessages(id) {
   const result = await pool.query(
     `UPDATE contacts c
@@ -1158,21 +1159,23 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
        AND (
          c.attention_reason LIKE 'Delivery failed:%'
          OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+         OR (
+           c.mode = 'human'
+           AND c.attention_reason = 'New message — conversation is staff-owned.'
+         )
        )
-       -- Clear delivery-only attention only when a *direct* reply was
-       -- accepted after BOTH the latest customer turn and any later failed/
-       -- unknown attempts. A historical failure stays in the audit but
-       -- cannot poison a newly answered conversation. A late accepted reply
-       -- to an older customer turn must never clear a newer unanswered one.
        AND EXISTS (
          SELECT 1 FROM messages reply
          WHERE reply.contact_id = c.id
-           AND reply.role = 'assistant'
-           AND reply.is_automated_follow_up IS NOT TRUE
-           -- Keep identical acceptance semantics to Inbox Unreplied,
-           -- including real WhatsApp Business App/Meta echoes with NULL
-           -- delivery status and an actual provider message ID.
-           AND ${acceptedNormalOutboundSql("reply")}
+           AND ${acceptedDirectReplySql("reply")}
+           -- Staff-owned waiting is only resolved by a *staff* response,
+           -- not an AI acknowledgement or a follow-up generated before
+           -- the manual takeover.
+           AND (
+             c.attention_reason IS DISTINCT FROM
+               'New message — conversation is staff-owned.'
+             OR reply.sent_by_username IS NOT NULL
+           )
            AND NOT EXISTS (
              SELECT 1 FROM messages inbound
              WHERE inbound.contact_id = c.id
@@ -1185,8 +1188,12 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
              WHERE failed.contact_id = c.id
                AND failed.role = 'assistant'
                AND failed.delivery_status IN ('failed', 'unknown')
-               AND (failed.created_at, failed.id) >
-                   (reply.created_at, reply.id)
+               -- Newer failed sends cannot be hidden by an earlier reply.
+               -- Older failed media also remains an actionable attachment.
+               AND (
+                 (failed.created_at, failed.id) > (reply.created_at, reply.id)
+                 OR ${failedMediaSql("failed")}
+               )
            )
        )
      RETURNING *`,
