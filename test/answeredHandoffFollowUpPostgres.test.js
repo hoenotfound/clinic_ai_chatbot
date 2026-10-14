@@ -27,6 +27,7 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         channel_user_id text, mode text NOT NULL DEFAULT 'ai',
         takeover_by text, takeover_at timestamptz,
         needs_attention boolean NOT NULL DEFAULT false, attention_reason text,
+        delivery_attention_dismissed_at timestamptz,
         is_unread boolean DEFAULT false, updated_at timestamptz DEFAULT now()
       );
       CREATE TABLE messages (
@@ -35,8 +36,12 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         created_at timestamptz NOT NULL DEFAULT now(), sent_by_username text,
         delivery_status text, whatsapp_message_id text,
         is_automated_follow_up boolean NOT NULL DEFAULT false,
-        automated_follow_up_for_message_id integer, automated_follow_up_step integer
+        automated_follow_up_for_message_id integer, automated_follow_up_step integer,
+        automated_follow_up_parent_message_id integer,
+        whatsapp_template jsonb, pricing_reminder_anchor_id integer,
+        media_key text,media_url text,media_base64 text,media_mime_type text
       );
+      CREATE TABLE scheduled_messages(message_id integer);
       CREATE TABLE ai_review_items (
         id bigserial PRIMARY KEY, contact_id integer, inbound_message_id integer,
         summary text, category text, status text, created_at timestamptz DEFAULT now(),
