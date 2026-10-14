@@ -119,11 +119,13 @@ async function resolvePricePromotionForReply({
     // same independently verified active package options. Any conflicting,
     // missing or ambiguous amount suppresses ALL optional price graphics.
     const verified = verifiedPricesForService(
-      treatment, promotions, customerText, conversationHistory
+      treatment, promotions, customerText, conversationHistory,
+      { clarifiedPriceService: clarificationService }
     );
     if (!verified?.length) return null;
     const requested = requestedPricePackages(
-      genericBundle.packages, customerText, conversationHistory
+      genericBundle.packages, customerText, conversationHistory,
+      { clarifiedPriceService: clarificationService, treatment }
     );
     const approved = new Set(verified.map((option) => option.name));
     if (approved.size !== requested.length ||
