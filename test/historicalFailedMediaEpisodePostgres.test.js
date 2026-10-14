@@ -118,8 +118,9 @@ test("contact 433 historical failed Before & After cannot poison a new staff rep
         attention_reason='Delivery failed: Before & After image still needs review'
       WHERE id=433;
     `);
+    await client.query("UPDATE contacts SET delivery_attention_message_id=1488 WHERE id=433");
     assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(433), null,
-      "staff must explicitly resolve an open historical delivery warning");
+      "the specifically flagged historic photo stays open until staff resolves it");
     const openFailure = (await client.query(
       "SELECT needs_attention,attention_reason FROM contacts WHERE id=433"
     )).rows[0];
@@ -151,6 +152,78 @@ test("contact 433 historical failed Before & After cannot poison a new staff rep
     const recovered = await contacts.clearDeliveryAttentionIfNoFailedMessages(433);
     assert.equal(recovered.needs_attention, false,
       "successful retry of the current image permits routine attention cleanup");
+
+    // Regression: two failures, in DIFFERENT customer episodes. The new
+    // callback owns message 1704. When that image is actually retried and
+    // accepted, a previously failed photo (1702) must NOT resurrect merely
+    // because the visible attention reason still begins "Delivery failed".
+    await client.query(`
+      INSERT INTO contacts(id, mode, needs_attention)
+      VALUES (434,'human',false);
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1701,434,'user',now()-interval '3 hours');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+      VALUES (1702,434,'assistant',now()-interval '2 hours',
+              'failed','https://example.invalid/old-failed-image.jpg');
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1703,434,'user',now()-interval '1 hour');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+      VALUES (1704,434,'assistant',now()-interval '50 minutes',
+              'failed','https://example.invalid/new-failed-image.jpg');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,
+                           whatsapp_message_id,sent_by_username)
+      VALUES (1705,434,'assistant',now()-interval '40 minutes',
+              'read','wamid.new-reply','staff');
+      UPDATE contacts SET needs_attention=true,
+        attention_reason='Delivery failed: new photo requires retry',
+        delivery_attention_message_id=1704
+      WHERE id=434;
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(434),null,
+      "the failed image linked to the visible warning has not been retried yet");
+    await client.query(`
+      UPDATE messages SET delivery_status='read',
+        whatsapp_message_id='wamid.retry1704' WHERE id=1704;
+    `);
+    const newestRecovered = await contacts.clearDeliveryAttentionIfNoFailedMessages(434);
+    assert.equal(newestRecovered.needs_attention,false,
+      "old-episode media cannot block resolution after a newer image recovers");
+    assert.equal(newestRecovered.delivery_attention_message_id,null,
+      "clearing an alert must clear its message anchor");
+    assert.equal(newestRecovered.delivery_attention_dismissed_at,null,
+      "successful retry does not fabricate an explicit staff dismissal");
+    assert.equal((await client.query(
+      "SELECT delivery_status FROM messages WHERE id=1702"
+    )).rows[0].delivery_status,"failed",
+      "the historical failed-image audit is preserved");
+
+    // A new customer turn alone is not proof their question was answered.
+    // No provider ID means an old failed photo cannot yet be disregarded for
+    // explicit delivery reconciliation, even when the old task was unlinked.
+    await client.query(`
+      INSERT INTO contacts(id,mode,needs_attention,attention_reason)
+      VALUES (435,'human',true,'Delivery failed: old photo still unreviewed');
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1711,435,'user',now()-interval '3 hours');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_url)
+      VALUES (1712,435,'assistant',now()-interval '2 hours',
+              'failed','https://example.invalid/old-missing-image.jpg');
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1713,435,'user',now()-interval '1 hour');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,sent_by_username)
+      VALUES (1714,435,'assistant',now()-interval '50 minutes','pending','staff');
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(435),null,
+      "a saved draft cannot resolve an explicit historical failed image");
+    await client.query(`
+      UPDATE messages SET whatsapp_message_id='wamid.answer1714',
+        delivery_status='read' WHERE id=1714;
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(435),null,
+      "a legacy unlinked media-failure warning still requires explicit dismissal");
+    const oldDismissed=await contacts.dismissAttentionAndReviews(435);
+    assert.equal(oldDismissed.needs_attention,false);
+    assert.ok(oldDismissed.delivery_attention_dismissed_at);
 
     // A pending clinical question always outranks a valid staff response.
     await client.query(`
