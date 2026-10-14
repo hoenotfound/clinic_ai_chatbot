@@ -28,6 +28,7 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         takeover_by text, takeover_at timestamptz,
         needs_attention boolean NOT NULL DEFAULT false, attention_reason text,
         delivery_attention_dismissed_at timestamptz,
+        delivery_attention_message_id integer,
         is_unread boolean DEFAULT false, updated_at timestamptz DEFAULT now()
       );
       CREATE TABLE messages (
