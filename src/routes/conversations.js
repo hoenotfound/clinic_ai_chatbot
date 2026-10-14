@@ -284,21 +284,21 @@ async function finishInboxMediaSend(saved, sendResult, contact, username, timing
     finalMessage = { ...saved, whatsapp_message_id: sendResult.wamid || saved.whatsapp_message_id || null,
       delivery_status: unknown ? "unknown" : sendResult.success ? "pending" : "failed", delivery_error: errorText };
     await flagInboxMediaAttention(contact.id,
-      "Provider send completed, but its delivery state could not be fully persisted. Please verify this conversation before retrying.", timings);
+      "Provider send completed, but its delivery state could not be fully persisted. Please verify this conversation before retrying.", timings, saved.id);
   }
   if (sendResult.success) {
     await reconcileAcceptedStaffReplyAttention(contact.id);
     await timedMediaStage(timings, "pipelineMs", () => markLeadContacted(contact.id, username, sendResult), true);
   } else {
     await flagInboxMediaAttention(contact.id,
-      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`, timings);
+      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`, timings, saved.id);
   }
   return finalMessage;
 }
 
-async function flagInboxMediaAttention(contactId, reason, timings) {
+async function flagInboxMediaAttention(contactId, reason, timings, failedMessageId = null) {
   try {
-    await withInboxDatabaseTimeouts(() => contactsRepo.setDeliveryAttention(contactId, reason), timings);
+    await withInboxDatabaseTimeouts(() => contactsRepo.setDeliveryAttention(contactId, reason, failedMessageId), timings);
   } catch (err) {
     console.error(`[Inbox image] failed to flag attention for contact ${contactId}:`, err);
   }
@@ -1752,7 +1752,8 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     } else {
       await contactsRepo.setDeliveryAttention(
         preparedContact.id,
-        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
+        saved.id
       );
     }
 
@@ -1958,7 +1959,8 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     } else {
       await contactsRepo.setDeliveryAttention(
         sendContact.id,
-        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
+        message.id
       );
     }
 
@@ -2240,7 +2242,8 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
       sendResult.unknown === true || sendResult.ambiguous === true;
     await contactsRepo.setDeliveryAttention(
       preparedContact.id,
-      `${deliveryUnknown ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
+      `${deliveryUnknown ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
+      saved.id
     );
   }
 
@@ -2437,7 +2440,8 @@ router.post("/:contactId/messages", async (req, res) => {
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(
         preparedContact.id,
-        `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`,
+        saved.id
       );
     } else {
       await reconcileAcceptedStaffReplyAttention(preparedContact.id);
@@ -3316,7 +3320,8 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       } else {
         await contactsRepo.setDeliveryAttention(
           currentContact.id,
-          `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${errorText}`
+          `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${errorText}`,
+          saved.id
         );
       }
     } catch (attentionErr) {
