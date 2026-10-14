@@ -339,7 +339,7 @@ async function sendText(contact, text, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendMessage(contact.whatsapp_number, text, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
@@ -408,7 +408,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
     if (cancelled) return cancelled;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
@@ -457,7 +457,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       mediaId,
       caption || undefined,
       { replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.requestId ? { requestId: options.requestId } : {}) }
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}), ...(options.requestId ? { requestId: options.requestId } : {}) }
     );
   }
 
@@ -586,7 +586,7 @@ async function sendStickerBuffer(
   if (cancelled) return cancelled;
   return whatsapp.sendStickerById(contact.whatsapp_number, mediaId, {
     replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
   });
 }
@@ -620,7 +620,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
 
     return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
@@ -764,7 +764,7 @@ async function sendDocumentBuffer(
     caption || undefined,
     {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
       ...(options.requestId ? { requestId: options.requestId } : {}),
     }
   );
@@ -884,7 +884,7 @@ async function sendVideoByStoredKey(
       caption,
       {
         replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}), ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
         ...(options.requestId ? { requestId: options.requestId } : {}),
       }
     );
@@ -937,7 +937,7 @@ async function sendVideoByStoredKey(
       contact.whatsapp_number, replacementId, caption, {
         replyToProviderMessageId: sendOptions.replyToProviderMessageId,
         ...(options.currentMessageId != null ? { currentMessageId: options.currentMessageId } : {}),
-        ...(options.staffMedia === true ? { staffMedia: true } : {}),
+        ...(options.staffMedia === true ? { staffMedia: true } : {}), ...(options.autoFollowUp === true ? { autoFollowUp: true } : {}),
         ...(options.requestId ? { requestId: options.requestId } : {}),
       }
     );

@@ -145,6 +145,7 @@ async function findCandidates({
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
          previous_follow_up.created_at AS previous_follow_up_created_at,
+         policy_hold.retry_at AS policy_retry_at,
          latest_lead.treatment_interest,
          ARRAY(
            SELECT recent_inbound.content
@@ -232,6 +233,13 @@ async function findCandidates({
          LIMIT 1
        ) previous_follow_up ON true
        LEFT JOIN LATERAL (
+         SELECT retry_at
+         FROM whatsapp_follow_up_policy_holds hold
+         WHERE hold.contact_id = c.id
+           AND hold.trigger_message_id = anchor.id
+           AND hold.follow_up_step = COALESCE(progress.max_step, 0) + 1
+       ) policy_hold ON true
+       LEFT JOIN LATERAL (
          SELECT
            l.id,
            l.treatment_interest,
@@ -288,10 +296,12 @@ async function findCandidates({
        recent_inbound_messages,
        recent_service_messages,
        treatment_interest,
-       next_follow_up_step
+       next_follow_up_step,
+       policy_retry_at
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
        AND has_blocking_claim = false
+       AND (policy_retry_at IS NULL OR policy_retry_at <= now())
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
                THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($6::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,reservePricingOnSocial:reserveSocialPricingWindow(),channel:"channel"})}
@@ -367,7 +377,8 @@ async function getNextCandidateDueAt({
          latest_inbound.created_at AS latest_inbound_created_at,
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
-         previous_follow_up.created_at AS previous_follow_up_created_at
+         previous_follow_up.created_at AS previous_follow_up_created_at,
+         policy_hold.retry_at AS policy_retry_at
        FROM contacts c
        JOIN LATERAL (
          SELECT id, created_at
@@ -420,6 +431,13 @@ async function getNextCandidateDueAt({
          LIMIT 1
        ) previous_follow_up ON true
        LEFT JOIN LATERAL (
+         SELECT retry_at
+         FROM whatsapp_follow_up_policy_holds hold
+         WHERE hold.contact_id = c.id
+           AND hold.trigger_message_id = anchor.id
+           AND hold.follow_up_step = COALESCE(progress.max_step, 0) + 1
+       ) policy_hold ON true
+       LEFT JOIN LATERAL (
          SELECT
            l.id,
            l.is_closed,
@@ -465,7 +483,7 @@ async function getNextCandidateDueAt({
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
      )
-     SELECT MIN(
+     SELECT MIN(GREATEST(
        CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
                THEN ${beforeExpiryDueSql({inbound:"latest_inbound_created_at",previous:"previous_follow_up_created_at",step:"next_follow_up_step",offset:"($5::integer[])[next_follow_up_step]",gap:"(($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1])",quietHours,reservePricingMinutes:reserveFinalPricingWindow()?5:0,reservePricingOnSocial:reserveSocialPricingWindow(),channel:"channel"})}
@@ -477,8 +495,9 @@ async function getNextCandidateDueAt({
                  trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
                )
              )
-           END
-     ) AS due_at
+           END,
+       COALESCE(policy_retry_at,'-infinity'::timestamptz)
+     )) AS due_at
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
        AND has_blocking_claim = false

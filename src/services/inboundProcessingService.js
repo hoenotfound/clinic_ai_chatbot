@@ -273,7 +273,8 @@ async function reconcileRecoveredOutbound(
       }
       await contacts.setDeliveryAttention(
         job.contact_id,
-        `Delivery failed: ${attempt.error_text || attempt.delivery_error || "The automated reply was rejected by the messaging provider."}`
+        `Delivery failed: ${attempt.error_text || attempt.delivery_error || "The automated reply was rejected by the messaging provider."}`,
+        attempt.assistant_message_id || job.assistant_message_id || null
       );
     } catch (err) {
       console.error(

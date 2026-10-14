@@ -234,7 +234,8 @@ async function sendPricingReminder(candidate, offer, settings, imageCount = 1, o
       candidate.contact_id,
       statusForPricingSend(result) === "unknown"
         ? "Delivery unconfirmed: pricing graphic or caption may have reached Meta. Check the customer chat before retrying."
-        : "Delivery failed: the pricing graphic was rejected. Review in Inbox."
+        : "Delivery failed: the pricing graphic was rejected. Review in Inbox.",
+      saved.id
     );
   }
   // Do not advance to Package B without a durable receipt for Package A.

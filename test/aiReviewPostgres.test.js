@@ -27,6 +27,7 @@ test("Postgres preserves distinct pending questions and gates unsafe follow-ups"
         is_unread boolean default false,
         needs_attention boolean default false, attention_reason text,
         delivery_attention_dismissed_at timestamptz,
+        delivery_attention_message_id integer,
         updated_at timestamptz default now());
       CREATE TABLE messages (id integer primary key, contact_id integer references contacts(id),
         role text, content text, delivery_status text, sent_by_username text,

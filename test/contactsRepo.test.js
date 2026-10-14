@@ -354,6 +354,119 @@ test("temporary AI outage attention does not clear a newer staff reason", async 
   assert.equal(updated, null);
 });
 
+test("direct delivery warnings link only a validated failed assistant message", async (t) => {
+  const originalQuery = pool.query;
+  const originalAlert = telegramImmediateAlerts.sendDeliveryFailureAlert;
+  t.after(() => {
+    pool.query = originalQuery;
+    telegramImmediateAlerts.sendDeliveryFailureAlert = originalAlert;
+  });
+  pool.query = async (sql, params) => {
+    assert.match(sql, /delivery_attention_message_id = \(/);
+    assert.match(sql, /m\.delivery_status IN \('failed','unknown'\)/);
+    assert.match(sql, /m\.contact_id = contacts\.id/);
+    assert.match(sql, /active_attempt\.created_at, active_attempt\.id/);
+    assert.deepEqual(params, ["Delivery failed: an image was rejected", 99, 5003]);
+    return { rows: [{ id: 99, needs_attention: true,
+      delivery_attention_message_id: 5003 }] };
+  };
+  telegramImmediateAlerts.sendDeliveryFailureAlert = async () => ({
+    status: "queued",
+  });
+  const alert = await contactsRepo.setDeliveryAttention(
+    99, "Delivery failed: an image was rejected", 5003
+  );
+  assert.equal(alert.delivery_attention_message_id, 5003);
+});
+
+test("stale suppressed delivery attempt does not send Telegram or Web Push alerts", async (t) => {
+  const oldQuery = pool.query;
+  const oldTelegram = telegramImmediateAlerts.sendDeliveryFailureAlert;
+  const oldPush = webPushNotifications.sendContactAlertBestEffort;
+  t.after(() => {
+    pool.query = oldQuery;
+    telegramImmediateAlerts.sendDeliveryFailureAlert = oldTelegram;
+    webPushNotifications.sendContactAlertBestEffort = oldPush;
+  });
+
+  let calls = 0;
+  pool.query = async (sql, params) => {
+    calls++;
+    if (calls === 1) {
+      assert.match(sql, /delivery_attention_message_id = \(/);
+      assert.deepEqual(params, ["Delivery failed: stale photo", 72, 9001]);
+      // An older failure has already been superseded by a newer alert.
+      return { rows: [] };
+    }
+    assert.equal(calls, 2);
+    assert.match(sql, /AS actionable/);
+    assert.match(sql, /unresolved|failed\.delivery_status IN \('failed', 'unknown'\)/);
+    assert.match(sql, /c\.delivery_attention_message_id IS NOT NULL/);
+    assert.deepEqual(params, [72, 9001]);
+    return { rows: [{ actionable: false }] };
+  };
+
+  const emitted = [];
+  telegramImmediateAlerts.sendDeliveryFailureAlert = async (args) => {
+    emitted.push(["telegram", args]);
+  };
+  webPushNotifications.sendContactAlertBestEffort = (args) => {
+    emitted.push(["push", args]);
+  };
+
+  assert.equal(await contactsRepo.setDeliveryAttention(
+    72, "Delivery failed: stale photo", 9001
+  ), null);
+  await nextTick();
+  assert.equal(calls, 2);
+  assert.deepEqual(emitted, [], "a suppressed older failure must be silent");
+});
+
+test("actionable failure behind protected clinical attention still sends Telegram and Web Push", async (t) => {
+  const oldQuery = pool.query;
+  const oldTelegram = telegramImmediateAlerts.sendDeliveryFailureAlert;
+  const oldPush = webPushNotifications.sendContactAlertBestEffort;
+  t.after(() => {
+    pool.query = oldQuery;
+    telegramImmediateAlerts.sendDeliveryFailureAlert = oldTelegram;
+    webPushNotifications.sendContactAlertBestEffort = oldPush;
+  });
+
+  let calls = 0;
+  pool.query = async (sql, params) => {
+    calls++;
+    if (calls === 1) {
+      assert.match(sql, /attention_reason LIKE 'Delivery failed:%'/);
+      assert.deepEqual(params, ["Delivery failed: current photo", 73, 9002]);
+      // A clinical/booking warning takes precedence over delivery attention.
+      return { rows: [] };
+    }
+    assert.equal(calls, 2);
+    assert.match(sql, /AS actionable/);
+    assert.deepEqual(params, [73, 9002]);
+    return { rows: [{ actionable: true }] };
+  };
+
+  const emitted = [];
+  telegramImmediateAlerts.sendDeliveryFailureAlert = async ({contactId,reason}) => {
+    emitted.push(["telegram", contactId, reason]);
+    return { status: "sent" };
+  };
+  webPushNotifications.sendContactAlertBestEffort = ({contactId,type}) => {
+    emitted.push(["push", contactId, type]);
+  };
+
+  assert.equal(await contactsRepo.setDeliveryAttention(
+    73, "Delivery failed: current photo", 9002
+  ), null);
+  await nextTick();
+  assert.equal(calls, 2);
+  assert.deepEqual(emitted, [
+    ["telegram", 73, "Delivery failed: current photo"],
+    ["push", 73, "delivery_failure"]
+  ]);
+});
+
 test("delivery failures alert Telegram even when a higher-priority attention reason prevents replacing the contact flag", async (t) => {
   const originalQuery = pool.query;
   const originalAlert = telegramImmediateAlerts.sendDeliveryFailureAlert;
@@ -364,7 +477,8 @@ test("delivery failures alert Telegram even when a higher-priority attention rea
 
   pool.query = async (sql, params) => {
     assert.match(sql, /attention_reason LIKE 'Delivery failed:%'/);
-    assert.deepEqual(params, ["Delivery failed: Meta rejected the message.", 12]);
+    assert.deepEqual(params, ["Delivery failed: Meta rejected the message.", 12, null]);
+    assert.match(sql, /delivery_attention_message_id/);
     return { rows: [] };
   };
 

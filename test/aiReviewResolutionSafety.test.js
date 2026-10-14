@@ -43,6 +43,7 @@ test("resolving the last individual review preserves a failed delivery", {
         needs_attention boolean not null default false,
         attention_reason text,
         delivery_attention_dismissed_at timestamptz,
+        delivery_attention_message_id integer,
         updated_at timestamptz default now()
       );
       CREATE TABLE scheduled_messages(message_id integer);

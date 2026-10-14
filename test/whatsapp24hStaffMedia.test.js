@@ -82,6 +82,7 @@ test("Postgres: staff-originated media eligible for a genuine 24h inbound; other
         automated_follow_up_step INTEGER NOT NULL DEFAULT 1,
         automated_follow_up_parent_message_id INTEGER,
         pricing_reminder_anchor_id INTEGER,sent_by_username TEXT,media_mime_type TEXT,
+        media_url TEXT, media_key TEXT, automated_follow_up_for_message_id INTEGER,
         delivery_status TEXT
       );
       CREATE TABLE whatsapp_free_entry_followup_attempts(

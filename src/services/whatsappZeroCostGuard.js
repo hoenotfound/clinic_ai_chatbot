@@ -266,16 +266,22 @@ function settings() {
 function enabled() { return settings().enabled === true; }
 function allow24hServiceReplies() { return enabled() && settings().allow24hServiceReplies === true; }
 function allow24hStaffMedia() { return enabled() && settings().allow24hStaffMedia === true; }
+function allow24hAutoFollowUps() { return enabled() && settings().allow24hAutoFollowUps === true; }
 
 // A separate, deliberately potentially paid lane for direct text replies.
 // A unique pre-send record prevents retries of an ambiguous provider request.
 async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={}}={}) {
   const isText=context.messageKind==="first_reply_text";
   const isStaffMedia=context.messageKind==="staff_media";
+  const isFollowUpText=context.messageKind==="auto_followup_text";
+  const isFollowUpMedia=context.messageKind==="auto_followup_media";
   if (!(isText && allow24hServiceReplies()) &&
-      !(isStaffMedia && allow24hStaffMedia())) return null;
+      !(isStaffMedia && allow24hStaffMedia()) &&
+      !((isFollowUpText || isFollowUpMedia) && allow24hAutoFollowUps())) return null;
   if (context.currentFollowUpAttemptId != null) return null;
-  const sendKind=isStaffMedia ? "staff_media" : "text";
+  const sendKind=isStaffMedia ? "staff_media"
+    : isFollowUpText ? "auto_followup_text"
+    : isFollowUpMedia ? "auto_followup_media" : "text";
   const messageId=Number(context.currentMessageId);
   const recipient=String(to||"").replace(/\D/g,"");
   const stamp=new Date(now);
@@ -288,18 +294,44 @@ async function reserve24hServiceReply(to,{database=pool,now=new Date(),context={
     WHERE m.id=$1 AND m.role='assistant' AND c.channel='whatsapp'
       AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$2
       AND m.whatsapp_message_id IS NULL AND m.whatsapp_template IS NULL
-      AND m.is_automated_follow_up IS NOT TRUE
+      AND (
+        ($4::text IN ('text','staff_media') AND m.is_automated_follow_up IS NOT TRUE)
+        OR ($4::text IN ('auto_followup_text','auto_followup_media')
+          AND m.is_automated_follow_up IS TRUE
+          AND m.sent_by_username='Follow-up automation'
+          AND m.automated_follow_up_for_message_id IS NOT NULL
+          AND m.automated_follow_up_step BETWEEN 1 AND 3
+          AND EXISTS (SELECT 1 FROM messages anchor
+            WHERE anchor.id=m.automated_follow_up_for_message_id
+              AND anchor.contact_id=m.contact_id
+              AND anchor.role='assistant'
+              AND anchor.whatsapp_message_id IS NOT NULL)
+          -- An inbound arriving after generation invalidates the old follow-up.
+          AND NOT EXISTS (SELECT 1 FROM messages newer
+            WHERE newer.contact_id=m.contact_id AND newer.role='user'
+              AND newer.created_at>m.created_at))
+      )
       -- Production messages.automated_follow_up_step is NOT NULL DEFAULT 1
       -- even for ordinary customer and manually sent messages. Step alone
       -- cannot establish automation; use the explicit automation flag,
       -- parent link, scheduled-message and follow-up-attempt records.
       AND m.automated_follow_up_parent_message_id IS NULL
       AND m.pricing_reminder_anchor_id IS NULL
-      -- Only staff-authored, persisted media qualifies for this separate lane.
-      AND ($4::text='text' OR (
-        m.sent_by_username IS NOT NULL AND btrim(m.sent_by_username)<>''
-        AND m.media_mime_type IS NOT NULL AND m.media_mime_type<>''
-      ))
+      -- Only genuine saved follow-up text/media and staff media qualify.
+      AND (
+        ($4::text='text')
+        OR ($4::text='staff_media' AND m.sent_by_username IS NOT NULL
+            AND btrim(m.sent_by_username)<>'' AND m.media_mime_type IS NOT NULL
+            AND m.media_mime_type<>'')
+        OR ($4::text='auto_followup_text'
+            AND NULLIF(BTRIM(COALESCE(m.media_url,'')),'') IS NULL
+            AND NULLIF(BTRIM(COALESCE(m.media_key,'')),'') IS NULL
+            AND NULLIF(BTRIM(COALESCE(m.media_mime_type,'')),'') IS NULL)
+        OR ($4::text='auto_followup_media' AND (
+            NULLIF(BTRIM(COALESCE(m.media_url,'')),'') IS NOT NULL
+            OR NULLIF(BTRIM(COALESCE(m.media_key,'')),'') IS NOT NULL
+            OR NULLIF(BTRIM(COALESCE(m.media_mime_type,'')),'') IS NOT NULL))
+      )
       AND NOT EXISTS(SELECT 1 FROM whatsapp_free_entry_followup_attempts a
                      WHERE a.message_id=m.id)
       AND NOT EXISTS(SELECT 1 FROM scheduled_messages scheduled
@@ -552,7 +584,9 @@ async function inspectFreeTemplateWindow(to, {
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
   if ((allow24hServiceReplies() && context.messageKind === "first_reply_text") ||
-      (allow24hStaffMedia() && context.messageKind === "staff_media")) {
+      (allow24hStaffMedia() && context.messageKind === "staff_media") ||
+      (allow24hAutoFollowUps() &&
+        ["auto_followup_text","auto_followup_media"].includes(context.messageKind))) {
     try {
       const permission=await reserve24hServiceReply(to,{database,now,context});
       if (permission) return permission;
@@ -853,6 +887,6 @@ async function perform(to, operation, context = {}) {
 }
 
 module.exports = {
-  blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,allow24hStaffMedia,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
+  blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,allow24hStaffMedia,allow24hAutoFollowUps,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
 };
