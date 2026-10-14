@@ -244,6 +244,76 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
     `);
     assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(397), null);
 
+    // Explicit staff dismissal acknowledges historical failed media without
+    // rewriting its provider delivery status. A new inbound + accepted staff
+    // reply must no longer inherit that old photo warning.
+    await client.query(`
+      INSERT INTO contacts(id,channel,mode,needs_attention,attention_reason,is_unread)
+      VALUES (398,'whatsapp','human',true,'Delivery failed: old photo',true);
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1601,398,'user',now()-interval '2 hours');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_key,media_mime_type)
+      VALUES (1602,398,'assistant',now()-interval '90 minutes','failed','old-image','image/jpeg');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,whatsapp_message_id,
+                           sent_by_username)
+      VALUES (1603,398,'assistant',now()-interval '80 minutes','read','wamid.oldtext','admin');
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(398), null,
+      "an undismissed failed photo remains actionable even after staff text");
+    const dismissed = await contacts.dismissAttentionAndReviews(398);
+    assert.equal(dismissed.needs_attention, false);
+    assert.ok(dismissed.delivery_attention_dismissed_at,
+      "explicit dismissal must leave a durable per-contact timestamp");
+    assert.equal((await client.query(
+      "SELECT delivery_status FROM messages WHERE id=1602"
+    )).rows[0].delivery_status, "failed",
+    "dismissal must preserve the old provider-failure audit");
+
+    // Opening a newer customer turn can no longer resurrect dismissed media.
+    await client.query(`
+      UPDATE contacts SET mode='ai', needs_attention=false, is_unread=true,
+        updated_at=date_trunc('milliseconds',now()) WHERE id=398;
+    `);
+    const newStaffSnapshot = (await client.query(
+      "SELECT * FROM contacts WHERE id=398"
+    )).rows[0];
+    const safeAssist = await contacts.clearStaffAssistStateIfUnchanged(newStaffSnapshot);
+    assert.equal(safeAssist.needs_attention, false,
+      "saved staff draft cleanup cannot resurrect dismissed historical media");
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at)
+      VALUES (1604,398,'user',clock_timestamp()+interval '1 second');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,whatsapp_message_id,
+                           sent_by_username)
+      VALUES (1605,398,'assistant',clock_timestamp()+interval '2 seconds',
+              'pending','wamid.newstaff','admin');
+      UPDATE contacts SET mode='human', takeover_by='admin',
+        needs_attention=true, attention_reason='New message — conversation is staff-owned.'
+      WHERE id=398;
+    `);
+    assert.equal((await contacts.clearDeliveryAttentionIfNoFailedMessages(398)).needs_attention,
+      false, "accepted manual reply clears routine waiting after historical dismissal");
+
+    // The cutoff is not a blanket waiver. A newly failed attachment is still
+    // unresolved and cannot be hidden by a subsequent accepted text.
+    await client.query(`
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,media_key,media_mime_type)
+      VALUES (1606,398,'assistant',clock_timestamp()+interval '3 seconds',
+              'failed','new-image','image/png');
+      INSERT INTO messages(id,contact_id,role,created_at,delivery_status,whatsapp_message_id,
+                           sent_by_username)
+      VALUES (1607,398,'assistant',clock_timestamp()+interval '4 seconds',
+              'read','wamid.freshtext','admin');
+      UPDATE contacts SET needs_attention=true,
+        attention_reason='Delivery failed: new photo still outstanding' WHERE id=398;
+    `);
+    assert.equal(await contacts.clearDeliveryAttentionIfNoFailedMessages(398), null,
+      "dismissal of an older photo does not waive a newer failed image");
+    const reDismissed = await contacts.dismissAttentionAndReviews(398);
+    assert.equal(reDismissed.needs_attention,false);
+    assert.ok(new Date(reDismissed.delivery_attention_dismissed_at) >=
+      new Date(dismissed.delivery_attention_dismissed_at));
+    
     // An unrelated earlier failure must never replace a booking-ready warning.
     await client.query(`
       UPDATE contacts SET needs_attention=true,
