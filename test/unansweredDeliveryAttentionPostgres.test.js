@@ -43,6 +43,7 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
         mode text NOT NULL DEFAULT 'ai',
         takeover_by text, takeover_at timestamptz,
         needs_attention boolean DEFAULT false, attention_reason text,
+        delivery_attention_dismissed_at timestamptz,
         is_unread boolean DEFAULT false, updated_at timestamptz DEFAULT now()
       );
       CREATE TABLE messages (
@@ -58,7 +59,8 @@ test("reply cleanup requires a newer Meta-accepted direct reply; old failures do
       CREATE TABLE scheduled_messages(message_id integer);
       CREATE TABLE ai_review_items (
         id bigserial PRIMARY KEY, contact_id integer, inbound_message_id integer,
-        summary text, status text, created_at timestamptz DEFAULT now()
+        summary text, status text, created_at timestamptz DEFAULT now(),
+        resolved_at timestamptz
       );
       CREATE TABLE follow_up_ai_decisions (
         id bigserial PRIMARY KEY, contact_id integer, trigger_message_id integer,
