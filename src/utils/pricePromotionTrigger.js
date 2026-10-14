@@ -2,6 +2,7 @@ const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQ
 const clinicConfig = require("../config/clinicConfig");
 const { relatedPricingConflict } = require("./relatedServicePolicy");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
+const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
@@ -66,18 +67,26 @@ async function resolvePricePromotionForReply({
   hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
 }) {
+  const clarificationService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+    ? resolveClarifiedPriceService({
+        customerText, conversationHistory, services, serviceAliases,
+      }) : null;
+  const verifiedClarification = Boolean(treatment) &&
+    clarificationService === treatment && verifiedServiceFromText === treatment;
+  const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
+    verifiedClarification;
   if (
     // A verified monetary question is sufficient for opted-in clinics even
     // when the LLM under-classifies priceQuery. Keep all media safety checks.
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? (!treatment || !verifiedServiceFromText || verifiedServiceFromText !== treatment ||
-          !hasExplicitPriceRequest(customerText, { treatment }))
+          !verifiedPriceRequest)
       : (priceQuery !== true && packageQuery !== true)) ||
     !(hasCustomerPriceEnquiry(customerText) ||
       (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-        isContextualBarePriceQuestion(customerText, treatment))) ||
+        (isContextualBarePriceQuestion(customerText, treatment) || verifiedClarification))) ||
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-      !hasExplicitPriceRequest(customerText, { treatment })) ||
+      !verifiedPriceRequest) ||
     hasClinicalMediaRisk(customerText) ||
     !treatment ||
     flagged ||
