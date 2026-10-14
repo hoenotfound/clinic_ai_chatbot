@@ -55,8 +55,8 @@ function harness({
       calls.push(["findMessageByWamid", wamid]);
       return existingMessage;
     },
-    setDeliveryAttentionState: async (contactId, reason) => {
-      calls.push(["setDeliveryAttentionState", contactId, reason]);
+    setDeliveryAttentionState: async (contactId, reason, query, failedMessageId) => {
+      calls.push(["setDeliveryAttentionState", contactId, reason, failedMessageId]);
       return { id: contactId };
     },
     pruneCompleted: async () => 0,
@@ -163,6 +163,28 @@ test("new failed status restores Inbox attention and sends one best-effort Teleg
   ));
   assert.ok(calls.some((call) => call[0] === "publishContact" && call[1] === 12));
   assert.equal(calls.filter((call) => call[0] === "sendDeliveryFailureAlert").length, 1);
+  assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id));
+});
+
+test("superseded late failure callback does not re-open Inbox attention or alert Telegram", async () => {
+  const statusJob = job({
+    id: 820, delivery_status: "failed", error_message: "Old text failed",
+  });
+  const updated = {
+    id: 821, contact_id: 82, whatsapp_message_id: statusJob.wamid,
+    delivery_status: "failed", delivery_error: statusJob.error_message,
+  };
+  const { calls, repo, service } = harness({ claimed: [statusJob], updateResult: updated });
+  repo.setDeliveryAttentionState = async (contactId, reason, query, failedId) => {
+    calls.push(["setDeliveryAttentionState", contactId, reason, failedId]);
+    return null; // SQL confirms a newer provider-accepted reply exists.
+  };
+
+  await service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  assert.deepEqual(calls.find((call) => call[0] === "setDeliveryAttentionState"),
+    ["setDeliveryAttentionState", 82, "Delivery failed: Old text failed", 821]);
+  assert.equal(calls.some((call) => call[0] === "publishContact"), false);
+  assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
   assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id));
 });
 
