@@ -67,9 +67,13 @@ function textReply(text,turns,offerName="骨盆调理") {
   });
 }
 async function media(text, turns, treatment) {
+  // Match the real server: an AI-selected treatment is not proof that the
+  // customer actually asked about that service. Independently resolve it.
+  const verified = safeServiceFromCustomer(text, services, serviceAliases)?.name ||
+    resolved(text, turns);
   return withAssessmentFirst(async()=>resolvePricePromotionForReply({
     priceQuery:false,packageQuery:false,
-    treatment,verifiedServiceFromText:treatment,
+    treatment,verifiedServiceFromText:verified,
     customerText:text,conversationHistory:turns,services,serviceAliases,
     promotions,resultMedia:[],contactId:100,textSendSucceeded:true,
     wasPromoRecentlySent:async()=>false,
