@@ -73,7 +73,8 @@ async function resolvePricePromotionForReply({
   // are not a request for paid treatment price graphics.
   if (isComplimentaryAssessmentFeeQuestion(
     customerText,
-    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true
+    clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+    conversationHistory
   )) return null;
   const clarificationService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
     ? resolveClarifiedPriceService({
