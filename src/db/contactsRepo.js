@@ -1176,6 +1176,26 @@ async function setDeliveryAttention(id, reason, failedMessageId = null) {
          OR attention_reason LIKE 'Delivery failed:%'
          OR attention_reason LIKE 'Delivery unconfirmed:%'
        )
+       -- Protect a newer, specifically identified delivery failure from a
+       -- late background/AI retry finishing an older failed attempt.
+       AND (
+         $3::integer IS NULL
+         OR delivery_attention_message_id IS NULL
+         OR needs_attention IS DISTINCT FROM TRUE
+         OR NOT (
+           attention_reason LIKE 'Delivery failed:%'
+           OR attention_reason LIKE 'Delivery unconfirmed:%'
+         )
+         OR NOT EXISTS (
+           SELECT 1 FROM messages active_attempt
+           JOIN messages reported_attempt
+             ON reported_attempt.id = $3::integer
+           WHERE active_attempt.id = contacts.delivery_attention_message_id
+             AND active_attempt.contact_id = contacts.id
+             AND (active_attempt.created_at, active_attempt.id) >
+                 (reported_attempt.created_at, reported_attempt.id)
+         )
+       )
      RETURNING *`,
     [reason, id, safeMessageId]
   );
