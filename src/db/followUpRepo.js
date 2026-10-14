@@ -1,5 +1,6 @@
 const { acceptedNormalOutboundSql } = require("../utils/normalOutboundProofSql");
 const { followUpAttentionAllowedSql } = require("../utils/aiReviewPolicy");
+const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const { beforeExpiryDueSql } = require("../utils/followUpAdaptiveTiming");
@@ -291,7 +292,7 @@ async function findCandidates({
            FROM follow_up_ai_decisions decision
            WHERE decision.contact_id = c.id
              AND decision.trigger_message_id = anchor.id
-             AND decision.action = 'human_review'
+             AND ${terminalFollowUpDecisionSql("decision")}
          )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
@@ -499,7 +500,7 @@ async function getNextCandidateDueAt({
            FROM follow_up_ai_decisions decision
            WHERE decision.contact_id = c.id
              AND decision.trigger_message_id = anchor.id
-             AND decision.action = 'human_review'
+             AND ${terminalFollowUpDecisionSql("decision")}
          )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
@@ -743,7 +744,7 @@ async function saveIfStillEligible({
          FROM follow_up_ai_decisions decision
          WHERE decision.contact_id = c.id
            AND decision.trigger_message_id = anchor.id
-           AND decision.action = 'human_review'
+           AND ${terminalFollowUpDecisionSql("decision")}
        )
        AND anchor.created_at >= $9::timestamptz
        AND CASE
@@ -1025,7 +1026,7 @@ async function recordAiDecisionIfStillEligible({
            FROM follow_up_ai_decisions existing
            WHERE existing.contact_id = c.id
              AND existing.trigger_message_id = anchor.id
-             AND existing.action = 'human_review'
+             AND ${terminalFollowUpDecisionSql("existing")}
          )
          AND anchor.created_at >= $9::timestamptz
          AND CASE
@@ -1071,7 +1072,7 @@ async function recordAiDecisionIfStillEligible({
            ),
            updated_at = now()
        FROM inserted_decision
-       WHERE inserted_decision.action = 'human_review'
+       WHERE inserted_${terminalFollowUpDecisionSql("decision")}
          AND c.id = inserted_decision.contact_id
        RETURNING c.id
      )
@@ -1155,7 +1156,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
            FROM follow_up_ai_decisions decision
            WHERE decision.contact_id = c.id
              AND decision.trigger_message_id = anchor.id
-             AND decision.action = 'human_review'
+             AND ${terminalFollowUpDecisionSql("decision")}
          )
          AND claim.delivery_status IS NULL
          AND claim.whatsapp_message_id IS NULL
