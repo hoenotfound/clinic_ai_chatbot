@@ -978,6 +978,9 @@ function start({
     events.subscribe("config_changed", (payload) => {
       if (!payload?.keys || payload.keys.includes("automatedFollowUp")) wake(0);
     }),
+    // Pricing may be confirmed before the matching outbound WAMID is linked.
+    // Immediate refresh plus the 15m safety backstop cover either ordering.
+    events.subscribe("whatsapp_fep_billing_evidence", () => wake(0)),
   ];
   timer.start();
   return stop;
