@@ -410,6 +410,25 @@ function normalizeJob(row) {
   };
 }
 
+// Reuse the existing retry and stale-lease deadlines instead of checking for
+// completed work on a fixed interval while the database could be suspended.
+async function getNextPurgeJobDueAt(database = pool) {
+  const result = await database.query(
+    `SELECT MIN(
+         CASE
+           WHEN status IN ('pending', 'failed') THEN
+             COALESCE(next_attempt_at, created_at)
+           WHEN status = 'processing' THEN
+             claimed_at + ($1::integer * interval '1 minute')
+         END
+       ) AS due_at
+       FROM customer_data_purge_jobs
+       WHERE status IN ('pending', 'failed', 'processing')`,
+    [PURGE_PROCESSING_STALE_MINUTES]
+  );
+  return result.rows[0]?.due_at || null;
+}
+
 async function claimPurgeJob({
   jobId = null,
   leaseToken = crypto.randomUUID(),
@@ -539,6 +558,7 @@ module.exports = {
   PURGE_JOB_RETENTION_DAYS,
   PURGE_PROCESSING_STALE_MINUTES,
   claimPurgeJob,
+  getNextPurgeJobDueAt,
   listRetentionCandidates,
   markPurgeJobCompleted,
   markPurgeJobFailed,
