@@ -103,6 +103,30 @@ function createWhatsAppDeliveryStatusService({
   let recoveryRunning = false;
   let lastPrunedAt = Date.now();
   let recoveryTimer = null;
+  // Only the first meaningful Meta free-entry pricing state for a WAMID
+  // needs to re-evaluate extended templates. Read/delivered callbacks
+  // repeating the same pricing proof must not repeatedly poll Neon.
+  const lastFepPricingSignal = new Map();
+  const MAX_FEP_SIGNAL_KEYS = 2048;
+
+  function signalChangedFepPricing(updates) {
+    let changed = false;
+    for (const item of updates || []) {
+      if (item?.pricingType !== "free_entry_point" ||
+          typeof item.pricingBillable !== "boolean" || !item.wamid) continue;
+      const key = String(item.wamid);
+      const value = item.pricingBillable ? "billable" : "free";
+      if (lastFepPricingSignal.get(key) === value) continue;
+      lastFepPricingSignal.delete(key);
+      lastFepPricingSignal.set(key, value);
+      changed = true;
+    }
+    while (lastFepPricingSignal.size > MAX_FEP_SIGNAL_KEYS) {
+      lastFepPricingSignal.delete(lastFepPricingSignal.keys().next().value);
+    }
+    if (changed) publishPricingEvidence();
+    return changed;
+  }
 
   function wakeRecovery(delayMs = 0) {
     return recoveryTimer?.wake(delayMs) || false;
@@ -116,7 +140,7 @@ function createWhatsAppDeliveryStatusService({
       // The FEP timer may be sleeping past a newly verified billing epoch.
       // Signal it only AFTER the pricing evidence has been durably stored.
       // Internal-only: no customer SSE traffic and no new provider sends.
-      publishPricingEvidence();
+      signalChangedFepPricing(updates);
       wakeResultMedia(0);
       // The webhook can arrive minutes before another outbound send. Clear
       // only proof-backed gates immediately, without waiting on Telegram.
