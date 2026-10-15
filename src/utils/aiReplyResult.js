@@ -225,6 +225,18 @@ function parseStructuredReply(raw) {
   const priceQuery = parsed.priceQuery === true;
   const packageQuery = parsed.packageQuery === true;
   const promotionOption = cleanOptionalText(parsed.promotionOption);
+  const intentInput = parsed.pricingIntent;
+  const pricingIntent = intentInput && typeof intentInput === "object" &&
+    !Array.isArray(intentInput) &&
+    ["none", "price", "package_options"].includes(intentInput.type) &&
+    [null, "current_customer", "recent_customer", "meta_ad"].includes(intentInput.source) &&
+    (intentInput.treatment == null || typeof intentInput.treatment === "string")
+      ? {
+          type: intentInput.type,
+          treatment: cleanOptionalText(intentInput.treatment),
+          source: intentInput.source,
+        }
+      : null;
   const reviewType = parsed.reviewType === "information" ? "information" : "clinical";
 
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
@@ -248,6 +260,7 @@ function parseStructuredReply(raw) {
       priceQuery,
       packageQuery,
       promotionOption,
+      pricingIntent,
       outcome: "normal",
       structured: true,
       details: emptyDetails(),
@@ -347,6 +360,7 @@ function parseStructuredReply(raw) {
     priceQuery,
     packageQuery,
     promotionOption,
+    pricingIntent,
     outcome,
     structured: true,
     details,
@@ -391,6 +405,7 @@ function parseAiReplyResult(raw) {
     priceQuery: false,
     packageQuery: false,
     promotionOption: null,
+    pricingIntent: null,
     outcome: legacy.flagged
       ? "needs_human"
       : bookingReady
