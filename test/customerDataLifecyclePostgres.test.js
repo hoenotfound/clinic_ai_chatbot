@@ -488,3 +488,104 @@ test(
     }
   }
 );
+
+
+test(
+  "Neon idle recovery respects actual PostgreSQL retry deadlines and atomic claims",
+  { skip: !connectionString },
+  async () => {
+    const client = new Client({ connectionString });
+    const schemaName = `adaptive_recovery_${process.pid}_${Date.now()}`;
+    await client.connect();
+    try {
+      await client.query(`CREATE SCHEMA ${schemaName}`);
+      await client.query(`SET search_path TO ${schemaName}`);
+      await createLifecycleSchema(client);
+
+      const comment = await client.query(
+        `INSERT INTO meta_comment_automation_jobs
+           (channel, comment_id, entry_id, author_id, comment_text)
+         VALUES ('facebook', 'recovery-1', 'page-1', 'customer-1', 'Can I book?')
+         RETURNING id`
+      );
+      const commentId = Number(comment.rows[0].id);
+      assert.ok(await metaCommentAutomationRepo.getNextRecoverableAt(client));
+      const firstClaim = await metaCommentAutomationRepo.claimJob(commentId, client);
+      assert.equal(firstClaim.status, "processing");
+      assert.equal(await metaCommentAutomationRepo.claimJob(commentId, client), null,
+        "an in-flight comment must not be processed twice");
+
+      await client.query(
+        `UPDATE meta_comment_automation_jobs
+         SET updated_at = NOW() - interval '11 minutes' WHERE id = $1`,
+        [commentId]
+      );
+      assert.ok(
+        new Date(await metaCommentAutomationRepo.getNextRecoverableAt(client)).getTime() <= Date.now(),
+        "stale processing work should be immediately recoverable"
+      );
+      const restartedClaim = await metaCommentAutomationRepo.claimJob(commentId, client);
+      assert.equal(restartedClaim.attemptCount, 2);
+      const failed = await metaCommentAutomationRepo.markFailed(
+        commentId, new Error("provider temporarily unavailable"), 2, client
+      );
+      assert.equal(failed.status, "failed");
+      const commentRetryDue = new Date(await metaCommentAutomationRepo.getNextRecoverableAt(client));
+      assert.ok(commentRetryDue.getTime() > Date.now());
+      assert.equal((await metaCommentAutomationRepo.listRecoverable(20, client)).length, 0);
+      await client.query(
+        `UPDATE meta_comment_automation_jobs
+         SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1`,
+        [commentId]
+      );
+      assert.equal((await metaCommentAutomationRepo.listRecoverable(20, client)).length, 1);
+      const nextClaim = await metaCommentAutomationRepo.claimJob(commentId, client);
+      assert.equal(nextClaim.attemptCount, 3);
+      await metaCommentAutomationRepo.markPrivateReplySent(
+        commentId, { messageId: "meta-mid-already-accepted", recipientId: "customer-1" }, client
+      );
+      const completed = await metaCommentAutomationRepo.markCompleted(commentId, client);
+      assert.equal(completed.privateReplyMessageId, "meta-mid-already-accepted",
+        "the confirmed provider ID must survive terminal completion");
+      assert.equal(await metaCommentAutomationRepo.getNextRecoverableAt(client), null);
+
+      const purge = await client.query(
+        `INSERT INTO customer_data_purge_jobs
+           (contact_id, reason, media_keys, media_prefixes)
+         VALUES (201, 'manual', '["clients/demo/201/a.jpg"]', '["clients/demo/201/"]')
+         RETURNING id`
+      );
+      const purgeId = Number(purge.rows[0].id);
+      assert.ok(await lifecycleRepo.getNextPurgeJobDueAt(client));
+      const lease = await lifecycleRepo.claimPurgeJob({
+        jobId: purgeId, leaseToken: "lease-one", database: client,
+      });
+      assert.equal(lease.status, "processing");
+      assert.equal(await lifecycleRepo.claimPurgeJob({
+        jobId: purgeId, leaseToken: "lease-two", database: client,
+      }), null, "a leased R2 cleanup job must not be claimed again");
+      await lifecycleRepo.markPurgeJobFailed({
+        jobId: purgeId, leaseToken: "lease-one", attempts: lease.attempts,
+        error: new Error("R2 temporary failure"), database: client,
+      });
+      const purgeRetryDue = new Date(await lifecycleRepo.getNextPurgeJobDueAt(client));
+      assert.ok(purgeRetryDue.getTime() > Date.now());
+      await client.query(
+        `UPDATE customer_data_purge_jobs
+         SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1`,
+        [purgeId]
+      );
+      const retryLease = await lifecycleRepo.claimPurgeJob({
+        jobId: purgeId, leaseToken: "lease-retry", database: client,
+      });
+      assert.equal(retryLease.attempts, 2);
+      await lifecycleRepo.markPurgeJobCompleted({
+        jobId: purgeId, leaseToken: "lease-retry", database: client,
+      });
+      assert.equal(await lifecycleRepo.getNextPurgeJobDueAt(client), null);
+    } finally {
+      await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
+      await client.end();
+    }
+  }
+);
