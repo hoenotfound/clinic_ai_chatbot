@@ -8,6 +8,12 @@ const express = require("express");
 const { createOpsReadinessRouter } = require("../src/routes/opsReadiness");
 const { createPoolActivityTracker } = require("../src/services/databasePoolActivity");
 const { normalizeRemoteSnapshot } = require("../src/ops/clientPoller");
+const { createAdaptiveWorkerTimer } = require("../src/utils/adaptiveWorkerTimer");
+const {
+  currentDatabaseActivitySource,
+  withDatabaseActivitySource,
+} = require("../src/utils/databaseActivityContext");
+const { createRequireOpsReadinessToken } = require("../src/middleware/requireOpsReadinessToken");
 
 test("pool observation is passive and keeps bounded minute windows", () => {
   const pool = new EventEmitter();
@@ -20,14 +26,17 @@ test("pool observation is passive and keeps bounded minute windows", () => {
   assert.equal(pool.listenerCount("acquire"), before + 1);
 
   pool.emit("connect");
-  pool.emit("acquire");
+  withDatabaseActivitySource("WhatsApp recovery", () => pool.emit("acquire"));
   pool.emit("acquire");
   at += 6 * 60_000;
-  pool.emit("acquire");
+  withDatabaseActivitySource("Meta comment recovery", () => pool.emit("acquire"));
   pool.emit("remove");
 
   const first = tracker.snapshot();
   assert.equal(first.acquiredTotal, 3);
+  assert.equal(first.bySource.find(row => row.source === "WhatsApp recovery").acquiredTotal, 1);
+  assert.equal(first.bySource.find(row => row.source === "Meta comment recovery").last5Minutes, 1);
+  assert.equal(first.bySource.find(row => row.source === "unattributed").acquiredTotal, 1);
   assert.equal(first.connectedTotal, 1);
   assert.equal(first.removedTotal, 1);
   assert.equal(first.last5Minutes, 1);
@@ -101,6 +110,13 @@ test("PostgreSQL integration: query acquisition is visible without extra telemet
     assert.ok(metrics.connectedTotal >= 1);
     assert.ok(metrics.openConnections >= 1);
     assert.ok(metrics.idleConnections >= 1);
+    await withDatabaseActivitySource("Neon phase2 query test", async () => {
+      await pool.query("SELECT 2 AS ready");
+    });
+    const labelled = tracker.snapshot().bySource.find(
+      (row) => row.source === "Neon phase2 query test"
+    );
+    assert.ok(labelled?.acquiredTotal >= 1, "warm pooled query should retain worker label");
   } finally {
     await pool.end();
   }
@@ -128,4 +144,105 @@ test("pool-activity route is read-only and never runs the full database-backed r
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test("adaptive recovery preserves its source across asynchronous DB acquisition", async () => {
+  const fakePool = new EventEmitter();
+  fakePool.totalCount = 1;
+  fakePool.idleCount = 1;
+  fakePool.waitingCount = 0;
+  const tracker = createPoolActivityTracker(fakePool);
+  const tasks = [];
+  const worker = createAdaptiveWorkerTimer({
+    label: "WhatsApp delivery-status recovery",
+    run: async () => {
+      await Promise.resolve();
+      fakePool.emit("acquire");
+      return null;
+    },
+    delayForResult: () => null,
+    setTimeoutImpl: (fn) => {
+      tasks.push(fn);
+      return { unref() {} };
+    },
+    clearTimeoutImpl: () => {},
+  });
+  worker.start();
+  assert.equal(currentDatabaseActivitySource(), "unattributed");
+  await tasks.shift()();
+  assert.equal(currentDatabaseActivitySource(), "unattributed");
+  assert.equal(tracker.snapshot().bySource[0].source, "WhatsApp delivery-status recovery");
+  worker.stop();
+});
+
+test("unauthorized pool observation is rejected before any database or pool access", async () => {
+  const token = "x".repeat(32);
+  const makeApp = (env) => {
+    let poolCalls = 0;
+    let readinessCalls = 0;
+    const app = express();
+    app.use("/api/ops/readiness", createOpsReadinessRouter({
+      authenticate: createRequireOpsReadinessToken({ env }),
+      loadReadiness: async () => { readinessCalls++; throw new Error("unwanted DB call"); },
+      loadPoolActivity: () => { poolCalls++; return { acquiredTotal: 0 }; },
+    }));
+    return { app, calls: () => ({ poolCalls, readinessCalls }) };
+  };
+  const makeRequest = async (env, headers) => {
+    const { app, calls } = makeApp(env);
+    const server = await new Promise(resolve => {
+      const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+    });
+    try {
+      const url = `http://127.0.0.1:${server.address().port}/api/ops/readiness/pool-activity`;
+      const response = await fetch(url, { headers });
+      const body = await response.json();
+      return { status: response.status, body, headers: response.headers, calls: calls() };
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  };
+
+  const disabled = await makeRequest({}, {});
+  assert.equal(disabled.status, 404);
+  assert.deepEqual(disabled.calls, { poolCalls: 0, readinessCalls: 0 });
+
+  const unauthenticated = await makeRequest({ OPS_READINESS_TOKEN: token }, {});
+  assert.equal(unauthenticated.status, 401);
+  assert.deepEqual(unauthenticated.calls, { poolCalls: 0, readinessCalls: 0 });
+
+  const invalid = await makeRequest(
+    { OPS_READINESS_TOKEN: token },
+    { authorization: `Bearer ${"y".repeat(32)}` }
+  );
+  assert.equal(invalid.status, 401);
+  assert.deepEqual(invalid.calls, { poolCalls: 0, readinessCalls: 0 });
+
+  const allowed = await makeRequest(
+    { OPS_READINESS_TOKEN: token },
+    { authorization: `Bearer ${token}` }
+  );
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.headers.get("cache-control"), "no-store");
+  assert.deepEqual(allowed.calls, { poolCalls: 1, readinessCalls: 0 });
+});
+
+test("Ops Registry rejects secret or oversized per-worker source labels", () => {
+  const base = {
+    source: "da-chatbot", schemaVersion: 1,
+    client: { slug: "neutro-sense-tcm" },
+    readiness: { status: "ready" },
+    databasePool: {
+      bySource: [
+        { source: "WhatsApp delivery-status recovery", acquiredTotal: 3, last5Minutes: 2, last15Minutes: 3 },
+        { source: "customer +60123456789", acquiredTotal: 1, last5Minutes: 1, last15Minutes: 1 },
+        { source: "private-token=" + "x".repeat(80), acquiredTotal: 3 },
+      ],
+    },
+  };
+  const value = normalizeRemoteSnapshot(base, "neutro-sense-tcm").databasePool.bySource;
+  assert.equal(value.length, 1);
+  assert.equal(value[0].source, "WhatsApp delivery-status recovery");
+  assert.equal(value[0].last5Minutes, 2);
+  assert.doesNotMatch(JSON.stringify(value), /60123456789|private-token/);
 });
