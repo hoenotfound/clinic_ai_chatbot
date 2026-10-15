@@ -745,36 +745,43 @@ async function run({ now = new Date() } = {}) {
 
 
 /**
- * Conservative wake-time hint, NOT a permission-to-send query.
- *
- * This deliberately considers a superset of real candidates. All marketing
- * eligibility, consent, silence, template and RM0 gates remain in candidateSql
- * and the final guarded provider send. A later verified ad entry or last
- * customer/business message can only bring the wake earlier (or cause extra
- * no-op checks), never authorize a message.
- *
- * The final configured slot can move up to 12h earlier to avoid quiet hours
- * at the free-entry expiry boundary. Wake no later than that early bound.
+ * Read-only scheduler hint, not an eligibility or send decision. Anchor to the
+ * same CTWA billing epoch and first business reply as candidateSql, then
+ * prune permanent stop states and claimed slots before calculating due times.
+ * The original candidateSql, locked claim and final RM0 guard remain the
+ * exclusive authorities for outbound sends.
  */
 const potentialDueSql = `
-  SELECT MIN(GREATEST(
-    reply.created_at + (
-      slot.hours - CASE WHEN slot.hours = (
-        SELECT MAX(n) FROM unnest($2::integer[]) AS n
-        WHERE n < $3::integer
-      ) THEN 12 ELSE 0 END
-    ) * interval '1 hour',
-    last_inbound.created_at + interval '24 hours',
-    COALESCE(last_outbound.created_at, reply.created_at) + interval '5 hours'
-  )) AS due_at
+  SELECT c.id AS contact_id, first_reply.id AS first_reply_message_id,
+         first_reply.created_at AS first_reply_at,
+         last_inbound.created_at AS last_inbound_at,
+         last_outbound.created_at AS last_outbound_at,
+         slot.hours AS slot_hours
   FROM contacts c
-  JOIN messages reply ON reply.contact_id = c.id AND reply.role = 'assistant'
-    AND reply.whatsapp_message_id IS NOT NULL
+  JOIN LATERAL (
+    SELECT l.id, l.is_closed, l.appointment_status, l.marketing_consent,
+           s.stage_type, s.system_key
+    FROM leads l LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+    WHERE l.contact_id = c.id
+    ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC LIMIT 1
+  ) lead ON true
+  ${sessionLateralSql({ contactAlias: 'c', ceilingParam: '$3' })}
+  JOIN messages origin ON origin.id = referral.origin_message_id
+    AND origin.contact_id = c.id AND origin.role = 'user'
+  JOIN LATERAL (
+    SELECT reply.id, reply.created_at, reply.whatsapp_message_id
+    FROM messages reply
+    WHERE reply.contact_id = c.id AND reply.role = 'assistant'
+      AND reply.whatsapp_message_id IS NOT NULL
+      AND reply.created_at >= origin.created_at
+      AND reply.created_at < origin.created_at + interval '24 hours'
+    ORDER BY reply.created_at ASC, reply.id ASC LIMIT 1
+  ) first_reply ON true
   JOIN whatsapp_free_entry_pricing_evidence proof
-    ON proof.wamid = reply.whatsapp_message_id
+    ON proof.wamid = first_reply.whatsapp_message_id
     AND proof.pricing_type = 'free_entry_point'
     AND proof.billable = false
-    AND proof.delivery_status IN ('sent', 'delivered', 'read')
+    AND proof.delivery_status IN ('sent','delivered','read')
   JOIN LATERAL (
     SELECT incoming.created_at FROM messages incoming
     WHERE incoming.contact_id = c.id AND incoming.role = 'user'
@@ -789,41 +796,133 @@ const potentialDueSql = `
   CROSS JOIN unnest($2::integer[]) AS slot(hours)
   WHERE c.channel = 'whatsapp'
     AND c.whatsapp_number IS NOT NULL
-    AND reply.created_at >= $1::timestamptz - interval '24 hours'
-    AND reply.created_at > now() - interval '7 days'
+    AND COALESCE(c.mode,'ai') <> 'human'
+    AND c.needs_attention = false
+    AND c.whatsapp_opt_in_at IS NOT NULL
+    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
+    AND c.whatsapp_opt_out_at IS NULL
+    AND c.whatsapp_marketing_opt_out_at IS NULL
+    AND lead.marketing_consent = 'opted_in'
+    AND lead.is_closed = false
+    AND COALESCE(lead.stage_type,'open') = 'open'
+    AND COALESCE(lead.system_key,'') NOT IN ('appointment_set','visited')
+    AND COALESCE(lead.appointment_status,'none') NOT IN ('set','visited')
+    AND (referral.ctwa_clid IS NOT NULL OR referral.meta_ad_id IS NOT NULL)
+    AND first_reply.created_at >= $1::timestamptz - interval '24 hours'
+    AND (first_reply.created_at >= $1::timestamptz
+         OR c.whatsapp_opt_in_at <= $1::timestamptz)
+    AND first_reply.created_at > now() - interval '7 days'
     AND slot.hours < $3::integer
-    AND now() < reply.created_at + ($3::integer * interval '1 hour') - interval '1 hour'
-    AND now() < reply.created_at + (slot.hours + 12) * interval '1 hour'
+    AND now() < first_reply.created_at + ($3::integer * interval '1 hour') - interval '1 hour'
+    AND now() < first_reply.created_at + (slot.hours + 12) * interval '1 hour'
+    AND (SELECT COUNT(*) FROM whatsapp_free_entry_followup_attempts sent
+         WHERE sent.first_reply_message_id = first_reply.id
+           AND sent.status = 'accepted') < 3
+    AND NOT EXISTS (
+      SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
+      LEFT JOIN whatsapp_free_entry_pricing_evidence prior_billing
+        ON prior_billing.wamid = prior.wamid
+      WHERE prior.first_reply_message_id = first_reply.id
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_free_only_reconciliations audit
+          WHERE audit.attempt_id=prior.id AND audit.verified_billing_hub=true
+        )
+        AND (
+          prior.status IN ('sending','failed','unknown')
+          OR (prior.status = 'accepted' AND (
+            prior_billing.wamid IS NULL
+            OR prior_billing.pricing_type <> 'free_entry_point'
+            OR prior_billing.billable IS DISTINCT FROM false
+            OR prior_billing.delivery_status = 'failed'
+          ))
+        )
+    )
     AND EXISTS (
-      SELECT 1 FROM whatsapp_free_entry_referrals entry
-      JOIN messages origin ON origin.id = entry.origin_message_id
-        AND origin.contact_id = c.id AND origin.role = 'user'
-      WHERE entry.contact_id = c.id
-        AND (entry.ctwa_clid IS NOT NULL OR entry.meta_ad_id IS NOT NULL)
-        AND origin.created_at <= reply.created_at
-        AND origin.created_at > reply.created_at - interval '24 hours'
+      SELECT 1 FROM messages responded
+      WHERE responded.contact_id = c.id AND responded.role = 'assistant'
+        AND responded.whatsapp_message_id IS NOT NULL
+        AND responded.created_at > last_inbound.created_at
+        AND responded.delivery_status IS DISTINCT FROM 'failed'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM messages staff_reply
+      WHERE staff_reply.contact_id = c.id
+        AND staff_reply.role = 'assistant'
+        AND staff_reply.sent_by_username IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM users human_staff
+          WHERE human_staff.username=staff_reply.sent_by_username
+        )
+        AND (staff_reply.created_at,staff_reply.id) >
+            (first_reply.created_at,first_reply.id)
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM follow_up_ai_decisions d
+      JOIN messages decision_anchor ON decision_anchor.id = d.trigger_message_id
+        AND decision_anchor.contact_id = c.id
+      WHERE d.contact_id = c.id
+        AND decision_anchor.created_at >= origin.created_at
+        AND ${terminalFollowUpDecisionSql("d")}
     )
     AND NOT EXISTS (
       SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
-      WHERE prior.first_reply_message_id = reply.id
+      WHERE prior.first_reply_message_id = first_reply.id
         AND prior.slot_hours = slot.hours
         AND NOT (${safelyDeferredAttemptSql('prior')})
     )
 `;
+
+// Compute due time in clinic-local time, so an ordinary last slot is not
+// falsely treated as overdue 12h early. Legitimate quiet-hours advancement
+// still uses the same effectiveSlotDueAt logic as the actual sender.
+function summarizePotentialDue(rows, active, now = new Date()) {
+  const clock = new Date(now).getTime();
+  let nextFutureAt = null;
+  let hasOverdue = false;
+  for (const candidate of rows || []) {
+    const slotHours = Number(candidate.slot_hours);
+    const firstReplyMs = new Date(candidate.first_reply_at).getTime();
+    const lastInboundMs = new Date(candidate.last_inbound_at).getTime();
+    const outboundMs = candidate.last_outbound_at == null
+      ? firstReplyMs
+      : new Date(candidate.last_outbound_at).getTime();
+    const effective = effectiveSlotDueAt(
+      candidate.first_reply_at, slotHours, active.slots,
+      clinicConfig.automatedFollowUp?.quietHours,
+      { maxCeilingHours: active.sevenDayVerified ? 168 : 72 }
+    );
+    const dueMs = Math.max(
+      new Date(effective).getTime(),
+      lastInboundMs + 24 * 3600000,
+      outboundMs + 5 * 3600000
+    );
+    if (!Number.isFinite(dueMs)) continue;
+    if (dueMs <= clock) hasOverdue = true;
+    else if (nextFutureAt === null || dueMs < nextFutureAt) nextFutureAt = dueMs;
+  }
+  return {
+    nextDueAt: nextFutureAt === null ? null : new Date(nextFutureAt),
+    hasOverdue,
+  };
+}
 
 async function nextPotentialDueAt(active, database = pool) {
   const aligned = await alignedSettings(active, database);
   const result = await database.query(potentialDueSql, [
     aligned.activatedAt, aligned.slots, aligned.sevenDayVerified ? 168 : 72,
   ]);
-  return result.rows[0]?.due_at || null;
+  return summarizePotentialDue(result.rows, aligned);
 }
 
-function nextPollDelay(dueAt, nowMs = Date.now()) {
-  if (!dueAt) return IDLE_CHECK_INTERVAL_MS;
-  const dueMs = new Date(dueAt).getTime();
+function nextPollDelay(due, nowMs = Date.now()) {
+  const nextDueAt = due && typeof due === "object" && "nextDueAt" in due
+    ? due.nextDueAt : due;
+  if (!nextDueAt) return IDLE_CHECK_INTERVAL_MS;
+  const dueMs = new Date(nextDueAt).getTime();
   if (!Number.isFinite(dueMs)) return CHECK_INTERVAL_MS;
-  if (dueMs <= nowMs) return CHECK_INTERVAL_MS;
+  // Already-due work is retried promptly only when the actual candidate
+  // sweep found actionable work. An obsolete hint cannot force 5m polling.
+  if (dueMs <= nowMs) return IDLE_CHECK_INTERVAL_MS;
   return Math.max(1000, Math.min(IDLE_CHECK_INTERVAL_MS, dueMs - nowMs));
 }
 
@@ -836,8 +935,13 @@ async function runAndSchedule() {
   }
   const configured = settings();
   if (!configured) return IDLE_CHECK_INTERVAL_MS;
-  const dueAt = await nextPotentialDueAt(configured);
-  return nextPollDelay(dueAt);
+  const hint = await nextPotentialDueAt(configured);
+  // Only a real, still-unresolved candidate justifies repeated five-minute
+  // checks. A historical overdue hint without actionable candidates does not.
+  if (hint.hasOverdue && result?.candidates > 0 && result?.skipped > 0) {
+    return CHECK_INTERVAL_MS;
+  }
+  return nextPollDelay(hint);
 }
 
 function wake(delayMs = CHECK_INTERVAL_MS) {
