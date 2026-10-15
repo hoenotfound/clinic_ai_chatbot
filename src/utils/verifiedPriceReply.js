@@ -124,9 +124,17 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     const sources = [option.caption, option.followUpMessage, ...translations, ...followUpTranslations]
       .filter((source) => String(source || "").trim());
     const evidence = sources.map(priceEvidence);
+    const structured = option.pricing;
+    const configured = structured?.currency === "MYR" &&
+      Number.isSafeInteger(structured.offer) && structured.offer > 0 &&
+      (structured.normal == null || structured.normal >= structured.offer)
+      ? "RM" + structured.offer : null;
+    // Structured prices are authoritative only if no readable sales amount in
+    // any translated caption conflicts. Unverified legacy copy stays closed.
     if (evidence.some((entry) => entry.ambiguous)) return null;
     const unique = [...new Set(evidence.map((entry) => entry.price).filter(Boolean))];
-    if (unique.length !== 1) return null;
+    if (configured && unique.some((price) => price !== configured)) return null;
+    if (!configured && unique.length !== 1) return null;
     const localizedCaptions = [option.caption, ...translations]
       .filter((value) => typeof value === "string" && value.trim());
     const afterVoucher = localizedCaptions.some((copy) =>
@@ -135,7 +143,7 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     );
     result.push({
       name: String(option.name).trim(), title: String(option.title || "").trim(),
-      price: unique[0], afterVoucher,
+      price: configured || unique[0], afterVoucher,
     });
   }
   return result;
@@ -179,6 +187,7 @@ function nonPriceExplanation(reply) {
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
+  verifiedPricingIntent = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
 } = {}) {
@@ -194,7 +203,8 @@ function ensureVerifiedPriceReply({
     return { reply: complimentaryAssessmentFeeReply(language), restored: true };
   }
   if (!original || !treatment ||
-      !(hasExplicitPriceRequest(customerText, { treatment }) ||
+      !(verifiedPricingIntent === true ||
+        hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
       relatedPricingConflict({
         customerText, treatment, conversationHistory, services, serviceAliases,
