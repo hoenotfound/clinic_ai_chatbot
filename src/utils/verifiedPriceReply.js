@@ -250,6 +250,17 @@ function ensureVerifiedPriceReply({
       });
   const locale = String(language || "").toLowerCase();
   if (!prices) {
+    // Text-only service prices remain valid when the clinic has not configured
+    // a promotion. This fallback can never authorize a promotional graphic.
+    if (aiLed && pricingDecision.servicePrice) {
+      const locale = String(language || "").toLowerCase();
+      const text = locale.startsWith("ms")
+        ? `Harga untuk ${treatment}: ${pricingDecision.servicePrice} 😊`
+        : locale.startsWith("en")
+          ? `The price for ${treatment} is ${pricingDecision.servicePrice} 😊`
+          : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
+      return { reply: text, restored: true };
+    }
     const safeInfo = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
