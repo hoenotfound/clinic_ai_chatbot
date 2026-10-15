@@ -391,3 +391,51 @@ test("queued optional image failed callback updates audit but never triggers tex
     "an accepted image that later fails must not be retried as an AI text");
   assert.ok(calls.some(call=>call[0]==="markCompleted"));
 });
+
+test("pricing evidence wakes the internal FEP scheduler only after durable callback storage", async () => {
+  const calls = [];
+  let resolveStore;
+  const repo = {
+    async storeBatch() {
+      calls.push("storing");
+      return new Promise(resolve => { resolveStore = resolve; });
+    },
+  };
+  const service = createWhatsAppDeliveryStatusService({
+    repo,
+    wakeResultMedia() { calls.push("media-wake"); },
+    reconcileFreeOnlyGate: async () => false,
+    publishPricingEvidence() { calls.push("billing-wake"); },
+  });
+  const promise = service.storeDeliveryStatusUpdates([{
+    wamid: "wamid.before-link", pricingType: "free_entry_point",
+    pricingBillable: false, status: "delivered",
+  }]);
+  assert.deepEqual(calls, ["storing"],
+    "Meta proof must not wake a worker before the receipt commits");
+  resolveStore([]);
+  await promise;
+  assert.deepEqual(calls.slice(0, 3), ["storing", "billing-wake", "media-wake"],
+    "receipt-first callbacks must wake even without a linked message row");
+
+  const noPricing = await service.storeDeliveryStatusUpdates([{
+    wamid: "wamid.no-billing", status: "sent",
+  }]);
+  assert.ok(noPricing);
+  assert.equal(calls.filter(x => x === "billing-wake").length, 1,
+    "status callbacks without pricing evidence should not wake FEP");
+
+  const failed = createWhatsAppDeliveryStatusService({
+    repo: { async storeBatch() { throw new Error("database unavailable"); } },
+    wakeResultMedia() {},
+    reconcileFreeOnlyGate: async () => false,
+    publishPricingEvidence() { calls.push("invalid-wake"); },
+  });
+  await assert.rejects(
+    failed.storeDeliveryStatusUpdates([{
+      wamid: "wamid.uncommitted", pricingType: "free_entry_point",
+      pricingBillable: false, status: "delivered",
+    }]), /database unavailable/
+  );
+  assert.equal(calls.includes("invalid-wake"), false);
+});
