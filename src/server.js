@@ -58,7 +58,7 @@ const {
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
-const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence");
+const { isStandalonePriceQuestion, hasExplicitPriceRequest } = require("./utils/customerEnquiryEvidence");
 const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = require("./utils/tcmServiceReviewReply");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
@@ -1195,7 +1195,7 @@ async function processIncomingMessage(
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
-        priceRequested: aiPricingEnabled && (priceQuery || packageQuery),
+        priceRequested: aiPricingEnabled && (priceQuery || packageQuery || hasExplicitPriceRequest(text)),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
