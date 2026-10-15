@@ -21,6 +21,9 @@ const VOUCHER_BEFORE = /(?:voucher|coupon|baucar|优惠券|優惠券|折扣券|�
 
 function priceEvidence(copy) {
   const normalized = String(copy || "").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu, "");
+  const originalPrices = [...normalized.matchAll(ORIGINAL)]
+    .map((match) => Number(match[0].match(/(?:RM|MYR)\s*([\d,]+)/iu)?.[1]?.replace(/,/g, "")))
+    .filter((amount) => Number.isSafeInteger(amount) && amount > 0);
   const finalMatches = [...normalized.matchAll(FINAL_SALE)];
   const directMatches = [...normalized.matchAll(DIRECT_SALE)];
   const bareMatches = /(?:限时优惠|限時優惠|limited[\s-]*time\s+offer|promosi\s+masa\s+terhad)/iu.test(normalized)
@@ -29,7 +32,8 @@ function priceEvidence(copy) {
   const distinct = [...new Set(preferred.map((m) => m[1]))];
   if (distinct.length !== 1) {
     const unlabeled = normalized.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
-    return { price: null, ambiguous: preferred.length > 0 || Boolean(unlabeled.match(MONEY)) };
+    return { price: null, originalPrices,
+      ambiguous: preferred.length > 0 || Boolean(unlabeled.match(MONEY)) };
   }
   let remaining = normalized;
   const claims = [...finalMatches, ...directMatches, ...bareMatches].sort((a, b) => b.index - a.index);
@@ -42,8 +46,8 @@ function priceEvidence(copy) {
   }
   remaining = normalized.split("").map((char, i) => covered.has(i) ? " " : char).join("");
   remaining = remaining.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
-  if (remaining.match(MONEY)) return { price: null, ambiguous: true };
-  return { price: "RM" + distinct[0], ambiguous: false };
+  if (remaining.match(MONEY)) return { price: null, originalPrices, ambiguous: true };
+  return { price: "RM" + distinct[0], originalPrices, ambiguous: false };
 }
 
 function configuredOfferPrice(copy) {
@@ -104,10 +108,16 @@ function requestedPricePackages(packages, customerText, conversationHistory = []
 function verifiedPricesForService(treatment, promotions, customerText = "", conversationHistory = [], {
   clarifiedPriceService = null, allowTextOnlyOffers = false,
 } = {}) {
-  const matching = getActivePromotions(promotions).filter((promotion) =>
-    (allowTextOnlyOffers || promotion?.sendOnPriceQuery === true) &&
+  const related = getActivePromotions(promotions).filter((promotion) =>
     String(promotion.linkedService || "").trim() === treatment
   );
+  const automatic = related.filter((promotion) => promotion.sendOnPriceQuery === true);
+  // One automatic campaign owns the actual image. An overlapping text-only
+  // campaign must not hide an otherwise unambiguous graphic if its price is
+  // the same, but contradictory current pricing must still fail closed.
+  const matching = automatic.length
+    ? automatic
+    : allowTextOnlyOffers ? related : [];
   if (matching.length !== 1 || findAmbiguousPromotionPackageTerm(matching[0])) return null;
   const options = promotionPackages(matching[0]);
   if (!options.length || options.length > 4) return null;
@@ -133,8 +143,13 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     // any translated caption conflicts. Unverified legacy copy stays closed.
     if (evidence.some((entry) => entry.ambiguous)) return null;
     const unique = [...new Set(evidence.map((entry) => entry.price).filter(Boolean))];
+    const originals = [...new Set(evidence.flatMap(entry => entry.originalPrices))];
     if (configured && unique.some((price) => price !== configured)) return null;
     if (!configured && unique.length !== 1) return null;
+    // Do not allow translated caption RM999 to contradict a configured
+    // RM888 normal price while the RM488 trial price happens to match.
+    if (originals.length > 1 || (structured?.normal != null &&
+      originals.some(normal => normal !== structured.normal))) return null;
     const localizedCaptions = [option.caption, ...translations]
       .filter((value) => typeof value === "string" && value.trim());
     const afterVoucher = localizedCaptions.some((copy) =>
@@ -145,6 +160,28 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
       name: String(option.name).trim(), title: String(option.title || "").trim(),
       price: configured || unique[0], afterVoucher,
     });
+  }
+  if (automatic.length === 1 && allowTextOnlyOffers) {
+    const approved = new Set(result.map((item) => item.price));
+    for (const other of related.filter(p => p !== matching[0])) {
+      const otherOptions = promotionPackages(other);
+      const hasPriceEvidence = otherOptions.some((option) =>
+        Boolean(option.pricing?.offer) ||
+        [option.caption, option.followUpMessage,
+          ...Object.values(option.mediaTranslations || {}).map(x => x?.caption || x),
+          ...Object.values(option.followUpTranslations || {}).map(x => x?.message || x)]
+          .some(copy => /(?:RM|MYR)\s*\d{2,5}/iu.test(
+            String(copy || "").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu, "")
+          ))
+      );
+      if (!hasPriceEvidence) continue;
+      const otherPrices = verifiedPricesForService(
+        treatment, [other], customerText, conversationHistory,
+        { clarifiedPriceService, allowTextOnlyOffers: true }
+      );
+      if (!otherPrices?.length ||
+          otherPrices.some(item => !approved.has(item.price))) return null;
+    }
   }
   return result;
 }
