@@ -1,4 +1,5 @@
 const { loadGoLiveGate } = require("./goLiveGateLoaderService");
+const { getPoolActivitySnapshot } = require("./databasePoolActivity");
 const { version: appVersion } = require("../../package.json");
 
 const ALLOWED_STATUSES = new Set([
@@ -123,7 +124,12 @@ async function loadOpsReadiness({
   baseUrl,
 } = {}) {
   const gate = await loadGate({ runChecks: false, baseUrl });
-  return sanitizeGateForOps(gate, env);
+  return {
+    ...sanitizeGateForOps(gate, env),
+    // Authorized Ops readiness only. These are in-memory connection counts,
+    // not SQL queries; publishing the snapshot never polls Neon by itself.
+    databasePool: getPoolActivitySnapshot(),
+  };
 }
 
 module.exports = {
