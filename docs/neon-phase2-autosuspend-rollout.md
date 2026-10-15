@@ -14,11 +14,15 @@ Scope: Neutro Sense TCM, project `steep-forest-44509907`, endpoint
   last poll dated September 24 at the October 15 audit. It was **not**
   participating in the registry's live five-minute background polling.
   Recheck lifecycle before attributing future wake-ups to the registry.
-- The pool activity summary is available only from authenticated
-  `GET /api/ops/readiness`, or a manual Ops Registry refresh of that
-  client once the receiving registry code is deployed. Its counters are
-  in-memory, reset on process restart, and **are not a measurement of
-  Neon CU-hours or the exact number of SQL queries**.
+- Use authenticated `GET /api/ops/readiness/pool-activity` to inspect pool
+  counters without issuing SQL. This endpoint requires the existing Ops
+  readiness bearer token, does not refresh setup checks or call Neon, and does
+  not require changing the client's lifecycle.
+- A full `GET /api/ops/readiness` or manual central Ops refresh still
+  performs normal PostgreSQL setup queries and can wake Neon: avoid using
+  these for quiet-window measurements.
+- Pool counters are in-memory, reset on process restart, and **are not a
+  measurement of Neon CU-hours or the exact number of SQL queries**.
 
 ## Proposed rollout after explicit approval
 
@@ -66,6 +70,6 @@ Scope: Neutro Sense TCM, project `steep-forest-44509907`, endpoint
 `removedTotal`, `last5Minutes`, `last15Minutes`,
 `lastAcquireAt`, `openConnections`, `idleConnections`, and
 `waitingForConnection`. It contains **no SQL text, passwords, message
-content, customer identifiers or background timers**. Even when the pool
-is idle, the existing protected Ops readiness route still performs its
-regular setup reads if requested; do not poll it solely to measure idleness.
+content, customer identifiers or background timers**. The standalone
+`/api/ops/readiness/pool-activity` route has no database dependencies;
+the normal full readiness route still queries Neon.
