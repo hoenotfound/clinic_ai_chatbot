@@ -10,7 +10,7 @@ const {
 
 test("comment recovery sleeps through idle periods and wakes at the precise next retry", () => {
   const now = Date.parse("2026-10-15T10:00:00Z");
-  assert.equal(recoveryDelayForResult({ nextRecoverableAt: null }, now), 6 * 60 * 60 * 1000);
+  assert.equal(recoveryDelayForResult({ nextRecoverableAt: null }, now), 15 * 60 * 1000);
   assert.equal(recoveryDelayForResult({
     nextRecoverableAt: "2026-10-15T10:00:15Z",
   }, now), 15000);
@@ -55,4 +55,5 @@ test("live comment webhooks stay immediate while recovery no longer polls every 
   assert.match(source, /createAdaptiveWorkerTimer\(/);
   assert.match(source, /getNextRecoverableAt\(/);
   assert.doesNotMatch(source, /setInterval\(/);
+  assert.doesNotMatch(source, /recoveryWorker\?\.wake\(0\);[\s\S]*?if \(job\) accepted\.push/);
 });
