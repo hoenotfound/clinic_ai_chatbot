@@ -677,3 +677,99 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     await client.end();
   }
 });
+
+test("Postgres extended-template scheduler wakes before true eligibility without widening sending policy",
+  { skip: !connectionString }, async () => {
+    const client = new Client({ connectionString });
+    const schema = "fep_wake_" + process.pid + "_" + Date.now();
+    await client.connect();
+    const previous = clinicConfig.automatedFollowUp;
+    try {
+      await client.query("CREATE SCHEMA " + schema);
+      await client.query("SET search_path TO " + schema);
+      await client.query(`
+        CREATE TABLE contacts (
+          id INTEGER PRIMARY KEY, channel TEXT, whatsapp_number TEXT
+        );
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY, contact_id INTEGER, role TEXT,
+          created_at TIMESTAMPTZ, whatsapp_message_id TEXT,
+          delivery_status TEXT
+        );
+        CREATE TABLE whatsapp_free_entry_referrals (
+          origin_message_id INTEGER, contact_id INTEGER,
+          ctwa_clid TEXT, meta_ad_id TEXT
+        );
+        CREATE TABLE whatsapp_free_entry_pricing_evidence (
+          wamid TEXT PRIMARY KEY, pricing_type TEXT, billable BOOLEAN,
+          delivery_status TEXT
+        );
+        CREATE TABLE whatsapp_free_entry_followup_attempts (
+          first_reply_message_id INTEGER, contact_id INTEGER, slot_hours INTEGER,
+          status TEXT, error TEXT, wamid TEXT, message_id INTEGER
+        );
+        INSERT INTO contacts VALUES (1, 'whatsapp', '60121234567');
+        INSERT INTO messages(id,contact_id,role,created_at)
+          VALUES(10,1,'user',now()-interval '35 hours');
+        INSERT INTO messages(id,contact_id,role,created_at,whatsapp_message_id,delivery_status)
+          VALUES(11,1,'assistant',now()-interval '34 hours','wamid.entry','delivered');
+        INSERT INTO whatsapp_free_entry_referrals
+          VALUES(10,1,'ctwa-live',null);
+        INSERT INTO whatsapp_free_entry_pricing_evidence
+          VALUES('wamid.entry','free_entry_point',false,'delivered');
+      `);
+      clinicConfig.automatedFollowUp = {
+        ...previous,
+        whatsappFreeOnly: { enabled: false },
+      };
+      const active = {
+        activatedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+        slots: [36, 48, 66],
+        sevenDayVerified: false,
+      };
+      const within = (dueAt, hours, toleranceSeconds = 30) => {
+        assert.ok(dueAt, "expected next wake deadline");
+        assert.ok(Math.abs(new Date(dueAt).getTime() - (Date.now()+hours*3600000)) < toleranceSeconds*1000,
+          "unexpected due time: " + new Date(dueAt).toISOString());
+      };
+
+      within(await worker.nextPotentialDueAt(active, client), 2);
+      // A new customer enquiry must defer marketing until 24 hours of silence.
+      await client.query(`INSERT INTO messages VALUES
+        (12,1,'user',now(),null,null)`);
+      within(await worker.nextPotentialDueAt(active, client), 24);
+      await client.query("DELETE FROM messages WHERE id=12");
+
+      // Recent assistant sends impose the unchanged five-hour spacing gate.
+      await client.query(`INSERT INTO messages VALUES
+        (13,1,'assistant',now()-interval '2 hours','wamid.other','delivered')`);
+      within(await worker.nextPotentialDueAt(active, client), 3);
+      await client.query("DELETE FROM messages WHERE id=13");
+
+      // A claimed slot can never be re-sent; schedule the next unique slot.
+      await client.query(`INSERT INTO whatsapp_free_entry_followup_attempts
+        (first_reply_message_id,contact_id,slot_hours,status)
+        VALUES(11,1,36,'accepted')`);
+      within(await worker.nextPotentialDueAt(active, client), 14);
+
+      // Final slot may legally advance 12 hours ahead of its usual 66h time
+      // when the configured quiet hours overlap the free-entry deadline.
+      await client.query("UPDATE messages SET created_at=now()-interval '54 hours' WHERE id=11");
+      await client.query("UPDATE messages SET created_at=now()-interval '55 hours' WHERE id=10");
+      await client.query(`INSERT INTO whatsapp_free_entry_followup_attempts
+        (first_reply_message_id,contact_id,slot_hours,status)
+        VALUES(11,1,48,'accepted')`);
+      assert.ok(new Date(await worker.nextPotentialDueAt(active, client)).getTime() <= Date.now() + 10000,
+        "last slot must be woken before any permitted early quiet-hour window");
+
+      await client.query(`UPDATE whatsapp_free_entry_pricing_evidence
+        SET billable=true WHERE wamid='wamid.entry'`);
+      assert.equal(await worker.nextPotentialDueAt(active, client), null,
+        "charged entry must never be considered a verified free window");
+    } finally {
+      clinicConfig.automatedFollowUp = previous;
+      await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => {});
+      await client.end();
+    }
+  }
+);
