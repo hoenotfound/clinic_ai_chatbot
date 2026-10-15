@@ -13,7 +13,9 @@ const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
 // Fast retry while a real delivery-status job needs work.
 const RECOVERY_INTERVAL_MS = 10 * 1000;
-const IDLE_RECOVERY_INTERVAL_MS = 15 * 60 * 1000;
+// A backstop for rare lost wake signals, not the customer-facing retry cadence.
+// Queued work and the startup stale-lease check retain their prompt schedules.
+const IDLE_RECOVERY_INTERVAL_MS = 60 * 60 * 1000;
 const BILLING_ALERT_RETRY_INTERVAL_MS = 30 * 1000;
 const UNMATCHED_CALLBACK_GRACE_SECONDS = 5 * 60;
 const STALE_AFTER_SECONDS = 60;
@@ -75,6 +77,17 @@ function defaultUnmatchedFailureAlert({ jobs }) {
       "\nReview the corresponding status jobs in Neon. " +
       "A missing record does not by itself prove that the customer was not reached.",
   });
+}
+
+function recoveryDelayForResult(result, { runCount }) {
+  if (Number(result?.workCount) > 0) return RECOVERY_INTERVAL_MS;
+  if (result?.pendingBillingAlerts === true) return BILLING_ALERT_RETRY_INTERVAL_MS;
+  // On startup, a lease held by the previous Render process may still look
+  // fresh. Recheck once after the stale window, then become truly idle.
+  if (runCount === 1) {
+    return STALE_AFTER_SECONDS * 1000 + STALE_RECHECK_GRACE_MS;
+  }
+  return IDLE_RECOVERY_INTERVAL_MS;
 }
 
 function createWhatsAppDeliveryStatusService({
@@ -445,17 +458,6 @@ function createWhatsAppDeliveryStatusService({
     }
   }
 
-  function recoveryDelayForResult(result, { runCount }) {
-    if (Number(result?.workCount) > 0) return RECOVERY_INTERVAL_MS;
-    if (result?.pendingBillingAlerts === true) return BILLING_ALERT_RETRY_INTERVAL_MS;
-    // On startup, a lease held by the previous Render process may still look
-    // fresh. Recheck once after the stale window, then become truly idle.
-    if (runCount === 1) {
-      return STALE_AFTER_SECONDS * 1000 + STALE_RECHECK_GRACE_MS;
-    }
-    return IDLE_RECOVERY_INTERVAL_MS;
-  }
-
   function startWhatsAppDeliveryStatusRecovery() {
     if (recoveryTimer && !recoveryTimer.state().stopped) {
       return () => recoveryTimer.stop();
@@ -486,6 +488,7 @@ module.exports = {
   BATCH_SIZE,
   COMPLETED_RETENTION_HOURS,
   IDLE_RECOVERY_INTERVAL_MS,
+  recoveryDelayForResult,
   UNMATCHED_CALLBACK_GRACE_SECONDS,
   MAX_ATTEMPTS,
   RECOVERY_INTERVAL_MS,
