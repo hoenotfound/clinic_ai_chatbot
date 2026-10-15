@@ -348,8 +348,13 @@ function conversationPromotionsList(conversationContext) {
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
 
-  if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
-      (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
+  // AI-led pricing needs matching offer knowledge even when natural wording
+  // such as "做一次多少" matches none of the legacy keyword patterns.
+  const aiLedContext = ["shadow", "enabled"].includes(config.aiPricingIntentMode) &&
+    selected.length > 0;
+  if (!aiLedContext &&
+      ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
+      (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)))) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
