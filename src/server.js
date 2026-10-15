@@ -1459,7 +1459,11 @@ async function processIncomingMessage(
         resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage,
         contactId: contact.id,
-        wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
+        // A staff-forwarded copy of the same graphic counts as already sent,
+        // even when staff used a different caption. Keep legacy behavior off.
+        wasPromoRecentlySent: aiPricingEnabled
+          ? (id, url, _caption, hours) => messagesRepo.wasMediaRecentlySent(id, url, hours)
+          : messagesRepo.wasPromoRecentlySent,
         hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
       });
       if (promoBundle) {
