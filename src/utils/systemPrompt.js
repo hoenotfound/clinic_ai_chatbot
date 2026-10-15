@@ -350,7 +350,7 @@ function conversationPromotionsList(conversationContext) {
 
   // AI-led pricing needs matching offer knowledge even when natural wording
   // such as "做一次多少" matches none of the legacy keyword patterns.
-  const aiLedContext = ["shadow", "enabled"].includes(config.aiPricingIntentMode) &&
+  const aiLedContext = config.aiPricingIntentMode === "enabled" &&
     selected.length > 0;
   if (!aiLedContext &&
       ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
