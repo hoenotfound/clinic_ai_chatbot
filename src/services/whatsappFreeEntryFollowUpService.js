@@ -694,7 +694,7 @@ async function run({ now = new Date() } = {}) {
   running = true;
   try {
     const active = await alignedSettings(configured);
-    const result = { candidates: 0, accepted: 0, skipped: 0 };
+    const result = { candidates: 0, accepted: 0, skipped: 0, retryable: 0 };
     const catalog = await whatsappTemplates.listApprovedTemplates();
     if (!catalog.success) return { disabled: true, reason: "template_catalog_unavailable" };
     // The queue is paged so 20 contacts missing template variants cannot
@@ -737,7 +737,15 @@ async function run({ now = new Date() } = {}) {
       const { template, spec } = resolved;
       const outcome = await processCandidate(candidate, active, template, now, spec);
       if (outcome === "accepted") result.accepted++;
-      else result.skipped++;
+      else {
+        result.skipped++;
+        // Intentional declines, absent approved templates, sent-once failures
+        // and confirmed opt-outs are not retryable. Only a temporary RM0 gate
+        // deferral warrants continued five-minute checks for this due slot.
+        if (outcome === "billing_preflight_deferred" || outcome === "policy_deferred") {
+          result.retryable++;
+        }
+      }
     }
     return result;
   } finally { running = false; }
@@ -892,12 +900,21 @@ function summarizePotentialDue(rows, active, now = new Date()) {
       { maxCeilingHours: active.sevenDayVerified ? 168 : 72 }
     );
     const effectiveMs = effective ? new Date(effective).getTime() : NaN;
-    const dueMs = Math.max(
+    let dueMs = Math.max(
       effectiveMs,
       lastInboundMs + 24 * 3600000,
       outboundMs + 5 * 3600000
     );
     if (!Number.isFinite(dueMs)) continue;
+    // Do not poll repeatedly while the configured quiet hours prohibit
+    // sending. Wake at their end instead, provided the slot still exists.
+    const quiet = quietHoursStatus(
+      new Date(Math.max(dueMs, clock)),
+      clinicConfig.automatedFollowUp?.quietHours
+    );
+    if (quiet.active && quiet.endsAt) {
+      dueMs = Math.max(dueMs, Date.parse(quiet.endsAt));
+    }
     const expiresMs = firstReplyMs + (slotHours + 12) * 3600000;
     const ceilingMs = firstReplyMs +
       (active.sevenDayVerified ? 168 : 72) * 3600000 - 3600000;
@@ -945,7 +962,7 @@ async function runAndSchedule() {
   const hint = await nextPotentialDueAt(configured);
   // Only a real, still-unresolved candidate justifies repeated five-minute
   // checks. A historical overdue hint without actionable candidates does not.
-  if (hint.hasOverdue && result?.candidates > 0 && result?.skipped > 0) {
+  if (hint.hasOverdue && result?.retryable > 0) {
     return CHECK_INTERVAL_MS;
   }
   return nextPollDelay(hint);
