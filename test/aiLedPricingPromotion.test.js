@@ -251,3 +251,119 @@ test("an ambiguous active offer cannot fall back to the standing service price",
   assert.equal(d?.prices, null);
   assert.equal(d?.servicePrice, null);
 });
+
+
+test("erroneous AI price flag never converts duration or session count to a promo", () => {
+  for (const customerText of [
+    "3D 小颜术做一次要多久？",
+    "3D 小颜术做一次要多少时间？",
+    "3D 小颜术要做几次？",
+    "How much time does one 3D session take?",
+    "Berapa lama satu sesi 3D?",
+  ]) {
+    assert.equal(decide({ customerText,
+      conversationHistory: [{ role:"user", content:customerText }],
+    }), null, customerText);
+  }
+  const customerText = "3D 小颜术做一次要多久，多少钱？";
+  assert.equal(decide({ customerText,
+    conversationHistory:[{role:"user",content:customerText}],
+  })?.prices?.[0]?.price, "RM488", "a separate explicit price question must still work");
+});
+
+test("a service-level fallback never quotes historical promotions or ambiguous ranges", () => {
+  for (const priceRange of [
+    "Old promo RM488", "Expired trial RM488", "RM488-RM888",
+    "RM488 or RM888", "原价 RM888", "RM488 / RM888", "Special offer RM488",
+  ]) {
+    const clinicServices = [{name:"3D 小颜术",priceRange}];
+    const d = decide({promotions:[], services:clinicServices});
+    assert.equal(d?.servicePrice, null, priceRange);
+  }
+  assert.equal(decide({promotions:[], services:[{
+    name:"3D 小颜术",priceRange:"Normal price: RM888",
+  }]}).servicePrice, "Normal price: RM888");
+});
+
+test("normal and original prices must agree across structured data and every language", () => {
+  assert.equal(decide().prices?.[0]?.price,"RM488");
+  for (const bad of [
+    {...trial,followUpMessage:"现在只需 RM488 (原价 RM999)"},
+    {...trial,mediaTranslations:{en:{caption:"Trial price RM488 (Original price RM999)"}}},
+    {...trial,followUpTranslations:{ms:"Harga promosi RM488 (Harga asal RM999)"}},
+  ]) {
+    const d=decide({promotions:[bad]});
+    assert.equal(d?.prices,null,JSON.stringify(bad));
+  }
+});
+
+test("compatible text-only offers do not suppress the one eligible promotion graphic", async () => {
+  const matching = {
+    name:"3D Text Info",linkedService:"3D 小颜术",sendOnPriceQuery:false,
+    imageUrl:"",caption:"First Trial 只需 RM488 (原价 RM888)",
+    pricing:{currency:"MYR",offer:488,normal:888},
+  };
+  const d=decide({promotions:[trial,matching]});
+  assert.deepEqual(d?.prices?.map(p=>p.price),["RM488"]);
+  const media=await resolvePricePromotionForReply(mediaArgs(d,{promotions:[trial,matching]}));
+  assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl);
+  const conflicting={...matching,caption:"First Trial 只需 RM588 (原价 RM888)",
+    pricing:{currency:"MYR",offer:588,normal:888}};
+  const blocked=decide({promotions:[trial,conflicting]});
+  assert.equal(blocked?.prices,null);
+  assert.equal(await resolvePricePromotionForReply(mediaArgs(blocked,{
+    promotions:[trial,conflicting],
+  })),null);
+});
+
+test("the verified reply strips image-delivery promises in Chinese, English and Malay", () => {
+  const d=decide();
+  for (const [language,reply,promise] of [
+    ["zh","我等下发图片给你😊",/发图片给你/u],
+    ["zh","优惠详情我会发图片给你参考😊",/发图片给你/u],
+    ["en","I'll send the promotion image shortly 😊",/send the promotion image/iu],
+    ["ms","Saya akan hantar gambar promosi sekarang 😊",/hantar gambar promosi/iu],
+  ]) {
+    const result=ensureVerifiedPriceReply({
+      customerText:"请问,做一次多少",reply,language,
+      pricingDecision:d,treatment:d.treatment,
+      services,serviceAliases:aliases,promotions,conversationHistory:history,
+    });
+    assert.match(result.reply,/RM488/);
+    assert.doesNotMatch(result.reply,promise,reply);
+  }
+});
+
+test("Gemini receives a compact verified price reference for natural language pricing", () => {
+  const {buildConversationPromptContext}=require("../src/utils/conversationPromptContext");
+  const {buildSystemPrompt}=require("../src/utils/systemPrompt");
+  const original={
+    aiPricingIntentMode:config.aiPricingIntentMode,
+    services:config.services,
+    promotions:config.promotions,
+    serviceAliases:config.serviceAliases,
+    automatedFollowUp:config.automatedFollowUp,
+  };
+  try {
+    config.aiPricingIntentMode="enabled";
+    config.services=services;
+    config.promotions=[trial];
+    config.serviceAliases=aliases;
+    config.automatedFollowUp={...original.automatedFollowUp,assessmentFirstPricingEnabled:true};
+    const context=buildConversationPromptContext([
+      {role:"user",content:"想了解 Neutro Sense TCM 3D 小颜术"},
+      {role:"assistant",content:"可以先做1对1评估+体验"},
+      {role:"user",content:"请问,做一次多少"},
+    ],{services,aliases,promotions:[trial]});
+    assert.deepEqual(context.relevantServiceNames,["3D 小颜术"]);
+    const prompt=buildSystemPrompt({conversationContext:context});
+    assert.match(prompt,/VERIFIED PRICE REFERENCE[\s\S]{0,350}RM488/u);
+    assert.doesNotMatch(prompt,/只需 RM 4️⃣8️⃣8️⃣/u,
+      "natural question must not load full ad caption just to learn a price");
+    config.aiPricingIntentMode="off";
+    const legacy=buildSystemPrompt({conversationContext:context});
+    assert.doesNotMatch(legacy,/VERIFIED PRICE REFERENCE/u);
+  } finally {
+    Object.assign(config,original);
+  }
+});
