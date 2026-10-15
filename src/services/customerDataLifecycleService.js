@@ -248,7 +248,7 @@ function startCustomerDataLifecycle({
   // immediately; durable recovery begins on the normal cleanup interval.
   const cleanupTimer = createWorkerTimer({
     run: runCleanup,
-    delayForResult: mediaCleanupDelay,
+    delayForResult: (dueAt) => mediaCleanupDelay(dueAt),
     errorRetryDelayMs: MEDIA_CLEANUP_INTERVAL_MS,
     label: "Customer media cleanup recovery",
   });
