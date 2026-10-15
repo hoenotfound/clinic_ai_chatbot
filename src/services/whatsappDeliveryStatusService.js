@@ -109,6 +109,10 @@ function createWhatsAppDeliveryStatusService({
     // Wake deferred result media immediately after durable Meta pricing is saved.
     // This does not await image sending or slow webhook acknowledgement.
     if (updates?.some(update => update?.pricingType)) {
+      // The FEP timer may be sleeping past a newly verified billing epoch.
+      // Signal it only AFTER the pricing evidence has been durably stored.
+      // Internal-only: no customer SSE traffic and no new provider sends.
+      realtimeEvents.publishInternal("whatsapp_fep_billing_evidence", {});
       whatsappResultMediaQueue.wake(0);
       // The webhook can arrive minutes before another outbound send. Clear
       // only proof-backed gates immediately, without waiting on Telegram.
