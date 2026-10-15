@@ -8,9 +8,9 @@ const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 
-const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|(?:\\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\\b))/iu;
-const REFUSAL = /(?:不要(?:价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\\b(?:do not|don't|no)\\s+(?:send|want|need)\\b.{0,35}\\b(?:price|promo|offer)\\b)/iu;
-const STAFF_PREFIX = /^\\[Verified STAFF message\\]/u;
+const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|(?:\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b))/iu;
+const REFUSAL = /(?:不要(?:价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
+const STAFF_PREFIX = /^\[Verified STAFF message\]/u;
 
 function resolveAiPricingIntent({
   intent, customerText, conversationHistory = [], services = [],
@@ -32,7 +32,7 @@ function resolveAiPricingIntent({
   // independent pricing wording surviving the consent-stripper may qualify.
   const stripped = stripFutureFollowUpPermission(current);
   if (stripped.hasFuturePermission &&
-      !/(?:价|價|多少钱|多少錢|几钱|幾錢|优惠价|優惠價|\\b(?:price|pricing|cost|how much|harga|berapa bayar)\\b)/iu.test(stripped.text)) {
+      !/(?:价|價|多少钱|多少錢|几钱|幾錢|优惠价|優惠價|\b(?:price|pricing|cost|how much|harga|berapa bayar)\b)/iu.test(stripped.text)) {
     return null;
   }
 
