@@ -148,7 +148,8 @@ test("restart recovery serializes multiple durable jobs and atomic claims preven
   await timer.options.run();
   assert.deepEqual([...claimed].sort((a, b) => a - b), [17, 18, 19]);
   assert.equal(calls.length, 6);
-  assert.equal(timer.options.delayForResult({ nextRecoverableAt: null }), 15 * 60 * 1000);
+  assert.equal(timer.options.delayForResult({ nextRecoverableAt: null }), 60 * 60 * 1000,
+    "orphan recovery remains bounded but does not wake idle Neon every 15 minutes");
 });
 
 test("failed R2 deletion is stored for retry, wakes cleanup and later completes", async () => {

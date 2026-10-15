@@ -3,7 +3,20 @@ const assert = require("node:assert/strict");
 
 const {
   createWhatsAppDeliveryStatusService,
+  recoveryDelayForResult,
+  IDLE_RECOVERY_INTERVAL_MS,
 } = require("../src/services/whatsappDeliveryStatusService");
+
+test("empty delivery queue uses hourly safety checks but live recovery stays fast", () => {
+  assert.equal(IDLE_RECOVERY_INTERVAL_MS, 60 * 60 * 1000);
+  assert.equal(recoveryDelayForResult({ workCount: 0, pendingBillingAlerts: false }, { runCount: 2 }), 60 * 60 * 1000);
+  assert.equal(recoveryDelayForResult({ workCount: 0 }, { runCount: 1 }), 65 * 1000,
+    "startup still rechecks stale leases promptly");
+  assert.equal(recoveryDelayForResult({ workCount: 1 }, { runCount: 2 }), 10 * 1000,
+    "pending delivery jobs must not wait for the hourly safety check");
+  assert.equal(recoveryDelayForResult({ workCount: 0, pendingBillingAlerts: true }, { runCount: 2 }), 30 * 1000,
+    "billing alerts retain fast recovery");
+});
 
 function job(overrides = {}) {
   return {
