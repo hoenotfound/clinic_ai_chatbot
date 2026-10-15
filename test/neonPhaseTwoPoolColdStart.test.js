@@ -10,13 +10,13 @@ const {
   DEFAULT_DATABASE_POOL_IDLE_TIMEOUT_MS,
 } = require("../src/db/db");
 
-test("Neon pool keeps existing concurrency and idle semantics but allows a longer cold connection", () => {
+test("Neon pool preserves production defaults until a cold-start change is approved", () => {
   const defaults = databasePoolOptions({
     DATABASE_URL: "postgresql://user:password@db.example.com/chatbot",
     CLIENT_SLUG: "neutro-sense-tcm",
   });
   assert.equal(defaults.connectionTimeoutMillis, DEFAULT_DATABASE_CONNECT_TIMEOUT_MS);
-  assert.equal(defaults.connectionTimeoutMillis, 20_000);
+  assert.equal(defaults.connectionTimeoutMillis, 10_000);
   assert.equal(defaults.max, DEFAULT_DATABASE_POOL_MAX);
   assert.equal(defaults.max, 10);
   assert.equal(defaults.idleTimeoutMillis, DEFAULT_DATABASE_POOL_IDLE_TIMEOUT_MS);
@@ -28,11 +28,11 @@ test("pool overrides are bounded and cannot accidentally pin all idle connection
   const options = databasePoolOptions({
     DATABASE_URL: "postgresql://example",
     CLIENT_SLUG: "test/unsafe name",
-    DATABASE_CONNECT_TIMEOUT_MS: "25000",
+    DATABASE_CONNECT_TIMEOUT_MS: "20000",
     DATABASE_POOL_MAX: "5",
     DATABASE_POOL_IDLE_TIMEOUT_MS: "15000",
   });
-  assert.equal(options.connectionTimeoutMillis, 25000);
+  assert.equal(options.connectionTimeoutMillis, 20000);
   assert.equal(options.max, 5);
   assert.equal(options.idleTimeoutMillis, 15000);
   assert.equal(options.application_name, "da-chatbot-test-unsafe-name");
