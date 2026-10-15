@@ -1195,6 +1195,7 @@ async function processIncomingMessage(
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
+        priceRequested: aiPricingEnabled && (priceQuery || packageQuery),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
