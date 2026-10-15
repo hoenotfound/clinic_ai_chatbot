@@ -102,12 +102,12 @@ function createAdaptiveWorkerTimer({
     }
   }
 
-  function start() {
+  function start(initialDelayMs = 0) {
     if (!stopped) return stop;
     stopped = false;
     runCount = 0;
     pendingWakeDelay = null;
-    schedule(0);
+    schedule(initialDelayMs);
     return stop;
   }
 
