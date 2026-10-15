@@ -400,7 +400,8 @@ async function resolveResultMediaForReply({
     serviceQuery === true && sourceIsTrusted && (metaAdSourceVerified || !!directlyNamedTreatment);
 
   // Mismatched or unverified Meta source cannot bypass any trigger mode.
-  if (serviceQuerySource === "meta_ad" && !metaAdSourceVerified && !directlyNamedTreatment) {
+  if (serviceQuerySource === "meta_ad" && !metaAdSourceVerified &&
+      !directlyNamedTreatment && !contextualResultTreatment) {
     return skip("meta_creative_conflicts_with_ai");
   }
 
