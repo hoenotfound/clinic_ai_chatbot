@@ -102,10 +102,10 @@ function requestedPricePackages(packages, customerText, conversationHistory = []
 }
 
 function verifiedPricesForService(treatment, promotions, customerText = "", conversationHistory = [], {
-  clarifiedPriceService = null,
+  clarifiedPriceService = null, allowTextOnlyOffers = false,
 } = {}) {
   const matching = getActivePromotions(promotions).filter((promotion) =>
-    promotion?.sendOnPriceQuery === true &&
+    (allowTextOnlyOffers || promotion?.sendOnPriceQuery === true) &&
     String(promotion.linkedService || "").trim() === treatment
   );
   if (matching.length !== 1 || findAmbiguousPromotionPackageTerm(matching[0])) return null;
