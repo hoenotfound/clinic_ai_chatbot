@@ -36,7 +36,7 @@ const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
 const RECOVERY_INTERVAL_MS = 60 * 1000;
 // A rare crash between saving a job and scheduling it must still be recoverable.
 // Normal idle periods never need a minute-by-minute query.
-const IDLE_RECOVERY_SAFETY_MS = 6 * 60 * 60 * 1000;
+const IDLE_RECOVERY_SAFETY_MS = 15 * 60 * 1000;
 
 function recoveryDelayForResult(result, nowMs = Date.now()) {
   if (!result?.nextRecoverableAt) return IDLE_RECOVERY_SAFETY_MS;
@@ -510,6 +510,7 @@ function createMetaCommentAutomationService({
   config = clinicConfig,
   repliesEnabled = automatedRepliesEnabled,
   handoff = pauseAiForHumanHandoff,
+  createRecoveryTimer = createAdaptiveWorkerTimer,
 } = {}) {
   async function acceptIncomingComments(body) {
     const settings = settingsFromConfig(config);
@@ -538,13 +539,10 @@ function createMetaCommentAutomationService({
             },
           };
       const job = await repo.storeIncomingComment(eventToStore);
-      if (job) {
-        accepted.push(job);
-        // Wake durable recovery as soon as the insert succeeds. If the webhook
-        // handler fails before queueing the normal immediate task, this process
-        // still discovers the saved work without waiting for the idle backstop.
-        recoveryWorker?.wake(0);
-      }
+      // The webhook must finish persisting and applying staff echoes before
+      // attempting a comment reply. Scheduling happens in createApp after that
+      // processing, never inside the persistence stage.
+      if (job) accepted.push(job);
     }
     return accepted;
   }
@@ -765,7 +763,7 @@ function createMetaCommentAutomationService({
     if (recoveryWorker && !recoveryWorker.state().stopped) {
       return () => recoveryWorker.stop();
     }
-    recoveryWorker = createAdaptiveWorkerTimer({
+    recoveryWorker = createRecoveryTimer({
       run: runRecoveryAndSchedule,
       delayForResult: (result) => recoveryDelayForResult(result),
       errorRetryDelayMs: intervalMs,
@@ -780,6 +778,7 @@ function createMetaCommentAutomationService({
     scheduleJob,
     runRecoveryOnce,
     startRecovery,
+    wakeRecovery: (delayMs = 0) => recoveryWorker?.wake(delayMs) || false,
   };
 }
 
