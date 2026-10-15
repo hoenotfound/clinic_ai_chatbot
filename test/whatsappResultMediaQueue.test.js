@@ -9,6 +9,17 @@ const conversationStore = require("../src/utils/conversationStore");
 const queue = require("../src/services/whatsappResultMediaQueue");
 const { resultMediaAuditOutcome } = require("../src/utils/resultMediaAudit");
 
+test("empty image queue uses hourly fallback while due media retains precise deadlines", async () => {
+  assert.equal(queue.IDLE_MS, 60 * 60 * 1000);
+  const idle = { query: async () => ({ rows: [{ due_at: null }] }) };
+  assert.equal(await queue.nextDelay(idle), 60 * 60 * 1000);
+  const dueAt = Date.now() + 5000;
+  const urgent = { query: async () => ({ rows: [{ due_at: new Date(dueAt) }] }) };
+  const delay = await queue.nextDelay(urgent);
+  assert.ok(delay >= 4000 && delay <= 5000,
+    "a pending image must wake at the due time instead of the hourly fallback");
+});
+
 const sample = () => ({
   id: 9, lease_token: "11111111-1111-4111-8111-111111111111",
   contact_id: 443, inbound_message_id: 1503,
