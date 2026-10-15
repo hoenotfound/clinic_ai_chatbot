@@ -88,17 +88,18 @@ function createAdaptiveWorkerTimer({
       running = false;
       if (stopped) return;
 
-      if (pendingWakeDelay !== null) {
-        const delay = pendingWakeDelay;
-        pendingWakeDelay = null;
-        schedule(delay);
-        return;
-      }
-
-      const nextDelay = failed
+      const nextDelay = normalizeDelay(failed
         ? errorRetryDelayMs
-        : delayForResult(result, { runCount });
-      schedule(nextDelay);
+        : delayForResult(result, { runCount }));
+      // An event arriving during a sweep must not postpone an earlier
+      // deadline calculated by that same sweep. Null means the worker
+      // otherwise sleeps, in which case a pending event still wakes it.
+      const delay = pendingWakeDelay === null
+        ? nextDelay
+        : nextDelay === null ? pendingWakeDelay
+          : Math.min(pendingWakeDelay, nextDelay);
+      pendingWakeDelay = null;
+      schedule(delay);
     }
   }
 
