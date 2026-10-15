@@ -52,7 +52,7 @@ test("live comment webhooks stay immediate while recovery no longer polls every 
     "utf8"
   );
   assert.match(source, /const task = scheduledJobChain\.then\(\(\) => processJob\(jobOrId\)\)/);
-  assert.match(source, /createAdaptiveWorkerTimer\(/);
+  assert.match(source, /createRecoveryTimer\(/);
   assert.match(source, /getNextRecoverableAt\(/);
   assert.doesNotMatch(source, /setInterval\(/);
   assert.doesNotMatch(source, /recoveryWorker\?\.wake\(0\);[\s\S]*?if \(job\) accepted\.push/);
