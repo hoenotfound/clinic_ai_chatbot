@@ -398,6 +398,7 @@ test("pricing evidence wakes the internal FEP scheduler only after durable callb
   const repo = {
     async storeBatch() {
       calls.push("storing");
+      if (calls.filter(x => x === "storing").length > 1) return [];
       return new Promise(resolve => { resolveStore = resolve; });
     },
   };
