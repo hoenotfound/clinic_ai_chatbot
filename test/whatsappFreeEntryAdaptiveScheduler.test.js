@@ -2,13 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const worker = require("../src/services/whatsappFreeEntryFollowUpService");
 
-test("extended follow-up timer checks due work at the existing five-minute safety cadence", () => {
+test("extended follow-up timer uses hourly idle fallback and precise due slots", () => {
   const now = Date.parse("2026-10-15T10:00:00Z");
-  assert.equal(worker.nextPollDelay(null, now), 15 * 60 * 1000);
+  assert.equal(worker.nextPollDelay(null, now), 60 * 60 * 1000);
   assert.equal(worker.nextPollDelay("invalid", now), 5 * 60 * 1000);
-  assert.equal(worker.nextPollDelay("2026-10-15T09:59:00Z", now), 15 * 60 * 1000);
+  assert.equal(worker.nextPollDelay("2026-10-15T09:59:00Z", now), 60 * 60 * 1000);
   assert.equal(worker.nextPollDelay("2026-10-15T10:02:00Z", now), 2 * 60 * 1000);
-  assert.equal(worker.nextPollDelay("2026-10-15T12:00:00Z", now), 15 * 60 * 1000);
+  assert.equal(worker.nextPollDelay("2026-10-15T10:40:00Z", now), 40 * 60 * 1000);
+  assert.equal(worker.nextPollDelay("2026-10-15T12:00:00Z", now), 60 * 60 * 1000);
 });
 
 test("extended follow-up scheduler handles conversation, pipeline and config wakes without fixed setInterval", () => {
@@ -98,7 +99,7 @@ test("regular final slot wakes at configured hour, not twelve hours early", () =
     }], { slots: [48, 66], sevenDayVerified: false }, now);
     assert.equal(result.hasOverdue, false);
     assert.equal(result.nextDueAt.toISOString(), "2026-10-17T18:00:00.000Z");
-    assert.equal(worker.nextPollDelay(result, now.getTime()), 15 * 60 * 1000);
+    assert.equal(worker.nextPollDelay(result, now.getTime()), 60 * 60 * 1000);
   } finally {
     clinicConfig.automatedFollowUp = old;
   }
@@ -154,7 +155,7 @@ test("intentional skips never trigger five-minute polling just because a slot is
   const overdue = { nextDueAt: null, hasOverdue: true };
   const countSkipped = { candidates: 1, skipped: 1, retryable: 0 };
   assert.equal(worker.followUpDelayForResult(countSkipped, overdue, now),
-    15 * 60 * 1000,
+    60 * 60 * 1000,
     "not-due, declined, unapproved media or low-interest leads must idle");
   assert.equal(worker.followUpDelayForResult(
     { candidates: 1, skipped: 1, retryable: 1 }, overdue, now),
