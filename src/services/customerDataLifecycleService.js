@@ -5,7 +5,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
-const IDLE_MEDIA_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const IDLE_MEDIA_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
 let activeCleanupWorker = null;
 
 function wakeCustomerMediaCleanup(delayMs = 0) {
