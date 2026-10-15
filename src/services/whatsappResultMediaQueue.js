@@ -21,7 +21,9 @@ const RETRY_MS = 2000;
 const SPACING_MS = 1000;
 const MAX_BILLING_WAIT_MS = 2 * 60 * 1000;
 const UNKNOWN_AFTER_MS = 3 * 60 * 1000;
-const IDLE_MS = 15 * 60 * 1000;
+// This runs only with no pending/processing queue rows. Real enqueue and
+// verified billing events wake the worker immediately; due rows use exact times.
+const IDLE_MS = 60 * 60 * 1000;
 const TEMPORARY_BILLING_CODES = new Set([
   "zero_cost_previous_send_unreconciled",
   "zero_cost_unverified_free_entry",
@@ -483,4 +485,5 @@ function start() {
 module.exports={
   enqueue,runOne,start,wake,isTemporaryBillingBlock,
   reconcileAudit,reconcileProviderDelivery,isQueuedMessage,queueExpired,sweepStaleAndBlocked,MAX_BILLING_WAIT_MS,
+  nextDelay,IDLE_MS,
 };
