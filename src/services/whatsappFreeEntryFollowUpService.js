@@ -950,22 +950,26 @@ function nextPollDelay(due, nowMs = Date.now()) {
   return Math.max(1000, Math.min(IDLE_CHECK_INTERVAL_MS, dueMs - nowMs));
 }
 
+function followUpDelayForResult(result, hint, nowMs = Date.now()) {
+  // Only real scheduler contention, catalog failures or a temporary RM0
+  // policy hold on a currently due slot need an early retry. A skipped lead
+  // is not necessarily actionable and must not hold Neon on five-minute polls.
+  if (result?.skipped === true || result?.reason === "template_catalog_unavailable" ||
+      (hint?.hasOverdue && result?.retryable > 0)) {
+    return CHECK_INTERVAL_MS;
+  }
+  return nextPollDelay(hint, nowMs);
+}
+
 async function runAndSchedule() {
   const result = await run();
-  // Unknown Meta catalog, overlapping invocations and other transient
-  // uncertainty retain the old 5-minute retry for safety.
   if (result?.skipped === true || result?.reason === "template_catalog_unavailable") {
     return CHECK_INTERVAL_MS;
   }
   const configured = settings();
   if (!configured) return IDLE_CHECK_INTERVAL_MS;
   const hint = await nextPotentialDueAt(configured);
-  // Only a real, still-unresolved candidate justifies repeated five-minute
-  // checks. A historical overdue hint without actionable candidates does not.
-  if (hint.hasOverdue && result?.retryable > 0) {
-    return CHECK_INTERVAL_MS;
-  }
-  return nextPollDelay(hint);
+  return followUpDelayForResult(result, hint);
 }
 
 function wake(delayMs = CHECK_INTERVAL_MS) {
@@ -1013,7 +1017,7 @@ function start({
 module.exports = {
   settings, alignedSettings, selectedSlot, listCandidates, claim,
   processCandidate, run, start, stop, wake, nextPotentialDueAt, nextPollDelay,
-  runAndSchedule, potentialDueSql, summarizePotentialDue,
+  runAndSchedule, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
   CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
   resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause,
