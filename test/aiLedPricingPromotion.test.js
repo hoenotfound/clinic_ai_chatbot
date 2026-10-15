@@ -227,3 +227,28 @@ test("unverified and contradictory promo prices never result in a graphic", asyn
   assert.equal(d?.prices,null);
   assert.equal(await resolvePricePromotionForReply(mediaArgs(d,{promotions:[bad]})),null);
 });
+
+test("services without active promotions still answer their configured price in text", async () => {
+  const clinicServices = [{ name: "3D 小颜术", priceRange: "RM888 per session" }];
+  const d = decide({ promotions: [], services: clinicServices });
+  assert.equal(d?.prices, null);
+  assert.equal(d?.servicePrice, "RM888 per session");
+  const reply = ensureVerifiedPriceReply({
+    customerText: "请问,做一次多少", reply: "我们有个优惠",
+    treatment: d.treatment, pricingDecision: d, priceRequested: true,
+    services: clinicServices, promotions: [], language: "zh",
+  });
+  assert.match(reply.reply, /RM888 per session/);
+  assert.equal(await resolvePricePromotionForReply(mediaArgs(d, {
+    promotions: [], services: clinicServices,
+  })), null);
+});
+
+test("an ambiguous active offer cannot fall back to the standing service price", () => {
+  const withPrices = services.map(s => s.name === "3D 小颜术"
+    ? { ...s, priceRange: "RM888" } : s);
+  const bad = { ...trial, followUpMessage: "现在只需 RM588" };
+  const d = decide({ services: withPrices, promotions: [bad] });
+  assert.equal(d?.prices, null);
+  assert.equal(d?.servicePrice, null);
+});
