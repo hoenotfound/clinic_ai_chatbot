@@ -28,7 +28,7 @@ const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeSe
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingIntent } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision } = require("./utils/aiPricingIntentDecision");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
@@ -922,7 +922,6 @@ async function processIncomingMessage(
     let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
-    let pricingIntent = null;
     let details = null;
 
     if (urgentSafety || isActiveSafetyConcern(text)) {
@@ -992,7 +991,6 @@ async function processIncomingMessage(
         serviceQuerySource,
         priceQuery,
         packageQuery,
-        pricingIntent,
         details,
       } = parsedReply);
 
@@ -1097,13 +1095,14 @@ async function processIncomingMessage(
     // named context, never the AI's inferred service or a Meta ad label.
     const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
     const aiPricingEnabled = aiPricingMode === "enabled";
-    const aiPriceDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
-      ? resolveAiPricingIntent({
-          intent: pricingIntent,
-          customerText: text,
-          conversationHistory: history,
-          services: clinicConfig.services,
-          serviceAliases: clinicConfig.serviceAliases,
+    // The model already returns priceQuery/packageQuery and treatment. Resolve
+    // one verified decision for reply text and optional promotional media.
+    const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
+      ? resolveAiPricingDecision({
+          priceQuery, packageQuery, treatment: details?.treatment || null,
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
           allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
@@ -1111,28 +1110,30 @@ async function processIncomingMessage(
       : null;
     if (aiPricingMode === "shadow") {
       console.info("[AI pricing shadow] contact=" + contact.id +
-        " intent=" + (pricingIntent?.type || "missing") +
-        " verified=" + Boolean(aiPriceDecision));
+        " priceQuery=" + priceQuery + " packageQuery=" + packageQuery +
+        " verified=" + Boolean(pricingDecision) +
+        " amountVerified=" + Boolean(pricingDecision?.prices?.length));
     }
-    const clarifiedPriceService = !aiPricingEnabled &&
-      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-      ? resolveClarifiedPriceService({
-          customerText: text, conversationHistory: history,
-          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-        }) : null;
-    const verifiedPriceService = aiPricingEnabled
-      ? (aiPriceDecision
-          ? (clinicConfig.services || []).find(service => service.name === aiPriceDecision.treatment) || null
-          : null)
+    // Keep all established legacy clarification paths in Off/Shadow modes.
+    const clarifiedPriceService = aiPricingEnabled
+      ? pricingDecision?.clarifiedPriceService || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-      ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
-        resolveVerifiedPriceFollowUpService({
-          customerText: text, conversationHistory: history,
-          services: clinicConfig.services,
-          serviceAliases: clinicConfig.serviceAliases,
-          promotions: clinicConfig.promotions,
-        })
-      : null;
+        ? resolveClarifiedPriceService({
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          }) : null;
+    const verifiedPriceService = aiPricingEnabled
+      ? (clinicConfig.services || []).find(
+          service => service.name === pricingDecision?.treatment
+        ) || null
+      : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+        ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
+          resolveVerifiedPriceFollowUpService({
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            promotions: clinicConfig.promotions,
+          })
+        : null;
 
     let reply = isFirstMessage && !flagged && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
@@ -1173,7 +1174,7 @@ async function processIncomingMessage(
             // treatment, with bounded history and topic-change safeguards.
             treatment: verifiedPriceService?.name || null,
             clarifiedPriceService,
-            verifiedPricingIntent: aiPricingEnabled && Boolean(aiPriceDecision),
+            verifiedPricingIntent: aiPricingEnabled && Boolean(pricingDecision),
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
           })
@@ -1188,11 +1189,12 @@ async function processIncomingMessage(
     // to move straight to the assessment. Use only this verified treatment's
     // active configured packages, never a guessed amount or stacked voucher.
     if (!flagged && !marketingStopQuestion &&
-        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+        (aiPricingEnabled ||
+         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true)) {
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
-        verifiedPricingIntent: aiPricingEnabled && Boolean(aiPriceDecision),
+        pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
@@ -1440,9 +1442,9 @@ async function processIncomingMessage(
       // A directly named service or a one-turn standalone price follow-up
       // remains customer-verified; never trust a stale CRM/ad label.
       const promoBundle = await resolvePricePromotionForReply({
-        priceQuery: aiPricingEnabled ? aiPriceDecision?.type === "price" : priceQuery,
-        packageQuery: aiPricingEnabled ? aiPriceDecision?.type === "package_options" : packageQuery,
-        verifiedPricingIntent: aiPricingEnabled && Boolean(aiPriceDecision),
+        priceQuery,
+        packageQuery,
+        pricingDecision: aiPricingEnabled ? pricingDecision : null,
         aiPricingEnabled,
         treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
