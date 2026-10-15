@@ -145,6 +145,6 @@ test("worker retains all existing consent, duplicate, quiet-hours and provider-s
     assert.ok(source.includes(required), `Missing safeguard: ${required}`);
   }
   assert.doesNotMatch(source, /setInterval\(/);
-  assert.match(source, /result\\?\\.skipped === true/,
+  assert.ok(source.includes("result?.skipped === true"),
     "numeric skipped-contact counts must not cause perpetual fast polling");
 });
