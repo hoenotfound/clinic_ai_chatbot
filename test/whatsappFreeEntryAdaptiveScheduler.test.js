@@ -181,9 +181,9 @@ test("overdue quiet-hour reminders wait for quiet-hours end, not repeated polls"
     // Clinic timezone Asia/Kuala_Lumpur: 16:30Z = 00:30 MYT.
     const at = new Date("2026-10-16T16:30:00Z");
     const result = worker.summarizePotentialDue([{
-      first_reply_at: "2026-10-14T08:00:00Z",
-      last_inbound_at: "2026-10-14T07:59:00Z",
-      last_outbound_at: "2026-10-14T08:00:00Z",
+      first_reply_at: "2026-10-14T18:00:00Z",
+      last_inbound_at: "2026-10-14T17:59:00Z",
+      last_outbound_at: "2026-10-14T18:00:00Z",
       slot_hours: 48,
     }], { slots: [48, 66], sevenDayVerified: false }, at);
     assert.equal(result.hasOverdue, false);
