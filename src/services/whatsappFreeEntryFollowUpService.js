@@ -937,7 +937,7 @@ async function runAndSchedule() {
   const result = await run();
   // Unknown Meta catalog, overlapping invocations and other transient
   // uncertainty retain the old 5-minute retry for safety.
-  if (result?.skipped || result?.reason === "template_catalog_unavailable") {
+  if (result?.skipped === true || result?.reason === "template_catalog_unavailable") {
     return CHECK_INTERVAL_MS;
   }
   const configured = settings();
