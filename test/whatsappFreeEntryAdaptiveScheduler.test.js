@@ -64,7 +64,7 @@ test("extended follow-up scheduler handles conversation, pipeline and config wak
 
 test("next-due query shares the CTWA epoch and filters abandoned or unconsented leads", () => {
   const sql = worker.potentialDueSql;
-  assert.match(sql, /sessionLateralSql/);
+  assert.match(sql, /WITH RECURSIVE qualified AS/);
   assert.match(sql, /first_reply\.created_at >= origin\.created_at/);
   assert.match(sql, /proof\.pricing_type = 'free_entry_point'/);
   assert.match(sql, /proof\.billable = false/);
