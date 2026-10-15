@@ -47,6 +47,7 @@ const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {
   resolveResultMediaForReply,
   isEarlyContextualAdEnquiry,
+  isContextualResultOutcomeQuestion,
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
@@ -1611,12 +1612,31 @@ async function processIncomingMessage(
           }
         }
 
+        // This optional DB lookup happens AFTER the AI text is accepted.
+        // It enables verified follow-up questions about outcomes without
+        // trusting an LLM guess, CRM treatment label or earlier ad campaign.
+        // A failed lookup simply preserves the old trigger behavior.
+        let priorResultContextRows = null;
+        if (isContextualResultOutcomeQuestion(text)) {
+          try {
+            priorResultContextRows = await messagesRepo.getRecentResultProofContext(
+              contact.id, savedInbound.id
+            );
+          } catch (contextError) {
+            console.warn(
+              `[Result media] Recent customer-treatment context unavailable for contact ${contact.id}; skipping contextual results:`,
+              contextError
+            );
+          }
+        }
+
         const resultBundle = await resolveResultMediaForReply({
           serviceQuery,
           serviceQuerySource,
           metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
           priorCustomerTexts: verifiedPriorCustomerTexts,
+          priorResultContextRows,
           onSkip: (reason) => { auditReason = reason; },
           priceQuery,
           packageQuery,
