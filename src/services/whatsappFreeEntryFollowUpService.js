@@ -891,12 +891,19 @@ function summarizePotentialDue(rows, active, now = new Date()) {
       clinicConfig.automatedFollowUp?.quietHours,
       { maxCeilingHours: active.sevenDayVerified ? 168 : 72 }
     );
+    const effectiveMs = effective ? new Date(effective).getTime() : NaN;
     const dueMs = Math.max(
-      new Date(effective).getTime(),
+      effectiveMs,
       lastInboundMs + 24 * 3600000,
       outboundMs + 5 * 3600000
     );
     if (!Number.isFinite(dueMs)) continue;
+    const expiresMs = firstReplyMs + (slotHours + 12) * 3600000;
+    const ceilingMs = firstReplyMs +
+      (active.sevenDayVerified ? 168 : 72) * 3600000 - 3600000;
+    // A newly replied-to lead may need 24h of silence after the remaining
+    // slot window has already expired. Do not keep scheduling impossible work.
+    if (dueMs >= expiresMs || dueMs >= ceilingMs) continue;
     if (dueMs <= clock) hasOverdue = true;
     else if (nextFutureAt === null || dueMs < nextFutureAt) nextFutureAt = dueMs;
   }
@@ -989,7 +996,8 @@ function start({
 module.exports = {
   settings, alignedSettings, selectedSlot, listCandidates, claim,
   processCandidate, run, start, stop, wake, nextPotentialDueAt, nextPollDelay,
-  runAndSchedule, potentialDueSql, CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
+  runAndSchedule, potentialDueSql, summarizePotentialDue,
+  CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
   resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause,
 };
