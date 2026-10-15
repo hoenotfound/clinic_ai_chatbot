@@ -187,7 +187,8 @@ function nonPriceExplanation(reply) {
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
-  verifiedPricingIntent = false,
+  pricingDecision = undefined,
+  priceRequested = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
 } = {}) {
@@ -202,8 +203,25 @@ function ensureVerifiedPriceReply({
   )) {
     return { reply: complimentaryAssessmentFeeReply(language), restored: true };
   }
+  const aiLed = pricingDecision !== undefined;
+  // In enabled mode the same independently verified decision drives text and
+  // images. No price decision must not leave an invented quote or a promise to
+  // send promotion media in the AI text.
+  if (aiLed && (!pricingDecision || pricingDecision.treatment !== treatment)) {
+    const safeText = nonPriceExplanation(original);
+    if (!priceRequested && !hasCommercialReplyContent(original)) {
+      return { reply: original, restored: false };
+    }
+    const locale = String(language || "").toLowerCase();
+    const question = locale.startsWith("ms")
+      ? "Harga untuk rawatan yang mana satu ya? Saya boleh bantu semak 😊"
+      : locale.startsWith("en")
+        ? "Which treatment would you like the price for? I can help check 😊"
+        : "请问你想了解哪项疗程的价格呢？我帮你确认 😊";
+    return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true };
+  }
   if (!original || !treatment ||
-      !(verifiedPricingIntent === true ||
+      !(aiLed ||
         hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
       relatedPricingConflict({
@@ -214,9 +232,11 @@ function ensureVerifiedPriceReply({
         customerText, conversationHistory, services, serviceAliases, resultMedia,
       })) return { reply: original, restored: false };
 
-  const prices = verifiedPricesForService(treatment, promotions, customerText, conversationHistory, {
-    clarifiedPriceService,
-  });
+  const prices = aiLed
+    ? pricingDecision.prices
+    : verifiedPricesForService(treatment, promotions, customerText, conversationHistory, {
+        clarifiedPriceService,
+      });
   const locale = String(language || "").toLowerCase();
   if (!prices) {
     const safeInfo = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
