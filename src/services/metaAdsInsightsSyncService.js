@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
 const repo = require("../db/metaAdsInsightsRepo");
 const api = require("./metaAdsInsightsApiService");
 const { marketingAccessToken } = require("./metaAdsApiService");
@@ -343,7 +344,7 @@ function createMetaAdsInsightsSyncService({
     timer = setTimeoutFn(async () => {
       timer = null;
       try {
-        await runOnce();
+        await withDatabaseActivitySource("Meta Ads Insights sync", runOnce);
       } catch (err) {
         logger.error?.("Meta Ads Insights worker failed:", err);
       } finally {

@@ -33,6 +33,39 @@ function tokenFromEnv(client, env = process.env) {
   return token;
 }
 
+function normalizePoolActivity(value) {
+  if (!value || typeof value !== "object") return null;
+  const counters = ["acquiredTotal", "connectedTotal", "removedTotal",
+    "last5Minutes", "last15Minutes", "openConnections", "idleConnections",
+    "waitingForConnection"];
+  const result = {};
+  for (const key of counters) {
+    const number = value[key];
+    result[key] = Number.isSafeInteger(number) && number >= 0 ? number : null;
+  }
+  result.bySource = Array.isArray(value.bySource)
+    ? value.bySource.slice(0, 32).flatMap((entry) => {
+      if (!entry || typeof entry.source !== "string"
+          || entry.source.length > 64
+          || !/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(entry.source)) {
+        return [];
+      }
+      return [{
+        source: entry.source,
+        acquiredTotal: Number.isSafeInteger(entry.acquiredTotal)
+          && entry.acquiredTotal >= 0 ? entry.acquiredTotal : null,
+        last5Minutes: Number.isSafeInteger(entry.last5Minutes)
+          && entry.last5Minutes >= 0 ? entry.last5Minutes : null,
+        last15Minutes: Number.isSafeInteger(entry.last15Minutes)
+          && entry.last15Minutes >= 0 ? entry.last15Minutes : null,
+      }];
+    }) : [];
+  result.lastAcquireAt = typeof value.lastAcquireAt === "string"
+    && !Number.isNaN(Date.parse(value.lastAcquireAt))
+    ? new Date(value.lastAcquireAt).toISOString() : null;
+  return result;
+}
+
 function normalizeRemoteSnapshot(payload, expectedSlug = null) {
   if (!payload || Number(payload.schemaVersion) !== 1 || payload.source !== "da-chatbot") {
     throw new Error("Client returned an unsupported operations-readiness schema.");
@@ -60,6 +93,9 @@ function normalizeRemoteSnapshot(payload, expectedSlug = null) {
       startedAt: payload?.deployment?.startedAt || null,
       appVersion: payload?.deployment?.appVersion || null,
     },
+    // Optional non-sensitive telemetry from newer clients. No credentials or
+    // customer content are carried by this field.
+    databasePool: normalizePoolActivity(payload.databasePool),
     readiness: {
       status: payload.readiness.status,
       ready: payload.readiness.ready === true,

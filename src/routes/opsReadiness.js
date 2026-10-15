@@ -3,6 +3,7 @@ const {
   requireOpsReadinessToken,
 } = require("../middleware/requireOpsReadinessToken");
 const { loadOpsReadiness } = require("../services/opsReadinessService");
+const { getPoolActivitySnapshot } = require("../services/databasePoolActivity");
 
 function requestBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
@@ -11,9 +12,19 @@ function requestBaseUrl(req) {
 function createOpsReadinessRouter({
   authenticate = requireOpsReadinessToken,
   loadReadiness = loadOpsReadiness,
+  loadPoolActivity = getPoolActivitySnapshot,
 } = {}) {
   const router = express.Router();
   router.use(authenticate);
+
+  // Unlike full readiness, this diagnostic does not query the database.
+  // Sampling it cannot by itself wake a suspended Neon compute.
+  router.get("/pool-activity", (_req, res) => {
+    return res.json({
+      observedAt: new Date().toISOString(),
+      databasePool: loadPoolActivity(),
+    });
+  });
 
   router.get("/", async (req, res) => {
     try {
