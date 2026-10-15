@@ -135,6 +135,7 @@ function promotionPackages(promotion) {
       aliases: Array.isArray(item.aliases)
         ? item.aliases.map((alias) => String(alias || "").trim()).filter(Boolean)
         : [],
+      pricing: item.pricing,
       imageUrl: String(item.imageUrl || "").trim(),
       caption: String(item.caption || "").trim(),
       mediaTranslations: normalizeMediaTranslations(item.mediaTranslations),
@@ -156,6 +157,7 @@ function promotionPackages(promotion) {
     aliases: [],
     imageUrl,
     caption,
+    pricing: promotion?.pricing,
     mediaTranslations: normalizeMediaTranslations(promotion?.mediaTranslations),
     followUpMessage: String(promotion?.followUpMessage || "").trim(),
     followUpImageUrl: String(promotion?.followUpImageUrl || "").trim(),
