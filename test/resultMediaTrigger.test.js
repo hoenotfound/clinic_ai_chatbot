@@ -841,3 +841,136 @@ test("bounded Neon result context query uses message boundary, contact ID and tw
     /Valid contact/
   );
 });
+
+test("conversation fallback is strictly after original Before & After skip, never parallel", async () => {
+  const enabled = [{ ...resultMedia[0], triggerMode: "service_enquiry" }];
+  const verified = [{ role: "assistant", content: "We discussed 3D." },
+    { role: "user", content: "我想了解3D小颜术" }];
+  const baseArgs = {
+    resultMedia: enabled,
+    customerText: "会好看的吗？",
+    priceQuery: false,
+    serviceQuery: false,
+    serviceQuerySource: null,
+    treatment: "3D 小颜术",
+  };
+
+  let queried = 0;
+  let skipCalls = [];
+  const fallback = await resolveResultMediaForReply(base({
+    ...baseArgs,
+    onSkip: (reason) => skipCalls.push(reason),
+    loadPriorResultContext: async () => { queried++; return verified; },
+  }));
+  assert.equal(fallback?.serviceQuerySource, "verified_customer_followup");
+  assert.equal(queried, 1, "lookup only after original no_customer_service_enquiry skip");
+  assert.deepEqual(skipCalls, [], "intermediate original skip must not be audited when fallback sends");
+
+  queried = 0;
+  const normal = await resolveResultMediaForReply(base({
+    ...baseArgs,
+    customerText: "我想了解3D小颜术",
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    loadPriorResultContext: async () => { queried++; throw Error("Never query for original trigger"); },
+  }));
+  assert.equal(normal?.serviceQuerySource, "customer_message");
+  assert.equal(queried, 0, "original service enquiry takes absolute precedence");
+
+  queried = 0;
+  const ad = await resolveResultMediaForReply(base({
+    ...baseArgs, treatment: null,
+    customerText: "Hello! Can I get more info on this?",
+    serviceQuery: false, serviceQuerySource: null,
+    priorCustomerTexts: [], metaAdCreativeService: "3D 小颜术",
+    loadPriorResultContext: async () => { queried++; return verified; },
+  }));
+  assert.equal(ad?.serviceQuerySource, "meta_ad");
+  assert.equal(queried, 0, "original verified CTWA trigger also takes precedence");
+
+  queried = 0;
+  const noContext = [];
+  const originalSkip = await resolveResultMediaForReply(base({
+    ...baseArgs,
+    onSkip: (reason) => noContext.push(reason),
+    loadPriorResultContext: async () => { queried++; return []; },
+  }));
+  assert.equal(originalSkip, null);
+  assert.equal(queried, 1);
+  assert.deepEqual(noContext, ["no_customer_service_enquiry"],
+    "missing evidence retains the exact old skip decision");
+
+  // An explicit result question naming a service is never reinterpreted by
+  // stale chat history if the original named-service intent has been skipped.
+  queried = 0;
+  await resolveResultMediaForReply(base({
+    ...baseArgs,
+    customerText: "3D 小颜术效果好吗？",
+    serviceQuery: false, serviceQuerySource: null,
+    loadPriorResultContext: async () => { queried++; return verified; },
+  }));
+  assert.equal(queried, 0, "a named current-turn service is owned by the original triggers");
+});
+
+test("fallback does not run after safety, price priority, opt-outs, duplicates or unavailable delivery", async () => {
+  const enabled = [{ ...resultMedia[0], triggerMode: "service_enquiry" }];
+  const rows = [{ role: "user", content: "3D 小颜术" }];
+  const baseline = {
+    customerText: "会好看的吗？", treatment: "3D 小颜术",
+    serviceQuery: false, serviceQuerySource: null,
+    priceQuery: false, resultMedia: enabled,
+  };
+  for (const overrides of [
+    { flagged: true },
+    { bookingReady: true },
+    { keywordReason: "urgent" },
+    { needsAttention: true },
+    { textSendSucceeded: false },
+    { customerText: "3D多少钱？" },
+    { customerText: "不要再发信息给我，会好看吗？" },
+    { resultMedia: [{ ...enabled[0], enabled: false }] },
+    { resultMedia: [{ ...enabled[0], triggerMode: "off" }] },
+    { resultMedia: [{ ...enabled[0], triggerMode: "price_only" }] },
+  ]) {
+    let loads = 0;
+    const selected = await resolveResultMediaForReply(base({
+      ...baseline, ...overrides,
+      loadPriorResultContext: async () => { loads++; return rows; },
+    }));
+    assert.equal(selected, null, JSON.stringify(overrides));
+    assert.equal(loads, 0, "never query fallback on a guarded/price-only/off path");
+  }
+
+  for (const guard of [
+    { wasMediaRecentlySent: async () => true },
+    { hasUnconfirmedMediaDelivery: async () => true },
+    { getMostRecentlySentMediaUrl: null },
+  ]) {
+    let loads = 0;
+    const selected = await resolveResultMediaForReply(base({
+      ...baseline, ...guard,
+      loadPriorResultContext: async () => { loads++; return rows; },
+    }));
+    assert.equal(selected, null);
+    assert.equal(loads, 1,
+      "the original skip is recovered once; existing media-history safety must reject the send");
+  }
+});
+
+test("context fallback does not use the DB when old trigger already passed its duplicate gate", async () => {
+  // A direct service enquiry is accepted by the original trigger, even if
+  // the duplicate gate later skips it. The new fallback must not retry it.
+  let reads = 0;
+  const reasons = [];
+  const selected = await resolveResultMediaForReply(base({
+    customerText: "我想了解3D小颜术", priceQuery: false,
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    wasMediaRecentlySent: async () => true,
+    onSkip: (reason) => reasons.push(reason),
+    loadPriorResultContext: async () => { reads++; return [{role:"user",content:"9D逆龄抗衰"}]; },
+  }));
+  assert.equal(selected, null);
+  assert.equal(reads, 0);
+  assert.deepEqual(reasons, ["result_media_recently_sent"]);
+});
