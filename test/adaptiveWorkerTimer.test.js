@@ -178,9 +178,10 @@ test("pending immediate wakes win over later computed deadlines", async () => {
   worker.wake(0);
   release();
   await advancing;
-  assert.equal(worker.state().dueAt, 0);
-  await timers.advance(0);
-  assert.equal(runs, 2);
+  assert.equal(runs, 2,
+    "the immediate event must trigger the second run before the clock advances");
+  assert.equal(worker.state().dueAt, 15 * 60 * 1000,
+    "after the immediate run, the worker may schedule its next idle interval");
   worker.stop();
 });
 
