@@ -8,7 +8,7 @@ const {
   normalizeMediaTranslations,
   resolveLocalizedMedia,
 } = require("./mediaLocalization");
-const { EXPLICIT_TREATMENT_INTEREST } = require("./resultMediaPacing");
+const { EXPLICIT_TREATMENT_INTEREST, EXPLICIT_RESULT_IMAGE_REQUEST } = require("./resultMediaPacing");
 const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
@@ -236,12 +236,67 @@ function isEarlyContextualAdEnquiry({
   return priorCustomerTexts.every((text) => isGreetingOrLanguageOnly(text));
 }
 
+// Additional, narrow trigger for a customer who asks about visible RESULTS
+// while continuing a single treatment conversation. Not an AI/CRM/ad guess.
+const OUTCOME_FOLLOWUP = /(?:会|會|能|可以|会不会|會不會|能不能|有没有|有沒有|效果|結果|结果|做完|做了).{0,24}(?:好看|漂亮|改善|变化|變化|明显|明顯|有效|见效|見效|看得出|看得到|瘦|紧致|緊緻|提升|提拉|效果|差别|差別)|(?:效果|結果|结果|好看|变化|變化).{0,12}(?:好|吗|嗎|呢|怎样|怎樣|如何|怎么样|怎麼樣|明显|明顯|有|看得到|看得出)|\b(?:will\s+(?:it|i)\s+(?:look|see|notice|improve)|(?:does|do|will|can)\s+(?:it|this)\s+(?:work|help|improve|make|show)|(?:look\s+better|visible\s+results?|see\s+results?|notice\s+a\s+difference|results?\s+(?:good|visible|noticeable))|boleh\s+(?:nampak|jadi|kurang|cantik)|nampak\s+(?:hasil|perubahan)|ada\s+(?:hasil|perubahan))\b/iu;
+const NON_RESULT_OR_DECLINE = /(?:别|別|不用|不要|不想|停止|取消|退订|退訂|退费|退費|投诉|投訴|退款|不感兴趣|不感興趣|没兴趣|沒興趣|不要发|不要發|不必发|不必發|不用看|不想看|\b(?:stop|cancel|unsubscribe|opt[\s-]?out|not\s+interested|no\s+thanks|don't\s+send|do\s+not\s+send|refund|complain|appointment|address|location|opening\s+hours)\b)/iu;
+const SHORT_RELATED_CONCERN = /^(?:下巴|双下巴|雙下巴|下颚线|下顎線|下颌线|脸型|臉型|脸宽|臉寬|jawline|double\s+chin|face\s+shape|小腹|腰酸|腰痛|lower\s+back|posture)[\s。.!！?？]*$/iu;
+
+function isContextualResultOutcomeQuestion(customerText) {
+  const text = String(customerText || "").normalize("NFKC").trim();
+  if (!text || text.length > 160 ||
+      isGreetingOrLanguageOnly(text) ||
+      hasCustomerPriceEnquiry(text) ||
+      isContextualAdServiceEnquiry(text) ||
+      NON_RESULT_OR_DECLINE.test(text) ||
+      hasClinicalMediaRisk(text)) return false;
+  return EXPLICIT_RESULT_IMAGE_REQUEST.test(text) || OUTCOME_FOLLOWUP.test(text);
+}
+
+/**
+ * Database evidence is DESC (latest first), from this contact only and at most
+ * two hours old. The closest preceding customer-authorized named service wins.
+ * A staff message, topic change, vague ack, unrelated question or two unknown
+ * customer turns fails closed. No Meta ad copy or AI-selected service is used.
+ */
+function verifiedRecentResultTreatment({
+  customerText, priorConversationRows, resultMedia, services = [], serviceAliases = [],
+} = {}) {
+  if (!isContextualResultOutcomeQuestion(customerText) ||
+      !Array.isArray(priorConversationRows) || !priorConversationRows.length) return null;
+  if (customerNamedServices(resultMedia, customerText, serviceAliases, services).length) return null;
+  let customerTurns = 0;
+  for (const turn of priorConversationRows.slice(0, 12)) {
+    if (turn?.role === "assistant") {
+      if (turn.sent_by_username ||
+          /^\[Verified STAFF message\]/iu.test(String(turn.content || ""))) return null;
+      continue;
+    }
+    if (turn?.role !== "user" || typeof turn.content !== "string" ||
+        turn.media_mime_type || turn.media_url) return null;
+    const text = turn.content.normalize("NFKC").trim();
+    if (!text || NON_RESULT_OR_DECLINE.test(text) || hasClinicalMediaRisk(text)) return null;
+    const matches = qualifiedTreatmentMentions(
+      customerNamedServices(resultMedia, text, serviceAliases, services), text
+    );
+    if (matches.length > 1) return null;
+    if (matches.length === 1) {
+      const media = matchingResultMediaSet(resultMedia, matches[0]);
+      return media?.triggerMode === "service_enquiry" ? matches[0] : null;
+    }
+    customerTurns += 1;
+    if (customerTurns > 1 || !SHORT_RELATED_CONCERN.test(text)) return null;
+  }
+  return null;
+}
+
 async function resolveResultMediaForReply({
   serviceQuery,
   serviceQuerySource,
   metaAdCreativeService = null,
   customerText = null,
   priorCustomerTexts = null,
+  priorResultContextRows = null,
   onSkip = null,
   priceQuery,
   packageQuery,
@@ -308,7 +363,13 @@ async function resolveResultMediaForReply({
   const directlyNamedTreatment = explicitServiceNamedByCustomer(
     resultMedia, customerText, serviceAliases, services
   ) || (relatedPriceProof ? namedServices[0] : null);
-  const effectiveTreatment = directlyNamedTreatment || treatment ||
+  const contextualResultTreatment = namedServices.length === 0
+    ? verifiedRecentResultTreatment({
+        customerText, priorConversationRows: priorResultContextRows,
+        resultMedia, services, serviceAliases,
+      })
+    : null;
+  const effectiveTreatment = directlyNamedTreatment || contextualResultTreatment || treatment ||
     (contextualAdEnquiry ? metaAdCreativeService : null);
   if (!effectiveTreatment) return skip("no_verified_treatment");
   const resultSet = matchingResultMediaSet(resultMedia, effectiveTreatment);
@@ -328,7 +389,8 @@ async function resolveResultMediaForReply({
   // independent, current customer enquiry is mandatory.
   const customerRequestedMediaContext = resultSet.triggerMode === "price_only"
     ? hasCustomerPriceEnquiry(customerText)
-    : hasCustomerServiceEnquiry(customerText) || (contextualAdEnquiry && verifiedCreativeService);
+    : hasCustomerServiceEnquiry(customerText) || (contextualAdEnquiry && verifiedCreativeService) ||
+      Boolean(contextualResultTreatment);
   if (!customerRequestedMediaContext) return skip("no_customer_service_enquiry");
 
   const sourceIsTrusted = SERVICE_QUERY_SOURCES.has(serviceQuerySource);
@@ -349,7 +411,8 @@ async function resolveResultMediaForReply({
     contextualAdEnquiry && verifiedCreativeService;
   const intentEligible =
     resultSet.triggerMode === "service_enquiry"
-      ? trustedServiceQuery || verifiedAdFallback || !!directlyNamedTreatment
+      ? trustedServiceQuery || verifiedAdFallback || !!directlyNamedTreatment ||
+        !!contextualResultTreatment
       : priceQuery === true;
   if (!intentEligible) return skip("structured_service_intent_not_verified");
 
@@ -391,7 +454,8 @@ async function resolveResultMediaForReply({
     service: resultSet.service,
     triggerMode: resultSet.triggerMode,
     allowRelatedPriceProof: relatedPriceProof === true,
-    serviceQuerySource: directlyNamedTreatment ? "customer_message"
+    serviceQuerySource: contextualResultTreatment ? "verified_customer_followup"
+      : directlyNamedTreatment ? "customer_message"
       : verifiedAdFallback ? "meta_ad" : trustedServiceQuery ? serviceQuerySource : null,
     items: rotatedItems
       .slice(0, resultSet.autoSendCount)
@@ -413,4 +477,6 @@ module.exports = {
   mediaIdentity,
   rotateAfter,
   resolveResultMediaForReply,
+  isContextualResultOutcomeQuestion,
+  verifiedRecentResultTreatment,
 };
