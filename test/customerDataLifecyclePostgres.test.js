@@ -564,8 +564,21 @@ test(
       assert.equal(await lifecycleRepo.claimPurgeJob({
         jobId: purgeId, leaseToken: "lease-two", database: client,
       }), null, "a leased R2 cleanup job must not be claimed again");
+      await client.query(
+        `UPDATE customer_data_purge_jobs
+         SET claimed_at = NOW() - interval '11 minutes' WHERE id = $1`,
+        [purgeId]
+      );
+      assert.ok(
+        new Date(await lifecycleRepo.getNextPurgeJobDueAt(client)).getTime() <= Date.now(),
+        "stale R2 cleanup leases must be recoverable after restart"
+      );
+      const staleLease = await lifecycleRepo.claimPurgeJob({
+        jobId: purgeId, leaseToken: "lease-stale", database: client,
+      });
+      assert.equal(staleLease.attempts, 2);
       await lifecycleRepo.markPurgeJobFailed({
-        jobId: purgeId, leaseToken: "lease-one", attempts: lease.attempts,
+        jobId: purgeId, leaseToken: "lease-stale", attempts: staleLease.attempts,
         error: new Error("R2 temporary failure"), database: client,
       });
       const purgeRetryDue = new Date(await lifecycleRepo.getNextPurgeJobDueAt(client));
@@ -578,7 +591,7 @@ test(
       const retryLease = await lifecycleRepo.claimPurgeJob({
         jobId: purgeId, leaseToken: "lease-retry", database: client,
       });
-      assert.equal(retryLease.attempts, 2);
+      assert.equal(retryLease.attempts, 3);
       await lifecycleRepo.markPurgeJobCompleted({
         jobId: purgeId, leaseToken: "lease-retry", database: client,
       });
