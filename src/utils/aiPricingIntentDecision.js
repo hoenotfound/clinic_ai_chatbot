@@ -10,6 +10,7 @@ const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessm
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
+const { getActivePromotions } = require("./activePromotion");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
 const REFUSAL = /(?:不要(?:价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
@@ -102,9 +103,19 @@ function resolveAiPricingDecision({
     anchor.treatment, promotions, current, conversationHistory,
     { clarifiedPriceService, allowTextOnlyOffers: true }
   );
+  // Some clients configure prices directly on SERVICES without promotions.
+  // Reuse that verified service text only when there is no active offer for
+  // this treatment. A conflicting/uncertain active offer must fail closed.
+  const activeOffer = getActivePromotions(promotions).some(p => p.linkedService === anchor.treatment);
+  const rawServicePrice = !activeOffer
+    ? services.find(s => s.name === anchor.treatment)?.priceRange : null;
+  const servicePrice = typeof rawServicePrice === "string" &&
+    rawServicePrice.trim().length <= 180 &&
+    /(?:\b(?:RM|MYR|USD|SGD|EUR|GBP)\b|[$€£])\s*\d/iu.test(rawServicePrice)
+      ? rawServicePrice.trim() : null;
   return Object.freeze({
     type, treatment: anchor.treatment, source: anchor.source,
-    clarifiedPriceService, prices,
+    clarifiedPriceService, prices, servicePrice,
   });
 }
 
