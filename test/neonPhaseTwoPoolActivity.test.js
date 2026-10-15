@@ -4,6 +4,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { Pool } = require("pg");
+const express = require("express");
+const { createOpsReadinessRouter } = require("../src/routes/opsReadiness");
 const { createPoolActivityTracker } = require("../src/services/databasePoolActivity");
 const { normalizeRemoteSnapshot } = require("../src/ops/clientPoller");
 
@@ -101,5 +103,29 @@ test("PostgreSQL integration: query acquisition is visible without extra telemet
     assert.ok(metrics.idleConnections >= 1);
   } finally {
     await pool.end();
+  }
+});
+
+test("pool-activity route is read-only and never runs the full database-backed readiness loader", async () => {
+  let fullReadinessCalls = 0;
+  let poolSnapshots = 0;
+  const app = express();
+  app.use("/api/ops/readiness", createOpsReadinessRouter({
+    authenticate: (_req, _res, next) => next(),
+    loadReadiness: async () => { fullReadinessCalls += 1; throw new Error("must not query DB"); },
+    loadPoolActivity: () => { poolSnapshots += 1; return { acquiredTotal: 2, last5Minutes: 0 }; },
+  }));
+  const server = await new Promise(resolve => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/ops/readiness/pool-activity`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.databasePool.acquiredTotal, 2);
+    assert.equal(fullReadinessCalls, 0);
+    assert.equal(poolSnapshots, 1);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
   }
 });
