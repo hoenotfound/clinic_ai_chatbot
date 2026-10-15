@@ -440,3 +440,27 @@ test("pricing evidence wakes the internal FEP scheduler only after durable callb
   );
   assert.equal(calls.includes("invalid-wake"), false);
 });
+
+test("repeated Meta delivery receipts wake FEP only for a new meaningful billing state", async () => {
+  const calls = [];
+  const service = createWhatsAppDeliveryStatusService({
+    repo: { async storeBatch(updates) { calls.push(["persist", updates[0]?.wamid]); return []; } },
+    wakeResultMedia() {},
+    reconcileFreeOnlyGate: async () => false,
+    publishPricingEvidence() { calls.push(["wake"]); },
+  });
+  const callback = (wamid, type = "free_entry_point", billable = false, status = "sent") =>
+    service.storeDeliveryStatusUpdates([{
+      wamid, pricingType: type, pricingBillable: billable, status,
+    }]);
+  await callback("wamid.one", "free_entry_point", false, "sent");
+  await callback("wamid.one", "free_entry_point", false, "delivered");
+  await callback("wamid.one", "free_entry_point", false, "read");
+  await callback("wamid.other", "regular", true);
+  assert.equal(calls.filter(x => x[0] === "wake").length, 1,
+    "repeated proof/read statuses and unrelated billing must not repoll Neon");
+  await callback("wamid.two", "free_entry_point", false, "delivered");
+  await callback("wamid.one", "free_entry_point", true, "delivered");
+  assert.equal(calls.filter(x => x[0] === "wake").length, 3,
+    "another verified entry and a genuine billable transition require fresh checks");
+});
