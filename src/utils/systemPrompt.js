@@ -1,6 +1,7 @@
 const config = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
+const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { relatedMediaTargets } = require("./relatedServicePolicy");
 
@@ -341,6 +342,21 @@ function conversationPromotionsList(conversationContext) {
     ].join("\n");
   }
 
+  // Reuse independently verified amounts without loading long commercial copy
+  // when Gemini sees a natural question absent from the legacy keyword list.
+  const aiPriceReference = config.aiPricingIntentMode === "enabled" && selected.length === 1
+    ? verifiedPricesForService(selected[0].name, active,
+        conversationContext?.currentCustomerText || "", [],
+        { allowTextOnlyOffers: true })
+    : null;
+  const compactVerifiedPrices = aiPriceReference?.length
+    ? [
+        "  VERIFIED PRICE REFERENCE (internal only): quote these amounts ONLY for a CURRENT customer price request. Do not send or promise images based on this reference.",
+        ...aiPriceReference.map((item) =>
+          `  - ${item.name === "Main offer" ? selected[0].name : item.name}: ${item.price}`
+        ),
+      ]
+    : [];
   const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
   const relevant = active.filter((promotion) => {
     const linked = followUpLookupKey(promotion?.linkedService);
@@ -355,6 +371,7 @@ function conversationPromotionsList(conversationContext) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
+      ...compactVerifiedPrices,
     ].join("\n");
   }
 
