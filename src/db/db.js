@@ -6,20 +6,43 @@ const {
   runMigrations,
 } = require("./migrationRunner");
 
-const DEFAULT_DATABASE_CONNECT_TIMEOUT_MS = 10_000;
+// A sleeping Neon compute can take longer to accept a new connection.
+// Only connection establishment gets the longer deadline. Never replay a
+// failed SQL statement: the server may have committed an outbound claim/send.
+const DEFAULT_DATABASE_CONNECT_TIMEOUT_MS = 20_000;
+const DEFAULT_DATABASE_POOL_MAX = 10; // node-postgres's existing default
+const DEFAULT_DATABASE_POOL_IDLE_TIMEOUT_MS = 10_000; // existing pg default
 
 function positiveInt(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function boundedInt(value, fallback, min, max) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max
+    ? parsed : fallback;
+}
+
 function databasePoolOptions(env = process.env) {
+  const slug = String(env.CLIENT_SLUG || "client")
+    .replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 42) || "client";
   return {
     connectionString: env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: positiveInt(
+    application_name: `da-chatbot-${slug}`,
+    // Keep the effective pg defaults for concurrency and idle eviction.
+    // Both can be adjusted separately if production metrics warrant it.
+    max: boundedInt(env.DATABASE_POOL_MAX, DEFAULT_DATABASE_POOL_MAX, 1, 20),
+    idleTimeoutMillis: boundedInt(
+      env.DATABASE_POOL_IDLE_TIMEOUT_MS,
+      DEFAULT_DATABASE_POOL_IDLE_TIMEOUT_MS,
+      1_000, 60_000
+    ),
+    connectionTimeoutMillis: boundedInt(
       env.DATABASE_CONNECT_TIMEOUT_MS,
-      DEFAULT_DATABASE_CONNECT_TIMEOUT_MS
+      DEFAULT_DATABASE_CONNECT_TIMEOUT_MS,
+      1_000, 30_000
     ),
   };
 }
@@ -95,6 +118,8 @@ async function initSchema(options = {}) {
 
 module.exports = {
   DEFAULT_DATABASE_CONNECT_TIMEOUT_MS,
+  DEFAULT_DATABASE_POOL_MAX,
+  DEFAULT_DATABASE_POOL_IDLE_TIMEOUT_MS,
   databasePoolOptions,
   initSchema,
   pool,
