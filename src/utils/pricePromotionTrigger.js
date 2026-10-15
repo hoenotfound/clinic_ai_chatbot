@@ -50,6 +50,8 @@ function recentCustomerPackageContext(packages, conversationHistory, currentText
 async function resolvePricePromotionForReply({
   priceQuery,
   packageQuery,
+  verifiedPricingIntent = false,
+  aiPricingEnabled = false,
   treatment,
   verifiedServiceFromText = null,
   customerText,
@@ -82,8 +84,10 @@ async function resolvePricePromotionForReply({
       }) : null;
   const verifiedClarification = Boolean(treatment) &&
     clarificationService === treatment && verifiedServiceFromText === treatment;
-  const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
+  const verifiedPriceRequest = (aiPricingEnabled && verifiedPricingIntent) ||
+    hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
+  if (aiPricingEnabled && !verifiedPricingIntent) return null;
   if (
     // A verified monetary question is sufficient for opted-in clinics even
     // when the LLM under-classifies priceQuery. Keep all media safety checks.
@@ -91,9 +95,10 @@ async function resolvePricePromotionForReply({
       ? (!treatment || !verifiedServiceFromText || verifiedServiceFromText !== treatment ||
           !verifiedPriceRequest)
       : (priceQuery !== true && packageQuery !== true)) ||
-    !(hasCustomerPriceEnquiry(customerText) ||
-      (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-        (isContextualBarePriceQuestion(customerText, treatment) || verifiedClarification))) ||
+    !(aiPricingEnabled && verifiedPricingIntent) &&
+      !(hasCustomerPriceEnquiry(customerText) ||
+        (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+          (isContextualBarePriceQuestion(customerText, treatment) || verifiedClarification))) ||
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       !verifiedPriceRequest) ||
     hasClinicalMediaRisk(customerText) ||
