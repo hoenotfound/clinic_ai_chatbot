@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Pool } = require("pg");
+const { randomUUID } = require("node:crypto");
 const {
   databasePoolOptions,
   DEFAULT_DATABASE_CONNECT_TIMEOUT_MS,
@@ -82,6 +83,46 @@ test("Postgres pooled client reconnects after an idle socket is dropped", {
     assert.equal(Number(reconnect.rows[0].result), 42);
     assert.equal(pool.waitingCount, 0);
     // The pool establishes a fresh connection; no failed user SQL is replayed.
+    assert.ok(idleErrors.length <= 1);
+  } finally {
+    await pool.end();
+  }
+});
+
+test("interrupted checked-out transaction is discarded, never replayed automatically", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const pool = new Pool({
+    ...databasePoolOptions({
+      DATABASE_URL: process.env.TEST_DATABASE_URL,
+      CLIENT_SLUG: "phase2-tx-interrupt",
+    }),
+    ssl: false,
+    max: 1,
+  });
+  const idleErrors = [];
+  pool.on("error", error => idleErrors.push(error));
+  // Unique, safe identifier so unrelated parallel CI tests are unaffected.
+  const table = "phase2_interrupt_" + randomUUID().replace(/-/g, "").slice(0, 18);
+  const client = await pool.connect();
+  const clientErrors = [];
+  client.on("error", error => clientErrors.push(error));
+  try {
+    await client.query("BEGIN");
+    await client.query(`CREATE TABLE "${table}" (id integer PRIMARY KEY)`);
+    await client.query(`INSERT INTO "${table}" (id) VALUES (1)`);
+    // Model a database connection severed before COMMIT, for example by a
+    // compute restart. Do not call COMMIT or retry any operation on error.
+    client.connection.stream.destroy(new Error("simulated database interruption"));
+  } finally {
+    client.release(new Error("discard interrupted transaction"));
+  }
+  try {
+    const check = await pool.query("SELECT to_regclass($1) AS relation", [`public.${table}`]);
+    assert.equal(check.rows[0].relation, null,
+      "uncommitted changes must not be repeated or persist on a new session");
+    assert.equal(pool.waitingCount, 0);
+    assert.ok(clientErrors.length <= 1);
     assert.ok(idleErrors.length <= 1);
   } finally {
     await pool.end();
