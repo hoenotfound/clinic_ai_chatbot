@@ -290,13 +290,13 @@ function verifiedRecentResultTreatment({
   return null;
 }
 
-async function resolveResultMediaForReply({
+async function resolveResultMediaForReplyAttempt({
   serviceQuery,
   serviceQuerySource,
   metaAdCreativeService = null,
   customerText = null,
   priorCustomerTexts = null,
-  priorResultContextRows = null,
+  contextualResultTreatment = null,
   onSkip = null,
   priceQuery,
   packageQuery,
@@ -363,12 +363,6 @@ async function resolveResultMediaForReply({
   const directlyNamedTreatment = explicitServiceNamedByCustomer(
     resultMedia, customerText, serviceAliases, services
   ) || (relatedPriceProof ? namedServices[0] : null);
-  const contextualResultTreatment = namedServices.length === 0
-    ? verifiedRecentResultTreatment({
-        customerText, priorConversationRows: priorResultContextRows,
-        resultMedia, services, serviceAliases,
-      })
-    : null;
   const effectiveTreatment = directlyNamedTreatment || contextualResultTreatment || treatment ||
     (contextualAdEnquiry ? metaAdCreativeService : null);
   if (!effectiveTreatment) return skip("no_verified_treatment");
@@ -462,6 +456,64 @@ async function resolveResultMediaForReply({
       .slice(0, resultSet.autoSendCount)
       .map((item) => resolveLocalizedMedia(item, language)),
   };
+}
+
+// The existing resolver ALWAYS has first refusal. Only when the original
+// trigger would SKIP for missing enquiry/service evidence may a verified
+// results-related follow-up supply the missing context. Never rescue safety,
+// review, disabled/off, duplicate, unknown-delivery or provider-state skips.
+const CONTEXTUAL_FALLBACK_SKIP_REASONS = new Set([
+  "no_verified_treatment",
+  "no_customer_service_enquiry",
+  "structured_service_intent_not_verified",
+]);
+
+async function resolveResultMediaForReply(options = {}) {
+  let originalSkip = null;
+  const primary = await resolveResultMediaForReplyAttempt({
+    ...options,
+    contextualResultTreatment: null,
+    onSkip: (reason) => { originalSkip = reason; },
+  });
+  if (primary) return primary;
+
+  const emitSkip = (reason) => {
+    if (typeof options.onSkip === "function") options.onSkip(reason);
+    return null;
+  };
+  if (!CONTEXTUAL_FALLBACK_SKIP_REASONS.has(originalSkip) ||
+      !isContextualResultOutcomeQuestion(options.customerText)) {
+    return emitSkip(originalSkip);
+  }
+
+  // This query is deliberately lazy: if the old logic would have sent the
+  // photos, or another mandatory guard blocked them, don't even fetch context.
+  let priorRows = options.priorResultContextRows;
+  if (!Array.isArray(priorRows) &&
+      typeof options.loadPriorResultContext === "function") {
+    try {
+      priorRows = await options.loadPriorResultContext();
+    } catch (_err) {
+      return emitSkip(originalSkip); // fail closed without changing the reply
+    }
+  }
+  const contextualTreatment = verifiedRecentResultTreatment({
+    customerText: options.customerText,
+    priorConversationRows: priorRows,
+    resultMedia: options.resultMedia,
+    services: options.services,
+    serviceAliases: options.serviceAliases,
+  });
+  if (!contextualTreatment) return emitSkip(originalSkip);
+
+  let fallbackSkip = null;
+  const recovered = await resolveResultMediaForReplyAttempt({
+    ...options,
+    contextualResultTreatment: contextualTreatment,
+    onSkip: (reason) => { fallbackSkip = reason; },
+  });
+  if (recovered) return recovered;
+  return emitSkip(fallbackSkip || originalSkip);
 }
 
 module.exports = {
