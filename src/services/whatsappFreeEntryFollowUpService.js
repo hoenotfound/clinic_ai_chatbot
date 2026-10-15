@@ -11,6 +11,7 @@ const mediaCache = require("./whatsappFreeEntryMediaCache");
 const messagesRepo = require("../db/messagesRepo");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { quietHoursStatus } = require("../utils/quietHours");
 const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
@@ -22,6 +23,7 @@ const {
 } = require("../utils/whatsappFreeEntryWindow");
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const IDLE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 const MAX_BATCH_SIZE = 20;
 // Only a strictly policy-rejected request that NEVER reached Meta can be
 // re-claimed. Unknown, failed, accepted, and manual cancellations stay one-shot.
@@ -42,6 +44,7 @@ function safelyDeferredAttemptSql(alias) {
 }
 let running = false;
 let timer = null;
+let timerSubscriptions = [];
 
 // A fresh Meta pricing callback on the first real business response is required.
 // Ad attribution alone is not sufficient billing proof. A narrow pre-activation
@@ -740,16 +743,146 @@ async function run({ now = new Date() } = {}) {
   } finally { running = false; }
 }
 
-function start() {
-  if (timer) return () => clearInterval(timer);
-  if (!freeEntryEnabled()) return () => {};
-  // Only start after the schema and clinic config are loaded.
-  const tick = () => run().catch((error) =>
-    console.error("[WhatsApp FEP] worker failed:", error));
-  timer = setInterval(tick, CHECK_INTERVAL_MS);
-  timer.unref?.();
-  tick();
-  return () => { clearInterval(timer); timer = null; };
+
+/**
+ * Conservative wake-time hint, NOT a permission-to-send query.
+ *
+ * This deliberately considers a superset of real candidates. All marketing
+ * eligibility, consent, silence, template and RM0 gates remain in candidateSql
+ * and the final guarded provider send. A later verified ad entry or last
+ * customer/business message can only bring the wake earlier (or cause extra
+ * no-op checks), never authorize a message.
+ *
+ * The final configured slot can move up to 12h earlier to avoid quiet hours
+ * at the free-entry expiry boundary. Wake no later than that early bound.
+ */
+const potentialDueSql = `
+  SELECT MIN(GREATEST(
+    reply.created_at + (
+      slot.hours - CASE WHEN slot.hours = (
+        SELECT MAX(n) FROM unnest($2::integer[]) AS n
+        WHERE n < $3::integer
+      ) THEN 12 ELSE 0 END
+    ) * interval '1 hour',
+    last_inbound.created_at + interval '24 hours',
+    COALESCE(last_outbound.created_at, reply.created_at) + interval '5 hours'
+  )) AS due_at
+  FROM contacts c
+  JOIN messages reply ON reply.contact_id = c.id AND reply.role = 'assistant'
+    AND reply.whatsapp_message_id IS NOT NULL
+  JOIN whatsapp_free_entry_pricing_evidence proof
+    ON proof.wamid = reply.whatsapp_message_id
+    AND proof.pricing_type = 'free_entry_point'
+    AND proof.billable = false
+    AND proof.delivery_status IN ('sent', 'delivered', 'read')
+  JOIN LATERAL (
+    SELECT incoming.created_at FROM messages incoming
+    WHERE incoming.contact_id = c.id AND incoming.role = 'user'
+    ORDER BY incoming.created_at DESC, incoming.id DESC LIMIT 1
+  ) last_inbound ON true
+  LEFT JOIN LATERAL (
+    SELECT outbound.created_at FROM messages outbound
+    WHERE outbound.contact_id = c.id AND outbound.role = 'assistant'
+      AND outbound.delivery_status IS DISTINCT FROM 'cancelled'
+    ORDER BY outbound.created_at DESC, outbound.id DESC LIMIT 1
+  ) last_outbound ON true
+  CROSS JOIN unnest($2::integer[]) AS slot(hours)
+  WHERE c.channel = 'whatsapp'
+    AND c.whatsapp_number IS NOT NULL
+    AND reply.created_at >= $1::timestamptz - interval '24 hours'
+    AND reply.created_at > now() - interval '7 days'
+    AND slot.hours < $3::integer
+    AND now() < reply.created_at + ($3::integer * interval '1 hour') - interval '1 hour'
+    AND now() < reply.created_at + (slot.hours + 12) * interval '1 hour'
+    AND EXISTS (
+      SELECT 1 FROM whatsapp_free_entry_referrals entry
+      JOIN messages origin ON origin.id = entry.origin_message_id
+        AND origin.contact_id = c.id AND origin.role = 'user'
+      WHERE entry.contact_id = c.id
+        AND (entry.ctwa_clid IS NOT NULL OR entry.meta_ad_id IS NOT NULL)
+        AND origin.created_at <= reply.created_at
+        AND origin.created_at > reply.created_at - interval '24 hours'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
+      WHERE prior.first_reply_message_id = reply.id
+        AND prior.slot_hours = slot.hours
+        AND NOT (${safelyDeferredAttemptSql('prior')})
+    )
+`;
+
+async function nextPotentialDueAt(active, database = pool) {
+  const aligned = await alignedSettings(active, database);
+  const result = await database.query(potentialDueSql, [
+    aligned.activatedAt, aligned.slots, aligned.sevenDayVerified ? 168 : 72,
+  ]);
+  return result.rows[0]?.due_at || null;
 }
 
-module.exports = { settings, alignedSettings, selectedSlot, listCandidates, claim, processCandidate, run, start, SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage, resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause };
+function nextPollDelay(dueAt, nowMs = Date.now()) {
+  if (!dueAt) return IDLE_CHECK_INTERVAL_MS;
+  const dueMs = new Date(dueAt).getTime();
+  if (!Number.isFinite(dueMs)) return CHECK_INTERVAL_MS;
+  if (dueMs <= nowMs) return CHECK_INTERVAL_MS;
+  return Math.max(1000, Math.min(IDLE_CHECK_INTERVAL_MS, dueMs - nowMs));
+}
+
+async function runAndSchedule() {
+  const result = await run();
+  // Unknown Meta catalog, overlapping invocations and other transient
+  // uncertainty retain the old 5-minute retry for safety.
+  if (result?.skipped || result?.reason === "template_catalog_unavailable") {
+    return CHECK_INTERVAL_MS;
+  }
+  const configured = settings();
+  if (!configured) return IDLE_CHECK_INTERVAL_MS;
+  const dueAt = await nextPotentialDueAt(configured);
+  return nextPollDelay(dueAt);
+}
+
+function wake(delayMs = CHECK_INTERVAL_MS) {
+  return timer?.wake(delayMs) || false;
+}
+
+function stop() {
+  for (const unsubscribe of timerSubscriptions.splice(0)) unsubscribe();
+  timer?.stop();
+  timer = null;
+}
+
+function start({
+  createTimer = createAdaptiveWorkerTimer,
+  events = realtimeEvents,
+} = {}) {
+  if (timer && !timer.state().stopped) return stop;
+  if (!freeEntryEnabled()) return () => {};
+  // Recompute on relevant changes. Most conversation changes are debounced
+  // to five minutes; next-due timers are never pushed later by these signals.
+  timer = createTimer({
+    run: runAndSchedule,
+    delayForResult: (delayMs) => delayMs,
+    errorRetryDelayMs: CHECK_INTERVAL_MS,
+    label: "WhatsApp extended follow-up scheduler",
+  });
+  timerSubscriptions = [
+    events.subscribe("conversation_changed", (payload) => {
+      if (payload?.contactId != null) wake(CHECK_INTERVAL_MS);
+    }),
+    events.subscribe("pipeline_changed", (payload) => {
+      if (payload?.contactId != null || payload?.leadId != null) wake(CHECK_INTERVAL_MS);
+    }),
+    events.subscribe("config_changed", (payload) => {
+      if (!payload?.keys || payload.keys.includes("automatedFollowUp")) wake(0);
+    }),
+  ];
+  timer.start();
+  return stop;
+}
+
+module.exports = {
+  settings, alignedSettings, selectedSlot, listCandidates, claim,
+  processCandidate, run, start, stop, wake, nextPotentialDueAt, nextPollDelay,
+  runAndSchedule, potentialDueSql, CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
+  SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
+  resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause,
+};
