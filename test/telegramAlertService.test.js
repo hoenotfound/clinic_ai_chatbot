@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildConversationSummaryMessage,
+  buildTelegramRequestOptions,
   buildWhatsappChatUrl,
   createTelegramAlertService,
   formatWhatsappNumber,
@@ -48,6 +49,28 @@ test("Telegram alerts require the toggle, token, and chat id", () => {
     TELEGRAM_BOT_TOKEN: "token",
     TELEGRAM_CHAT_ID: "-1001",
   }), true);
+});
+
+
+test("Telegram transport pins api.telegram.org to IPv4 without changing its timeout", () => {
+  const payload = JSON.stringify({
+    chat_id: "-100123",
+    text: "test",
+    disable_web_page_preview: true,
+  });
+  const options = buildTelegramRequestOptions({
+    token: "bot-token",
+    payload,
+  });
+
+  assert.equal(options.hostname, "api.telegram.org");
+  assert.equal(options.port, 443);
+  assert.equal(options.family, 4);
+  assert.equal(options.method, "POST");
+  assert.equal(options.timeout, 8000);
+  assert.equal(options.path, "/botbot-token/sendMessage");
+  assert.equal(options.headers["Content-Type"], "application/json");
+  assert.equal(options.headers["Content-Length"], Buffer.byteLength(payload));
 });
 
 test("formats Malaysian WhatsApp number for Telegram display", () => {
