@@ -43,6 +43,23 @@ function normalizePoolActivity(value) {
     const number = value[key];
     result[key] = Number.isSafeInteger(number) && number >= 0 ? number : null;
   }
+  result.bySource = Array.isArray(value.bySource)
+    ? value.bySource.slice(0, 32).flatMap((entry) => {
+      if (!entry || typeof entry.source !== "string"
+          || entry.source.length > 64
+          || !/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(entry.source)) {
+        return [];
+      }
+      return [{
+        source: entry.source,
+        acquiredTotal: Number.isSafeInteger(entry.acquiredTotal)
+          && entry.acquiredTotal >= 0 ? entry.acquiredTotal : null,
+        last5Minutes: Number.isSafeInteger(entry.last5Minutes)
+          && entry.last5Minutes >= 0 ? entry.last5Minutes : null,
+        last15Minutes: Number.isSafeInteger(entry.last15Minutes)
+          && entry.last15Minutes >= 0 ? entry.last15Minutes : null,
+      }];
+    }) : [];
   result.lastAcquireAt = typeof value.lastAcquireAt === "string"
     && !Number.isNaN(Date.parse(value.lastAcquireAt))
     ? new Date(value.lastAcquireAt).toISOString() : null;
