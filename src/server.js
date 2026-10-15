@@ -1611,12 +1611,29 @@ async function processIncomingMessage(
           }
         }
 
+        // This lookup is called ONLY after the original Before & After trigger
+        // has skipped for missing enquiry evidence, not for guarded failures.
+        const loadPriorResultContext = async () => {
+          try {
+            return await messagesRepo.getRecentResultProofContext(
+              contact.id, savedInbound.id
+            );
+          } catch (contextError) {
+            console.warn(
+              `[Result media] Recent customer-treatment context unavailable for contact ${contact.id}; original skip preserved:`,
+              contextError
+            );
+            return null;
+          }
+        };
+
         const resultBundle = await resolveResultMediaForReply({
           serviceQuery,
           serviceQuerySource,
           metaAdCreativeService: resultMediaCreativeService,
           customerText: text,
           priorCustomerTexts: verifiedPriorCustomerTexts,
+          loadPriorResultContext,
           onSkip: (reason) => { auditReason = reason; },
           priceQuery,
           packageQuery,

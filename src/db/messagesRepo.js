@@ -293,6 +293,30 @@ async function getPriorCustomerTextsForAdEnquiry(
   return priorCustomers.map((row) => String(row.content || ""));
 }
 
+/**
+ * Verified, bounded context for a CURRENT customer question about results.
+ * Unlike an AI snapshot/CRM/ad name, each preceding treatment name must come
+ * from a persisted customer message in the same chat, at most two hours ago.
+ * A small window includes staff rows so handoffs cannot be overlooked.
+ */
+async function getRecentResultProofContext(contactId, inboundMessageId, query = pool.query.bind(pool)) {
+  const contact = Number(contactId);
+  const inbound = Number(inboundMessageId);
+  if (!Number.isSafeInteger(contact) || contact < 1 ||
+      !Number.isSafeInteger(inbound) || inbound < 1) {
+    throw new TypeError("Valid contact and inbound message IDs are required.");
+  }
+  const result = await query(
+    "SELECT role, content, sent_by_username, media_url, media_mime_type " +
+    "FROM messages WHERE contact_id = $1 AND id < $2 " +
+    "AND created_at >= (SELECT created_at - INTERVAL '2 hours' " +
+    "FROM messages WHERE id = $2 AND contact_id = $1 AND role = 'user') " +
+    "ORDER BY id DESC LIMIT 12",
+    [contact, inbound]
+  );
+  return result.rows;
+}
+
 async function getMessagesForContact(contactId, limit = 50, includeMedia = true) {
   const safeLimit = clampPageSize(limit);
   const mediaColumn = includeMedia
@@ -1714,6 +1738,7 @@ module.exports = {
   updateInboundMessage,
   getMessagesForContact,
   getPriorCustomerTextsForAdEnquiry,
+  getRecentResultProofContext,
   wasPromoRecentlySent,
   wasPromoRecentlySentWithExecutor,
   wasMediaRecentlySent,
