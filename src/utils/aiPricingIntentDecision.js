@@ -13,7 +13,7 @@ const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
-const REFUSAL = /(?:不要(?:价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
+const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
 const STAFF_PREFIX = /^\[Verified STAFF message\]/u;
 const UNRELATED = /(?:停车|停車|营业|營業|开门|開門|几点|幾點|在哪|地址|分行|预约|預約|退款|取消|\b(?:parking|hours|location|address|branch|booking|appointment|refund|cancel)\b)/iu;
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
@@ -111,7 +111,7 @@ function resolveAiPricingDecision({
     ? services.find(s => s.name === anchor.treatment)?.priceRange : null;
   const servicePrice = typeof rawServicePrice === "string" &&
     rawServicePrice.trim().length <= 180 &&
-    /(?:\b(?:RM|MYR|USD|SGD|EUR|GBP)\b|[$€£])\s*\d/iu.test(rawServicePrice)
+    /(?:\b(?:RM|MYR|USD|SGD|EUR|GBP)\s*|[$€£]\s*)\d/iu.test(rawServicePrice)
       ? rawServicePrice.trim() : null;
   return Object.freeze({
     type, treatment: anchor.treatment, source: anchor.source,
