@@ -114,6 +114,7 @@ function presentClient(client, {
     lastError: client.lastError,
     lastHttpStatus: client.lastHttpStatus,
     readiness,
+    databasePool: snapshot?.databasePool || null,
     channels: Array.isArray(readiness?.channels) ? readiness.channels : [],
     blockers: Array.isArray(readiness?.blockers) ? readiness.blockers : [],
     testing: Array.isArray(readiness?.testingRequired) ? readiness.testingRequired : [],
