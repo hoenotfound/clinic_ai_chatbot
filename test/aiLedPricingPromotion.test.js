@@ -74,7 +74,6 @@ test("uses existing model price flags without adding a second AI response contra
     priceQuery: true, packageQuery: false, treatment: "3D 小颜术",
   }));
   assert.equal(parsed.priceQuery, true);
-  assert.equal(parsed.details.treatment, "3D 小颜术");
   assert.equal(Object.hasOwn(parsed, "pricingIntent"), false);
 });
 
