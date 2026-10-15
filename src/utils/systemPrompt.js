@@ -348,13 +348,10 @@ function conversationPromotionsList(conversationContext) {
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
 
-  // AI-led pricing needs matching offer knowledge even when natural wording
-  // such as "做一次多少" matches none of the legacy keyword patterns.
-  const aiLedContext = config.aiPricingIntentMode === "enabled" &&
-    selected.length > 0;
-  if (!aiLedContext &&
-      ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
-      (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext)))) {
+  // Show only compact offer facts on non-commercial turns. Even an explicit
+  // treatment mention is not consent to receive unsolicited promotion copy.
+  if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
+      (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
@@ -1288,7 +1285,6 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "packageQuery": false,
   "reviewType": null,
   "promotionOption": null,
-  "pricingIntent": {"type": "none | price | package_options", "treatment": null, "source": null},
   "treatment": "canonical configured service name if clearly known, otherwise null",
   "branch": "canonical configured business location name if clearly chosen, otherwise null",
   "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
@@ -1307,8 +1303,7 @@ Rules for structured fields:
 - A current price/package enquiry about exactly one known service is also a service enquiry: set "serviceQuery" to true as well as the appropriate price/package flag. If the service is known only from the ad, use "meta_ad"; if it is known from the current wording use "customer_message"; otherwise use "conversation".
 - A customer-sent Click-to-WhatsApp introduction granting FUTURE follow-ups or offer notifications (for example "可以跟进我，有优惠也发我看看") is NOT an immediate request for pricing, offers, or package lists. Interpret its separate current treatment interest normally. Greet naturally, explain the named treatment briefly and ask one useful question. Do not quote or list packages/prices unless the customer also asks about them NOW.
 - Before & After images are selected separately by the application when the customer clearly asks about one treatment, including in a first message with future opt-in wording. Do NOT suppress treatment interest just because future promotional permission is present, and do not promise image delivery because media may be blocked by safety or duplicate checks.
-- Classify "pricingIntent" from the CURRENT customer question and recent conversation. Use type "price" for monetary cost questions including conversational phrases like "做一次多少", "一次几多", "how much per session", "berapa satu sesi". Use "package_options" only when CURRENTLY requesting available prices, packages or offers; use "none" for treatment details, outcomes, duration, how many sessions, budget statements, greetings, and permission to send FUTURE promotions. A past price question does not make a new non-price question a price request. Set treatment to the canonical service only when unambiguous, and source to "current_customer" when the customer names it now, "recent_customer" when the customer themselves named it in the preceding discussion, or "meta_ad" when only advertising identifies it. Use null for unknown fields; never borrow an unrelated older service. PricingIntent describes meaning, NOT permission to send an image.
-- Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, cost, fee, charge, package price, first-trial price, promotion price, or equivalent wording, OR when the customer immediately answers our which-treatment price clarification after their explicit price request. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
+- Set "priceQuery" to true ONLY when the customer's CURRENT message asks for monetary cost, including natural conversational questions like "做一次多少", "一次几多", "how much per session", "berapa satu sesi", or when the customer immediately answers our which-treatment price clarification after their explicit price request. A previous price request does not carry over to a new non-pricing question. Duration, number-of-sessions, treatment effectiveness, and permission for FUTURE promotions are not price queries. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
 - Set "packageQuery" to true ONLY when the customer's CURRENT message explicitly asks to see, list, compare, or know the available packages/options/offers for one service, such as "有什么package?", "有什么配套?", "what packages do you have?", or "show me the options". Merely mentioning a package while asking about suitability, symptoms, results, or treatment details is not a packageQuery.
 - When either "priceQuery" or "packageQuery" is true and exactly one configured service is clearly being discussed, set "treatment" to that canonical configured service even if the customer used an alias. If the request covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
 - "promotionOption" is descriptive internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or one of its listed aliases, set "promotionOption" to that package's exact configured name (for example "Package B"). If the customer asks the service price/packages generally, set it to null. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. Outbound media routing does NOT trust this field; the backend independently matches configured package wording from the customer's own current/recent message.
