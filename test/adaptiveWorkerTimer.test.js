@@ -212,3 +212,22 @@ test("null result still accepts event wake and error retry is not delayed", asyn
   assert.equal(runs, 2);
   worker.stop();
 });
+
+test("delay callback failure retries safely instead of stranding the timer", async () => {
+  const timers = fakeTimers();
+  const errors = [];
+  let count = 0;
+  const worker = createAdaptiveWorkerTimer({
+    run: async () => ++count,
+    delayForResult: () => { throw new Error("invalid scheduling hint"); },
+    logger: {error(...args) {errors.push(args);}},
+    errorRetryDelayMs: 2000,
+    ...timers,
+  });
+  worker.start();
+  await timers.advance(0);
+  assert.equal(count, 1);
+  assert.equal(worker.state().dueAt, 2000);
+  assert.equal(errors.length, 1);
+  worker.stop();
+});
