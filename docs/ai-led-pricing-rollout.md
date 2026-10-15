@@ -40,11 +40,11 @@ existing price-copy verification remains the fallback. Readable prices that
 conflict with the structured offer amount prevent quotation and auto media.
 No database migration is required; values live in the client config JSON.
 
-The AI never supplies an image URL, actual amount, or permitted provider send.
-It emits a structured `pricingIntent` alongside the normal reply and
-`priceQuery`/`packageQuery` compatibility fields. Service selection must
-match a current or immediately previous customer-authored service statement,
-not an old ad, CRM label or bot suggestion.
+The AI cannot authorize image URLs, sale amounts or provider sends. The
+existing `priceQuery`, `packageQuery` and `treatment` response fields feed
+one verified pricing decision, with no second model request. Service selection
+must match the current or recent customer-authored service, not an old ad,
+CRM label or bot suggestion.
 
 ## Troubleshooting
 
