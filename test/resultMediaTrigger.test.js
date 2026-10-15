@@ -656,3 +656,188 @@ test("non-ad service interest in an established conversation keeps the existing 
   }));
   assert.equal(rejected, null, "vague CTWA text does not independently establish service interest");
 });
+
+
+test("Linkie's 3D price then outcome follow-up sends one verified Before & After, never on price-only", async () => {
+  const cfg = [{
+    ...resultMedia[0], triggerMode: "service_enquiry", sendAfterPrice: undefined,
+    autoSendCount: 1,
+  }];
+  const rows = [
+    { role: "assistant", content: "3D graphic", media_url: "/promo-images/32" },
+    { role: "assistant", content: "3D 小颜术：RM488" },
+    { role: "user", content: "3D多少钱？" },
+  ];
+  const context = {
+    resultMedia: cfg,
+    serviceAliases: [{ alias: "3D", officialService: "3D 小颜术" }],
+    customerText: "会好看的吗？",
+    priorResultContextRows: rows,
+    priceQuery: false, serviceQuery: false, serviceQuerySource: null,
+    treatment: null,
+  };
+  const proof = await resolveResultMediaForReply(base(context));
+  assert.equal(proof?.service, "3D 小颜术");
+  assert.equal(proof?.serviceQuerySource, "verified_customer_followup");
+  assert.equal(proof?.items.length, 1);
+  assert.equal(proof.items[0].imageUrl, "https://example.test/3d-1.jpg");
+
+  // The earlier price-only message still prioritizes the 3D promotion.
+  const { planResultMediaPacing } = require("../src/utils/resultMediaPacing");
+  assert.equal(planResultMediaPacing({
+    customerText: "3D多少钱？", promotionCount: 1,
+    items: [resultMedia[0].items[0]],
+  }).items.length, 0);
+  assert.equal(planResultMediaPacing({
+    customerText: "会好看的吗？", promotionCount: 0,
+    items: proof.items,
+  }).items.length, 1);
+
+  // Generic anatomy, thanks, and booking chat never unlock proof.
+  for (const message of ["下巴", "OK", "谢谢", "你的地址？", "可以预约吗？", "3D还有优惠吗？"]) {
+    const selected = await resolveResultMediaForReply(base({
+      ...context, customerText: message,
+    }));
+    assert.equal(selected, null, "no unsolicited proof for: " + message);
+  }
+});
+
+test("new conversation results trigger works for 3D, 9D, and pelvic, keeping original modes", async () => {
+  const sets = [
+    { service: "3D 小颜术", term: "3D", image: "3d" },
+    { service: "9D 逆龄抗衰", term: "9D", image: "9d" },
+    { service: "骨盆调理", term: "骨盆调理", image: "pelvic" },
+  ].map(x => ({
+    service: x.service, enabled: true, triggerMode: "service_enquiry",
+    autoSendCount: 1,
+    items: [{ imageUrl: "https://example.test/" + x.image + ".jpg",
+      caption: "Approved visual example" }],
+  }));
+  for (const [service, name] of [
+    ["3D 小颜术", "3D"],
+    ["9D 逆龄抗衰", "9D"],
+    ["骨盆调理", "骨盆调理"],
+  ]) {
+    for (const question of ["会好看的吗？", "效果明显吗？", "可以给我看看before after吗？"]) {
+      const selected = await resolveResultMediaForReply(base({
+        customerText: question,
+        priceQuery: false, serviceQuery: false, serviceQuerySource: null,
+        treatment: null, resultMedia: sets,
+        serviceAliases: [
+          { alias: "3D", officialService: "3D 小颜术" },
+          { alias: "9D", officialService: "9D 逆龄抗衰" },
+        ],
+        priorResultContextRows: [
+          { role: "assistant", content: "Which area concerns you?" },
+          { role: "user", content: name + "想了解" },
+        ],
+      }));
+      assert.equal(selected?.service, service, service + " - " + question);
+      assert.equal(selected?.items.length, 1);
+    }
+  }
+  const original = await resolveResultMediaForReply(base({
+    resultMedia: sets, customerText: "我想了解3D小颜术",
+    serviceQuery: true, serviceQuerySource: "customer_message",
+    priceQuery: false,
+  }));
+  assert.equal(original?.service, "3D 小颜术",
+    "new contextual path does not replace existing direct service enquiry");
+});
+
+test("contextual results require fresh, unambiguous customer evidence and respect staff takeover", async () => {
+  const configured = [{
+    ...resultMedia[0], triggerMode: "service_enquiry", sendAfterPrice: undefined,
+  }, {
+    service: "9D 逆龄抗衰", triggerMode: "service_enquiry", enabled: true,
+    autoSendCount: 1, items: [{ imageUrl: "https://example.test/9d.jpg", caption: "9D" }],
+  }];
+  const customer3d = { role: "user", content: "我想了解3D小颜术" };
+  const customer9d = { role: "user", content: "我想了解9D逆龄抗衰" };
+  const allowed = {
+    priceQuery: false, serviceQuery: false, treatment: null,
+    serviceQuerySource: null, customerText: "会好看的吗？",
+    resultMedia: configured,
+    priorResultContextRows: [{ role: "assistant", content: "Here are details." }, customer3d],
+  };
+  const negative = [
+    null, [],
+    [{ role: "assistant", content: "3D is good." }],
+    [{ role: "assistant", content: "Model says 3D." }, { role: "user", content: "hi" }],
+    [{ role: "assistant", content: "Hello", sent_by_username: "staff" }, customer3d],
+    [{ role: "assistant", content: "[Verified STAFF message] Hello" }, customer3d],
+    [{ role: "user", content: "不想了" }, customer3d],
+    [{ role: "user", content: "我想了解3D和9D" }],
+    [{ role: "user", content: "请问营业时间？" }, customer3d],
+    [{ role: "user", content: "好的" }, customer3d],
+    [{ role: "user", content: "下巴" }, { role: "user", content: "好的" }, customer3d],
+    [{ role: "user", content: "9D和3D有什么区别？" }, customer3d],
+    [{ role: "user", content: "3D小颜术", media_mime_type: "image/jpeg" }],
+  ];
+  for (const rows of negative) {
+    const selected = await resolveResultMediaForReply(base({
+      ...allowed, priorResultContextRows: rows,
+    }));
+    assert.equal(selected, null, JSON.stringify(rows));
+  }
+  // The closest distinct named treatment wins, never a stale CRM guess.
+  const switched = await resolveResultMediaForReply(base({
+    ...allowed, treatment: "3D 小颜术",
+    priorResultContextRows: [customer9d, customer3d],
+  }));
+  assert.equal(switched?.service, "9D 逆龄抗衰");
+
+  const throughOneConcern = await resolveResultMediaForReply(base({
+    ...allowed, priorResultContextRows: [
+      { role: "user", content: "下巴" },
+      { role: "assistant", content: "3D?" },
+      customer3d,
+    ],
+  }));
+  assert.equal(throughOneConcern?.service, "3D 小颜术");
+});
+
+test("contextual Before & After retains clinical, delivery and 7-day duplicate safeguards", async () => {
+  const context = {
+    customerText: "会好看的吗？",
+    priceQuery: false, serviceQuery: false, treatment: null,
+    resultMedia: [{ ...resultMedia[0], triggerMode: "service_enquiry" }],
+    priorResultContextRows: [{ role: "user", content: "3D 小颜术" }],
+  };
+  for (const blocks of [
+    { flagged: true }, { bookingReady: true }, { keywordReason: "medical" },
+    { needsAttention: true }, { textSendSucceeded: false },
+    { hasUnconfirmedMediaDelivery: async () => true },
+    { wasMediaRecentlySent: async () => true },
+  ]) {
+    assert.equal(await resolveResultMediaForReply(base({
+      ...context, ...blocks,
+    })), null, Object.keys(blocks).join(","));
+  }
+  assert.equal(await resolveResultMediaForReply(base({
+    ...context, customerText: "我产后两周还流血，会好看吗？",
+  })), null);
+  assert.equal(await resolveResultMediaForReply(base({
+    ...context, resultMedia: [{ ...resultMedia[0], triggerMode: "price_only" }],
+  })), null, "a price-only image config must not inherit new service-enquiry behavior");
+});
+
+test("bounded Neon result context query uses message boundary, contact ID and two-hour limit", async () => {
+  const messagesRepo = require("../src/db/messagesRepo");
+  const rows = [{ role: "user", content: "3D 小颜术" }];
+  const result = await messagesRepo.getRecentResultProofContext(
+    12, 1638, async (sql, params) => {
+      assert.match(sql, /created_at - INTERVAL '2 hours'/);
+      assert.match(sql, /id < \$2/);
+      assert.match(sql, /contact_id = \$1/);
+      assert.match(sql, /LIMIT 12/);
+      assert.deepEqual(params, [12, 1638]);
+      return { rows };
+    }
+  );
+  assert.deepEqual(result, rows);
+  await assert.rejects(
+    () => messagesRepo.getRecentResultProofContext(12, -1),
+    /Valid contact/
+  );
+});
