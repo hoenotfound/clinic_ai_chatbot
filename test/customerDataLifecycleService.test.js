@@ -152,15 +152,22 @@ test("disabled retention policy does not query customer candidates", async () =>
 });
 
 
-test("lifecycle worker schedules recovery and retention without running them during startup", async () => {
+test("lifecycle recovery waits ten minutes on startup and uses adaptive retry deadlines", async () => {
   const intervals = [];
   let cleanupClaims = 0;
+  let deadlineQueries = 0;
   let retentionQueries = 0;
   let pruneCalls = 0;
+  let startupDelay = null;
+  let workerOptions;
 
   const repository = {
     async claimPurgeJob() {
       cleanupClaims += 1;
+      return null;
+    },
+    async getNextPurgeJobDueAt() {
+      deadlineQueries += 1;
       return null;
     },
     async listRetentionCandidates() {
@@ -177,6 +184,13 @@ test("lifecycle worker schedules recovery and retention without running them dur
     env: { CUSTOMER_DATA_RETENTION_DAYS: "90" },
     repository,
     storage: {},
+    createWorkerTimer(options) {
+      workerOptions = options;
+      return {
+        start(delay) { startupDelay = delay; },
+        wake() { return true; },
+      };
+    },
     setIntervalFn(fn, delay) {
       const timer = { fn, delay, unref() {} };
       intervals.push(timer);
@@ -184,26 +198,38 @@ test("lifecycle worker schedules recovery and retention without running them dur
     },
   });
 
-  // Starting the application must not immediately compete with live media or
-  // DB traffic. The worker only registers its normal recovery intervals.
   assert.equal(cleanupClaims, 0);
   assert.equal(retentionQueries, 0);
   assert.equal(pruneCalls, 0);
-  assert.deepEqual(
-    intervals.map((item) => item.delay),
-    [
-      lifecycle.MEDIA_CLEANUP_INTERVAL_MS,
-      lifecycle.RETENTION_SWEEP_INTERVAL_MS,
-      lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS,
-    ]
-  );
+  assert.equal(startupDelay, lifecycle.MEDIA_CLEANUP_INTERVAL_MS);
+  assert.deepEqual(intervals.map((item) => item.delay), [
+    lifecycle.RETENTION_SWEEP_INTERVAL_MS,
+    lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS,
+  ]);
+
+  assert.equal(await workerOptions.run(), null);
+  assert.equal(cleanupClaims, 1);
+  assert.equal(deadlineQueries, 1);
+  assert.equal(workerOptions.delayForResult(null), lifecycle.IDLE_MEDIA_CLEANUP_INTERVAL_MS);
 
   await intervals[0].fn();
-  assert.equal(cleanupClaims, 1);
-
-  await intervals[1].fn();
   assert.equal(retentionQueries, 1);
-
-  await intervals[2].fn();
+  await intervals[1].fn();
   assert.equal(pruneCalls, 1);
+});
+
+test("media cleanup wakes at the exact stored retry deadline", () => {
+  const now = Date.parse("2026-10-15T10:00:00Z");
+  assert.equal(
+    lifecycle.mediaCleanupDelay("2026-10-15T10:00:30Z", now),
+    30000
+  );
+  assert.equal(
+    lifecycle.mediaCleanupDelay("2026-10-15T09:59:00Z", now),
+    1000
+  );
+  assert.equal(
+    lifecycle.mediaCleanupDelay(null, now),
+    30 * 60 * 1000
+  );
 });

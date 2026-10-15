@@ -2,8 +2,22 @@ const crypto = require("crypto");
 const repo = require("../db/customerDataLifecycleRepo");
 const mediaStorage = require("./mediaStorageService");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const IDLE_MEDIA_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+let activeCleanupWorker = null;
+
+function wakeCustomerMediaCleanup(delayMs = 0) {
+  return activeCleanupWorker?.wake(delayMs) || false;
+}
+
+function mediaCleanupDelay(nextDueAt, nowMs = Date.now()) {
+  if (!nextDueAt) return IDLE_MEDIA_CLEANUP_INTERVAL_MS;
+  const dueAtMs = new Date(nextDueAt).getTime();
+  if (!Number.isFinite(dueAtMs)) return MEDIA_CLEANUP_INTERVAL_MS;
+  return Math.max(1000, dueAtMs - nowMs);
+}
 const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const PURGE_JOB_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RETENTION_BATCH_SIZE = 25;
@@ -102,6 +116,7 @@ async function purgeCustomerData({
       repository,
       storage,
     });
+    if (cleanup?.status !== "completed") wakeCustomerMediaCleanup(0);
     return {
       ...result,
       mediaCleanupPending: cleanup?.status !== "completed",
@@ -112,6 +127,7 @@ async function purgeCustomerData({
       `Customer ${contactId} database purge committed but media cleanup will retry:`,
       err
     );
+    wakeCustomerMediaCleanup(0);
     return {
       ...result,
       mediaCleanupPending: true,
@@ -196,18 +212,21 @@ async function runRetentionSweep({
 function startCustomerDataLifecycle({
   env = process.env,
   setIntervalFn = setInterval,
+  createWorkerTimer = createAdaptiveWorkerTimer,
   repository = repo,
   storage = mediaStorage,
 } = {}) {
-  const runCleanup = () => {
-    runMediaCleanupSweep({ repository, storage }).catch((err) => {
-      console.error("Customer purge media-cleanup sweep failed:", err);
-    });
+  const runCleanup = async () => {
+    await runMediaCleanupSweep({ repository, storage });
+    return typeof repository.getNextPurgeJobDueAt === "function"
+      ? repository.getNextPurgeJobDueAt()
+      : null;
   };
   const runRetention = () => {
     runRetentionSweep({ env, repository, storage })
       .then((result) => {
         if (result.enabled && (result.purged > 0 || result.skipped > 0)) {
+          wakeCustomerMediaCleanup(0);
           console.log(
             `Customer retention sweep: purged=${result.purged}, skipped=${result.skipped}, retention=${result.days}d.`
           );
@@ -227,8 +246,16 @@ function startCustomerDataLifecycle({
   // PR #236 deliberately keeps the hot-deploy window free for live customer
   // media traffic. Manual customer deletion still attempts its own cleanup
   // immediately; durable recovery begins on the normal cleanup interval.
-  const cleanupTimer = setIntervalFn(runCleanup, MEDIA_CLEANUP_INTERVAL_MS);
-  cleanupTimer?.unref?.();
+  const cleanupTimer = createWorkerTimer({
+    run: runCleanup,
+    delayForResult: (dueAt) => mediaCleanupDelay(dueAt),
+    errorRetryDelayMs: MEDIA_CLEANUP_INTERVAL_MS,
+    label: "Customer media cleanup recovery",
+  });
+  activeCleanupWorker = cleanupTimer;
+  // Preserve the existing ten-minute startup grace period. Manual deletion
+  // still cleans media immediately and can wake recovery after a failure.
+  cleanupTimer.start(MEDIA_CLEANUP_INTERVAL_MS);
   const retentionTimer = setIntervalFn(runRetention, RETENTION_SWEEP_INTERVAL_MS);
   retentionTimer?.unref?.();
   const pruneTimer = setIntervalFn(pruneJobs, PURGE_JOB_PRUNE_INTERVAL_MS);
@@ -240,6 +267,9 @@ function startCustomerDataLifecycle({
 module.exports = {
   CLEANUP_BATCH_SIZE,
   MEDIA_CLEANUP_INTERVAL_MS,
+  IDLE_MEDIA_CLEANUP_INTERVAL_MS,
+  mediaCleanupDelay,
+  wakeCustomerMediaCleanup,
   PURGE_JOB_PRUNE_INTERVAL_MS,
   RETENTION_BATCH_SIZE,
   RETENTION_SWEEP_INTERVAL_MS,

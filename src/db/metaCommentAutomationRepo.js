@@ -104,6 +104,25 @@ async function listRecoverable(limit = 20, database = pool) {
   return result.rows.map(rowToJob);
 }
 
+// Find the next due retry without waking Neon to re-scan completed jobs.
+async function getNextRecoverableAt(database = pool) {
+  const result = await database.query(
+    `SELECT MIN(
+         CASE
+           WHEN status IN ('pending', 'failed') THEN
+             COALESCE(next_attempt_at, created_at)
+           WHEN status = 'processing' THEN
+             updated_at + ($2::integer * interval '1 minute')
+         END
+       ) AS due_at
+       FROM meta_comment_automation_jobs
+       WHERE attempt_count < $1::integer
+         AND status IN ('pending', 'failed', 'processing')`,
+    [MAX_ATTEMPTS, STALE_PROCESSING_MINUTES]
+  );
+  return result.rows[0]?.due_at || null;
+}
+
 async function markPublicReplySent(id, replyId, database = pool) {
   const result = await database.query(
     `UPDATE meta_comment_automation_jobs
@@ -323,6 +342,7 @@ module.exports = {
   STALE_PROCESSING_MINUTES,
   claimJob,
   listRecoverable,
+  getNextRecoverableAt,
   markCompleted,
   markFailed,
   markFailedPreservingPrivateReplyPending,
