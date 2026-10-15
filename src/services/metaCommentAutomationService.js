@@ -538,7 +538,13 @@ function createMetaCommentAutomationService({
             },
           };
       const job = await repo.storeIncomingComment(eventToStore);
-      if (job) accepted.push(job);
+      if (job) {
+        accepted.push(job);
+        // Wake durable recovery as soon as the insert succeeds. If the webhook
+        // handler fails before queueing the normal immediate task, this process
+        // still discovers the saved work without waiting for the idle backstop.
+        recoveryWorker?.wake(0);
+      }
     }
     return accepted;
   }
