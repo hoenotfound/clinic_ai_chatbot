@@ -1,5 +1,6 @@
 const clinicConfig = require("../config/clinicConfig");
 const { guardAssessmentFirstPricingReply } = require("../utils/initialOfferReplyGuard");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const commentRepo = require("../db/metaCommentAutomationRepo");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
@@ -33,6 +34,16 @@ const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
 });
 
 const RECOVERY_INTERVAL_MS = 60 * 1000;
+// A rare crash between saving a job and scheduling it must still be recoverable.
+// Normal idle periods never need a minute-by-minute query.
+const IDLE_RECOVERY_SAFETY_MS = 6 * 60 * 60 * 1000;
+
+function recoveryDelayForResult(result, nowMs = Date.now()) {
+  if (!result?.nextRecoverableAt) return IDLE_RECOVERY_SAFETY_MS;
+  const dueAt = new Date(result.nextRecoverableAt).getTime();
+  if (!Number.isFinite(dueAt)) return RECOVERY_INTERVAL_MS;
+  return Math.max(1000, dueAt - nowMs);
+}
 const RECOVERY_BATCH_SIZE = 20;
 const PAUSED_SAFETY_ONLY_MARKER = "_da_paused_safety_only";
 
@@ -713,10 +724,16 @@ function createMetaCommentAutomationService({
   }
 
   let scheduledJobChain = Promise.resolve();
+  let recoveryWorker = null;
 
   function scheduleJob(jobOrId) {
+    // Webhook arrivals run immediately. Only failed jobs need a timed retry.
     const task = scheduledJobChain.then(() => processJob(jobOrId));
     scheduledJobChain = task.catch(() => {});
+    task.then(
+      (job) => { if (job?.status === "failed") recoveryWorker?.wake(0); },
+      () => { recoveryWorker?.wake(RECOVERY_INTERVAL_MS); }
+    );
     return task;
   }
 
@@ -728,17 +745,27 @@ function createMetaCommentAutomationService({
     return jobs.length;
   }
 
+  async function runRecoveryAndSchedule() {
+    await runRecoveryOnce();
+    // The next failed-job retry or stale lease determines the exact wake time.
+    // A bounded idle safety check also covers an interrupted webhook enqueue.
+    const nextRecoverableAt = typeof repo.getNextRecoverableAt === "function"
+      ? await repo.getNextRecoverableAt()
+      : null;
+    return { nextRecoverableAt };
+  }
+
   function startRecovery({ intervalMs = RECOVERY_INTERVAL_MS } = {}) {
-    runRecoveryOnce().catch((err) => {
-      console.error("Initial Meta comment automation recovery failed:", err);
+    if (recoveryWorker && !recoveryWorker.state().stopped) {
+      return () => recoveryWorker.stop();
+    }
+    recoveryWorker = createAdaptiveWorkerTimer({
+      run: runRecoveryAndSchedule,
+      delayForResult: recoveryDelayForResult,
+      errorRetryDelayMs: intervalMs,
+      label: "Meta comment recovery worker",
     });
-    const timer = setInterval(() => {
-      runRecoveryOnce().catch((err) => {
-        console.error("Meta comment automation recovery failed:", err);
-      });
-    }, intervalMs);
-    timer.unref?.();
-    return timer;
+    return recoveryWorker.start();
   }
 
   return {
@@ -756,6 +783,7 @@ module.exports = {
   DEFAULT_COMMENT_AUTOMATION,
   PAUSED_SAFETY_ONLY_MARKER,
   createMetaCommentAutomationService,
+  recoveryDelayForResult,
   buildCommentAttribution,
   deterministicCommentPublicHandoff,
   deterministicCommentSafetyCopy,
