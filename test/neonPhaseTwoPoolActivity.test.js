@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const { Pool } = require("pg");
 const { createPoolActivityTracker } = require("../src/services/databasePoolActivity");
 const { normalizeRemoteSnapshot } = require("../src/ops/clientPoller");
 
@@ -77,4 +78,28 @@ test("registry gracefully handles older client readiness without pool metrics", 
     readiness: { status: "ready" },
   }, "older-client");
   assert.equal(result.databasePool, null);
+});
+
+test("PostgreSQL integration: query acquisition is visible without extra telemetry SQL", {
+  skip: !process.env.TEST_DATABASE_URL,
+}, async () => {
+  const pool = new Pool({
+    connectionString: process.env.TEST_DATABASE_URL,
+    ssl: false,
+    max: 2,
+    idleTimeoutMillis: 1000,
+  });
+  const tracker = createPoolActivityTracker(pool);
+  try {
+    assert.equal(tracker.snapshot().acquiredTotal, 0);
+    const result = await pool.query("SELECT 1 AS ready");
+    assert.equal(Number(result.rows[0].ready), 1);
+    const metrics = tracker.snapshot();
+    assert.ok(metrics.acquiredTotal >= 1);
+    assert.ok(metrics.connectedTotal >= 1);
+    assert.ok(metrics.openConnections >= 1);
+    assert.ok(metrics.idleConnections >= 1);
+  } finally {
+    await pool.end();
+  }
 });
