@@ -1,3 +1,5 @@
+const { withDatabaseActivitySource } = require("./databaseActivityContext");
+
 function normalizeDelay(delayMs) {
   if (delayMs === null || delayMs === undefined) return null;
   const value = Number(delayMs);
@@ -80,7 +82,7 @@ function createAdaptiveWorkerTimer({
     let failed = false;
 
     try {
-      result = await run();
+      result = await withDatabaseActivitySource(label, run);
     } catch (err) {
       failed = true;
       logger.error?.(`${label} failed:`, err);

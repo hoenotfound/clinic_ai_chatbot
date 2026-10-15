@@ -3,6 +3,7 @@ const repo = require("../db/customerDataLifecycleRepo");
 const mediaStorage = require("./mediaStorageService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 const IDLE_MEDIA_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
@@ -223,7 +224,10 @@ function startCustomerDataLifecycle({
       : null;
   };
   const runRetention = () => {
-    runRetentionSweep({ env, repository, storage })
+    withDatabaseActivitySource(
+      "Customer retention sweep",
+      () => runRetentionSweep({ env, repository, storage })
+    )
       .then((result) => {
         if (result.enabled && (result.purged > 0 || result.skipped > 0)) {
           wakeCustomerMediaCleanup(0);
@@ -237,7 +241,10 @@ function startCustomerDataLifecycle({
       });
   };
   const pruneJobs = () => {
-    repository.pruneCompletedPurgeJobs().catch((err) => {
+    withDatabaseActivitySource(
+      "Customer purge-job prune",
+      () => repository.pruneCompletedPurgeJobs()
+    ).catch((err) => {
       console.error("Failed to prune completed customer purge jobs:", err);
     });
   };
