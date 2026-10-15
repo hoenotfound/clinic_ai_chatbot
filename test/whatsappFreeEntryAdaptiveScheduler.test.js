@@ -148,3 +148,47 @@ test("worker retains all existing consent, duplicate, quiet-hours and provider-s
   assert.ok(source.includes("result?.skipped === true"),
     "numeric skipped-contact counts must not cause perpetual fast polling");
 });
+
+test("intentional skips never trigger five-minute polling just because a slot is overdue", () => {
+  const now = Date.parse("2026-10-15T10:00:00Z");
+  const overdue = { nextDueAt: null, hasOverdue: true };
+  const countSkipped = { candidates: 1, skipped: 1, retryable: 0 };
+  assert.equal(worker.followUpDelayForResult(countSkipped, overdue, now),
+    15 * 60 * 1000,
+    "not-due, declined, unapproved media or low-interest leads must idle");
+  assert.equal(worker.followUpDelayForResult(
+    { candidates: 1, skipped: 1, retryable: 1 }, overdue, now),
+  5 * 60 * 1000,
+  "temporary strict billing holds remain eligible for prompt retry");
+  assert.equal(worker.followUpDelayForResult(
+    { skipped: true }, overdue, now), 5 * 60 * 1000);
+  assert.equal(worker.followUpDelayForResult(
+    { reason: "template_catalog_unavailable" }, overdue, now), 5 * 60 * 1000);
+  assert.equal(worker.followUpDelayForResult(
+    { candidates: 3, skipped: 3, retryable: 0 },
+    { nextDueAt: new Date(now + 2 * 60000), hasOverdue: true }, now),
+  2 * 60000,
+  "intentional skip must not postpone an unrelated sooner future slot");
+});
+
+test("overdue quiet-hour reminders wait for quiet-hours end, not repeated polls", () => {
+  const cfg = require("../src/config/clinicConfig");
+  const original = cfg.automatedFollowUp;
+  try {
+    cfg.automatedFollowUp = {
+      ...original, quietHours: { enabled: true, start: "00:00", end: "07:00" },
+    };
+    // Clinic timezone Asia/Kuala_Lumpur: 16:30Z = 00:30 MYT.
+    const at = new Date("2026-10-16T16:30:00Z");
+    const result = worker.summarizePotentialDue([{
+      first_reply_at: "2026-10-14T08:00:00Z",
+      last_inbound_at: "2026-10-14T07:59:00Z",
+      last_outbound_at: "2026-10-14T08:00:00Z",
+      slot_hours: 48,
+    }], { slots: [48, 66], sevenDayVerified: false }, at);
+    assert.equal(result.hasOverdue, false);
+    assert.equal(result.nextDueAt.toISOString(), "2026-10-16T23:00:00.000Z");
+  } finally {
+    cfg.automatedFollowUp = original;
+  }
+});
