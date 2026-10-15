@@ -57,3 +57,13 @@ test("live comment webhooks stay immediate while recovery no longer polls every 
   assert.doesNotMatch(source, /setInterval\(/);
   assert.doesNotMatch(source, /recoveryWorker\?\.wake\(0\);[\s\S]*?if \(job\) accepted\.push/);
 });
+
+test("Meta webhook applies staff echoes before starting immediate comment processing", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/createApp.js"), "utf8"
+  );
+  const echoIndex = source.indexOf("await metaStaffEcho.finalizeStaffEcho(persisted)");
+  const commentIndex = source.indexOf("metaCommentAutomation.scheduleJob(job.id)");
+  assert.ok(echoIndex >= 0 && commentIndex > echoIndex,
+    "comment processing must remain after staff-echo finalization");
+});
