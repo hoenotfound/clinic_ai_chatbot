@@ -6,10 +6,11 @@ const {
   runMigrations,
 } = require("./migrationRunner");
 
-// A sleeping Neon compute can take longer to accept a new connection.
-// Only connection establishment gets the longer deadline. Never replay a
-// failed SQL statement: the server may have committed an outbound claim/send.
-const DEFAULT_DATABASE_CONNECT_TIMEOUT_MS = 20_000;
+// Preserve the existing 10-second production deadline. A longer deadline can
+// be opted into only after testing the Meta router's 8-second webhook forward
+// timeout against a sleeping Neon compute. Never replay a failed SQL statement:
+// the database or provider may already have accepted the operation.
+const DEFAULT_DATABASE_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_DATABASE_POOL_MAX = 10; // node-postgres's existing default
 const DEFAULT_DATABASE_POOL_IDLE_TIMEOUT_MS = 10_000; // existing pg default
 
