@@ -23,6 +23,15 @@ Scope: Neutro Sense TCM, project `steep-forest-44509907`, endpoint
   these for quiet-window measurements.
 - Pool counters are in-memory, reset on process restart, and **are not a
   measurement of Neon CU-hours or the exact number of SQL queries**.
+- `bySource` shows connection acquisitions from named adaptive recovery
+  workers and the Meta Ads sync / customer retention maintenance. All sources
+  are bounded, static labels. Other HTTP traffic, setup tasks, and unknown
+  async contexts appear as `unattributed`. Query execution may also outlive
+  a worker context: treat source attribution as *best effort*, not accounting.
+- Each `pg.Pool` acquisition corresponds to an attempt to acquire a pooled
+  connection, **not necessarily a new TCP connection or a database wake**.
+  To identify actual Neon wake-ups, correlate sources and timestamps with
+  the Neon's endpoint state and CU-hour totals, without causing probe traffic.
 
 ## Proposed rollout after explicit approval
 
@@ -68,8 +77,9 @@ Scope: Neutro Sense TCM, project `steep-forest-44509907`, endpoint
 
 `databasePool` contains `acquiredTotal`, `connectedTotal`,
 `removedTotal`, `last5Minutes`, `last15Minutes`,
-`lastAcquireAt`, `openConnections`, `idleConnections`, and
-`waitingForConnection`. It contains **no SQL text, passwords, message
-content, customer identifiers or background timers**. The standalone
+`lastAcquireAt`, `openConnections`, `idleConnections`,
+`waitingForConnection`, and a limited `bySource` summary.
+It contains **no SQL text, passwords, message content, customer identifiers,
+or background timers**. The standalone
 `/api/ops/readiness/pool-activity` route has no database dependencies;
 the normal full readiness route still queries Neon.
