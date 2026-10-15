@@ -767,7 +767,7 @@ function createMetaCommentAutomationService({
     }
     recoveryWorker = createAdaptiveWorkerTimer({
       run: runRecoveryAndSchedule,
-      delayForResult: recoveryDelayForResult,
+      delayForResult: (result) => recoveryDelayForResult(result),
       errorRetryDelayMs: intervalMs,
       label: "Meta comment recovery worker",
     });
