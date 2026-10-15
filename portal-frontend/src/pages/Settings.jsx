@@ -715,6 +715,42 @@ function PromotionFollowUpTranslationsEditor({ value = {}, onChange }) {
   );
 }
 
+function PromotionPriceFields({ pricing, onChange }) {
+  // Store ordinary numeric MYR amounts, not price information parsed from
+  // translated captions, images, or emoji-digit promotional copy.
+  const updatePrice = (field, raw) => {
+    const amount = raw === "" ? null : Number(raw);
+    const offer = field === "offer" ? amount : pricing?.offer ?? null;
+    const normal = field === "normal" ? amount : pricing?.normal ?? null;
+    onChange(offer === null
+      ? undefined
+      : { currency: "MYR", offer, ...(normal === null ? {} : { normal }) });
+  };
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+      <p className="text-xs font-semibold">Verified MYR prices (optional)</p>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Use numeric amounts such as 488. When omitted, the existing caption-verification method remains in use.
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className={labelClass}>Current offer price (RM)</label>
+          <input type="number" min="1" max="1000000" step="1" className={inputClass}
+            value={pricing?.offer ?? ""}
+            onChange={(event) => updatePrice("offer", event.target.value)} />
+        </div>
+        <div>
+          <label className={labelClass}>Normal price (RM, optional)</label>
+          <input type="number" min="1" max="1000000" step="1" className={inputClass}
+            disabled={pricing?.offer == null}
+            value={pricing?.normal ?? ""}
+            onChange={(event) => updatePrice("normal", event.target.value)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PromotionPackagesEditor({ items, onChange, onError }) {
   const [openIndex, setOpenIndex] = useState(null);
 
@@ -736,7 +772,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
   function addPackage() {
     const next = [
       ...items,
-      { name: "", title: "", aliases: [], imageUrl: "", caption: "", mediaTranslations: {}, followUpMessage: "", followUpImageUrl: "", followUpTranslations: {} },
+      { name: "", title: "", aliases: [], imageUrl: "", caption: "", pricing: undefined, mediaTranslations: {}, followUpMessage: "", followUpImageUrl: "", followUpTranslations: {} },
     ];
     onChange(next);
     setOpenIndex(next.length - 1);
@@ -812,6 +848,8 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                       onError={onError}
                     />
                   </div>
+                  <PromotionPriceFields pricing={item.pricing}
+                    onChange={(pricing) => updatePackage(index, "pricing", pricing)} />
                   <div>
                     <label className={labelClass}>Caption sent with this image</label>
                     <textarea
@@ -1841,6 +1879,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   aliases: cleanStrings(item.aliases || []),
                   imageUrl: String(item.imageUrl || "").trim(),
                   caption: String(item.caption || "").trim(),
+                  ...(item.pricing ? { pricing: item.pricing } : {}),
                   ...(Object.keys(cleanMediaTranslations(item.mediaTranslations)).length
                     ? { mediaTranslations: cleanMediaTranslations(item.mediaTranslations) }
                     : {}),
@@ -1857,6 +1896,7 @@ function PromotionsTab({ config, onSaved, onError }) {
             : [],
           imageUrl: packageMode ? "" : p.imageUrl.trim(),
           caption: packageMode ? "" : p.caption.trim(),
+          ...(!packageMode && p.pricing ? { pricing: p.pricing } : {}),
           ...(!packageMode && Object.keys(cleanMediaTranslations(p.mediaTranslations)).length
             ? { mediaTranslations: cleanMediaTranslations(p.mediaTranslations) }
             : {}),
@@ -2082,6 +2122,8 @@ function PromotionsTab({ config, onSaved, onError }) {
                             onError={onError}
                           />
                         </div>
+                        <PromotionPriceFields pricing={item.pricing}
+                          onChange={(pricing) => updateItem(index, { pricing })} />
                         <div>
                           <label className={labelClass}>Caption sent with the image</label>
                           <textarea
@@ -2653,6 +2695,8 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     messagingStyle: config.messagingStyle || "",
     closingPlaybook: config.closingPlaybook || "",
     sop: config.sop || "",
+    aiPricingIntentMode: config.aiPricingIntentMode || "off",
+    aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
   });
   const [saving, setSaving] = useState(false);
 
@@ -2674,6 +2718,23 @@ function AiBehaviorTab({ config, onSaved, onError }) {
         title="AI Behavior"
         description="Read literally by the AI as instructions, not just background — edit carefully, since these directly shape every reply."
       />
+      <Field label="AI pricing graphic decisions" hint="Per-client rollout. Shadow logs AI pricing decisions without changing what gets sent.">
+        <select className={inputClass} value={form.aiPricingIntentMode}
+          onChange={(event) => setForm({ ...form, aiPricingIntentMode: event.target.value })}>
+          <option value="off">Off: existing pricing trigger</option>
+          <option value="shadow">Shadow: record AI decisions only</option>
+          <option value="enabled">Enabled: verified AI pricing decisions</option>
+        </select>
+        <label className="mt-3 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.aiPricingOfferEnquiriesEnabled}
+            onChange={(event) => setForm({ ...form, aiPricingOfferEnquiriesEnabled: event.target.checked })} />
+          Also allow questions asking for available packages or offers
+        </label>
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+          Leave unchecked to send promotion images only for monetary price enquiries.
+          Staff takeover, duplicate, verified offer and channel billing checks always apply.
+        </p>
+      </Field>
       <Field label="Texting style" hint="Concrete rules for how the AI writes messages (length, tone, punctuation, etc.).">
         <textarea
           rows={10}
