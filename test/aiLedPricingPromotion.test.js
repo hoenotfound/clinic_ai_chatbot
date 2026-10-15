@@ -1,10 +1,9 @@
 "use strict";
-
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const config = require("../src/config/clinicConfig");
-const { resolveAiPricingIntent } = require("../src/utils/aiPricingIntentDecision");
-const { ensureVerifiedPriceReply, verifiedPricesForService } = require("../src/utils/verifiedPriceReply");
+const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
+const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
@@ -15,143 +14,216 @@ const aliases = [
   { alias: "9D", officialService: "9D 逆龄抗衰" },
   { alias: "骨盆", officialService: "骨盆调理" },
 ];
-const promotion = {
-  name: "3D First Trial",
-  linkedService: "3D 小颜术",
-  sendOnPriceQuery: true,
-  imageUrl: "https://example.test/promo/32",
-  caption: "限时优惠 First Trial",
-  followUpMessage: "3D First Trial 只需 RM 4️⃣8️⃣8️⃣ (原价 RM888)",
+const trial = {
+  name: "3D First Trial", linkedService: "3D 小颜术",
+  sendOnPriceQuery: true, imageUrl: "https://example.test/promo/32",
+  caption: "3D First Trial 限时优惠",
+  followUpMessage: "只需 RM 4️⃣8️⃣8️⃣ (原价 RM888)",
   pricing: { currency: "MYR", offer: 488, normal: 888 },
 };
+const pelvic = {
+  name: "骨盆", linkedService: "骨盆调理", sendOnPriceQuery: true,
+  imageUrl: "", caption: "",
+  packages: [
+    { name: "Package A", imageUrl: "https://example.test/a", caption: "现在只需 RM388",
+      pricing: { currency: "MYR", offer: 388, normal: 488 } },
+    { name: "Package B", imageUrl: "https://example.test/b", caption: "现在只需 RM288",
+      pricing: { currency: "MYR", offer: 288, normal: 388 } },
+  ],
+};
+const promotions = [trial, pelvic];
 const history = [
   { role: "user", content: "Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～" },
   { role: "assistant", content: "3D小颜术是我们的徒手脸型护理。" },
-  { role: "assistant", content: "这个是顾客完成一次3D小颜术后的 Before & After。" },
+  { role: "assistant", content: "这是顾客的 Before & After。" },
   { role: "user", content: "请问,做一次多少" },
 ];
-function decision(overrides = {}) {
-  return resolveAiPricingIntent({
-    intent: { type: "price", treatment: "3D 小颜术", source: "recent_customer" },
-    customerText: "请问,做一次多少",
-    conversationHistory: history,
-    services, serviceAliases: aliases,
-    ...overrides,
+function decide(overrides = {}) {
+  return resolveAiPricingDecision({
+    priceQuery: true,
+    treatment: "3D 小颜术", customerText: "请问,做一次多少",
+    conversationHistory: history, services, serviceAliases: aliases,
+    promotions, ...overrides,
   });
 }
-async function withAssessmentFirst(fn) {
-  const previous = config.automatedFollowUp;
-  config.automatedFollowUp = { ...previous, assessmentFirstPricingEnabled: true };
+async function inAssessmentFirst(fn) {
+  const original = config.automatedFollowUp;
+  config.automatedFollowUp = { ...original, assessmentFirstPricingEnabled: true };
   try { return await fn(); }
-  finally { config.automatedFollowUp = previous; }
+  finally { config.automatedFollowUp = original; }
+}
+function mediaArgs(decision, overrides = {}) {
+  return {
+    aiPricingEnabled: true, pricingDecision: decision,
+    customerText: "请问,做一次多少", conversationHistory: history,
+    treatment: decision?.treatment || null, verifiedServiceFromText: decision?.treatment || null,
+    promotions, services, serviceAliases: aliases, resultMedia: [],
+    flagged: false, bookingReady: false, needsAttention: false,
+    keywordReason: null, textSendSucceeded: true,
+    contactId: 484, language: "zh",
+    wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    ...overrides,
+  };
 }
 
-test("structured reply parser retains AI pricing intent without changing priceQuery", () => {
-  const raw = JSON.stringify({
-    reply: "First Trial details",
-    outcome: "normal", serviceQuery: true, serviceQuerySource: "conversation",
-    priceQuery: false, packageQuery: false,
-    pricingIntent: { type: "price", treatment: "3D 小颜术", source: "recent_customer" },
+test("uses existing model price flags without adding a second AI response contract", () => {
+  const parsed = parseAiReplyResult(JSON.stringify({
+    reply: "我帮你确认价格 😊", outcome: "normal",
+    serviceQuery: true, serviceQuerySource: "conversation",
+    priceQuery: true, packageQuery: false, treatment: "3D 小颜术",
+  }));
+  assert.equal(parsed.priceQuery, true);
+  assert.equal(parsed.details.treatment, "3D 小颜术");
+  assert.equal(Object.hasOwn(parsed, "pricingIntent"), false);
+});
+
+test("Neutro's reported '做一次多少' resolves 3D and its verified RM488 price", () => {
+  const d = decide();
+  assert.equal(d?.type, "price");
+  assert.equal(d?.treatment, "3D 小颜术");
+  assert.equal(d?.source, "recent_customer");
+  assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+});
+
+test("explicit current treatment and AI-missed price keyword both work", () => {
+  const h = [{ role: "user", content: "3D First Trial 多少钱？" }];
+  const d = decide({ priceQuery: false, customerText: "3D First Trial 多少钱？",
+    conversationHistory: h });
+  assert.equal(d?.treatment, "3D 小颜术");
+  assert.equal(d?.prices?.[0]?.price, "RM488");
+});
+
+test("a short relevant interim customer question can bridge once", () => {
+  const h = [
+    { role: "user", content: "想了解3D小颜术" },
+    { role: "user", content: "这个效果好吗？" },
+    { role: "user", content: "做一次多少?" },
+  ];
+  const d = decide({ customerText: "做一次多少?", conversationHistory: h });
+  assert.equal(d?.treatment, "3D 小颜术");
+});
+
+test("unrelated topics, staff intervention, stale history, ambiguity and ad-only guesses fail closed", () => {
+  const cases = [
+    { treatment: "9D 逆龄抗衰" },
+    { customerText: "3D和9D都多少钱?", conversationHistory: [{role:"user",content:"3D和9D都多少钱?"}] },
+    { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"assistant",content:"[Verified STAFF message] 请先联系我们"},{role:"user",content:"请问,做一次多少"}] },
+    { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"我想改聊其他事情"},{role:"user",content:"请问,做一次多少"}] },
+    { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"你们停车在哪?"},{role:"user",content:"请问,做一次多少"}] },
+    { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"你好"},{role:"user",content:"请问,做一次多少"}] },
+    { conversationHistory: [{role:"assistant",content:"看起来你想做3D小颜术"},{role:"user",content:"请问,做一次多少"}] },
+  ];
+  for (const item of cases) assert.equal(decide(item), null, JSON.stringify(item));
+});
+
+test("future promotion consent, refused prices, clinical concerns and free assessment questions fail closed", () => {
+  const base = [{ role:"user",content:"想了解3D小颜术" }];
+  for (const customerText of [
+    "3D小颜术，之后有优惠可以发我",
+    "我不要报价",
+    "怀孕了做一次多少",
+    "这个免费1对1评估是多少钱",
+  ]) {
+    assert.equal(decide({
+      customerText, conversationHistory: [...base,{ role:"user",content:customerText }],
+      complimentaryAssessmentExperienceEnabled: true,
+    }), null, customerText);
+  }
+});
+
+test("a package-price clarification inherits only the customer-named Package B", async () => {
+  const customerText = "骨盆调理";
+  const h = [
+    { role:"user",content:"Package B 多少钱？" },
+    { role:"assistant",content:"请问你想了解哪个疗程的价格呢？" },
+    { role:"user",content:customerText },
+  ];
+  const d = decide({ priceQuery:false, treatment:"骨盆调理",
+    customerText, conversationHistory:h });
+  assert.equal(d?.clarifiedPriceService, "骨盆调理");
+  assert.deepEqual(d?.prices?.map(p => [p.name, p.price]), [["Package B", "RM288"]]);
+  await inAssessmentFirst(async () => {
+    const media = await resolvePricePromotionForReply(mediaArgs(d, {
+      customerText, conversationHistory:h, contactId:55,
+    }));
+    assert.deepEqual(media?.packages?.map(p => p.name), ["Package B"]);
   });
-  const result = parseAiReplyResult(raw);
-  assert.equal(result.pricingIntent.type, "price");
-  assert.equal(result.pricingIntent.treatment, "3D 小颜术");
-  assert.equal(result.priceQuery, false);
 });
 
-test("Ms's real follow-up is a verified contextual 3D price request", () => {
-  assert.deepEqual(decision(), {
-    type: "price", treatment: "3D 小颜术", source: "recent_customer",
+test("offer/package requests require the separate opt-in", () => {
+  const current = "3D小颜术有什么配套?";
+  const opts = { priceQuery:false, packageQuery:true,
+    treatment:"3D 小颜术", customerText:current,
+    conversationHistory:[{role:"user",content:current}] };
+  assert.equal(decide(opts), null);
+  assert.equal(decide({...opts,allowOfferEnquiries:true})?.type,"package_options");
+});
+
+test("ordinary non-price answers remain unchanged in enabled mode", () => {
+  const text = "我们可以先帮你做免费1对1评估+体验，了解你想改善的地方 😊";
+  const result = ensureVerifiedPriceReply({ customerText:"我想了解3D小颜术",
+    reply:text, pricingDecision:null, priceRequested:false, language:"zh" });
+  assert.equal(result.reply, text);
+  assert.equal(result.restored, false);
+});
+
+test("AI cannot promise an image or quote an unsupported price when no decision verifies it", () => {
+  const guarded = ensureVerifiedPriceReply({
+    customerText:"请问,做一次多少", priceRequested:true, pricingDecision:null,
+    reply:"3D First Trial RM999，我发优惠详情给你", language:"zh",
   });
+  assert.doesNotMatch(guarded.reply, /RM999|发优惠详情/u);
+  assert.match(guarded.reply, /哪项疗程的价格/u);
 });
 
-test("AI pricing decision does not authorize a guessed, unrelated, or ambiguous service", () => {
-  assert.equal(decision({ intent: { type: "price", treatment: "9D 逆龄抗衰", source: "recent_customer" } }), null);
-  assert.equal(decision({ intent: { type: "price", treatment: "3D 小颜术", source: "meta_ad" } }), null);
-  assert.equal(decision({ customerText: "3D 和 9D 哪个多少钱？" }), null);
-  assert.equal(decision({
-    conversationHistory: [
-      { role: "user", content: "我想了解3D小颜术" },
-      { role: "assistant", content: "[Verified STAFF message] 先沟通一下" },
-      { role: "user", content: "请问,做一次多少" },
-    ],
-  }), null);
-  assert.equal(decision({
-    conversationHistory: [
-      { role: "user", content: "我想了解3D小颜术" },
-      { role: "user", content: "我想改聊其他事情" },
-      { role: "user", content: "请问,做一次多少" },
-    ],
-  }), null);
+test("configured text-only offer still gives a verified price without an automatic graphic", async () => {
+  const textOnly = {...trial,sendOnPriceQuery:false};
+  const d = decide({ promotions:[textOnly] });
+  assert.equal(d?.prices?.[0]?.price,"RM488");
+  const reply = ensureVerifiedPriceReply({
+    customerText:"请问,做一次多少",reply:"我帮你查价格",
+    pricingDecision:d, treatment:d.treatment, language:"zh",
+  });
+  assert.match(reply.reply,/RM488/u);
+  const media=await resolvePricePromotionForReply(mediaArgs(d,{promotions:[textOnly]}));
+  assert.equal(media,null);
 });
 
-test("future follow-up permission, medical concerns, and free-assessment fee do not send price graphics", () => {
-  assert.equal(decision({
-    customerText: "想了解3D小颜术，可以 WhatsApp 跟进我和发相关优惠",
-    intent: { type: "price", treatment: "3D 小颜术", source: "current_customer" },
-  }), null);
-  assert.equal(decision({ customerText: "怀孕了做一次多少" }), null);
-  assert.equal(decision({
-    customerText: "你们免费1对1评估多少钱",
-    complimentaryAssessmentExperienceEnabled: true,
-  }), null);
-});
-
-test("package offers remain off unless the clinic explicitly opts in", () => {
-  const intent = { type: "package_options", treatment: "3D 小颜术", source: "recent_customer" };
-  assert.equal(decision({ intent }), null);
-  assert.equal(decision({ intent, allowOfferEnquiries: true }).type, "package_options");
-});
-
-test("numeric offer amounts remain authoritative, with conflicting price copy blocked", () => {
-  assert.equal(verifiedPricesForService("3D 小颜术", [promotion])[0].price, "RM488");
-  const bad = { ...promotion, followUpMessage: "现在只需 RM588" };
-  assert.equal(verifiedPricesForService("3D 小颜术", [bad]), null);
-});
-
-test("one verified decision governs both price text and optional graphic", async () => {
-  await withAssessmentFirst(async () => {
-    const ai = decision();
-    assert.ok(ai);
+test("one decision supplies identical approved price and promotion image", async () => {
+  await inAssessmentFirst(async () => {
+    const d = decide();
     const guarded = guardAssessmentFirstPricingReply({
-      customerText: "请问,做一次多少", reply: "这项疗程 RM488",
-      treatment: ai.treatment, verifiedPricingIntent: true,
-      requireVerifiedTreatment: true, services, serviceAliases: aliases,
-      conversationHistory: history, resultMedia: [],
+      customerText:"请问,做一次多少",reply:"3D 小颜术 RM488",
+      treatment:d.treatment,verifiedPricingIntent:true,requireVerifiedTreatment:true,
+      services,serviceAliases:aliases,conversationHistory:history,resultMedia:[],
     });
-    assert.equal(guarded.replaced, false);
+    assert.equal(guarded.replaced,false);
     const text = ensureVerifiedPriceReply({
-      customerText: "请问,做一次多少", reply: "我们有优惠我发你",
-      treatment: ai.treatment, verifiedPricingIntent: true,
-      services, serviceAliases: aliases, promotions: [promotion],
-      conversationHistory: history, resultMedia: [], language: "zh",
+      customerText:"请问,做一次多少",reply:"我们有优惠我发你",
+      treatment:d.treatment,pricingDecision:d,priceRequested:true,
+      services,serviceAliases:aliases,promotions,conversationHistory:history,
+      resultMedia:[],language:"zh",
     });
-    assert.match(text.reply, /RM488/);
-    const shared = {
-      customerText: "请问,做一次多少", conversationHistory: history,
-      priceQuery: false, packageQuery: false,
-      treatment: ai.treatment, verifiedServiceFromText: ai.treatment,
-      verifiedPricingIntent: true, aiPricingEnabled: true,
-      flagged: false, bookingReady: false, keywordReason: null, needsAttention: false,
-      textSendSucceeded: true, promotions: [promotion],
-      services, serviceAliases: aliases, resultMedia: [],
-      contactId: 484, language: "zh",
-      wasPromoRecentlySent: async () => false,
-      hasUnconfirmedMediaDelivery: async () => false,
-    };
-    const media = await resolvePricePromotionForReply(shared);
-    assert.equal(media?.packages[0]?.imageUrl, promotion.imageUrl);
-    assert.equal(await resolvePricePromotionForReply({
-      ...shared, wasPromoRecentlySent: async () => true,
-    }), null, "manually sent graphic must not be repeated");
-    assert.equal(await resolvePricePromotionForReply({
-      ...shared, hasUnconfirmedMediaDelivery: async () => true,
-    }), null, "unknown Meta receipt must never be blindly resent");
-    assert.equal(await resolvePricePromotionForReply({
-      ...shared, textSendSucceeded: false,
-    }), null, "a failed initial text must not create an independent media send");
-    assert.equal(await resolvePricePromotionForReply({
-      ...shared, verifiedPricingIntent: false,
-    }), null, "AI pricing classification alone is not enough");
+    assert.match(text.reply,/RM488/u);
+    assert.doesNotMatch(text.reply,/我发你/u);
+    const media = await resolvePricePromotionForReply(mediaArgs(d));
+    assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl);
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(d,{
+      wasPromoRecentlySent:async()=>true,
+    })),null,"staff-forwarded duplicate must be skipped");
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(d,{
+      hasUnconfirmedMediaDelivery:async()=>true,
+    })),null,"uncertain provider receipt must fail closed");
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(d,{
+      textSendSucceeded:false,
+    })),null,"failed reply must not create separate image send");
   });
+});
+
+test("unverified and contradictory promo prices never result in a graphic", async () => {
+  const bad={...trial,followUpMessage:"现在只需 RM588"};
+  const d=decide({promotions:[bad]});
+  assert.equal(d?.prices,null);
+  assert.equal(await resolvePricePromotionForReply(mediaArgs(d,{promotions:[bad]})),null);
 });
