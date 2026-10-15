@@ -16,6 +16,13 @@ const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊�
 const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
 const STAFF_PREFIX = /^\[Verified STAFF message\]/u;
 const UNRELATED = /(?:停车|停車|营业|營業|开门|開門|几点|幾點|在哪|地址|分行|预约|預約|退款|取消|\b(?:parking|hours|location|address|branch|booking|appointment|refund|cancel)\b)/iu;
+// Obvious non-monetary questions must not become a price enquiry just
+// because a provider mistakenly sets priceQuery=true. A separate monetary
+// question in the same message still qualifies.
+const NON_MONETARY_ONLY = /(?:多久|多長|多长|幾分鐘|几分钟|幾小時|几小时|多少(?:时间|時間|次|回|疗程|療程)|幾次|几次|要做幾次|要做几次|\b(?:how\s+long|how\s+much\s+time|how\s+many\s+(?:sessions?|times?|treatments?)|berapa\s+(?:lama|masa|kali|sesi|jam|minit))\b)/iu;
+const DEFINITE_MONEY = /(?:多少[钱錢]|[价價](?:格|钱|錢|位)|费[用]?|費用|幾[钱錢]|几[钱錢]|\b(?:price|pricing|cost|fee|harga|bayaran|rm|myr|ringgit)\b)/iu;
+const STALE_SERVICE_PRICE = /(?:\b(?:old|former|previous|expired|past|promotion|promo|special|offer|discount|trial|sale|campaign|voucher)\b|旧|舊|原价|原價|優惠|优惠|折扣|特价|特價|促销|促銷|限时|限時|过期|過期|活动|活動|曾经|曾經)/iu;
+const SINGLE_STANDING_PRICE = /^(?:(?:normal|regular|standard)\s+(?:price\s*)?[:：]?\s*)?(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?(?:\s*(?:per\s+(?:session|treatment)|\/\s*(?:session|treatment)|每次|一次))?$/iu;
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
 
 function verifiedServiceAnchor({
@@ -72,6 +79,7 @@ function resolveAiPricingDecision({
   const current = String(customerText || "").trim();
   if (!current || RESET.test(current) || REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
+      (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
       isComplimentaryAssessmentFeeQuestion(
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
@@ -109,9 +117,12 @@ function resolveAiPricingDecision({
   const activeOffer = getActivePromotions(promotions).some(p => p.linkedService === anchor.treatment);
   const rawServicePrice = !activeOffer
     ? services.find(s => s.name === anchor.treatment)?.priceRange : null;
+  // SERVICE.priceRange may contain expired marketing copy or ambiguous ranges.
+  // Only a single explicitly standing MYR price can be quoted as a fallback.
   const servicePrice = typeof rawServicePrice === "string" &&
-    rawServicePrice.trim().length <= 180 &&
-    /(?:\b(?:RM|MYR|USD|SGD|EUR|GBP)\s*|[$€£]\s*)\d/iu.test(rawServicePrice)
+    rawServicePrice.trim().length <= 100 &&
+    !STALE_SERVICE_PRICE.test(rawServicePrice) &&
+    SINGLE_STANDING_PRICE.test(rawServicePrice.trim())
       ? rawServicePrice.trim() : null;
   return Object.freeze({
     type, treatment: anchor.treatment, source: anchor.source,
