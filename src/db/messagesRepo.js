@@ -1071,8 +1071,8 @@ async function setWhatsappMessageId(messageId, whatsappMessageId, {
     // Meta may have persisted verified free-entry pricing before this outbound
     // WAMID became locally visible. Signal the scheduler AFTER the committed
     // link; the opposite ordering is covered by the pricing callback's signal.
-    // Check the indexed evidence key without adding another database round
-    // trip. This is best-effort and must never turn an accepted send into a
+    // Check the indexed evidence key in a best-effort extra read. Failure
+    // here must never turn an accepted send into a
     // failed or duplicate send if pricing lookup/realtime signaling fails.
     try {
       const proof = await client.query(
