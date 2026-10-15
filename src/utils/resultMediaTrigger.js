@@ -482,7 +482,17 @@ async function resolveResultMediaForReply(options = {}) {
     return null;
   };
   if (!CONTEXTUAL_FALLBACK_SKIP_REASONS.has(originalSkip) ||
-      !isContextualResultOutcomeQuestion(options.customerText)) {
+      !isContextualResultOutcomeQuestion(options.customerText) ||
+      // A current-turn named treatment belongs to the original triggers;
+      // contextual recovery must never override a same-turn intent decision.
+      customerNamedServices(
+        options.resultMedia, options.customerText,
+        options.serviceAliases, options.services
+      ).length !== 0 ||
+      !(Array.isArray(options.resultMedia) && options.resultMedia.some((entry) =>
+        entry?.enabled === true &&
+        normalizeResultMediaTriggerMode(entry) === "service_enquiry"
+      ))) {
     return emitSkip(originalSkip);
   }
 
