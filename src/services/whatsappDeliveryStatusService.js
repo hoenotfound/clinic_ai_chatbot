@@ -95,6 +95,10 @@ function createWhatsAppDeliveryStatusService({
     ? contactsRepo.clearDeliveryAttentionIfNoFailedMessages : async () => null,
   sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
+  wakeResultMedia = whatsappResultMediaQueue.wake,
+  reconcileFreeOnlyGate = whatsappZeroCostGuard.reconcileConfirmedGate,
+  publishPricingEvidence = () =>
+    realtimeEvents.publishInternal("whatsapp_fep_billing_evidence", {}),
 } = {}) {
   let recoveryRunning = false;
   let lastPrunedAt = Date.now();
@@ -112,12 +116,12 @@ function createWhatsAppDeliveryStatusService({
       // The FEP timer may be sleeping past a newly verified billing epoch.
       // Signal it only AFTER the pricing evidence has been durably stored.
       // Internal-only: no customer SSE traffic and no new provider sends.
-      realtimeEvents.publishInternal("whatsapp_fep_billing_evidence", {});
-      whatsappResultMediaQueue.wake(0);
+      publishPricingEvidence();
+      wakeResultMedia(0);
       // The webhook can arrive minutes before another outbound send. Clear
       // only proof-backed gates immediately, without waiting on Telegram.
-      Promise.resolve().then(() => whatsappZeroCostGuard.reconcileConfirmedGate())
-        .then((released) => { if (released) whatsappResultMediaQueue.wake(0); })
+      Promise.resolve().then(() => reconcileFreeOnlyGate())
+        .then((released) => { if (released) wakeResultMedia(0); })
         .catch((err) => logger.error("[WhatsApp free-only] Gate reconciliation failed:", err));
     }
     // Never delay a webhook or drop persisted pricing evidence if Telegram
