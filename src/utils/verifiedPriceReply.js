@@ -208,11 +208,22 @@ function ensureVerifiedPriceReply({
   // images. No price decision must not leave an invented quote or a promise to
   // send promotion media in the AI text.
   if (aiLed && (!pricingDecision || pricingDecision.treatment !== treatment)) {
-    const safeText = nonPriceExplanation(original);
-    if (!priceRequested && !hasCommercialReplyContent(original)) {
+    // Non-price service replies must remain intact. Only remove a genuinely
+    // unsolicited numeric price or a promise of promotional media that may
+    // never pass the provider's separate delivery checks.
+    const mediaPromise = /(?:我(?:会|會|现在|現在|等下|先)?发.{0,35}(?:优惠|優惠|促销|促銷|图片|圖片|详情|詳情|资料|資料|图)|\b(?:send|sending|share|forward)\b.{0,50}\b(?:promo|offer|image|graphic|promotion details)\b|\b(?:hantar|kongsikan)\b.{0,50}\b(?:promosi|gambar)\b)/iu.test(original);
+    const unsolicitedAmount = hasTreatmentPriceContent(original);
+    if (!priceRequested && !mediaPromise && !unsolicitedAmount) {
       return { reply: original, restored: false };
     }
+    const safeText = nonPriceExplanation(original);
     const locale = String(language || "").toLowerCase();
+    if (!priceRequested) {
+      const fallback = locale.startsWith("ms") ? "Boleh saya bantu terangkan rawatan ini 😊"
+        : locale.startsWith("en") ? "I can help explain this treatment 😊"
+          : "我可以先帮你介绍这项疗程哦 😊";
+      return { reply: safeText || fallback, restored: true };
+    }
     const question = locale.startsWith("ms")
       ? "Harga untuk rawatan yang mana satu ya? Saya boleh bantu semak 😊"
       : locale.startsWith("en")
