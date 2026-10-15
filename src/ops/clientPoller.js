@@ -33,6 +33,22 @@ function tokenFromEnv(client, env = process.env) {
   return token;
 }
 
+function normalizePoolActivity(value) {
+  if (!value || typeof value !== "object") return null;
+  const counters = ["acquiredTotal", "connectedTotal", "removedTotal",
+    "last5Minutes", "last15Minutes", "openConnections", "idleConnections",
+    "waitingForConnection"];
+  const result = {};
+  for (const key of counters) {
+    const number = value[key];
+    result[key] = Number.isSafeInteger(number) && number >= 0 ? number : null;
+  }
+  result.lastAcquireAt = typeof value.lastAcquireAt === "string"
+    && !Number.isNaN(Date.parse(value.lastAcquireAt))
+    ? new Date(value.lastAcquireAt).toISOString() : null;
+  return result;
+}
+
 function normalizeRemoteSnapshot(payload, expectedSlug = null) {
   if (!payload || Number(payload.schemaVersion) !== 1 || payload.source !== "da-chatbot") {
     throw new Error("Client returned an unsupported operations-readiness schema.");
@@ -60,6 +76,9 @@ function normalizeRemoteSnapshot(payload, expectedSlug = null) {
       startedAt: payload?.deployment?.startedAt || null,
       appVersion: payload?.deployment?.appVersion || null,
     },
+    // Optional non-sensitive telemetry from newer clients. No credentials or
+    // customer content are carried by this field.
+    databasePool: normalizePoolActivity(payload.databasePool),
     readiness: {
       status: payload.readiness.status,
       ready: payload.readiness.ready === true,
