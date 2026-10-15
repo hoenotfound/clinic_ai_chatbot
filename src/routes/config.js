@@ -159,6 +159,8 @@ const VALIDATORS = {
     Array.isArray(v) &&
     v.every((b) => isPlainObject(b) && isNonEmptyString(b.name) && isString(b.address) && isString(b.phone)),
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
+  aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
+  aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
   promotions: (v) =>
     Array.isArray(v) &&
     v.every(
@@ -169,6 +171,7 @@ const VALIDATORS = {
         isString(p.caption) &&
         (p.linkedService === undefined || isString(p.linkedService)) &&
         (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean") &&
+        isPromotionPricing(p.pricing) &&
         (
           p.followUpMessage === undefined ||
           (isString(p.followUpMessage) && p.followUpMessage.trim().length <= 1000)
@@ -253,11 +256,20 @@ function hasPromotionFollowUpCopy(value) {
   );
 }
 
+function isPromotionPricing(value) {
+  if (value === undefined) return true;
+  return isPlainObject(value) && value.currency === "MYR" &&
+    Number.isSafeInteger(value.offer) && value.offer > 0 && value.offer <= 1000000 &&
+    (value.normal === undefined ||
+      (Number.isSafeInteger(value.normal) && value.normal >= value.offer && value.normal <= 1000000));
+}
+
 function isPromotionPackage(value) {
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.name) &&
     (value.title === undefined || isString(value.title)) &&
+    isPromotionPricing(value.pricing) &&
     (
       value.aliases === undefined ||
       (Array.isArray(value.aliases) && value.aliases.every(isString))
