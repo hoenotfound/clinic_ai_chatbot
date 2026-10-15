@@ -381,12 +381,23 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         "UPDATE whatsapp_free_only_send_gate SET updated_at=now()-interval '6 minutes' WHERE reservation_id=$1",
         [next.reservationId]
       );
-      const released=await freeOnlyReconciliation.reconcile({
-        actor:"admin",reservationId:next.reservationId,
-        reason:"Reviewed the exact WhatsApp conversation and Meta billing records; no unmatched delivery remains.",
-        confirmedBillingHub:true,
-      },guardDb);
+      const events = require("../src/utils/realtimeEvents");
+      let billingWakes = 0;
+      const unsubscribeBilling = events.subscribe("whatsapp_fep_billing_evidence",
+        () => { billingWakes++; });
+      let released;
+      try {
+        released = await freeOnlyReconciliation.reconcile({
+          actor:"admin",reservationId:next.reservationId,
+          reason:"Reviewed the exact WhatsApp conversation and Meta billing records; no unmatched delivery remains.",
+          confirmedBillingHub:true,
+        },guardDb);
+      } finally {
+        unsubscribeBilling();
+      }
       assert.equal(released.success,true);
+      assert.equal(billingWakes,1,
+        "committed manual billing reconciliation must wake the FEP scheduler exactly once");
       const audit=await guardDb.query(`
         SELECT actor,prior_status,verified_billing_hub
         FROM whatsapp_free_only_reconciliations
