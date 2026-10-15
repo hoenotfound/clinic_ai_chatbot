@@ -95,10 +95,38 @@ function createWhatsAppDeliveryStatusService({
     ? contactsRepo.clearDeliveryAttentionIfNoFailedMessages : async () => null,
   sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
+  wakeResultMedia = whatsappResultMediaQueue.wake,
+  reconcileFreeOnlyGate = whatsappZeroCostGuard.reconcileConfirmedGate,
+  publishPricingEvidence = () =>
+    realtimeEvents.publishInternal("whatsapp_fep_billing_evidence", {}),
 } = {}) {
   let recoveryRunning = false;
   let lastPrunedAt = Date.now();
   let recoveryTimer = null;
+  // Only the first meaningful Meta free-entry pricing state for a WAMID
+  // needs to re-evaluate extended templates. Read/delivered callbacks
+  // repeating the same pricing proof must not repeatedly poll Neon.
+  const lastFepPricingSignal = new Map();
+  const MAX_FEP_SIGNAL_KEYS = 2048;
+
+  function signalChangedFepPricing(updates) {
+    let changed = false;
+    for (const item of updates || []) {
+      if (item?.pricingType !== "free_entry_point" ||
+          typeof item.pricingBillable !== "boolean" || !item.wamid) continue;
+      const key = String(item.wamid);
+      const value = item.pricingBillable ? "billable" : "free";
+      if (lastFepPricingSignal.get(key) === value) continue;
+      lastFepPricingSignal.delete(key);
+      lastFepPricingSignal.set(key, value);
+      changed = true;
+    }
+    while (lastFepPricingSignal.size > MAX_FEP_SIGNAL_KEYS) {
+      lastFepPricingSignal.delete(lastFepPricingSignal.keys().next().value);
+    }
+    if (changed) publishPricingEvidence();
+    return changed;
+  }
 
   function wakeRecovery(delayMs = 0) {
     return recoveryTimer?.wake(delayMs) || false;
@@ -109,11 +137,22 @@ function createWhatsAppDeliveryStatusService({
     // Wake deferred result media immediately after durable Meta pricing is saved.
     // This does not await image sending or slow webhook acknowledgement.
     if (updates?.some(update => update?.pricingType)) {
-      whatsappResultMediaQueue.wake(0);
+      // The FEP timer may be sleeping past a newly verified billing epoch.
+      // Signal it only AFTER the pricing evidence has been durably stored.
+      // Internal-only: no customer SSE traffic and no new provider sends.
+      signalChangedFepPricing(updates);
+      wakeResultMedia(0);
       // The webhook can arrive minutes before another outbound send. Clear
       // only proof-backed gates immediately, without waiting on Telegram.
-      Promise.resolve().then(() => whatsappZeroCostGuard.reconcileConfirmedGate())
-        .then((released) => { if (released) whatsappResultMediaQueue.wake(0); })
+      Promise.resolve().then(() => reconcileFreeOnlyGate())
+        .then((released) => {
+          if (released) {
+            wakeResultMedia(0);
+            // The strict account gate is now confirmed released. Recheck any
+            // due FEP slots without waiting for the idle safety timer.
+            publishPricingEvidence();
+          }
+        })
         .catch((err) => logger.error("[WhatsApp free-only] Gate reconciliation failed:", err));
     }
     // Never delay a webhook or drop persisted pricing evidence if Telegram

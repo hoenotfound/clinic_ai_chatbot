@@ -381,12 +381,23 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         "UPDATE whatsapp_free_only_send_gate SET updated_at=now()-interval '6 minutes' WHERE reservation_id=$1",
         [next.reservationId]
       );
-      const released=await freeOnlyReconciliation.reconcile({
-        actor:"admin",reservationId:next.reservationId,
-        reason:"Reviewed the exact WhatsApp conversation and Meta billing records; no unmatched delivery remains.",
-        confirmedBillingHub:true,
-      },guardDb);
+      const events = require("../src/utils/realtimeEvents");
+      let billingWakes = 0;
+      const unsubscribeBilling = events.subscribe("whatsapp_fep_billing_evidence",
+        () => { billingWakes++; });
+      let released;
+      try {
+        released = await freeOnlyReconciliation.reconcile({
+          actor:"admin",reservationId:next.reservationId,
+          reason:"Reviewed the exact WhatsApp conversation and Meta billing records; no unmatched delivery remains.",
+          confirmedBillingHub:true,
+        },guardDb);
+      } finally {
+        unsubscribeBilling();
+      }
       assert.equal(released.success,true);
+      assert.equal(billingWakes,1,
+        "committed manual billing reconciliation must wake the FEP scheduler exactly once");
       const audit=await guardDb.query(`
         SELECT actor,prior_status,verified_billing_hub
         FROM whatsapp_free_only_reconciliations
@@ -677,3 +688,156 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     await client.end();
   }
 });
+
+test("Postgres FEP wake query uses the verified epoch, consent and unclaimed slots",
+  { skip: !connectionString }, async () => {
+    const client = new Client({ connectionString });
+    const schema = "fep_wake_" + process.pid + "_" + Date.now();
+    await client.connect();
+    const previous = clinicConfig.automatedFollowUp;
+    try {
+      await client.query("CREATE SCHEMA " + schema);
+      await client.query("SET search_path TO " + schema);
+      await client.query(`
+        CREATE TABLE contacts (
+          id INTEGER PRIMARY KEY, channel TEXT, whatsapp_number TEXT,
+          mode TEXT, needs_attention BOOLEAN DEFAULT false,
+          whatsapp_opt_in_at TIMESTAMPTZ, whatsapp_opt_in_source TEXT,
+          whatsapp_opt_out_at TIMESTAMPTZ,
+          whatsapp_marketing_opt_out_at TIMESTAMPTZ
+        );
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY, contact_id INTEGER, role TEXT,
+          created_at TIMESTAMPTZ, whatsapp_message_id TEXT,
+          delivery_status TEXT, sent_by_username TEXT
+        );
+        CREATE TABLE leads (
+          id INTEGER PRIMARY KEY, contact_id INTEGER, is_closed BOOLEAN,
+          appointment_status TEXT, marketing_consent TEXT,
+          stage_id INTEGER, created_at TIMESTAMPTZ
+        );
+        CREATE TABLE pipeline_stages (id INTEGER PRIMARY KEY, stage_type TEXT, system_key TEXT);
+        CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
+        CREATE TABLE follow_up_ai_decisions (
+          id INTEGER PRIMARY KEY, trigger_message_id INTEGER,
+          contact_id INTEGER, action TEXT, reason TEXT
+        );
+        CREATE TABLE whatsapp_free_only_reconciliations (
+          attempt_id INTEGER, verified_billing_hub BOOLEAN
+        );
+        CREATE TABLE whatsapp_free_entry_referrals (
+          origin_message_id INTEGER, contact_id INTEGER,
+          ctwa_clid TEXT, meta_ad_id TEXT, treatment_interest TEXT
+        );
+        CREATE TABLE whatsapp_free_entry_pricing_evidence (
+          wamid TEXT PRIMARY KEY, pricing_type TEXT, billable BOOLEAN,
+          delivery_status TEXT
+        );
+        CREATE TABLE whatsapp_free_entry_followup_attempts (
+          id SERIAL PRIMARY KEY, first_reply_message_id INTEGER,
+          contact_id INTEGER, slot_hours INTEGER, status TEXT,
+          error TEXT, wamid TEXT, message_id INTEGER
+        );
+        INSERT INTO contacts(id,channel,whatsapp_number,mode,whatsapp_opt_in_at,whatsapp_opt_in_source)
+          VALUES(1,'whatsapp','60121234567','ai',now()-interval '50 hours','consent CTA');
+        INSERT INTO pipeline_stages VALUES(1,'open','new');
+        INSERT INTO users VALUES(1,'staff');
+        INSERT INTO leads VALUES(1,1,false,'none','opted_in',1,now()-interval '60 hours');
+        INSERT INTO messages(id,contact_id,role,created_at)
+          VALUES(10,1,'user',now()-interval '35 hours');
+        INSERT INTO messages(id,contact_id,role,created_at,whatsapp_message_id,delivery_status)
+          VALUES(11,1,'assistant',now()-interval '34 hours','wamid.entry','delivered');
+        INSERT INTO whatsapp_free_entry_referrals
+          VALUES(10,1,'ctwa-live',null,'骨盆调理');
+        INSERT INTO whatsapp_free_entry_pricing_evidence
+          VALUES('wamid.entry','free_entry_point',false,'delivered');
+      `);
+      clinicConfig.automatedFollowUp = {
+        ...previous,
+        quietHours: { enabled:false,start:"00:00",end:"07:00" },
+        whatsappFreeOnly: { enabled: false },
+      };
+      const active = {
+        activatedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+        slots: [36, 48, 66], sevenDayVerified: false,
+      };
+      const next = async () => (await worker.nextPotentialDueAt(active, client)).nextDueAt;
+      const within = (dueAt, hours, toleranceSeconds = 30) => {
+        assert.ok(dueAt, "expected next wake deadline");
+        assert.ok(Math.abs(new Date(dueAt).getTime() - (Date.now()+hours*3600000)) <
+          toleranceSeconds*1000, "unexpected due time: " + new Date(dueAt).toISOString());
+      };
+
+      within(await next(), 2);
+
+      // New customer messages without a business response are not ready.
+      await client.query(`INSERT INTO messages VALUES
+        (12,1,'user',now()-interval '1 minute',null,null,null)`);
+      assert.equal(await next(), null);
+      await client.query(`INSERT INTO messages VALUES
+        (15,1,'assistant',now(),'wamid.responded','delivered',null)`);
+      within(await next(), 24 - 1/60);
+      await client.query("DELETE FROM messages WHERE id IN (12,15)");
+
+      await client.query(`INSERT INTO messages VALUES
+        (13,1,'assistant',now()-interval '2 hours','wamid.other','delivered',null)`);
+      within(await next(), 3);
+      await client.query("DELETE FROM messages WHERE id=13");
+
+      // An accepted slot needs an actual free Meta billing receipt before the
+      // NEXT slot is considered; uncertain sends must never auto-retry.
+      await client.query(`INSERT INTO whatsapp_free_entry_followup_attempts
+        (first_reply_message_id,contact_id,slot_hours,status,wamid)
+        VALUES(11,1,36,'accepted','wamid.slot')`);
+      assert.equal(await next(), null);
+      await client.query(`INSERT INTO whatsapp_free_entry_pricing_evidence
+        VALUES('wamid.slot','free_entry_point',false,'delivered')`);
+      within(await next(), 14);
+
+      // Correct final slot timing is +66h, NOT a generic 12h early window.
+      await client.query("UPDATE messages SET created_at=now()-interval '54 hours' WHERE id=11");
+      await client.query("UPDATE messages SET created_at=now()-interval '55 hours' WHERE id=10");
+      await client.query(`INSERT INTO whatsapp_free_entry_followup_attempts
+        (first_reply_message_id,contact_id,slot_hours,status,wamid)
+        VALUES(11,1,48,'accepted','wamid.slot2')`);
+      await client.query(`INSERT INTO whatsapp_free_entry_pricing_evidence
+        VALUES('wamid.slot2','free_entry_point',false,'delivered')`);
+      within(await next(), 12);
+
+      // Stopped/attention/non-consenting contacts contribute no wake hints.
+      await client.query("UPDATE contacts SET needs_attention=true WHERE id=1");
+      assert.equal(await next(), null);
+      await client.query("UPDATE contacts SET needs_attention=false,whatsapp_opt_in_at=NULL WHERE id=1");
+      assert.equal(await next(), null);
+      await client.query("UPDATE contacts SET whatsapp_opt_in_at=now()-interval '50 hours' WHERE id=1");
+      await client.query("UPDATE leads SET is_closed=true WHERE id=1");
+      assert.equal(await next(), null);
+      await client.query("UPDATE leads SET is_closed=false WHERE id=1");
+
+      // Two priced business replies in the SAME CTWA epoch must still point
+      // to the original anchor, not reset the window.
+      await client.query(`INSERT INTO messages VALUES
+        (19,1,'assistant',now()-interval '29 hours','wamid.duplicate','delivered',null)`);
+      await client.query(`INSERT INTO whatsapp_free_entry_pricing_evidence
+        VALUES('wamid.duplicate','free_entry_point',false,'delivered')`);
+      const hints = await client.query(worker.potentialDueSql,
+        [active.activatedAt,active.slots,72]);
+      assert.ok(hints.rows.length > 0);
+      assert.ok(hints.rows.every(row => Number(row.first_reply_message_id) === 11),
+        "same-epoch duplicate reply must not create a second anchor");
+
+      // Billed proof and opt-out must not produce template wake candidates.
+      await client.query(`UPDATE whatsapp_free_entry_pricing_evidence
+        SET billable=true WHERE wamid='wamid.entry'`);
+      assert.equal(await next(), null);
+      await client.query(`UPDATE whatsapp_free_entry_pricing_evidence
+        SET billable=false WHERE wamid='wamid.entry'`);
+      await client.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=now() WHERE id=1");
+      assert.equal(await next(), null);
+    } finally {
+      clinicConfig.automatedFollowUp = previous;
+      await client.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(() => {});
+      await client.end();
+    }
+  }
+);

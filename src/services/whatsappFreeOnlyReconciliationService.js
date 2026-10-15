@@ -3,6 +3,7 @@
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
 const { configuredAccount } = require("./whatsappZeroCostGuard");
+const realtimeEvents = require("../utils/realtimeEvents");
 
 class ReconcileError extends Error {
   constructor(code, message, status = 409) {
@@ -87,6 +88,10 @@ async function reconcile({ actor, reservationId, reason, confirmedBillingHub }, 
          message_id=NULL,attempt_id=NULL,updated_at=now()
        WHERE phone_number_id=$1 AND reservation_id=$2`,[account,reservationId]);
     await client.query("COMMIT");
+    // A verified manual reconciliation can unblock a later eligible slot.
+    // Wake only after commit; the existing FEP candidate and RM0 guards
+    // independently verify send eligibility on the next sweep.
+    realtimeEvents.publishInternal("whatsapp_fep_billing_evidence", {});
     return {
       success:true,priorStatus:gate.status,
       billingVerifiedByMeta:priced?.pricing_type==="free_entry_point" && priced.billable===false,

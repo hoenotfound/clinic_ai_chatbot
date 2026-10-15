@@ -130,3 +130,105 @@ test("optional startup delay waits for the initial grace period but accepts an e
   assert.equal(runs, 1);
   worker.stop();
 });
+
+test("event during a run must not postpone an earlier computed due time", async () => {
+  const timers = fakeTimers();
+  let release;
+  let runs = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const worker = createAdaptiveWorkerTimer({
+    run: async () => {
+      runs++;
+      if (runs === 1) await gate;
+      return runs === 1 ? { nextMs: 60 * 1000 } : { nextMs: null };
+    },
+    delayForResult: result => result.nextMs,
+    ...timers,
+  });
+  worker.start();
+  const advancing = timers.advance(0);
+  await Promise.resolve();
+  worker.wake(5 * 60 * 1000); // chat event while a due slot is discovered
+  release();
+  await advancing;
+  assert.equal(worker.state().dueAt, 60 * 1000,
+    "earlier 1-minute template deadline must beat 5-minute event wake");
+  await timers.advance(60 * 1000);
+  assert.equal(runs, 2);
+  worker.stop();
+});
+
+test("pending immediate wakes win over later computed deadlines", async () => {
+  const timers = fakeTimers();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let runs = 0;
+  const worker = createAdaptiveWorkerTimer({
+    run: async () => {
+      runs++;
+      if (runs === 1) await gate;
+      return 15 * 60 * 1000;
+    },
+    delayForResult: value => value,
+    ...timers,
+  });
+  worker.start();
+  const advancing = timers.advance(0);
+  await Promise.resolve();
+  worker.wake(0);
+  release();
+  await advancing;
+  assert.equal(runs, 2,
+    "the immediate event must trigger the second run before the clock advances");
+  assert.equal(worker.state().dueAt, 15 * 60 * 1000,
+    "after the immediate run, the worker may schedule its next idle interval");
+  worker.stop();
+});
+
+test("null result still accepts event wake and error retry is not delayed", async () => {
+  const timers = fakeTimers();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let runs = 0;
+  const worker = createAdaptiveWorkerTimer({
+    run: async () => {
+      runs++;
+      if (runs === 1) await gate;
+      if (runs === 1) throw new Error("transient");
+      return null;
+    },
+    logger: {error() {}},
+    errorRetryDelayMs: 10 * 1000,
+    delayForResult: () => null,
+    ...timers,
+  });
+  worker.start();
+  const advancing = timers.advance(0);
+  await Promise.resolve();
+  worker.wake(5 * 60 * 1000);
+  release();
+  await advancing;
+  assert.equal(worker.state().dueAt, 10 * 1000);
+  await timers.advance(10 * 1000);
+  assert.equal(runs, 2);
+  worker.stop();
+});
+
+test("delay callback failure retries safely instead of stranding the timer", async () => {
+  const timers = fakeTimers();
+  const errors = [];
+  let count = 0;
+  const worker = createAdaptiveWorkerTimer({
+    run: async () => ++count,
+    delayForResult: () => { throw new Error("invalid scheduling hint"); },
+    logger: {error(...args) {errors.push(args);}},
+    errorRetryDelayMs: 2000,
+    ...timers,
+  });
+  worker.start();
+  await timers.advance(0);
+  assert.equal(count, 1);
+  assert.equal(worker.state().dueAt, 2000);
+  assert.equal(errors.length, 1);
+  worker.stop();
+});

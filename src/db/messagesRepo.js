@@ -1004,11 +1004,14 @@ async function deleteUnsentAssistantMessage(messageId) {
   return result.rows[0] || null;
 }
 
-async function setWhatsappMessageId(messageId, whatsappMessageId) {
+async function setWhatsappMessageId(messageId, whatsappMessageId, {
+  database = pool,
+  events = realtimeEvents,
+} = {}) {
   const targetWhatsappMessageId = String(whatsappMessageId || "").trim();
   if (!targetWhatsappMessageId) return null;
 
-  const client = await pool.connect();
+  const client = await database.connect();
   let transactionStarted = false;
   let reactionUpdate = null;
 
@@ -1064,6 +1067,29 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
 
     await client.query("COMMIT");
     transactionStarted = false;
+
+    // Meta may have persisted verified free-entry pricing before this outbound
+    // WAMID became locally visible. Signal the scheduler AFTER the committed
+    // link; the opposite ordering is covered by the pricing callback's signal.
+    // Check the indexed evidence key in a best-effort extra read. Failure
+    // here must never turn an accepted send into a
+    // failed or duplicate send if pricing lookup/realtime signaling fails.
+    try {
+      const proof = await client.query(
+        `SELECT 1 FROM whatsapp_free_entry_pricing_evidence
+         WHERE wamid=$1 AND pricing_type='free_entry_point'
+           AND billable=false AND delivery_status IN ('sent','delivered','read')
+         LIMIT 1`, [targetWhatsappMessageId]
+      );
+      if (proof.rows.length) {
+        events.publishInternal("whatsapp_fep_billing_evidence", {
+          contactId: updated.contact_id, wamid: targetWhatsappMessageId,
+          reason: "wamid_linked",
+        });
+      }
+    } catch (err) {
+      console.warn("[WhatsApp FEP] post-link billing wake unavailable:", err?.message);
+    }
 
     if (reactionUpdate?.changed) {
       realtimeEvents.publish("conversation_changed", {
