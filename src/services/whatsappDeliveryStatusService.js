@@ -121,7 +121,14 @@ function createWhatsAppDeliveryStatusService({
       // The webhook can arrive minutes before another outbound send. Clear
       // only proof-backed gates immediately, without waiting on Telegram.
       Promise.resolve().then(() => reconcileFreeOnlyGate())
-        .then((released) => { if (released) wakeResultMedia(0); })
+        .then((released) => {
+          if (released) {
+            wakeResultMedia(0);
+            // The strict account gate is now confirmed released. Recheck any
+            // due FEP slots without waiting for the idle safety timer.
+            publishPricingEvidence();
+          }
+        })
         .catch((err) => logger.error("[WhatsApp free-only] Gate reconciliation failed:", err));
     }
     // Never delay a webhook or drop persisted pricing evidence if Telegram
