@@ -210,10 +210,15 @@ function clinicalPricingAcknowledgement(customerText, language = "zh") {
     : "关于你提到的身体情况或是否适合，建议先让中医师了解实际情况再评估，不能单凭聊天直接保证安全或效果哦。";
 }
 
+// An AI draft cannot commit the system to sending a graphic. Actual image
+// permission is decided separately after the text is accepted, and may fail
+// even when a promotion price is verified.
+const MEDIA_SEND_PROMISE = /(?:我|我们|我們).{0,15}(?:发|發|传|傳|分享).{0,50}(?:图片|圖片|图|圖|照片|优惠|優惠|促销|促銷|资料|資料|详情|詳情)|(?:\b(?:i(?:'ll| will| can)?|we(?:'ll| will| can)?|sending)\b.{0,30}\b(?:send|share|forward|over)\b.{0,55}\b(?:image|photo|picture|promo|promotion|offer|graphic|details)\b)|(?:\b(?:saya|kami)\b.{0,20}\b(?:hantar|kongsikan)\b.{0,55}\b(?:gambar|promosi|tawaran)\b)/iu;
 function nonPriceExplanation(reply) {
   const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
   const kept = clauses.map((line) => line.trim()).filter((line) =>
-    line && !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
+    line && !MEDIA_SEND_PROMISE.test(line) &&
+    !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
     !/(?:[价價][钱錢格位]|收费|收費|费用|費用|原价|原價|优惠|優惠|折扣|voucher|discount|\b(?:price|pricing|cost|harga|promosi)\b)/iu.test(line)
   );
   return kept.slice(0, 3).join("\n").slice(0, 340).trim();
@@ -248,7 +253,7 @@ function ensureVerifiedPriceReply({
     // Non-price service replies must remain intact. Only remove a genuinely
     // unsolicited numeric price or a promise of promotional media that may
     // never pass the provider's separate delivery checks.
-    const mediaPromise = /(?:我(?:会|會|现在|現在|等下|先)?发.{0,35}(?:优惠|優惠|促销|促銷|图片|圖片|详情|詳情|资料|資料|图)|\b(?:send|sending|share|forward)\b.{0,50}\b(?:promo|offer|image|graphic|promotion details)\b|\b(?:hantar|kongsikan)\b.{0,50}\b(?:promosi|gambar)\b)/iu.test(original);
+    const mediaPromise = MEDIA_SEND_PROMISE.test(original);
     const unsolicitedAmount = hasTreatmentPriceContent(original);
     if (!priceRequested && !mediaPromise && !unsolicitedAmount) {
       return { reply: original, restored: false };
