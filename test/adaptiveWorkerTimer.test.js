@@ -111,3 +111,22 @@ test("wake during a run causes another run without overlapping", async () => {
 
   assert.equal(runs, 2);
 });
+
+test("optional startup delay waits for the initial grace period but accepts an earlier wake", async () => {
+  const timers = fakeTimers();
+  let runs = 0;
+  const worker = createAdaptiveWorkerTimer({
+    run: async () => { runs++; return null; },
+    delayForResult: () => null,
+    ...timers,
+  });
+  worker.start(600000);
+  await timers.advance(0);
+  assert.equal(runs, 0);
+  await timers.advance(1000);
+  assert.equal(runs, 0);
+  worker.wake(1000);
+  await timers.advance(1000);
+  assert.equal(runs, 1);
+  worker.stop();
+});
