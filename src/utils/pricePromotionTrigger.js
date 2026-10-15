@@ -50,7 +50,7 @@ function recentCustomerPackageContext(packages, conversationHistory, currentText
 async function resolvePricePromotionForReply({
   priceQuery,
   packageQuery,
-  verifiedPricingIntent = false,
+  pricingDecision = null,
   aiPricingEnabled = false,
   treatment,
   verifiedServiceFromText = null,
@@ -78,39 +78,40 @@ async function resolvePricePromotionForReply({
     clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
     conversationHistory
   )) return null;
-  const clarificationService = clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-    ? resolveClarifiedPriceService({
-        customerText, conversationHistory, services, serviceAliases,
-      }) : null;
+  // Enabled mode uses one already-verified pricing result for both text and
+  // media. Leave the old keyword-backed path intact for Off/Shadow clients.
+  if (aiPricingEnabled && (
+    !pricingDecision || pricingDecision.treatment !== treatment ||
+    !Array.isArray(pricingDecision.prices) || !pricingDecision.prices.length ||
+    !["price", "package_options"].includes(pricingDecision.type)
+  )) return null;
+  const clarificationService = aiPricingEnabled
+    ? pricingDecision.clarifiedPriceService
+    : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? resolveClarifiedPriceService({
+          customerText, conversationHistory, services, serviceAliases,
+        }) : null;
   const verifiedClarification = Boolean(treatment) &&
     clarificationService === treatment && verifiedServiceFromText === treatment;
-  const verifiedPriceRequest = (aiPricingEnabled && verifiedPricingIntent) ||
-    hasExplicitPriceRequest(customerText, { treatment }) ||
+  const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
-  if (aiPricingEnabled && !verifiedPricingIntent) return null;
-  if (
-    // A verified monetary question is sufficient for opted-in clinics even
-    // when the LLM under-classifies priceQuery. Keep all media safety checks.
+  const legacyBlocked = !aiPricingEnabled && (
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-      ? (!treatment || !verifiedServiceFromText || verifiedServiceFromText !== treatment ||
-          !verifiedPriceRequest)
+      ? (!treatment || !verifiedServiceFromText ||
+          verifiedServiceFromText !== treatment || !verifiedPriceRequest)
       : (priceQuery !== true && packageQuery !== true)) ||
-    !(aiPricingEnabled && verifiedPricingIntent) &&
-      !(hasCustomerPriceEnquiry(customerText) ||
-        (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-          (isContextualBarePriceQuestion(customerText, treatment) || verifiedClarification))) ||
+    !(hasCustomerPriceEnquiry(customerText) ||
+      (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        (isContextualBarePriceQuestion(customerText, treatment) || verifiedClarification))) ||
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-      !verifiedPriceRequest) ||
+      !verifiedPriceRequest)
+  );
+  if (
+    legacyBlocked ||
     hasClinicalMediaRisk(customerText) ||
-    !treatment ||
-    flagged ||
-    bookingReady ||
-    keywordReason ||
-    needsAttention ||
-    textSendSucceeded !== true
-  ) {
-    return null;
-  }
+    !treatment || flagged || bookingReady || keywordReason ||
+    needsAttention || textSendSucceeded !== true
+  ) return null;
 
   if (relatedPricingConflict({
     customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
@@ -127,10 +128,17 @@ async function resolvePricePromotionForReply({
   if (!genericBundle) return null;
 
   let bundle;
-  if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
-    // The price graphic and the actual text quote must be sourced from the
-    // same independently verified active package options. Any conflicting,
-    // missing or ambiguous amount suppresses ALL optional price graphics.
+  if (aiPricingEnabled) {
+    // The decision was verified before the text reply. Do not parse prices or
+    // choose package options a second time for the image path.
+    const approved = new Set(pricingDecision.prices.map(option => option.name));
+    const selected = genericBundle.packages.filter(option => approved.has(option.name));
+    if (selected.length !== approved.size) return null;
+    // An explicit comparison of multiple named packages should receive text
+    // only, not a large automatic image blast.
+    if (findMentionedPromotionPackages(genericBundle.packages, customerText).length > 1) return null;
+    bundle = { ...genericBundle, packages: selected };
+  } else if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
     const verified = verifiedPricesForService(
       treatment, promotions, customerText, conversationHistory,
       { clarifiedPriceService: clarificationService }
@@ -140,9 +148,9 @@ async function resolvePricePromotionForReply({
       genericBundle.packages, customerText, conversationHistory,
       { clarifiedPriceService: clarificationService, treatment }
     );
-    const approved = new Set(verified.map((option) => option.name));
+    const approved = new Set(verified.map(option => option.name));
     if (approved.size !== requested.length ||
-        requested.some((option) => !approved.has(option.name))) return null;
+        requested.some(option => !approved.has(option.name))) return null;
     bundle = { ...genericBundle, packages: requested };
   } else {
     // Preserve the original fail-closed policy for clients that do not use
