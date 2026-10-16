@@ -2,7 +2,6 @@
 
 const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { relatedPricingConflict, configuredServiceMention, unpricedRelatedPrimary } = require("./relatedServicePolicy");
-const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
 
 const {
   hasCustomerPriceEnquiry,
@@ -354,6 +353,9 @@ function guardAssessmentFirstPricingReply({
   const unpricedPrimary = unpricedRelatedPrimary({
     customerText, conversationHistory, services, serviceAliases, resultMedia,
   });
+  // Delayed import avoids a require cycle: the price-context module uses
+  // safeServiceFromCustomer exported by this module.
+  const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
   const verifiedContinuedService = resolveContinuedTreatmentPriceService({
     customerText, conversationHistory, services, serviceAliases, promotions,
   })?.name === treatment;
