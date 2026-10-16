@@ -1,11 +1,11 @@
 "use strict";
 
-// The existing model priceQuery/packageQuery fields classify the customer's
-// request. Only customer-authored service evidence and active configured prices
-// can authorize customer-facing price quotations or promotional media.
+// Existing AI intent flags classify the customer's request. Treatment identity
+// must come from customer evidence or an unambiguous verified Meta acquisition
+// context; all quoted prices must come from active configured offers.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
+const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -50,6 +50,18 @@ function hasCurrentPriceAmountRequest(customerText) {
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
+// A customer asking for the clinic's address/hours has not switched away
+// from the treatment they explicitly chose. Only a short, standalone
+// administrative question can bridge ONE customer turn. Refunds, deposits,
+// cancellations and different treatment topics remain hard stops.
+const SHORT_LOCATION_HOURS = /^(?:(?:请问|請問|想问|想問|请发|請發|你们|你們|你家|你那边|你那邊|在哪里|在哪裡|在那|where\s+(?:are\s+you|is\s+(?:the\s+)?(?:clinic|centre|center))|what(?:'s| is)\s+(?:your|the))\s*){0,2}(?:地址|地点|地點|位置|在哪里|在哪裡|在哪|营业时间|營業時間|几点开门|幾點開門|开门时间|開門時間|几点关门|幾點關門|branch|location|address|opening\s+hours|business\s+hours|working\s+hours|hours|alamat|lokasi|waktu\s+operasi|jam\s+buka)(?:\s*(?:在哪里|在哪裡|在哪|是|呢|呀|啊|几点|幾點|多少|多少点|多少點|please|ya|ah))?[\s?？。!！]*$/iu;
+const SHORT_LOCATION_QUESTION = /^(?:(?:where\s+are\s+you(?:\s+located)?|where\s+is\s+(?:your|the)\s+(?:clinic|centre|center)|what(?:'s| is)\s+your\s+(?:address|location)|where\s+to\s+find\s+you|(?:你们|你們|诊所|診所)\s*(?:在)?(?:哪里|哪裡|哪里啊|哪裡啊|在哪|在哪里|在哪裡)|在哪里|在哪裡|alamat\s+(?:di\s+mana|mana)|kat\s+mana))[\s?？。!！]*$/iu;
+function isBriefLocationHoursQuestion(text) {
+  const value = String(text || "").normalize("NFKC").trim();
+  return value.length > 0 && value.length <= 55 &&
+    !SPECIFIC_ADMIN_FEE.test(value) &&
+    (SHORT_LOCATION_HOURS.test(value) || SHORT_LOCATION_QUESTION.test(value));
+}
 
 function verifiedServiceAnchor({
   customerText, conversationHistory, services, serviceAliases, modelTreatment,
@@ -60,14 +72,15 @@ function verifiedServiceAnchor({
   const currentService = safeServiceFromCustomer(current, services, serviceAliases);
   if (mentions.length > 1 || (mentions.length && !currentService)) return null;
   if (currentService) {
-    return !modelTreatment || modelTreatment === currentService.name
-      ? { treatment: currentService.name, source: "current_customer" }
-      : null;
+    // Customer-authored, unambiguous service evidence outranks an unsupported
+    // model label. The model cannot veto or invent a treatment at this boundary.
+    return { treatment: currentService.name, source: "current_customer" };
   }
 
   // Never carry a treatment from a CRM label, an ad, or a bot suggestion.
-  // Read a maximum of two previous customer turns. An intervening customer
-  // turn is permitted only when it clearly refers to the same treatment.
+  // Read at most two previous customer turns. A single short clinic
+  // address/hours question may interrupt a customer-named service enquiry;
+  // this does not authorize an ad-only or model-only treatment.
   if (current.length > 115) return null;
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
   let currentSkipped = false, customerTurns = 0, bridge = false;
@@ -80,27 +93,113 @@ function verifiedServiceAnchor({
     if (entry?.role !== "user") continue;
     const text = String(entry.content || "").trim();
     if (!currentSkipped && text === current) { currentSkipped = true; continue; }
-    if (!text || RESET.test(text) || REFUSAL.test(text)) return null;
+    if (!text || RESET.test(text) || REFUSAL.test(text) ||
+        AD_NEGATED_TOPIC.test(text) || AD_BROAD_TOPIC.test(text)) return null;
     customerTurns += 1;
     const found = [...new Set(findServicesInText(text, candidates))];
     const named = safeServiceFromCustomer(text, services, serviceAliases);
     if (found.length > 1 || (found.length && !named)) return null;
     if (named) {
-      return !modelTreatment || modelTreatment === named.name
-        ? { treatment: named.name, source: "recent_customer" }
-        : null;
+      // Latest independent customer choice wins, including a switch from the
+      // original ad treatment; a conflicting model label is not proof.
+      return { treatment: named.name, source: "recent_customer" };
     }
-    if (bridge || UNRELATED.test(text) || !BRIDGE.test(text)) return null;
+    if (bridge || (!BRIDGE.test(text) && !isBriefLocationHoursQuestion(text)) ||
+        (UNRELATED.test(text) && !isBriefLocationHoursQuestion(text))) return null;
     bridge = true;
   }
   return null;
+}
+
+
+// A first-touch Meta ad can establish the initial service, but only when its
+// locally verified creative or ad name identifies exactly one configured
+// treatment. Do not use a CRM treatment label, free-form AI guess or stale ad
+// attribution after the customer has changed or broadened the conversation.
+const AD_BROAD_TOPIC = /(?:所有|全部|全套|整份|列出|价目表|價目表|还有什么|有什么(?:疗程|療程|服务|服務)|其他(?:疗程|療程|服务|服務)|\b(?:all\s+(?:the\s+)?(?:prices|treatments|services)|(?:price|pricing|cost)\s*list|which\s+(?:treatments|services)|other\s+(?:treatments|services)|senarai\s+harga)\b)/iu;
+
+const AD_NEGATED_TOPIC = /(?:不要|不想|不考虑|不考慮|不需要|不做|不是|没兴趣|沒興趣|not interested|don.t want|do not want|tak nak|tidak mahu)/iu;
+// The original ad is an acquisition hint only. After seven days a standalone
+// price question needs a fresh service confirmation from the customer.
+const META_AD_PRICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const AD_UNRELATED_FEE = /(?:订金|訂金|定金|按金|押金|预付|預付|手续费|手續費|挂号|掛號|诊金|診金|注册|註冊|报名|報名|停车|停車|运费|運費|邮费|郵費|配送|送货|送貨|会员费|會員費|咨[询詢]|评估|評估|面诊|面診|预约|預約|取消费|取消費|\b(?:deposit|down[\s-]?payment|booking|reservation|registration|consultation|assessment|evaluation|parking|delivery|shipping|membership|cancellation|admin(?:istration)?|processing)\b)/iu;
+// Keep the ad-only fallback narrow. Other price requests still follow the
+// existing customer-authored service verification path.
+// A customer can ask about a paid treatment and its appointment in one
+// message. Do not suppress that legitimate quote just because "booking"
+// appears, but still block a question about a separate administrative charge.
+const SPECIFIC_ADMIN_FEE = /(?:订金|訂金|定金|按金|押金|手续费|手續費|挂号费|掛號費|诊金|診金|注册费|註冊費|报名费|報名費|停车费|停車費|运费|運費|邮费|郵費|配送费|送货费|送貨費|会员费|會員費|预约金|預約金|预约费|預約費|(?:咨询|諮詢|评估|評估|面诊|面診)(?:的)?(?:费|費|多少钱|多少錢|收费|收費)|\b(?:deposit|down[\s-]?payment|booking\s+fee|reservation\s+fee|registration\s+fee|consultation\s+fee|assessment\s+fee|evaluation\s+fee|parking\s+fee|delivery\s+fee|shipping\s+fee|membership\s+fee|cancellation\s+fee|admin(?:istration)?\s+fee|processing\s+fee)\b)/iu;
+const AD_TREATMENT_PRICE_QUESTION = /^(?:(?:请问|請問|想问|想問)\s*)?(?:(?:这个|這個|这项|這項|这种|這種)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:(?:要|是|大概|大约|大約|收费|收費|花)\s*)?(?:多少(?:钱|錢)?|[几幾]多(?:钱|錢)?)[\s?？。!！]*$/iu;
+const AD_ENGLISH_SESSION_PRICE = /^(?:how much\s+(?:is it\s+)?(?:per|for)\s+(?:(?:one|a|1)\s+)?(?:session|treatment)|(?:what(?:'s| is)?|how much is)\s+(?:the\s+)?(?:price|cost|fee)\s+(?:for|per)\s+(?:(?:one|a|1)\s+)?(?:session|treatment))[\s?？.!！]*$/iu;
+const AD_MALAY_SESSION_PRICE = /^(?:berapa\s+(?:harga\s+)?(?:untuk\s+)?(?:satu|1)\s+sesi|harga\s+(?:untuk\s+)?(?:satu|1)\s+sesi\s+berapa|berapa\s+(?:untuk\s+)?sekali\s+rawatan)[\s?？.!！]*$/iu;
+
+function isShortAdTreatmentPriceQuestion(text) {
+  const current = String(text || "").normalize("NFKC").trim();
+  if (!current || current.length > 80 || AD_BROAD_TOPIC.test(current) ||
+      AD_UNRELATED_FEE.test(current)) return false;
+  return isStandalonePriceQuestion(current) ||
+    AD_TREATMENT_PRICE_QUESTION.test(current) ||
+    AD_ENGLISH_SESSION_PRICE.test(current) ||
+    AD_MALAY_SESSION_PRICE.test(current);
+}
+
+function verifiedMetaAdPriceAnchor({
+  customerText, conversationHistory, services, serviceAliases, modelTreatment,
+  metaAdContext, now = Date.now(),
+}) {
+  if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource)) return null;
+  const adService = (services || []).filter((service) =>
+    String(service?.name || "").trim() === metaAdContext.serviceHint
+  );
+  if (adService.length !== 1) return null;
+  const name = adService[0].name;
+  const attributedAtMs = Date.parse(String(metaAdContext.attributedAt || ""));
+  if (!Number.isFinite(attributedAtMs) || !Number.isFinite(now) ||
+      attributedAtMs > now || now - attributedAtMs > META_AD_PRICE_MAX_AGE_MS) return null;
+
+  const current = String(customerText || "").trim();
+  const candidates = serviceCandidates(services, serviceAliases);
+  // Ad-only context is for short contextual monetary enquiries, not for an
+  // unrequested price, all-treatment price list, or a competing named service.
+  if (!isShortAdTreatmentPriceQuestion(current) ||
+      UNRELATED.test(current) ||
+      findServicesInText(current, candidates).length > 0) return null;
+
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  let skippedCurrent = false;
+  let previousCustomerTurns = 0;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const entry = history[i];
+    if (entry?.role === "assistant") {
+      if (STAFF_PREFIX.test(String(entry.content || "").trim())) return null;
+      continue;
+    }
+    if (entry?.role !== "user") continue;
+    const prior = String(entry.content || "").trim();
+    if (!skippedCurrent && prior === current) {
+      skippedCurrent = true;
+      continue;
+    }
+    previousCustomerTurns += 1;
+    // This is an acquisition hint, not a permanent conversation default.
+    if (previousCustomerTurns > 4 || !prior || RESET.test(prior) ||
+        REFUSAL.test(prior) || AD_BROAD_TOPIC.test(prior) ||
+        AD_NEGATED_TOPIC.test(prior)) return null;
+    const mentions = [...new Set(findServicesInText(prior, candidates))];
+    if (mentions.length > 1 || (mentions.length === 1 && mentions[0] !== name)) return null;
+    // Reject ambiguous service mentions or negated references even when they
+    // happen to contain the advertised service name.
+    if (mentions.length && !safeServiceFromCustomer(prior, services, serviceAliases)) return null;
+  }
+  return { treatment: name, source: "meta_ad" };
 }
 
 function resolveAiPricingDecision({
   priceQuery = false, packageQuery = false, treatment = null,
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
-  complimentaryAssessmentExperienceEnabled = false,
+  complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
+  now = Date.now(),
 } = {}) {
   const current = String(customerText || "").trim();
   const explicitAmount = hasCurrentPriceAmountRequest(current);
@@ -112,7 +211,10 @@ function resolveAiPricingDecision({
   // treatment refusal never become pricing authorization.
   const validNewTreatmentSwitch = TOPIC_SWITCH_TO_NEW_SERVICE.test(current) &&
     Boolean(currentNamedService) && (explicitAmount || explicitOptions);
-  if (!current || (RESET.test(current) && !validNewTreatmentSwitch) ||
+  // Deposit/consultation/booking fees are not paid treatment prices, even
+  // when the customer explicitly names a treatment or a model flags pricing.
+  if (!current || SPECIFIC_ADMIN_FEE.test(current) ||
+      (RESET.test(current) && !validNewTreatmentSwitch) ||
       /\b(?:stop|unsubscribe)\b|退订|退訂/iu.test(current) ||
       REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
@@ -129,7 +231,8 @@ function resolveAiPricingDecision({
   // unsolicited graphic. Clear keywords retain deterministic recovery if
   // Gemini misses them; natural cost wording still works when Gemini sees it.
   const monetary = Boolean(clarifiedPriceService) ||
-    (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current)));
+    (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current))) ||
+    (isStandalonePriceQuestion(current) && priceQuery === true);
   const type = monetary ? "price" :
     packageQuery === true && allowOfferEnquiries && explicitOptions
       ? "package_options" : null;
@@ -140,6 +243,9 @@ function resolveAiPricingDecision({
   const anchor = verifiedServiceAnchor({
     customerText: current, conversationHistory, services, serviceAliases,
     modelTreatment: treatment,
+  }) || verifiedMetaAdPriceAnchor({
+    customerText: current, conversationHistory, services, serviceAliases,
+    modelTreatment: treatment, metaAdContext, now,
   });
   if (!anchor || (clarifiedPriceService &&
       clarifiedPriceService !== anchor.treatment)) return null;

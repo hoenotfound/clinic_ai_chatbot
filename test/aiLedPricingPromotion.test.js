@@ -105,11 +105,10 @@ test("a short relevant interim customer question can bridge once", () => {
 
 test("unrelated topics, staff intervention, stale history, ambiguity and ad-only guesses fail closed", () => {
   const cases = [
-    { treatment: "9D 逆龄抗衰" },
     { customerText: "3D和9D都多少钱?", conversationHistory: [{role:"user",content:"3D和9D都多少钱?"}] },
     { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"assistant",content:"[Verified STAFF message] 请先联系我们"},{role:"user",content:"请问,做一次多少"}] },
     { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"我想改聊其他事情"},{role:"user",content:"请问,做一次多少"}] },
-    { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"你们停车在哪?"},{role:"user",content:"请问,做一次多少"}] },
+    { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"停车费多少钱?"},{role:"user",content:"请问,做一次多少"}] },
     { conversationHistory: [{role:"user",content:"3D小颜术"},{role:"user",content:"你好"},{role:"user",content:"请问,做一次多少"}] },
     { conversationHistory: [{role:"assistant",content:"看起来你想做3D小颜术"},{role:"user",content:"请问,做一次多少"}] },
   ];
@@ -578,4 +577,29 @@ test("opted-in package questions work but package details alone never trigger gr
   assert.equal(hasExplicitPackageOptionsRequest(details),false);
   assert.equal(decide({priceQuery:false,packageQuery:true,allowOfferEnquiries:true,
     customerText:details,conversationHistory:[{role:"user",content:details}]}),null);
+});
+
+test("customer treatment survives one short address question, but not a second unrelated interruption", () => {
+  const priceText = "请问,做一次多少";
+  const admin = [
+    {role:"user",content:"Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～"},
+    {role:"assistant",content:"我们有3D的资料可供参考"},
+    {role:"user",content:"地址？"},
+    {role:"assistant",content:"我们在 Petaling Jaya。"},
+    {role:"user",content:priceText},
+  ];
+  const d=decide({treatment:null,customerText:priceText,conversationHistory:admin});
+  assert.equal(d?.treatment,"3D 小颜术");
+  assert.equal(d?.source,"recent_customer");
+  assert.deepEqual(d?.prices?.map(p=>p.price),["RM488"]);
+  const modelMistake=decide({treatment:"9D 逆龄抗衰",customerText:priceText,conversationHistory:admin});
+  assert.equal(modelMistake?.treatment,"3D 小颜术","customer evidence beats unsupported AI treatment");
+
+  for (const middle of ["取消预约", "退款", "停车费多少钱?", "我想改聊其他事情", "我不想做3D", "你好"]) {
+    const turns=[admin[0],{role:"user",content:middle},{role:"user",content:priceText}];
+    assert.equal(decide({treatment:null,customerText:priceText,conversationHistory:turns}),null,middle);
+  }
+  assert.equal(decide({customerText:priceText,conversationHistory:[
+    admin[0],{role:"user",content:"地址?"},{role:"user",content:"营业时间?"},{role:"user",content:priceText}
+  ]}),null,"only one brief admin interruption is allowed");
 });
