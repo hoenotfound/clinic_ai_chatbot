@@ -167,3 +167,9 @@ test("legacy R2 preview requires an exact clinic reference, not just a shared pr
   assert.equal(storage.isReferencedClinicFollowUpMediaKey("messages/follow-up-config/foreign.jpg", own, env), false);
   assert.equal(storage.isReferencedClinicFollowUpMediaKey("clients/another-clinic/messages/follow-up-config/video.mp4", own, env), false);
 });
+
+test("first pelvic approved video template never accepts facial follow-up content", () => {
+  assert.equal(policy.allowedForTreatment("ns_pelvis_followup_video", "骨盆调理"), true);
+  assert.equal(policy.allowedForTreatment("ns_pelvis_followup_video", "3D 小颜术"), false);
+  assert.equal(policy.allowedForTreatment("ns_pelvis_followup_video", "9D 逆龄抗衰"), false);
+});
