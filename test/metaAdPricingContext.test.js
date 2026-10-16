@@ -6,6 +6,7 @@ const { normalizeMetaAdReplyContext } = require("../src/services/metaAdReplyCont
 const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
+const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
 
 const TEST_NOW = Date.parse("2026-10-16T12:00:00.000Z");
 
@@ -149,10 +150,12 @@ test("later customer-named treatment outranks the first-touch ad", () => {
   assert.equal(decision?.treatment, "9D 逆龄抗衰");
   assert.equal(decision?.source, "recent_customer");
 
-  // Even when the model mistakenly keeps the 3D label, do not send the old
-  // ad's price instead of overriding the customer's explicit 9D selection.
-  assert.equal(decide({ customerText: "价格?",
-    conversationHistory: history, treatment: "3D 小颜术", metaAdContext }), null);
+  // An unsupported old model label cannot override a customer-confirmed
+  // new treatment, even when the original ad promoted 3D.
+  const corrected = decide({ customerText: "价格?",
+    conversationHistory: history, treatment: "3D 小颜术", metaAdContext });
+  assert.equal(corrected?.treatment, "9D 逆龄抗衰");
+  assert.equal(corrected?.source, "recent_customer");
 });
 
 test("Meta context cannot authorize an ambiguous, stale or contradicted quote", () => {
@@ -302,4 +305,93 @@ test("asking for a 3D treatment price and booking in the same message still work
   assert.equal(d?.treatment, "3D 小颜术");
   assert.equal(d?.source, "current_customer");
   assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+});
+
+// This reproduces the important parts of Eunice's production sequence and
+// includes the real ad's multi-service theme. Do not test an invented clean
+// 3D-only creative: it concealed the original bug.
+const neutroServices = [...services, { name: "3D + 9D 组合" }];
+const neutroAliases = [...serviceAliases,
+  { alias: "3D + 9D", officialService: "3D + 9D 组合" },
+  { alias: "3D+9D", officialService: "3D + 9D 组合" },
+  { alias: "9D+3D", officialService: "3D + 9D 组合" },
+];
+
+test("real mixed 3D+9D creative does not authorize an ad-only 3D quotation", () => {
+  const ad = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "小颜术 6",
+    headline: "Neutro Sense TCM Centre 中医养生馆",
+    body: "我们建议她做 3D 小颜术 + 9D 逆龄抗衰。3D 小颜术徒手调整，再搭配 9D 逆龄抗衰，3D 调整 + 9D 紧致。",
+    attributed_at: TEST_NOW,
+  }, { services: neutroServices, aliases: neutroAliases });
+  assert.notEqual(ad?.serviceHint, "3D 小颜术");
+  assert.notEqual(ad?.serviceHint, "9D 逆龄抗衰");
+  const adOnly = decide({ metaAdContext: ad, customerText: "价格？",
+    conversationHistory: [{ role: "user", content: "价格？" }],
+    services: neutroServices, serviceAliases: neutroAliases });
+  assert.ok(!adOnly?.prices?.length, "mixed ad alone cannot quote a 3D price");
+});
+
+test("Eunice 3D enquiry, address then 价格？ answers RM488 and selects 3D graphic", async () => {
+  const ad = normalizeMetaAdReplyContext({
+    source: "meta_ads", ad_name: "小颜术 6",
+    headline: "Neutro Sense TCM Centre 中医养生馆",
+    body: "她做 3D 小颜术 + 9D 逆龄抗衰，3D 徒手调整搭配 9D 紧致。",
+    attributed_at: TEST_NOW,
+  }, { services: neutroServices, aliases: neutroAliases });
+  const history = [
+    { role: "user", content: "Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～" },
+    { role: "assistant", content: "Hi 你好 👋 3D小颜术是纯徒手的脸部护理" },
+    { role: "assistant", content: "这个是我们顾客完成一次【3D小颜术】后的 Before & After" },
+    { role: "user", content: "地址？" },
+    { role: "assistant", content: "我们在 Petaling Jaya 哦" },
+    { role: "user", content: "价格？" },
+  ];
+  const d = decide({
+    priceQuery: false, treatment: "3D + 9D 组合",
+    customerText: "价格？", conversationHistory: history,
+    metaAdContext: ad, services: neutroServices, serviceAliases: neutroAliases,
+  });
+  assert.equal(d?.treatment, "3D 小颜术");
+  assert.equal(d?.source, "recent_customer");
+  assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+
+  const guard = guardAssessmentFirstPricingReply({
+    customerText: "价格？", reply: "请问你想了解哪一项疗程的价格呢？",
+    treatment: d.treatment, verifiedPricingIntent: true,
+    requireVerifiedTreatment: true, services: neutroServices,
+    serviceAliases: neutroAliases, conversationHistory: history,
+    resultMedia: [],
+  });
+  const quote = ensureVerifiedPriceReply({
+    customerText: "价格？", reply: guard.reply,
+    treatment: d.treatment, pricingDecision: d, priceRequested: true,
+    promotions, services: neutroServices, serviceAliases: neutroAliases,
+    conversationHistory: history, resultMedia: [], language: "zh",
+  });
+  assert.match(quote.reply, /3D 小颜术/u);
+  assert.match(quote.reply, /RM488/u);
+  assert.doesNotMatch(quote.reply, /哪.*疗程的价格/u);
+  const graphic = await promotionFor(d, "价格？", history, {
+    services: neutroServices, serviceAliases: neutroAliases,
+  });
+  assert.deepEqual(graphic?.packages?.map(p => p.imageUrl),
+    ["https://example.test/3d.png"]);
+});
+
+test("switch from the initial 3D enquiry to 9D beats a mixed ad after address question", async () => {
+  const history = [
+    { role: "user", content: "想了解3D 小颜术" },
+    { role: "user", content: "我现在想了解9D 逆龄抗衰" },
+    { role: "user", content: "地址？" },
+    { role: "user", content: "价格？" },
+  ];
+  const d = decide({ customerText: "价格？", conversationHistory: history,
+    treatment: "3D 小颜术", metaAdContext: null });
+  assert.equal(d?.treatment, "9D 逆龄抗衰");
+  assert.equal(d?.source, "recent_customer");
+  assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+  const graphic = await promotionFor(d, "价格？", history);
+  assert.deepEqual(graphic?.packages?.map(p => p.imageUrl),
+    ["https://example.test/9d.png"]);
 });
