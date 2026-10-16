@@ -1,6 +1,7 @@
 const config = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
+const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { relatedMediaTargets } = require("./relatedServicePolicy");
 
@@ -341,6 +342,21 @@ function conversationPromotionsList(conversationContext) {
     ].join("\n");
   }
 
+  // Reuse independently verified amounts without loading long commercial copy
+  // when Gemini sees a natural question absent from the legacy keyword list.
+  const aiPriceReference = config.aiPricingIntentMode === "enabled" && selected.length === 1
+    ? verifiedPricesForService(selected[0].name, active,
+        conversationContext?.currentCustomerText || "", [],
+        { allowTextOnlyOffers: true })
+    : null;
+  const compactVerifiedPrices = aiPriceReference?.length
+    ? [
+        "  VERIFIED PRICE REFERENCE (internal only): quote these amounts ONLY for a CURRENT customer price request. Do not send or promise images based on this reference.",
+        ...aiPriceReference.map((item) =>
+          `  - ${item.name === "Main offer" ? selected[0].name : item.name}: ${item.price}`
+        ),
+      ]
+    : [];
   const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
   const relevant = active.filter((promotion) => {
     const linked = followUpLookupKey(promotion?.linkedService);
@@ -348,11 +364,14 @@ function conversationPromotionsList(conversationContext) {
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
 
+  // Show only compact offer facts on non-commercial turns. Even an explicit
+  // treatment mention is not consent to receive unsolicited promotion copy.
   if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
       (config.automatedFollowUp?.assessmentFirstPricingEnabled === true && !explicitConversationPriceRequest(conversationContext))) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
+      ...compactVerifiedPrices,
     ].join("\n");
   }
 
@@ -1301,12 +1320,13 @@ Rules for structured fields:
 - A current price/package enquiry about exactly one known service is also a service enquiry: set "serviceQuery" to true as well as the appropriate price/package flag. If the service is known only from the ad, use "meta_ad"; if it is known from the current wording use "customer_message"; otherwise use "conversation".
 - A customer-sent Click-to-WhatsApp introduction granting FUTURE follow-ups or offer notifications (for example "可以跟进我，有优惠也发我看看") is NOT an immediate request for pricing, offers, or package lists. Interpret its separate current treatment interest normally. Greet naturally, explain the named treatment briefly and ask one useful question. Do not quote or list packages/prices unless the customer also asks about them NOW.
 - Before & After images are selected separately by the application when the customer clearly asks about one treatment, including in a first message with future opt-in wording. Do NOT suppress treatment interest just because future promotional permission is present, and do not promise image delivery because media may be blocked by safety or duplicate checks.
-- Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, cost, fee, charge, package price, first-trial price, promotion price, or equivalent wording, OR when the customer immediately answers our which-treatment price clarification after their explicit price request. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
+- Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, including natural conversational questions like "做一次多少", "一次几多", "how much per session", "berapa satu sesi", or when the customer immediately answers our which-treatment price clarification after their explicit price request. A previous price request does not carry over to a new non-pricing question. Duration, number-of-sessions, treatment effectiveness, and permission for FUTURE promotions are not price queries. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
 - Set "packageQuery" to true ONLY when the customer's CURRENT message explicitly asks to see, list, compare, or know the available packages/options/offers for one service, such as "有什么package?", "有什么配套?", "what packages do you have?", or "show me the options". Merely mentioning a package while asking about suitability, symptoms, results, or treatment details is not a packageQuery.
 - When either "priceQuery" or "packageQuery" is true and exactly one configured service is clearly being discussed, set "treatment" to that canonical configured service even if the customer used an alias. If the request covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
 - "promotionOption" is descriptive internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or one of its listed aliases, set "promotionOption" to that package's exact configured name (for example "Package B"). If the customer asks the service price/packages generally, set it to null. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. Outbound media routing does NOT trust this field; the backend independently matches configured package wording from the customer's own current/recent message.
 - "serviceQuery", "serviceQuerySource", "priceQuery", "packageQuery", and "promotionOption" are internal metadata. Never mention these field names to the customer.
 - If the customer's CURRENT request, or the immediately previous customer turn that a short follow-up clearly refers to, explicitly names two or more configured package options, set "promotionOption" to null and answer the requested prices/comparison directly in "reply" from ACTIVE PROMOTIONS. Do not rely on automatic media for a multi-package explicit comparison, because the backend intentionally fails closed rather than choosing or blasting several specifically named options.
+- Never promise that a promotion graphic will be sent: channel billing, duplicate protection, human takeover and delivery eligibility are checked independently after drafting the reply.
 - Otherwise, if either "priceQuery" or "packageQuery" is true and the matching ACTIVE PROMOTION for that service says "auto-send on price/package enquiry: yes", keep the visible reply very short and do not repeat the full promotion caption or package details; the configured promotion media is handled separately. When "promotionOption" is null and the customer asked about the service/packages generally, do not pick one package in the text response. Do not promise that an image will definitely be sent because media delivery may fail.
 - If the matching promotion says "auto-send on price/package enquiry: no", answer the price/package question normally from ACTIVE PROMOTIONS in text.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.

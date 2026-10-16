@@ -21,6 +21,9 @@ const VOUCHER_BEFORE = /(?:voucher|coupon|baucar|优惠券|優惠券|折扣券|�
 
 function priceEvidence(copy) {
   const normalized = String(copy || "").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu, "");
+  const originalPrices = [...normalized.matchAll(ORIGINAL)]
+    .map((match) => Number(match[0].match(/(?:RM|MYR)\s*([\d,]+)/iu)?.[1]?.replace(/,/g, "")))
+    .filter((amount) => Number.isSafeInteger(amount) && amount > 0);
   const finalMatches = [...normalized.matchAll(FINAL_SALE)];
   const directMatches = [...normalized.matchAll(DIRECT_SALE)];
   const bareMatches = /(?:限时优惠|限時優惠|limited[\s-]*time\s+offer|promosi\s+masa\s+terhad)/iu.test(normalized)
@@ -29,7 +32,8 @@ function priceEvidence(copy) {
   const distinct = [...new Set(preferred.map((m) => m[1]))];
   if (distinct.length !== 1) {
     const unlabeled = normalized.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
-    return { price: null, ambiguous: preferred.length > 0 || Boolean(unlabeled.match(MONEY)) };
+    return { price: null, originalPrices,
+      ambiguous: preferred.length > 0 || Boolean(unlabeled.match(MONEY)) };
   }
   let remaining = normalized;
   const claims = [...finalMatches, ...directMatches, ...bareMatches].sort((a, b) => b.index - a.index);
@@ -42,8 +46,8 @@ function priceEvidence(copy) {
   }
   remaining = normalized.split("").map((char, i) => covered.has(i) ? " " : char).join("");
   remaining = remaining.replace(ORIGINAL, " ").replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
-  if (remaining.match(MONEY)) return { price: null, ambiguous: true };
-  return { price: "RM" + distinct[0], ambiguous: false };
+  if (remaining.match(MONEY)) return { price: null, originalPrices, ambiguous: true };
+  return { price: "RM" + distinct[0], originalPrices, ambiguous: false };
 }
 
 function configuredOfferPrice(copy) {
@@ -102,12 +106,18 @@ function requestedPricePackages(packages, customerText, conversationHistory = []
 }
 
 function verifiedPricesForService(treatment, promotions, customerText = "", conversationHistory = [], {
-  clarifiedPriceService = null,
+  clarifiedPriceService = null, allowTextOnlyOffers = false,
 } = {}) {
-  const matching = getActivePromotions(promotions).filter((promotion) =>
-    promotion?.sendOnPriceQuery === true &&
+  const related = getActivePromotions(promotions).filter((promotion) =>
     String(promotion.linkedService || "").trim() === treatment
   );
+  const automatic = related.filter((promotion) => promotion.sendOnPriceQuery === true);
+  // One automatic campaign owns the actual image. An overlapping text-only
+  // campaign must not hide an otherwise unambiguous graphic if its price is
+  // the same, but contradictory current pricing must still fail closed.
+  const matching = automatic.length
+    ? automatic
+    : allowTextOnlyOffers ? related : [];
   if (matching.length !== 1 || findAmbiguousPromotionPackageTerm(matching[0])) return null;
   const options = promotionPackages(matching[0]);
   if (!options.length || options.length > 4) return null;
@@ -124,9 +134,22 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     const sources = [option.caption, option.followUpMessage, ...translations, ...followUpTranslations]
       .filter((source) => String(source || "").trim());
     const evidence = sources.map(priceEvidence);
+    const structured = option.pricing;
+    const configured = structured?.currency === "MYR" &&
+      Number.isSafeInteger(structured.offer) && structured.offer > 0 &&
+      (structured.normal == null || structured.normal >= structured.offer)
+      ? "RM" + structured.offer : null;
+    // Structured prices are authoritative only if no readable sales amount in
+    // any translated caption conflicts. Unverified legacy copy stays closed.
     if (evidence.some((entry) => entry.ambiguous)) return null;
     const unique = [...new Set(evidence.map((entry) => entry.price).filter(Boolean))];
-    if (unique.length !== 1) return null;
+    const originals = [...new Set(evidence.flatMap(entry => entry.originalPrices))];
+    if (configured && unique.some((price) => price !== configured)) return null;
+    if (!configured && unique.length !== 1) return null;
+    // Do not allow translated caption RM999 to contradict a configured
+    // RM888 normal price while the RM488 trial price happens to match.
+    if (originals.length > 1 || (structured?.normal != null &&
+      originals.some(normal => normal !== structured.normal))) return null;
     const localizedCaptions = [option.caption, ...translations]
       .filter((value) => typeof value === "string" && value.trim());
     const afterVoucher = localizedCaptions.some((copy) =>
@@ -135,8 +158,30 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     );
     result.push({
       name: String(option.name).trim(), title: String(option.title || "").trim(),
-      price: unique[0], afterVoucher,
+      price: configured || unique[0], afterVoucher,
     });
+  }
+  if (automatic.length === 1 && allowTextOnlyOffers) {
+    const approved = new Set(result.map((item) => item.price));
+    for (const other of related.filter(p => p !== matching[0])) {
+      const otherOptions = promotionPackages(other);
+      const hasPriceEvidence = otherOptions.some((option) =>
+        Boolean(option.pricing?.offer) ||
+        [option.caption, option.followUpMessage,
+          ...Object.values(option.mediaTranslations || {}).map(x => x?.caption || x),
+          ...Object.values(option.followUpTranslations || {}).map(x => x?.message || x)]
+          .some(copy => /(?:RM|MYR)\s*\d{2,5}/iu.test(
+            String(copy || "").normalize("NFKC").replace(/[\uFE0F\u20E3]/gu, "")
+          ))
+      );
+      if (!hasPriceEvidence) continue;
+      const otherPrices = verifiedPricesForService(
+        treatment, [other], customerText, conversationHistory,
+        { clarifiedPriceService, allowTextOnlyOffers: true }
+      );
+      if (!otherPrices?.length ||
+          otherPrices.some(item => !approved.has(item.price))) return null;
+    }
   }
   return result;
 }
@@ -165,10 +210,15 @@ function clinicalPricingAcknowledgement(customerText, language = "zh") {
     : "关于你提到的身体情况或是否适合，建议先让中医师了解实际情况再评估，不能单凭聊天直接保证安全或效果哦。";
 }
 
+// An AI draft cannot commit the system to sending a graphic. Actual image
+// permission is decided separately after the text is accepted, and may fail
+// even when a promotion price is verified.
+const MEDIA_SEND_PROMISE = /(?:我|我们|我們).{0,15}(?:发|發|传|傳|分享).{0,50}(?:图片|圖片|图|圖|照片|优惠|優惠|促销|促銷|资料|資料|详情|詳情)|(?:\b(?:i(?:'ll| will| can)?|we(?:'ll| will| can)?|sending)\b.{0,30}\b(?:send|share|forward|over)\b.{0,55}\b(?:image|photo|picture|promo|promotion|offer|graphic|details)\b)|(?:\b(?:saya|kami)\b.{0,20}\b(?:hantar|kongsikan)\b.{0,55}\b(?:gambar|promosi|tawaran)\b)/iu;
 function nonPriceExplanation(reply) {
   const clauses = String(reply || "").split(/\n+|(?<=[。！？!?])\s*/u);
   const kept = clauses.map((line) => line.trim()).filter((line) =>
-    line && !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
+    line && !MEDIA_SEND_PROMISE.test(line) &&
+    !hasCommercialReplyContent(line) && !hasTreatmentPriceContent(line) &&
     !/(?:[价價][钱錢格位]|收费|收費|费用|費用|原价|原價|优惠|優惠|折扣|voucher|discount|\b(?:price|pricing|cost|harga|promosi)\b)/iu.test(line)
   );
   return kept.slice(0, 3).join("\n").slice(0, 340).trim();
@@ -179,6 +229,8 @@ function nonPriceExplanation(reply) {
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
+  pricingDecision = undefined,
+  priceRequested = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
 } = {}) {
@@ -193,8 +245,37 @@ function ensureVerifiedPriceReply({
   )) {
     return { reply: complimentaryAssessmentFeeReply(language), restored: true };
   }
+  const aiLed = pricingDecision !== undefined;
+  // In enabled mode the same independently verified decision drives text and
+  // images. No price decision must not leave an invented quote or a promise to
+  // send promotion media in the AI text.
+  if (aiLed && (!pricingDecision || pricingDecision.treatment !== treatment)) {
+    // Non-price service replies must remain intact. Only remove a genuinely
+    // unsolicited numeric price or a promise of promotional media that may
+    // never pass the provider's separate delivery checks.
+    const mediaPromise = MEDIA_SEND_PROMISE.test(original);
+    const unsolicitedAmount = hasTreatmentPriceContent(original);
+    if (!priceRequested && !mediaPromise && !unsolicitedAmount) {
+      return { reply: original, restored: false };
+    }
+    const safeText = nonPriceExplanation(original);
+    const locale = String(language || "").toLowerCase();
+    if (!priceRequested) {
+      const fallback = locale.startsWith("ms") ? "Boleh saya bantu terangkan rawatan ini 😊"
+        : locale.startsWith("en") ? "I can help explain this treatment 😊"
+          : "我可以先帮你介绍这项疗程哦 😊";
+      return { reply: safeText || fallback, restored: true };
+    }
+    const question = locale.startsWith("ms")
+      ? "Harga untuk rawatan yang mana satu ya? Saya boleh bantu semak 😊"
+      : locale.startsWith("en")
+        ? "Which treatment would you like the price for? I can help check 😊"
+        : "请问你想了解哪项疗程的价格呢？我帮你确认 😊";
+    return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true };
+  }
   if (!original || !treatment ||
-      !(hasExplicitPriceRequest(customerText, { treatment }) ||
+      !(aiLed ||
+        hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
       relatedPricingConflict({
         customerText, treatment, conversationHistory, services, serviceAliases,
@@ -204,11 +285,24 @@ function ensureVerifiedPriceReply({
         customerText, conversationHistory, services, serviceAliases, resultMedia,
       })) return { reply: original, restored: false };
 
-  const prices = verifiedPricesForService(treatment, promotions, customerText, conversationHistory, {
-    clarifiedPriceService,
-  });
+  const prices = aiLed
+    ? pricingDecision.prices
+    : verifiedPricesForService(treatment, promotions, customerText, conversationHistory, {
+        clarifiedPriceService,
+      });
   const locale = String(language || "").toLowerCase();
   if (!prices) {
+    // Text-only service prices remain valid when the clinic has not configured
+    // a promotion. This fallback can never authorize a promotional graphic.
+    if (aiLed && pricingDecision.servicePrice) {
+      const locale = String(language || "").toLowerCase();
+      const text = locale.startsWith("ms")
+        ? `Harga untuk ${treatment}: ${pricingDecision.servicePrice} 😊`
+        : locale.startsWith("en")
+          ? `The price for ${treatment} is ${pricingDecision.servicePrice} 😊`
+          : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
+      return { reply: text, restored: true };
+    }
     const safeInfo = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
