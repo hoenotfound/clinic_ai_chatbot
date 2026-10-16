@@ -192,7 +192,10 @@ function resolveAiPricingDecision({
   // treatment refusal never become pricing authorization.
   const validNewTreatmentSwitch = TOPIC_SWITCH_TO_NEW_SERVICE.test(current) &&
     Boolean(currentNamedService) && (explicitAmount || explicitOptions);
-  if (!current || (RESET.test(current) && !validNewTreatmentSwitch) ||
+  // Deposit/consultation/booking fees are not paid treatment prices, even
+  // when the customer explicitly names a treatment or a model flags pricing.
+  if (!current || AD_UNRELATED_FEE.test(current) ||
+      (RESET.test(current) && !validNewTreatmentSwitch) ||
       /\b(?:stop|unsubscribe)\b|退订|退訂/iu.test(current) ||
       REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
