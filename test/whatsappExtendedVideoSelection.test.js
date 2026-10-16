@@ -171,7 +171,7 @@ test("48h and 66h fallback proceeds through the guarded provider-send path as co
     messagesRepo.setDeliveryStatusById = original.setStatus;
     realtime.publish = original.publish;
   });
-  clinicConfig.services = [{ name: "骨盆调理" }];
+  clinicConfig.services = [{ name: "骨盆调理" }, { name: "3D 小颜术" }];
   clinicConfig.automatedFollowUp = {
     enabled: true, quietHours: { enabled: false },
     freeEntry: { enabled: true, activatedAt: "2026-10-01T00:00:00Z",
