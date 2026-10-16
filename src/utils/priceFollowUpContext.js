@@ -55,6 +55,39 @@ function currentMatchesPromotion(customerText, options, promotions) {
 const SESSION_AMOUNT = /^(?:(?:请问|請問)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:疗程|療程|护理|護理)?\s*(?:(?:要|是|花|需|收费|收費)\s*)?(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢)[\s?？。!！]*$/iu;
 const TOPIC_CHANGE = /(?:换个|換個|改聊|不聊|另外想|不要|不想(?:了解|做)|\b(?:instead|switch|another\s+treatment|different\s+treatment|stop|unsubscribe|opt\s*out)\b|退订|退訂)/iu;
 const STAFF = /^\[Verified STAFF message\]/u;
+const CONTINUED_CONTEXT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function pricingMessageText(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  // Inbound photos are not proof of a treatment. Assistant image captions
+  // remain text, and any authenticated staff caption must break continuity.
+  const parts = content.filter(p => p?.type === "text" && typeof p.text === "string");
+  return parts.map(p => p.text).join("\n");
+}
+
+function isVerifiedStaffTurn(turn) {
+  return turn?.role === "assistant" && (
+    turn.pricingStaffAuthored === true ||
+    STAFF.test(pricingMessageText(turn).trim())
+  );
+}
+
+function isRecentPricingThread(turns, startIndex, now = Date.now()) {
+  if (!Number.isFinite(now) || startIndex < 0 || startIndex >= turns.length)
+    return false;
+  let previous = -Infinity;
+  for (const turn of turns.slice(startIndex)) {
+    // Only trusted DB timestamps can authorize this *extended* carryover.
+    // Synthetic/legacy histories without metadata fail closed.
+    const time = turn?.pricingCreatedAtMs;
+    if (!Number.isFinite(time) || time < now - CONTINUED_CONTEXT_MAX_AGE_MS ||
+        time > now + 60_000 || time < previous) return false;
+    previous = time;
+  }
+  return true;
+}
 const CONCERN_ANSWER = /^(?:产后|產後)\s*(?:体态|體態|身材|小腹|恢复状态|恢復狀態)[\s。!！]*$/iu;
 const AGE_ANSWER = /^(?:大概|约|約|差不多|已经|已經)?\s*(?:\d{1,2}|一|二|两|兩|三|四|五|六|七|八|九|十|半)\s*(?:年|个月|個月|个?月|周|週|星期|天|日)[\s。!！]*$/iu;
 const FREE_ASSESSMENT = /^(?:(?:请问|請問)\s*)?(?:(?:免费|免費)\s*)?(?:体态评估|體態評估|评估|評估|1\s*[对對]\s*1\s*评估)\s*(?:\+\s*体验|体验|體驗)?\s*(?:是|有)?\s*(?:免费|免費|收费|收費|要钱|要錢|吗|嗎)?[\s?？。!！]*$/iu;
@@ -70,7 +103,7 @@ function isContinuedTreatmentPriceQuestion(text) {
 
 function resolveContinuedTreatmentPriceService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
-  promotions = [],
+  promotions = [], now = Date.now(),
 } = {}) {
   const current = String(customerText || "").trim();
   if (!isContinuedTreatmentPriceQuestion(current) ||
@@ -81,32 +114,35 @@ function resolveContinuedTreatmentPriceService({
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
     .filter(x => x?.role === "user" || x?.role === "assistant");
   if (turns.at(-1)?.role !== "user" ||
-      String(turns.at(-1)?.content || "").trim() !== current) return null;
+      typeof turns.at(-1)?.content !== "string" ||
+      pricingMessageText(turns.at(-1)).trim() !== current) return null;
   const before = turns.slice(0, -1);
   const customerIndexes = before.flatMap((x, i) => x.role === "user" ? [i] : []).slice(-4);
   const lastAssistant = before.at(-1);
   if (customerIndexes.length < 2 || lastAssistant?.role !== "assistant" ||
-      STAFF.test(String(lastAssistant.content || ""))) return null;
+      isVerifiedStaffTurn(lastAssistant)) return null;
 
   for (let pos = customerIndexes.length - 1; pos >= 0; pos--) {
     const index = customerIndexes[pos];
-    const source = String(before[index]?.content || "").trim();
-    if (!source || TOPIC_CHANGE.test(source)) return null;
+    const source = pricingMessageText(before[index]).trim();
+    if (typeof before[index]?.content !== "string" || !source ||
+        TOPIC_CHANGE.test(source)) return null;
     const named = safeServiceFromCustomer(source, services, serviceAliases);
     const mentions = findServicesInText(source, candidates);
     if (!named || mentions.length !== 1 || named.name !== mentions[0] ||
         !/(?:有兴趣|有興趣|感兴趣|感興趣|想了解|想知道|想问|想問|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(source)) continue;
-    if (hasClinicalMediaRisk(source) || !currentPricePackageOptions(named.name, promotions).length)
-      return null;
+    if (hasClinicalMediaRisk(source) || !currentPricePackageOptions(named.name, promotions).length ||
+        !isRecentPricingThread(turns, index, now)) return null;
     // The latest bot turn must still identify the previously CUSTOMER-named
     // treatment; an advertisement, CRM field or model label is insufficient.
-    const lastText = String(lastAssistant.content || "");
+    const lastText = pricingMessageText(lastAssistant);
     if (!lastText.includes(named.name) &&
         !(named.name === "骨盆调理" && lastText.includes("骨盆"))) return null;
     for (let i = index + 1; i < before.length; i++) {
-      const turn = before[i], value = String(turn.content || "").trim();
-      if (!value || STAFF.test(value)) return null;
+      const turn = before[i], value = pricingMessageText(turn).trim();
+      if (!value || isVerifiedStaffTurn(turn)) return null;
       if (turn.role !== "user") continue;
+      if (typeof turn.content !== "string") return null;
       if (TOPIC_CHANGE.test(value)) return null;
       // Several automatic Before & After captions may follow the previous
       // answer. A fee question can still refer to its earlier assessment
@@ -117,8 +153,8 @@ function resolveContinuedTreatmentPriceService({
       const replies = before.slice(previousCustomer + 1, i);
       if (!replies.length || replies.length > 4 ||
           replies.some(x => x.role !== "assistant" ||
-            STAFF.test(String(x.content || "")))) return null;
-      const question = replies.map(x => String(x.content || "")).join("\n");
+            isVerifiedStaffTurn(x) || !pricingMessageText(x).trim())) return null;
+      const question = replies.map(pricingMessageText).join("\n");
       if (FREE_ASSESSMENT.test(value) && /(?:评估|評估|体验|體驗)/iu.test(question)) continue;
       if (CONCERN_ANSWER.test(value) && ASK_CONCERN.test(question)) continue;
       if (AGE_ANSWER.test(value) && ASK_AGE.test(question)) continue;
@@ -131,17 +167,19 @@ function resolveContinuedTreatmentPriceService({
 
 function resolveVerifiedPriceFollowUpService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
-  promotions = [],
+  promotions = [], allowContinuedPriceContext = false,
 } = {}) {
   const current = String(customerText || "").trim();
   if (!current || current.length > 115 ||
       !(hasExplicitPriceRequest(current) || isStandalonePriceQuestion(current)) ||
       TOPIC_RESET.test(current) || BROAD_PRICE_QUESTION.test(current)) return null;
 
-  const continued = resolveContinuedTreatmentPriceService({
-    customerText: current, conversationHistory, services, serviceAliases, promotions,
-  });
-  if (continued) return continued;
+  if (allowContinuedPriceContext === true) {
+    const continued = resolveContinuedTreatmentPriceService({
+      customerText: current, conversationHistory, services, serviceAliases, promotions,
+    });
+    if (continued) return continued;
+  }
   const candidates = serviceCandidates(services, serviceAliases);
   // A current multi-service or mixed-treatment enquiry is not a short,
   // service-free follow-up. Do not fall back to an older service.
@@ -207,5 +245,6 @@ function resolveVerifiedPriceFollowUpService({
 
 module.exports = {
   isContextualPriceReference, isContinuedTreatmentPriceQuestion,
+  pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
 };
