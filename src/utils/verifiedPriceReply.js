@@ -54,6 +54,29 @@ function configuredOfferPrice(copy) {
   return priceEvidence(copy).price;
 }
 
+// Existing Neutro copy includes emoji digits such as "RM 4️⃣8️⃣8️⃣" in
+// translations. When a structured MYR amount is configured, a price without a
+// "now only" label can still be checked: every unlabelled monetary amount must
+// match the configured offer, and any stated original price must match normal.
+// Without structured pricing the older strict evidence rule remains in place.
+function ambiguousCopyMatchesStructuredPrice(copy, structured) {
+  if (structured?.currency !== "MYR" ||
+      !Number.isSafeInteger(structured.offer) || structured.offer <= 0) return false;
+  const source = String(copy || "").normalize("NFKC")
+    .replace(/[\uFE0F\u20E3]/gu, "");
+  const originals = [...source.matchAll(ORIGINAL)].map((match) =>
+    Number(match[0].match(/(?:RM|MYR)\s*([\d,]+)/iu)?.[1]?.replace(/,/g, ""))
+  );
+  if (originals.length && (!Number.isSafeInteger(structured.normal) ||
+      originals.some((amount) => amount !== structured.normal))) return false;
+  const withoutLabels = source.replace(ORIGINAL, " ")
+    .replace(VOUCHER_AFTER, " ").replace(VOUCHER_BEFORE, " ");
+  const amounts = [...withoutLabels.matchAll(MONEY)].map((match) =>
+    Number(match[0].match(/\d+/u)?.[0])
+  );
+  return amounts.length > 0 && amounts.every((amount) => amount === structured.offer);
+}
+
 // Resolve package choices once for both the customer-facing text and any
 // optional promotional images. Multiple explicitly named packages are valid.
 // Carry a package from history only for a standalone price follow-up; a new
@@ -141,7 +164,8 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
       ? "RM" + structured.offer : null;
     // Structured prices are authoritative only if no readable sales amount in
     // any translated caption conflicts. Unverified legacy copy stays closed.
-    if (evidence.some((entry) => entry.ambiguous)) return null;
+    if (evidence.some((entry, index) => entry.ambiguous &&
+      !ambiguousCopyMatchesStructuredPrice(sources[index], structured))) return null;
     const unique = [...new Set(evidence.map((entry) => entry.price).filter(Boolean))];
     const originals = [...new Set(evidence.flatMap(entry => entry.originalPrices))];
     if (configured && unique.some((price) => price !== configured)) return null;
