@@ -138,7 +138,9 @@ const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|c
 // A model packageQuery flag alone is not authorization to send an offer.
 // Require positive option-list evidence in the customer's own CURRENT text.
 function hasExplicitPackageOptionsRequest(customerText) {
-  return PACKAGE_OPTIONS_REQUEST.test(String(customerText || "").trim());
+  const current = String(customerText || "").trim();
+  return PACKAGE_OPTIONS_REQUEST.test(current) ||
+    /(?:有(?:什么|什麼|哪些|没有|沒有).{0,16}(?:优惠|優惠|促销|促銷)|(?:哪些|什么|什麼)(?:优惠|優惠|促销|促銷)|(?:优惠|優惠|促销|促銷).{0,12}(?:有哪些|有什[么麼]|有哪[些种種])|\b(?:what|which|any|show|list|available|have)\b.{0,30}\b(?:offers?|promos?|promotions?|deals?)\b|\b(?:ada|apa|senarai|pilihan)\b.{0,25}\b(?:promosi|tawaran)\b)/iu.test(current);
 }
 
 function hasCustomerPriceEnquiry(customerText) {
