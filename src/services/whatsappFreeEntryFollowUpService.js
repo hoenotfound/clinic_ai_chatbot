@@ -400,7 +400,7 @@ async function processCandidate(candidate, requested, template, now = new Date()
   const active = await alignedSettings(requested);
   const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
-  const spec = explicitSpec || enrichAutomatedTemplateSpec(
+  let spec = explicitSpec || enrichAutomatedTemplateSpec(
     selectTemplateSpec(candidate, slotHours, active), template
   );
   if (!spec) return "unsupported_or_ambiguous_template_media";
@@ -438,9 +438,23 @@ async function processCandidate(candidate, requested, template, now = new Date()
            AND delivery_status IS DISTINCT FROM 'cancelled'`,
         [candidate.contact_id, candidate.first_inbound_at, message?.id || null]
       );
-      if (await mediaAlreadyShared(spec.mediaKey, alreadySent.rows.map((row) => row.media_key))) {
-        await finish(attemptId, "cancelled", { error: "Media already sent in this ad conversation" });
-        return "media_already_sent";
+      const previousMedia = alreadySent.rows.map((row) => row.media_key);
+      if (await mediaAlreadyShared(spec.mediaKey, previousMedia)) {
+        // Another outbound sender may have published this video between
+        // candidate selection and acquiring the claimed slot. Re-select only
+        // this slot's configured, approved TEXT fallback before creating the
+        // message. Never reuse the video or improvise unrelated copy.
+        const fallback = templateCatalog && resolveSafeTemplate({
+          ...candidate, previously_sent_media_keys: previousMedia,
+        }, slotHours, active, templateCatalog, { skipPreferred: true });
+        if (!fallback || !(await validateApprovedMedia(fallback.template, fallback.spec))) {
+          await finish(attemptId, "cancelled", {
+            error: "Media already sent in this ad conversation; no approved slot text fallback",
+          });
+          return "media_already_sent";
+        }
+        template = fallback.template;
+        spec = fallback.spec;
       }
     }
     // Every value comes from a configured service/active clinic promotion;
@@ -696,7 +710,9 @@ function resolveSafeTemplate(candidate, slotHours, active, catalog, {
   const wildcard = (active.templateRules || []).find((rule) =>
     rule.slotHours === slotHours && rule.serviceName === "*" &&
     !rule.mediaKey && !rule.mediaUrl);
-  const fallbackName = wildcard?.templateName || active.templateName;
+  // If the operator omitted a text rule for this slot, do not silently
+  // repurpose the global default or another slot's marketing copy.
+  const fallbackName = wildcard?.templateName || null;
   const usePreferred = !skipPreferred && !usedNames.includes(preferred.templateName) &&
     !(preferred.mediaKey && previouslySent.includes(preferred.mediaKey));
   const alternatives = usePreferred
