@@ -367,3 +367,58 @@ test("Gemini receives a compact verified price reference for natural language pr
     Object.assign(config,original);
   }
 });
+
+
+test("model priceQuery false positives cannot resend promotional graphics on price objections", async () => {
+  const complaints = [
+    "3D 小颜术价格太贵了",
+    "3D 小颜术价格太高，超出预算",
+    "3D小颜术贵了，我考虑一下",
+    "My 3D treatment price is too expensive",
+    "My budget is RM500 for 3D",
+    "3D 价格不便宜",
+    "Harga 3D mahal sangat",
+  ];
+  const { isPurePriceObjection } = require("../src/utils/aiPricingIntentDecision");
+  for (const customerText of complaints) {
+    const h = [{ role: "user", content: customerText }];
+    assert.equal(isPurePriceObjection(customerText), true, customerText);
+    const d = decide({ customerText, conversationHistory: h, priceQuery: true });
+    assert.equal(d, null, "bad model flag must not authorize pricing: " + customerText);
+    const reply = ensureVerifiedPriceReply({
+      customerText, reply: "我明白你会考虑预算，我们可以先了解你的需求 😊",
+      treatment: null, pricingDecision: d, priceRequested: false, language: "zh",
+    });
+    assert.doesNotMatch(reply.reply, /哪项疗程的价格/u,
+      "objection should not trigger a which-treatment pricing clarification");
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(d, {
+      customerText, conversationHistory: h, priceQuery: true,
+    })), null, "objection should not send a graphic");
+  }
+});
+
+test("a separate direct price question after an objection still qualifies", () => {
+  const { isPurePriceObjection } = require("../src/utils/aiPricingIntentDecision");
+  for (const customerText of [
+    "3D 小颜术价格太贵了，现在多少钱？",
+    "3D价格太贵，不过做一次多少？",
+    "3D price too expensive; what is the current price?",
+  ]) {
+    assert.equal(isPurePriceObjection(customerText), false, customerText);
+    const d = decide({ customerText,
+      conversationHistory: [{ role: "user", content: customerText }],
+    });
+    assert.equal(d?.treatment, "3D 小颜术", customerText);
+    assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"], customerText);
+  }
+});
+
+test("complaints combined with duration questions do not become price requests", () => {
+  const { isPurePriceObjection } = require("../src/utils/aiPricingIntentDecision");
+  const customerText = "3D 价格太贵了，做一次多少时间？";
+  assert.equal(isPurePriceObjection(customerText), true);
+  assert.equal(decide({
+    customerText, conversationHistory: [{ role: "user", content: customerText }],
+    priceQuery: true,
+  }), null);
+});
