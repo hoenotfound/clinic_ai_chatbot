@@ -534,26 +534,21 @@ async function processCandidate(candidate, requested, template, now = new Date()
           { maxCeilingHours: liveActive.sevenDayVerified ? 168 : 72 }),
       }) ||
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
-      !(() => {
-        const selected = selectTemplateSpec(fresh, slotHours, liveActive);
-        // Check the actual resolved fallback, not just the preferred template.
-        // Otherwise safe text fallbacks always cancel after being claimed.
-        const current = templateCatalog
-          ? resolveSafeTemplate(fresh, slotHours, liveActive, templateCatalog,
-              { skipPreferred: spec.fallbackDueToMedia === true })?.spec
-          : selected && enrichAutomatedTemplateSpec(
-              { ...selected, language: template.language }, template
-            );
-        return current && current.templateName === spec.templateName &&
+      !(await (async () => {
+        // Fresh policy, contact, template AND media checks must still select
+        // the same exact send, including text fallback and Meta's en variant.
+        const selected = templateCatalog
+          ? await selectEligibleTemplate(fresh, slotHours, liveActive, templateCatalog)
+          : null;
+        const current = selected?.spec;
+        return current && selected.template.language === template.language &&
+          current.templateName === spec.templateName &&
           current.mediaKey === spec.mediaKey &&
           current.mediaUrl === spec.mediaUrl &&
           current.serviceName === spec.serviceName &&
           current.autoPromoImageId === spec.autoPromoImageId &&
-          current.bodyValue === spec.bodyValue &&
-          (selected.language === spec.language ||
-            (selected.language === "en_US" && spec.language === "en") ||
-            spec.language === liveActive.fallbackLanguage);
-      })()) {
+          current.bodyValue === spec.bodyValue;
+      })())) {
       await messagesRepo.setDeliveryStatusById(message.id, "cancelled", "No longer eligible");
       await finish(attemptId, "cancelled", { messageId: message.id, error: "No longer eligible" });
       return "cancelled";
@@ -649,6 +644,7 @@ async function processCandidate(candidate, requested, template, now = new Date()
 async function mediaAlreadyShared(mediaKey, previousKeys, store = mediaStorage) {
   if (!mediaKey || !Array.isArray(previousKeys) || !previousKeys.length) return false;
   if (previousKeys.includes(mediaKey)) return true;
+  if (!/\.mp4$/i.test(mediaKey)) return false;
   const videos = [...new Set(previousKeys)].filter((key) =>
     typeof key === "string" && key.endsWith(".mp4") && store.isSharedFollowUpConfigKey(key));
   if (!videos.length) return false;
@@ -676,31 +672,59 @@ function approvedInLanguage(catalog, name, language) {
     item.category === "MARKETING") || null;
 }
 
-function resolveSafeTemplate(candidate, slotHours, active, catalog, { skipPreferred = false } = {}) {
+function resolveSafeTemplate(candidate, slotHours, active, catalog, {
+  skipPreferred = false, build = buildStaticMarketingTemplate,
+  materialize = materializeTemplateMediaSpec,
+} = {}) {
   const preferred = selectTemplateSpec(candidate, slotHours, active);
   if (!preferred) return null;
   const usedNames = candidate.used_template_names || [];
-  const sentKeys = candidate.previously_sent_media_keys || [];
-  // A video already sent in any earlier or manual follow-up must not repeat.
-  // If a video has no approved variant in the customer's language, choose a
-  // distinct approved text template instead of silently switching to Chinese.
-  const alternatives = skipPreferred ? [] : [preferred.templateName];
-  if (preferred.mediaKey) alternatives.push("ns_fu1_service_checkin", "ns_fu2_general_checkin");
-  for (const name of alternatives) {
-    if (usedNames.includes(name)) continue;
-    const isPreferred = name === preferred.templateName;
-    if (isPreferred && preferred.mediaKey && sentKeys.includes(preferred.mediaKey)) continue;
-    const template = approvedInLanguage(catalog, name, preferred.language);
+  const previouslySent = candidate.previously_sent_media_keys || [];
+  // Use the operator's wildcard text rule for THIS slot, never another slot's
+  // template or an unrelated hardcoded follow-up. No wildcard means use the
+  // clinic's configured default text template.
+  const wildcard = (active.templateRules || []).find((rule) =>
+    rule.slotHours === slotHours && rule.serviceName === "*" &&
+    !rule.mediaKey && !rule.mediaUrl);
+  const fallbackName = wildcard?.templateName || active.templateName;
+  const usePreferred = !skipPreferred && !usedNames.includes(preferred.templateName) &&
+    !(preferred.mediaKey && previouslySent.includes(preferred.mediaKey));
+  const alternatives = usePreferred
+    ? [{ ...preferred }]
+    : [];
+  if (preferred.mediaKey && fallbackName && fallbackName !== preferred.templateName &&
+      !usedNames.includes(fallbackName)) {
+    alternatives.push({
+      ...preferred, templateName: fallbackName, serviceName: wildcard?.serviceName || null,
+      mediaKey: "", mediaUrl: "", mediaSourceId: "", videoCodecVerified: false,
+    });
+  }
+  for (const base of alternatives) {
+    const template = approvedInLanguage(catalog, base.templateName, preferred.language);
     if (!template) continue;
-    const base = isPreferred ? preferred : {
-      ...preferred, templateName: name, mediaKey: "", mediaUrl: "",
-      mediaSourceId: "", videoCodecVerified: false,
-    };
+    if (base.templateName !== preferred.templateName &&
+        (template.header?.format || "TEXT") !== "TEXT") continue;
     const spec = enrichAutomatedTemplateSpec({ ...base, language: template.language }, template);
-    if (spec && buildStaticMarketingTemplate(template,
-      materializeTemplateMediaSpec(spec), whatsappTemplates,
+    if (spec && build(template, materialize(spec), whatsappTemplates,
       { allowUnuploadedMedia: true })) return { template, spec };
   }
+  return null;
+}
+
+// Decide once, using the same rule and media checks at initial selection and
+// immediately before the provider send. An already-seen or unusable video
+// falls back only to the configured wildcard/default TEXT rule for this slot.
+async function selectEligibleTemplate(candidate, slotHours, active, catalog, {
+  validate = validateApprovedMedia, isDuplicate = mediaAlreadyShared,
+  resolve = resolveSafeTemplate,
+} = {}) {
+  const primary = resolve(candidate, slotHours, active, catalog);
+  if (primary &&
+      !(primary.spec.mediaKey && await isDuplicate(primary.spec.mediaKey,
+        candidate.previously_sent_media_keys || [])) &&
+      await validate(primary.template, primary.spec)) return primary;
+  const fallback = resolve(candidate, slotHours, active, catalog, { skipPreferred: true });
+  if (fallback && await validate(fallback.template, fallback.spec)) return fallback;
   return null;
 }
 
@@ -758,25 +782,11 @@ async function run({ now = new Date() } = {}) {
           .catch(() => {});
         continue;
       }
-      let resolved = resolveSafeTemplate(candidate, slotHours, active, catalog.templates);
-      if (resolved?.spec.mediaKey && await mediaAlreadyShared(
-        resolved.spec.mediaKey, candidate.previously_sent_media_keys || [])) {
-        resolved = null;
-      }
-      if (resolved && !await validateApprovedMedia(resolved.template, resolved.spec)) resolved = null;
-      // Avoid sending the same clip again, or dropping the slot because the
-      // video is missing. Use a distinct approved text template in-language.
-      if (!resolved) {
-        const fallback = resolveSafeTemplate(candidate, slotHours, active, catalog.templates,
-          { skipPreferred: true });
-        if (fallback && await validateApprovedMedia(fallback.template, fallback.spec)) {
-          resolved = { ...fallback, spec: { ...fallback.spec, fallbackDueToMedia: true } };
-        }
-      }
+      const resolved = await selectEligibleTemplate(
+        candidate, slotHours, active, catalog.templates);
       if (!resolved) {
         result.skipped++;
-        const reason = resolved ? "unsupported_or_unavailable_media" :
-          "no_distinct_approved_template_in_customer_language";
+        const reason = "no_distinct_approved_template_in_customer_language";
         await freeEntryReport.recordSkip(candidate.contact_id,
           candidate.first_reply_message_id, slotHours, reason).catch((error) =>
           console.warn("[WhatsApp FEP] failed to record skip:", error?.message));
@@ -1069,5 +1079,6 @@ module.exports = {
   runAndSchedule, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
   CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
-  resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause, mediaAlreadyShared,
+  resolveSafeTemplate, selectEligibleTemplate, selectiveSlotAllowed,
+  customerRequestedPause, mediaAlreadyShared,
 };
