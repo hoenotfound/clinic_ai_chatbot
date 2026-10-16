@@ -257,6 +257,7 @@ function ensureVerifiedPriceReply({
   priceRequested = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
+  allowContinuedPriceContext = false,
 } = {}) {
   const original = String(reply || "").trim();
   // The clinic explicitly offers the introductory assessment + experience
@@ -301,9 +302,10 @@ function ensureVerifiedPriceReply({
   // anchor through a short postpartum *concern* answer. The generic
   // related-treatment guard otherwise mistakes "产后体态" for a request to
   // switch to the separate, unpriced 产后调理 service.
-  const verifiedContinuedService = resolveContinuedTreatmentPriceService({
-    customerText, conversationHistory, services, serviceAliases, promotions,
-  })?.name === treatment;
+  const verifiedContinuedService = allowContinuedPriceContext === true &&
+    resolveContinuedTreatmentPriceService({
+      customerText, conversationHistory, services, serviceAliases, promotions,
+    })?.name === treatment;
   if (!original || !treatment ||
       !(aiLed ||
         hasExplicitPriceRequest(customerText, { treatment }) ||
