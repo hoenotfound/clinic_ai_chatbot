@@ -20,6 +20,7 @@ function supportedForAutomation(template) {
 function chooseVariant(catalog, name, language) {
   const variants = (catalog?.templates || []).filter((item) => item.name === name);
   return variants.find((item) => item.language === language) ||
+    (language === "en_US" ? variants.find((item) => item.language === "en") : null) ||
     variants.find((item) => item.language === "zh_CN") || variants[0] || null;
 }
 
@@ -32,7 +33,8 @@ export function ApprovedFollowUpTemplatePicker({
     const grouped = new Map();
     for (const template of catalog?.templates || []) {
       if (!supportedForAutomation(template) || (defaultOnly && ["IMAGE", "VIDEO"].includes(template.header?.format))) continue;
-      if (language !== "auto" && template.language !== language) continue;
+      if (language !== "auto" && template.language !== language &&
+          !(language === "en_US" && template.language === "en")) continue;
       const found = grouped.get(template.name);
       if (!found) grouped.set(template.name, []);
       grouped.get(template.name).push(template);
@@ -85,7 +87,8 @@ export function ApprovedFollowUpTemplatePicker({
           <div className="mt-2 space-y-1 border-t border-[var(--color-border)] pt-2" aria-label="Template approval by language">
             <p className="text-[11px] font-semibold">Template approval by language · not sending eligibility</p>
             {["zh_CN", "en_US", "ms"].map((locale) => {
-              const variant = chosenVariants.find((v) => v.language === locale);
+              const variant = chosenVariants.find((v) => v.language === locale) ||
+                (locale === "en_US" ? chosenVariants.find((v) => v.language === "en") : null);
               const ready = variant && supportedForAutomation(variant) &&
                 (defaultOnly ? (variant.header?.format || "TEXT") === "TEXT" :
                   supportedFormats.length === 1 && (variant.header?.format || "TEXT") === format);
@@ -131,7 +134,8 @@ export function FollowUpTemplateMediaPicker({ rule, index, template, catalog, la
   const variants = (catalog?.templates || []).filter((item) => item.name === rule.templateName);
   const selectedLanguages = language === "auto" ? ["zh_CN", "en_US", "ms"] : [language];
   const languageProblems = selectedLanguages.filter((code) => {
-    const v = variants.find((item) => item.language === code);
+    const v = variants.find((item) => item.language === code) ||
+      (code === "en_US" ? variants.find((item) => item.language === "en") : null);
     return v && (!supportedForAutomation(v) || (v.header?.format || "TEXT") !== format);
   });
   const mediaBlocked = needsAttachment && (
