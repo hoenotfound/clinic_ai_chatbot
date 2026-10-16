@@ -540,8 +540,13 @@ async function processCandidate(candidate, requested, template, now = new Date()
         const selected = templateCatalog
           ? await selectEligibleTemplate(fresh, slotHours, liveActive, templateCatalog)
           : null;
-        const current = selected?.spec;
-        return current && selected.template.language === template.language &&
+        // Keep the original directly-invoked sender path for approved image
+        // templates; the scheduler supplies a catalog and uses the stricter
+        // full re-selection path for both video and text fallbacks.
+        const base = !templateCatalog ? selectTemplateSpec(fresh, slotHours, liveActive) : null;
+        const current = selected?.spec || (base &&
+          enrichAutomatedTemplateSpec({ ...base, language: template.language }, template));
+        return current && (!selected || selected.template.language === template.language) &&
           current.templateName === spec.templateName &&
           current.mediaKey === spec.mediaKey &&
           current.mediaUrl === spec.mediaUrl &&
