@@ -39,15 +39,26 @@ multi-package option may have its own `pricing` object. If omitted, the
 existing price-copy verification remains the fallback. Readable prices that
 conflict with the structured offer amount prevent quotation and auto media.
 No database migration is required; values live in the client config JSON.
+Verified numerical prices should be stored for production campaigns. Text with
+emoji digits (for example RM 4️⃣8️⃣8️⃣) is accepted only if every money amount in
+all configured language copies matches that structured price, and each labeled
+original price matches the structured normal price. Conflicting amounts block
+automatic media; a raw unverified caption never supplies the price.
 
 The AI cannot authorize image URLs, sale amounts or provider sends. The
 existing `priceQuery`, `packageQuery` and `treatment` response fields feed
 one verified pricing decision, with no second model request. Service selection prioritizes the current or recent customer-authored service.
 For a short early price question with no customer-selected treatment, a single
 service inferred independently from the current lead's verified Meta creative
-or ad name may establish the initial topic. This is bounded to at most four
-prior customer turns, and fails closed after a topic reset, contradiction,
-ambiguity, staff intervention, or broad price-list request. CRM interest fields
+or ad name may establish the initial topic. Ad-only pricing requires the
+persisted attribution timestamp to be within seven days and is bounded to at
+most four prior customer turns. It only accepts standalone treatment-price
+questions (or clear single-session price questions), never deposit, booking,
+consultation, assessment, administrative charges, or broad price-list requests.
+It fails closed after a topic reset, contradiction, ambiguity, or staff
+intervention. An ungrounded model treatment guess may be ignored if the
+validated recent ad and customer messages uniquely support a different service.
+CRM interest fields
 and model guesses never authorize an ad-only treatment. Existing channel
 sending rules, duplicate/receipt checks, and verified active sale amounts are
 unchanged.
