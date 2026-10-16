@@ -1217,6 +1217,7 @@ async function processIncomingMessage(
             verifiedPricingIntent: aiPricingEnabled && Boolean(pricingDecision),
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
+            promotions: clinicConfig.promotions,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
