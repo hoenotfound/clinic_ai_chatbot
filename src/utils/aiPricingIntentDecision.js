@@ -5,7 +5,7 @@
 // can authorize customer-facing price quotations or promotional media.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest } = require("./customerEnquiryEvidence");
+const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -170,5 +170,20 @@ function resolveAiPricingDecision({
   });
 }
 
+// Use the same customer-authored evidence at the outbound text boundary as
+// at the optional promotion decision. Never ask for pricing clarification just
+// because a model wrongly returned priceQuery=true on a service question.
+function hasCustomerRequestedPriceReply({
+  customerText, pricingDecision = null,
+} = {}) {
+  const current = String(customerText || "").trim();
+  return Boolean(current) &&
+    !hasFuturePromotionPermissionWithoutPrice(current) &&
+    !isPurePriceObjection(current) &&
+    (hasCurrentPriceAmountRequest(current) ||
+      Boolean(pricingDecision?.clarifiedPriceService) ||
+      pricingDecision?.type === "package_options");
+}
+
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest };
+module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply };
