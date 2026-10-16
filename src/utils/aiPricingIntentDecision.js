@@ -1,11 +1,11 @@
 "use strict";
 
-// The existing model priceQuery/packageQuery fields classify the customer's
-// request. Only customer-authored service evidence and active configured prices
-// can authorize customer-facing price quotations or promotional media.
+// Existing AI intent flags classify the customer's request. Treatment identity
+// must come from customer evidence or an unambiguous verified Meta acquisition
+// context; all quoted prices must come from active configured offers.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice } = require("./customerEnquiryEvidence");
+const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -96,11 +96,67 @@ function verifiedServiceAnchor({
   return null;
 }
 
+
+// A first-touch Meta ad can establish the initial service, but only when its
+// locally verified creative or ad name identifies exactly one configured
+// treatment. Do not use a CRM treatment label, free-form AI guess or stale ad
+// attribution after the customer has changed or broadened the conversation.
+const AD_BROAD_TOPIC = /(?:所有|全部|全套|整份|列出|价目表|價目表|还有什么|有什么(?:疗程|療程|服务|服務)|其他(?:疗程|療程|服务|服務)|\b(?:all\s+(?:the\s+)?(?:prices|treatments|services)|(?:price|pricing|cost)\s*list|which\s+(?:treatments|services)|other\s+(?:treatments|services)|senarai\s+harga)\b)/iu;
+
+function verifiedMetaAdPriceAnchor({
+  customerText, conversationHistory, services, serviceAliases, modelTreatment,
+  metaAdContext,
+}) {
+  if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource)) return null;
+  const adService = (services || []).filter((service) =>
+    String(service?.name || "").trim() === metaAdContext.serviceHint
+  );
+  if (adService.length !== 1) return null;
+  const name = adService[0].name;
+  if (modelTreatment && modelTreatment !== name) return null;
+
+  const current = String(customerText || "").trim();
+  const candidates = serviceCandidates(services, serviceAliases);
+  // Ad-only context is for short contextual monetary enquiries, not for an
+  // unrequested price, all-treatment price list, or a competing named service.
+  if (current.length > 80 ||
+      !(isStandalonePriceQuestion(current) || hasCurrentPriceAmountRequest(current)) ||
+      AD_BROAD_TOPIC.test(current) || UNRELATED.test(current) ||
+      findServicesInText(current, candidates).length > 0) return null;
+
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  let skippedCurrent = false;
+  let previousCustomerTurns = 0;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const entry = history[i];
+    if (entry?.role === "assistant") {
+      if (STAFF_PREFIX.test(String(entry.content || "").trim())) return null;
+      continue;
+    }
+    if (entry?.role !== "user") continue;
+    const prior = String(entry.content || "").trim();
+    if (!skippedCurrent && prior === current) {
+      skippedCurrent = true;
+      continue;
+    }
+    previousCustomerTurns += 1;
+    // This is an acquisition hint, not a permanent conversation default.
+    if (previousCustomerTurns > 4 || !prior || RESET.test(prior) ||
+        REFUSAL.test(prior) || AD_BROAD_TOPIC.test(prior)) return null;
+    const mentions = [...new Set(findServicesInText(prior, candidates))];
+    if (mentions.length > 1 || (mentions.length === 1 && mentions[0] !== name)) return null;
+    // Reject ambiguous service mentions or negated references even when they
+    // happen to contain the advertised service name.
+    if (mentions.length && !safeServiceFromCustomer(prior, services, serviceAliases)) return null;
+  }
+  return { treatment: name, source: "meta_ad" };
+}
+
 function resolveAiPricingDecision({
   priceQuery = false, packageQuery = false, treatment = null,
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
-  complimentaryAssessmentExperienceEnabled = false,
+  complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
 } = {}) {
   const current = String(customerText || "").trim();
   const explicitAmount = hasCurrentPriceAmountRequest(current);
@@ -140,6 +196,9 @@ function resolveAiPricingDecision({
   const anchor = verifiedServiceAnchor({
     customerText: current, conversationHistory, services, serviceAliases,
     modelTreatment: treatment,
+  }) || verifiedMetaAdPriceAnchor({
+    customerText: current, conversationHistory, services, serviceAliases,
+    modelTreatment: treatment, metaAdContext,
   });
   if (!anchor || (clarifiedPriceService &&
       clarifiedPriceService !== anchor.treatment)) return null;
