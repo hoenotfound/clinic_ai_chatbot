@@ -2,7 +2,7 @@
 
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
 const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
-const { isContextualPriceReference } = require("./priceFollowUpContext");
+const { isContextualPriceReference, resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
 const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
@@ -297,17 +297,24 @@ function ensureVerifiedPriceReply({
         : "请问你想了解哪项疗程的价格呢？我帮你确认 😊";
     return { reply: [safeText, question].filter(Boolean).join("\n\n"), restored: true };
   }
+  // A verified customer-selected pelvic treatment remains the pricing
+  // anchor through a short postpartum *concern* answer. The generic
+  // related-treatment guard otherwise mistakes "产后体态" for a request to
+  // switch to the separate, unpriced 产后调理 service.
+  const verifiedContinuedService = resolveContinuedTreatmentPriceService({
+    customerText, conversationHistory, services, serviceAliases, promotions,
+  })?.name === treatment;
   if (!original || !treatment ||
       !(aiLed ||
         hasExplicitPriceRequest(customerText, { treatment }) ||
         clarifiedPriceService === treatment) ||
-      relatedPricingConflict({
+      (!verifiedContinuedService && relatedPricingConflict({
         customerText, treatment, conversationHistory, services, serviceAliases,
         resultMedia,
-      }) ||
-      unpricedRelatedPrimary({
+      })) ||
+      (!verifiedContinuedService && unpricedRelatedPrimary({
         customerText, conversationHistory, services, serviceAliases, resultMedia,
-      })) return { reply: original, restored: false };
+      }))) return { reply: original, restored: false };
 
   const prices = aiLed
     ? pricingDecision.prices
