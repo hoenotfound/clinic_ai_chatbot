@@ -23,6 +23,18 @@ const NON_MONETARY_ONLY = /(?:多久|多長|多长|幾分鐘|几分钟|幾小時
 const DEFINITE_MONEY = /(?:多少[钱錢]|[价價](?:格|钱|錢|位)|费[用]?|費用|幾[钱錢]|几[钱錢]|\b(?:price|pricing|cost|fee|harga|bayaran|rm|myr|ringgit)\b)/iu;
 const STALE_SERVICE_PRICE = /(?:\b(?:old|former|previous|expired|past|promotion|promo|special|offer|discount|trial|sale|campaign|voucher)\b|旧|舊|原价|原價|優惠|优惠|折扣|特价|特價|促销|促銷|限时|限時|过期|過期|活动|活動|曾经|曾經)/iu;
 const SINGLE_STANDING_PRICE = /^(?:(?:normal|regular|standard)\s+(?:price\s*)?[:：]?\s*)?(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?(?:\s*(?:per\s+(?:session|treatment)|\/\s*(?:session|treatment)|每次|一次))?$/iu;
+
+// Complaints about a quoted price, affordability and a customer's budget are
+// not requests for another promotional graphic. A separate direct price
+// question in the same message is still a current enquiry.
+const PRICE_OBJECTION = /(?:[价價](?:格|錢|钱|位).{0,28}(?:太[贵貴高]|偏高|好[贵貴]|很[贵貴]|有点[贵貴]|有點[貴贵]|贵了|貴了|超出(?:我的)?[预預]算|不便宜|负担不起|負擔不起|接受不了)|(?:太[贵貴高]|好[贵貴]|很[贵貴]|贵了|貴了|超出(?:我的)?[预預]算|负担不起|負擔不起).{0,28}[价價](?:格|錢|钱|位)|[预預]算(?:是|只有|大概|大约|大約|在|不到)?\s*(?:RM|MYR)?\s*\d{2,}|(?:\b(?:price|pricing|cost|fee|harga)\b.{0,35}\b(?:too\s+(?:expensive|high)|expensive|costly|mahal|out\s+of\s+(?:my\s+)?budget|can't\s+afford|cannot\s+afford)\b)|(?:\b(?:too\s+(?:expensive|high)|expensive|costly|mahal|can't\s+afford|cannot\s+afford)\b.{0,35}\b(?:price|pricing|cost|harga)\b)|\b(?:my|our)\s+budget\b|\bbudget\s+(?:is|around|about|of|only|rm|myr)\b|(?:harga\s+mahal|mahal\s+sangat|tak\s+mampu|tidak\s+mampu))/iu;
+const CLEAR_PRICE_QUESTION = /(?:多少[钱錢]|[几幾](?:多)?[钱錢]|[价價](?:格|錢|钱|位)\s*(?:是|多少|几多|幾多)?\s*[?？]|(?:做|来|來)?(?:一(?:次|回|趟|个|個)|1\s*(?:次|回))\s*(?:是|要|需要|收费|收費|花)?\s*(?:多少|几多|幾多)\s*[?？]?(?!\s*(?:[分钟鐘]|小时|小時|次|疗程|療程))|\bhow\s+much\b(?!\s+(?:time|long|pain|hurt|duration|recovery|sessions?))|\b(?:what(?:'s| is)?|tell\s+me|send\s+me|share|show\s+me)\b.{0,35}\b(?:price|cost|fee|harga)\b|\b(?:price|harga|berapa\s+(?:harga|bayar|ringgit|rm))\s*[?？]|\b(?:berapa\s+(?:harga|bayar|nak\s+bayar|untuk\s+(?:satu|1)\s+sesi))\b|(?:目前|现在|現在|current|latest|today).{0,20}(?:[价價](?:格|錢|钱)|多少钱|多少錢|price|cost|harga))/iu;
+
+function isPurePriceObjection(customerText) {
+  const current = String(customerText || "").trim();
+  return PRICE_OBJECTION.test(current) && !CLEAR_PRICE_QUESTION.test(current);
+}
+
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
 
 function verifiedServiceAnchor({
@@ -79,6 +91,7 @@ function resolveAiPricingDecision({
   const current = String(customerText || "").trim();
   if (!current || RESET.test(current) || REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
+      isPurePriceObjection(current) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
       isComplimentaryAssessmentFeeQuestion(
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
@@ -131,4 +144,4 @@ function resolveAiPricingDecision({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveAiPricingDecision, verifiedServiceAnchor };
+module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, isPurePriceObjection };
