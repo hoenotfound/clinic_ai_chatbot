@@ -122,7 +122,7 @@ const SERVICE_LABELS = {
   "3D + 9D 组合": { zh_CN: "3D + 9D 组合", en_US: "3D + 9D Combination", ms: "Gabungan 3D + 9D" },
 };
 const RESTRICTED_TEMPLATE_NAMES = new Set([
-  "ns_fu2_pelvis_video", "ns_fu3_pelvis_feedback", "ns_fu3_face_feedback",
+  "ns_fu2_pelvis_video", "ns_pelvis_followup_video", "ns_fu3_pelvis_feedback", "ns_fu3_face_feedback",
   "ns_fu_pricing_graphic", "ns_fu_meridian_gift",
 ]);
 
@@ -147,8 +147,11 @@ function isTemplateCompatible(templateName, option) {
   if (templateName === "ns_fu_pricing_graphic") return option.format === "IMAGE";
   if (templateName === "ns_fu_meridian_gift") return option.format === "IMAGE" && option.freeMeridianGift === true;
   if (templateName === "ns_fu2_pelvis_video") return option.format === "VIDEO" && option.stepNumber === 2 && option.serviceName === "骨盆调理";
-  if (templateName === "ns_fu3_pelvis_feedback") return option.format === "VIDEO" && option.stepNumber === 3 && option.serviceName === "骨盆调理";
-  if (templateName === "ns_fu3_face_feedback") return option.format === "VIDEO" && option.stepNumber === 3 &&
+  // Approved post-window video templates can reuse the clinic's earlier videos.
+  // The sending worker separately prevents repeating media already received.
+  if (templateName === "ns_pelvis_followup_video") return option.format === "VIDEO" && option.stepNumber === 1 && option.serviceName === "骨盆调理";
+  if (templateName === "ns_fu3_pelvis_feedback") return option.format === "VIDEO" && [2, 3].includes(option.stepNumber) && option.serviceName === "骨盆调理";
+  if (templateName === "ns_fu3_face_feedback") return option.format === "VIDEO" && [2, 3].includes(option.stepNumber) &&
     ["3D 小颜术", "9D 逆龄抗衰", "3D + 9D 组合"].includes(option.serviceName);
   return false;
 }

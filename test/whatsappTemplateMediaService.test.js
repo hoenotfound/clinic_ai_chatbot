@@ -236,7 +236,8 @@ test("service-specific video headers select only configured matching follow-up s
   const pelvis3 = choices.find((item) => item.stepNumber === 3 && item.serviceName === "骨盆调理");
   const face3 = choices.find((item) => item.serviceName === "3D 小颜术");
   assert.equal(media.isTemplateCompatible("ns_fu2_pelvis_video", pelvis2), true);
-  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis2), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis2), true,
+    "approved extended template may safely reuse the existing second-step pelvic video");
   assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis3), true);
   assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", pelvis3), false);
   assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", face3), true);
@@ -270,4 +271,22 @@ test("staff template upload reuse is content-addressed within its clinic namespa
     "legacy shared buckets fall back to per-contact keys for tenant safety");
   assert.throws(() => mediaStorage.reusableTemplateMediaKey(png, "application/pdf", isolated),
     /validated JPEG, PNG or MP4/);
+});
+
+test("approved extended templates accept the three existing Neutro videos only for the right treatment", () => {
+  const option = (serviceName, stepNumber) => ({ format: "VIDEO", serviceName, stepNumber });
+  const pelvisIntro = option("骨盆调理", 1);
+  const pelvisExperience = option("骨盆调理", 2);
+  const faceExperience = option("3D 小颜术", 2);
+  assert.equal(media.isTemplateCompatible("ns_pelvis_followup_video", pelvisIntro), true);
+  assert.equal(media.isTemplateCompatible("ns_pelvis_followup_video", pelvisExperience), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvisExperience), true);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvisIntro), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", faceExperience), true);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", option("9D 逆龄抗衰", 2)), true);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", option("3D + 9D 组合", 2)), true);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", pelvisExperience), false);
+  assert.equal(media.isTemplateCompatible("ns_pelvis_followup_video", faceExperience), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", faceExperience), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", { ...faceExperience, format: "IMAGE" }), false);
 });
