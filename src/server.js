@@ -28,7 +28,7 @@ const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeSe
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision, isPurePriceObjection, hasCurrentPriceAmountRequest } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
@@ -58,7 +58,7 @@ const {
 } = require("./utils/chatLanguage");
 const { preserveOriginalIntroFacts } = require("./utils/localizedIntroGuard");
 const { guardFutureOfferIntroductionReply, guardAssessmentFirstPricingReply, ensureFirstAssessmentInvitation, safeServiceFromCustomer, hasCommercialReplyContent, safeIntroReply } = require("./utils/initialOfferReplyGuard");
-const { isStandalonePriceQuestion, hasFuturePromotionPermissionWithoutPrice } = require("./utils/customerEnquiryEvidence");
+const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence");
 const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = require("./utils/tcmServiceReviewReply");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
@@ -1195,13 +1195,11 @@ async function processIncomingMessage(
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
-        // An erroneous Gemini priceQuery/packageQuery flag must not turn an
-        // ordinary treatment enquiry into a price-clarification reply.
-        priceRequested: aiPricingEnabled && !hasFuturePromotionPermissionWithoutPrice(text) &&
-          !isPurePriceObjection(text) &&
-          (hasCurrentPriceAmountRequest(text) ||
-           Boolean(pricingDecision?.clarifiedPriceService) ||
-           pricingDecision?.type === "package_options"),
+        // Only customer-authored pricing evidence (not model flags) can
+        // trigger a fallback clarification on the outbound text path.
+        priceRequested: aiPricingEnabled && hasCustomerRequestedPriceReply({
+          customerText: text, pricingDecision,
+        }),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
