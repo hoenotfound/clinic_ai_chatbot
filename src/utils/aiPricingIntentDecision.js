@@ -9,6 +9,7 @@ const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPacka
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
+const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 
@@ -232,7 +233,8 @@ function resolveAiPricingDecision({
   // Gemini misses them; natural cost wording still works when Gemini sees it.
   const monetary = Boolean(clarifiedPriceService) ||
     (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current))) ||
-    (isStandalonePriceQuestion(current) && priceQuery === true);
+    (isStandalonePriceQuestion(current) && priceQuery === true) ||
+    (isContinuedTreatmentPriceQuestion(current) && hasExplicitPriceRequest(current));
   const type = monetary ? "price" :
     packageQuery === true && allowOfferEnquiries && explicitOptions
       ? "package_options" : null;
@@ -240,13 +242,18 @@ function resolveAiPricingDecision({
   const stripped = stripFutureFollowUpPermission(current);
   if (stripped.hasFuturePermission && !hasExplicitPriceRequest(stripped.text)) return null;
 
-  const anchor = verifiedServiceAnchor({
-    customerText: current, conversationHistory, services, serviceAliases,
-    modelTreatment: treatment,
-  }) || verifiedMetaAdPriceAnchor({
-    customerText: current, conversationHistory, services, serviceAliases,
-    modelTreatment: treatment, metaAdContext, now,
-  });
+  const continued = type === "price" ? resolveContinuedTreatmentPriceService({
+    customerText: current, conversationHistory, services, serviceAliases, promotions,
+  }) : null;
+  const anchor = continued
+    ? { treatment: continued.name, source: "continued_customer" }
+    : verifiedServiceAnchor({
+        customerText: current, conversationHistory, services, serviceAliases,
+        modelTreatment: treatment,
+      }) || verifiedMetaAdPriceAnchor({
+        customerText: current, conversationHistory, services, serviceAliases,
+        modelTreatment: treatment, metaAdContext, now,
+      });
   if (!anchor || (clarifiedPriceService &&
       clarifiedPriceService !== anchor.treatment)) return null;
 
@@ -287,6 +294,7 @@ function hasCustomerRequestedPriceReply({
     !hasFuturePromotionPermissionWithoutPrice(current) &&
     !isPurePriceObjection(current) &&
     (hasCurrentPriceAmountRequest(current) ||
+      (isContinuedTreatmentPriceQuestion(current) && hasExplicitPriceRequest(current)) ||
       Boolean(pricingDecision?.clarifiedPriceService) ||
       pricingDecision?.type === "package_options");
 }

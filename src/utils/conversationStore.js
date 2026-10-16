@@ -52,6 +52,27 @@ function aiContextTextForRow(row) {
 // Keep the model role as assistant for Claude/Gemini conversation compatibility.
 const STAFF_HISTORY_PREFIX = "[Verified STAFF message] ";
 
+// Verified pricing continuity uses database timestamps and staff authorship,
+// but this metadata must not enter Gemini/Claude prompts, history JSON or
+// user-facing message content. Non-enumerable fields survive the local
+// pricing checks and disappear from normal serialization.
+function withPricingHistoryMetadata(entry, row) {
+  const rawTime = row?.created_at;
+  const timestamp = rawTime instanceof Date
+    ? rawTime.getTime() : Date.parse(String(rawTime ?? ""));
+  Object.defineProperties(entry, {
+    pricingCreatedAtMs: {
+      value: Number.isFinite(timestamp) ? timestamp : null,
+      enumerable: false,
+    },
+    pricingStaffAuthored: {
+      value: row?.role === "assistant" && Boolean(row?.sent_by_username),
+      enumerable: false,
+    },
+  });
+  return entry;
+}
+
 function aiVisibleRows(rows) {
   return (rows || []).filter(
     (row) =>
@@ -116,14 +137,14 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
     const contextText = r.role === "assistant" && r.sent_by_username
       ? `${STAFF_HISTORY_PREFIX}${aiContextTextForRow(r)}`
       : aiContextTextForRow(r);
-    if (!media) return { role: r.role, content: contextText };
-    return {
+    if (!media) return withPricingHistoryMetadata({ role: r.role, content: contextText }, r);
+    return withPricingHistoryMetadata({
       role: r.role,
       content: [
         { type: "text", text: contextText },
         { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
       ],
-    };
+    }, r);
   });
 }
 
@@ -261,6 +282,7 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
 }
 
 module.exports = {
+  withPricingHistoryMetadata,
   aiContextTextForRow,
   aiVisibleRows,
   getHistory,
