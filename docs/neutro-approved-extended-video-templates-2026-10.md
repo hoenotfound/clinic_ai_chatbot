@@ -24,15 +24,16 @@ Only configure treatment-specific video overrides if there is a customer journey
 
 | Slot | Treatment | Approved template | Choose existing clinic video |
 |---|---|---|---|
-| 48h | 骨盆调理 | `ns_pelvis_followup_video` | FU1 pelvis explanation |
+| 48h | 骨盆调理 | `ns_pelvis_followup_video` | **HOLD:** FU1 pelvis explanation — verify that this is actually the customer experience described by the approved template before binding |
 | 48h | 3D 小颜术 | `ns_fu3_face_feedback` | FU2 3D facial experience |
 | 48h | 9D 逆龄抗衰 | `ns_fu3_face_feedback` | FU2 9D facial experience |
 | 48h | 3D + 9D 组合 | `ns_fu3_face_feedback` | FU2 3D+9D facial experience |
 | 66h | 骨盆调理 | `ns_fu3_pelvis_feedback` | FU2 pelvis customer testimonial |
 
-4. For every video rule, select **Choose saved video** and let the server verify H.264/AAC and the clinic-owned R2 path. Do not upload another copy solely because the Meta template's approval example already contains it.
-5. Preview the template and attachment, then **Save through Tools**. This performs config validation, updates the live server configuration, wakes the worker, and starts a fresh activation for future eligible enquiries. Prior claims are never replayed.
-6. Check an eligible, consented CTWA enquiry and confirm the actual template name, exact video/media key (or same-slot text fallback), language, delivery callback and Meta zero-cost evidence. Never assume an approved template guarantees a free send.
+4. **Review the pelvic FU1 recording and the actual Meta-approved header preview before enabling the 48h pelvic rule.** Meta's `ns_pelvis_followup_video` body calls it a *顾客体验影片*, but the early FU1 asset was previously described as an explanation video. Approval of a sample is not evidence that the proposed live R2 file matches the copy. **If it is instructional rather than a patient/customer experience, do not enable that pairing**; leave the 48h wildcard text rule active until a matching video/template is available.
+5. For every video rule you have confirmed, select **Choose saved video** and let the server verify H.264/AAC and the clinic-owned R2 path. Do not upload another copy solely because the Meta template's approval example already contains it.
+6. Preview the template and attachment, then **Save through Tools**. This performs config validation, updates the live server configuration, wakes the worker, and starts a fresh activation for future eligible enquiries. Prior claims are never replayed.
+7. Check an eligible, consented CTWA enquiry and confirm the actual template name, exact video/media key (or same-slot text fallback), language, delivery callback and Meta zero-cost evidence. Never assume an approved template guarantees a free send.
 
 ## Operational safeguards
 
