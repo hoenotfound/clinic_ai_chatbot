@@ -37,11 +37,16 @@ function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) 
   // attribution includes matching creative or an actual ad name.
   const serviceHint = creativeService || nameService;
   const serviceHintSource = creativeService ? "creative" : nameService ? "ad_name" : null;
+  // Only pass a timestamp belonging to this persisted current-lead attribution.
+  // Ad-only pricing requires it to be recent; missing timestamps fail closed.
+  const attributedAtMs = row.attributed_at == null ? NaN : new Date(row.attributed_at).getTime();
+  const attributedAt = Number.isFinite(attributedAtMs) ? new Date(attributedAtMs).toISOString() : null;
   if (!headline && !body && !serviceHint) return null;
   return {
     headline,
     body,
     ...(serviceHint ? { serviceHint, serviceHintSource } : {}),
+    ...(attributedAt ? { attributedAt } : {}),
   };
 }
 
