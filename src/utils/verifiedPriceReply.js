@@ -334,7 +334,11 @@ function ensureVerifiedPriceReply({
   // A clinical/suitability question may need staff input. Do not reproduce
   // potentially unsafe model claims about pain, pregnancy or eligibility;
   // quote verified prices independently without authorizing marketing media.
-  const explanation = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
+  // For an ad-anchored short price question, discard a model-generated
+  // "which treatment?" clarification. The verified quote already answers it.
+  const explanation = hasClinicalMediaRisk(customerText) ||
+    (aiLed && pricingDecision.source === "meta_ad")
+      ? "" : nonPriceExplanation(original);
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
   return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }
