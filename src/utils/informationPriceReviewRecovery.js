@@ -25,6 +25,7 @@ function planInformationPriceRecovery({
 
   const service = resolveVerifiedPriceFollowUpService({
     customerText: text, conversationHistory, services, serviceAliases, promotions,
+    allowContinuedPriceContext: true,
   });
   if (!service) return null;
   const prices = verifiedPricesForService(service.name, promotions, text, conversationHistory);
@@ -32,6 +33,7 @@ function planInformationPriceRecovery({
   const quoted = ensureVerifiedPriceReply({
     customerText: text, reply: "好的 😊", treatment: service.name,
     conversationHistory, services, serviceAliases, promotions, resultMedia, language,
+    allowContinuedPriceContext: true,
   });
   if (!quoted.restored || !quoted.reply || !prices.every(p => quoted.reply.includes(p.price)))
     return null;
