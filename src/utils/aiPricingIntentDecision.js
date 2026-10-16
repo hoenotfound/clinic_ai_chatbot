@@ -5,7 +5,7 @@
 // can authorize customer-facing price quotations or promotional media.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { stripFutureFollowUpPermission, hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
+const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -33,6 +33,20 @@ const CLEAR_PRICE_QUESTION = /(?:多少[钱錢]|[几幾](?:多)?[钱錢]|[价價
 function isPurePriceObjection(customerText) {
   const current = String(customerText || "").trim();
   return PRICE_OBJECTION.test(current) && !CLEAR_PRICE_QUESTION.test(current);
+}
+
+// An AI flag is a classification hint, not customer permission to quote or
+// automatically send media. Independently require a CURRENT request for the
+// actual monetary amount (not an opinion about results, duration or value).
+// The natural Malaysian Chinese/Malay forms were absent from the older
+// keyword checker; retain them explicitly without accepting any 'price' noun.
+const CURRENT_PRICE_AMOUNT_REQUEST =
+  /(?:多少[钱錢]|[几幾](?:多)?[钱錢]|[价價](?:格|錢|钱|位)\s*(?:(?:是|要|多少|[几幾]多)\s*)?[?？]|(?:做|来|來|上)?(?:一\s*(?:次|回|趟|个|個)|1\s*(?:次|回))\s*(?:(?:要|收|花|需|是|收费|收費|费用|費用)\s*)?(?:多少|[几幾]多)(?!\s*(?:[分钟鐘]|小时|小時|时间|時間|次|回|疗程|療程|天|日|周|週))|(?:[价價](?:格|錢|钱|位)|费用|費用|收费|收費)\s*(?:是\s*)?(?:多少|[几幾]多)|(?:怎么|怎麼|如何|怎样|怎樣)\s*(?:收[费費]|算(?:[价價]|钱|錢))|\bhow\s+much\b(?!\s+(?:time|long|pain|hurt|duration|recovery|sessions?|swelling|water|weight|difference|improvement|does|do|will|would|should|can|could|must|need)\b)|\b(?:what(?:'s| is)?|tell\s+me|show\s+me|send\s+me|share|could\s+you|can\s+you)\b.{0,45}\b(?:price|cost|fee|rates?|harga|bayaran)\b|\b(?:price|pricing|cost|fees?|harga)\s*[?？]?\s*$|\b(?:berapa\s+(?:harga|nak\s+bayar|bayar|ringgit|rm|kos|caj|satu\s+sesi|sekali|untuk\s+(?:satu|1)\s+sesi)|harga\s+berapa|berapa\s+ya\s+harga)\b)/iu;
+const TOPIC_SWITCH_TO_NEW_SERVICE =
+  /(?:换个|換個|改聊|另外想|(?:现在|現在|这次|這次)\s*(?:想了解|想问|想問)|\b(?:instead|rather|switch|another\s+treatment|different\s+treatment)\b|\b(?:nak|mahu)\b.{0,18}\b(?:rawatan|servis)\b.{0,12}\blain\b)/iu;
+
+function hasCurrentPriceAmountRequest(customerText) {
+  return CURRENT_PRICE_AMOUNT_REQUEST.test(String(customerText || "").trim());
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
@@ -89,7 +103,17 @@ function resolveAiPricingDecision({
   complimentaryAssessmentExperienceEnabled = false,
 } = {}) {
   const current = String(customerText || "").trim();
-  if (!current || RESET.test(current) || REFUSAL.test(current) ||
+  const explicitAmount = hasCurrentPriceAmountRequest(current);
+  const explicitOptions = hasExplicitPackageOptionsRequest(current);
+  const currentNamedService = safeServiceFromCustomer(current, services, serviceAliases);
+  // A new, explicitly named treatment plus a CURRENT pricing question is
+  // permitted after a topic switch. A reset without that evidence still
+  // invalidates any older service or package context; stop/unsubscribe and
+  // treatment refusal never become pricing authorization.
+  const validNewTreatmentSwitch = TOPIC_SWITCH_TO_NEW_SERVICE.test(current) &&
+    Boolean(currentNamedService) && (explicitAmount || explicitOptions);
+  if (!current || (RESET.test(current) && !validNewTreatmentSwitch) ||
+      REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
       isPurePriceObjection(current) ||
       (NON_MONETARY_ONLY.test(current) && !DEFINITE_MONEY.test(current)) ||
@@ -97,15 +121,17 @@ function resolveAiPricingDecision({
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
 
-  // Retain the existing explicit-price detector as a narrow fallback when the
-  // AI misses a clear price request. It cannot select a service by itself.
   const clarifiedPriceService = resolveClarifiedPriceService({
     customerText: current, conversationHistory, services, serviceAliases,
   });
-  const monetary = priceQuery === true || hasExplicitPriceRequest(current) ||
-    Boolean(clarifiedPriceService);
+  // Model intent alone must never turn a normal treatment question into an
+  // unsolicited graphic. Clear keywords retain deterministic recovery if
+  // Gemini misses them; natural cost wording still works when Gemini sees it.
+  const monetary = Boolean(clarifiedPriceService) ||
+    (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current)));
   const type = monetary ? "price" :
-    packageQuery === true && allowOfferEnquiries ? "package_options" : null;
+    packageQuery === true && allowOfferEnquiries && explicitOptions
+      ? "package_options" : null;
   if (!type) return null;
   const stripped = stripFutureFollowUpPermission(current);
   if (stripped.hasFuturePermission && !hasExplicitPriceRequest(stripped.text)) return null;
@@ -144,4 +170,4 @@ function resolveAiPricingDecision({
 }
 
 // Compatibility alias for existing imports in downstream tests.
-module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, isPurePriceObjection };
+module.exports = { resolveAiPricingDecision, verifiedServiceAnchor, isPurePriceObjection, hasCurrentPriceAmountRequest };
