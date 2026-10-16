@@ -110,6 +110,10 @@ const META_AD_PRICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AD_UNRELATED_FEE = /(?:订金|訂金|定金|按金|押金|预付|預付|手续费|手續費|挂号|掛號|诊金|診金|注册|註冊|报名|報名|停车|停車|运费|運費|邮费|郵費|配送|送货|送貨|会员费|會員費|咨[询詢]|评估|評估|面诊|面診|预约|預約|取消费|取消費|\b(?:deposit|down[\s-]?payment|booking|reservation|registration|consultation|assessment|evaluation|parking|delivery|shipping|membership|cancellation|admin(?:istration)?|processing)\b)/iu;
 // Keep the ad-only fallback narrow. Other price requests still follow the
 // existing customer-authored service verification path.
+// A customer can ask about a paid treatment and its appointment in one
+// message. Do not suppress that legitimate quote just because "booking"
+// appears, but still block a question about a separate administrative charge.
+const SPECIFIC_ADMIN_FEE = /(?:订金|訂金|定金|按金|押金|手续费|手續費|挂号费|掛號費|诊金|診金|注册费|註冊費|报名费|報名費|停车费|停車費|运费|運費|邮费|郵費|配送费|送货费|送貨費|会员费|會員費|预约金|預約金|预约费|預約費|(?:咨询|諮詢|评估|評估|面诊|面診)(?:的)?(?:费|費|多少钱|多少錢|收费|收費)|\b(?:deposit|down[\s-]?payment|booking\s+fee|reservation\s+fee|registration\s+fee|consultation\s+fee|assessment\s+fee|evaluation\s+fee|parking\s+fee|delivery\s+fee|shipping\s+fee|membership\s+fee|cancellation\s+fee|admin(?:istration)?\s+fee|processing\s+fee)\b)/iu;
 const AD_TREATMENT_PRICE_QUESTION = /^(?:(?:请问|請問|想问|想問)\s*)?(?:(?:这个|這個|这项|這項|这种|這種)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:(?:要|是|大概|大约|大約|收费|收費|花)\s*)?(?:多少(?:钱|錢)?|[几幾]多(?:钱|錢)?)[\s?？。!！]*$/iu;
 const AD_ENGLISH_SESSION_PRICE = /^(?:how much\s+(?:is it\s+)?(?:per|for)\s+(?:(?:one|a|1)\s+)?(?:session|treatment)|(?:what(?:'s| is)?|how much is)\s+(?:the\s+)?(?:price|cost|fee)\s+(?:for|per)\s+(?:(?:one|a|1)\s+)?(?:session|treatment))[\s?？.!！]*$/iu;
 const AD_MALAY_SESSION_PRICE = /^(?:berapa\s+(?:harga\s+)?(?:untuk\s+)?(?:satu|1)\s+sesi|harga\s+(?:untuk\s+)?(?:satu|1)\s+sesi\s+berapa|berapa\s+(?:untuk\s+)?sekali\s+rawatan)[\s?？.!！]*$/iu;
@@ -194,7 +198,7 @@ function resolveAiPricingDecision({
     Boolean(currentNamedService) && (explicitAmount || explicitOptions);
   // Deposit/consultation/booking fees are not paid treatment prices, even
   // when the customer explicitly names a treatment or a model flags pricing.
-  if (!current || AD_UNRELATED_FEE.test(current) ||
+  if (!current || SPECIFIC_ADMIN_FEE.test(current) ||
       (RESET.test(current) && !validNewTreatmentSwitch) ||
       /\b(?:stop|unsubscribe)\b|退订|退訂/iu.test(current) ||
       REFUSAL.test(current) ||
