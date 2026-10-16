@@ -2,6 +2,7 @@
 
 const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { relatedPricingConflict, configuredServiceMention, unpricedRelatedPrimary } = require("./relatedServicePolicy");
+const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
 
 const {
   hasCustomerPriceEnquiry,
@@ -337,7 +338,7 @@ function guardAssessmentFirstPricingReply({
   services = [], serviceAliases = [], treatment = null,
   requireVerifiedTreatment = false, clarifiedPriceService = null,
   verifiedPricingIntent = false,
-  resultMedia = [], conversationHistory = [],
+  resultMedia = [], conversationHistory = [], promotions = [],
 } = {}) {
   const original = String(reply || "");
   if (flagged || !hasTreatmentPriceContent(original)) {
@@ -353,7 +354,10 @@ function guardAssessmentFirstPricingReply({
   const unpricedPrimary = unpricedRelatedPrimary({
     customerText, conversationHistory, services, serviceAliases, resultMedia,
   });
-  if (relatedConflict || unpricedPrimary) {
+  const verifiedContinuedService = resolveContinuedTreatmentPriceService({
+    customerText, conversationHistory, services, serviceAliases, promotions,
+  })?.name === treatment;
+  if ((relatedConflict || unpricedPrimary) && !verifiedContinuedService) {
     const primary = unpricedPrimary ||
       configuredServiceMention(customerText, services, serviceAliases) ||
       (Array.isArray(conversationHistory)
