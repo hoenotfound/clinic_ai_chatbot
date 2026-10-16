@@ -151,7 +151,7 @@ test("extended follow-up detects identical bytes under different treatment video
 test("post-window template fallback is revalidated without counting its own pending message as earlier media", () => {
   const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
   assert.match(code, /media\.id IS DISTINCT FROM \$5::integer/);
-  assert.match(code, /skipPreferred: spec\.fallbackDueToMedia === true/);
-  assert.match(code, /templateCatalog\s*\? resolveSafeTemplate/);
+  assert.match(code, /await selectEligibleTemplate\(fresh, slotHours, liveActive, templateCatalog\)/);
+  assert.match(code, /resolve\(candidate, slotHours, active, catalog, \{ skipPreferred: true \}\)/);
   assert.match(code, /mediaAlreadyShared\(spec\.mediaKey/);
 });
