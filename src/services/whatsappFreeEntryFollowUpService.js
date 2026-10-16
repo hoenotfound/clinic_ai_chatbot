@@ -1068,5 +1068,5 @@ module.exports = {
   runAndSchedule, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
   CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
-  resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause,
+  resolveSafeTemplate, selectiveSlotAllowed, customerRequestedPause, mediaAlreadyShared,
 };
