@@ -551,6 +551,7 @@ async function processCandidate(candidate, requested, template, now = new Date()
           current.autoPromoImageId === spec.autoPromoImageId &&
           current.bodyValue === spec.bodyValue &&
           (selected.language === spec.language ||
+            (selected.language === "en_US" && spec.language === "en") ||
             spec.language === liveActive.fallbackLanguage);
       })()) {
       await messagesRepo.setDeliveryStatusById(message.id, "cancelled", "No longer eligible");
