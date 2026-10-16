@@ -103,6 +103,7 @@ function verifiedServiceAnchor({
 // attribution after the customer has changed or broadened the conversation.
 const AD_BROAD_TOPIC = /(?:所有|全部|全套|整份|列出|价目表|價目表|还有什么|有什么(?:疗程|療程|服务|服務)|其他(?:疗程|療程|服务|服務)|\b(?:all\s+(?:the\s+)?(?:prices|treatments|services)|(?:price|pricing|cost)\s*list|which\s+(?:treatments|services)|other\s+(?:treatments|services)|senarai\s+harga)\b)/iu;
 
+const AD_NEGATED_TOPIC = /(?:不要|不想|不考虑|不考慮|不需要|不做|不是|没兴趣|沒興趣|not interested|don.t want|do not want|tak nak|tidak mahu)/iu;
 function verifiedMetaAdPriceAnchor({
   customerText, conversationHistory, services, serviceAliases, modelTreatment,
   metaAdContext,
@@ -142,7 +143,8 @@ function verifiedMetaAdPriceAnchor({
     previousCustomerTurns += 1;
     // This is an acquisition hint, not a permanent conversation default.
     if (previousCustomerTurns > 4 || !prior || RESET.test(prior) ||
-        REFUSAL.test(prior) || AD_BROAD_TOPIC.test(prior)) return null;
+        REFUSAL.test(prior) || AD_BROAD_TOPIC.test(prior) ||
+        AD_NEGATED_TOPIC.test(prior)) return null;
     const mentions = [...new Set(findServicesInText(prior, candidates))];
     if (mentions.length > 1 || (mentions.length === 1 && mentions[0] !== name)) return null;
     // Reject ambiguous service mentions or negated references even when they
