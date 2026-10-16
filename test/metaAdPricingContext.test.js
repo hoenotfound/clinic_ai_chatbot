@@ -187,11 +187,6 @@ test("Meta context cannot authorize an ambiguous, stale or contradicted quote", 
     { metaAdContext: context("小颜术 6", "欢迎了解", TEST_NOW - 8 * 24 * 60 * 60 * 1000) },
     { metaAdContext: context("小颜术 6", "欢迎了解", TEST_NOW + 60 * 1000) },
     { metaAdContext: valid, conversationHistory: [
-      { role: "user", content: "之前想了解9D" },
-      { role: "user", content: "地址?" },
-      { role: "user", content: "价格?" },
-    ] },
-    { metaAdContext: valid, conversationHistory: [
       { role: "user", content: "我想改聊别的事情" },
       { role: "user", content: "价格?" },
     ] },
@@ -240,8 +235,11 @@ test("verified ad price overrides a model-only service guess, but never a custom
     { role: "assistant", content: "骨盆调理可以先做评估" },
     { role: "user", content: "价格?" },
   ];
-  assert.equal(decide({ metaAdContext, conversationHistory: changed,
-    customerText: "价格?", treatment: "3D 小颜术" }), null);
+  const corrected = decide({ metaAdContext, conversationHistory: changed,
+    customerText: "价格?", treatment: "3D 小颜术" });
+  assert.equal(corrected?.treatment, "骨盆调理");
+  assert.equal(corrected?.source, "recent_customer");
+  assert.deepEqual(corrected?.prices?.map(p => p.price), ["RM388", "RM288"]);
 });
 
 test("ad-only treatment price wording remains narrow and current", () => {
@@ -395,3 +393,18 @@ test("switch from the initial 3D enquiry to 9D beats a mixed ad after address qu
   assert.deepEqual(graphic?.packages?.map(p => p.imageUrl),
     ["https://example.test/9d.png"]);
 });
+
+test("9D customer-selected interest survives a short address enquiry despite 3D ad", () => {
+  const history = [
+    { role: "user", content: "之前想了解9D" },
+    { role: "user", content: "地址?" },
+    { role: "user", content: "价格?" },
+  ];
+  const d = decide({ metaAdContext: context("小颜术 6"),
+    conversationHistory: history, customerText: "价格?",
+    treatment: "3D 小颜术" });
+  assert.equal(d?.treatment, "9D 逆龄抗衰");
+  assert.equal(d?.source, "recent_customer");
+  assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+});
+
