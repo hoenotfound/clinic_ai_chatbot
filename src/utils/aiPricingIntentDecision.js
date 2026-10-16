@@ -123,6 +123,7 @@ function verifiedMetaAdPriceAnchor({
   if (current.length > 80 ||
       !(isStandalonePriceQuestion(current) || hasCurrentPriceAmountRequest(current)) ||
       AD_BROAD_TOPIC.test(current) || UNRELATED.test(current) ||
+      /(?:评估|評估|咨询|諮詢|面诊|面診|assessment|consultation|evaluation)/iu.test(current) ||
       findServicesInText(current, candidates).length > 0) return null;
 
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
