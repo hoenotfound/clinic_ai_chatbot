@@ -1091,11 +1091,13 @@ async function processIncomingMessage(
       }
     }
 
-    // Gemini may flag an otherwise answerable price question for INFORMATION
-    // review. Recover only an explicit current-price enquiry with a
-    // customer-verified continuous treatment thread and independently verified
-    // active offer. Keep all safety, clinical, staff and RM0 send gates intact.
-    if (flagged && reviewRequired && reviewType === "information" &&
+    // Recovery changes the customer-facing reply, so it is ONLY active in
+    // AI-Led Pricing Enabled mode. Shadow evaluates pricing separately but
+    // must not bypass the existing information-review early return.
+    const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
+    const aiPricingEnabled = aiPricingMode === "enabled";
+    if (aiPricingEnabled &&
+        flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
         !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
         !isExplicitStaffRequest(text) && !marketingStopQuestion) {
@@ -1132,8 +1134,6 @@ async function processIncomingMessage(
     // Customer-selected treatment remains authoritative. In enabled mode,
     // an unambiguous current-lead Meta ad can anchor an early short pricing
     // enquiry, but cannot override a later customer treatment switch.
-    const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
-    const aiPricingEnabled = aiPricingMode === "enabled";
     // The model already returns priceQuery/packageQuery and treatment. Resolve
     // one verified decision for reply text and optional promotional media.
     const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
@@ -1172,6 +1172,7 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
+            allowContinuedPriceContext: aiPricingEnabled,
           })
         : null;
 
@@ -1218,6 +1219,7 @@ async function processIncomingMessage(
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
             promotions: clinicConfig.promotions,
+            allowContinuedPriceContext: aiPricingEnabled,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
@@ -1245,6 +1247,7 @@ async function processIncomingMessage(
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
         language: mediaLanguage,
+        allowContinuedPriceContext: aiPricingEnabled,
       });
       if (priced.restored) {
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
