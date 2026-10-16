@@ -171,7 +171,7 @@ test("server checks informational review BEFORE early return and preserves safet
   assert.ok(recoveryPosition>0&&earlyReturn>recoveryPosition);
   assert.match(server,/getTcmReviewEvidence\(\s*contact\.id,\s*savedInbound\.id\s*\)/u);
   assert.match(server,/pendingClinicalReview:\s*reviewEvidence\?\.pendingClinicalReview/u);
-  assert.match(server,/if \(flagged && reviewRequired && reviewType === "information"/u);
+  assert.match(server,/if \(aiPricingEnabled &&\s*flagged && reviewRequired && reviewType === "information"/u);
 });
 
 
