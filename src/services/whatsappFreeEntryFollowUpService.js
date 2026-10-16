@@ -9,6 +9,7 @@ const whatsapp = require("./whatsappService");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaCache = require("./whatsappFreeEntryMediaCache");
 const messagesRepo = require("../db/messagesRepo");
+const mediaStorage = require("./mediaStorageService");
 const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -89,6 +90,7 @@ const candidateSql = `
          (SELECT COALESCE(array_agg(DISTINCT media.media_key), '{}')
             FROM messages media
             WHERE media.contact_id = c.id AND media.role = 'assistant'
+              AND media.id IS DISTINCT FROM $5::integer
               AND media.created_at >= origin.created_at
               AND NULLIF(media.media_key, '') IS NOT NULL
               AND media.delivery_status IS DISTINCT FROM 'failed'
@@ -394,7 +396,7 @@ async function finish(attemptId, status, values = {}) {
   );
 }
 
-async function processCandidate(candidate, requested, template, now = new Date(), explicitSpec = null) {
+async function processCandidate(candidate, requested, template, now = new Date(), explicitSpec = null, templateCatalog = null) {
   const active = await alignedSettings(requested);
   const slotHours = selectedSlot({...candidate, sevenDayVerified:active.sevenDayVerified}, active.slots, now);
   if (!slotHours) return "not_due";
@@ -427,15 +429,16 @@ async function processCandidate(candidate, requested, template, now = new Date()
     // including any manual/in-window video sent while this worker was waiting.
     if (spec.mediaKey) {
       const alreadySent = await pool.query(
-        `SELECT 1 FROM messages
-         WHERE contact_id=$1 AND role='assistant' AND media_key=$2
-           AND created_at >= $3::timestamptz
+        `SELECT DISTINCT media_key FROM messages
+         WHERE contact_id=$1 AND role='assistant'
+           AND NULLIF(media_key, '') IS NOT NULL
+           AND id IS DISTINCT FROM $3::integer
+           AND created_at >= $2::timestamptz
            AND delivery_status IS DISTINCT FROM 'failed'
-           AND delivery_status IS DISTINCT FROM 'cancelled'
-         LIMIT 1`,
-        [candidate.contact_id, spec.mediaKey, candidate.first_inbound_at]
+           AND delivery_status IS DISTINCT FROM 'cancelled'`,
+        [candidate.contact_id, candidate.first_inbound_at, message?.id || null]
       );
-      if (alreadySent.rows.length) {
+      if (await mediaAlreadyShared(spec.mediaKey, alreadySent.rows.map((row) => row.media_key))) {
         await finish(attemptId, "cancelled", { error: "Media already sent in this ad conversation" });
         return "media_already_sent";
       }
@@ -533,9 +536,14 @@ async function processCandidate(candidate, requested, template, now = new Date()
       quietHoursStatus(new Date(), clinicConfig.automatedFollowUp?.quietHours).active ||
       !(() => {
         const selected = selectTemplateSpec(fresh, slotHours, liveActive);
-        const current = selected && enrichAutomatedTemplateSpec(
-          { ...selected, language: template.language }, template
-        );
+        // Check the actual resolved fallback, not just the preferred template.
+        // Otherwise safe text fallbacks always cancel after being claimed.
+        const current = templateCatalog
+          ? resolveSafeTemplate(fresh, slotHours, liveActive, templateCatalog,
+              { skipPreferred: spec.fallbackDueToMedia === true })?.spec
+          : selected && enrichAutomatedTemplateSpec(
+              { ...selected, language: template.language }, template
+            );
         return current && current.templateName === spec.templateName &&
           current.mediaKey === spec.mediaKey &&
           current.mediaUrl === spec.mediaUrl &&
@@ -634,6 +642,30 @@ async function processCandidate(candidate, requested, template, now = new Date()
   }
 }
 
+// Compare R2 object ETags as well as keys. Some treatment slots store identical
+// video bytes under different filenames, and a customer must never see the
+// same footage twice just because their treatment interest changed.
+async function mediaAlreadyShared(mediaKey, previousKeys, store = mediaStorage) {
+  if (!mediaKey || !Array.isArray(previousKeys) || !previousKeys.length) return false;
+  if (previousKeys.includes(mediaKey)) return true;
+  const videos = [...new Set(previousKeys)].filter((key) =>
+    typeof key === "string" && key.endsWith(".mp4") && store.isSharedFollowUpConfigKey(key));
+  if (!videos.length) return false;
+  try {
+    const current = await store.getSharedFollowUpMediaInfo(mediaKey);
+    if (!current?.etag || !Number.isFinite(Number(current.bytes))) return true;
+    for (const key of videos) {
+      const previous = await store.getSharedFollowUpMediaInfo(key);
+      if (!previous?.etag) return true;
+      if (previous.etag === current.etag && Number(previous.bytes) === Number(current.bytes)) return true;
+    }
+    return false;
+  } catch {
+    // If we cannot prove the earlier video differs, prefer a text follow-up.
+    return true;
+  }
+}
+
 // Use only an approved variant of the customer's language after the 24h window.
 // Meta's existing English video templates use "en" rather than "en_US".
 function approvedInLanguage(catalog, name, language) {
@@ -643,7 +675,7 @@ function approvedInLanguage(catalog, name, language) {
     item.category === "MARKETING") || null;
 }
 
-function resolveSafeTemplate(candidate, slotHours, active, catalog) {
+function resolveSafeTemplate(candidate, slotHours, active, catalog, { skipPreferred = false } = {}) {
   const preferred = selectTemplateSpec(candidate, slotHours, active);
   if (!preferred) return null;
   const usedNames = candidate.used_template_names || [];
@@ -651,7 +683,7 @@ function resolveSafeTemplate(candidate, slotHours, active, catalog) {
   // A video already sent in any earlier or manual follow-up must not repeat.
   // If a video has no approved variant in the customer's language, choose a
   // distinct approved text template instead of silently switching to Chinese.
-  const alternatives = [preferred.templateName];
+  const alternatives = skipPreferred ? [] : [preferred.templateName];
   if (preferred.mediaKey) alternatives.push("ns_fu1_service_checkin", "ns_fu2_general_checkin");
   for (const name of alternatives) {
     if (usedNames.includes(name)) continue;
@@ -725,8 +757,22 @@ async function run({ now = new Date() } = {}) {
           .catch(() => {});
         continue;
       }
-      const resolved = resolveSafeTemplate(candidate, slotHours, active, catalog.templates);
-      if (!resolved || !await validateApprovedMedia(resolved.template, resolved.spec)) {
+      let resolved = resolveSafeTemplate(candidate, slotHours, active, catalog.templates);
+      if (resolved?.spec.mediaKey && await mediaAlreadyShared(
+        resolved.spec.mediaKey, candidate.previously_sent_media_keys || [])) {
+        resolved = null;
+      }
+      if (resolved && !await validateApprovedMedia(resolved.template, resolved.spec)) resolved = null;
+      // Avoid sending the same clip again, or dropping the slot because the
+      // video is missing. Use a distinct approved text template in-language.
+      if (!resolved) {
+        const fallback = resolveSafeTemplate(candidate, slotHours, active, catalog.templates,
+          { skipPreferred: true });
+        if (fallback && await validateApprovedMedia(fallback.template, fallback.spec)) {
+          resolved = { ...fallback, spec: { ...fallback.spec, fallbackDueToMedia: true } };
+        }
+      }
+      if (!resolved) {
         result.skipped++;
         const reason = resolved ? "unsupported_or_unavailable_media" :
           "no_distinct_approved_template_in_customer_language";
@@ -737,7 +783,7 @@ async function run({ now = new Date() } = {}) {
         continue;
       }
       const { template, spec } = resolved;
-      const outcome = await processCandidate(candidate, active, template, now, spec);
+      const outcome = await processCandidate(candidate, active, template, now, spec, catalog.templates);
       if (outcome === "accepted") result.accepted++;
       else {
         result.skipped++;
