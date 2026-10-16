@@ -32,6 +32,7 @@ const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
+const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
   RESULT_MEDIA_SEND_SPACING_MS,
@@ -1087,6 +1088,44 @@ async function processIncomingMessage(
         reviewRequired = true;
         reviewType = "information";
         bookingReady = false;
+      }
+    }
+
+    // Gemini may flag an otherwise answerable price question for INFORMATION
+    // review. Recover only an explicit current-price enquiry with a
+    // customer-verified continuous treatment thread and independently verified
+    // active offer. Keep all safety, clinical, staff and RM0 send gates intact.
+    if (flagged && reviewRequired && reviewType === "information" &&
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion) {
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      const recovered = planInformationPriceRecovery({
+        enabled: true, flagged, reviewRequired, reviewType,
+        customerText: text, conversationHistory: history,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions, resultMedia: clinicConfig.resultMedia,
+        language: mediaLanguage, hasKeywordAlert: Boolean(keywordReason),
+        urgentSafety, activeSafety: isActiveSafetyConcern(text),
+        explicitStaffRequest: isExplicitStaffRequest(text),
+        marketingStop: Boolean(marketingStopQuestion),
+        pendingClinicalReview: reviewEvidence?.pendingClinicalReview,
+      });
+      if (recovered) {
+        aiReply = recovered.reply;
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        details = { ...details, treatment: recovered.treatment };
+        console.info(
+          "[Pricing] Recovered verified informational review for " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id
+        );
       }
     }
 
