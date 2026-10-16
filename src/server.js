@@ -28,7 +28,7 @@ const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeSe
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
-const { resolveAiPricingDecision } = require("./utils/aiPricingIntentDecision");
+const { resolveAiPricingDecision, isPurePriceObjection } = require("./utils/aiPricingIntentDecision");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
@@ -1196,6 +1196,7 @@ async function processIncomingMessage(
         clarifiedPriceService,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         priceRequested: aiPricingEnabled && !hasFuturePromotionPermissionWithoutPrice(text) &&
+          !isPurePriceObjection(text) &&
           (priceQuery || packageQuery || hasExplicitPriceRequest(text)),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
