@@ -42,9 +42,15 @@ No database migration is required; values live in the client config JSON.
 
 The AI cannot authorize image URLs, sale amounts or provider sends. The
 existing `priceQuery`, `packageQuery` and `treatment` response fields feed
-one verified pricing decision, with no second model request. Service selection
-must match the current or recent customer-authored service, not an old ad,
-CRM label or bot suggestion.
+one verified pricing decision, with no second model request. Service selection prioritizes the current or recent customer-authored service.
+For a short early price question with no customer-selected treatment, a single
+service inferred independently from the current lead's verified Meta creative
+or ad name may establish the initial topic. This is bounded to at most four
+prior customer turns, and fails closed after a topic reset, contradiction,
+ambiguity, staff intervention, or broad price-list request. CRM interest fields
+and model guesses never authorize an ad-only treatment. Existing channel
+sending rules, duplicate/receipt checks, and verified active sale amounts are
+unchanged.
 
 ## Troubleshooting
 
