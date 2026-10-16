@@ -136,3 +136,101 @@ test("final send path uses a new eligibility selection instead of trusting the i
   assert.match(code, /preflightTemplate/);
   assert.match(code, /marketing_consent = 'opted_in'/);
 });
+
+test("48h and 66h fallback proceeds through the guarded provider-send path as configured", async (t) => {
+  const { pool } = require("../src/db/db");
+  const clinicConfig = require("../src/config/clinicConfig");
+  const zeroCostGuard = require("../src/services/whatsappZeroCostGuard");
+  const messagesRepo = require("../src/db/messagesRepo");
+  const realtime = require("../src/utils/realtimeEvents");
+  const keys = ["WHATSAPP_FEP_FOLLOWUPS_ENABLED", "AUTOMATED_REPLIES_ENABLED"];
+  const previousEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  keys.forEach((key) => { process.env[key] = "true"; });
+  const original = {
+    query: pool.query, connect: pool.connect,
+    auto: clinicConfig.automatedFollowUp, services: clinicConfig.services,
+    enabled: zeroCostGuard.enabled, preflight: zeroCostGuard.preflightTemplate,
+    send: templates.sendApprovedTemplate,
+    save: messagesRepo.saveMessage, setWamid: messagesRepo.setWhatsappMessageId,
+    setStatus: messagesRepo.setDeliveryStatusById, publish: realtime.publish,
+  };
+  t.after(() => {
+    keys.forEach((key) => {
+      if (previousEnv[key] == null) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    });
+    pool.query = original.query;
+    pool.connect = original.connect;
+    clinicConfig.automatedFollowUp = original.auto;
+    clinicConfig.services = original.services;
+    zeroCostGuard.enabled = original.enabled;
+    zeroCostGuard.preflightTemplate = original.preflight;
+    templates.sendApprovedTemplate = original.send;
+    messagesRepo.saveMessage = original.save;
+    messagesRepo.setWhatsappMessageId = original.setWamid;
+    messagesRepo.setDeliveryStatusById = original.setStatus;
+    realtime.publish = original.publish;
+  });
+  clinicConfig.services = [{ name: "骨盆调理" }];
+  clinicConfig.automatedFollowUp = {
+    enabled: true, quietHours: { enabled: false },
+    freeEntry: { enabled: true, activatedAt: "2026-10-01T00:00:00Z",
+      templateName: active.templateName, language: active.language,
+      fallbackLanguage: "zh_CN", slotsHours: [48, 66],
+      templateRules: active.templateRules },
+  };
+  zeroCostGuard.enabled = () => false;
+  zeroCostGuard.preflightTemplate = async () => ({ allowed: true });
+  let fresh;
+  let nextId = 710;
+  const sent = [], saved = [];
+  pool.query = async (sql) => {
+    if (sql.includes("FROM contacts c")) return { rows: [fresh] };
+    if (sql.includes("INSERT INTO whatsapp_free_entry_followup_attempts")) {
+      return { rows: [{ id: 555 }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  };
+  pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
+  templates.sendApprovedTemplate = async (_contact, payload) => {
+    sent.push(payload);
+    return { success: true, wamid: "wamid.fallback-" + sent.length };
+  };
+  messagesRepo.saveMessage = async (...args) => {
+    saved.push(args);
+    return { id: nextId++ };
+  };
+  messagesRepo.setWhatsappMessageId = async () => {};
+  messagesRepo.setDeliveryStatusById = async () => {};
+  realtime.publish = () => {};
+  const configured = worker.settings();
+  assert.ok(configured);
+  const now = new Date("2026-10-16T12:00:00Z");
+  for (const [hours, key, expected] of [
+    [48, media.pelvisIntro, "ns_enquiry_reengagement"],
+    [66, media.pelvisFeedback, "ns_fu2_general_checkin"],
+  ]) {
+    const firstReply = new Date(now.getTime() - (hours + 0.3) * 3600000);
+    const firstInbound = new Date(firstReply.getTime() - 60_000);
+    fresh = {
+      ...candidate("骨盆调理", [key]),
+      contact_id: 30 + hours, whatsapp_number: "60112223333",
+      whatsapp_opt_in_at: firstInbound.toISOString(),
+      first_inbound_at: firstInbound, first_reply_at: firstReply,
+      last_inbound_at: firstInbound, first_reply_message_id: 1000 + hours,
+      source_is_ctwa: true, evidence_type: "free_entry_point",
+      claimed_slots: [], lead_temperature: "warm",
+    };
+    const resolved = await worker.selectEligibleTemplate(
+      fresh, hours, configured, catalog);
+    assert.equal(resolved?.template.name, expected);
+    assert.equal(resolved.spec.mediaKey, "");
+    assert.equal(await worker.processCandidate(
+      fresh, configured, resolved.template, now, resolved.spec, catalog), "accepted");
+    assert.equal(sent.at(-1)?.templateName, expected);
+    assert.equal(sent.at(-1)?.components.some((comp) => comp.type === "header"), false);
+    assert.equal(saved.at(-1)?.[8]?.whatsappTemplate?.name, expected);
+  }
+  assert.equal(sent.length, 2);
+  assert.equal(saved.length, 2);
+});
