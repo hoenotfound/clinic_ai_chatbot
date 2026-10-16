@@ -444,10 +444,9 @@ async function processCandidate(candidate, requested, template, now = new Date()
         // candidate selection and acquiring the claimed slot. Re-select only
         // this slot's configured, approved TEXT fallback before creating the
         // message. Never reuse the video or improvise unrelated copy.
-        const fallback = templateCatalog && resolveSafeTemplate({
-          ...candidate, previously_sent_media_keys: previousMedia,
-        }, slotHours, active, templateCatalog, { skipPreferred: true });
-        if (!fallback || !(await validateApprovedMedia(fallback.template, fallback.spec))) {
+        const fallback = await selectClaimedVideoFallback(
+          candidate, slotHours, active, templateCatalog, previousMedia);
+        if (!fallback) {
           await finish(attemptId, "cancelled", {
             error: "Media already sent in this ad conversation; no approved slot text fallback",
           });
@@ -687,6 +686,23 @@ async function mediaAlreadyShared(mediaKey, previousKeys, store = mediaStorage) 
   }
 }
 
+// A video sent by another worker after the slot was claimed must never be
+// replayed. At this point no outbound template row exists, so a same-slot
+// approved TEXT fallback can safely replace the pending video. This cannot
+// make an unapproved or missing text rule sendable.
+async function selectClaimedVideoFallback(candidate, slotHours, active,
+  catalog, previousMedia, { resolve = resolveSafeTemplate,
+    validate = validateApprovedMedia } = {}) {
+  if (!catalog) return null;
+  const fallback = resolve({
+    ...candidate, previously_sent_media_keys: previousMedia,
+  }, slotHours, active, catalog, { skipPreferred: true });
+  if (!fallback || fallback.spec.mediaKey || fallback.spec.mediaUrl ||
+      (fallback.template.header?.format || "TEXT") !== "TEXT" ||
+      !(await validate(fallback.template, fallback.spec))) return null;
+  return fallback;
+}
+
 // Use only an approved variant of the customer's language after the 24h window.
 // Meta's existing English video templates use "en" rather than "en_US".
 function approvedInLanguage(catalog, name, language) {
@@ -739,7 +755,7 @@ function resolveSafeTemplate(candidate, slotHours, active, catalog, {
 
 // Decide once, using the same rule and media checks at initial selection and
 // immediately before the provider send. An already-seen or unusable video
-// falls back only to the configured wildcard/default TEXT rule for this slot.
+// falls back only to the configured wildcard TEXT rule for this slot.
 async function selectEligibleTemplate(candidate, slotHours, active, catalog, {
   validate = validateApprovedMedia, isDuplicate = mediaAlreadyShared,
   resolve = resolveSafeTemplate,
@@ -1105,6 +1121,7 @@ module.exports = {
   runAndSchedule, followUpDelayForResult, potentialDueSql, summarizePotentialDue,
   CHECK_INTERVAL_MS, IDLE_CHECK_INTERVAL_MS,
   SAFE_POLICY_DEFERRAL, safelyDeferredAttemptSql, approvedInLanguage,
-  resolveSafeTemplate, selectEligibleTemplate, selectiveSlotAllowed,
+  resolveSafeTemplate, selectEligibleTemplate, selectClaimedVideoFallback,
+  selectiveSlotAllowed,
   customerRequestedPause, mediaAlreadyShared,
 };
