@@ -127,3 +127,30 @@ test("video duplicate protection is rechecked after a follow-up slot is claimed"
   assert.match(code, /Media already sent in this ad conversation/);
   assert.match(code, /WHERE contact_id=\$1 AND role='assistant' AND media_key=\$2/);
 });
+
+test("extended follow-up detects identical bytes under different treatment video filenames", async () => {
+  const one = "messages/follow-up-config/3d.mp4";
+  const two = "messages/follow-up-config/9d.mp4";
+  const other = "messages/follow-up-config/pelvis.mp4";
+  const store = {
+    isSharedFollowUpConfigKey: (key) => key.startsWith("messages/follow-up-config/"),
+    getSharedFollowUpMediaInfo: async (key) => ({
+      etag: key === other ? "different" : "same-video-bytes", bytes: 1000,
+    }),
+  };
+  assert.equal(await worker.mediaAlreadyShared(one, [one], store), true);
+  assert.equal(await worker.mediaAlreadyShared(one, [two], store), true);
+  assert.equal(await worker.mediaAlreadyShared(one, [other], store), false);
+  assert.equal(await worker.mediaAlreadyShared(one, [], store), false);
+  assert.equal(await worker.mediaAlreadyShared(one, [two], {
+    ...store, getSharedFollowUpMediaInfo: async () => { throw Error("R2 unavailable"); },
+  }), true, "unverifiable duplicate should fall back to text instead of resending");
+});
+
+test("post-window template fallback is revalidated without counting its own pending message as earlier media", () => {
+  const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(code, /media\.id IS DISTINCT FROM \$5::integer/);
+  assert.match(code, /skipPreferred: spec\.fallbackDueToMedia === true/);
+  assert.match(code, /templateCatalog\s*\? resolveSafeTemplate/);
+  assert.match(code, /mediaAlreadyShared\(spec\.mediaKey/);
+});
