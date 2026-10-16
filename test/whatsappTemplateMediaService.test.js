@@ -236,7 +236,8 @@ test("service-specific video headers select only configured matching follow-up s
   const pelvis3 = choices.find((item) => item.stepNumber === 3 && item.serviceName === "骨盆调理");
   const face3 = choices.find((item) => item.serviceName === "3D 小颜术");
   assert.equal(media.isTemplateCompatible("ns_fu2_pelvis_video", pelvis2), true);
-  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis2), false);
+  assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis2), true,
+    "approved extended template may safely reuse the existing second-step pelvic video");
   assert.equal(media.isTemplateCompatible("ns_fu3_pelvis_feedback", pelvis3), true);
   assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", pelvis3), false);
   assert.equal(media.isTemplateCompatible("ns_fu3_face_feedback", face3), true);
