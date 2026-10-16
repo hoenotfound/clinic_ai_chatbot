@@ -1090,9 +1090,9 @@ async function processIncomingMessage(
       }
     }
 
-    // The current customer's explicit treatment is authoritative. A
-    // service-free follow-up price question may reuse only recent customer-
-    // named context, never the AI's inferred service or a Meta ad label.
+    // Customer-selected treatment remains authoritative. In enabled mode,
+    // an unambiguous current-lead Meta ad can anchor an early short pricing
+    // enquiry, but cannot override a later customer treatment switch.
     const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
     const aiPricingEnabled = aiPricingMode === "enabled";
     // The model already returns priceQuery/packageQuery and treatment. Resolve
