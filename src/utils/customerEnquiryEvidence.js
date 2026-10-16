@@ -135,6 +135,12 @@ function isFollowUpConsentEnquiry(customerText) {
 const ACK_ONLY = /^(?:ok(?:ay)?|kk|k|alright|all\s+right|noted|thanks?(?:\s+you)?|thank\s+you|tq|thx|sure|yes|yeah|yep|no|nope|later|fine|got\s+it|received|好的|好|好吧|谢谢|謝謝|收到|明白|嗯|哦|是的|可以|好呀|baik|terima\s+kasih|faham|boleh|ya|tak|👍|🙏|😊|🙂)[\s.!！。~👍🙏😊🙂]*$/iu;
 const ADMIN_ONLY = /^(?:(?:where\s+(?:are|is)|what\s+(?:are|is)\s+(?:your|the)|can\s+you\s+(?:give|send)\s+(?:me\s+)?)\s*)?(?:address|location|branch(?:es)?|business\s+hours?|opening\s+hours?|contact|phone\s+number|whatsapp|opening\s+time|clinic\s+location|appointment\s+slots?|营业时间|營業時間|分店|地址|电话号码|電話號碼|在哪里|在哪裡|营业吗|營業嗎|lokasi|alamat|cawangan|waktu\s+operasi)(?:[\s?？!.。]*)$/iu;
 
+// A model packageQuery flag alone is not authorization to send an offer.
+// Require positive option-list evidence in the customer's own CURRENT text.
+function hasExplicitPackageOptionsRequest(customerText) {
+  return PACKAGE_OPTIONS_REQUEST.test(String(customerText || "").trim());
+}
+
 function hasCustomerPriceEnquiry(customerText) {
   const value = String(customerText || "").trim();
   if (!value || isGreetingOrLanguageOnly(value) || ACK_ONLY.test(value)) return false;
@@ -220,4 +226,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { LOCAL_MONETARY_QUESTION, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { LOCAL_MONETARY_QUESTION, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasExplicitPackageOptionsRequest, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
