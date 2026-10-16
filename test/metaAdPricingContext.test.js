@@ -291,3 +291,15 @@ test("Neutro production-shaped emoji price translations are verified against num
   wrongNormal.followUpTranslations.en = "Limited-time offer RM 4️⃣8️⃣8️⃣ (Original price RM999)";
   assert.equal(decide({ metaAdContext, promotions: [wrongNormal] })?.prices, null);
 });
+
+test("asking for a 3D treatment price and booking in the same message still works", () => {
+  const text = "3D 小颜术做一次多少钱？可以预约吗";
+  const d = decide({
+    customerText: text,
+    conversationHistory: [{ role: "user", content: text }],
+    metaAdContext: context("小颜术 6"),
+  });
+  assert.equal(d?.treatment, "3D 小颜术");
+  assert.equal(d?.source, "current_customer");
+  assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+});
