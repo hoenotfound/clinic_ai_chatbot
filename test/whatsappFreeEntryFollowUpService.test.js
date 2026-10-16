@@ -125,7 +125,8 @@ test("respect explicit deferral instead of automatically marketing to customers"
 test("video duplicate protection is rechecked after a follow-up slot is claimed", () => {
   const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
   assert.match(code, /Media already sent in this ad conversation/);
-  assert.match(code, /WHERE contact_id=\$1 AND role='assistant' AND media_key=\$2/);
+  assert.match(code, /SELECT DISTINCT media_key FROM messages/);
+  assert.match(code, /mediaAlreadyShared\(spec\.mediaKey/);
 });
 
 test("extended follow-up detects identical bytes under different treatment video filenames", async () => {
