@@ -104,9 +104,29 @@ function verifiedServiceAnchor({
 const AD_BROAD_TOPIC = /(?:所有|全部|全套|整份|列出|价目表|價目表|还有什么|有什么(?:疗程|療程|服务|服務)|其他(?:疗程|療程|服务|服務)|\b(?:all\s+(?:the\s+)?(?:prices|treatments|services)|(?:price|pricing|cost)\s*list|which\s+(?:treatments|services)|other\s+(?:treatments|services)|senarai\s+harga)\b)/iu;
 
 const AD_NEGATED_TOPIC = /(?:不要|不想|不考虑|不考慮|不需要|不做|不是|没兴趣|沒興趣|not interested|don.t want|do not want|tak nak|tidak mahu)/iu;
+// The original ad is an acquisition hint only. After seven days a standalone
+// price question needs a fresh service confirmation from the customer.
+const META_AD_PRICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const AD_UNRELATED_FEE = /(?:订金|訂金|定金|按金|押金|预付|預付|手续费|手續費|挂号|掛號|诊金|診金|注册|註冊|报名|報名|停车|停車|运费|運費|邮费|郵費|配送|送货|送貨|会员费|會員費|咨[询詢]|评估|評估|面诊|面診|预约|預約|取消费|取消費|\b(?:deposit|down[\s-]?payment|booking|reservation|registration|consultation|assessment|evaluation|parking|delivery|shipping|membership|cancellation|admin(?:istration)?|processing)\b)/iu;
+// Keep the ad-only fallback narrow. Other price requests still follow the
+// existing customer-authored service verification path.
+const AD_TREATMENT_PRICE_QUESTION = /^(?:(?:请问|請問|想问|想問)\s*)?(?:(?:这个|這個|这项|這項|这种|這種)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:(?:要|是|大概|大约|大約|收费|收費|花)\s*)?(?:多少(?:钱|錢)?|[几幾]多(?:钱|錢)?)[\s?？。!！]*$/iu;
+const AD_ENGLISH_SESSION_PRICE = /^(?:how much\s+(?:is it\s+)?(?:per|for)\s+(?:(?:one|a|1)\s+)?(?:session|treatment)|(?:what(?:'s| is)?|how much is)\s+(?:the\s+)?(?:price|cost|fee)\s+(?:for|per)\s+(?:(?:one|a|1)\s+)?(?:session|treatment))[\s?？.!！]*$/iu;
+const AD_MALAY_SESSION_PRICE = /^(?:berapa\s+(?:harga\s+)?(?:untuk\s+)?(?:satu|1)\s+sesi|harga\s+(?:untuk\s+)?(?:satu|1)\s+sesi\s+berapa|berapa\s+(?:untuk\s+)?sekali\s+rawatan)[\s?？.!！]*$/iu;
+
+function isShortAdTreatmentPriceQuestion(text) {
+  const current = String(text || "").normalize("NFKC").trim();
+  if (!current || current.length > 80 || AD_BROAD_TOPIC.test(current) ||
+      AD_UNRELATED_FEE.test(current)) return false;
+  return isStandalonePriceQuestion(current) ||
+    AD_TREATMENT_PRICE_QUESTION.test(current) ||
+    AD_ENGLISH_SESSION_PRICE.test(current) ||
+    AD_MALAY_SESSION_PRICE.test(current);
+}
+
 function verifiedMetaAdPriceAnchor({
   customerText, conversationHistory, services, serviceAliases, modelTreatment,
-  metaAdContext,
+  metaAdContext, now = Date.now(),
 }) {
   if (!metaAdContext || !["creative", "ad_name"].includes(metaAdContext.serviceHintSource)) return null;
   const adService = (services || []).filter((service) =>
@@ -114,16 +134,16 @@ function verifiedMetaAdPriceAnchor({
   );
   if (adService.length !== 1) return null;
   const name = adService[0].name;
-  if (modelTreatment && modelTreatment !== name) return null;
+  const attributedAtMs = Date.parse(String(metaAdContext.attributedAt || ""));
+  if (!Number.isFinite(attributedAtMs) || !Number.isFinite(now) ||
+      attributedAtMs > now || now - attributedAtMs > META_AD_PRICE_MAX_AGE_MS) return null;
 
   const current = String(customerText || "").trim();
   const candidates = serviceCandidates(services, serviceAliases);
   // Ad-only context is for short contextual monetary enquiries, not for an
   // unrequested price, all-treatment price list, or a competing named service.
-  if (current.length > 80 ||
-      !(isStandalonePriceQuestion(current) || hasCurrentPriceAmountRequest(current)) ||
-      AD_BROAD_TOPIC.test(current) || UNRELATED.test(current) ||
-      /(?:评估|評估|咨询|諮詢|面诊|面診|assessment|consultation|evaluation)/iu.test(current) ||
+  if (!isShortAdTreatmentPriceQuestion(current) ||
+      UNRELATED.test(current) ||
       findServicesInText(current, candidates).length > 0) return null;
 
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
@@ -160,6 +180,7 @@ function resolveAiPricingDecision({
   customerText, conversationHistory = [], services = [],
   serviceAliases = [], promotions = [], allowOfferEnquiries = false,
   complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
+  now = Date.now(),
 } = {}) {
   const current = String(customerText || "").trim();
   const explicitAmount = hasCurrentPriceAmountRequest(current);
@@ -188,7 +209,8 @@ function resolveAiPricingDecision({
   // unsolicited graphic. Clear keywords retain deterministic recovery if
   // Gemini misses them; natural cost wording still works when Gemini sees it.
   const monetary = Boolean(clarifiedPriceService) ||
-    (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current)));
+    (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current))) ||
+    (isStandalonePriceQuestion(current) && priceQuery === true);
   const type = monetary ? "price" :
     packageQuery === true && allowOfferEnquiries && explicitOptions
       ? "package_options" : null;
@@ -201,7 +223,7 @@ function resolveAiPricingDecision({
     modelTreatment: treatment,
   }) || verifiedMetaAdPriceAnchor({
     customerText: current, conversationHistory, services, serviceAliases,
-    modelTreatment: treatment, metaAdContext,
+    modelTreatment: treatment, metaAdContext, now,
   });
   if (!anchor || (clarifiedPriceService &&
       clarifiedPriceService !== anchor.treatment)) return null;
