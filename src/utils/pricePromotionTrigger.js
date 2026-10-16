@@ -114,9 +114,10 @@ async function resolvePricePromotionForReply({
     needsAttention || textSendSucceeded !== true
   ) return null;
 
-  const verifiedContinuedService = resolveContinuedTreatmentPriceService({
-    customerText, conversationHistory, services, serviceAliases, promotions,
-  })?.name === treatment;
+  const verifiedContinuedService = aiPricingEnabled === true &&
+    resolveContinuedTreatmentPriceService({
+      customerText, conversationHistory, services, serviceAliases, promotions,
+    })?.name === treatment;
   if (!verifiedContinuedService && (relatedPricingConflict({
     customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
   }) || (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
