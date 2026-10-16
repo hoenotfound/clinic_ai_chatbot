@@ -205,7 +205,7 @@ test("48h and 66h fallback proceeds through the guarded provider-send path as co
   realtime.publish = () => {};
   const configured = worker.settings();
   assert.ok(configured);
-  const now = new Date("2026-10-16T12:00:00Z");
+  const now = new Date();
   for (const [hours, key, expected] of [
     [48, media.pelvisIntro, "ns_enquiry_reengagement"],
     [66, media.pelvisFeedback, "ns_fu2_general_checkin"],
