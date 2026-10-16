@@ -7,6 +7,8 @@ const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecisi
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 
+const TEST_NOW = Date.parse("2026-10-16T12:00:00.000Z");
+
 const services = [
   { name: "3D 小颜术" },
   { name: "9D 逆龄抗衰" },
@@ -43,9 +45,10 @@ const promotions = [
   },
 ];
 
-function context(adName, headline = "欢迎了解") {
+function context(adName, headline = "欢迎了解", attributedAt = TEST_NOW) {
   return normalizeMetaAdReplyContext({
     source: "meta_ads", ad_name: adName, headline, body: "",
+    attributed_at: attributedAt,
   }, { services, aliases: serviceAliases });
 }
 
@@ -56,7 +59,7 @@ function decide({ customerText = "价格?", conversationHistory, metaAdContext,
     conversationHistory: conversationHistory ||
       [{ role: "user", content: customerText }],
     metaAdContext, services, serviceAliases, promotions,
-    ...overrides,
+    now: TEST_NOW, ...overrides,
   });
 }
 
@@ -159,13 +162,25 @@ test("Meta context cannot authorize an ambiguous, stale or contradicted quote", 
     { metaAdContext: { serviceHint: "3D 小颜术" } },
     { metaAdContext: context("3D + 9D", "3D 小颜术 和 9D 逆龄抗衰") },
     { metaAdContext: context("3D 小颜术 + 骨盆") },
-    { metaAdContext: valid, treatment: "9D 逆龄抗衰" },
+    { metaAdContext: valid, customerText: "订金多少钱?" },
+    { metaAdContext: valid, customerText: "定金要多少钱?" },
+    { metaAdContext: valid, customerText: "注册费多少钱?" },
+    { metaAdContext: valid, customerText: "deposit how much?" },
+    { metaAdContext: valid, customerText: "how much for parking?" },
+    { metaAdContext: valid, customerText: "多少钱的consultation?" },
+    { metaAdContext: valid, customerText: "押金多少钱?" },
+    { metaAdContext: valid, customerText: "how much would you charge for delivery?" },
+    { metaAdContext: valid, customerText: "价格高不高?" },
+    { metaAdContext: valid, customerText: "做多少次才有效?" },
     { metaAdContext: valid, customerText: "全部疗程价格?" },
     { metaAdContext: valid, customerText: "停车费多少钱?" },
     { metaAdContext: valid, customerText: "有优惠可以发我" },
     { metaAdContext: valid, customerText: "免费评估多少钱?",
       complimentaryAssessmentExperienceEnabled: true },
     { metaAdContext: valid, customerText: "怀孕了价格多少?" },
+    { metaAdContext: { ...valid, attributedAt: undefined } },
+    { metaAdContext: context("小颜术 6", "欢迎了解", TEST_NOW - 8 * 24 * 60 * 60 * 1000) },
+    { metaAdContext: context("小颜术 6", "欢迎了解", TEST_NOW + 60 * 1000) },
     { metaAdContext: valid, conversationHistory: [
       { role: "user", content: "之前想了解9D" },
       { role: "user", content: "地址?" },
@@ -202,4 +217,75 @@ test("price image remains independently gated by ownership, receipt and reply su
     [{ role: "user", content: "价格?" }], { hasUnconfirmedMediaDelivery: async () => true }), null);
   assert.equal(await promotionFor(decision, "价格?",
     [{ role: "user", content: "价格?" }], { wasPromoRecentlySent: async () => true }), null);
+});
+
+
+test("verified ad price overrides a model-only service guess, but never a customer switch", () => {
+  const metaAdContext = context("小颜术 6");
+  const priceOnly = [{ role: "user", content: "价格?" }];
+  const decision = decide({
+    metaAdContext, customerText: "价格?",
+    conversationHistory: priceOnly, treatment: "9D 逆龄抗衰",
+  });
+  assert.equal(decision?.source, "meta_ad");
+  assert.equal(decision?.treatment, "3D 小颜术");
+
+  const changed = [
+    { role: "user", content: "现在想了解骨盆调理" },
+    { role: "assistant", content: "骨盆调理可以先做评估" },
+    { role: "user", content: "价格?" },
+  ];
+  assert.equal(decide({ metaAdContext, conversationHistory: changed,
+    customerText: "价格?", treatment: "3D 小颜术" }), null);
+});
+
+test("ad-only treatment price wording remains narrow and current", () => {
+  const metaAdContext = context("小颜术 6");
+  for (const customerText of [
+    "价格?", "多少钱?", "做一次多少钱?", "请问做一次多少钱?",
+    "How much?", "How much for one session?", "berapa satu sesi?",
+  ]) {
+    const d = decide({ metaAdContext, customerText,
+      conversationHistory: [{ role: "user", content: customerText }],
+      priceQuery: true });
+    assert.equal(d?.treatment, "3D 小颜术", customerText);
+    assert.equal(d?.prices?.[0]?.price, "RM488", customerText);
+  }
+  const miss = decide({ metaAdContext, customerText: "做一次多少钱?",
+    priceQuery: false });
+  assert.equal(miss?.treatment, "3D 小颜术");
+});
+
+test("Neutro production-shaped emoji price translations are verified against numerical MYR values", async () => {
+  // Shape and price wording mirror the October Neutro 3D promotion; no
+  // customer data, credentials, Meta URLs or private media links in this test.
+  const realistic = {
+    ...promotions[0], name: "3D 小颜术 First Trial",
+    caption: "【中医小颜术】是一项中医的治疗项目",
+    followUpMessage: "🎊 限时优惠 小颜术美颜整骨 💎只需 RM 4️⃣8️⃣8️⃣ ( 原价 RM888)",
+    mediaTranslations: {
+      en: { caption: "TCM Face Sculpting care" },
+      ms: { caption: "Rawatan TCM" },
+      zh: { caption: "中医小颜术护理" },
+    },
+    followUpTranslations: {
+      en: "Limited-time offer RM 4️⃣8️⃣8️⃣ (Original price RM888)",
+      ms: "Promosi masa terhad RM 4️⃣8️⃣8️⃣ (Harga asal RM888)",
+      zh: "限时优惠 💎RM 4️⃣8️⃣8️⃣ (原价 RM888)",
+    },
+  };
+  const metaAdContext = context("小颜术 6");
+  const d = decide({ metaAdContext, promotions: [realistic] });
+  assert.equal(d?.treatment, "3D 小颜术");
+  assert.deepEqual(d?.prices?.map(p => p.price), ["RM488"]);
+  const graphic = await promotionFor(d, "价格?",
+    [{ role: "user", content: "价格?" }], { promotions: [realistic] });
+  assert.equal(graphic?.packages?.[0]?.imageUrl, "https://example.test/3d.png");
+
+  const mismatch = structuredClone(realistic);
+  mismatch.followUpTranslations.en = "Limited-time offer RM 999 (Original price RM888)";
+  assert.equal(decide({ metaAdContext, promotions: [mismatch] })?.prices, null);
+  const wrongNormal = structuredClone(realistic);
+  wrongNormal.followUpTranslations.en = "Limited-time offer RM 4️⃣8️⃣8️⃣ (Original price RM999)";
+  assert.equal(decide({ metaAdContext, promotions: [wrongNormal] })?.prices, null);
 });
