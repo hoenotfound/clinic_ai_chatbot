@@ -108,9 +108,17 @@ function resolveContinuedTreatmentPriceService({
       if (!value || STAFF.test(value)) return null;
       if (turn.role !== "user") continue;
       if (TOPIC_CHANGE.test(value)) return null;
-      const prior = before[i - 1];
-      if (prior?.role !== "assistant") return null;
-      const question = String(prior.content || "");
+      // Several automatic Before & After captions may follow the previous
+      // answer. A fee question can still refer to its earlier assessment
+      // invitation, but must never cross a different customer or STAFF turn.
+      let previousCustomer = i - 1;
+      while (previousCustomer >= 0 && before[previousCustomer].role !== "user")
+        previousCustomer--;
+      const replies = before.slice(previousCustomer + 1, i);
+      if (!replies.length || replies.length > 4 ||
+          replies.some(x => x.role !== "assistant" ||
+            STAFF.test(String(x.content || "")))) return null;
+      const question = replies.map(x => String(x.content || "")).join("\n");
       if (FREE_ASSESSMENT.test(value) && /(?:评估|評估|体验|體驗)/iu.test(question)) continue;
       if (CONCERN_ANSWER.test(value) && ASK_CONCERN.test(question)) continue;
       if (AGE_ANSWER.test(value) && ASK_AGE.test(question)) continue;
