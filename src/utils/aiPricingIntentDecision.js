@@ -50,6 +50,18 @@ function hasCurrentPriceAmountRequest(customerText) {
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
+// A customer asking for the clinic's address/hours has not switched away
+// from the treatment they explicitly chose. Only a short, standalone
+// administrative question can bridge ONE customer turn. Refunds, deposits,
+// cancellations and different treatment topics remain hard stops.
+const SHORT_LOCATION_HOURS = /^(?:(?:请问|請問|想问|想問|请发|請發|你们|你們|你家|你那边|你那邊|在哪里|在哪裡|在那|where\s+(?:are\s+you|is\s+(?:the\s+)?(?:clinic|centre|center))|what(?:'s| is)\s+(?:your|the))\s*){0,2}(?:地址|地点|地點|位置|在哪里|在哪裡|在哪|营业时间|營業時間|几点开门|幾點開門|开门时间|開門時間|几点关门|幾點關門|branch|location|address|opening\s+hours|business\s+hours|working\s+hours|hours|alamat|lokasi|waktu\s+operasi|jam\s+buka)(?:\s*(?:在哪里|在哪裡|在哪|是|呢|呀|啊|几点|幾點|多少|多少点|多少點|please|ya|ah))?[\s?？。!！]*$/iu;
+const SHORT_LOCATION_QUESTION = /^(?:(?:where\s+are\s+you(?:\s+located)?|where\s+is\s+(?:your|the)\s+(?:clinic|centre|center)|what(?:'s| is)\s+your\s+(?:address|location)|where\s+to\s+find\s+you|(?:你们|你們|诊所|診所)\s*(?:在)?(?:哪里|哪裡|哪里啊|哪裡啊|在哪|在哪里|在哪裡)|在哪里|在哪裡|alamat\s+(?:di\s+mana|mana)|kat\s+mana))[\s?？。!！]*$/iu;
+function isBriefLocationHoursQuestion(text) {
+  const value = String(text || "").normalize("NFKC").trim();
+  return value.length > 0 && value.length <= 55 &&
+    !SPECIFIC_ADMIN_FEE.test(value) &&
+    (SHORT_LOCATION_HOURS.test(value) || SHORT_LOCATION_QUESTION.test(value));
+}
 
 function verifiedServiceAnchor({
   customerText, conversationHistory, services, serviceAliases, modelTreatment,
@@ -60,14 +72,15 @@ function verifiedServiceAnchor({
   const currentService = safeServiceFromCustomer(current, services, serviceAliases);
   if (mentions.length > 1 || (mentions.length && !currentService)) return null;
   if (currentService) {
-    return !modelTreatment || modelTreatment === currentService.name
-      ? { treatment: currentService.name, source: "current_customer" }
-      : null;
+    // Customer-authored, unambiguous service evidence outranks an unsupported
+    // model label. The model cannot veto or invent a treatment at this boundary.
+    return { treatment: currentService.name, source: "current_customer" };
   }
 
   // Never carry a treatment from a CRM label, an ad, or a bot suggestion.
-  // Read a maximum of two previous customer turns. An intervening customer
-  // turn is permitted only when it clearly refers to the same treatment.
+  // Read at most two previous customer turns. A single short clinic
+  // address/hours question may interrupt a customer-named service enquiry;
+  // this does not authorize an ad-only or model-only treatment.
   if (current.length > 115) return null;
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
   let currentSkipped = false, customerTurns = 0, bridge = false;
@@ -80,17 +93,19 @@ function verifiedServiceAnchor({
     if (entry?.role !== "user") continue;
     const text = String(entry.content || "").trim();
     if (!currentSkipped && text === current) { currentSkipped = true; continue; }
-    if (!text || RESET.test(text) || REFUSAL.test(text)) return null;
+    if (!text || RESET.test(text) || REFUSAL.test(text) ||
+        AD_NEGATED_TOPIC.test(text) || AD_BROAD_TOPIC.test(text)) return null;
     customerTurns += 1;
     const found = [...new Set(findServicesInText(text, candidates))];
     const named = safeServiceFromCustomer(text, services, serviceAliases);
     if (found.length > 1 || (found.length && !named)) return null;
     if (named) {
-      return !modelTreatment || modelTreatment === named.name
-        ? { treatment: named.name, source: "recent_customer" }
-        : null;
+      // Latest independent customer choice wins, including a switch from the
+      // original ad treatment; a conflicting model label is not proof.
+      return { treatment: named.name, source: "recent_customer" };
     }
-    if (bridge || UNRELATED.test(text) || !BRIDGE.test(text)) return null;
+    if (bridge || (!BRIDGE.test(text) && !isBriefLocationHoursQuestion(text)) ||
+        (UNRELATED.test(text) && !isBriefLocationHoursQuestion(text))) return null;
     bridge = true;
   }
   return null;
