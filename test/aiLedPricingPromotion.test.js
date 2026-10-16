@@ -422,3 +422,160 @@ test("complaints combined with duration questions do not become price requests",
     priceQuery: true,
   }), null);
 });
+
+
+test("a wrong model price flag never turns ordinary treatment questions into prices or graphics", async () => {
+  const { hasCustomerRequestedPriceReply, hasCurrentPriceAmountRequest } =
+    require("../src/utils/aiPricingIntentDecision");
+  const { hasExplicitPackageOptionsRequest } =
+    require("../src/utils/customerEnquiryEvidence");
+  const questions = [
+    "3D 小颜术有效果吗？",
+    "3D 小颜术可以改善大小脸吗？",
+    "3D 是徒手做的吗？",
+    "3D 小颜术这个疗程包括什么？",
+    "3D 的套餐里面有什么？",
+    "3D 的价格合理吗？",
+    "Does the 3D facial actually work?",
+    "How does the 3D treatment work?",
+    "3D rawatan berkesan ke?",
+  ];
+  for (const customerText of questions) {
+    const history = [{ role: "user", content: customerText }];
+    assert.equal(hasCurrentPriceAmountRequest(customerText), false, customerText);
+    assert.equal(hasExplicitPackageOptionsRequest(customerText), false, customerText);
+    const d = decide({
+      priceQuery: true, packageQuery: true, allowOfferEnquiries: true,
+      customerText, conversationHistory: history,
+    });
+    assert.equal(d, null, "model misclassification must fail closed: " + customerText);
+    assert.equal(hasCustomerRequestedPriceReply({
+      customerText, pricingDecision: d,
+    }), false, "no spurious price clarification: " + customerText);
+    const text = "我们可以先了解你想改善的地方，再做1对1评估+体验 😊";
+    const guarded = ensureVerifiedPriceReply({
+      customerText, reply: text, pricingDecision: d,
+      priceRequested: hasCustomerRequestedPriceReply({customerText, pricingDecision: d}),
+      treatment: null, language: "zh",
+    });
+    assert.equal(guarded.reply, text, "normal service explanation remains unchanged");
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(d, {
+      customerText, conversationHistory: history, priceQuery: true, packageQuery: true,
+    })), null, "no unsolicited image");
+  }
+});
+
+test("genuine colloquial price questions still work even with cautious model flags", () => {
+  const { hasCurrentPriceAmountRequest, hasCustomerRequestedPriceReply } =
+    require("../src/utils/aiPricingIntentDecision");
+  for (const customerText of [
+    "3D 小颜术多少钱？",
+    "3D First Trial 多少钱？",
+    "3D 做一次多少？",
+    "3D 一次几多？",
+    "3D how much per session?",
+    "3D berapa satu sesi?",
+    "3D price?",
+    "3D 怎么收费？",
+  ]) {
+    assert.equal(hasCurrentPriceAmountRequest(customerText), true, customerText);
+    const d = decide({customerText,conversationHistory:[{role:"user",content:customerText}]});
+    assert.equal(d?.type, "price", customerText);
+    assert.deepEqual(d?.prices?.map(p=>p.price), ["RM488"], customerText);
+    assert.equal(hasCustomerRequestedPriceReply({customerText,pricingDecision:d}),true);
+  }
+  assert.equal(decide({
+    priceQuery:false, customerText:"3D First Trial 多少钱？",
+    conversationHistory:[{role:"user",content:"3D First Trial 多少钱？"}],
+  })?.prices?.[0]?.price,"RM488","explicit question recovers if Gemini misses the price flag");
+});
+
+test("current named treatment switches permit new pricing, not old CRM or conversation prices", async () => {
+  const nine = {
+    ...trial,
+    name:"9D First Trial",
+    linkedService:"9D 逆龄抗衰",
+    imageUrl:"https://example.test/9d",
+    caption:"9D First Trial 限时优惠",
+    followUpMessage:"只需 RM488 (原价 RM1288)",
+    pricing:{currency:"MYR", offer:488,normal:1288},
+  };
+  const promos = [...promotions,nine];
+  for(const customerText of [
+    "换个疗程，我想了解9D多少钱？",
+    "改聊9D，做一次多少？",
+    "I want to switch to 9D. How much per session?",
+    "Instead, what's the price of 9D?",
+  ]) {
+    const h=[
+      {role:"user",content:"我想了解3D小颜术"},
+      {role:"assistant",content:"3D小颜术可以先评估"},
+      {role:"user",content:customerText},
+    ];
+    const d=decide({
+      treatment:"9D 逆龄抗衰",promotions:promos,
+      customerText,conversationHistory:h,
+    });
+    assert.equal(d?.treatment,"9D 逆龄抗衰",customerText);
+    assert.equal(d?.source,"current_customer");
+    assert.deepEqual(d?.prices?.map(p=>p.price),["RM488"],customerText);
+    const media=await resolvePricePromotionForReply(mediaArgs(d,{
+      treatment:d.treatment,verifiedServiceFromText:d.treatment,
+      customerText,conversationHistory:h,promotions:promos,
+    }));
+    assert.equal(media?.packages?.[0]?.imageUrl,nine.imageUrl,customerText);
+  }
+});
+
+test("topic reset still never resurrects an old treatment, a refusal, or an ad-only service", () => {
+  const nine={
+    ...trial,name:"9D First Trial",linkedService:"9D 逆龄抗衰",
+    followUpMessage:"只需 RM488 (原价 RM1288)",
+    pricing:{currency:"MYR",offer:488,normal:1288},
+  };
+  const promos=[...promotions,nine];
+  for (const customerText of [
+    "换个疗程，多少钱？",
+    "改聊其他东西，价格呢？",
+    "switch treatments, how much?",
+    "Stop promotions; switch to 9D. How much?",
+    "不要9D，我想换个疗程，多少钱？",
+  ]) {
+    const h=[
+      {role:"user",content:"之前是3D小颜术"},
+      {role:"assistant",content:"好的"},
+      {role:"user",content:customerText},
+    ];
+    assert.equal(decide({
+      customerText,conversationHistory:h,
+      treatment:"9D 逆龄抗衰",promotions:promos,
+    }),null,customerText);
+  }
+  const both="不要3D，换个9D多少钱？";
+  assert.equal(decide({
+    customerText:both, treatment:"9D 逆龄抗衰",
+    conversationHistory:[{role:"user",content:both}],
+    promotions:promos,
+  }),null,"two named service mentions fail closed unless their context is independently resolved");
+});
+
+test("opted-in package questions work but package details alone never trigger graphics", () => {
+  const { hasExplicitPackageOptionsRequest } =
+    require("../src/utils/customerEnquiryEvidence");
+  for(const customerText of [
+    "3D 有什么配套？",
+    "3D 有什么优惠？",
+    "What packages do you have for 3D?",
+  ]) {
+    assert.equal(hasExplicitPackageOptionsRequest(customerText),true,customerText);
+    const h=[{role:"user",content:customerText}];
+    const opts={priceQuery:false,packageQuery:true,treatment:"3D 小颜术",
+      customerText,conversationHistory:h};
+    assert.equal(decide({...opts,allowOfferEnquiries:false}),null);
+    assert.equal(decide({...opts,allowOfferEnquiries:true})?.type,"package_options");
+  }
+  const details="3D 套餐里面有什么？";
+  assert.equal(hasExplicitPackageOptionsRequest(details),false);
+  assert.equal(decide({priceQuery:false,packageQuery:true,allowOfferEnquiries:true,
+    customerText:details,conversationHistory:[{role:"user",content:details}]}),null);
+});
