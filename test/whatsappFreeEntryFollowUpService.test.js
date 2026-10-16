@@ -104,8 +104,8 @@ test("extended candidate SQL checks previously sent follow-up videos from all ou
   const code = fs.readFileSync(path.join(__dirname, "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
   assert.match(code, /AS previously_sent_media_keys/);
   assert.match(code, /media\.created_at >= origin\.created_at/);
-  assert.match(code, /sentKeys\.includes\(preferred\.mediaKey\)/);
-  assert.match(code, /usedNames\.includes\(name\)/);
+  assert.match(code, /previouslySent\.includes\(preferred\.mediaKey\)/);
+  assert.match(code, /usedNames\.includes\(preferred\.templateName\)/);
   assert.match(code, /no_distinct_approved_template_in_customer_language/);
 });
 
