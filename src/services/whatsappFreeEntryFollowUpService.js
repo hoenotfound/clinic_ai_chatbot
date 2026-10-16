@@ -546,7 +546,12 @@ async function processCandidate(candidate, requested, template, now = new Date()
         const base = !templateCatalog ? selectTemplateSpec(fresh, slotHours, liveActive) : null;
         const current = selected?.spec || (base &&
           enrichAutomatedTemplateSpec({ ...base, language: template.language }, template));
-        return current && (!selected || selected.template.language === template.language) &&
+        const languageMatches = selected
+          ? selected.template.language === template.language
+          : base && (base.language === template.language ||
+              (base.language === "en_US" && template.language === "en") ||
+              template.language === liveActive.fallbackLanguage);
+        return current && languageMatches &&
           current.templateName === spec.templateName &&
           current.mediaKey === spec.mediaKey &&
           current.mediaUrl === spec.mediaUrl &&
