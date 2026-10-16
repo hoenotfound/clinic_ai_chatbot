@@ -23,7 +23,9 @@ const {
 } = require("../utils/whatsappFreeEntryWindow");
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-const IDLE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+// When no actionable slot is due, use an hourly backstop. Conversation,
+// configuration and billing-evidence events still wake this worker promptly.
+const IDLE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_BATCH_SIZE = 20;
 // Only a strictly policy-rejected request that NEVER reached Meta can be
 // re-claimed. Unknown, failed, accepted, and manual cancellations stay one-shot.
@@ -1007,7 +1009,7 @@ function start({
       if (!payload?.keys || payload.keys.includes("automatedFollowUp")) wake(0);
     }),
     // Pricing may be confirmed before the matching outbound WAMID is linked.
-    // Immediate refresh plus the 15m safety backstop cover either ordering.
+    // Immediate refresh plus the hourly idle safety backstop cover either ordering.
     events.subscribe("whatsapp_fep_billing_evidence", () => wake(0)),
   ];
   timer.start();

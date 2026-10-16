@@ -35,8 +35,9 @@ const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
 
 const RECOVERY_INTERVAL_MS = 60 * 1000;
 // A rare crash between saving a job and scheduling it must still be recoverable.
-// Normal idle periods never need a minute-by-minute query.
-const IDLE_RECOVERY_SAFETY_MS = 15 * 60 * 1000;
+// Lost webhook scheduling is recovered by an hourly safety sweep; live
+// comments and failed/stale claims still run immediately or at their due time.
+const IDLE_RECOVERY_SAFETY_MS = 60 * 60 * 1000;
 
 function recoveryDelayForResult(result, nowMs = Date.now()) {
   if (!result?.nextRecoverableAt) return IDLE_RECOVERY_SAFETY_MS;

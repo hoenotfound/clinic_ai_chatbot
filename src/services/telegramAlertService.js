@@ -220,6 +220,24 @@ function buildConversationSummaryMessage({
   return limitTelegramMessage(lines);
 }
 
+function buildTelegramRequestOptions({ token, payload }) {
+  return {
+    hostname: "api.telegram.org",
+    port: 443,
+    // Render production has observed Telegram IPv6 routes failing with
+    // ENETUNREACH. Keep this workaround scoped to Telegram so Node does not
+    // attempt the unusable IPv6 route while other outbound traffic is unchanged.
+    family: 4,
+    path: `/bot${token}/sendMessage`,
+    method: "POST",
+    timeout: TELEGRAM_TIMEOUT_MS,
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(payload),
+    },
+  };
+}
+
 function postTelegramMessage({ token, chatId, text }) {
   const payload = JSON.stringify({
     chat_id: chatId,
@@ -229,17 +247,7 @@ function postTelegramMessage({ token, chatId, text }) {
 
   return new Promise((resolve, reject) => {
     const request = https.request(
-      {
-        hostname: "api.telegram.org",
-        port: 443,
-        path: `/bot${token}/sendMessage`,
-        method: "POST",
-        timeout: TELEGRAM_TIMEOUT_MS,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
-        },
-      },
+      buildTelegramRequestOptions({ token, payload }),
       (response) => {
         let body = "";
         response.setEncoding("utf8");
@@ -410,6 +418,7 @@ module.exports = {
   TELEGRAM_FLUSH_BATCH_SIZE,
   TELEGRAM_MESSAGE_LIMIT,
   buildConversationSummaryMessage,
+  buildTelegramRequestOptions,
   buildWhatsappChatUrl,
   channelLabel,
   createTelegramAlertService,
