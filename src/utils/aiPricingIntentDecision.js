@@ -113,6 +113,7 @@ function resolveAiPricingDecision({
   const validNewTreatmentSwitch = TOPIC_SWITCH_TO_NEW_SERVICE.test(current) &&
     Boolean(currentNamedService) && (explicitAmount || explicitOptions);
   if (!current || (RESET.test(current) && !validNewTreatmentSwitch) ||
+      /\b(?:stop|unsubscribe)\b|退订|退訂/iu.test(current) ||
       REFUSAL.test(current) ||
       hasClinicalMediaRisk(current) ||
       isPurePriceObjection(current) ||
