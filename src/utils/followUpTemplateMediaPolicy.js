@@ -6,6 +6,7 @@ const templateMedia = require("../services/whatsappTemplateMediaService");
 
 const RESTRICTED_TREATMENT_TEMPLATES = Object.freeze({
   ns_fu2_pelvis_video: ["骨盆调理"],
+  ns_pelvis_followup_video: ["骨盆调理"],
   ns_fu3_pelvis_feedback: ["骨盆调理"],
   ns_fu3_face_feedback: ["3D 小颜术", "9D 逆龄抗衰", "3D + 9D 组合"],
 });
