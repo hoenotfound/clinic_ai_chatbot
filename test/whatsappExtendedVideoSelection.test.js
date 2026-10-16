@@ -234,3 +234,59 @@ test("48h and 66h fallback proceeds through the guarded provider-send path as co
   assert.equal(sent.length, 2);
   assert.equal(saved.length, 2);
 });
+
+test("missing same-slot text rule fails closed, never borrowing the global default", async () => {
+  const no48Text = { ...active, templateRules: active.templateRules.filter(
+    (r) => !(r.slotHours === 48 && r.serviceName === "*")) };
+  const no66Text = { ...active, templateRules: active.templateRules.filter(
+    (r) => !(r.slotHours === 66 && r.serviceName === "*")) };
+  assert.equal(await choose(candidate("骨盆调理", [media.pelvisIntro]), 48, no48Text), null);
+  assert.equal(await choose(candidate("骨盆调理", [media.pelvisFeedback]), 66, no66Text), null);
+  assert.equal(await choose(candidate("骨盆调理"), 48, no48Text)
+    .then((x) => x?.template.name), "ns_pelvis_followup_video",
+    "unseen approved video can still send when the fallback is not needed");
+});
+
+test("post-claim video race resolves to the exact approved text template before writing", async () => {
+  const previous = [media.pelvisIntro];
+  const recovered = await worker.selectClaimedVideoFallback(
+    candidate("骨盆调理"), 48, active, catalog, previous, {
+      resolve, validate: async () => true,
+    });
+  assert.equal(recovered?.template.name, "ns_enquiry_reengagement");
+  assert.equal(recovered.spec.mediaKey, "");
+  assert.equal(recovered.template.header?.format || "TEXT", "TEXT");
+  const noText = { ...active, templateRules: active.templateRules.filter(
+    (r) => !(r.slotHours === 48 && r.serviceName === "*")) };
+  assert.equal(await worker.selectClaimedVideoFallback(
+    candidate("骨盆调理"), 48, noText, catalog, previous,
+    { resolve, validate: async () => true }), null);
+});
+
+test("post-claim race cannot substitute unapproved, media-bearing or wrong-language fallback", async () => {
+  const lead = candidate("骨盆调理");
+  const args = [lead, 48, active, catalog, [media.pelvisIntro]];
+  assert.equal(await worker.selectClaimedVideoFallback(...args, {
+    resolve: () => ({
+      template: createTemplate("ns_fu3_face_feedback", "VIDEO"),
+      spec: { mediaKey: media.face },
+    }), validate: async () => true,
+  }), null);
+  assert.equal(await worker.selectClaimedVideoFallback(...args, {
+    resolve: () => ({ template: createTemplate("ns_enquiry_reengagement"),
+      spec: { mediaKey: "", mediaUrl: "" } }),
+    validate: async () => false,
+  }), null);
+  assert.equal(await worker.selectClaimedVideoFallback(...args.slice(0, 3), null,
+    [media.pelvisIntro], { resolve, validate: async () => true }), null);
+});
+
+test("claimed duplicate recovery is wired to the outbound worker before saveMessage", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const code = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  const recovery = code.indexOf("const fallback = await selectClaimedVideoFallback(");
+  const persisted = code.indexOf("message = await messagesRepo.saveMessage(");
+  assert.ok(recovery >= 0 && persisted > recovery);
+  assert.match(code, /template = fallback\.template;\s*spec = fallback\.spec/);
+});
