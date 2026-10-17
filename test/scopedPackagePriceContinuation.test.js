@@ -114,6 +114,28 @@ async function withAssessmentFirst(fn) {
   config.automatedFollowUp = {...original, assessmentFirstPricingEnabled:true};
   try { return await fn(); } finally { config.automatedFollowUp = original; }
 }
+
+test("first '价钱这方面' after pelvic ad should already quote both packages without asking which treatment",async()=>{
+  const currentPrice="价钱这方面";
+  const firstPriceHistory=[...history.slice(0,-3),{role:"user",content:currentPrice}];
+  const d=decision({customerText:currentPrice,conversationHistory:firstPriceHistory});
+  assert.equal(d?.treatment,"骨盆调理");
+  assert.deepEqual(d?.prices?.map(x=>x.price),["RM388","RM288"]);
+  await withAssessmentFirst(async()=>{
+    const quoted=ensureVerifiedPriceReply({
+      ...input({customerText:currentPrice,conversationHistory:firstPriceHistory}),
+      reply:"你想先了解哪一项呢？",treatment:d.treatment,
+      clarifiedPriceService:d.clarifiedPriceService,resultMedia:[],language:"zh",
+    });
+    assert.equal(quoted.restored,true);
+    assert.match(quoted.reply,/Package A.*RM388/su);
+    assert.match(quoted.reply,/Package B.*RM288/su);
+    assert.doesNotMatch(quoted.reply,/3D|9D|RM688/u);
+    const media=await priceMedia({customerText:currentPrice,conversationHistory:firstPriceHistory});
+    assert.deepEqual(media?.packages?.map(x=>x.name),["Package A","Package B"]);
+  });
+});
+
 test("don't infer from ad or bot label alone, a broad clinic price list, a switched treatment or expired ads",()=>{
   const cases=[
     {conversationHistory:history.slice(1)},
@@ -147,7 +169,7 @@ test("don't infer from ad or bot label alone, a broad clinic price list, a switc
   }
 });
 test("standalone price enquiry, clinical question and future offer permission never qualify as this narrow continuation",()=>{
-  for(const phrase of ["价钱这方面","骨盆多少錢","现在我要知道每一项的价格","每一个疗程我都想了解","两次有优惠吗？","以后有优惠可以通知我","How much time does it take?"]){
+  for(const phrase of ["骨盆多少錢","现在我要知道每一项的价格","每一个疗程我都想了解","两次有优惠吗？","以后有优惠可以通知我","How much time does it take?"]){
     assert.equal(decision({customerText:phrase,
       conversationHistory:[...history.slice(0,-1),{role:"user",content:phrase}]}),null,phrase);
   }
