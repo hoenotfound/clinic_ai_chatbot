@@ -108,7 +108,8 @@ function resolveScopedPackagePriceContinuation({
   for (const turn of previous.slice(selectedAt + 1)) {
     const text = messageText(turn);
     if (!text || isVerifiedStaffTurn(turn) ||
-        (STOP_OR_SWITCH.test(text) && turn.role === "user")) return null;
+        (turn.role === "user" &&
+          (STOP_OR_SWITCH.test(text) || hasClinicalMediaRisk(text)))) return null;
     // Neither a later customer message nor an assistant-mentioned different
     // treatment may silently broaden/switch the current pricing subject.
     const mentioned = findServicesInText(text, candidates);
