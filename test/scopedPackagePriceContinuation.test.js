@@ -90,7 +90,8 @@ test("骨盆 ad + explicit customer choice + price clarification + every item me
     });
     assert.equal(guarded.replaced,false);
     const reply=ensureVerifiedPriceReply({
-      ...input(), reply:guarded.reply,treatment:d.treatment,
+      ...input(), reply:"我们主要有3D小颜术和9D逆龄抗衰，还有脉冲波，你想看哪个？",
+      treatment:d.treatment, priceOnlyResponse:true,
       clarifiedPriceService:d.clarifiedPriceService,resultMedia:[],language:"zh",
     });
     assert.equal(reply.restored,true);
@@ -124,8 +125,9 @@ test("first '价钱这方面' after pelvic ad should already quote both packages
   await withAssessmentFirst(async()=>{
     const quoted=ensureVerifiedPriceReply({
       ...input({customerText:currentPrice,conversationHistory:firstPriceHistory}),
-      reply:"你想先了解哪一项呢？",treatment:d.treatment,
-      clarifiedPriceService:d.clarifiedPriceService,resultMedia:[],language:"zh",
+      reply:"我们有3D、9D、脉冲波，你想看哪一个？",treatment:d.treatment,
+      clarifiedPriceService:d.clarifiedPriceService,priceOnlyResponse:true,
+      resultMedia:[],language:"zh",
     });
     assert.equal(quoted.restored,true);
     assert.match(quoted.reply,/Package A.*RM388/su);
