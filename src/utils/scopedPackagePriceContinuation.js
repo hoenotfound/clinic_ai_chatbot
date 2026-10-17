@@ -96,6 +96,15 @@ function resolveScopedPackagePriceContinuation({
   const candidates = serviceCandidates(services, serviceAliases);
   if (!selected || (findServicesInText(selectedText, candidates).length !== 1) ||
       !/(?:有兴趣|有興趣|想了解|想知道|感兴趣|感興趣|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(selectedText)) return null;
+  if (clarifiedPackages) {
+    // The clarification and preceding price request may not name another
+    // treatment. A question about 3D must never resolve to Pelvis from
+    // earlier ad/current-lead context.
+    for (const text of [messageText(turns.at(-3)), messageText(turns.at(-2))]) {
+      const names = findServicesInText(text, candidates);
+      if (names.some(name => name !== selected.name)) return null;
+    }
+  }
   // The ad/creative must mention the customer-selected treatment. An
   // unrelated 3D advertisement cannot scope "all" to pelvis solely because
   // a prior customer message happened to mention pelvic care.
