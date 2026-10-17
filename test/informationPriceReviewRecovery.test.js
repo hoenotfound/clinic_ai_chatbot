@@ -243,6 +243,38 @@ test("only fresh, monotonic trusted timestamps authorize extended price carryove
     "missing trustworthy metadata must fail closed");
 });
 
+test("deployment setting can shorten the price-context window, never extend it beyond 24 hours",()=>{
+  const { resolveContinuedTreatmentPriceService } =
+    require("../src/utils/priceFollowUpContext");
+  const variable = "AI_PRICING_CONTINUITY_MAX_AGE_HOURS";
+  const previous = process.env[variable];
+  const pastThread=(hours)=>joey.map((turn,i)=>withPricingHistoryMetadata(
+    {role:turn.role,content:turn.content},
+    {role:turn.role,created_at:new Date(Date.now()-hours*60*60*1000+i*3_000)}
+  ));
+  try {
+    const twoHoursOld = pastThread(2);
+    const twentySixHoursOld = pastThread(26);
+    process.env[variable] = "1";
+    assert.equal(resolveContinuedTreatmentPriceService(args(twoHoursOld)),null,
+      "one-hour setting cannot revive a two-hour-old conversation");
+    assert.equal(resolveContinuedTreatmentPriceService(args())?.name,"骨盆调理",
+      "fresh conversations remain usable");
+    process.env[variable] = "24";
+    assert.equal(resolveContinuedTreatmentPriceService(args(twoHoursOld))?.name,"骨盆调理",
+      "the default 24-hour window remains available");
+    process.env[variable] = "72";
+    assert.equal(resolveContinuedTreatmentPriceService(args(twentySixHoursOld)),null,
+      "oversized overrides must not widen the verified window");
+    process.env[variable] = "invalid";
+    assert.equal(resolveContinuedTreatmentPriceService(args(twentySixHoursOld)),null,
+      "invalid overrides must also remain fail-closed");
+  } finally {
+    if (previous === undefined) delete process.env[variable];
+    else process.env[variable] = previous;
+  }
+});
+
 test("Postgres evidence fields stay readable to pricing logic but invisible to model JSON",()=>{
   const row={role:"assistant",content:[{type:"text",text:"Hello"},{type:"image",data:"fake"}]};
   const enriched=withPricingHistoryMetadata(row,{
