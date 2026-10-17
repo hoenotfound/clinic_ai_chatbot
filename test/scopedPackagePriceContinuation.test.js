@@ -137,7 +137,9 @@ test("don't infer from ad or bot label alone, a broad clinic price list, a switc
     {conversationHistory:history.slice(0,-1).concat({role:"user",content:"每一项都想了解，我怀孕了"}),customerText:"每一项都想了解，我怀孕了"},
     {promotions:promotions.filter(x=>x.linkedService!=="骨盆调理")},
     {promotions:promotions.map(p=>p.linkedService==="骨盆调理"
-      ? {...p,packages:p.packages.map(x=>x.name==="Package A"?{...x,caption:"优惠后仅需 RM399"}:x)}
+      ? {...p,packages:p.packages.map(x=>x.name==="Package A"?{...x,
+          caption:"优惠后仅需 RM399",
+          followUpTranslations:{zh:"本月限时优惠，优惠后仅需 RM388"}}:x)}
       :p)},
   ];
   for(const override of cases) {
