@@ -57,6 +57,16 @@ const TOPIC_CHANGE = /(?:换个|換個|改聊|不聊|另外想|不要|不想(?:�
 const STAFF = /^\[Verified STAFF message\]/u;
 const CONTINUED_CONTEXT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// Only allow shortening the verified conversation window. An invalid or
+// over-24-hour deployment override falls back to the safe 24-hour default.
+// Read at decision time so tests and independently configured clients behave
+// consistently without leaking additional history into the model prompt.
+function continuedContextMaxAgeMs() {
+  const hours = Number(process.env.AI_PRICING_CONTINUITY_MAX_AGE_HOURS);
+  return Number.isInteger(hours) && hours >= 1 && hours <= 24
+    ? hours * 60 * 60 * 1000 : CONTINUED_CONTEXT_MAX_AGE_MS;
+}
+
 function pricingMessageText(message) {
   const content = message?.content;
   if (typeof content === "string") return content;
@@ -77,12 +87,13 @@ function isVerifiedStaffTurn(turn) {
 function isRecentPricingThread(turns, startIndex, now = Date.now()) {
   if (!Number.isFinite(now) || startIndex < 0 || startIndex >= turns.length)
     return false;
+  const maxAgeMs = continuedContextMaxAgeMs();
   let previous = -Infinity;
   for (const turn of turns.slice(startIndex)) {
     // Only trusted DB timestamps can authorize this *extended* carryover.
     // Synthetic/legacy histories without metadata fail closed.
     const time = turn?.pricingCreatedAtMs;
-    if (!Number.isFinite(time) || time < now - CONTINUED_CONTEXT_MAX_AGE_MS ||
+    if (!Number.isFinite(time) || time < now - maxAgeMs ||
         time > now + 60_000 || time < previous) return false;
     previous = time;
   }
