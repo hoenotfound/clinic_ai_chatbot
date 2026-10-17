@@ -8,6 +8,7 @@ const { resolveScopedPackagePriceContinuation } =
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
+const { withPricingHistoryMetadata, isVerifiedHumanStaffRow } = require("../src/utils/conversationStore");
 
 const services = [
   { name: "骨盆调理" }, { name: "3D 小颜术" },
@@ -49,22 +50,45 @@ const current = "每一项都想了解";
 const history = [
   { role:"user", content:initial },
   { role:"assistant", content:"中医师会先帮你做1对1体态评估+体验，了解你的骨盆和体态状况哦 😊" },
-  { role:"assistant", content:"Before & After 😊" },
-  { role:"assistant", content:"Hi～很多平时久坐上班的顾客做完骨盆调理后都觉得状态轻松" },
+  { role:"assistant", content:"Before & After 😊", minutesBefore:360 },
+  { role:"assistant", content:"再给你看一个顾客护理后的 Before & After 😊", minutesBefore:360 },
+  { role:"assistant", content:"Hi～不知道你平时主要是久坐腰酸，还是比较在意体态假胯宽呢？", minutesBefore:240,
+    is_automated_follow_up:true, sent_by_username:"Follow-up automation" },
+  { role:"assistant", content:"Hi～很多平时久坐上班的顾客做完骨盆调理后都觉得状态轻松", minutesBefore:1,
+    is_automated_follow_up:true, sent_by_username:"Follow-up automation" },
   { role:"user", content:price },
   { role:"assistant", content:clarification },
   { role:"user", content:current },
 ];
 function input(overrides = {}) {
-  return {customerText:current,conversationHistory:history,
+  const merged = {customerText:current,conversationHistory:history,
     metaAdContext:ad(),services,serviceAliases,promotions,...overrides};
+  const now = Date.now();
+  const rows = merged.conversationHistory;
+  merged.conversationHistory = rows.map((turn,i) => {
+    if (Number.isFinite(turn?.pricingCreatedAtMs)) return turn;
+    const isStaffText = typeof turn.content === "string" &&
+      turn.content.startsWith("[Verified STAFF message]");
+    const row = {
+      role:turn.role, created_at:new Date(now -
+        (turn.minutesBefore ?? (rows.length - i)) * 60_000),
+      is_automated_follow_up:turn.is_automated_follow_up === true,
+      sent_by_username:turn.sent_by_username ||
+        (isStaffText ? "admin" : null),
+    };
+    return withPricingHistoryMetadata({
+      role:turn.role,content:turn.content,
+    },row);
+  });
+  return merged;
 }
 function decision(overrides = {}) {
   return resolveScopedPackagePriceContinuation(input(overrides));
 }
 async function priceMedia(overrides = {}) {
+  const normalizedInput = input(overrides);
   return resolvePricePromotionForReply({
-    ...input(),
+    ...normalizedInput,
     priceQuery:false,packageQuery:false,
     aiPricingEnabled:false,pricingDecision:null,
     treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
@@ -73,6 +97,7 @@ async function priceMedia(overrides = {}) {
     textSendSucceeded:true,wasPromoRecentlySent:async()=>false,
     hasUnconfirmedMediaDelivery:async()=>false,
     ...overrides,
+    conversationHistory:normalizedInput.conversationHistory,
   });
 }
 
