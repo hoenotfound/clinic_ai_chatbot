@@ -1255,6 +1255,7 @@ async function processIncomingMessage(
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
+        priceOnlyResponse: Boolean(scopedPackagePrice),
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
