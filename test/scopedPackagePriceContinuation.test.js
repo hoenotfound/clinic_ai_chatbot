@@ -201,3 +201,111 @@ test("standalone price enquiry, clinical question and future offer permission ne
       conversationHistory:[...history.slice(0,-1),{role:"user",content:phrase}]}),null,phrase);
   }
 });
+
+
+test("Neutro follow-up automation rows are not mistaken for authenticated staff", () => {
+  const automated = {
+    role:"assistant", sent_by_username:"Follow-up automation",
+    is_automated_follow_up:true,
+    created_at:new Date(),
+  };
+  const human = {
+    ...automated, sent_by_username:"admin", is_automated_follow_up:false,
+  };
+  assert.equal(isVerifiedHumanStaffRow(automated),false);
+  assert.equal(isVerifiedHumanStaffRow(human),true);
+  assert.equal(isVerifiedHumanStaffRow({
+    ...automated,is_automated_follow_up:false,
+  }),true,"display name without trusted automation flag cannot impersonate AI");
+  const stamped = withPricingHistoryMetadata(
+    {role:"assistant",content:"自动跟进：骨盆调理"},
+    automated
+  );
+  assert.equal(stamped.pricingStaffAuthored,false);
+  const actual = input();
+  assert.equal(actual.conversationHistory[4].pricingStaffAuthored,false);
+  assert.equal(actual.conversationHistory[5].pricingStaffAuthored,false);
+  assert.equal(decision()?.treatment,"骨盆调理",
+    "real automated follow-ups must not interrupt the original customer topic");
+});
+
+test("a prior human staff reply or staff clarification blocks scoped automatic pricing",()=>{
+  const a=input();
+  const base=a.conversationHistory;
+  const original=base[4];
+  const human=withPricingHistoryMetadata({
+    role:"assistant",content:"骨盆调理这方面我先帮你确认",
+  },{
+    role:"assistant",sent_by_username:"admin",
+    created_at:new Date(original.pricingCreatedAtMs),
+  });
+  const turns=[...base];
+  turns[4]=human;
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:turns,
+  }),null,"DB-authenticated staff is a boundary even without visible prefix");
+
+  const clarification=withPricingHistoryMetadata({
+    role:"assistant",content:"请问你想了解哪一项疗程的价格呢？",
+  },{
+    role:"assistant",sent_by_username:"admin",
+    created_at:new Date(base.at(-2).pricingCreatedAtMs),
+  });
+  const other=[...base];
+  other[other.length-2]=clarification;
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:other,
+  }),null,"a staff-authored clarification is not AI permission");
+});
+
+test("stale and untrusted message timestamps never establish a new pricing permission",()=>{
+  const a=input();
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:history,
+  }),null,"raw history without DB timestamps must fail closed");
+  const stale=[...a.conversationHistory];
+  stale[0]=withPricingHistoryMetadata(
+    {role:"user",content:initial},
+    {role:"user",created_at:new Date(Date.now()-26*60*60*1000)}
+  );
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:stale,
+  }),null,"one day old treatment choices cannot scope fresh amount requests");
+});
+
+test("unrelated ad creatives, contradictory service clarifications and clinical interruptions fail closed",()=>{
+  assert.equal(decision({
+    metaAdContext:{
+      headline:"3D 小颜术 First Trial",body:"3D 面部轮廓优化",
+      attributedAt:new Date(Date.now()-120_000).toISOString(),
+    },
+  }),null,"different treatment advertisement should not anchor pelvic packages");
+
+  const a=input();
+  const differentQuestion=[...a.conversationHistory];
+  differentQuestion[differentQuestion.length-2]=withPricingHistoryMetadata(
+    {role:"assistant",content:"你想了解3D小颜术哪一项疗程的价格呢？"},
+    {role:"assistant",created_at:new Date(a.conversationHistory.at(-2).pricingCreatedAtMs)}
+  );
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:differentQuestion,
+  }),null,"the bot cannot introduce 3D then quote pelvic prices");
+
+  const differentPrice=[...a.conversationHistory];
+  differentPrice[differentPrice.length-3]=withPricingHistoryMetadata(
+    {role:"user",content:"3D 小颜术价钱这方面"},
+    {role:"user",created_at:new Date(a.conversationHistory.at(-3).pricingCreatedAtMs)}
+  );
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:differentPrice,
+  }),null,"preceding customer enquiry about another treatment is authoritative");
+
+  const clinical=[...a.conversationHistory];
+  clinical.splice(-3,0,withPricingHistoryMetadata(
+    {role:"user",content:"怀孕了，骨盆可以调理吗"},
+    {role:"user",created_at:new Date(a.conversationHistory.at(-4).pricingCreatedAtMs+15000)}
+  ));
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:clinical,
+  }),null,"intervening pregnancy/suitability concern requires assessment");
+});
