@@ -9,6 +9,8 @@ const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTr
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
 const { withPricingHistoryMetadata, isVerifiedHumanStaffRow } = require("../src/utils/conversationStore");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const services = [
   { name: "骨盆调理" }, { name: "3D 小颜术" },
@@ -308,4 +310,22 @@ test("unrelated ad creatives, contradictory service clarifications and clinical 
   assert.equal(resolveScopedPackagePriceContinuation({
     ...a,conversationHistory:clinical,
   }),null,"intervening pregnancy/suitability concern requires assessment");
+});
+
+
+test("information review recovers only after an independent verified scoped quote and no clinical review",()=>{
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const candidate=server.indexOf('const scopedReviewCandidate = flagged && reviewRequired &&');
+  const evidence=server.indexOf('reviewEvidence?.pendingClinicalReview === false',candidate);
+  const decisionIndex=server.indexOf('const pricingDecision = ',candidate);
+  const reviewEarlyReturn=server.indexOf('if (flagged && reviewRequired) {',decisionIndex);
+  assert.ok(candidate > 0 && evidence > candidate && decisionIndex > evidence);
+  assert.ok(reviewEarlyReturn > decisionIndex,
+    "scoped review recovery must happen before information-review early return");
+  assert.match(server.slice(candidate,decisionIndex),/reviewType === "information"/u);
+  assert.match(server.slice(candidate,decisionIndex),/getTcmReviewEvidence\(/u);
+  assert.match(server.slice(candidate,decisionIndex),/scopedPackagePrice = null/u);
+  assert.match(server.slice(candidate,decisionIndex),/!urgentSafety/u);
+  assert.match(server.slice(candidate,decisionIndex),/!isActiveSafetyConcern\(text\)/u);
+  assert.match(server.slice(candidate,decisionIndex),/!isExplicitStaffRequest\(text\)/u);
 });
