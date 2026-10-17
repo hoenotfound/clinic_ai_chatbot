@@ -21,6 +21,26 @@ const DIRECT_AD_SCOPED_PRICE =
 const EXPLICIT_ALL_SERVICES = /(?:所有|全部|每个|每個|每一)(?:的)?(?:疗程|療程|服务|服務|项目|項目)|(?:全院|整间|整間|全部)(?:的)?(?:价目表|價目表)|(?:all|every|whole|entire)\s+(?:the\s+)?(?:clinic|treatments?|services?)|\b(?:price\s+list|full\s+menu)\b/iu;
 const STOP_OR_SWITCH = /(?:别|別|不要|不用|换个|換個|改聊|退订|退訂|不想了解|不感兴趣|\b(?:stop|unsubscribe|switch|instead|rather|not\s+interested|don't\s+want|do\s+not\s+want|opt\s*out)\b)/iu;
 const STAFF_PREFIX = "[Verified STAFF message]";
+const SCOPED_THREAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+function isVerifiedStaffTurn(turn) {
+  return turn?.role === "assistant" &&
+    (turn.pricingStaffAuthored === true ||
+      messageText(turn).startsWith(STAFF_PREFIX));
+}
+// Extended price replies require DB timestamps, not model-supplied dates.
+// A stale former lead cannot create a fresh package-price authorization.
+function hasRecentContinuousPricingHistory(turns, selectedIndex, now) {
+  if (!Number.isFinite(now)) return false;
+  let previous = -Infinity;
+  for (const turn of turns.slice(selectedIndex)) {
+    const timestamp = turn?.pricingCreatedAtMs;
+    if (!Number.isFinite(timestamp) ||
+        timestamp < now - SCOPED_THREAD_MAX_AGE_MS ||
+        timestamp > now + 60_000 || timestamp < previous) return false;
+    previous = timestamp;
+  }
+  return true;
+}
 const PRICE_CLARIFICATION =
   /(?:哪(?:一)?(?:项|項|个|個|种|種)|什么|什麼).{0,90}(?:价[格钱錢]|價錢|费[用]?|費用)|(?:[价價](?:格|钱|錢)|费用|費用).{0,80}(?:哪(?:一)?(?:项|項|个|個)|什么|什麼)|\b(?:which|what)\b.{0,90}\b(?:price|cost|fees?|charges?)\b|\b(?:price|cost|fees?|charges?)\b.{0,90}\b(?:which|what)\b|\b(?:harga|bayaran)\b.{0,65}\b(?:rawatan|pakej)\b.{0,30}\b(?:mana|apa)\b/iu;
 
@@ -55,7 +75,7 @@ function resolveScopedPackagePriceContinuation({
     const question = turns.at(-2), priorPrice = turns.at(-3);
     if (question.role !== "assistant" || priorPrice.role !== "user" ||
         !PRICE_CLARIFICATION.test(messageText(question)) ||
-        messageText(question).startsWith(STAFF_PREFIX) ||
+        isVerifiedStaffTurn(question) ||
         !hasExplicitPriceRequest(messageText(priorPrice)) ||
         STOP_OR_SWITCH.test(messageText(priorPrice)) ||
         hasClinicalMediaRisk(messageText(priorPrice))) return null;
@@ -68,6 +88,7 @@ function resolveScopedPackagePriceContinuation({
   const earlierCustomers = previous.flatMap((turn,i) => turn.role === "user" ? [i] : []);
   if (!earlierCustomers.length || earlierCustomers.length > 3) return null;
   const selectedAt = earlierCustomers.at(-1);
+  if (!hasRecentContinuousPricingHistory(turns, selectedAt, now)) return null;
   const selectedText = messageText(previous[selectedAt]);
   if (!selectedText || STOP_OR_SWITCH.test(selectedText) ||
       !hasCustomerServiceEnquiry(selectedText) || hasClinicalMediaRisk(selectedText)) return null;
@@ -75,10 +96,19 @@ function resolveScopedPackagePriceContinuation({
   const candidates = serviceCandidates(services, serviceAliases);
   if (!selected || (findServicesInText(selectedText, candidates).length !== 1) ||
       !/(?:有兴趣|有興趣|想了解|想知道|感兴趣|感興趣|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(selectedText)) return null;
+  // The ad/creative must mention the customer-selected treatment. An
+  // unrelated 3D advertisement cannot scope "all" to pelvis solely because
+  // a prior customer message happened to mention pelvic care.
+  const creativeText = [
+    metaAdContext.headline, metaAdContext.body,
+  ].filter(x => typeof x === "string").join(" ");
+  const adMentions = findServicesInText(creativeText, candidates);
+  if (!adMentions.includes(selected.name) &&
+      metaAdContext.serviceHint !== selected.name) return null;
   for (const turn of previous.slice(selectedAt + 1)) {
     const text = messageText(turn);
-    if (!text || text.startsWith(STAFF_PREFIX) ||
-        STOP_OR_SWITCH.test(text) && turn.role === "user") return null;
+    if (!text || isVerifiedStaffTurn(turn) ||
+        (STOP_OR_SWITCH.test(text) && turn.role === "user")) return null;
     // Neither a later customer message nor an assistant-mentioned different
     // treatment may silently broaden/switch the current pricing subject.
     const mentioned = findServicesInText(text, candidates);
