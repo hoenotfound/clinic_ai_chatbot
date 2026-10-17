@@ -1,0 +1,331 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const config = require("../src/config/clinicConfig");
+const { resolveScopedPackagePriceContinuation } =
+  require("../src/utils/scopedPackagePriceContinuation");
+const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
+const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
+const { withPricingHistoryMetadata, isVerifiedHumanStaffRow } = require("../src/utils/conversationStore");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const services = [
+  { name: "骨盆调理" }, { name: "3D 小颜术" },
+  { name: "9D 逆龄抗衰" }, { name: "徒手体态调理" },
+];
+const serviceAliases = [
+  { alias: "骨盆", officialService: "骨盆调理" },
+  { alias: "3D", officialService: "3D 小颜术" },
+  { alias: "9D", officialService: "9D 逆龄抗衰" },
+  { alias: "整骨", officialService: "徒手体态调理" },
+];
+const promotions = [
+  { name: "骨盆调理套餐", linkedService: "骨盆调理",
+    sendOnPriceQuery: true, validFrom: "2026-10-01", validUntil: "2026-10-31",
+    packages: [
+      { name: "Package A", title: "尊享护理配套",
+        imageUrl: "https://example.test/pelvic-a.jpg",
+        caption: "本月限时优惠\nRM100 优惠券限时领取\n原价优惠 RM488\n优惠后仅需 RM3️⃣8️⃣8️⃣" },
+      { name: "Package B", title: "女性护理配套",
+        imageUrl: "https://example.test/pelvic-b.jpg",
+        caption: "本月限时优惠 RM100 OFF\n原价 RM388\n现在只需 RM2️⃣8️⃣8️⃣" },
+    ],
+  },
+  { name: "3D First Trial",linkedService: "3D 小颜术",sendOnPriceQuery:true,
+    imageUrl:"https://example.test/3d.jpg",caption:"只需 RM488 原价 RM888",
+    pricing:{currency:"MYR",offer:488,normal:888} },
+];
+const ad = () => ({
+  // The current lead's attributed Meta creative can be general "整骨".
+  // Do not use an inferred service label: the CUSTOMER named 骨盆调理.
+  headline:"徒手整骨｜从头到脚",
+  body:"今天来了一位小姐姐做骨盆矫正评估",
+  attributedAt:new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+});
+const initial = "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊";
+const price = "价钱这方面";
+const clarification = "请问你想了解哪一项疗程的价格呢？我可以帮你确认 😊";
+const current = "每一项都想了解";
+const history = [
+  { role:"user", content:initial, minutesBefore:360.1 },
+  { role:"assistant", content:"中医师会先帮你做1对1体态评估+体验，了解你的骨盆和体态状况哦 😊", minutesBefore:360 },
+  { role:"assistant", content:"Before & After 😊", minutesBefore:360 },
+  { role:"assistant", content:"再给你看一个顾客护理后的 Before & After 😊", minutesBefore:360 },
+  { role:"assistant", content:"Hi～不知道你平时主要是久坐腰酸，还是比较在意体态假胯宽呢？", minutesBefore:240,
+    is_automated_follow_up:true, sent_by_username:"Follow-up automation" },
+  { role:"assistant", content:"Hi～很多平时久坐上班的顾客做完骨盆调理后都觉得状态轻松", minutesBefore:1,
+    is_automated_follow_up:true, sent_by_username:"Follow-up automation" },
+  { role:"user", content:price, minutesBefore:0.6 },
+  { role:"assistant", content:clarification, minutesBefore:0.4 },
+  { role:"user", content:current, minutesBefore:0.2 },
+];
+function input(overrides = {}) {
+  const merged = {customerText:current,conversationHistory:history,
+    metaAdContext:ad(),services,serviceAliases,promotions,...overrides};
+  const now = Date.now();
+  const rows = merged.conversationHistory;
+  merged.conversationHistory = rows.map((turn,i) => {
+    if (Number.isFinite(turn?.pricingCreatedAtMs)) return turn;
+    const isStaffText = typeof turn.content === "string" &&
+      turn.content.startsWith("[Verified STAFF message]");
+    const row = {
+      role:turn.role, created_at:new Date(now -
+        (turn.minutesBefore ?? (rows.length - i)) * 60_000),
+      is_automated_follow_up:turn.is_automated_follow_up === true,
+      sent_by_username:turn.sent_by_username ||
+        (isStaffText ? "admin" : null),
+    };
+    return withPricingHistoryMetadata({
+      role:turn.role,content:turn.content,
+    },row);
+  });
+  return merged;
+}
+function decision(overrides = {}) {
+  return resolveScopedPackagePriceContinuation(input(overrides));
+}
+async function priceMedia(overrides = {}) {
+  const normalizedInput = input(overrides);
+  return resolvePricePromotionForReply({
+    ...normalizedInput,
+    priceQuery:false,packageQuery:false,
+    aiPricingEnabled:false,pricingDecision:null,
+    treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+    resultMedia:[],language:"zh",contactId:493,
+    flagged:false,keywordReason:null,bookingReady:false,needsAttention:false,
+    textSendSucceeded:true,wasPromoRecentlySent:async()=>false,
+    hasUnconfirmedMediaDelivery:async()=>false,
+    ...overrides,
+    conversationHistory:normalizedInput.conversationHistory,
+  });
+}
+
+test("骨盆 ad + explicit customer choice + price clarification + every item means ONLY both pelvic prices", async()=>{
+  const d=decision();
+  assert.equal(d?.treatment,"骨盆调理");
+  assert.equal(d?.source,"customer_scoped_packages");
+  assert.deepEqual(d?.prices?.map(x=>x.price),["RM388","RM288"]);
+  assert.deepEqual(d?.prices?.map(x=>x.name),["Package A","Package B"]);
+  await withAssessmentFirst(async()=>{
+    const guarded=guardAssessmentFirstPricingReply({
+      ...input(),reply:"这个要怎么安排呢？",treatment:d.treatment,
+      clarifiedPriceService:d.clarifiedPriceService,requireVerifiedTreatment:true,
+      resultMedia:[],
+    });
+    assert.equal(guarded.replaced,false);
+    const reply=ensureVerifiedPriceReply({
+      ...input(), reply:"我们主要有3D小颜术和9D逆龄抗衰，还有脉冲波，你想看哪个？",
+      treatment:d.treatment, priceOnlyResponse:true,
+      clarifiedPriceService:d.clarifiedPriceService,resultMedia:[],language:"zh",
+    });
+    assert.equal(reply.restored,true);
+    assert.match(reply.reply,/Package A.*RM388/su);
+    assert.match(reply.reply,/Package B.*RM288/su);
+    assert.doesNotMatch(reply.reply,/3D|9D|RM688/u);
+    assert.match(reply.reply,/优惠券后的价格/u);
+    const media=await priceMedia();
+    assert.deepEqual(media?.packages.map(x=>x.name),["Package A","Package B"]);
+    assert.deepEqual(media?.packages.map(x=>x.imageUrl),[
+      "https://example.test/pelvic-a.jpg","https://example.test/pelvic-b.jpg",
+    ]);
+    assert.equal(await priceMedia({wasPromoRecentlySent:async()=>true}),null);
+    assert.equal(await priceMedia({hasUnconfirmedMediaDelivery:async()=>true}),null);
+    assert.equal(await priceMedia({textSendSucceeded:false}),null);
+    assert.equal(await priceMedia({needsAttention:true}),null);
+  });
+});
+async function withAssessmentFirst(fn) {
+  const original = config.automatedFollowUp;
+  config.automatedFollowUp = {...original, assessmentFirstPricingEnabled:true};
+  try { return await fn(); } finally { config.automatedFollowUp = original; }
+}
+
+test("first '价钱这方面' after pelvic ad should already quote both packages without asking which treatment",async()=>{
+  const currentPrice="价钱这方面";
+  const firstPriceHistory=[...history.slice(0,-3),{role:"user",content:currentPrice}];
+  const d=decision({customerText:currentPrice,conversationHistory:firstPriceHistory});
+  assert.equal(d?.treatment,"骨盆调理");
+  assert.deepEqual(d?.prices?.map(x=>x.price),["RM388","RM288"]);
+  await withAssessmentFirst(async()=>{
+    const quoted=ensureVerifiedPriceReply({
+      ...input({customerText:currentPrice,conversationHistory:firstPriceHistory}),
+      reply:"我们有3D、9D、脉冲波，你想看哪一个？",treatment:d.treatment,
+      clarifiedPriceService:d.clarifiedPriceService,priceOnlyResponse:true,
+      resultMedia:[],language:"zh",
+    });
+    assert.equal(quoted.restored,true);
+    assert.match(quoted.reply,/Package A.*RM388/su);
+    assert.match(quoted.reply,/Package B.*RM288/su);
+    assert.doesNotMatch(quoted.reply,/3D|9D|RM688/u);
+    const media=await priceMedia({customerText:currentPrice,conversationHistory:firstPriceHistory});
+    assert.deepEqual(media?.packages?.map(x=>x.name),["Package A","Package B"]);
+  });
+});
+
+test("don't infer from ad or bot label alone, a broad clinic price list, a switched treatment or expired ads",()=>{
+  const cases=[
+    {conversationHistory:history.slice(1)},
+    {metaAdContext:null},
+    {metaAdContext:{...ad(),attributedAt:new Date(Date.now()-8*86400000).toISOString()}},
+    {conversationHistory:[...history.slice(0,-1),{role:"user",content:"所有疗程和服务的价钱都想了解"}],
+     customerText:"所有疗程和服务的价钱都想了解"},
+    {conversationHistory:[...history.slice(0,-1),{role:"user",content:"我现在想知道3D的价格"}],
+     customerText:"我现在想知道3D的价格"},
+    {conversationHistory:[history[0],{role:"user",content:"改聊9D小颜术"},
+      ...history.slice(-3)]},
+    {conversationHistory:[history[0],{role:"assistant",content:"[Verified STAFF message] 骨盆相关内容"},
+      ...history.slice(-3)]},
+    {conversationHistory:[history[0],{role:"assistant",
+      content:[{type:"text",text:"[Verified STAFF message] 我们先确认"}]} , ...history.slice(-3)]},
+    {conversationHistory:[history[0],...history.slice(1,-2),
+      {role:"assistant",content:"你几时方便过来？"},{role:"user",content:current}]},
+    {conversationHistory:[history[0],...history.slice(1,-3),
+      {role:"user",content:"不用价格"},{role:"assistant",content:clarification},
+      {role:"user",content:current}]},
+    {conversationHistory:history.slice(0,-1).concat({role:"user",content:"每一项都想了解，我怀孕了"}),customerText:"每一项都想了解，我怀孕了"},
+    {promotions:promotions.filter(x=>x.linkedService!=="骨盆调理")},
+    {promotions:promotions.map(p=>p.linkedService==="骨盆调理"
+      ? {...p,packages:p.packages.map(x=>x.name==="Package A"?{...x,
+          caption:"优惠后仅需 RM399",
+          followUpTranslations:{zh:"本月限时优惠，优惠后仅需 RM388"}}:x)}
+      :p)},
+  ];
+  for(const override of cases) {
+    assert.equal(decision(override),null,JSON.stringify(override).slice(0,220));
+  }
+});
+test("standalone price enquiry, clinical question and future offer permission never qualify as this narrow continuation",()=>{
+  for(const phrase of ["骨盆多少錢","现在我要知道每一项的价格","每一个疗程我都想了解","两次有优惠吗？","以后有优惠可以通知我","How much time does it take?"]){
+    assert.equal(decision({customerText:phrase,
+      conversationHistory:[...history.slice(0,-1),{role:"user",content:phrase}]}),null,phrase);
+  }
+});
+
+
+test("Neutro follow-up automation rows are not mistaken for authenticated staff", () => {
+  const automated = {
+    role:"assistant", sent_by_username:"Follow-up automation",
+    is_automated_follow_up:true,
+    created_at:new Date(),
+  };
+  const human = {
+    ...automated, sent_by_username:"admin", is_automated_follow_up:false,
+  };
+  assert.equal(isVerifiedHumanStaffRow(automated),false);
+  assert.equal(isVerifiedHumanStaffRow(human),true);
+  assert.equal(isVerifiedHumanStaffRow({
+    ...automated,is_automated_follow_up:false,
+  }),true,"display name without trusted automation flag cannot impersonate AI");
+  const stamped = withPricingHistoryMetadata(
+    {role:"assistant",content:"自动跟进：骨盆调理"},
+    automated
+  );
+  assert.equal(stamped.pricingStaffAuthored,false);
+  const actual = input();
+  assert.equal(actual.conversationHistory[4].pricingStaffAuthored,false);
+  assert.equal(actual.conversationHistory[5].pricingStaffAuthored,false);
+  assert.equal(decision()?.treatment,"骨盆调理",
+    "real automated follow-ups must not interrupt the original customer topic");
+});
+
+test("a prior human staff reply or staff clarification blocks scoped automatic pricing",()=>{
+  const a=input();
+  const base=a.conversationHistory;
+  const original=base[4];
+  const human=withPricingHistoryMetadata({
+    role:"assistant",content:"骨盆调理这方面我先帮你确认",
+  },{
+    role:"assistant",sent_by_username:"admin",
+    created_at:new Date(original.pricingCreatedAtMs),
+  });
+  const turns=[...base];
+  turns[4]=human;
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:turns,
+  }),null,"DB-authenticated staff is a boundary even without visible prefix");
+
+  const clarification=withPricingHistoryMetadata({
+    role:"assistant",content:"请问你想了解哪一项疗程的价格呢？",
+  },{
+    role:"assistant",sent_by_username:"admin",
+    created_at:new Date(base.at(-2).pricingCreatedAtMs),
+  });
+  const other=[...base];
+  other[other.length-2]=clarification;
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:other,
+  }),null,"a staff-authored clarification is not AI permission");
+});
+
+test("stale and untrusted message timestamps never establish a new pricing permission",()=>{
+  const a=input();
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:history,
+  }),null,"raw history without DB timestamps must fail closed");
+  const stale=[...a.conversationHistory];
+  stale[0]=withPricingHistoryMetadata(
+    {role:"user",content:initial},
+    {role:"user",created_at:new Date(Date.now()-26*60*60*1000)}
+  );
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:stale,
+  }),null,"one day old treatment choices cannot scope fresh amount requests");
+});
+
+test("unrelated ad creatives, contradictory service clarifications and clinical interruptions fail closed",()=>{
+  assert.equal(decision({
+    metaAdContext:{
+      headline:"3D 小颜术 First Trial",body:"3D 面部轮廓优化",
+      attributedAt:new Date(Date.now()-120_000).toISOString(),
+    },
+  }),null,"different treatment advertisement should not anchor pelvic packages");
+
+  const a=input();
+  const differentQuestion=[...a.conversationHistory];
+  differentQuestion[differentQuestion.length-2]=withPricingHistoryMetadata(
+    {role:"assistant",content:"你想了解3D小颜术哪一项疗程的价格呢？"},
+    {role:"assistant",created_at:new Date(a.conversationHistory.at(-2).pricingCreatedAtMs)}
+  );
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:differentQuestion,
+  }),null,"the bot cannot introduce 3D then quote pelvic prices");
+
+  const differentPrice=[...a.conversationHistory];
+  differentPrice[differentPrice.length-3]=withPricingHistoryMetadata(
+    {role:"user",content:"3D 小颜术价钱这方面"},
+    {role:"user",created_at:new Date(a.conversationHistory.at(-3).pricingCreatedAtMs)}
+  );
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:differentPrice,
+  }),null,"preceding customer enquiry about another treatment is authoritative");
+
+  const clinical=[...a.conversationHistory];
+  clinical.splice(-3,0,withPricingHistoryMetadata(
+    {role:"user",content:"怀孕了，骨盆可以调理吗"},
+    {role:"user",created_at:new Date(a.conversationHistory.at(-4).pricingCreatedAtMs+15000)}
+  ));
+  assert.equal(resolveScopedPackagePriceContinuation({
+    ...a,conversationHistory:clinical,
+  }),null,"intervening pregnancy/suitability concern requires assessment");
+});
+
+
+test("information review recovers only after an independent verified scoped quote and no clinical review",()=>{
+  const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const candidate=server.indexOf('const scopedReviewCandidate = flagged && reviewRequired &&');
+  const evidence=server.indexOf('reviewEvidence?.pendingClinicalReview === false',candidate);
+  const decisionIndex=server.indexOf('const pricingDecision = ',candidate);
+  const reviewEarlyReturn=server.indexOf('if (flagged && reviewRequired) {',decisionIndex);
+  assert.ok(candidate > 0 && evidence > candidate && decisionIndex > evidence);
+  assert.ok(reviewEarlyReturn > decisionIndex,
+    "scoped review recovery must happen before information-review early return");
+  assert.match(server.slice(candidate,decisionIndex),/reviewType === "information"/u);
+  assert.match(server.slice(candidate,decisionIndex),/getTcmReviewEvidence\(/u);
+  assert.match(server.slice(candidate,decisionIndex),/scopedPackagePrice = null/u);
+  assert.match(server.slice(candidate,decisionIndex),/!urgentSafety/u);
+  assert.match(server.slice(candidate,decisionIndex),/!isActiveSafetyConcern\(text\)/u);
+  assert.match(server.slice(candidate,decisionIndex),/!isExplicitStaffRequest\(text\)/u);
+});

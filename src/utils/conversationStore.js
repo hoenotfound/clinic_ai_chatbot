@@ -48,6 +48,15 @@ function aiContextTextForRow(row) {
   return `🎥 [Customer sent a video. The AI cannot inspect the video's visual or audio content. Customer caption: ${caption}]`;
 }
 
+// Automated follow-ups are created by the follow-up repository with a
+// recognizable, DB-verified marker. They are NOT human staff intervention,
+// even though they have a sent_by_username for Inbox display.
+function isVerifiedHumanStaffRow(row) {
+  return row?.role === "assistant" && Boolean(row?.sent_by_username) &&
+    !(row.is_automated_follow_up === true &&
+      row.sent_by_username === "Follow-up automation");
+}
+
 // Prefix is applied only to authenticated outbound staff rows, never to customer text.
 // Keep the model role as assistant for Claude/Gemini conversation compatibility.
 const STAFF_HISTORY_PREFIX = "[Verified STAFF message] ";
@@ -66,7 +75,7 @@ function withPricingHistoryMetadata(entry, row) {
       enumerable: false,
     },
     pricingStaffAuthored: {
-      value: row?.role === "assistant" && Boolean(row?.sent_by_username),
+      value: isVerifiedHumanStaffRow(row),
       enumerable: false,
     },
   });
@@ -134,7 +143,7 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
 
   return rows.map((r, i) => {
     const media = photoMedia.get(i);
-    const contextText = r.role === "assistant" && r.sent_by_username
+    const contextText = isVerifiedHumanStaffRow(r)
       ? `${STAFF_HISTORY_PREFIX}${aiContextTextForRow(r)}`
       : aiContextTextForRow(r);
     if (!media) return withPricingHistoryMetadata({ role: r.role, content: contextText }, r);
@@ -282,6 +291,7 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
 }
 
 module.exports = {
+  isVerifiedHumanStaffRow,
   withPricingHistoryMetadata,
   aiContextTextForRow,
   aiVisibleRows,

@@ -29,6 +29,7 @@ const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmen
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
+const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
@@ -1131,13 +1132,54 @@ async function processIncomingMessage(
       }
     }
 
+    // A customer-confirmed ad treatment can scope "all of them" to the
+    // packages of THAT treatment only when the previous user asked about
+    // price and the bot just asked "which treatment's price?".
+    // This is a narrow legacy price-correction as well as a new AI-pricing
+    // decision; it never turns on general AI-Led Pricing in Shadow mode.
+    const scopedReviewCandidate = flagged && reviewRequired &&
+      reviewType === "information";
+    let scopedPackagePrice = (!flagged || scopedReviewCandidate) &&
+      !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion
+      ? resolveScopedPackagePriceContinuation({
+          customerText: text, conversationHistory: history, metaAdContext,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+        }) : null;
+    if (scopedPackagePrice && scopedReviewCandidate) {
+      // A verified amount request is answerable without staffing a generic
+      // INFORMATION review. Clinical/safety reviews never enter this branch.
+      // The DB may have newer unresolved clinical evidence than the current
+      // Gemini result; any unavailable evidence must fail closed.
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        details = { ...details, treatment: scopedPackagePrice.treatment };
+        // The price-only formatter replaces this safe placeholder with
+        // currently configured and independently verified package amounts.
+        aiReply = "我帮你核对这两项配套的价格 😊";
+        console.info("[Pricing] Resolved verified scoped-package information review " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
+      } else {
+        scopedPackagePrice = null;
+      }
+    }
+
     // Customer-selected treatment remains authoritative. In enabled mode,
     // an unambiguous current-lead Meta ad can anchor an early short pricing
     // enquiry, but cannot override a later customer treatment switch.
     // The model already returns priceQuery/packageQuery and treatment. Resolve
     // one verified decision for reply text and optional promotional media.
     const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
-      ? resolveAiPricingDecision({
+      ? scopedPackagePrice || resolveAiPricingDecision({
           priceQuery, packageQuery, treatment: details?.treatment || null,
           customerText: text, conversationHistory: history,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
@@ -1155,14 +1197,17 @@ async function processIncomingMessage(
         " amountVerified=" + Boolean(pricingDecision?.prices?.length));
     }
     // Keep all established legacy clarification paths in Off/Shadow modes.
-    const clarifiedPriceService = aiPricingEnabled
+    const clarifiedPriceService = scopedPackagePrice?.clarifiedPriceService ||
+      (aiPricingEnabled
       ? pricingDecision?.clarifiedPriceService || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
         ? resolveClarifiedPriceService({
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-          }) : null;
-    const verifiedPriceService = aiPricingEnabled
+          }) : null);
+    const verifiedPriceService = scopedPackagePrice
+      ? (clinicConfig.services || []).find(s => s.name === scopedPackagePrice.treatment) || null
+      : aiPricingEnabled
       ? (clinicConfig.services || []).find(
           service => service.name === pricingDecision?.treatment
         ) || null
@@ -1237,6 +1282,7 @@ async function processIncomingMessage(
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
+        priceOnlyResponse: Boolean(scopedPackagePrice),
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
@@ -1495,6 +1541,7 @@ async function processIncomingMessage(
         packageQuery,
         pricingDecision: aiPricingEnabled ? pricingDecision : null,
         aiPricingEnabled,
+        metaAdContext,
         treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
         customerText: text,

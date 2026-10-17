@@ -254,7 +254,7 @@ function nonPriceExplanation(reply) {
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
   pricingDecision = undefined,
-  priceRequested = false,
+  priceRequested = false, priceOnlyResponse = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
   allowContinuedPriceContext = false,
@@ -369,7 +369,10 @@ function ensureVerifiedPriceReply({
   // quote verified prices independently without authorizing marketing media.
   // For an ad-anchored short price question, discard a model-generated
   // "which treatment?" clarification. The verified quote already answers it.
-  const explanation = hasClinicalMediaRisk(customerText) ||
+  // A verified, customer-selected package-list continuation must not
+  // re-append Gemini's unrelated clinic-wide service catalog.
+  const explanation = priceOnlyResponse === true ||
+    hasClinicalMediaRisk(customerText) ||
     (aiLed && pricingDecision.source === "meta_ad")
       ? "" : nonPriceExplanation(original);
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
