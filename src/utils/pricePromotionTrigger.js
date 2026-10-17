@@ -2,6 +2,7 @@ const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQ
 const clinicConfig = require("../config/clinicConfig");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
 const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
+const { resolveScopedPackagePriceContinuation } = require("./scopedPackagePriceContinuation");
 const { verifiedPricesForService, requestedPricePackages } = require("./verifiedPriceReply");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -53,6 +54,7 @@ async function resolvePricePromotionForReply({
   packageQuery,
   pricingDecision = null,
   aiPricingEnabled = false,
+  metaAdContext = null,
   treatment,
   verifiedServiceFromText = null,
   customerText,
@@ -92,8 +94,16 @@ async function resolvePricePromotionForReply({
       ? resolveClarifiedPriceService({
           customerText, conversationHistory, services, serviceAliases,
         }) : null;
+  // Independently verify the same customer-selected service and CURRENT
+  // multi-package clarification for optional images. No ad/CRM hint alone
+  // can authorize media, and the normal duplicate/RM0 gates stay in force.
+  const scopedPackagePrice = resolveScopedPackagePriceContinuation({
+    customerText, conversationHistory, metaAdContext,
+    services, serviceAliases, promotions,
+  });
   const verifiedClarification = Boolean(treatment) &&
-    clarificationService === treatment && verifiedServiceFromText === treatment;
+    verifiedServiceFromText === treatment &&
+    (clarificationService === treatment || scopedPackagePrice?.treatment === treatment);
   const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
   const legacyBlocked = !aiPricingEnabled && (
