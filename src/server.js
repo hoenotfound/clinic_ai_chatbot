@@ -1137,14 +1137,41 @@ async function processIncomingMessage(
     // price and the bot just asked "which treatment's price?".
     // This is a narrow legacy price-correction as well as a new AI-pricing
     // decision; it never turns on general AI-Led Pricing in Shadow mode.
-    const scopedPackagePrice = !flagged && !keywordReason &&
-      !urgentSafety && !isActiveSafetyConcern(text) &&
+    const scopedReviewCandidate = flagged && reviewRequired &&
+      reviewType === "information";
+    let scopedPackagePrice = (!flagged || scopedReviewCandidate) &&
+      !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
       !isExplicitStaffRequest(text) && !marketingStopQuestion
       ? resolveScopedPackagePriceContinuation({
           customerText: text, conversationHistory: history, metaAdContext,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
         }) : null;
+    if (scopedPackagePrice && scopedReviewCandidate) {
+      // A verified amount request is answerable without staffing a generic
+      // INFORMATION review. Clinical/safety reviews never enter this branch.
+      // The DB may have newer unresolved clinical evidence than the current
+      // Gemini result; any unavailable evidence must fail closed.
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        details = { ...details, treatment: scopedPackagePrice.treatment };
+        // The price-only formatter replaces this safe placeholder with
+        // currently configured and independently verified package amounts.
+        aiReply = "我帮你核对这两项配套的价格 😊";
+        console.info("[Pricing] Resolved verified scoped-package information review " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
+      } else {
+        scopedPackagePrice = null;
+      }
+    }
 
     // Customer-selected treatment remains authoritative. In enabled mode,
     // an unambiguous current-lead Meta ad can anchor an early short pricing
