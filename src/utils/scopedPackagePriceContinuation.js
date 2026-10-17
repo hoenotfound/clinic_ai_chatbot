@@ -79,12 +79,11 @@ function resolveScopedPackagePriceContinuation({
     const text = messageText(turn);
     if (!text || text.startsWith(STAFF_PREFIX) ||
         STOP_OR_SWITCH.test(text) && turn.role === "user") return null;
-    if (turn.role === "user") {
-      // A second customer message cannot quietly choose a different treatment.
-      const mentioned = findServicesInText(text, candidates);
-      if (mentioned.length && (mentioned.length !== 1 || mentioned[0] !== selected.name))
-        return null;
-    }
+    // Neither a later customer message nor an assistant-mentioned different
+    // treatment may silently broaden/switch the current pricing subject.
+    const mentioned = findServicesInText(text, candidates);
+    if (mentioned.some(name => name !== selected.name) ||
+        (turn.role === "user" && mentioned.length > 1)) return null;
   }
 
   const active = getActivePromotions(promotions).filter(p =>
