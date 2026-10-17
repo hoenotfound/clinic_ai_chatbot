@@ -323,7 +323,7 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
     ? "media_key"
     : "(media_key IS NOT NULL) AS has_media_attachment";
   const result = await pool.query(
-    `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename FROM messages
+    `SELECT id, role, content, created_at, sent_by_username, is_automated_follow_up, media_url, ${mediaColumn}, media_mime_type, media_filename FROM messages
      WHERE contact_id = $1
        AND (
          role <> 'assistant'
