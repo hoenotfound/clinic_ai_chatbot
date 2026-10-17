@@ -48,17 +48,17 @@ const price = "价钱这方面";
 const clarification = "请问你想了解哪一项疗程的价格呢？我可以帮你确认 😊";
 const current = "每一项都想了解";
 const history = [
-  { role:"user", content:initial },
-  { role:"assistant", content:"中医师会先帮你做1对1体态评估+体验，了解你的骨盆和体态状况哦 😊" },
+  { role:"user", content:initial, minutesBefore:360.1 },
+  { role:"assistant", content:"中医师会先帮你做1对1体态评估+体验，了解你的骨盆和体态状况哦 😊", minutesBefore:360 },
   { role:"assistant", content:"Before & After 😊", minutesBefore:360 },
   { role:"assistant", content:"再给你看一个顾客护理后的 Before & After 😊", minutesBefore:360 },
   { role:"assistant", content:"Hi～不知道你平时主要是久坐腰酸，还是比较在意体态假胯宽呢？", minutesBefore:240,
     is_automated_follow_up:true, sent_by_username:"Follow-up automation" },
   { role:"assistant", content:"Hi～很多平时久坐上班的顾客做完骨盆调理后都觉得状态轻松", minutesBefore:1,
     is_automated_follow_up:true, sent_by_username:"Follow-up automation" },
-  { role:"user", content:price },
-  { role:"assistant", content:clarification },
-  { role:"user", content:current },
+  { role:"user", content:price, minutesBefore:0.6 },
+  { role:"assistant", content:clarification, minutesBefore:0.4 },
+  { role:"user", content:current, minutesBefore:0.2 },
 ];
 function input(overrides = {}) {
   const merged = {customerText:current,conversationHistory:history,
