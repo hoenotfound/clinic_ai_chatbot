@@ -291,6 +291,7 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
 }
 
 module.exports = {
+  isVerifiedHumanStaffRow,
   withPricingHistoryMetadata,
   aiContextTextForRow,
   aiVisibleRows,
