@@ -98,10 +98,16 @@ the 24-hour conversation window, marketing permission, customer/staff ownership,
 accepted-media URL duplicate checks, or unconfirmed-delivery holds. Those are
 side-effect protections, not extra treatment-price classifiers.
 
-Structured `[Pricing authority]` logs report the per-inbound observed-versus-
-approved outcome and verified source. The logs are **not** a delivery receipt;
-the existing durable result-media decision and WhatsApp queue audits remain
-the source of truth for image outcomes.
+Structured `[Pricing authority]` logs report observed-versus-approved
+decisions and sources. Migration 077 creates the staff-only
+`pricing_decision_audit` table, recording the pricing decision, whether the
+accepted text contains the approved price, and whether promotion graphics
+were eligible (including the exact skip reason). The optional audit executes
+after the text-send outcome, is limited to pricing-related enquiries, and
+does not gate Meta sends or inbound retry semantics. No raw message/phone/ad
+content is stored. For provider receipts and deferred/cancelled images, use
+the separate `result_media_decisions`, `whatsapp_result_media_queue` and
+message delivery statuses; eligibility does not imply delivery.
 
 ### Regression turn shapes
 
