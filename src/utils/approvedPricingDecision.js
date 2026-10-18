@@ -8,12 +8,6 @@
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
 
-const CUSTOMER_GROUNDED_SOURCES = new Set([
-  "current_customer", "recent_customer", "continued_customer",
-  "recent_first_customer", "customer_price_clarification",
-  "customer_scoped_packages", "numbered_price_menu",
-]);
-
 function resolveApprovedPricingDecision({
   mode = "off", aiDecision = null, shadowException = null,
   scopedPackageDecision = null, numberedMenuDecision = null,
@@ -53,13 +47,18 @@ function resolveApprovedPricingDecision({
   // Keep the related/unpriced primary-treatment safety policy at this one
   // authorization boundary; do not ask three downstream components to guess
   // whether the independently approved service can be priced.
-  const conflict = relatedPricingConflict({
+  const relatedConflict = relatedPricingConflict({
     customerText, treatment: candidate.treatment, conversationHistory,
     services, serviceAliases, resultMedia,
-  }) || unpricedRelatedPrimary({
+  });
+  const unpricedPrimary = unpricedRelatedPrimary({
     customerText, conversationHistory, services, serviceAliases, resultMedia,
   });
-  if (conflict && !CUSTOMER_GROUNDED_SOURCES.has(candidate.source)) return null;
+  // The source explains why a decision was considered, but it never grants
+  // permission to ignore a conflicting/unpriced primary treatment. Earlier
+  // customer selection cannot silently price another treatment after a topic
+  // switch (e.g. unpriced full-body 整骨 vs. related pelvic result images).
+  if (relatedConflict || unpricedPrimary) return null;
 
   return Object.freeze({
     ...candidate,
