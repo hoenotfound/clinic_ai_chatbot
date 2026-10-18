@@ -603,3 +603,47 @@ test("customer treatment survives one short address question, but not a second u
     admin[0],{role:"user",content:"地址?"},{role:"user",content:"营业时间?"},{role:"user",content:priceText}
   ]}),null,"only one brief admin interruption is allowed");
 });
+
+test("compound Chinese cost questions keep customer-selected treatment and verified graphic prices",()=>{
+  const mixed="大概需要做几次呢？价钱呢？";
+  const faceHistory=[
+    {role:"user",content:"Hi～想了解 Neutro Sense TCM 3D 小颜术"},
+    {role:"assistant",content:"3D 小颜术可以先做评估"},
+    {role:"assistant",content:"3D 的 Before & After"},
+    {role:"assistant",content:"你好，关于3D我们可以先做评估"},
+    {role:"user",content:mixed},
+  ];
+  const face=decide({treatment:null,customerText:mixed,conversationHistory:faceHistory});
+  assert.equal(face?.treatment,"3D 小颜术");
+  assert.deepEqual(face?.prices?.map(p=>p.price),["RM488"]);
+
+  for (const priceText of ["什么价钱呢？","想了解是什么价钱先呢？"]) {
+    const h=[
+      {role:"user",content:"我对 Neutro Sense TCM 骨盆调理有兴趣"},
+      {role:"assistant",content:"我们的骨盆调理可以先做体态评估"},
+      {role:"assistant",content:"骨盆 Before & After"},
+      {role:"user",content:priceText},
+    ];
+    const pelvicPrices=decide({treatment:null,customerText:priceText,conversationHistory:h});
+    assert.equal(pelvicPrices?.treatment,"骨盆调理",priceText);
+    assert.deepEqual(pelvicPrices?.prices?.map(p=>p.price),["RM388","RM288"]);
+  }
+});
+
+test("compound-question recognition excludes frequency, objections, free assessment and refusal",()=>{
+  const h=[
+    {role:"user",content:"我对 3D 小颜术有兴趣"},
+    {role:"assistant",content:"这个是3D的内容"},
+  ];
+  for (const text of [
+    "大概需要做几次呢？",
+    "价钱太贵了吧？",
+    "我不想了解价钱呢？",
+    "这个免费的1对1评估收费吗？",
+  ]) {
+    const result=decide({treatment:null,customerText:text,
+      conversationHistory:[...h,{role:"user",content:text}],
+      complimentaryAssessmentExperienceEnabled:true});
+    assert.equal(result,null,text);
+  }
+});
