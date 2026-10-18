@@ -33,7 +33,7 @@ const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackage
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException } = require("./utils/shadowPriceException");
-const { resolveApprovedPricingDecision } = require("./utils/approvedPricingDecision");
+const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1267,7 +1267,7 @@ async function processIncomingMessage(
     // One approved result is shared by the outbound guard, verified text and
     // optional promo-media selector. Shadow observations never authorize sales;
     // only narrowly verified Shadow exceptions or explicit menu continuations do.
-    const approvedPricingDecision = resolveApprovedPricingDecision({
+    const pricingApproval = resolveApprovedPricingAssessment({
       mode: aiPricingMode, aiDecision: pricingDecision,
       shadowException: shadowPriceException,
       scopedPackageDecision: scopedPackagePrice,
@@ -1277,6 +1277,7 @@ async function processIncomingMessage(
       resultMedia: clinicConfig.resultMedia,
       flagged, bookingReady, keywordReason, marketingStopQuestion,
     });
+    const approvedPricingDecision = pricingApproval.decision;
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
         shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
@@ -1284,6 +1285,7 @@ async function processIncomingMessage(
         " mode=" + aiPricingMode +
         " observed=" + Boolean(pricingDecision) +
         " authorized=" + Boolean(approvedPricingDecision) +
+        " reason=" + pricingApproval.reason +
         " source=" + (approvedPricingDecision?.source || "none") +
         " treatment=" + (approvedPricingDecision?.treatment || "none"));
     }
@@ -1733,6 +1735,7 @@ async function processIncomingMessage(
             mode: aiPricingMode,
             observed: Boolean(pricingDecision),
             approved: Boolean(approvedPricingDecision),
+            approvalReason: pricingApproval.reason,
             treatment: approvedPricingDecision?.treatment || null,
             decisionSource: approvedPricingDecision?.source || null,
             replyStatus: !sendOutcome.sendResult.success ? "text_not_accepted"
