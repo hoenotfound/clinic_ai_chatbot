@@ -57,6 +57,7 @@ async function resolvePricePromotionForReply({
   metaAdContext = null,
   treatment,
   verifiedServiceFromText = null,
+  verifiedNumberedSelection = null,
   customerText,
   conversationHistory,
   flagged,
@@ -103,7 +104,9 @@ async function resolvePricePromotionForReply({
   });
   const verifiedClarification = Boolean(treatment) &&
     verifiedServiceFromText === treatment &&
-    (clarificationService === treatment || scopedPackagePrice?.treatment === treatment);
+    (clarificationService === treatment ||
+      scopedPackagePrice?.treatment === treatment ||
+      verifiedNumberedSelection === treatment);
   const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
   const legacyBlocked = !aiPricingEnabled && (
@@ -124,7 +127,7 @@ async function resolvePricePromotionForReply({
     needsAttention || textSendSucceeded !== true
   ) return null;
 
-  const verifiedContinuedService = aiPricingEnabled === true &&
+  const verifiedContinuedService =
     resolveContinuedTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
     })?.name === treatment;
