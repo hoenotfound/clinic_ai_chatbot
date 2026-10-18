@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS pricing_decision_audit (
   mode TEXT NOT NULL CHECK (mode IN ('off', 'shadow', 'enabled')),
   observed BOOLEAN NOT NULL DEFAULT FALSE,
   approved BOOLEAN NOT NULL DEFAULT FALSE,
+  approval_reason TEXT NOT NULL,
   treatment TEXT,
   decision_source TEXT,
   reply_status TEXT NOT NULL,
