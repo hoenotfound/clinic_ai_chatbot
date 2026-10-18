@@ -399,7 +399,7 @@ function ensureVerifiedPriceReply({
   // duration/session counts without fabricating a fixed treatment plan.
   // Bare digit/menu/ad-price follow-ups remain price-only.
   const independentServiceQuestion =
-    /(?:[几幾多]\\s*(?:次|回|个疗程|個療程)|多少\\s*(?:次|个疗程|個療程)|(?:要|需要)\\s*做\\s*(?:几|幾|多少)\\s*次|多久|多长|多長|(?:how\\s+many\\s+sessions?|how\\s+long)|berapa\\s+(?:kali|sesi|lama))/iu.test(
+    /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|多久|多长|多長|(?:how\s+many\s+sessions?|how\s+long)|berapa\s+(?:kali|sesi|lama))/iu.test(
       String(customerText || "")
     );
   const explanation = hasClinicalMediaRisk(customerText) ||
