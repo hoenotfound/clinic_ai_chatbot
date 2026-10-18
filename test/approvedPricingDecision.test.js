@@ -345,7 +345,8 @@ test("pricing audit persists stage fields without storing customer message conte
   },async(sql,params)=>{call={sql,params};});
   assert.match(call.sql,/ON CONFLICT \(inbound_message_id\)/u);
   assert.equal(call.params[0],93);
-  assert.equal(call.params[6],"unknown");
+  assert.equal(call.params[5],"unknown");
+  assert.equal(call.params[6],"骨盆调理");
   assert.equal(call.params[7],"recent_first_customer");
   assert.equal(call.params[10],"all_graphics_already_sent");
   assert.doesNotMatch(call.sql,/customer_message|customer_text|phone_number/u);
