@@ -93,6 +93,20 @@ customer reply. A rejected/clinical/staff-taken-over/booking/marketing-opt-out
 turn never obtains approval. The complimentary introductory assessment remains
 separate from charged treatment packages.
 
+A rejected approval is not allowed to fall back to an observed AI model
+decision, including in the text formatter, image selector or service identity
+resolver. In Shadow, only a separately verified exception/menu/package choice
+uses the new authorization; other original Shadow/Off conversations keep their
+legacy path. Related/unpriced treatment conflicts always reject approval,
+regardless of the decision's source label.
+
+The numbered selection handler accepts canonical numbered treatment headings
+with a colon or optional parenthetical explanation (for example,
+`1. 骨盆/体态调理（适合产后...）`). It still requires a recent trusted
+timestamped price-enquiry/list/menu/number sequence, no intervening staff
+response, and exactly one safe configured treatment for the selected entry.
+Multi-treatment headings and descriptions cannot authorize automatic pricing.
+
 The shared decision does **not** bypass provider guards, WhatsApp Strict RM0,
 the 24-hour conversation window, marketing permission, customer/staff ownership,
 accepted-media URL duplicate checks, or unconfirmed-delivery holds. Those are
