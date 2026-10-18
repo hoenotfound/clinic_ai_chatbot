@@ -22,7 +22,10 @@ function resolveApprovedPricingDecision({
   bookingReady = false, keywordReason = null,
   marketingStopQuestion = false,
 } = {}) {
-  if (flagged || bookingReady || keywordReason || marketingStopQuestion ||
+  // Off is an untouched legacy rollout state for other clients. Its
+  // existing menu and promotion paths retain their original gates.
+  if (!["shadow", "enabled"].includes(mode) ||
+      flagged || bookingReady || keywordReason || marketingStopQuestion ||
       hasClinicalMediaRisk(customerText)) return null;
 
   // Explicit customer-selected flows are already independently checked for
