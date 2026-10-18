@@ -200,3 +200,76 @@ test("Server wires one approved decision to guard, quote, media and duplicate lo
   assert.match(server,/pricingDecision: approvedPricingDecision \|\| \(aiPricingEnabled \? pricingDecision : null\)/u);
   assert.match(server,/aiPricingEnabled: Boolean\(approvedPricingDecision\) \|\| aiPricingEnabled/u);
 });
+
+test("live #525/#532: menu 1 uses only independently verified numbered pelvic selection",async()=>{
+  const numbered={...pelvicDecision,source:"numbered_price_menu",clarifiedPriceService:"骨盆调理"};
+  for(const entry of [
+    {contact:525,query:"1",history:[
+      {role:"user",content:"什么价钱呢？"},
+      {role:"assistant",content:"我们主要有：\\n1. 骨盆/体态调理\\n2. 3D 小颜术"},
+      {role:"user",content:"1"},
+    ]},
+    {contact:532,query:"1",history:[
+      {role:"user",content:"请问一次收费是多少呢"},
+      {role:"assistant",content:"1. 骨盆/体态调理\\n2. 3D 小颜术"},
+      {role:"user",content:"1"},
+    ]},
+  ]) {
+    const approved=approve({numberedMenuDecision:numbered,shadowException:null,
+      customerText:entry.query,conversationHistory:entry.history});
+    assert.equal(approved?.source,"numbered_price_menu");
+    const quote=ensureVerifiedPriceReply({
+      customerText:entry.query,reply:"我帮你核对价格 😊",
+      treatment:approved.treatment,pricingDecision:approved,
+      priceOnlyResponse:true,conversationHistory:entry.history,
+      services,serviceAliases,promotions,resultMedia:[],language:"zh",
+    });
+    assert.match(quote.reply,/RM388/u);
+    assert.match(quote.reply,/RM288/u);
+    const media=await resolvePricePromotionForReply(mediaOptions(
+      approved,entry.query,entry.history,{contactId:entry.contact,
+        verifiedNumberedSelection:"骨盆调理"}
+    ));
+    assert.deepEqual(media?.packages.map(p=>p.name),["Package A","Package B"]);
+  }
+  // The raw AI observation without a verified numbered-menu selection is not enough.
+  assert.equal(approve({shadowException:null,aiDecision:numbered,customerText:"1"}),null);
+});
+
+test("pricing audit persists stage fields without storing customer message content",async()=>{
+  const { recordDecision }=require("../src/db/pricingDecisionAuditRepo");
+  let call=null;
+  await recordDecision({
+    contactId:93,inboundMessageId:1911,mode:"shadow",
+    observed:true,approved:true,treatment:"骨盆调理",
+    decisionSource:"recent_first_customer",replyStatus:"approved_price_quoted",
+    mediaStatus:"skipped",mediaReason:"all_graphics_already_sent",
+    mediaPackagesSelected:0,
+  },async(sql,params)=>{call={sql,params};});
+  assert.match(call.sql,/ON CONFLICT \(inbound_message_id\)/u);
+  assert.equal(call.params[0],93);
+  assert.equal(call.params[6],"recent_first_customer");
+  assert.equal(call.params[9],"all_graphics_already_sent");
+  assert.doesNotMatch(call.sql,/customer_message|customer_text|phone_number/u);
+  await assert.rejects(()=>recordDecision({
+    contactId:93,inboundMessageId:1911,mode:"shadow",
+    replyStatus:"quoted",mediaStatus:"skipped",
+    mediaPackagesSelected:4,
+  },async()=>{throw Error("should not write");}),/Invalid pricing audit stage/u);
+});
+
+test("promotional selector returns specific skip-stage reasons, not silent nulls",async()=>{
+  const approved=approve();
+  const reasons=[];
+  const missing=await resolvePricePromotionForReply(mediaOptions(approved,"疗程多少钱",
+    history93,{contactId:93,hasUnconfirmedMediaDelivery:async()=>true,
+      onSkip:reason=>reasons.push(reason)}));
+  assert.equal(missing,null);
+  assert.deepEqual(reasons,["unconfirmed_media_delivery"]);
+  reasons.length=0;
+  const duplicate=await resolvePricePromotionForReply(mediaOptions(approved,"疗程多少钱",
+    history93,{contactId:93,wasPromoRecentlySent:async()=>true,
+      onSkip:reason=>reasons.push(reason)}));
+  assert.equal(duplicate,null);
+  assert.deepEqual(reasons,["all_graphics_already_sent"]);
+});
