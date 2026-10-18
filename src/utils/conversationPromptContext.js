@@ -1,3 +1,4 @@
+const { withPelvicSpellingAliases } = require("./pelvicSpellingAliases");
 const config = require("../config/clinicConfig");
 const { termSpans, pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
@@ -186,7 +187,7 @@ function usefulTerm(value) {
 
 function serviceCandidates(services = config.services, aliases = config.serviceAliases) {
   const configuredServices = Array.isArray(services) ? services : [];
-  const configuredAliases = Array.isArray(aliases) ? aliases : [];
+  const configuredAliases = withPelvicSpellingAliases(configuredServices, aliases);
 
   return configuredServices
     .map((service) => {

@@ -253,7 +253,8 @@ function nonPriceExplanation(reply) {
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
-  verifiedNumberedSelection = null, pricingDecision = undefined,
+  verifiedNumberedSelection = null, verifiedShadowPriceService = null,
+  pricingDecision = undefined,
   priceRequested = false, priceOnlyResponse = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
@@ -317,6 +318,7 @@ function ensureVerifiedPriceReply({
   // related-treatment guard otherwise mistakes "产后体态" for a request to
   // switch to the separate, unpriced 产后调理 service.
   const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+    verifiedShadowPriceService === treatment ||
     resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
     })?.name === treatment ||

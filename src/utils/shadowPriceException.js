@@ -4,56 +4,143 @@ const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const {
-  resolveRecentFirstTreatmentPriceService, isVerifiedStaffTurn,
+  resolveRecentFirstTreatmentPriceService,
+  resolveContinuedTreatmentPriceService,
+  isVerifiedStaffTurn, isRecentPricingThread, pricingMessageText,
 } = require("./priceFollowUpContext");
+const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { resolveAiPricingDecision } = require("./aiPricingIntentDecision");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 
-// Shadow stays read-only for normal AI pricing. This helper permits only two
-// previously verified, narrowly bounded LEGACY price cases:
-// 1) a customer names the first treatment, then asks its price;
-// 2) a current Meta-ad hints one configured treatment and the customer asks
-//    a short, unambiguous price question before switching topics.
-// A CRM label/model treatment is never enough. Price evidence must exist now.
+const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+// Restrict every pricing exception to the current continuously timestamped
+// conversation. Old contacts may contain old staff replies; those must not
+// contaminate a NEW customer-led session. A staff message *inside* the new
+// session still blocks pricing, as does missing/untrusted DB timestamp data.
+function recentVerifiedPricingSession(conversationHistory = [], customerText, now = Date.now()) {
+  const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(turn => turn?.role === "user" || turn?.role === "assistant");
+  const current = String(customerText || "").trim();
+  if (!turns.length || turns.at(-1).role !== "user" ||
+      pricingMessageText(turns.at(-1)).trim() !== current ||
+      !Number.isFinite(now)) return null;
+
+  let start = turns.length;
+  let later = now + 60_000;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const timestamp = turns[i]?.pricingCreatedAtMs;
+    if (!Number.isFinite(timestamp) || timestamp < now - SESSION_MAX_AGE_MS ||
+        timestamp > later) break;
+    later = timestamp;
+    start = i;
+  }
+  const session = turns.slice(start);
+  if (!session.length || session[0]?.role !== "user" ||
+      session.some(isVerifiedStaffTurn) ||
+      !isRecentPricingThread(session, 0, now)) return null;
+  return session;
+}
+
+function shadowVerifiedPrice({
+  source, treatment, customerText, conversationHistory, promotions,
+  clarifiedPriceService = null,
+}) {
+  if (!treatment || !source) return null;
+  const prices = verifiedPricesForService(
+    treatment, promotions, customerText, conversationHistory,
+    { clarifiedPriceService }
+  );
+  if (!prices?.length) return null;
+  return Object.freeze({
+    source, treatment, type: "price", prices,
+    clarifiedPriceService,
+  });
+}
+
+// Shadow remains read-only for model-only guesses and normal package intent.
+// These exceptions require a new, DB-timestamped customer-led session and
+// validated active prices. Old staff activity is not inherited across a fresh
+// 24h window. Recent staff/clinical/opt-out handling remains fail-closed.
 function resolveShadowPriceException({
   customerText, conversationHistory = [], metaAdContext = null,
   services = [], serviceAliases = [], promotions = [],
   complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
-  if (!text || !hasExplicitPriceRequest(text) || hasClinicalMediaRisk(text) ||
-      isComplimentaryAssessmentFeeQuestion(
-        text, complimentaryAssessmentExperienceEnabled, conversationHistory
-      )) return null;
-  const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
-  // Pricing can never cross a verified staff conversation boundary.
-  if (turns.some(isVerifiedStaffTurn)) return null;
+  if (!text || hasClinicalMediaRisk(text)) return null;
+  const session = recentVerifiedPricingSession(conversationHistory, text, now);
+  if (!session || isComplimentaryAssessmentFeeQuestion(
+    text, complimentaryAssessmentExperienceEnabled, session
+  ) || session.some(turn => turn.role === "user" &&
+    hasClinicalMediaRisk(pricingMessageText(turn)))) return null;
+
+  // "疗程多少钱" -> bot: "which treatment's price?" -> "盆骨调整".
+  // The customer answer inherits only that immediate, independently verified
+  // pricing question. Neither an older ad nor a model service guess can grant it.
+  const clarification = resolveClarifiedPriceService({
+    customerText: text, conversationHistory: session, services, serviceAliases,
+  });
+  if (clarification &&
+      isRecentPricingThread(session, session.length - 3, now)) {
+    return shadowVerifiedPrice({
+      source: "customer_price_clarification", treatment: clarification,
+      customerText: text, conversationHistory: session, promotions,
+      clarifiedPriceService: clarification,
+    });
+  }
+  if (!hasExplicitPriceRequest(text)) return null;
+
   const first = resolveRecentFirstTreatmentPriceService({
-    customerText: text, conversationHistory: turns,
+    customerText: text, conversationHistory: session,
     services, serviceAliases, promotions, now,
   });
   if (first) {
-    const prices = verifiedPricesForService(first.name, promotions, text, turns);
-    if (prices?.length) return Object.freeze({
+    const result = shadowVerifiedPrice({
       source: "recent_first_customer", treatment: first.name,
-      type: "price", prices,
+      customerText: text, conversationHistory: session, promotions,
     });
+    if (result) return result;
   }
-  const adDecision = resolveAiPricingDecision({
+
+  const continued = resolveContinuedTreatmentPriceService({
+    customerText: text, conversationHistory: session,
+    services, serviceAliases, promotions, now,
+  });
+  if (continued) {
+    const result = shadowVerifiedPrice({
+      source: "continued_customer", treatment: continued.name,
+      customerText: text, conversationHistory: session, promotions,
+    });
+    if (result) return result;
+  }
+
+  const decision = resolveAiPricingDecision({
     priceQuery: true, packageQuery: false, treatment: null,
-    customerText: text, conversationHistory: turns,
+    customerText: text, conversationHistory: session,
     services, serviceAliases, promotions, metaAdContext,
     complimentaryAssessmentExperienceEnabled, now,
   });
-  // Never permit the general AI-led decision in Shadow; only the validated
-  // Meta origin, checked for age, named service and customer topic by the
-  // existing pricing resolver, may act as a narrow legacy exception.
-  if (adDecision?.source !== "meta_ad" || adDecision.type !== "price" ||
-      !adDecision.prices?.length) return null;
-  return Object.freeze({
-    source: "meta_ad", treatment: adDecision.treatment,
-    type: "price", prices: adDecision.prices,
+  if (!decision || decision.type !== "price" || !decision.prices?.length ||
+      !["meta_ad", "current_customer", "recent_customer", "continued_customer"].includes(decision.source)) {
+    return null;
+  }
+  // An ad named 骨盆 cannot overrule a customer's NEW enquiry about an
+  // unpriced, unrelated neck/shoulder or fascia service. Such wording is
+  // not always a configured service alias, so basic alias matching alone
+  // would otherwise treat Ashley's "筋膜放松，肩颈" as a pelvic price request.
+  const competingBodyConcern = /(?:筋膜|肩[颈頸膀部]|[颈頸]肩|筋膜枪|筋膜槍|\b(?:myofascial|fascia|neck|shoulder)\b)/iu;
+  const pelvicMention = /(?:骨盆|盆骨|\b(?:pelvic|pelvis)\b)/iu;
+  if (decision.source === "meta_ad" && decision.treatment === "骨盆调理" &&
+      session.some(turn => turn.role === "user" &&
+        competingBodyConcern.test(pricingMessageText(turn)) &&
+        !pelvicMention.test(pricingMessageText(turn)))) return null;
+  // Keep the independently verified treatment and price evidence coupled.
+  return shadowVerifiedPrice({
+    source: decision.source, treatment: decision.treatment,
+    customerText: text, conversationHistory: session, promotions,
+    clarifiedPriceService: decision.clarifiedPriceService,
   });
 }
 
-module.exports = { resolveShadowPriceException };
+module.exports = { resolveShadowPriceException, recentVerifiedPricingSession };

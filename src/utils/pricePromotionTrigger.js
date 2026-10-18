@@ -130,6 +130,7 @@ async function resolvePricePromotionForReply({
   ) return null;
 
   const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+    verifiedShadowPriceService === treatment ||
     resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
     })?.name === treatment ||
