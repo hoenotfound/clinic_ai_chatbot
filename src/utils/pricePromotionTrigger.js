@@ -246,6 +246,31 @@ async function resolvePricePromotionForReply({
     : null;
 }
 
+// Verified pricing paths identify an already sent picture by its media URL,
+// even if staff changed the caption. This is particularly important when
+// Neutro edits promotion copy after staff has already sent the graphic.
+// Other legacy uses retain their historical image+caption match.
+function selectPromoDuplicateCheck({
+  aiPricingEnabled = false,
+  numberedPricingSelection = null,
+  shadowPriceException = null,
+  scopedPackagePrice = null,
+  messagesRepo,
+} = {}) {
+  if (!messagesRepo ||
+      typeof messagesRepo.wasPromoRecentlySent !== "function" ||
+      typeof messagesRepo.wasMediaRecentlySent !== "function") {
+    throw new Error("Promotion duplicate check requires both message lookups");
+  }
+  const verifiedPath = aiPricingEnabled === true ||
+    Boolean(numberedPricingSelection || shadowPriceException || scopedPackagePrice);
+  return verifiedPath
+    ? (contactId, imageUrl, _caption, hours) =>
+        messagesRepo.wasMediaRecentlySent(contactId, imageUrl, hours)
+    : messagesRepo.wasPromoRecentlySent;
+}
+
 module.exports = {
   resolvePricePromotionForReply,
+  selectPromoDuplicateCheck,
 };
