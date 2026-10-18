@@ -632,7 +632,8 @@ test("specific pelvic ad and generic body technique can identify one advertised 
   };
   const promotions = [{
     linkedService: "骨盆调理", sendOnPriceQuery: true,
-    validFrom: "2026-10-01", validUntil: "2026-10-31",
+    // Test promotion dates must stay active regardless of when CI runs.
+    validFrom: "2000-01-01", validUntil: "2999-12-31",
   }];
   const resolved = normalizeMetaAdReplyContext(row, { services, aliases, promotions });
   assert.equal(resolved.serviceHint, "骨盆调理");
