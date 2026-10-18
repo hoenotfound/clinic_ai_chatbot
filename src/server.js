@@ -27,7 +27,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
-const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
 const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
@@ -1632,11 +1632,13 @@ async function processIncomingMessage(
         resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage,
         contactId: contact.id,
-        // A staff-forwarded copy of the same graphic counts as already sent,
-        // even when staff used a different caption. Keep legacy behavior off.
-        wasPromoRecentlySent: aiPricingEnabled
-          ? (id, url, _caption, hours) => messagesRepo.wasMediaRecentlySent(id, url, hours)
-          : messagesRepo.wasPromoRecentlySent,
+        // The verified pricing paths must not resend manually delivered images
+        // when staff used an older caption than the current promotion copy.
+        // Unverified legacy behaviour retains its existing matching rules.
+        wasPromoRecentlySent: selectPromoDuplicateCheck({
+          aiPricingEnabled, numberedPricingSelection, shadowPriceException,
+          scopedPackagePrice, messagesRepo,
+        }),
         hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
       });
       if (promoBundle) {
