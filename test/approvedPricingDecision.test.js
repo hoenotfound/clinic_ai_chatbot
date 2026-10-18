@@ -491,6 +491,61 @@ test("mixed treatment-frequency and price question retains safe non-price guidan
   assert.doesNotMatch(standalone.reply,/看看其他疗程|我发优惠图/u);
 });
 
+test("approved compound pricing never repeats invented sessions or guaranteed outcomes",()=>{
+  const cases=[
+    {
+      language:"zh",customerText:"大概需要做几次呢？价钱呢？",
+      reply:"做三次一定见效，而且完全改善不反弹！\n只需要2次就能保证完美脸型。",
+      safe:/具体做几次需要中医师评估后确认/u,
+      unsafe:/三次一定见效|2次|完全改善|不反弹|保证完美/u,
+    },{
+      language:"en",customerText:"How many sessions? What is the price?",
+      reply:"Only 2 sessions will definitely fix your face permanently!",
+      safe:/depends on your individual needs/u,
+      unsafe:/2 sessions|definitely|permanently/u,
+    },{
+      language:"ms",customerText:"Berapa sesi? Berapa harga?",
+      reply:"Pasti berhasil sepenuhnya selepas 3 sesi sahaja!",
+      safe:/bergantung pada keadaan individu/u,
+      unsafe:/3 sesi|Pasti berhasil/u,
+    },
+  ];
+  for(const x of cases){
+    const priced=ensureVerifiedPriceReply({
+      customerText:x.customerText,reply:x.reply,
+      treatment:"3D 小颜术",pricingDecision:threeDDecision,
+      priceOnlyResponse:true,conversationHistory:history524,
+      services,serviceAliases,promotions,resultMedia:[],language:x.language,
+    });
+    assert.match(priced.reply,/RM488/u,x.customerText);
+    assert.match(priced.reply,x.safe,x.customerText);
+    assert.doesNotMatch(priced.reply,x.unsafe,x.customerText);
+  }
+});
+
+test("denied pricing and unavailable prices never preserve unsupported session counts",()=>{
+  const reply="做三次一定见效，不用评估！";
+  const denied=ensureVerifiedPriceReply({
+    customerText:"大概需要做几次呢？价钱呢？",
+    reply,treatment:null,pricingDecision:null,priceRequested:true,
+    priceOnlyResponse:true,services,serviceAliases,promotions,
+    conversationHistory:history524,language:"zh",
+  });
+  assert.match(denied.reply,/具体做几次需要中医师评估后确认/u);
+  assert.doesNotMatch(denied.reply,/三次一定见效|不用评估/u);
+
+  const unavailable=ensureVerifiedPriceReply({
+    customerText:"大概需要做几次呢？价钱呢？",
+    reply,treatment:"3D 小颜术",
+    pricingDecision:{...threeDDecision,prices:[]},
+    services,serviceAliases,promotions,conversationHistory:history524,
+    language:"zh",
+  });
+  assert.match(unavailable.reply,/具体做几次需要中医师评估后确认/u);
+  assert.doesNotMatch(unavailable.reply,/三次一定见效|不用评估/u);
+  assert.match(unavailable.reply,/最新价格需要由门店帮你确认/u);
+});
+
 test("central pricing approval reports specific stage reasons without raw chat in audit",()=>{
   const normal={mode:"enabled",aiDecision:pelvicDecision,
     customerText:"多少钱",conversationHistory:history93,...base};
