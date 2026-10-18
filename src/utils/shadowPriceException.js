@@ -124,6 +124,16 @@ function resolveShadowPriceException({
       !["meta_ad", "current_customer", "recent_customer", "continued_customer"].includes(decision.source)) {
     return null;
   }
+  // An ad named 骨盆 cannot overrule a customer's NEW enquiry about an
+  // unpriced, unrelated neck/shoulder or fascia service. Such wording is
+  // not always a configured service alias, so basic alias matching alone
+  // would otherwise treat Ashley's "筋膜放松，肩颈" as a pelvic price request.
+  const competingBodyConcern = /(?:筋膜|肩[颈頸膀部]|[颈頸]肩|筋膜枪|筋膜槍|\b(?:myofascial|fascia|neck|shoulder)\b)/iu;
+  const pelvicMention = /(?:骨盆|盆骨|\b(?:pelvic|pelvis)\b)/iu;
+  if (decision.source === "meta_ad" && decision.treatment === "骨盆调理" &&
+      session.some(turn => turn.role === "user" &&
+        competingBodyConcern.test(pricingMessageText(turn)) &&
+        !pelvicMention.test(pricingMessageText(turn)))) return null;
   // Keep the independently verified treatment and price evidence coupled.
   return shadowVerifiedPrice({
     source: decision.source, treatment: decision.treatment,
