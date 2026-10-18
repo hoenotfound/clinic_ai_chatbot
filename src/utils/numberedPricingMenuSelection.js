@@ -20,7 +20,7 @@ const TREATMENT_LIST_REQUEST =
 const PRICE_MENU_QUESTION =
   /(?:哪.{0,40}(?:价格|價格|价钱|價錢|收费|收費|费用|費用)|(?:价格|價錢|价钱|收费|收費|费用|費用).{0,40}哪|\b(?:which|what)\b.{0,60}\b(?:price|cost|fee)\b|\b(?:harga)\b.{0,60}\b(?:mana|apa)\b)/iu;
 const ADMIN_FEE =
-  /(?:订金|訂金|定金|按金|押金|挂号|掛號|注册|註冊|停车|停車|咨询费|諮詢費|评估费|評估費|预约费|預約費|(?:免费|免費).{0,24}(?:评估|評估|体验|體驗).{0,30}(?:多少钱|多少錢|收费|收費|费用|費用|价钱|價錢|价格|要钱|要錢)|\b(?:deposit|booking fee|consultation fee|assessment fee|registration fee|parking fee)\b)/iu;
+  /(?:评估|評估|体验|體驗|咨询|諮詢|面诊|面診).{0,15}(?:多少钱|多少錢|收费|收費|费用|費用|价钱|價錢|价格|要钱|要錢)|(?:订金|訂金|定金|按金|押金|挂号|掛號|注册|註冊|停车|停車|咨询费|諮詢費|评估费|評估費|预约费|預約費|(?:免费|免費).{0,24}(?:评估|評估|体验|體驗).{0,30}(?:多少钱|多少錢|收费|收費|费用|費用|价钱|價錢|价格|要钱|要錢)|\b(?:deposit|booking fee|consultation fee|assessment fee|registration fee|parking fee)\b)/iu;
 
 // This routine is intentionally narrower than general AI intent recognition:
 // - a recent, DB-timestamped user price question;
