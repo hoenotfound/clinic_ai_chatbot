@@ -87,7 +87,7 @@ test("Kiwijiayee 16:42: new customer-led price enquiry survives 14-day-old staff
     assert.equal(window[0].role,"user");
     const decision=resolveShadowPriceException(context);
     assert.equal(decision?.treatment,"骨盆调理");
-    assert.equal(decision?.source,"continued_customer");
+    assert.equal(decision?.source,"recent_first_customer");
     assert.deepEqual(decision?.prices.map(p=>p.price),["RM388","RM288"]);
     const reply=ensureVerifiedPriceReply({
       ...context,reply:"请问你想了解哪一项疗程的价格呢？",
