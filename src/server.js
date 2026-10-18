@@ -33,6 +33,7 @@ const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackage
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException } = require("./utils/shadowPriceException");
+const { resolveApprovedPricingDecision } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1262,8 +1263,32 @@ async function processIncomingMessage(
         " verified=" + Boolean(pricingDecision) +
         " amountVerified=" + Boolean(pricingDecision?.prices?.length));
     }
+    // One approved result is shared by the outbound guard, verified text and
+    // optional promo-media selector. Shadow observations never authorize sales;
+    // only narrowly verified Shadow exceptions or explicit menu continuations do.
+    const approvedPricingDecision = resolveApprovedPricingDecision({
+      mode: aiPricingMode, aiDecision: pricingDecision,
+      shadowException: shadowPriceException,
+      scopedPackageDecision: scopedPackagePrice,
+      numberedMenuDecision: numberedPricingDecision,
+      customerText: text, conversationHistory: history,
+      services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+      resultMedia: clinicConfig.resultMedia,
+      flagged, bookingReady, keywordReason, marketingStopQuestion,
+    });
+    if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
+        shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
+      console.info("[Pricing authority] contact=" + contact.id +
+        " inbound=" + savedInbound.id +
+        " mode=" + aiPricingMode +
+        " observed=" + Boolean(pricingDecision) +
+        " authorized=" + Boolean(approvedPricingDecision) +
+        " source=" + (approvedPricingDecision?.source || "none") +
+        " treatment=" + (approvedPricingDecision?.treatment || "none"));
+    }
     // Keep all established legacy clarification paths in Off/Shadow modes.
-    const clarifiedPriceService = scopedPackagePrice?.clarifiedPriceService ||
+    const clarifiedPriceService = approvedPricingDecision?.clarifiedPriceService ||
+      scopedPackagePrice?.clarifiedPriceService ||
       numberedPricingSelection?.treatment ||
       shadowPriceException?.treatment ||
       (aiPricingEnabled
@@ -1273,7 +1298,9 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           }) : null);
-    const verifiedPriceService = scopedPackagePrice
+    const verifiedPriceService = approvedPricingDecision
+      ? (clinicConfig.services || []).find(s => s.name === approvedPricingDecision.treatment) || null
+      : scopedPackagePrice
       ? (clinicConfig.services || []).find(s => s.name === scopedPackagePrice.treatment) || null
       : numberedPricingSelection
       ? (clinicConfig.services || []).find(s => s.name === numberedPricingSelection.treatment) || null
@@ -1332,7 +1359,7 @@ async function processIncomingMessage(
             // treatment, with bounded history and topic-change safeguards.
             treatment: verifiedPriceService?.name || null,
             clarifiedPriceService,
-            verifiedPricingIntent: aiPricingEnabled && Boolean(pricingDecision),
+            verifiedPricingIntent: Boolean(approvedPricingDecision),
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
             promotions: clinicConfig.promotions,
@@ -1357,17 +1384,18 @@ async function processIncomingMessage(
         priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection || shadowPriceException),
         verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
         verifiedShadowPriceService: shadowPriceException?.treatment || null,
-        pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
+        pricingDecision: approvedPricingDecision || (aiPricingEnabled ? pricingDecision : undefined),
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
-        priceRequested: aiPricingEnabled && hasCustomerRequestedPriceReply({
-          customerText: text, pricingDecision,
-        }),
+        priceRequested: (aiPricingEnabled || Boolean(approvedPricingDecision)) &&
+          hasCustomerRequestedPriceReply({
+            customerText: text, pricingDecision: approvedPricingDecision || pricingDecision,
+          }),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
         language: mediaLanguage,
-        allowContinuedPriceContext: aiPricingEnabled,
+        allowContinuedPriceContext: aiPricingEnabled || Boolean(approvedPricingDecision),
       });
       if (priced.restored) {
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
@@ -1381,6 +1409,7 @@ async function processIncomingMessage(
     if (!flagged && !marketingStopQuestion && !shadowPriceException &&
         clinicConfig.businessType === "tcm_clinic" &&
         clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true &&
+        !approvedPricingDecision?.prices?.length &&
         !pricingDecision?.prices?.length && !verifiedPriceService) {
       const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
         text, history, mediaLanguage
@@ -1626,8 +1655,8 @@ async function processIncomingMessage(
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
-        pricingDecision: aiPricingEnabled ? pricingDecision : null,
-        aiPricingEnabled,
+        pricingDecision: approvedPricingDecision || (aiPricingEnabled ? pricingDecision : null),
+        aiPricingEnabled: Boolean(approvedPricingDecision) || aiPricingEnabled,
         metaAdContext,
         treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
@@ -1650,7 +1679,8 @@ async function processIncomingMessage(
         // when staff used an older caption than the current promotion copy.
         // Unverified legacy behaviour retains its existing matching rules.
         wasPromoRecentlySent: selectPromoDuplicateCheck({
-          aiPricingEnabled, numberedPricingSelection, shadowPriceException,
+          aiPricingEnabled: Boolean(approvedPricingDecision) || aiPricingEnabled,
+          numberedPricingSelection, shadowPriceException,
           scopedPackagePrice, messagesRepo,
         }),
         hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
