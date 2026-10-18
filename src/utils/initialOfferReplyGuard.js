@@ -346,6 +346,13 @@ function guardAssessmentFirstPricingReply({
   if (flagged || !hasTreatmentPriceContent(original)) {
     return { reply: original, replaced: false };
   }
+  // A single independently approved pricing decision has already checked
+  // the customer-selected treatment, active price and related-service safety.
+  // Do not let this later guard recalculate the conversation and veto it.
+  if (verifiedPricingIntent === true && Boolean(treatment) &&
+      !hasClinicalMediaRisk(customerText)) {
+    return { reply: original, replaced: false };
+  }
   // A related result-photo link is NOT a license to quote that other
   // treatment's package price. Protect full-body care even when the AI
   // correctly names the original service but invents a pelvic package cost.

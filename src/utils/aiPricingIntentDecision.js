@@ -14,7 +14,7 @@ const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
-const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
+const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不想(?:了解|知道|问|問|看)?(?:一下)?(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
 const STAFF_PREFIX = /^\[Verified STAFF message\]/u;
 const UNRELATED = /(?:停车|停車|营业|營業|开门|開門|几点|幾點|在哪|地址|分行|预约|預約|退款|取消|\b(?:parking|hours|location|address|branch|booking|appointment|refund|cancel)\b)/iu;
 // Obvious non-monetary questions must not become a price enquiry just
@@ -46,8 +46,18 @@ const CURRENT_PRICE_AMOUNT_REQUEST =
 const TOPIC_SWITCH_TO_NEW_SERVICE =
   /(?:换个|換個|改聊|另外想|(?:现在|現在|这次|這次)\s*(?:想了解|想问|想問)|\b(?:instead|rather|switch|another\s+treatment|different\s+treatment)\b|\b(?:nak|mahu)\b.{0,18}\b(?:rawatan|servis)\b.{0,12}\blain\b)/iu;
 
+// An explicitly interrogative price clause may be the second half of a
+// compound Malaysian-Chinese question: "做几次呢？价钱呢？". Requiring
+// the question to be ONLY an amount phrase loses an otherwise verified
+// service and causes the final reply guard to contradict model intent.
+// Adjectival comments ("价钱太贵了") and mere price mentions do not match.
+const PRICE_QUESTION_CLAUSE =
+  /(?:[价價](?:格|钱|錢|位)|收[费費]|费[用]?|費用)\s*(?:(?:是|要|大约|大概|约|約|先|呢|吗|嗎|呀|啊|多少|几多|幾多|什么|什麼|多少呢)\s*){0,5}[?？]/iu;
+
 function hasCurrentPriceAmountRequest(customerText) {
-  return CURRENT_PRICE_AMOUNT_REQUEST.test(String(customerText || "").trim());
+  const current = String(customerText || "").trim();
+  return CURRENT_PRICE_AMOUNT_REQUEST.test(current) ||
+    PRICE_QUESTION_CLAUSE.test(current);
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
@@ -138,10 +148,19 @@ function isShortAdTreatmentPriceQuestion(text) {
   const current = String(text || "").normalize("NFKC").trim();
   if (!current || current.length > 80 || AD_BROAD_TOPIC.test(current) ||
       AD_UNRELATED_FEE.test(current)) return false;
+  // Use the same strict monetary intent evidence as the final decision.
+  // Otherwise "什么价钱呢？" can be priced from a verified customer service,
+  // but not from the equally verified current ad for that service.
+  // A price objection, free assessment fee or broad catalogue enquiry does
+  // not become a treatment-price question merely by mentioning "价钱".
   return isStandalonePriceQuestion(current) ||
     AD_TREATMENT_PRICE_QUESTION.test(current) ||
     AD_ENGLISH_SESSION_PRICE.test(current) ||
-    AD_MALAY_SESSION_PRICE.test(current);
+    AD_MALAY_SESSION_PRICE.test(current) ||
+    (hasCurrentPriceAmountRequest(current) &&
+      hasExplicitPriceRequest(current) &&
+      !isPurePriceObjection(current) && !REFUSAL.test(current) &&
+      !RESET.test(current));
 }
 
 function verifiedMetaAdPriceAnchor({

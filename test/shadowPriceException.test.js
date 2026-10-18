@@ -163,8 +163,10 @@ test("Shadow informational review is gated by staff/safety and live clinical-rev
   assert.match(source,/!keywordReason && !urgentSafety && !isActiveSafetyConcern\(text\)/u);
   assert.match(source,/!isExplicitStaffRequest\(text\) && !marketingStopQuestion/u);
   assert.match(source,/const shadowPriceException = aiPricingMode === "shadow"/u);
-  assert.match(source,/verifiedShadowPriceService: shadowPriceException\?\.treatment \|\| null/u);
-  assert.match(source,/priceOnlyResponse: Boolean\(scopedPackagePrice \|\| numberedPricingSelection \|\| shadowPriceException\)/u);
+  assert.match(source,/verifiedShadowPriceService: pricingAuthorityRequired/u);
+  assert.match(source,/approvedPricingDecision && shadowPriceException/u);
+  assert.match(source,/priceOnlyResponse: pricingAuthorityRequired/u);
+  assert.match(source,/Boolean\(approvedPricingDecision && exceptionalPricingCandidate\)/u);
 });
 
 
@@ -255,6 +257,67 @@ test("PR #352 verified price graphics deduplicate manual sends despite different
 test("media identity duplicate check is used in server's final outbound send path", () => {
   const source = fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   assert.match(source,/wasPromoRecentlySent:\s*selectPromoDuplicateCheck\(\{/u);
-  assert.match(source,/aiPricingEnabled,\s*numberedPricingSelection,\s*shadowPriceException,\s*scopedPackagePrice,\s*messagesRepo/u);
+  assert.match(source,/aiPricingEnabled: pricingAuthorityRequired/u);
+  assert.match(source,/numberedPricingSelection: pricingAuthorityRequired/u);
+  assert.match(source,/shadowPriceException: pricingAuthorityRequired/u);
+  assert.match(source,/scopedPackagePrice: pricingAuthorityRequired/u);
+  assert.match(source,/messagesRepo,/u);
   assert.match(source,/hasUnconfirmedMediaDelivery:\s*messagesRepo\.hasUnconfirmedMediaDelivery/u);
+});
+
+
+test("Malaysian Chinese ad-linked monetary questions authorize exactly current pelvic prices",()=>{
+  const { resolveAiPricingDecision }=require("../src/utils/aiPricingIntentDecision");
+  const { resolveApprovedPricingAssessment }=require("../src/utils/approvedPricingDecision");
+  for (const text of ["什么价钱呢？","想了解是什么价钱先呢？","价钱呢？"]) {
+    const customerHistory=[
+      turn("user","Hi～",35_000),
+      turn("assistant","Hi! 欢迎了解 😊",28_000),
+      turn("user",text,15_000),
+    ];
+    const shadow=price({customerText:text,conversationHistory:customerHistory});
+    assert.equal(shadow?.source,"meta_ad",text);
+    assert.equal(shadow?.treatment,"骨盆调理",text);
+    assert.deepEqual(shadow?.prices?.map(p=>p.price),["RM388","RM288"],text);
+    const enabled=resolveAiPricingDecision({
+      priceQuery:true,packageQuery:false,treatment:null,
+      customerText:text,conversationHistory:customerHistory,
+      services,serviceAliases,promotions,metaAdContext:context,
+      complimentaryAssessmentExperienceEnabled:true,now,
+    });
+    assert.equal(enabled?.source,"meta_ad",text);
+    assert.equal(resolveApprovedPricingAssessment({
+      mode:"enabled",aiDecision:enabled,customerText:text,
+      conversationHistory:customerHistory,services,serviceAliases,
+      resultMedia:[],now,
+    }).reason,"approved",text);
+  }
+});
+
+test("ad-only phrase broadening cannot quote fees, objections, stale ads or switched treatments",()=>{
+  const { resolveAiPricingDecision }=require("../src/utils/aiPricingIntentDecision");
+  const negatives=[
+    "价钱太贵了？","我不想了解价钱呢？",
+    "免费评估收费吗？","预约费多少钱？",
+    "其他疗程什么价钱呢？",
+  ];
+  for(const text of negatives){
+    const history=[
+      turn("user","Hi～",35_000),
+      turn("assistant","Hi! 欢迎了解 😊",28_000),
+      turn("user",text,15_000),
+    ];
+    assert.equal(price({customerText:text,conversationHistory:history}),null,text);
+    assert.equal(resolveAiPricingDecision({
+      priceQuery:true,customerText:text,conversationHistory:history,
+      services,serviceAliases,promotions,metaAdContext:context,
+      complimentaryAssessmentExperienceEnabled:true,now,
+    }),null,text);
+  }
+  const stale={...context,attributedAt:new Date(now-8*86400_000).toISOString()};
+  const history=[turn("user","Hi～",35_000),
+    turn("assistant","Hi",28_000),
+    turn("user","什么价钱呢？",15_000)];
+  assert.equal(price({customerText:"什么价钱呢？",conversationHistory:history,
+    metaAdContext:stale}),null);
 });
