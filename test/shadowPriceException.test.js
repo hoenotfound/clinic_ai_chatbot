@@ -6,7 +6,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const clinicConfig = require("../src/config/clinicConfig");
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
-const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
+const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("../src/utils/pricePromotionTrigger");
+const {
+  wasPromoRecentlySentWithExecutor, wasMediaRecentlySentWithExecutor,
+} = require("../src/db/messagesRepo");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 
 const now = Date.now();
@@ -162,4 +165,96 @@ test("Shadow informational review is gated by staff/safety and live clinical-rev
   assert.match(source,/const shadowPriceException = aiPricingMode === "shadow"/u);
   assert.match(source,/verifiedShadowPriceService: shadowPriceException\?\.treatment \|\| null/u);
   assert.match(source,/priceOnlyResponse: Boolean\(scopedPackagePrice \|\| numberedPricingSelection \|\| shadowPriceException\)/u);
+});
+
+
+test("PR #352 verified price graphics deduplicate manual sends despite different captions", async () => {
+  // Reproduce a staff-accepted image where the shop updated its caption
+  // AFTER the media was already delivered. The exact same picture must not
+  // be sent again within the existing 24-hour duplicate window.
+  const rows = [
+    { contactId:47, imageUrl:"https://example.test/a.jpg",
+      caption:"Older caption manually sent by admin", accepted:true },
+  ];
+  const executor = {
+    query: async (sql, args) => {
+      const [contactId, imageUrl] = args;
+      const checksCaption = /content\s*=\s*\$3/u.test(sql);
+      return {
+        rowCount: rows.filter(row => row.accepted &&
+          row.contactId === contactId && row.imageUrl === imageUrl &&
+          (!checksCaption || row.caption === args[2])).length,
+      };
+    },
+  };
+  const newCaption = "New caption from the October promotion";
+  const oldCheck = (id,url,caption,hours) =>
+    wasPromoRecentlySentWithExecutor(executor,id,url,caption,hours);
+  const identityCheck = (id,url,hours) =>
+    wasMediaRecentlySentWithExecutor(executor,id,url,hours);
+  assert.equal(await oldCheck(47,"https://example.test/a.jpg",newCaption,24),false,
+    "legacy image-and-caption check misses a manual send with older caption");
+  assert.equal(await identityCheck(47,"https://example.test/a.jpg",24),true,
+    "media identity check finds the same accepted image");
+
+  const messagesRepo = {
+    wasPromoRecentlySent:oldCheck,
+    wasMediaRecentlySent:identityCheck,
+  };
+  for (const trusted of [
+    { aiPricingEnabled:true },
+    { shadowPriceException:{ treatment:"骨盆调理" } },
+    { numberedPricingSelection:{ treatment:"骨盆调理" } },
+    { scopedPackagePrice:{ treatment:"骨盆调理" } },
+  ]) {
+    const check = selectPromoDuplicateCheck({ ...trusted, messagesRepo });
+    assert.equal(await check(47,"https://example.test/a.jpg",newCaption,24),true,
+      "verified price flow must block previously sent graphic: " +
+       JSON.stringify(Object.keys(trusted)));
+  }
+  const legacy = selectPromoDuplicateCheck({ messagesRepo });
+  assert.equal(await legacy(47,"https://example.test/a.jpg",newCaption,24),false,
+    "unmodified legacy media rules retain their prior behaviour");
+
+  await withAssessmentFirst(async () => {
+    const decision = price();
+    const check = selectPromoDuplicateCheck({
+      shadowPriceException:decision, messagesRepo,
+    });
+    const result = await resolvePricePromotionForReply({
+      ...parameters(), priceQuery:true, packageQuery:false,
+      aiPricingEnabled:false, treatment:decision.treatment,
+      verifiedServiceFromText:decision.treatment,
+      verifiedShadowPriceService:decision.treatment,
+      flagged:false, bookingReady:false, keywordReason:null,
+      needsAttention:false, textSendSucceeded:true,
+      contactId:47, language:"zh",
+      wasPromoRecentlySent:check,
+      hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.deepEqual(result?.packages.map(p=>p.name), ["Package B"],
+      "an already-sent Package A must be suppressed while eligible unsent B remains");
+    rows.push({contactId:47,imageUrl:"https://example.test/b.jpg",
+      caption:"Another outdated manually sent caption",accepted:true});
+    const bothSent = await resolvePricePromotionForReply({
+      ...parameters(), priceQuery:true, packageQuery:false,
+      aiPricingEnabled:false, treatment:decision.treatment,
+      verifiedServiceFromText:decision.treatment,
+      verifiedShadowPriceService:decision.treatment,
+      flagged:false, bookingReady:false, keywordReason:null,
+      needsAttention:false, textSendSucceeded:true,
+      contactId:47, language:"zh",
+      wasPromoRecentlySent:check,
+      hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.equal(bothSent,null,
+      "neither Package A nor B should repeat after both were sent manually");
+  });
+});
+
+test("media identity duplicate check is used in server's final outbound send path", () => {
+  const source = fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  assert.match(source,/wasPromoRecentlySent:\s*selectPromoDuplicateCheck\(\{/u);
+  assert.match(source,/aiPricingEnabled,\s*numberedPricingSelection,\s*shadowPriceException,\s*scopedPackagePrice,\s*messagesRepo/u);
+  assert.match(source,/hasUnconfirmedMediaDelivery:\s*messagesRepo\.hasUnconfirmedMediaDelivery/u);
 });
