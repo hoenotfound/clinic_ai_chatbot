@@ -32,6 +32,7 @@ const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./
 const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
+const { resolveShadowPriceException } = require("./utils/shadowPriceException");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1111,11 +1112,22 @@ async function processIncomingMessage(
       }
     }
 
-    // Recovery changes the customer-facing reply, so it is ONLY active in
-    // AI-Led Pricing Enabled mode. Shadow evaluates pricing separately but
-    // must not bypass the existing information-review early return.
+    // Full multi-turn information-review recovery remains Enabled-only.
+    // In Shadow, only a separate independently verified early-treatment or
+    // current-Meta-ad pricing exception may use the legacy reply path.
     const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
     const aiPricingEnabled = aiPricingMode === "enabled";
+    const shadowPriceException = aiPricingMode === "shadow" &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion
+      ? resolveShadowPriceException({
+          customerText: text, conversationHistory: history, metaAdContext,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          complimentaryAssessmentExperienceEnabled:
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+        }) : null;
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
@@ -1148,6 +1160,29 @@ async function processIncomingMessage(
           "[Pricing] Recovered verified informational review for " +
           "contact=" + contact.id + " inbound=" + savedInbound.id
         );
+      }
+    }
+
+    // Recover narrowly verified Shadow price questions ONLY if the AI
+    // classified them as informational review and Neon confirms that no
+    // clinical review is pending. Clinical, safety and staff handoffs never
+    // enter this path. No extension of general AI-led pricing is enabled.
+    if (shadowPriceException && flagged && reviewRequired &&
+        reviewType === "information") {
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        details = { ...details, treatment: shadowPriceException.treatment };
+        aiReply = "我帮你核对这项疗程的价格 😊";
+        console.info("[Pricing] Recovered narrow Shadow price information review " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
       }
     }
 
@@ -1230,6 +1265,7 @@ async function processIncomingMessage(
     // Keep all established legacy clarification paths in Off/Shadow modes.
     const clarifiedPriceService = scopedPackagePrice?.clarifiedPriceService ||
       numberedPricingSelection?.treatment ||
+      shadowPriceException?.treatment ||
       (aiPricingEnabled
       ? pricingDecision?.clarifiedPriceService || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -1241,6 +1277,8 @@ async function processIncomingMessage(
       ? (clinicConfig.services || []).find(s => s.name === scopedPackagePrice.treatment) || null
       : numberedPricingSelection
       ? (clinicConfig.services || []).find(s => s.name === numberedPricingSelection.treatment) || null
+      : shadowPriceException
+      ? (clinicConfig.services || []).find(s => s.name === shadowPriceException.treatment) || null
       : aiPricingEnabled
       ? (clinicConfig.services || []).find(
           service => service.name === pricingDecision?.treatment
@@ -1316,7 +1354,7 @@ async function processIncomingMessage(
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
-        priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection),
+        priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection || shadowPriceException),
         verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
@@ -1580,6 +1618,7 @@ async function processIncomingMessage(
         treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
         verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
+        verifiedShadowPriceService: shadowPriceException?.treatment || null,
         customerText: text,
         conversationHistory: history,
         flagged,
