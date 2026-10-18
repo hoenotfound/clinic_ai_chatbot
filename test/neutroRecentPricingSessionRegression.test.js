@@ -219,3 +219,11 @@ test("Ashley: vague How much after body-treatment + free intro clarifies fees",(
     turn("user","How much",50_000),
   ],"en"),null,"staff-authored invitation cannot be used for AI override");
 });
+
+
+test("the ambiguous free intro clarification is limited to clinics that enabled the offer",()=>{
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  assert.match(source,/clinicConfig\.businessType === "tcm_clinic" &&\s*clinicConfig\.automatedFollowUp\?\.complimentaryAssessmentExperienceEnabled === true/u);
+});
