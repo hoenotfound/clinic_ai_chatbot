@@ -14,7 +14,7 @@ const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
-const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
+const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不想(?:了解|知道|问|問|看)?(?:一下)?(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠)|不用(?:报价|報價|价格|價格)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
 const STAFF_PREFIX = /^\[Verified STAFF message\]/u;
 const UNRELATED = /(?:停车|停車|营业|營業|开门|開門|几点|幾點|在哪|地址|分行|预约|預約|退款|取消|\b(?:parking|hours|location|address|branch|booking|appointment|refund|cancel)\b)/iu;
 // Obvious non-monetary questions must not become a price enquiry just
