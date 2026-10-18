@@ -46,8 +46,18 @@ const CURRENT_PRICE_AMOUNT_REQUEST =
 const TOPIC_SWITCH_TO_NEW_SERVICE =
   /(?:换个|換個|改聊|另外想|(?:现在|現在|这次|這次)\s*(?:想了解|想问|想問)|\b(?:instead|rather|switch|another\s+treatment|different\s+treatment)\b|\b(?:nak|mahu)\b.{0,18}\b(?:rawatan|servis)\b.{0,12}\blain\b)/iu;
 
+// An explicitly interrogative price clause may be the second half of a
+// compound Malaysian-Chinese question: "做几次呢？价钱呢？". Requiring
+// the question to be ONLY an amount phrase loses an otherwise verified
+// service and causes the final reply guard to contradict model intent.
+// Adjectival comments ("价钱太贵了") and mere price mentions do not match.
+const PRICE_QUESTION_CLAUSE =
+  /(?:[价價](?:格|钱|錢|位)|收[费費]|费[用]?|費用)\s*(?:(?:是|要|大约|大概|约|約|先|呢|吗|嗎|呀|啊|多少|几多|幾多|什么|什麼|多少呢)\s*){0,5}[?？]/iu;
+
 function hasCurrentPriceAmountRequest(customerText) {
-  return CURRENT_PRICE_AMOUNT_REQUEST.test(String(customerText || "").trim());
+  const current = String(customerText || "").trim();
+  return CURRENT_PRICE_AMOUNT_REQUEST.test(current) ||
+    PRICE_QUESTION_CLAUSE.test(current);
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
