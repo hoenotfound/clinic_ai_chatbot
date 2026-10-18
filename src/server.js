@@ -1318,14 +1318,13 @@ async function processIncomingMessage(
         : null;
     const clarifiedPriceService = pricingAuthorityRequired
       ? approvedPricingDecision?.clarifiedPriceService || null
-      : aiPricingMode === "off"
-        ? (scopedPackagePrice?.clarifiedPriceService ||
-            numberedPricingSelection?.treatment || null)
-      : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-        ? resolveClarifiedPriceService({
-            customerText: text, conversationHistory: history,
-            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-          }) : null;
+      : scopedPackagePrice?.clarifiedPriceService ||
+        numberedPricingSelection?.treatment ||
+        (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+          ? resolveClarifiedPriceService({
+              customerText: text, conversationHistory: history,
+              services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            }) : null);
 
     let reply = isFirstMessage && !flagged && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
