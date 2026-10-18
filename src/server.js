@@ -47,7 +47,7 @@ const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
-const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
+const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply, ambiguousAssessmentOrTreatmentFeeReply } = require("./utils/complimentaryAssessmentExperience");
 const { isUnanswerableCustomerReply } = require("./utils/aiSilentReviewPolicy");
 const {
   resolveResultMediaForReply,
@@ -1373,6 +1373,17 @@ async function processIncomingMessage(
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
       }
       reply = priced.reply;
+    }
+
+    // "How much?" after discussion of the complimentary intro AND separate
+    // body treatment is ambiguous. When no treatment price is independently
+    // verified, clarify the two fees rather than claiming all care is free.
+    if (!flagged && !marketingStopQuestion && !shadowPriceException &&
+        !pricingDecision?.prices?.length && !verifiedPriceService) {
+      const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
+        text, history, mediaLanguage
+      );
+      if (feeClarification) reply = feeClarification;
     }
 
     // Preserve the useful original service explanation. If an eligible first
