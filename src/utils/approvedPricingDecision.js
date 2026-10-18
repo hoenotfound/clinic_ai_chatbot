@@ -52,66 +52,65 @@ function pricingConflictHistory({ candidate, conversationHistory, services, serv
   return currentSession;
 }
 
-function resolveApprovedPricingDecision({
+function resolveApprovedPricingAssessment({
   mode = "off", aiDecision = null, shadowException = null,
   scopedPackageDecision = null, numberedMenuDecision = null,
   customerText = "", conversationHistory = [], services = [],
   serviceAliases = [], resultMedia = [], flagged = false,
   bookingReady = false, keywordReason = null,
-  marketingStopQuestion = false,
+  marketingStopQuestion = false, now = Date.now(),
 } = {}) {
-  // Off is an untouched legacy rollout state for other clients. Its
-  // existing menu and promotion paths retain their original gates.
-  if (!["shadow", "enabled"].includes(mode) ||
-      flagged || bookingReady || keywordReason || marketingStopQuestion ||
-      hasClinicalMediaRisk(customerText)) return null;
+  const rejected = reason => ({ decision: null, reason });
+  if (!["shadow", "enabled"].includes(mode)) return rejected("mode_off");
+  if (marketingStopQuestion) return rejected("marketing_opt_out");
+  if (flagged || bookingReady || keywordReason) return rejected("review_or_booking");
+  if (hasClinicalMediaRisk(customerText)) return rejected("clinical_safety");
 
-  // Explicit customer-selected flows are already independently checked for
-  // timestamp continuity, staff boundaries and verified active prices.
-  // A Shadow-only AI result cannot bypass those checks.
+  // An observed Shadow AI decision cannot become real authorization.
   const candidate = numberedMenuDecision || scopedPackageDecision ||
-    (mode === "enabled" ? aiDecision :
-      mode === "shadow" ? shadowException : null);
-  if (!candidate || !["price", "package_options"].includes(candidate.type) ||
+    (mode === "enabled" ? aiDecision : shadowException);
+  if (!candidate) return rejected("no_verified_candidate");
+  if (!["price", "package_options"].includes(candidate.type) ||
       typeof candidate.treatment !== "string" || !candidate.treatment.trim() ||
-      !(services || []).some(service => service?.name === candidate.treatment)) return null;
-  if (mode !== "enabled" && candidate.type !== "price") return null;
+      !(services || []).some(service => service?.name === candidate.treatment)) {
+    return rejected("invalid_treatment_or_intent");
+  }
+  if (mode !== "enabled" && candidate.type !== "price") {
+    return rejected("shadow_package_intent_unverified");
+  }
 
   const prices = Array.isArray(candidate.prices) ? candidate.prices : [];
   const validPrices = prices.length > 0 && prices.length <= 4 &&
     prices.every(item => item && typeof item.name === "string" && item.name.trim() &&
       /^RM[1-9]\d{0,5}$/u.test(String(item.price || ""))) &&
     new Set(prices.map(item => item.name)).size === prices.length;
-  // A verified standing SERVICE price may be text-only (no graphic), but
-  // it must never authorize promotional images without approved package prices.
   const textOnly = mode === "enabled" && prices.length === 0 &&
     /^RM[1-9]\d{0,5}$/u.test(String(candidate.servicePrice || ""));
-  if (!validPrices && !textOnly) return null;
+  if (!validPrices && !textOnly) return rejected("active_price_unverified");
 
-  // Keep the related/unpriced primary-treatment safety policy at this one
-  // authorization boundary; do not ask three downstream components to guess
-  // whether the independently approved service can be priced.
   const currentHistory = pricingConflictHistory({
-    candidate, conversationHistory, services, serviceAliases,
+    candidate, conversationHistory, services, serviceAliases, now,
   });
-  const relatedConflict = relatedPricingConflict({
+  if (relatedPricingConflict({
     customerText, treatment: candidate.treatment, conversationHistory: currentHistory,
     services, serviceAliases, resultMedia,
-  });
-  const unpricedPrimary = unpricedRelatedPrimary({
+  })) return rejected("related_treatment_conflict");
+  if (unpricedRelatedPrimary({
     customerText, conversationHistory: currentHistory,
     services, serviceAliases, resultMedia,
-  });
-  // The source explains why a decision was considered, but it never grants
-  // permission to ignore a conflicting/unpriced primary treatment. Earlier
-  // customer selection cannot silently price another treatment after a topic
-  // switch (e.g. unpriced full-body 整骨 vs. related pelvic result images).
-  if (relatedConflict || unpricedPrimary) return null;
+  })) return rejected("unpriced_primary_treatment");
 
-  return Object.freeze({
-    ...candidate,
-    prices: Object.freeze([...prices]),
-  });
+  return {
+    decision: Object.freeze({
+      ...candidate,
+      prices: Object.freeze([...prices]),
+    }),
+    reason: "approved",
+  };
 }
 
-module.exports = { resolveApprovedPricingDecision, pricingConflictHistory };
+function resolveApprovedPricingDecision(options = {}) {
+  return resolveApprovedPricingAssessment(options).decision;
+}
+
+module.exports = { resolveApprovedPricingDecision, resolveApprovedPricingAssessment, pricingConflictHistory };
