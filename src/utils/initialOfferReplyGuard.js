@@ -1,3 +1,4 @@
+const { withPelvicSpellingAliases } = require("./pelvicSpellingAliases");
 "use strict";
 
 const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
@@ -118,7 +119,7 @@ function safeServiceFromCustomer(customerText, services, serviceAliases = []) {
   };
 
   for (const service of byName.values()) addMentions(service, service.name);
-  for (const alias of Array.isArray(serviceAliases) ? serviceAliases : []) {
+  for (const alias of withPelvicSpellingAliases(services, serviceAliases)) {
     const canonical = byName.get(normalizeKey(alias?.officialService));
     if (!canonical) continue;
     for (const term of String(alias?.alias || "").split(/[,|;，、]+/u)) {
