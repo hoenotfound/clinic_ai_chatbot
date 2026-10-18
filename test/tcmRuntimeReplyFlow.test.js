@@ -11,6 +11,7 @@ const { categorizeAiReview, hasClinicalMediaRisk } = require("../src/utils/aiRev
 const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } = require("../src/utils/complimentaryAssessmentExperience");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
+const { appendRequestedBusinessFacts } = require("../src/utils/verifiedPricingBusinessFacts");
 
 // Execute the actual production handler and tracked text-sending functions,
 // not a reimplementation of the handler's control flow. Only external
@@ -112,7 +113,7 @@ function harness({ failDelivery = false } = {}) {
       }),
       isRecoverableAiReplyFailure: () => false,
     },
-    parseAiReplyResult, resolveApprovedPricingAssessment,
+    parseAiReplyResult, resolveApprovedPricingAssessment, appendRequestedBusinessFacts,
     bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply,
     getAiOwnedContact: async (contact) => state.mode === "ai" ? contact : null,
     categorizeAiReview,
