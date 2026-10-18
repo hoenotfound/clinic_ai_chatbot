@@ -275,6 +275,20 @@ function ensureVerifiedPriceReply({
   // images. No price decision must not leave an invented quote or a promise to
   // send promotion media in the AI text.
   if (aiLed && (!pricingDecision || pricingDecision.treatment !== treatment)) {
+    // The numbered menu itself verifies a treatment, but a missing or
+    // conflicting active price must never leave a placeholder unfulfilled or
+    // ask which treatment the customer chose again.
+    if (verifiedNumberedSelection && verifiedNumberedSelection === treatment) {
+      const locale = String(language || "").toLowerCase();
+      return {
+        reply: locale.startsWith("ms")
+          ? `Harga terkini untuk ${treatment} perlu disahkan oleh pihak pusat dahulu ya 😊`
+          : locale.startsWith("en")
+            ? `Our centre needs to confirm the current price for ${treatment} 😊`
+            : `${treatment} 的最新价格需要由门店帮你确认哦 😊`,
+        restored: true,
+      };
+    }
     // Non-price service replies must remain intact. Only remove a genuinely
     // unsolicited numeric price or a promise of promotional media that may
     // never pass the provider's separate delivery checks.
@@ -328,7 +342,7 @@ function ensureVerifiedPriceReply({
         clarifiedPriceService,
       });
   const locale = String(language || "").toLowerCase();
-  if (!prices) {
+  if (!Array.isArray(prices) || prices.length === 0) {
     // Text-only service prices remain valid when the clinic has not configured
     // a promotion. This fallback can never authorize a promotional graphic.
     if (aiLed && pricingDecision.servicePrice) {
