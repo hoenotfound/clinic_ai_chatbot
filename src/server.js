@@ -36,6 +36,7 @@ const { resolveShadowPriceException } = require("./utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
+const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -1417,6 +1418,21 @@ async function processIncomingMessage(
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
       }
       reply = priced.reply;
+      // The verified price formatter intentionally replaces model-authored
+      // text. Recover independently configured branch/hours details when the
+      // same customer turn also asks for them (e.g. location + RM488).
+      // Never append administrative facts to rejected/unverified pricing.
+      const approvedPriceQuoted = Boolean(approvedPricingDecision && priced.restored &&
+        (approvedPricingDecision.prices?.some(item =>
+          item.price && reply.includes(item.price)) ||
+          (approvedPricingDecision.servicePrice &&
+            reply.includes(approvedPricingDecision.servicePrice))));
+      if (approvedPriceQuoted) {
+        reply = appendRequestedBusinessFacts({
+          customerText: text, reply, language: mediaLanguage,
+          branches: clinicConfig.branches, hours: clinicConfig.hours,
+        });
+      }
     }
 
     // "How much?" after discussion of the complimentary intro AND separate
