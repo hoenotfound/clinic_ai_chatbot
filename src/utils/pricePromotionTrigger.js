@@ -1,7 +1,7 @@
 const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
 const clinicConfig = require("../config/clinicConfig");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
-const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
+const { resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
 const { resolveScopedPackagePriceContinuation } = require("./scopedPackagePriceContinuation");
 const { verifiedPricesForService, requestedPricePackages } = require("./verifiedPriceReply");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
@@ -127,10 +127,14 @@ async function resolvePricePromotionForReply({
     needsAttention || textSendSucceeded !== true
   ) return null;
 
-  const verifiedContinuedService =
-    resolveContinuedTreatmentPriceService({
+  const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+    resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
-    })?.name === treatment;
+    })?.name === treatment ||
+    (aiPricingEnabled === true &&
+      resolveContinuedTreatmentPriceService({
+        customerText, conversationHistory, services, serviceAliases, promotions,
+      })?.name === treatment);
   if (!verifiedContinuedService && (relatedPricingConflict({
     customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
   }) || (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
