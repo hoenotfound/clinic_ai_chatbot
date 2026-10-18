@@ -148,10 +148,19 @@ function isShortAdTreatmentPriceQuestion(text) {
   const current = String(text || "").normalize("NFKC").trim();
   if (!current || current.length > 80 || AD_BROAD_TOPIC.test(current) ||
       AD_UNRELATED_FEE.test(current)) return false;
+  // Use the same strict monetary intent evidence as the final decision.
+  // Otherwise "什么价钱呢？" can be priced from a verified customer service,
+  // but not from the equally verified current ad for that service.
+  // A price objection, free assessment fee or broad catalogue enquiry does
+  // not become a treatment-price question merely by mentioning "价钱".
   return isStandalonePriceQuestion(current) ||
     AD_TREATMENT_PRICE_QUESTION.test(current) ||
     AD_ENGLISH_SESSION_PRICE.test(current) ||
-    AD_MALAY_SESSION_PRICE.test(current);
+    AD_MALAY_SESSION_PRICE.test(current) ||
+    (hasCurrentPriceAmountRequest(current) &&
+      hasExplicitPriceRequest(current) &&
+      !isPurePriceObjection(current) && !REFUSAL.test(current) &&
+      !RESET.test(current));
 }
 
 function verifiedMetaAdPriceAnchor({
