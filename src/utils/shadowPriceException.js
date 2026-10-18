@@ -72,7 +72,8 @@ function resolveShadowPriceException({
   const session = recentVerifiedPricingSession(conversationHistory, text, now);
   if (!session || isComplimentaryAssessmentFeeQuestion(
     text, complimentaryAssessmentExperienceEnabled, session
-  )) return null;
+  ) || session.some(turn => turn.role === "user" &&
+    hasClinicalMediaRisk(pricingMessageText(turn)))) return null;
 
   // "疗程多少钱" -> bot: "which treatment's price?" -> "盆骨调整".
   // The customer answer inherits only that immediate, independently verified
