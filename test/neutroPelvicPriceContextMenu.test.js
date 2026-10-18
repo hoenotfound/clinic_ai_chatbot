@@ -196,3 +196,45 @@ test("continued price context rejects old conversations, staff and topic switche
   ];
   assert.equal(resolve(switched), null);
 });
+
+
+test("mixed numbered options are not silently reduced to one priced service", () => {
+  const base = numberedHistory();
+  const menuAt = base.length - 2;
+  const resolve = (heading, selected = "1") => {
+    const copy = base.slice();
+    copy[menuAt] = turn("assistant",
+      "我们有：\n1. " + heading + "：疗程介绍\n2. 3D 小颜术：脸型护理\n\n你想了解哪项的收费呢？",
+      -25);
+    return resolveNumberedPricingMenuSelection({
+      customerText: selected, conversationHistory: copy,
+      ...options, now,
+    });
+  };
+  assert.deepEqual(resolve("骨盆/体态调理"), {
+    treatment: "骨盆调理", source: "numbered_price_menu",
+  });
+  for (const heading of [
+    "3D/9D", "3D+9D", "骨盆/3D", "女性及产后调理",
+    "骨盆和3D", "3D、骨盆", "骨盆 & 3D",
+  ]) {
+    assert.equal(resolve(heading), null, heading + " must not select first treatment");
+  }
+});
+
+test("no verified numeric-menu price returns a clear confirmation in Enabled mode", () => {
+  const reply = ensureVerifiedPriceReply({
+    customerText: "1", reply: "我帮你核对这项疗程的最新配套价格 😊",
+    treatment: "骨盆调理", verifiedNumberedSelection: "骨盆调理",
+    pricingDecision: null, priceOnlyResponse: true,
+    promotions: [], ...options, language: "zh",
+  });
+  assert.equal(reply.restored, true);
+  assert.match(reply.reply, /骨盆调理.*价格需要由门店/u);
+  assert.doesNotMatch(reply.reply, /我帮你核对|哪项疗程/u);
+  const ordinary = ensureVerifiedPriceReply({
+    customerText: "Hi", reply: "我可以介绍疗程",
+    treatment: null, pricingDecision: null, ...options,
+  });
+  assert.equal(ordinary.reply, "我可以介绍疗程");
+});
