@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { resolveApprovedPricingDecision } = require("../src/utils/approvedPricingDecision");
+const { resolveApprovedPricingDecision, resolveApprovedPricingAssessment, pricingConflictHistory } = require("../src/utils/approvedPricingDecision");
 const { resolveNumberedPricingMenuSelection } = require("../src/utils/numberedPricingMenuSelection");
 const { verifiedPricesForService } = require("../src/utils/verifiedPriceReply");
 const { guardAssessmentFirstPricingReply } = require("../src/utils/initialOfferReplyGuard");
@@ -203,7 +203,8 @@ test("Manually delivered picture with an older caption still suppresses repeat",
 
 test("Server wires one approved decision to guard, quote, media and duplicate lookup",()=>{
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(server,/const approvedPricingDecision = resolveApprovedPricingDecision\(/u);
+  assert.match(server,/const pricingApproval = resolveApprovedPricingAssessment\(/u);
+  assert.match(server,/const approvedPricingDecision = pricingApproval.decision/u);
   assert.match(server,/verifiedPricingIntent: Boolean\(approvedPricingDecision\)/u);
   assert.match(server,/const authorizedPricingInput = pricingAuthorityRequired\s*\? approvedPricingDecision : undefined/u);
   assert.match(server,/pricingDecision: authorizedPricingInput/u);
@@ -344,8 +345,9 @@ test("pricing audit persists stage fields without storing customer message conte
   },async(sql,params)=>{call={sql,params};});
   assert.match(call.sql,/ON CONFLICT \(inbound_message_id\)/u);
   assert.equal(call.params[0],93);
-  assert.equal(call.params[6],"recent_first_customer");
-  assert.equal(call.params[9],"all_graphics_already_sent");
+  assert.equal(call.params[6],"unknown");
+  assert.equal(call.params[7],"recent_first_customer");
+  assert.equal(call.params[10],"all_graphics_already_sent");
   assert.doesNotMatch(call.sql,/customer_message|customer_text|phone_number/u);
   await assert.rejects(()=>recordDecision({
     contactId:93,inboundMessageId:1911,mode:"shadow",
