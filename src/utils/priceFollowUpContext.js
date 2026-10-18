@@ -137,7 +137,11 @@ function resolveContinuedTreatmentPriceService({
     // "体态". Require the customer's independently named service to appear
     // in at least one assistant response in the same uninterrupted exchange.
     // Do not use an ad name, CRM field or model label as the sole anchor.
-    const assistantAfterChoice = before.slice(index + 1);
+    const nextCustomerIndex = before.findIndex((turn, i) =>
+      i > index && turn.role === "user");
+    const assistantAfterChoice = before.slice(
+      index + 1, nextCustomerIndex < 0 ? before.length : nextCustomerIndex
+    );
     if (!assistantAfterChoice.length || assistantAfterChoice.length > 4 ||
         assistantAfterChoice.some(turn =>
           turn.role !== "assistant" || isVerifiedStaffTurn(turn) ||
@@ -174,6 +178,20 @@ function resolveContinuedTreatmentPriceService({
   return null;
 }
 
+// Narrow legacy-safe case: the current amount question immediately follows
+// the FIRST customer-authored treatment selection, with only recent automated
+// assistant replies/photos between them. Unlike the extended assessment thread,
+// there may be no intervening customer turns and no staff messages.
+function resolveRecentFirstTreatmentPriceService(args = {}) {
+  const turns = (Array.isArray(args.conversationHistory) ?
+    args.conversationHistory : []).filter(x =>
+    x?.role === "user" || x?.role === "assistant");
+  if (turns.filter(x => x.role === "user").length !== 2 ||
+      turns.at(0)?.role !== "user" ||
+      turns.at(-1)?.role !== "user") return null;
+  return resolveContinuedTreatmentPriceService(args);
+}
+
 function resolveVerifiedPriceFollowUpService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
   promotions = [], allowContinuedPriceContext = false,
@@ -189,6 +207,13 @@ function resolveVerifiedPriceFollowUpService({
     });
     if (continued) return continued;
   }
+  // Applies in Off/Shadow only to the first customer-selected treatment
+  // and its immediately following direct price question. This does not
+  // activate the broader multi-turn assessment recovery.
+  const firstPrice = resolveRecentFirstTreatmentPriceService({
+    customerText: current, conversationHistory, services, serviceAliases, promotions,
+  });
+  if (firstPrice) return firstPrice;
   const candidates = serviceCandidates(services, serviceAliases);
   // A current multi-service or mixed-treatment enquiry is not a short,
   // service-free follow-up. Do not fall back to an older service.
@@ -256,4 +281,5 @@ module.exports = {
   isContextualPriceReference, isContinuedTreatmentPriceQuestion,
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
+  resolveRecentFirstTreatmentPriceService,
 };
