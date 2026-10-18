@@ -75,3 +75,51 @@ For the Neutro regression, replay an inbound customer enquiry naming
 should classify the request as a price enquiry for 3D and use the configured
 RM488 trial promotion. Before enabling production, verify that the promo image,
 caption, validity and amount match the clinic's approved offering.
+
+## Single approved decision for customer-facing pricing
+
+`src/utils/approvedPricingDecision.js` is the final pricing authorization
+between model/context extraction and customer-facing content. A single
+approved decision supplies the verified treatment, package names and MYR
+amounts to the assessment-first reply guard, quote formatter and promotional
+graphic selector. No downstream component should invent a different price,
+change the chosen package, or independently veto a valid approved treatment.
+
+**Rollout safety:** In Enabled mode, the verified AI-led pricing decision can
+authorize a quote. In Shadow mode, the model's observation is still **not**
+authorization: only the separately verified, staff-safe Shadow exception,
+numbered pricing-menu selection, or scoped package continuation may affect the
+customer reply. A rejected/clinical/staff-taken-over/booking/marketing-opt-out
+turn never obtains approval. The complimentary introductory assessment remains
+separate from charged treatment packages.
+
+The shared decision does **not** bypass provider guards, WhatsApp Strict RM0,
+the 24-hour conversation window, marketing permission, customer/staff ownership,
+accepted-media URL duplicate checks, or unconfirmed-delivery holds. Those are
+side-effect protections, not extra treatment-price classifiers.
+
+Structured `[Pricing authority]` logs report the per-inbound observed-versus-
+approved outcome and verified source. The logs are **not** a delivery receipt;
+the existing durable result-media decision and WhatsApp queue audits remain
+the source of truth for image outcomes.
+
+### Regression turn shapes
+
+- #93: Existing staff history from an old session; a new customer-chosen 骨盆
+  discussion, two result photos, then `疗程多少钱`. Current-session Shadow
+  verification must supply both current pelvic packages without a second
+  "which treatment?" reply.
+- #524: Customer-named 3D, result image and automated follow-up, then
+  `大概需要做几次呢？价钱呢？`. When its treatment is independently
+  approved, reply and graphic must use the same 3D RM488.
+- #525: Pelvic ad, `什么价钱呢？`, numbered service list, `1`, one
+  address question, then `想了解是什么价钱先呢？`. Preserve only genuinely
+  verified context; never infer that a bare number always means pelvic.
+- #532: Pelvic after result pictures, `请问一次收费是多少呢`, numbered
+  menu `1`. Clinical review and malformed AI output must still be
+  handled by the independently verified menu path, not unverified guesses.
+
+A real WhatsApp provider send and a Render deployment smoke test are still
+required before turning on Enabled for Neutro. Leave its production
+`aiPricingIntentMode=shadow` and `assessmentFirstPricingEnabled=true`
+until the test and independent review pass.
