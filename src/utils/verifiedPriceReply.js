@@ -248,6 +248,26 @@ function nonPriceExplanation(reply) {
   return kept.slice(0, 3).join("\n").slice(0, 340).trim();
 }
 
+// Compound price + session/duration questions must not retain model-authored
+// session counts or guaranteed treatment outcomes (e.g. "三次一定见效").
+// Offer deterministic, individualized assessment guidance instead.
+const SESSION_OR_DURATION_QUESTION =
+  /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|多久|多长|多長|\bhow\s+many\s+sessions?\b|\bhow\s+long\b|\bberapa\s+(?:kali|sesi|lama)\b)/iu;
+
+function safeNonPriceExplanation(customerText, original, language) {
+  if (!SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))) {
+    return nonPriceExplanation(original);
+  }
+  const locale = String(language || "zh").toLowerCase();
+  if (locale.startsWith("ms")) {
+    return "Bilangan sesi atau tempoh rawatan bergantung pada keadaan individu dan perlu dinilai oleh pengamal terlebih dahulu.";
+  }
+  if (locale.startsWith("en")) {
+    return "The number of sessions or treatment duration depends on your individual needs and should be assessed by the practitioner.";
+  }
+  return "具体做几次需要中医师评估后确认，护理时间也会根据个人情况而有所不同。";
+}
+
 // If Gemini ignores an already verified price question, reply using active
 // configured package prices. Do not depend on optional images being sent: the
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
@@ -298,7 +318,7 @@ function ensureVerifiedPriceReply({
     if (!priceRequested && !mediaPromise && !unsolicitedAmount) {
       return { reply: original, restored: false };
     }
-    const safeText = nonPriceExplanation(original);
+    const safeText = safeNonPriceExplanation(customerText, original, language);
     const locale = String(language || "").toLowerCase();
     if (!priceRequested) {
       const fallback = locale.startsWith("ms") ? "Boleh saya bantu terangkan rawatan ini 😊"
@@ -358,7 +378,7 @@ function ensureVerifiedPriceReply({
           : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
       return { reply: text, restored: true };
     }
-    const safeInfo = hasClinicalMediaRisk(customerText) ? "" : nonPriceExplanation(original);
+    const safeInfo = hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language);
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
       : locale.startsWith("en")
@@ -393,19 +413,14 @@ function ensureVerifiedPriceReply({
   // "which treatment?" clarification. The verified quote already answers it.
   // A verified, customer-selected package-list continuation must not
   // re-append Gemini's unrelated clinic-wide service catalog.
-  // An explicit two-part question still deserves its non-price answer:
-  // "大概需要做几次呢？价钱呢？". Strip model-generated prices,
-  // delivery promises and commercial claims, but keep useful advice on
-  // duration/session counts without fabricating a fixed treatment plan.
-  // Bare digit/menu/ad-price follow-ups remain price-only.
+  // Preserve the second question using deterministic clinical guidance,
+  // not an unchecked model efficacy or fixed-session promise.
   const independentServiceQuestion =
-    /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|多久|多长|多長|(?:how\s+many\s+sessions?|how\s+long)|berapa\s+(?:kali|sesi|lama))/iu.test(
-      String(customerText || "")
-    );
+    SESSION_OR_DURATION_QUESTION.test(String(customerText || ""));
   const explanation = hasClinicalMediaRisk(customerText) ||
-    (priceOnlyResponse === true && !independentServiceQuestion) ||
-    (aiLed && pricingDecision.source === "meta_ad" && !independentServiceQuestion)
-      ? "" : nonPriceExplanation(original);
+    ((priceOnlyResponse === true ||
+      (aiLed && pricingDecision.source === "meta_ad")) && !independentServiceQuestion)
+      ? "" : safeNonPriceExplanation(customerText, original, language);
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
   return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }
