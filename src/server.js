@@ -1379,6 +1379,8 @@ async function processIncomingMessage(
     // body treatment is ambiguous. When no treatment price is independently
     // verified, clarify the two fees rather than claiming all care is free.
     if (!flagged && !marketingStopQuestion && !shadowPriceException &&
+        clinicConfig.businessType === "tcm_clinic" &&
+        clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true &&
         !pricingDecision?.prices?.length && !verifiedPriceService) {
       const feeClarification = ambiguousAssessmentOrTreatmentFeeReply(
         text, history, mediaLanguage
