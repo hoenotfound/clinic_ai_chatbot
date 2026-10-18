@@ -227,7 +227,7 @@ test("no verified numeric-menu price returns a clear confirmation in Enabled mod
     customerText: "1", reply: "我帮你核对这项疗程的最新配套价格 😊",
     treatment: "骨盆调理", verifiedNumberedSelection: "骨盆调理",
     pricingDecision: null, priceOnlyResponse: true,
-    promotions: [], ...options, language: "zh",
+    ...options, promotions: [], language: "zh",
   });
   assert.equal(reply.restored, true);
   assert.match(reply.reply, /骨盆调理.*价格需要由门店/u);
