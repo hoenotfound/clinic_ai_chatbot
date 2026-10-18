@@ -1303,6 +1303,10 @@ async function processIncomingMessage(
       ? (clinicConfig.services || []).find(
           service => service.name === approvedPricingDecision?.treatment
         ) || null
+      : aiPricingMode === "off" && (scopedPackagePrice || numberedPricingSelection)
+        ? (clinicConfig.services || []).find(s =>
+            s.name === (scopedPackagePrice?.treatment || numberedPricingSelection?.treatment)
+          ) || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
         ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
           resolveVerifiedPriceFollowUpService({
@@ -1314,6 +1318,9 @@ async function processIncomingMessage(
         : null;
     const clarifiedPriceService = pricingAuthorityRequired
       ? approvedPricingDecision?.clarifiedPriceService || null
+      : aiPricingMode === "off"
+        ? (scopedPackagePrice?.clarifiedPriceService ||
+            numberedPricingSelection?.treatment || null)
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
         ? resolveClarifiedPriceService({
             customerText: text, conversationHistory: history,
