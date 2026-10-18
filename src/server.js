@@ -1356,6 +1356,7 @@ async function processIncomingMessage(
         clarifiedPriceService,
         priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection || shadowPriceException),
         verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
+        verifiedShadowPriceService: shadowPriceException?.treatment || null,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
