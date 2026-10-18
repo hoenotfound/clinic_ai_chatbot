@@ -75,21 +75,26 @@ async function resolvePricePromotionForReply({
   wasPromoRecentlySent,
   hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
+  onSkip = null,
 }) {
+  const skip = (reason) => {
+    if (typeof onSkip === "function") onSkip(reason);
+    return null;
+  };
   // Questions about the separately verified FREE introductory experience
   // are not a request for paid treatment price graphics.
   if (isComplimentaryAssessmentFeeQuestion(
     customerText,
     clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
     conversationHistory
-  )) return null;
+  )) return skip("intro_assessment_fee");
   // Enabled mode uses one already-verified pricing result for both text and
   // media. Leave the old keyword-backed path intact for Off/Shadow clients.
   if (aiPricingEnabled && (
     !pricingDecision || pricingDecision.treatment !== treatment ||
     !Array.isArray(pricingDecision.prices) || !pricingDecision.prices.length ||
     !["price", "package_options"].includes(pricingDecision.type)
-  )) return null;
+  )) return skip("no_approved_pricing_decision");
   const clarificationService = aiPricingEnabled
     ? pricingDecision.clarifiedPriceService
     : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -127,7 +132,13 @@ async function resolvePricePromotionForReply({
     hasClinicalMediaRisk(customerText) ||
     !treatment || flagged || bookingReady || keywordReason ||
     needsAttention || textSendSucceeded !== true
-  ) return null;
+  ) return skip(
+    flagged || keywordReason ? "safety_or_review" :
+    bookingReady ? "booking_ready" :
+    needsAttention ? "staff_review_or_takeover" :
+    textSendSucceeded !== true ? "text_not_accepted" :
+    legacyBlocked ? "price_intent_unverified" : "treatment_or_clinical_media_block"
+  );
 
   const verifiedContinuedService =
     (aiPricingEnabled === true && pricingDecision?.treatment === treatment) ||
@@ -145,14 +156,14 @@ async function resolvePricePromotionForReply({
   }) || (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
     unpricedRelatedPrimary({
       customerText, conversationHistory, services, serviceAliases, resultMedia,
-    })))) return null;
+    })))) return skip("related_treatment_conflict");
 
   const genericBundle = getPricePromotionBundle(
     promotions,
     treatment,
     null
   );
-  if (!genericBundle) return null;
+  if (!genericBundle) return skip("no_active_promotion_graphic");
 
   let bundle;
   if (aiPricingEnabled) {
@@ -160,24 +171,24 @@ async function resolvePricePromotionForReply({
     // choose package options a second time for the image path.
     const approved = new Set(pricingDecision.prices.map(option => option.name));
     const selected = genericBundle.packages.filter(option => approved.has(option.name));
-    if (selected.length !== approved.size) return null;
+    if (selected.length !== approved.size) return skip("approved_package_media_mismatch");
     // An explicit comparison of multiple named packages should receive text
     // only, not a large automatic image blast.
-    if (findMentionedPromotionPackages(genericBundle.packages, customerText).length > 1) return null;
+    if (findMentionedPromotionPackages(genericBundle.packages, customerText).length > 1) return skip("multi_package_comparison_text_only");
     bundle = { ...genericBundle, packages: selected };
   } else if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
     const verified = verifiedPricesForService(
       treatment, promotions, customerText, conversationHistory,
       { clarifiedPriceService: clarificationService }
     );
-    if (!verified?.length) return null;
+    if (!verified?.length) return skip("active_price_unverified");
     const requested = requestedPricePackages(
       genericBundle.packages, customerText, conversationHistory,
       { clarifiedPriceService: clarificationService, treatment }
     );
     const approved = new Set(verified.map(option => option.name));
     if (approved.size !== requested.length ||
-        requested.some(option => !approved.has(option.name))) return null;
+        requested.some(option => !approved.has(option.name))) return skip("package_price_mismatch");
     bundle = { ...genericBundle, packages: requested };
   } else {
     // Preserve the original fail-closed policy for clients that do not use
@@ -185,13 +196,13 @@ async function resolvePricePromotionForReply({
     const mentionedPackages = findMentionedPromotionPackages(
       genericBundle.packages, customerText
     );
-    if (mentionedPackages.length > 1) return null;
+    if (mentionedPackages.length > 1) return skip("ambiguous_packages");
     const recentContext = mentionedPackages.length === 0
       ? recentCustomerPackageContext(
           genericBundle.packages, conversationHistory, customerText
         )
       : { packages: [], ambiguous: false };
-    if (recentContext.ambiguous) return null;
+    if (recentContext.ambiguous) return skip("ambiguous_previous_package");
     const contextualPackage =
       mentionedPackages[0] || recentContext.packages[0] || null;
     const selectedOption = contextualPackage?.name || null;
@@ -199,13 +210,13 @@ async function resolvePricePromotionForReply({
       ? getPricePromotionBundle(promotions, treatment, selectedOption)
       : genericBundle;
   }
-  if (!bundle) return null;
+  if (!bundle) return skip("no_matching_promotion_package");
 
   // Missing verification must never mean permission to retry a possibly
   // accepted image. Keep the AI text reply independent of this optional send.
   if (typeof wasPromoRecentlySent !== "function" ||
       typeof hasUnconfirmedMediaDelivery !== "function" || !contactId) {
-    return null;
+    return skip("delivery_verification_unavailable");
   }
 
   const unsentPackages = [];
@@ -219,24 +230,24 @@ async function resolvePricePromotionForReply({
       // two-package offer cannot be sent as a misleading partial bundle.
       try {
         if (await hasUnconfirmedMediaDelivery(contactId, variant.imageUrl)) {
-          return null;
+          return skip("unconfirmed_media_delivery");
         }
       } catch (error) {
         // This is optional sales media; an unavailable receipt lookup must
         // not fail the already-accepted AI text reply or permit a duplicate.
         console.warn("Skipping promotional images: delivery verification unavailable", error);
-        return null;
+        return skip("delivery_verification_failed");
       }
-      if (
-        await wasPromoRecentlySent(
-          contactId,
-          variant.imageUrl,
-          variant.caption,
-          duplicateWindowHours
-        )
-      ) {
-        recentlySent = true;
-        break;
+      try {
+        if (await wasPromoRecentlySent(
+          contactId, variant.imageUrl, variant.caption, duplicateWindowHours
+        )) {
+          recentlySent = true;
+          break;
+        }
+      } catch (error) {
+        console.warn("Skipping promotional images: duplicate lookup unavailable", error);
+        return skip("duplicate_lookup_failed");
       }
     }
     if (!recentlySent) {
@@ -246,7 +257,7 @@ async function resolvePricePromotionForReply({
 
   return unsentPackages.length > 0
     ? { ...bundle, packages: unsentPackages }
-    : null;
+    : skip("all_graphics_already_sent");
 }
 
 // Verified pricing paths identify an already sent picture by its media URL,
