@@ -24,7 +24,7 @@ const ADMIN_FEE =
 
 // This routine is intentionally narrower than general AI intent recognition:
 // - a recent, DB-timestamped user price question;
-// - an intervening request for a treatment list;
+// - a direct bot pricing menu OR an intervening treatment-list request;
 // - an assistant-authored, numbered menu ending in a pricing clarification;
 // - a single digit that maps to one currently configured service.
 // If any evidence is missing, the ordinary conversation route takes over.
@@ -36,12 +36,20 @@ function resolveNumberedPricingMenuSelection({
   if (!NUMBER.test(number) || hasClinicalMediaRisk(number)) return null;
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
     .filter(entry => entry?.role === "assistant" || entry?.role === "user");
-  if (turns.length < 5) return null;
-  const current = turns.at(-1), menu = turns.at(-2), listRequest = turns.at(-3);
+  if (turns.length < 3) return null;
+  const current = turns.at(-1), menu = turns.at(-2), previous = turns.at(-3);
+  // Either:
+  //   price question -> bot's numbered pricing menu -> chosen digit, OR
+  //   price question -> bot clarification -> customer requests options ->
+  //   bot's numbered pricing menu -> chosen digit.
+  // Never accept a digit based solely on an old menu or a verified ad.
+  const directPriceMenu = previous?.role === "user" &&
+    hasExplicitPriceRequest(pricingMessageText(previous));
+  const requestedList = previous?.role === "user" &&
+    TREATMENT_LIST_REQUEST.test(pricingMessageText(previous));
   if (current?.role !== "user" || pricingMessageText(current).trim() !== number ||
       menu?.role !== "assistant" || isVerifiedStaffTurn(menu) ||
-      listRequest?.role !== "user" ||
-      !TREATMENT_LIST_REQUEST.test(pricingMessageText(listRequest))) return null;
+      (!directPriceMenu && !requestedList)) return null;
   const menuText = pricingMessageText(menu);
   if (!PRICE_MENU_QUESTION.test(menuText.slice(-170))) return null;
   const options = [...menuText.matchAll(MENU_ENTRY)];
@@ -79,21 +87,27 @@ function resolveNumberedPricingMenuSelection({
   if (findServicesInText(treatmentDescription, candidates)
     .some(name => name !== selected.name)) return null;
 
-  const beforeMenu = turns.slice(0, -3);
-  const earlierCustomer = beforeMenu.map((turn, index) =>
-    turn.role === "user" ? index : -1).filter(index => index !== -1).at(-1);
-  if (earlierCustomer == null) return null;
-  const earlierPrice = pricingMessageText(beforeMenu[earlierCustomer]).trim();
-  if (!hasExplicitPriceRequest(earlierPrice) ||
-      hasClinicalMediaRisk(earlierPrice) || ADMIN_FEE.test(earlierPrice) ||
-      !isRecentPricingThread(turns, earlierCustomer, now)) return null;
+  if (directPriceMenu) {
+    const amountText = pricingMessageText(previous).trim();
+    if (hasClinicalMediaRisk(amountText) || ADMIN_FEE.test(amountText) ||
+        !isRecentPricingThread(turns, turns.length - 3, now)) return null;
+  } else {
+    const beforeMenu = turns.slice(0, -3);
+    const earlierCustomer = beforeMenu.map((turn, index) =>
+      turn.role === "user" ? index : -1).filter(index => index !== -1).at(-1);
+    if (earlierCustomer == null) return null;
+    const earlierPrice = pricingMessageText(beforeMenu[earlierCustomer]).trim();
+    if (!hasExplicitPriceRequest(earlierPrice) ||
+        hasClinicalMediaRisk(earlierPrice) || ADMIN_FEE.test(earlierPrice) ||
+        !isRecentPricingThread(turns, earlierCustomer, now)) return null;
 
-  // An authenticated staff turn, another customer topic, or ambiguous media
-  // between the price request and this menu ends the carryover.
-  const bridge = turns.slice(earlierCustomer + 1, -3);
-  if (bridge.length > 2 || bridge.some(turn =>
-    turn.role !== "assistant" || isVerifiedStaffTurn(turn) ||
-    !pricingMessageText(turn).trim())) return null;
+    // Staff, unrelated topics and ambiguous media between a customer's
+    // original price enquiry and a requested treatment menu end carryover.
+    const bridge = turns.slice(earlierCustomer + 1, -3);
+    if (bridge.length > 2 || bridge.some(turn =>
+      turn.role !== "assistant" || isVerifiedStaffTurn(turn) ||
+      !pricingMessageText(turn).trim())) return null;
+  }
   return { treatment: selected.name, source: "numbered_price_menu" };
 }
 
