@@ -955,6 +955,7 @@ async function processIncomingMessage(
         metaAdContext = await loadMetaAdReplyContext(contact.id, {
           services: clinicConfig.services,
           aliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
         });
         metaAdCreativeService = resolveMetaAdCreativeService(
           metaAdContext,
@@ -1762,6 +1763,7 @@ async function processIncomingMessage(
               const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
                 services: clinicConfig.services,
                 aliases: clinicConfig.serviceAliases,
+                promotions: clinicConfig.promotions,
               });
               resultMediaCreativeService = resolveMetaAdCreativeService(
                 refreshedMetaAdContext,
