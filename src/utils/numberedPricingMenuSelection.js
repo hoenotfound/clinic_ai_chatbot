@@ -2,6 +2,7 @@
 
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const {
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
@@ -10,7 +11,10 @@ const {
 // A bare digit is an answer only to the bot's IMMEDIATELY preceding numbered
 // treatment menu. Neither ad names nor old CRM interest can reinterpret it.
 const NUMBER = /^[1-9]$/u;
-const MENU_ENTRY = /^\s*([1-9])\s*[.)、．]\s*([^：:\n]{2,90})\s*[：:]/gmu;
+// Rendered AI menus often use "1. 骨盆/体态调理（适合产后...）"
+ // without a colon. Match complete numbered lines; authorize from the
+ // verified heading only, never free-form assistant description text.
+const MENU_ENTRY = /^\s*([1-9])\s*[.)、．]\s*([^\r\n]{2,160})\s*$/gmu;
 const TREATMENT_LIST_REQUEST =
   /(?:哪[几幾种種项項]|有哪[几幾种種類]|有什[么麼](?:疗程|療程|服务|服務|项目|項目)|(?:what|which)\s+(?:treatments?|services?|options?)|(?:senarai|jenis)\s+(?:rawatan|servis))/iu;
 const PRICE_MENU_QUESTION =
@@ -50,13 +54,22 @@ function resolveNumberedPricingMenuSelection({
   // must never be reduced to its first treatment. The existing single
   // pelvic/posture menu label is an explicitly recognized description,
   // not permission to guess the first part of arbitrary mixed headings.
-  const heading = matching[0][2].trim();
+  const fullEntry = matching[0][2].trim();
+  // The description is informational, not an independent service choice.
+  // A line with multiple configured treatments remains ambiguous even when
+  // the first phrase looks like the usual pelvic label.
+  const dividerAt = fullEntry.search(/[：:（(]/u);
+  const heading = (dividerAt < 0 ? fullEntry : fullEntry.slice(0, dividerAt)).trim();
+  const description = dividerAt < 0 ? "" : fullEntry.slice(dividerAt);
   const singlePelvicDescription = /^骨盆\s*[\/／]\s*体态调理$/u.test(heading);
   if (/[\/／+＋&＆、]|(?:\s*及\s*|\s*和\s*|\s*与\s*)/u.test(heading) &&
       !singlePelvicDescription) return null;
   const resolvedText = singlePelvicDescription ? "骨盆调理" : heading;
   const selected = safeServiceFromCustomer(resolvedText, services, serviceAliases);
   if (!selected) return null;
+  const candidates = serviceCandidates(services, serviceAliases);
+  if (findServicesInText(description, candidates).some(name => name !== selected.name))
+    return null;
 
   const beforeMenu = turns.slice(0, -3);
   const earlierCustomer = beforeMenu.map((turn, index) =>
