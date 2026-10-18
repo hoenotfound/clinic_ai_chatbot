@@ -371,3 +371,134 @@ test("promotional selector returns specific skip-stage reasons, not silent nulls
   assert.equal(duplicate,null);
   assert.deepEqual(reasons,["all_graphics_already_sent"]);
 });
+
+
+test("price -> bot numbered menu -> 1 resolves without an extra list request", async()=>{
+  const now=Date.now();
+  const at=(role,content,ageSeconds)=>({
+    role,content,pricingCreatedAtMs:now-ageSeconds*1000,pricingStaffAuthored:false,
+  });
+  const flow=[
+    at("user","什么价钱呢？",90),
+    at("assistant","我们有以下疗程：\n1. 骨盆/体态调理（适合产后、久坐）\n2. 3D 小颜术（轮廓）\n你想了解哪项的价钱呢？",60),
+    at("user","1",30),
+  ];
+  const productionServices=[...services,{name:"产后调理"}];
+  const productionAliases=[...serviceAliases,{alias:"产后",officialService:"产后调理"}];
+  const selection=resolveNumberedPricingMenuSelection({
+    customerText:"1",conversationHistory:flow,
+    services:productionServices,serviceAliases:productionAliases,now,
+  });
+  assert.deepEqual(selection,{treatment:"骨盆调理",source:"numbered_price_menu"});
+  const prices=verifiedPricesForService(selection.treatment,promotions,"1",flow,{
+    clarifiedPriceService:selection.treatment,
+  });
+  const outcome=resolveApprovedPricingAssessment({
+    mode:"shadow",numberedMenuDecision:{
+      ...pelvicDecision,source:selection.source,prices,
+      clarifiedPriceService:selection.treatment,
+    },customerText:"1",conversationHistory:flow,
+    services:productionServices,serviceAliases:productionAliases,resultMedia:[],now,
+  });
+  assert.equal(outcome.reason,"approved");
+  assert.deepEqual(outcome.decision.prices.map(p=>p.price),["RM388","RM288"]);
+  const reply=ensureVerifiedPriceReply({
+    customerText:"1",reply:"你想了解哪项疗程？",
+    treatment:selection.treatment,pricingDecision:outcome.decision,
+    priceOnlyResponse:true,language:"zh",services:productionServices,
+    serviceAliases:productionAliases,promotions,conversationHistory:flow,
+  });
+  assert.match(reply.reply,/RM388/u);
+  assert.match(reply.reply,/RM288/u);
+  const media=await resolvePricePromotionForReply(mediaOptions(
+    outcome.decision,"1",flow,{verifiedNumberedSelection:selection.treatment}
+  ));
+  assert.deepEqual(media?.packages.map(p=>p.name),["Package A","Package B"]);
+  for(const changed of [
+    [flow[0],{...flow[1],pricingStaffAuthored:true},flow[2]],
+    [{...flow[0],pricingCreatedAtMs:now-26*3600*1000},flow[1],flow[2]],
+    [at("user","评估收费多少？",90),flow[1],flow[2]],
+    [flow[0],flow[1],{...flow[2],pricingCreatedAtMs:null}],
+    [flow[0],at("assistant","不是菜单",60),flow[2]],
+  ]) {
+    assert.equal(resolveNumberedPricingMenuSelection({
+      customerText:"1",conversationHistory:changed,
+      services:productionServices,serviceAliases:productionAliases,now,
+    }),null);
+  }
+});
+
+test("current verified treatment choice overrides stale unpriced related topic, not current conflict",()=>{
+  const now=Date.now();
+  const at=(role,content,age)=>({role,content,pricingCreatedAtMs:now-age*1000});
+  const related=[{enabled:true,service:"骨盆调理",relatedServices:["徒手体态调理"]}];
+  const extendedServices=[...services,{name:"徒手体态调理",priceRange:""}];
+  const extendedAliases=[...serviceAliases,{alias:"整骨",officialService:"徒手体态调理"}];
+  const old=at("user","我想了解整骨",25*3600);
+  const menuSession=[
+    at("user","什么价钱呢？",90),
+    at("assistant","1. 骨盆/体态调理\n2. 3D 小颜术\n你想了解哪一项价格呢？",60),
+    at("user","1",30),
+  ];
+  const source={...pelvicDecision,source:"numbered_price_menu"};
+  const args={mode:"shadow",numberedMenuDecision:source,
+    customerText:"1",services:extendedServices,
+    serviceAliases:extendedAliases,resultMedia:related,now};
+  assert.equal(resolveApprovedPricingAssessment({
+    ...args,conversationHistory:[old,...menuSession],
+  }).reason,"approved");
+  assert.equal(resolveApprovedPricingAssessment({
+    ...args,conversationHistory:[at("user","整骨多少钱",120),...menuSession],
+  }).reason,"approved","current verified menu choice supersedes the earlier topic");
+  assert.equal(resolveApprovedPricingAssessment({
+    ...args,customerText:"整骨多少钱",conversationHistory:[old,...menuSession],
+  }).reason,"related_treatment_conflict");
+  const directChoice=[
+    at("user","整骨不适合我，想做骨盆调理",90),
+    at("assistant","好的，先评估适合程度",60),
+    at("user","多少钱？",30),
+  ];
+  assert.equal(resolveApprovedPricingAssessment({
+    mode:"enabled",aiDecision:{...pelvicDecision,source:"recent_customer"},
+    customerText:"多少钱？",conversationHistory:[old,...directChoice],
+    services:extendedServices,serviceAliases:extendedAliases,resultMedia:related,now,
+  }).reason,"approved");
+  assert.ok(pricingConflictHistory({
+    candidate:source,conversationHistory:[old,...menuSession],
+    services:extendedServices,serviceAliases:extendedAliases,now,
+  }).length <= 3);
+});
+
+test("mixed treatment-frequency and price question retains safe non-price guidance",()=>{
+  const result=ensureVerifiedPriceReply({
+    customerText:"大概需要做几次呢？价钱呢？",
+    reply:"具体做几次需要中医师评估后确认。\n价格我帮你核实。",
+    treatment:"3D 小颜术",pricingDecision:threeDDecision,
+    priceOnlyResponse:true,conversationHistory:history524,
+    services,serviceAliases,promotions,resultMedia:[],language:"zh",
+  });
+  assert.match(result.reply,/具体做几次需要中医师评估后确认/u);
+  assert.match(result.reply,/RM488/u);
+  assert.doesNotMatch(result.reply,/价格我帮你核实/u);
+  const standalone=ensureVerifiedPriceReply({
+    customerText:"价钱呢？",
+    reply:"你们也可以看看其他疗程。\n我发优惠图。",
+    treatment:"3D 小颜术",pricingDecision:threeDDecision,
+    priceOnlyResponse:true,conversationHistory:history524,
+    services,serviceAliases,promotions,resultMedia:[],language:"zh",
+  });
+  assert.doesNotMatch(standalone.reply,/看看其他疗程|我发优惠图/u);
+});
+
+test("central pricing approval reports specific stage reasons without raw chat in audit",()=>{
+  const normal={mode:"enabled",aiDecision:pelvicDecision,
+    customerText:"多少钱",conversationHistory:history93,...base};
+  assert.equal(resolveApprovedPricingAssessment(normal).reason,"approved");
+  assert.equal(resolveApprovedPricingAssessment({...normal,mode:"off"}).reason,"mode_off");
+  assert.equal(resolveApprovedPricingAssessment({...normal,marketingStopQuestion:true}).reason,"marketing_opt_out");
+  assert.equal(resolveApprovedPricingAssessment({...normal,flagged:true}).reason,"review_or_booking");
+  assert.equal(resolveApprovedPricingAssessment({...normal,customerText:"怀孕了多少钱"}).reason,"clinical_safety");
+  assert.equal(resolveApprovedPricingAssessment({...normal,aiDecision:null}).reason,"no_verified_candidate");
+  assert.equal(resolveApprovedPricingAssessment({...normal,aiDecision:{...pelvicDecision,treatment:"Invalid"}}).reason,"invalid_treatment_or_intent");
+  assert.equal(resolveApprovedPricingAssessment({...normal,aiDecision:{...pelvicDecision,prices:[]}}).reason,"active_price_unverified");
+});
