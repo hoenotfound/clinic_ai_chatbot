@@ -100,12 +100,15 @@ uses the new authorization; other original Shadow/Off conversations keep their
 legacy path. Related/unpriced treatment conflicts always reject approval,
 regardless of the decision's source label.
 
-The numbered selection handler accepts canonical numbered treatment headings
-with a colon or optional parenthetical explanation (for example,
-`1. 骨盆/体态调理（适合产后...）`). It still requires a recent trusted
-timestamped price-enquiry/list/menu/number sequence, no intervening staff
-response, and exactly one safe configured treatment for the selected entry.
-Multi-treatment headings and descriptions cannot authorize automatic pricing.
+The numbered selection handler accepts a directly requested treatment price
+followed by the bot's numbered pricing menu and a single-digit reply. A
+verified customer treatment-list request between the price and menu remains
+supported but is no longer mandatory. Both routes require strictly recent
+DB-timestamped messages, no intervening staff reply, exactly one configured
+treatment per chosen option, and no unrelated administrative/free-assessment
+fee question. Parenthetical audience descriptions (e.g. 适合产后) do not
+become a second treatment, but explicit mixed-treatment descriptions are
+rejected.
 
 The shared decision does **not** bypass provider guards, WhatsApp Strict RM0,
 the 24-hour conversation window, marketing permission, customer/staff ownership,
@@ -113,8 +116,12 @@ accepted-media URL duplicate checks, or unconfirmed-delivery holds. Those are
 side-effect protections, not extra treatment-price classifiers.
 
 Structured `[Pricing authority]` logs report observed-versus-approved
-decisions and sources. Migration 077 creates the staff-only
-`pricing_decision_audit` table, recording the pricing decision, whether the
+decisions, treatment sources and `approval_reason` codes such as
+`no_verified_candidate`, `active_price_unverified`,
+`related_treatment_conflict` and `clinical_safety`. The codes identify
+failures at the centralized authorization boundary, not every earlier
+source/creative validation stage. Migration 077 creates the staff-only
+`pricing_decision_audit` table, recording those stages, whether the
 accepted text contains the approved price, and whether promotion graphics
 were eligible (including the exact skip reason). The optional audit executes
 after the text-send outcome, is limited to pricing-related enquiries, and
@@ -122,6 +129,27 @@ does not gate Meta sends or inbound retry semantics. No raw message/phone/ad
 content is stored. For provider receipts and deferred/cancelled images, use
 the separate `result_media_decisions`, `whatsapp_result_media_queue` and
 message delivery statuses; eligibility does not imply delivery.
+
+
+### Context and compound-question safeguards
+
+Ad-context price checks share the same current customer monetary intent as
+the central price resolver, including `什么价钱呢？`, `价钱呢？` and
+`想了解是什么价钱先呢？`. The ad must still be independently verified
+(one configured treatment, fresh attribution, no competing current service,
+administrative fee, refusal, pricing objection, or broad price list).
+
+Approved treatment-conflict checks consider the bounded current DB-timestamped
+conversation. A new verified customer treatment choice, including selection
+from a new numbered menu, takes precedence over older unpriced/related
+treatment history. Current explicit conflicting treatment questions never gain
+approval. Legacy histories without trusted timestamps use conservative
+full-history conflict checks.
+
+Compound questions such as `大概需要做几次呢？价钱呢？` retain safe
+non-commercial, non-price advice from the drafted reply in addition to
+verified package amounts. No guessed charge, promotion-media delivery promise,
+or clinical guarantee is preserved merely because the customer asked twice.
 
 ### Regression turn shapes
 
