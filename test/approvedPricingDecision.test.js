@@ -235,8 +235,14 @@ test("representative #525/#532 menu formats resolve verified 1 through quote and
       turn("assistant",example.menu,45),
       turn("user","1",30),
     ];
+    // Production has 产后 -> 产后调理 as a separate alias. It must not
+    // reinterpret "适合产后" in the pelvic description as a second treatment.
+    const productionServices=[...services,{name:"产后调理",priceRange:""}];
+    const productionAliases=[...serviceAliases,
+      {alias:"产后",officialService:"产后调理"}];
     const selection=resolveNumberedPricingMenuSelection({
-      customerText:"1",conversationHistory:history,services,serviceAliases,now,
+      customerText:"1",conversationHistory:history,
+      services:productionServices,serviceAliases:productionAliases,now,
     });
     assert.deepEqual(selection,{treatment:"骨盆调理",source:"numbered_price_menu"},
       "real menu parser must select a single trusted pelvic treatment");
@@ -287,6 +293,16 @@ test("bare numbers never inherit ad, staff, expired or ambiguous menus",()=>{
   assert.equal(resolve([t("user","免费评估是多少钱",100),clarify,list,options,selected]),null);
   assert.equal(resolve([price,clarify,list,
     t("assistant","1. 骨盆/体态调理（3D 小颜术）\n2. 9D 逆龄抗衰\n你想了解哪项的价钱呢？",70),selected]),null);
+  // An explicit other *treatment* remains a conflict, unlike "适合产后".
+  const postpartumServices=[...services,{name:"产后调理"}];
+  const postpartumAliases=[...serviceAliases,
+    {alias:"产后",officialService:"产后调理"}];
+  const conflictingDescription=[price,clarify,list,
+    t("assistant","1. 骨盆/体态调理（包括产后调理）\n2. 3D 小颜术\n你想了解哪项的价钱呢？",70),selected];
+  assert.equal(resolveNumberedPricingMenuSelection({
+    customerText:"1",conversationHistory:conflictingDescription,
+    services:postpartumServices,serviceAliases:postpartumAliases,now,
+  }),null);
   assert.equal(approve({shadowException:null,aiDecision:{...pelvicDecision,source:"meta_ad"},
     customerText:"1"}),null);
 });
