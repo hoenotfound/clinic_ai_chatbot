@@ -129,7 +129,9 @@ async function resolvePricePromotionForReply({
     needsAttention || textSendSucceeded !== true
   ) return null;
 
-  const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+  const verifiedContinuedService =
+    (aiPricingEnabled === true && pricingDecision?.treatment === treatment) ||
+    verifiedNumberedSelection === treatment ||
     verifiedShadowPriceService === treatment ||
     resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
