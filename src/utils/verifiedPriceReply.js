@@ -317,7 +317,9 @@ function ensureVerifiedPriceReply({
   // anchor through a short postpartum *concern* answer. The generic
   // related-treatment guard otherwise mistakes "产后体态" for a request to
   // switch to the separate, unpriced 产后调理 service.
-  const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+  const verifiedContinuedService =
+    (aiLed && pricingDecision?.treatment === treatment) ||
+    verifiedNumberedSelection === treatment ||
     verifiedShadowPriceService === treatment ||
     resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
