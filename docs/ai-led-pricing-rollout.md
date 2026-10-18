@@ -146,10 +146,12 @@ treatment history. Current explicit conflicting treatment questions never gain
 approval. Legacy histories without trusted timestamps use conservative
 full-history conflict checks.
 
-Compound questions such as `大概需要做几次呢？价钱呢？` retain safe
-non-commercial, non-price advice from the drafted reply in addition to
-verified package amounts. No guessed charge, promotion-media delivery promise,
-or clinical guarantee is preserved merely because the customer asked twice.
+Compound questions such as `大概需要做几次呢？价钱呢？` return
+deterministic, practitioner-assessment guidance about session count or
+duration alongside the independently verified treatment prices. Model-written
+session counts, efficacy guarantees and permanent-result claims are never
+repeated in this branch. The same safeguard applies when verified amounts
+are unavailable; it does not promise to send optional images.
 
 ### Regression turn shapes
 
