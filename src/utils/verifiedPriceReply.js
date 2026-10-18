@@ -2,7 +2,7 @@
 
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
 const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
-const { isContextualPriceReference, resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
+const { isContextualPriceReference, resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
 const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
@@ -253,7 +253,7 @@ function nonPriceExplanation(reply) {
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
-  pricingDecision = undefined,
+  verifiedNumberedSelection = null, pricingDecision = undefined,
   priceRequested = false, priceOnlyResponse = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
@@ -302,10 +302,14 @@ function ensureVerifiedPriceReply({
   // anchor through a short postpartum *concern* answer. The generic
   // related-treatment guard otherwise mistakes "产后体态" for a request to
   // switch to the separate, unpriced 产后调理 service.
-  const verifiedContinuedService = allowContinuedPriceContext === true &&
-    resolveContinuedTreatmentPriceService({
+  const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+    resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
-    })?.name === treatment;
+    })?.name === treatment ||
+    (allowContinuedPriceContext === true &&
+      resolveContinuedTreatmentPriceService({
+        customerText, conversationHistory, services, serviceAliases, promotions,
+      })?.name === treatment);
   if (!original || !treatment ||
       !(aiLed ||
         hasExplicitPriceRequest(customerText, { treatment }) ||
