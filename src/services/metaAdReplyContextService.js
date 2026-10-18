@@ -1,5 +1,6 @@
 const leadAttributionRepo = require("../db/leadAttributionRepo");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
+const { getActivePromotions } = require("../utils/activePromotion");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 
 const FIELD_LIMITS = Object.freeze({
@@ -17,20 +18,31 @@ function cleanContextText(value, maxLength) {
   return text.slice(0, maxLength);
 }
 
-function normalizeMetaAdReplyContext(row, { services = [], aliases = [] } = {}) {
+function normalizeMetaAdReplyContext(row, { services = [], aliases = [], promotions = [] } = {}) {
   if (!row || row.source !== "meta_ads") return null;
   const headline = cleanContextText(row.headline, FIELD_LIMITS.headline);
   const body = cleanContextText(row.body, FIELD_LIMITS.body);
   const creativeMatches = matchingMetaAdCreativeServices({ headline, body }, services, aliases);
   const creativeService = resolveMetaAdCreativeService({ headline, body }, services, aliases);
-  // Only try an internal ad-name fallback when the creative has no service matches.
-  // Ambiguous creative cannot be overruled by internal ad metadata.
   const expandedAliases = (Array.isArray(aliases) ? aliases : []).flatMap((entry) =>
     splitConfiguredAlias(entry?.alias).map((alias) => ({ ...entry, alias }))
   );
-  const nameService = creativeMatches.length === 0
-    ? inferConfiguredServiceFromText(row.ad_name, { services, serviceAliases: expandedAliases })
-    : null;
+  const nameCandidate = inferConfiguredServiceFromText(
+    row.ad_name, { services, serviceAliases: expandedAliases }
+  );
+  // If the creative references a specific advertised treatment AND an
+  // unpriced general technique, an independently matched current ad name
+  // may identify the primary treatment. Never break a tie between two
+  // separately promoted services, or contradict the actual creative.
+  const activePriced = new Set(getActivePromotions(promotions)
+    .filter(p => p?.sendOnPriceQuery === true)
+    .map(p => p.linkedService));
+  const verifiedTie = creativeMatches.length === 2 &&
+    creativeMatches.includes(nameCandidate) &&
+    activePriced.has(nameCandidate) &&
+    creativeMatches.every(name => name === nameCandidate || !activePriced.has(name));
+  const nameService = creativeMatches.length === 0 || verifiedTie
+    ? nameCandidate : null;
   // A CRM lead's treatment_interest may have been entered by staff or
   // inferred from a different conversation. Its exact spelling does NOT
   // verify the current ad. Prefer an honest generic reply until this lead's
@@ -187,13 +199,13 @@ function resolveMetaAdCreativeService(context, services = [], aliases = []) {
 }
 async function loadMetaAdReplyContext(
   contactId,
-  { repo = leadAttributionRepo, services = [], aliases = [] } = {}
+  { repo = leadAttributionRepo, services = [], aliases = [], promotions = [] } = {}
 ) {
   const id = Number(contactId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
 
   const row = await repo.getForContactCurrentLead(id);
-  return normalizeMetaAdReplyContext(row, { services, aliases });
+  return normalizeMetaAdReplyContext(row, { services, aliases, promotions });
 }
 
 module.exports = {
