@@ -1250,7 +1250,7 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
-            allowContinuedPriceContext: true,
+            allowContinuedPriceContext: aiPricingEnabled,
           })
         : null;
 
@@ -1297,7 +1297,7 @@ async function processIncomingMessage(
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
             promotions: clinicConfig.promotions,
-            allowContinuedPriceContext: true,
+            allowContinuedPriceContext: aiPricingEnabled,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
@@ -1316,6 +1316,7 @@ async function processIncomingMessage(
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
         priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection),
+        verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
@@ -1326,7 +1327,7 @@ async function processIncomingMessage(
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
         language: mediaLanguage,
-        allowContinuedPriceContext: true,
+        allowContinuedPriceContext: aiPricingEnabled,
       });
       if (priced.restored) {
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
