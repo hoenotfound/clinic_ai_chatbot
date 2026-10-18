@@ -31,8 +31,9 @@ const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger
 const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
+const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -925,6 +926,15 @@ async function processIncomingMessage(
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
+    // Treat a digit as a pricing choice only when it answers a recent,
+    // assistant-authored numbered service menu in an active price thread.
+    // This avoids Gemini timeout/fallback and spurious clinical reviews for "1".
+    const numberedPricingSelection = !keywordReason && !marketingStopQuestion &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? resolveNumberedPricingMenuSelection({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        }) : null;
 
     if (urgentSafety || isActiveSafetyConcern(text)) {
       flagged = true;
@@ -974,27 +984,35 @@ async function processIncomingMessage(
       } catch (bookingContextErr) {
         console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
       }
-      const rawAiReply = await ai.getReply(replyHistory, {
-        bookingContext,
-        contactId: contact.id,
-        isFirstMessage,
-        generateFirstIntro,
-        channel,
-        metaAdContext,
-      });
-      const parsedReply = parseAiReplyResult(rawAiReply);
-      ({
-        text: aiReply,
-        flagged,
-        reviewRequired,
-        reviewType,
-        bookingReady,
-        serviceQuery,
-        serviceQuerySource,
-        priceQuery,
-        packageQuery,
-        details,
-      } = parsedReply);
+      if (numberedPricingSelection) {
+        // This is an independently verified customer choice, not an inferred
+        // model outcome. Price and media remain subject to downstream guards.
+        aiReply = "我帮你核对这项疗程的最新配套价格 😊";
+        priceQuery = true;
+        details = { treatment: numberedPricingSelection.treatment };
+      } else {
+        const rawAiReply = await ai.getReply(replyHistory, {
+          bookingContext,
+          contactId: contact.id,
+          isFirstMessage,
+          generateFirstIntro,
+          channel,
+          metaAdContext,
+        });
+        const parsedReply = parseAiReplyResult(rawAiReply);
+        ({
+          text: aiReply,
+          flagged,
+          reviewRequired,
+          reviewType,
+          bookingReady,
+          serviceQuery,
+          serviceQuerySource,
+          priceQuery,
+          packageQuery,
+          details,
+        } = parsedReply);
+      }
 
       // A model can miss a clear complaint, refund or legal escalation.
       // These need staff ownership, unlike a single unknown FAQ.
@@ -1178,8 +1196,20 @@ async function processIncomingMessage(
     // enquiry, but cannot override a later customer treatment switch.
     // The model already returns priceQuery/packageQuery and treatment. Resolve
     // one verified decision for reply text and optional promotional media.
+    const numberedPrices = numberedPricingSelection
+      ? verifiedPricesForService(
+          numberedPricingSelection.treatment, clinicConfig.promotions,
+          text, history, { clarifiedPriceService: numberedPricingSelection.treatment }
+        ) : null;
+    const numberedPricingDecision = numberedPrices?.length
+      ? {
+          type: "price", treatment: numberedPricingSelection.treatment,
+          source: "numbered_price_menu",
+          clarifiedPriceService: numberedPricingSelection.treatment,
+          prices: numberedPrices, servicePrice: null,
+        } : null;
     const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
-      ? scopedPackagePrice || resolveAiPricingDecision({
+      ? (numberedPricingSelection ? numberedPricingDecision : scopedPackagePrice || resolveAiPricingDecision({
           priceQuery, packageQuery, treatment: details?.treatment || null,
           customerText: text, conversationHistory: history,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
@@ -1188,7 +1218,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
-        })
+        }))
       : null;
     if (aiPricingMode === "shadow") {
       console.info("[AI pricing shadow] contact=" + contact.id +
@@ -1198,6 +1228,7 @@ async function processIncomingMessage(
     }
     // Keep all established legacy clarification paths in Off/Shadow modes.
     const clarifiedPriceService = scopedPackagePrice?.clarifiedPriceService ||
+      numberedPricingSelection?.treatment ||
       (aiPricingEnabled
       ? pricingDecision?.clarifiedPriceService || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -1207,6 +1238,8 @@ async function processIncomingMessage(
           }) : null);
     const verifiedPriceService = scopedPackagePrice
       ? (clinicConfig.services || []).find(s => s.name === scopedPackagePrice.treatment) || null
+      : numberedPricingSelection
+      ? (clinicConfig.services || []).find(s => s.name === numberedPricingSelection.treatment) || null
       : aiPricingEnabled
       ? (clinicConfig.services || []).find(
           service => service.name === pricingDecision?.treatment
@@ -1217,7 +1250,7 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
-            allowContinuedPriceContext: aiPricingEnabled,
+            allowContinuedPriceContext: true,
           })
         : null;
 
@@ -1264,7 +1297,7 @@ async function processIncomingMessage(
             requireVerifiedTreatment: true,
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
             promotions: clinicConfig.promotions,
-            allowContinuedPriceContext: aiPricingEnabled,
+            allowContinuedPriceContext: true,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
@@ -1282,7 +1315,7 @@ async function processIncomingMessage(
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
-        priceOnlyResponse: Boolean(scopedPackagePrice),
+        priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection),
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
@@ -1293,7 +1326,7 @@ async function processIncomingMessage(
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
         resultMedia: clinicConfig.resultMedia, conversationHistory: history,
         language: mediaLanguage,
-        allowContinuedPriceContext: aiPricingEnabled,
+        allowContinuedPriceContext: true,
       });
       if (priced.restored) {
         console.info("[Pricing] Restored confirmed active package amounts for a verified price enquiry.");
@@ -1544,6 +1577,7 @@ async function processIncomingMessage(
         metaAdContext,
         treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
+        verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
         customerText: text,
         conversationHistory: history,
         flagged,
