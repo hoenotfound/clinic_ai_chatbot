@@ -1696,8 +1696,9 @@ async function processIncomingMessage(
         const quotedApprovedPrices = approvedPricingDecision?.prices?.length
           ? approvedPricingDecision.prices.every(item => reply.includes(item.price))
           : false;
-        try {
-          await pricingDecisionAuditRepo.recordDecision({
+        // Fire-and-catch the optional audit: Neon latency must never hold
+        // up a WhatsApp/media send or delay an otherwise valid reply.
+        void pricingDecisionAuditRepo.recordDecision({
             contactId: contact.id,
             inboundMessageId: savedInbound.id,
             mode: aiPricingMode,
@@ -1713,10 +1714,9 @@ async function processIncomingMessage(
             mediaStatus: promoBundle ? "selected" : "skipped",
             mediaReason: promoBundle ? null : pricingMediaSkipReason,
             mediaPackagesSelected: Math.min(3, promoBundle?.packages?.length || 0),
+          }).catch(auditError => {
+            console.warn("[Pricing audit] Optional stage recording failed:", auditError);
           });
-        } catch (auditError) {
-          console.warn("[Pricing audit] Optional stage recording failed:", auditError);
-        }
       }
       if (promoBundle) {
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
