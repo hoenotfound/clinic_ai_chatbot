@@ -83,7 +83,35 @@ function complimentaryAssessmentFeeReply(language = "zh") {
   return "是的～我们中医师的1对1体态评估 + 体验是免费的 😊 如果之后选择正式疗程或其他付费配套，费用才会另外计算。";
 }
 
+// "How much?" after an invitation that discusses BOTH the introductory
+// assessment and paid hands-on care is ambiguous. Never quote an unrelated
+// pelvic package or describe a full treatment as free.
+function ambiguousAssessmentOrTreatmentFeeReply(customerText, conversationHistory = [], language = "en") {
+  const current = String(customerText || "").normalize("NFKC").trim();
+  if (!/^(?:how\s+much|berapa|brapa|brp|多少钱|多少錢|几多钱|幾多錢|几钱|幾錢)[\s?？。!！]*$/iu.test(current)) return null;
+  const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(x => x?.role === "user" || x?.role === "assistant");
+  const last = turns.at(-1), preceding = turns.at(-2);
+  if (!last || last.role !== "user" || String(last.content || "").trim() !== current ||
+      !preceding || preceding.role !== "assistant" ||
+      preceding.pricingStaffAuthored === true ||
+      STAFF_MESSAGE.test(String(preceding.content || "").trim())) return null;
+  const answer = String(preceding.content || "");
+  if (!ASSESSMENT.test(answer) || !INTRO_EXPERIENCE.test(answer) ||
+      !/(?:调理|調理|疗程|療程|护理|護理|放松|放鬆|treatment|rawatan)/iu.test(answer)) return null;
+  const stamp = last.pricingCreatedAtMs, previous = preceding.pricingCreatedAtMs;
+  if (!Number.isFinite(stamp) || !Number.isFinite(previous) ||
+      stamp < previous || stamp - previous > 24 * 60 * 60 * 1000) return null;
+  const locale = /^[a-z\s?!.]+$/iu.test(current) ? "en" : String(language || "").toLowerCase();
+  return locale.startsWith("ms") && /^(?:berapa|brapa|brp)/iu.test(current)
+    ? "Penilaian postur 1-ke-1 + sesi pengenalan adalah percuma 😊 Rawatan penuh adalah berasingan dan harganya perlu disahkan. Awak tanya tentang penilaian atau rawatan penuh?"
+    : locale.startsWith("en")
+      ? "Our 1-on-1 posture assessment + introductory experience is free 😊 A separate full treatment has its own price, which the centre can confirm. Did you mean the assessment or the full treatment?"
+      : "中医师的1对1体态评估 + 体验是免费的 😊 正式调理疗程会另外收费，价格需要门店确认。你想问的是免费评估体验，还是正式疗程的费用呢？";
+}
+
 module.exports = {
   isComplimentaryAssessmentFeeQuestion,
   complimentaryAssessmentFeeReply,
+  ambiguousAssessmentOrTreatmentFeeReply,
 };
