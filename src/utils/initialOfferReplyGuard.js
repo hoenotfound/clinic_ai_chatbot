@@ -1,5 +1,6 @@
-const { withPelvicSpellingAliases } = require("./pelvicSpellingAliases");
 "use strict";
+
+const { withPelvicSpellingAliases } = require("./pelvicSpellingAliases");
 
 const { pruneCoveredServiceMentions } = require("./serviceMentionResolution");
 const { relatedPricingConflict, configuredServiceMention, unpricedRelatedPrimary } = require("./relatedServicePolicy");
