@@ -1287,29 +1287,21 @@ async function processIncomingMessage(
         " source=" + (approvedPricingDecision?.source || "none") +
         " treatment=" + (approvedPricingDecision?.treatment || "none"));
     }
-    // Keep all established legacy clarification paths in Off/Shadow modes.
-    const clarifiedPriceService = approvedPricingDecision?.clarifiedPriceService ||
-      scopedPackagePrice?.clarifiedPriceService ||
-      numberedPricingSelection?.treatment ||
-      shadowPriceException?.treatment ||
-      (aiPricingEnabled
-      ? pricingDecision?.clarifiedPriceService || null
-      : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-        ? resolveClarifiedPriceService({
-            customerText: text, conversationHistory: history,
-            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-          }) : null);
-    const verifiedPriceService = approvedPricingDecision
-      ? (clinicConfig.services || []).find(s => s.name === approvedPricingDecision.treatment) || null
-      : scopedPackagePrice
-      ? (clinicConfig.services || []).find(s => s.name === scopedPackagePrice.treatment) || null
-      : numberedPricingSelection
-      ? (clinicConfig.services || []).find(s => s.name === numberedPricingSelection.treatment) || null
-      : shadowPriceException
-      ? (clinicConfig.services || []).find(s => s.name === shadowPriceException.treatment) || null
-      : aiPricingEnabled
+    // Enabled and independently verified Shadow exceptions MUST use the
+    // approved decision exclusively. A rejected candidate cannot re-enter the
+    // formatter/graphic selector through the former model/legacy fallbacks.
+    // Ordinary Shadow and Off enquiries retain their original legacy route.
+    const exceptionalPricingCandidate = Boolean(
+      shadowPriceException || numberedPricingSelection || scopedPackagePrice
+    );
+    const pricingAuthorityRequired = aiPricingEnabled || (
+      aiPricingMode === "shadow" && exceptionalPricingCandidate
+    );
+    const authorizedPricingInput = pricingAuthorityRequired
+      ? approvedPricingDecision : undefined;
+    const verifiedPriceService = pricingAuthorityRequired
       ? (clinicConfig.services || []).find(
-          service => service.name === pricingDecision?.treatment
+          service => service.name === approvedPricingDecision?.treatment
         ) || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
         ? safeServiceFromCustomer(text, clinicConfig.services, clinicConfig.serviceAliases) ||
@@ -1317,9 +1309,16 @@ async function processIncomingMessage(
             customerText: text, conversationHistory: history,
             services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             promotions: clinicConfig.promotions,
-            allowContinuedPriceContext: aiPricingEnabled,
+            allowContinuedPriceContext: false,
           })
         : null;
+    const clarifiedPriceService = pricingAuthorityRequired
+      ? approvedPricingDecision?.clarifiedPriceService || null
+      : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+        ? resolveClarifiedPriceService({
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          }) : null;
 
     let reply = isFirstMessage && !flagged && !generateFirstIntro
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
@@ -1382,15 +1381,23 @@ async function processIncomingMessage(
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
-        priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection || shadowPriceException),
-        verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
-        verifiedShadowPriceService: shadowPriceException?.treatment || null,
-        pricingDecision: approvedPricingDecision || (aiPricingEnabled ? pricingDecision : undefined),
+        priceOnlyResponse: pricingAuthorityRequired
+          ? Boolean(approvedPricingDecision && exceptionalPricingCandidate)
+          : false,
+        verifiedNumberedSelection: pricingAuthorityRequired
+          ? (approvedPricingDecision?.source === "numbered_price_menu"
+              ? approvedPricingDecision.treatment : null)
+          : numberedPricingSelection?.treatment || null,
+        verifiedShadowPriceService: pricingAuthorityRequired
+          ? (approvedPricingDecision && shadowPriceException
+              ? approvedPricingDecision.treatment : null)
+          : null,
+        pricingDecision: authorizedPricingInput,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
-        priceRequested: (aiPricingEnabled || Boolean(approvedPricingDecision)) &&
+        priceRequested: pricingAuthorityRequired &&
           hasCustomerRequestedPriceReply({
-            customerText: text, pricingDecision: approvedPricingDecision || pricingDecision,
+            customerText: text, pricingDecision: approvedPricingDecision,
           }),
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases, promotions: clinicConfig.promotions,
@@ -1657,13 +1664,20 @@ async function processIncomingMessage(
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
-        pricingDecision: approvedPricingDecision || (aiPricingEnabled ? pricingDecision : null),
-        aiPricingEnabled: Boolean(approvedPricingDecision) || aiPricingEnabled,
+        pricingDecision: pricingAuthorityRequired ? approvedPricingDecision : null,
+        aiPricingEnabled: pricingAuthorityRequired,
         metaAdContext,
-        treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
+        treatment: verifiedPriceService?.name ||
+          (pricingAuthorityRequired ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
-        verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
-        verifiedShadowPriceService: shadowPriceException?.treatment || null,
+        verifiedNumberedSelection: pricingAuthorityRequired
+          ? (approvedPricingDecision?.source === "numbered_price_menu"
+              ? approvedPricingDecision.treatment : null)
+          : numberedPricingSelection?.treatment || null,
+        verifiedShadowPriceService: pricingAuthorityRequired
+          ? (approvedPricingDecision && shadowPriceException
+              ? approvedPricingDecision.treatment : null)
+          : shadowPriceException?.treatment || null,
         customerText: text,
         conversationHistory: history,
         flagged,
@@ -1682,9 +1696,18 @@ async function processIncomingMessage(
         // when staff used an older caption than the current promotion copy.
         // Unverified legacy behaviour retains its existing matching rules.
         wasPromoRecentlySent: selectPromoDuplicateCheck({
-          aiPricingEnabled: Boolean(approvedPricingDecision) || aiPricingEnabled,
-          numberedPricingSelection, shadowPriceException,
-          scopedPackagePrice, messagesRepo,
+          aiPricingEnabled: pricingAuthorityRequired,
+          numberedPricingSelection: pricingAuthorityRequired
+            ? (approvedPricingDecision?.source === "numbered_price_menu"
+                ? numberedPricingSelection : null)
+            : numberedPricingSelection,
+          shadowPriceException: pricingAuthorityRequired
+            ? (approvedPricingDecision ? shadowPriceException : null)
+            : shadowPriceException,
+          scopedPackagePrice: pricingAuthorityRequired
+            ? (approvedPricingDecision ? scopedPackagePrice : null)
+            : scopedPackagePrice,
+          messagesRepo,
         }),
         hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
       });
