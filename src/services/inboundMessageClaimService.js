@@ -86,8 +86,11 @@ function createInboundMessageClaimService({
     const channel = incoming.channel || "whatsapp";
 
     // A clear stop/unsubscribe request is terminal for this inbound turn. Keep
-    // the customer's message durable and visible, mark it unread/attention,
-    // then complete its processing job without generating any outbound reply.
+    // the customer's message durable and visible, mark it unread, and finish
+    // processing without a reply. Consent is recorded separately; a routine
+    // opt-out must not create or overwrite a staff-attention flag (which would
+    // also send an urgent human-intervention notification). Preserve any
+    // existing, unrelated staff-attention reason.
     const optOutScope = customerOptOutScope(incoming);
     const socialStopEnforcedAtStore =
       ["facebook", "instagram"].includes(channel) &&
@@ -119,18 +122,6 @@ function createInboundMessageClaimService({
         // until it is recorded or explicitly surfaced for staff review.
         console.error(`Failed to record ${channel} opt-out for contact ${contact.id}:`, err);
         throw err;
-      }
-
-      try {
-        await contacts.setAttention(
-          contact.id,
-          true,
-          optOutScope === "marketing"
-            ? "Customer opted out of promotional messages. Do not send marketing until the customer opts in again."
-            : "Customer opted out of messages. Do not send proactive messages without a new explicit opt-in."
-        );
-      } catch (err) {
-        console.error(`Failed to flag ${channel} opt-out for contact ${contact.id}:`, err);
       }
 
       try {

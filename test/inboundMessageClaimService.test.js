@@ -311,13 +311,36 @@ test("WhatsApp opt-out completes its durable job without AI preparation", async 
     "contact",
     "claim",
     "event",
-    "attention",
     "unread",
     "completed",
   ]);
   assert.equal(calls.some((call) => call[0] === "processing-claim"), false);
   assert.equal(calls.some((call) => call[0] === "lead"), false);
   assert.equal(calls.some((call) => call[0] === "prepared"), false);
+});
+
+test("STOP preserves an existing staff handoff while suppressing new urgent notifications", async () => {
+  const policy = {
+    classifyOptOutText(text) {
+      return String(text || "").trim().toLowerCase() === "stop" ? "all" : null;
+    },
+    async recordOptOut() { return { id: 42 }; },
+  };
+  // setAttention is how a new Human Intervention Required alert is queued.
+  // Neither raising nor clearing it is appropriate when unrelated staff work
+  // may already be pending on a contact.
+  const { claim, calls } = makeService({ policy });
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-stop-with-staff-handoff",
+    from: "60123456789",
+    text: "STOP",
+    channel: "whatsapp",
+  });
+  await claim.prepareIncomingClaim(durable);
+  assert.deepEqual(calls.filter((call) => call[0] === "attention"), []);
+  assert.deepEqual(calls.filter((call) => call[0] === "unread"), [
+    ["unread", 42, true],
+  ]);
 });
 
 test("an unprepared recovered job keeps durable first-message state", async () => {
@@ -340,7 +363,7 @@ test("an unprepared recovered job keeps durable first-message state", async () =
   assert.equal(preparedCall[2], true);
 });
 
-test("WhatsApp marketing opt-out completes the durable job without creating a global opt-out", async () => {
+test("WhatsApp marketing opt-out completes without a global opt-out or urgent staff alert", async () => {
   const calls = [];
   const policy = {
     classifyOptOutText(text) {
@@ -357,7 +380,7 @@ test("WhatsApp marketing opt-out completes the durable job without creating a gl
       assert.fail("marketing-only opt-out must not record a global opt-out");
     },
   };
-  const { claim, wasCompleted } = makeService({ policy });
+  const { claim, calls: sideEffects, wasCompleted } = makeService({ policy });
 
   const durable = await claim.storeIncomingMessage({
     id: "wamid-stop-promotions",
@@ -371,6 +394,9 @@ test("WhatsApp marketing opt-out completes the durable job without creating a gl
   assert.equal(result, null);
   assert.equal(wasCompleted(), true);
   assert.deepEqual(calls, [["marketing-opt-out", 42, "customer_quick_reply"]]);
+  assert.deepEqual(sideEffects.map((call) => call[0]), [
+    "contact", "claim", "event", "unread", "completed",
+  ], "a routine marketing opt-out remains unread but does not request human intervention");
 });
 
 
@@ -394,6 +420,8 @@ for (const channel of ["facebook","instagram"]) {
     assert.equal(result,null);
     assert.equal(wasCompleted(),true);
     assert.deepEqual(records,[], "already enforced by the atomic social inbound INSERT");
+    assert.ok(calls.some(c=>c[0]==="unread"), "keep the opt-out visible in Inbox");
+    assert.equal(calls.some(c=>c[0]==="attention"),false, "no urgent staff alert");
     assert.equal(calls.some(c=>c[0]==="processing-claim"),false);
   });
 }
@@ -482,10 +510,12 @@ test("failed STOP persistence is never marked complete and is retried without an
   assert.equal(wasCompleted(),false);
   assert.ok(calls.some(x=>x[0]==="failed"));
   assert.equal(calls.some(x=>x[0]==="prepared"),false);
+  assert.equal(calls.some(x=>x[0]==="attention"),false);
   await claim.resumeProcessingJob({id:91});
   assert.equal(attempts,2);
   assert.equal(wasCompleted(),true);
   assert.equal(calls.some(x=>x[0]==="prepared"),false);
+  assert.equal(calls.some(x=>x[0]==="attention"),false, "recovery must not raise a human alert");
 });
 
 test("new CRM journeys check scope-compatible contact marketing consent without blocking replies",async()=>{
@@ -529,6 +559,7 @@ test("mixed marketing opt-out is recorded and a separate safe question reaches A
   assert.ok(result?.savedInbound, "service question remains available for an AI answer");
   assert.ok(calls.some((x) => x[0] === "prepared"));
   assert.equal(calls.some((x) => x[0] === "completed"), false);
+  assert.equal(calls.some((x) => x[0] === "attention"), false, "marketing refusal is not a handoff");
 });
 
 
@@ -554,6 +585,7 @@ for (const channel of ["facebook", "instagram"]) {
     assert.ok(prepared?.processingJobId);
     assert.equal(records.length, 0, "no replay/re-date of an already atomic STOP");
     assert.equal(calls.some((entry) => entry[0] === "prepared"), true);
+    assert.equal(calls.some((entry) => entry[0] === "attention"), false);
     assert.equal(wasCompleted(), false);
     // Simulate a process restart recovering this durable job. The persisted
     // marker ensures the same STOP is never applied a second time.
