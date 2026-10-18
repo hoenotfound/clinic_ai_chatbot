@@ -163,8 +163,10 @@ test("Shadow informational review is gated by staff/safety and live clinical-rev
   assert.match(source,/!keywordReason && !urgentSafety && !isActiveSafetyConcern\(text\)/u);
   assert.match(source,/!isExplicitStaffRequest\(text\) && !marketingStopQuestion/u);
   assert.match(source,/const shadowPriceException = aiPricingMode === "shadow"/u);
-  assert.match(source,/verifiedShadowPriceService: shadowPriceException\?\.treatment \|\| null/u);
-  assert.match(source,/priceOnlyResponse: Boolean\(scopedPackagePrice \|\| numberedPricingSelection \|\| shadowPriceException\)/u);
+  assert.match(source,/verifiedShadowPriceService: pricingAuthorityRequired/u);
+  assert.match(source,/approvedPricingDecision && shadowPriceException/u);
+  assert.match(source,/priceOnlyResponse: pricingAuthorityRequired/u);
+  assert.match(source,/Boolean\(approvedPricingDecision && exceptionalPricingCandidate\)/u);
 });
 
 
