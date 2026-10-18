@@ -44,6 +44,7 @@ const {
   planResultMediaPacing,
 } = require("./utils/resultMediaPacing");
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
+const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
@@ -1652,6 +1653,7 @@ async function processIncomingMessage(
     {
       // A directly named service or a one-turn standalone price follow-up
       // remains customer-verified; never trust a stale CRM/ad label.
+      let pricingMediaSkipReason = "not_evaluated";
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
@@ -1669,6 +1671,7 @@ async function processIncomingMessage(
         keywordReason,
         needsAttention: !(await contactsRepo.canSendAutomaticReviewMedia(contact.id)),
         textSendSucceeded: sendOutcome.sendResult.success,
+        onSkip: (reason) => { pricingMediaSkipReason = reason; },
         promotions: clinicConfig.promotions,
         services: clinicConfig.services,
         serviceAliases: clinicConfig.serviceAliases,
@@ -1685,6 +1688,36 @@ async function processIncomingMessage(
         }),
         hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
       });
+      // Store a stage summary only for pricing-related inbound turns.
+      // This optional write occurs after the text-send outcome is known and
+      // cannot affect accepted text, media sending or retry semantics.
+      if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
+          shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
+        const quotedApprovedPrices = approvedPricingDecision?.prices?.length
+          ? approvedPricingDecision.prices.every(item => reply.includes(item.price))
+          : false;
+        try {
+          await pricingDecisionAuditRepo.recordDecision({
+            contactId: contact.id,
+            inboundMessageId: savedInbound.id,
+            mode: aiPricingMode,
+            observed: Boolean(pricingDecision),
+            approved: Boolean(approvedPricingDecision),
+            treatment: approvedPricingDecision?.treatment || null,
+            decisionSource: approvedPricingDecision?.source || null,
+            replyStatus: !sendOutcome.sendResult.success ? "text_not_accepted"
+              : approvedPricingDecision ? (quotedApprovedPrices ? "approved_price_quoted"
+                : approvedPricingDecision.servicePrice && reply.includes(approvedPricingDecision.servicePrice)
+                  ? "approved_service_price_quoted" : "approved_quote_not_found")
+                : "legacy_or_no_approved_price",
+            mediaStatus: promoBundle ? "selected" : "skipped",
+            mediaReason: promoBundle ? null : pricingMediaSkipReason,
+            mediaPackagesSelected: Math.min(3, promoBundle?.packages?.length || 0),
+          });
+        } catch (auditError) {
+          console.warn("[Pricing audit] Optional stage recording failed:", auditError);
+        }
+      }
       if (promoBundle) {
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
         promotionImagesTruncated = !!pacedPromotions.reason;
