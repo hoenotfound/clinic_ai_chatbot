@@ -255,6 +255,10 @@ test("PR #352 verified price graphics deduplicate manual sends despite different
 test("media identity duplicate check is used in server's final outbound send path", () => {
   const source = fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   assert.match(source,/wasPromoRecentlySent:\s*selectPromoDuplicateCheck\(\{/u);
-  assert.match(source,/aiPricingEnabled,\s*numberedPricingSelection,\s*shadowPriceException,\s*scopedPackagePrice,\s*messagesRepo/u);
+  assert.match(source,/aiPricingEnabled: pricingAuthorityRequired/u);
+  assert.match(source,/numberedPricingSelection: pricingAuthorityRequired/u);
+  assert.match(source,/shadowPriceException: pricingAuthorityRequired/u);
+  assert.match(source,/scopedPackagePrice: pricingAuthorityRequired/u);
+  assert.match(source,/messagesRepo,/u);
   assert.match(source,/hasUnconfirmedMediaDelivery:\s*messagesRepo\.hasUnconfirmedMediaDelivery/u);
 });
