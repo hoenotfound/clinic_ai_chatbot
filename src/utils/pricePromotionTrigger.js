@@ -58,6 +58,7 @@ async function resolvePricePromotionForReply({
   treatment,
   verifiedServiceFromText = null,
   verifiedNumberedSelection = null,
+  verifiedShadowPriceService = null,
   customerText,
   conversationHistory,
   flagged,
@@ -106,7 +107,8 @@ async function resolvePricePromotionForReply({
     verifiedServiceFromText === treatment &&
     (clarificationService === treatment ||
       scopedPackagePrice?.treatment === treatment ||
-      verifiedNumberedSelection === treatment);
+      verifiedNumberedSelection === treatment ||
+      verifiedShadowPriceService === treatment);
   const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
   const legacyBlocked = !aiPricingEnabled && (
