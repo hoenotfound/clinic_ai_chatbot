@@ -127,6 +127,13 @@ test("live #524: verified 3D mixed session/count and price query shares the same
   assert.deepEqual(media?.packages.map(p=>p.name),["Main offer"]);
 });
 
+test("Off-mode clients retain their existing legacy pricing flow",()=>{
+  assert.equal(approve({mode:"off",shadowException:pelvicDecision}),null);
+  assert.equal(approve({mode:"off",numberedMenuDecision:{
+    ...pelvicDecision,source:"numbered_price_menu"
+  }}),null);
+});
+
 test("Shadow observation alone NEVER authorizes customer-facing prices or graphics",async()=>{
   const observed=approve({shadowException:null,aiDecision:pelvicDecision});
   assert.equal(observed,null);
