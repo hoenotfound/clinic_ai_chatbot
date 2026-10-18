@@ -227,3 +227,75 @@ test("the ambiguous free intro clarification is limited to clinics that enabled 
   const source = fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   assert.match(source,/clinicConfig\.businessType === "tcm_clinic" &&\s*clinicConfig\.automatedFollowUp\?\.complimentaryAssessmentExperienceEnabled === true/u);
 });
+
+
+test("dry-run outbound: verified pelvic inquiry produces quoted text and eligible A/B graphics", async () => {
+  await withAssessmentFirst(async () => {
+    const history = freshPelvic();
+    const customerText = "疗程多少钱";
+    const decision = resolveShadowPriceException(config({ customerText, conversationHistory: history }));
+    assert.equal(decision?.treatment, "骨盆调理");
+
+    // Simulate the final accepted provider text send followed by the
+    // production image decision, without touching Meta or any real contact.
+    const delivered = { text: [], media: [] };
+    const outbound = ensureVerifiedPriceReply({
+      ...config({ customerText, conversationHistory: history }),
+      reply: "请问你想了解哪一项疗程的价格呢？",
+      treatment: decision.treatment,
+      clarifiedPriceService: decision.clarifiedPriceService,
+      verifiedShadowPriceService: decision.treatment,
+      priceOnlyResponse: true,
+      language: "zh",
+    });
+    assert.equal(outbound.restored, true);
+    delivered.text.push(outbound.reply);
+    const bundle = await resolvePricePromotionForReply({
+      ...config({ customerText, conversationHistory: history }),
+      treatment: decision.treatment,
+      verifiedServiceFromText: decision.treatment,
+      verifiedShadowPriceService: decision.treatment,
+      priceQuery: true, packageQuery: false,
+      aiPricingEnabled: false, flagged: false, bookingReady: false,
+      keywordReason: null, needsAttention: false,
+      textSendSucceeded: delivered.text.length === 1,
+      contactId: 93, language: "zh",
+      wasPromoRecentlySent: async (contactId, url) =>
+        delivered.media.some(x => x.imageUrl === url),
+      hasUnconfirmedMediaDelivery: async () => false,
+    });
+    for (const item of bundle?.packages || []) delivered.media.push(item);
+    assert.equal(delivered.text.length, 1);
+    assert.match(delivered.text[0], /Package A.*RM388/su);
+    assert.match(delivered.text[0], /Package B.*RM288/su);
+    assert.deepEqual(delivered.media.map(x => x.name), ["Package A", "Package B"]);
+
+    // Running the same inbound as a provider retry must never send
+    // the same pictures after they were accepted.
+    const repeated = await resolvePricePromotionForReply({
+      ...config({ customerText, conversationHistory: history }),
+      treatment: decision.treatment, verifiedServiceFromText: decision.treatment,
+      verifiedShadowPriceService: decision.treatment,
+      priceQuery: true, packageQuery: false, aiPricingEnabled: false,
+      flagged: false, bookingReady: false, keywordReason: null,
+      needsAttention: false, textSendSucceeded: true,
+      contactId: 93, language: "zh",
+      wasPromoRecentlySent: async (contactId, url) =>
+        delivered.media.some(x => x.imageUrl === url),
+      hasUnconfirmedMediaDelivery: async () => false,
+    });
+    assert.equal(repeated, null);
+  });
+});
+
+test("strict mode remains the first statement in all touched CommonJS files", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  for (const filename of [
+    "initialOfferReplyGuard.js", "pelvicSpellingAliases.js",
+    "shadowPriceException.js",
+  ]) {
+    const source = fs.readFileSync(path.join(__dirname, "../src/utils", filename), "utf8");
+    assert.match(source, /^"use strict";/u, filename + " must stay in strict mode");
+  }
+});
