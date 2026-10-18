@@ -68,8 +68,16 @@ function resolveNumberedPricingMenuSelection({
   const selected = safeServiceFromCustomer(resolvedText, services, serviceAliases);
   if (!selected) return null;
   const candidates = serviceCandidates(services, serviceAliases);
-  if (findServicesInText(description, candidates).some(name => name !== selected.name))
-    return null;
+  // "适合产后" describes the target audience, not a second service.
+  // Neutro also has a bare "产后" alias for the separate 产后调理 service;
+  // do not misread that demographic phrase as a mixed-treatment menu entry.
+  // Explicit "产后调理/疗程/护理" remains a conflicting service.
+  const treatmentDescription = description.replace(
+    /(?:适合|適合|针对|針對|适用于|適用於)\s*(?:产后|產後)(?!\s*(?:调理|調理|疗程|療程|护理|護理))/gu,
+    ""
+  );
+  if (findServicesInText(treatmentDescription, candidates)
+    .some(name => name !== selected.name)) return null;
 
   const beforeMenu = turns.slice(0, -3);
   const earlierCustomer = beforeMenu.map((turn, index) =>
