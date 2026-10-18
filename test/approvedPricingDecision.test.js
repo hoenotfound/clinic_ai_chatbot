@@ -213,7 +213,7 @@ test("Server wires one approved decision to guard, quote, media and duplicate lo
   assert.doesNotMatch(server,/service => service\.name === pricingDecision\?\.treatment/u);
 });
 
-test("real #525/#532 menu formats resolve verified 1 through quote and media", async()=>{
+test("representative #525/#532 menu formats resolve verified 1 through quote and media", async()=>{
   const now=Date.now();
   const turn=(role,content,secondsBefore=0,staff=false)=>({
     role,content,pricingCreatedAtMs:now-secondsBefore*1000,
@@ -221,9 +221,9 @@ test("real #525/#532 menu formats resolve verified 1 through quote and media", a
   });
   const examples=[
     {contact:525,price:"什么价钱呢？",
-      menu:"我们目前有以下疗程：\\n1. 骨盆/体态调理（适合产后、久坐、体态不平衡）\\n2. 3D 小颜术（脸型轮廓护理）\\n3. 9D 逆龄抗衰（仪器紧致）\\n\\n你想了解哪一项的价钱呢？"},
+      menu:"我们目前有以下疗程：\n1. 骨盆/体态调理（适合产后、久坐、体态不平衡）\n2. 3D 小颜术（脸型轮廓护理）\n3. 9D 逆龄抗衰（仪器紧致）\n\n你想了解哪一项的价钱呢？"},
     {contact:532,price:"请问一次收费是多少呢",
-      menu:"主要有以下疗程：\\n1. 骨盆/体态调理：中医师徒手调理\\n2. 3D 小颜术：脸型护理\\n\\n你想先了解哪一项的收费呢？"},
+      menu:"主要有以下疗程：\n1. 骨盆/体态调理：中医师徒手调理\n2. 3D 小颜术：脸型护理\n\n你想先了解哪一项的收费呢？"},
   ];
   for(const example of examples) {
     const history=[
@@ -232,7 +232,7 @@ test("real #525/#532 menu formats resolve verified 1 through quote and media", a
       turn("user",example.price,90),
       turn("assistant","请问你想了解哪项疗程的价格呢？",75),
       turn("user","有什么疗程呢？",60),
-      turn("assistant",example.menu.replaceAll("\\\\n","\\n"),45),
+      turn("assistant",example.menu,45),
       turn("user","1",30),
     ];
     const selection=resolveNumberedPricingMenuSelection({
@@ -274,7 +274,7 @@ test("bare numbers never inherit ad, staff, expired or ambiguous menus",()=>{
   const price=t("user","什么价钱呢？",100);
   const clarify=t("assistant","请问哪个疗程的价格呢？",90);
   const list=t("user","有什么疗程呢？",80);
-  const options=t("assistant","1. 骨盆/体态调理（适合产后）\\n2. 3D 小颜术（护理）\\n你想了解哪项的价钱呢？",70);
+  const options=t("assistant","1. 骨盆/体态调理（适合产后）\n2. 3D 小颜术（护理）\n你想了解哪项的价钱呢？",70);
   const selected=t("user","1",60);
   const resolve=(history)=>resolveNumberedPricingMenuSelection({
     customerText:"1",conversationHistory:history,services,serviceAliases,now,
@@ -283,10 +283,10 @@ test("bare numbers never inherit ad, staff, expired or ambiguous menus",()=>{
   assert.equal(resolve([price,clarify,list,options,{...selected,pricingCreatedAtMs:null}]),null);
   assert.equal(resolve([price,clarify,list,{...options,pricingStaffAuthored:true},selected]),null);
   assert.equal(resolve([price,clarify,list,
-    t("assistant","1. 骨盆/3D（混合）\\n2. 9D 逆龄抗衰\\n你想了解哪项的价钱呢？",70),selected]),null);
+    t("assistant","1. 骨盆/3D（混合）\n2. 9D 逆龄抗衰\n你想了解哪项的价钱呢？",70),selected]),null);
   assert.equal(resolve([t("user","免费评估是多少钱",100),clarify,list,options,selected]),null);
   assert.equal(resolve([price,clarify,list,
-    t("assistant","1. 骨盆/体态调理（3D 小颜术）\\n2. 9D 逆龄抗衰\\n你想了解哪项的价钱呢？",70),selected]),null);
+    t("assistant","1. 骨盆/体态调理（3D 小颜术）\n2. 9D 逆龄抗衰\n你想了解哪项的价钱呢？",70),selected]),null);
   assert.equal(approve({shadowException:null,aiDecision:{...pelvicDecision,source:"meta_ad"},
     customerText:"1"}),null);
 });
