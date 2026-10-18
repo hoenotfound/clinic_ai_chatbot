@@ -39,7 +39,9 @@ function pricingConflictHistory({ candidate, conversationHistory, services, serv
       currentSession.at(-1)?.role === "user" &&
       currentSession.at(-2)?.role === "assistant" &&
       currentSession.at(-3)?.role === "user") {
-    return currentSession.slice(-3);
+    // The selected digit supersedes the prior pricing topic. That earlier
+    // question was validated by the menu resolver, including fee exclusions.
+    return currentSession.slice(-2);
   }
   // The newest explicitly customer-named approved treatment supersedes older
   // topics. A current new incompatible treatment is never hidden: it is
