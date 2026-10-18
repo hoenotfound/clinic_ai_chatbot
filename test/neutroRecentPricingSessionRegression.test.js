@@ -196,6 +196,14 @@ test("Ashley: vague How much after body-treatment + free intro clarifies fees",(
   assert.equal(resolveShadowPriceException(config({
     customerText:"How much",conversationHistory:discussion,
   })),null,"unpriced body service cannot inherit pelvic ad promotion");
+  assert.equal(resolveShadowPriceException(config({
+    customerText:"How much",conversationHistory:discussion,
+    metaAdContext:{
+      serviceHint:"骨盆调理",serviceHintSource:"ad_name",
+      headline:"徒手整骨",body:"骨盆矫正与徒手矫正",
+      attributedAt:new Date(now-3*3600_000).toISOString(),
+    },
+  })),null,"a pelvic ad must not override Ashley's explicit fascia/neck enquiry");
   assert.equal(ambiguousAssessmentOrTreatmentFeeReply("How much time",discussion,"en"),null);
   assert.equal(ambiguousAssessmentOrTreatmentFeeReply("How much",[
     ...discussion.slice(0,-2),
