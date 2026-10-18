@@ -393,9 +393,18 @@ function ensureVerifiedPriceReply({
   // "which treatment?" clarification. The verified quote already answers it.
   // A verified, customer-selected package-list continuation must not
   // re-append Gemini's unrelated clinic-wide service catalog.
-  const explanation = priceOnlyResponse === true ||
-    hasClinicalMediaRisk(customerText) ||
-    (aiLed && pricingDecision.source === "meta_ad")
+  // An explicit two-part question still deserves its non-price answer:
+  // "大概需要做几次呢？价钱呢？". Strip model-generated prices,
+  // delivery promises and commercial claims, but keep useful advice on
+  // duration/session counts without fabricating a fixed treatment plan.
+  // Bare digit/menu/ad-price follow-ups remain price-only.
+  const independentServiceQuestion =
+    /(?:[几幾多]\\s*(?:次|回|个疗程|個療程)|多少\\s*(?:次|个疗程|個療程)|(?:要|需要)\\s*做\\s*(?:几|幾|多少)\\s*次|多久|多长|多長|(?:how\\s+many\\s+sessions?|how\\s+long)|berapa\\s+(?:kali|sesi|lama))/iu.test(
+      String(customerText || "")
+    );
+  const explanation = hasClinicalMediaRisk(customerText) ||
+    (priceOnlyResponse === true && !independentServiceQuestion) ||
+    (aiLed && pricingDecision.source === "meta_ad" && !independentServiceQuestion)
       ? "" : nonPriceExplanation(original);
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
   return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
