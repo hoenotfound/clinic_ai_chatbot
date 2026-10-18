@@ -46,10 +46,16 @@ function resolveNumberedPricingMenuSelection({
   const matching = options.filter(option => option[1] === number);
   if (matching.length !== 1) return null;
 
-  // A combined description like "骨盆/体态调理" uses the first clearly
-  // named configured treatment. Never interpret a digit based on the lead.
-  const heading = matching[0][2].trim().split(/[\/／]/u)[0].trim();
-  const selected = safeServiceFromCustomer(heading, services, serviceAliases);
+  // A mixed option may advertise two separate services (3D/9D), so it
+  // must never be reduced to its first treatment. The existing single
+  // pelvic/posture menu label is an explicitly recognized description,
+  // not permission to guess the first part of arbitrary mixed headings.
+  const heading = matching[0][2].trim();
+  const singlePelvicDescription = /^骨盆\s*[\/／]\s*体态调理$/u.test(heading);
+  if (/[\/／+＋&＆、]|(?:\s*及\s*|\s*和\s*|\s*与\s*)/u.test(heading) &&
+      !singlePelvicDescription) return null;
+  const resolvedText = singlePelvicDescription ? "骨盆调理" : heading;
+  const selected = safeServiceFromCustomer(resolvedText, services, serviceAliases);
   if (!selected) return null;
 
   const beforeMenu = turns.slice(0, -3);
