@@ -71,7 +71,7 @@ test("English and Malay compound enquiries retain localized configured address",
     ["Where is your clinic? How much is the 3D price?","en",/Address: C-12-6/u],
     ["Alamat kat mana? Berapa harga 3D?","ms",/Alamat: C-12-6/u],
   ]) {
-    const priced = formattedPriceReply(question, language, "");
+    const priced = formattedPriceReply(question, language, "Here are the details 😊");
     const result = appendRequestedBusinessFacts({
       customerText: question,reply:priced.reply,language,...configured,
     });
