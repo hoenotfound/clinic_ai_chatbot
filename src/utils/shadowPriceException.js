@@ -90,18 +90,6 @@ function resolveShadowPriceException({
   }
   if (!hasExplicitPriceRequest(text)) return null;
 
-  const continued = resolveContinuedTreatmentPriceService({
-    customerText: text, conversationHistory: session,
-    services, serviceAliases, promotions, now,
-  });
-  if (continued) {
-    const result = shadowVerifiedPrice({
-      source: "continued_customer", treatment: continued.name,
-      customerText: text, conversationHistory: session, promotions,
-    });
-    if (result) return result;
-  }
-
   const first = resolveRecentFirstTreatmentPriceService({
     customerText: text, conversationHistory: session,
     services, serviceAliases, promotions, now,
@@ -109,6 +97,18 @@ function resolveShadowPriceException({
   if (first) {
     const result = shadowVerifiedPrice({
       source: "recent_first_customer", treatment: first.name,
+      customerText: text, conversationHistory: session, promotions,
+    });
+    if (result) return result;
+  }
+
+  const continued = resolveContinuedTreatmentPriceService({
+    customerText: text, conversationHistory: session,
+    services, serviceAliases, promotions, now,
+  });
+  if (continued) {
+    const result = shadowVerifiedPrice({
+      source: "continued_customer", treatment: continued.name,
       customerText: text, conversationHistory: session, promotions,
     });
     if (result) return result;
