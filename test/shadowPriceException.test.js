@@ -129,9 +129,9 @@ test("Shadow remains fail-closed for stale, ambiguous, clinical and staff cases"
     turn("user","Hi",35_000),turn("assistant","Hi",25_000),
     turn("user","免费评估收费吗？",15_000),
   ]}), null);
-  assert.equal(price({customerText:"我的骨盆最近剧痛，多少钱？",conversationHistory:[
+  assert.equal(price({customerText:"我有糖尿病，骨盆调理多少钱？",conversationHistory:[
     turn("user","Hi",35_000),turn("assistant","Hi",25_000),
-    turn("user","我的骨盆最近剧痛，多少钱？",15_000),
+    turn("user","我有糖尿病，骨盆调理多少钱？",15_000),
   ]}), null);
   const switched = [
     turn("user","我想了解3D 小颜术",35_000),
