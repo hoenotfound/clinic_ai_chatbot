@@ -176,6 +176,14 @@ test("price exception is bounded by newest session and verified staff boundaries
     conversationHistory:[...freshPelvic().slice(0,-1),turn("user","我有糖尿病，疗程多少钱",10_000)],
   })),null,"clinical risk remains blocked");
   assert.equal(resolveShadowPriceException(config({
+    customerText:"多少钱",
+    conversationHistory:[
+      turn("user","我有糖尿病，想了解骨盆调理",40_000),
+      turn("assistant","可以介绍骨盆调理",30_000),
+      turn("user","多少钱",10_000),
+    ],
+  })),null,"a prior medical-history warning in this session must block automatic sales");
+  assert.equal(resolveShadowPriceException(config({
     customerText:"评估多少钱",
     conversationHistory:[...freshPelvic().slice(0,-1),turn("user","评估多少钱",10_000)],
   })),null,"assessment fee must not be treated as pelvic full-treatment price");
