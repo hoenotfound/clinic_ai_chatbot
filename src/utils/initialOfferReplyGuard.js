@@ -356,11 +356,15 @@ function guardAssessmentFirstPricingReply({
   });
   // Delayed import avoids a require cycle: the price-context module uses
   // safeServiceFromCustomer exported by this module.
-  const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
-  const verifiedContinuedService = allowContinuedPriceContext === true &&
-    resolveContinuedTreatmentPriceService({
+  const { resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
+  const verifiedContinuedService =
+    resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
-    })?.name === treatment;
+    })?.name === treatment ||
+    (allowContinuedPriceContext === true &&
+      resolveContinuedTreatmentPriceService({
+        customerText, conversationHistory, services, serviceAliases, promotions,
+      })?.name === treatment);
   if ((relatedConflict || unpricedPrimary) && !verifiedContinuedService) {
     const primary = unpricedPrimary ||
       configuredServiceMention(customerText, services, serviceAliases) ||

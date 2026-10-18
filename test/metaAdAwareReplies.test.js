@@ -616,3 +616,38 @@ test("contextual media guard checks untruncated persisted history after sending 
   assert.match(source.slice(resolveAt, resolveAt + 400), /priorCustomerTexts: verifiedPriorCustomerTexts/);
   assert.doesNotMatch(source, /customerMessages\.slice\(0, -1\)\.map/);
 });
+
+
+test("specific pelvic ad and generic body technique can identify one advertised priced service", () => {
+  const services = [{ name: "骨盆调理" }, { name: "徒手体态调理" }, { name: "3D 小颜术" }];
+  const aliases = [
+    { alias: "骨盆矫正", officialService: "骨盆调理" },
+    { alias: "骨盆", officialService: "骨盆调理" },
+    { alias: "徒手矫正", officialService: "徒手体态调理" },
+  ];
+  const row = {
+    source: "meta_ads", ad_name: "骨盆 1",
+    headline: "骨盆矫正评估", body: "通过徒手矫正了解骨盆问题",
+    attributed_at: new Date().toISOString(),
+  };
+  const promotions = [{
+    linkedService: "骨盆调理", sendOnPriceQuery: true,
+    // Test promotion dates must stay active regardless of when CI runs.
+    validFrom: "2000-01-01", validUntil: "2999-12-31",
+  }];
+  const resolved = normalizeMetaAdReplyContext(row, { services, aliases, promotions });
+  assert.equal(resolved.serviceHint, "骨盆调理");
+  assert.equal(resolved.serviceHintSource, "ad_name");
+  assert.equal("adName" in resolved, false);
+
+  // No active approved price catalog means no disambiguation of mixed copy.
+  assert.equal(normalizeMetaAdReplyContext(row, { services, aliases }).serviceHint, undefined);
+  assert.equal(normalizeMetaAdReplyContext(row, {
+    services, aliases, promotions: [
+      ...promotions, { linkedService: "徒手体态调理", sendOnPriceQuery: true },
+    ],
+  }).serviceHint, undefined);
+  assert.equal(normalizeMetaAdReplyContext({
+    ...row, ad_name: "3D 小颜术 1",
+  }, { services, aliases, promotions }).serviceHint, undefined);
+});

@@ -52,7 +52,7 @@ function currentMatchesPromotion(customerText, options, promotions) {
 
 // Strict extension for a short session-price question after several natural
 // assessment replies. Never use the bot's guessed treatment as sole evidence.
-const SESSION_AMOUNT = /^(?:(?:请问|請問)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:疗程|療程|护理|護理)?\s*(?:(?:要|是|花|需|收费|收費)\s*)?(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢)[\s?？。!！]*$/iu;
+const SESSION_AMOUNT = /^(?:(?:请问|請問)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟)\s*(?:疗程|療程|护理|護理)?\s*(?:(?:要|是|花|需|收费|收費)\s*)?(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢)[\s?？。!！]*$|^(?:(?:请问|請問)\s*)?(?:做\s*)?(?:一|1)\s*次\s*(?:收费|收費|价格|價格|价钱|價錢|费用|費用)\s*(?:是|要|大概)?\s*多少(?:钱|錢)?[\s?？。!！呢]*$/iu;
 const TOPIC_CHANGE = /(?:换个|換個|改聊|不聊|另外想|不要|不想(?:了解|做)|\b(?:instead|switch|another\s+treatment|different\s+treatment|stop|unsubscribe|opt\s*out)\b|退订|退訂)/iu;
 const STAFF = /^\[Verified STAFF message\]/u;
 const CONTINUED_CONTEXT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -119,7 +119,7 @@ function resolveContinuedTreatmentPriceService({
   const before = turns.slice(0, -1);
   const customerIndexes = before.flatMap((x, i) => x.role === "user" ? [i] : []).slice(-4);
   const lastAssistant = before.at(-1);
-  if (customerIndexes.length < 2 || lastAssistant?.role !== "assistant" ||
+  if (customerIndexes.length < 1 || lastAssistant?.role !== "assistant" ||
       isVerifiedStaffTurn(lastAssistant)) return null;
 
   for (let pos = customerIndexes.length - 1; pos >= 0; pos--) {
@@ -133,11 +133,24 @@ function resolveContinuedTreatmentPriceService({
         !/(?:有兴趣|有興趣|感兴趣|感興趣|想了解|想知道|想问|想問|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(source)) continue;
     if (hasClinicalMediaRisk(source) || !currentPricePackageOptions(named.name, promotions).length ||
         !isRecentPricingThread(turns, index, now)) return null;
-    // The latest bot turn must still identify the previously CUSTOMER-named
-    // treatment; an advertisement, CRM field or model label is insufficient.
-    const lastText = pricingMessageText(lastAssistant);
-    if (!lastText.includes(named.name) &&
-        !(named.name === "骨盆调理" && lastText.includes("骨盆"))) return null;
+    // A Before & After caption may be the latest assistant turn and say only
+    // "体态". Require the customer's independently named service to appear
+    // in at least one assistant response in the same uninterrupted exchange.
+    // Do not use an ad name, CRM field or model label as the sole anchor.
+    const nextCustomerIndex = before.findIndex((turn, i) =>
+      i > index && turn.role === "user");
+    const assistantAfterChoice = before.slice(
+      index + 1, nextCustomerIndex < 0 ? before.length : nextCustomerIndex
+    );
+    if (!assistantAfterChoice.length || assistantAfterChoice.length > 4 ||
+        assistantAfterChoice.some(turn =>
+          turn.role !== "assistant" || isVerifiedStaffTurn(turn) ||
+          !pricingMessageText(turn).trim()) ||
+        !assistantAfterChoice.some(turn => {
+          const response = pricingMessageText(turn);
+          return response.includes(named.name) ||
+            (named.name === "骨盆调理" && response.includes("骨盆"));
+        })) return null;
     for (let i = index + 1; i < before.length; i++) {
       const turn = before[i], value = pricingMessageText(turn).trim();
       if (!value || isVerifiedStaffTurn(turn)) return null;
@@ -165,6 +178,20 @@ function resolveContinuedTreatmentPriceService({
   return null;
 }
 
+// Narrow legacy-safe case: the current amount question immediately follows
+// the FIRST customer-authored treatment selection, with only recent automated
+// assistant replies/photos between them. Unlike the extended assessment thread,
+// there may be no intervening customer turns and no staff messages.
+function resolveRecentFirstTreatmentPriceService(args = {}) {
+  const turns = (Array.isArray(args.conversationHistory) ?
+    args.conversationHistory : []).filter(x =>
+    x?.role === "user" || x?.role === "assistant");
+  if (turns.filter(x => x.role === "user").length !== 2 ||
+      turns.at(0)?.role !== "user" ||
+      turns.at(-1)?.role !== "user") return null;
+  return resolveContinuedTreatmentPriceService(args);
+}
+
 function resolveVerifiedPriceFollowUpService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
   promotions = [], allowContinuedPriceContext = false,
@@ -180,6 +207,13 @@ function resolveVerifiedPriceFollowUpService({
     });
     if (continued) return continued;
   }
+  // Applies in Off/Shadow only to the first customer-selected treatment
+  // and its immediately following direct price question. This does not
+  // activate the broader multi-turn assessment recovery.
+  const firstPrice = resolveRecentFirstTreatmentPriceService({
+    customerText: current, conversationHistory, services, serviceAliases, promotions,
+  });
+  if (firstPrice) return firstPrice;
   const candidates = serviceCandidates(services, serviceAliases);
   // A current multi-service or mixed-treatment enquiry is not a short,
   // service-free follow-up. Do not fall back to an older service.
@@ -247,4 +281,5 @@ module.exports = {
   isContextualPriceReference, isContinuedTreatmentPriceQuestion,
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
+  resolveRecentFirstTreatmentPriceService,
 };

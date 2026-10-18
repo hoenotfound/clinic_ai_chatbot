@@ -27,12 +27,14 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmentAcceptanceService");
 const conversationStore = require("./utils/conversationStore");
-const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
 const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
 const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
+const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
+const { resolveShadowPriceException } = require("./utils/shadowPriceException");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply } = require("./utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
 const {
@@ -925,6 +927,15 @@ async function processIncomingMessage(
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
+    // Treat a digit as a pricing choice only when it answers a recent,
+    // assistant-authored numbered service menu in an active price thread.
+    // This avoids Gemini timeout/fallback and spurious clinical reviews for "1".
+    const numberedPricingSelection = !keywordReason && !marketingStopQuestion &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? resolveNumberedPricingMenuSelection({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        }) : null;
 
     if (urgentSafety || isActiveSafetyConcern(text)) {
       flagged = true;
@@ -945,6 +956,7 @@ async function processIncomingMessage(
         metaAdContext = await loadMetaAdReplyContext(contact.id, {
           services: clinicConfig.services,
           aliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
         });
         metaAdCreativeService = resolveMetaAdCreativeService(
           metaAdContext,
@@ -974,27 +986,35 @@ async function processIncomingMessage(
       } catch (bookingContextErr) {
         console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
       }
-      const rawAiReply = await ai.getReply(replyHistory, {
-        bookingContext,
-        contactId: contact.id,
-        isFirstMessage,
-        generateFirstIntro,
-        channel,
-        metaAdContext,
-      });
-      const parsedReply = parseAiReplyResult(rawAiReply);
-      ({
-        text: aiReply,
-        flagged,
-        reviewRequired,
-        reviewType,
-        bookingReady,
-        serviceQuery,
-        serviceQuerySource,
-        priceQuery,
-        packageQuery,
-        details,
-      } = parsedReply);
+      if (numberedPricingSelection) {
+        // This is an independently verified customer choice, not an inferred
+        // model outcome. Price and media remain subject to downstream guards.
+        aiReply = "我帮你核对这项疗程的最新配套价格 😊";
+        priceQuery = true;
+        details = { treatment: numberedPricingSelection.treatment };
+      } else {
+        const rawAiReply = await ai.getReply(replyHistory, {
+          bookingContext,
+          contactId: contact.id,
+          isFirstMessage,
+          generateFirstIntro,
+          channel,
+          metaAdContext,
+        });
+        const parsedReply = parseAiReplyResult(rawAiReply);
+        ({
+          text: aiReply,
+          flagged,
+          reviewRequired,
+          reviewType,
+          bookingReady,
+          serviceQuery,
+          serviceQuerySource,
+          priceQuery,
+          packageQuery,
+          details,
+        } = parsedReply);
+      }
 
       // A model can miss a clear complaint, refund or legal escalation.
       // These need staff ownership, unlike a single unknown FAQ.
@@ -1092,11 +1112,22 @@ async function processIncomingMessage(
       }
     }
 
-    // Recovery changes the customer-facing reply, so it is ONLY active in
-    // AI-Led Pricing Enabled mode. Shadow evaluates pricing separately but
-    // must not bypass the existing information-review early return.
+    // Full multi-turn information-review recovery remains Enabled-only.
+    // In Shadow, only a separate independently verified early-treatment or
+    // current-Meta-ad pricing exception may use the legacy reply path.
     const aiPricingMode = clinicConfig.aiPricingIntentMode || "off";
     const aiPricingEnabled = aiPricingMode === "enabled";
+    const shadowPriceException = aiPricingMode === "shadow" &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+      !isExplicitStaffRequest(text) && !marketingStopQuestion
+      ? resolveShadowPriceException({
+          customerText: text, conversationHistory: history, metaAdContext,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          complimentaryAssessmentExperienceEnabled:
+            clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
+        }) : null;
     if (aiPricingEnabled &&
         flagged && reviewRequired && reviewType === "information" &&
         clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
@@ -1129,6 +1160,29 @@ async function processIncomingMessage(
           "[Pricing] Recovered verified informational review for " +
           "contact=" + contact.id + " inbound=" + savedInbound.id
         );
+      }
+    }
+
+    // Recover narrowly verified Shadow price questions ONLY if the AI
+    // classified them as informational review and Neon confirms that no
+    // clinical review is pending. Clinical, safety and staff handoffs never
+    // enter this path. No extension of general AI-led pricing is enabled.
+    if (shadowPriceException && flagged && reviewRequired &&
+        reviewType === "information") {
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        details = { ...details, treatment: shadowPriceException.treatment };
+        aiReply = "我帮你核对这项疗程的价格 😊";
+        console.info("[Pricing] Recovered narrow Shadow price information review " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
       }
     }
 
@@ -1178,8 +1232,20 @@ async function processIncomingMessage(
     // enquiry, but cannot override a later customer treatment switch.
     // The model already returns priceQuery/packageQuery and treatment. Resolve
     // one verified decision for reply text and optional promotional media.
+    const numberedPrices = numberedPricingSelection
+      ? verifiedPricesForService(
+          numberedPricingSelection.treatment, clinicConfig.promotions,
+          text, history, { clarifiedPriceService: numberedPricingSelection.treatment }
+        ) : null;
+    const numberedPricingDecision = numberedPrices?.length
+      ? {
+          type: "price", treatment: numberedPricingSelection.treatment,
+          source: "numbered_price_menu",
+          clarifiedPriceService: numberedPricingSelection.treatment,
+          prices: numberedPrices, servicePrice: null,
+        } : null;
     const pricingDecision = ["shadow", "enabled"].includes(aiPricingMode) && !flagged
-      ? scopedPackagePrice || resolveAiPricingDecision({
+      ? (numberedPricingSelection ? numberedPricingDecision : scopedPackagePrice || resolveAiPricingDecision({
           priceQuery, packageQuery, treatment: details?.treatment || null,
           customerText: text, conversationHistory: history,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
@@ -1188,7 +1254,7 @@ async function processIncomingMessage(
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
           metaAdContext,
-        })
+        }))
       : null;
     if (aiPricingMode === "shadow") {
       console.info("[AI pricing shadow] contact=" + contact.id +
@@ -1198,6 +1264,8 @@ async function processIncomingMessage(
     }
     // Keep all established legacy clarification paths in Off/Shadow modes.
     const clarifiedPriceService = scopedPackagePrice?.clarifiedPriceService ||
+      numberedPricingSelection?.treatment ||
+      shadowPriceException?.treatment ||
       (aiPricingEnabled
       ? pricingDecision?.clarifiedPriceService || null
       : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -1207,6 +1275,10 @@ async function processIncomingMessage(
           }) : null);
     const verifiedPriceService = scopedPackagePrice
       ? (clinicConfig.services || []).find(s => s.name === scopedPackagePrice.treatment) || null
+      : numberedPricingSelection
+      ? (clinicConfig.services || []).find(s => s.name === numberedPricingSelection.treatment) || null
+      : shadowPriceException
+      ? (clinicConfig.services || []).find(s => s.name === shadowPriceException.treatment) || null
       : aiPricingEnabled
       ? (clinicConfig.services || []).find(
           service => service.name === pricingDecision?.treatment
@@ -1282,7 +1354,8 @@ async function processIncomingMessage(
       const priced = ensureVerifiedPriceReply({
         customerText: text, reply, treatment: verifiedPriceService?.name || null,
         clarifiedPriceService,
-        priceOnlyResponse: Boolean(scopedPackagePrice),
+        priceOnlyResponse: Boolean(scopedPackagePrice || numberedPricingSelection || shadowPriceException),
+        verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
         pricingDecision: aiPricingEnabled ? pricingDecision : undefined,
         // Only customer-authored pricing evidence (not model flags) can
         // trigger a fallback clarification on the outbound text path.
@@ -1544,6 +1617,8 @@ async function processIncomingMessage(
         metaAdContext,
         treatment: verifiedPriceService?.name || (aiPricingEnabled ? null : details?.treatment),
         verifiedServiceFromText: verifiedPriceService?.name || null,
+        verifiedNumberedSelection: numberedPricingSelection?.treatment || null,
+        verifiedShadowPriceService: shadowPriceException?.treatment || null,
         customerText: text,
         conversationHistory: history,
         flagged,
@@ -1557,11 +1632,13 @@ async function processIncomingMessage(
         resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage,
         contactId: contact.id,
-        // A staff-forwarded copy of the same graphic counts as already sent,
-        // even when staff used a different caption. Keep legacy behavior off.
-        wasPromoRecentlySent: aiPricingEnabled
-          ? (id, url, _caption, hours) => messagesRepo.wasMediaRecentlySent(id, url, hours)
-          : messagesRepo.wasPromoRecentlySent,
+        // The verified pricing paths must not resend manually delivered images
+        // when staff used an older caption than the current promotion copy.
+        // Unverified legacy behaviour retains its existing matching rules.
+        wasPromoRecentlySent: selectPromoDuplicateCheck({
+          aiPricingEnabled, numberedPricingSelection, shadowPriceException,
+          scopedPackagePrice, messagesRepo,
+        }),
         hasUnconfirmedMediaDelivery: messagesRepo.hasUnconfirmedMediaDelivery,
       });
       if (promoBundle) {
@@ -1727,6 +1804,7 @@ async function processIncomingMessage(
               const refreshedMetaAdContext = await loadMetaAdReplyContext(contact.id, {
                 services: clinicConfig.services,
                 aliases: clinicConfig.serviceAliases,
+                promotions: clinicConfig.promotions,
               });
               resultMediaCreativeService = resolveMetaAdCreativeService(
                 refreshedMetaAdContext,

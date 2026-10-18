@@ -2,7 +2,7 @@
 
 const { getActivePromotions, promotionPackages, findAmbiguousPromotionPackageTerm, findMentionedPromotionPackages } = require("./activePromotion");
 const { hasExplicitPriceRequest, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
-const { isContextualPriceReference, resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
+const { isContextualPriceReference, resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
 const { hasTreatmentPriceContent, hasCommercialReplyContent } = require("./initialOfferReplyGuard");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
@@ -253,7 +253,7 @@ function nonPriceExplanation(reply) {
 // WhatsApp RM0 gate may suppress media while still allowing the text answer.
 function ensureVerifiedPriceReply({
   customerText, reply, treatment, clarifiedPriceService = null,
-  pricingDecision = undefined,
+  verifiedNumberedSelection = null, pricingDecision = undefined,
   priceRequested = false, priceOnlyResponse = false,
   services = [], serviceAliases = [], promotions = [],
   resultMedia = [], conversationHistory = [], language = "zh",
@@ -275,6 +275,20 @@ function ensureVerifiedPriceReply({
   // images. No price decision must not leave an invented quote or a promise to
   // send promotion media in the AI text.
   if (aiLed && (!pricingDecision || pricingDecision.treatment !== treatment)) {
+    // The numbered menu itself verifies a treatment, but a missing or
+    // conflicting active price must never leave a placeholder unfulfilled or
+    // ask which treatment the customer chose again.
+    if (verifiedNumberedSelection && verifiedNumberedSelection === treatment) {
+      const locale = String(language || "").toLowerCase();
+      return {
+        reply: locale.startsWith("ms")
+          ? `Harga terkini untuk ${treatment} perlu disahkan oleh pihak pusat dahulu ya 😊`
+          : locale.startsWith("en")
+            ? `Our centre needs to confirm the current price for ${treatment} 😊`
+            : `${treatment} 的最新价格需要由门店帮你确认哦 😊`,
+        restored: true,
+      };
+    }
     // Non-price service replies must remain intact. Only remove a genuinely
     // unsolicited numeric price or a promise of promotional media that may
     // never pass the provider's separate delivery checks.
@@ -302,10 +316,14 @@ function ensureVerifiedPriceReply({
   // anchor through a short postpartum *concern* answer. The generic
   // related-treatment guard otherwise mistakes "产后体态" for a request to
   // switch to the separate, unpriced 产后调理 service.
-  const verifiedContinuedService = allowContinuedPriceContext === true &&
-    resolveContinuedTreatmentPriceService({
+  const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+    resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
-    })?.name === treatment;
+    })?.name === treatment ||
+    (allowContinuedPriceContext === true &&
+      resolveContinuedTreatmentPriceService({
+        customerText, conversationHistory, services, serviceAliases, promotions,
+      })?.name === treatment);
   if (!original || !treatment ||
       !(aiLed ||
         hasExplicitPriceRequest(customerText, { treatment }) ||
@@ -324,7 +342,7 @@ function ensureVerifiedPriceReply({
         clarifiedPriceService,
       });
   const locale = String(language || "").toLowerCase();
-  if (!prices) {
+  if (!Array.isArray(prices) || prices.length === 0) {
     // Text-only service prices remain valid when the clinic has not configured
     // a promotion. This fallback can never authorize a promotional graphic.
     if (aiLed && pricingDecision.servicePrice) {

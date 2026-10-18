@@ -1,7 +1,7 @@
 const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
 const clinicConfig = require("../config/clinicConfig");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
-const { resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
+const { resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
 const { resolveScopedPackagePriceContinuation } = require("./scopedPackagePriceContinuation");
 const { verifiedPricesForService, requestedPricePackages } = require("./verifiedPriceReply");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
@@ -57,6 +57,8 @@ async function resolvePricePromotionForReply({
   metaAdContext = null,
   treatment,
   verifiedServiceFromText = null,
+  verifiedNumberedSelection = null,
+  verifiedShadowPriceService = null,
   customerText,
   conversationHistory,
   flagged,
@@ -103,7 +105,10 @@ async function resolvePricePromotionForReply({
   });
   const verifiedClarification = Boolean(treatment) &&
     verifiedServiceFromText === treatment &&
-    (clarificationService === treatment || scopedPackagePrice?.treatment === treatment);
+    (clarificationService === treatment ||
+      scopedPackagePrice?.treatment === treatment ||
+      verifiedNumberedSelection === treatment ||
+      verifiedShadowPriceService === treatment);
   const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
   const legacyBlocked = !aiPricingEnabled && (
@@ -124,10 +129,14 @@ async function resolvePricePromotionForReply({
     needsAttention || textSendSucceeded !== true
   ) return null;
 
-  const verifiedContinuedService = aiPricingEnabled === true &&
-    resolveContinuedTreatmentPriceService({
+  const verifiedContinuedService = verifiedNumberedSelection === treatment ||
+    resolveRecentFirstTreatmentPriceService({
       customerText, conversationHistory, services, serviceAliases, promotions,
-    })?.name === treatment;
+    })?.name === treatment ||
+    (aiPricingEnabled === true &&
+      resolveContinuedTreatmentPriceService({
+        customerText, conversationHistory, services, serviceAliases, promotions,
+      })?.name === treatment);
   if (!verifiedContinuedService && (relatedPricingConflict({
     customerText, treatment, conversationHistory, services, serviceAliases, resultMedia,
   }) || (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
@@ -237,6 +246,31 @@ async function resolvePricePromotionForReply({
     : null;
 }
 
+// Verified pricing paths identify an already sent picture by its media URL,
+// even if staff changed the caption. This is particularly important when
+// Neutro edits promotion copy after staff has already sent the graphic.
+// Other legacy uses retain their historical image+caption match.
+function selectPromoDuplicateCheck({
+  aiPricingEnabled = false,
+  numberedPricingSelection = null,
+  shadowPriceException = null,
+  scopedPackagePrice = null,
+  messagesRepo,
+} = {}) {
+  if (!messagesRepo ||
+      typeof messagesRepo.wasPromoRecentlySent !== "function" ||
+      typeof messagesRepo.wasMediaRecentlySent !== "function") {
+    throw new Error("Promotion duplicate check requires both message lookups");
+  }
+  const verifiedPath = aiPricingEnabled === true ||
+    Boolean(numberedPricingSelection || shadowPriceException || scopedPackagePrice);
+  return verifiedPath
+    ? (contactId, imageUrl, _caption, hours) =>
+        messagesRepo.wasMediaRecentlySent(contactId, imageUrl, hours)
+    : messagesRepo.wasPromoRecentlySent;
+}
+
 module.exports = {
   resolvePricePromotionForReply,
+  selectPromoDuplicateCheck,
 };
