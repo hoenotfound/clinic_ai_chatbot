@@ -143,3 +143,78 @@ test("Sharon #537: first-trial amount question is an explicit pricing enquiry", 
   assert.equal(hasCurrentPriceAmountRequest("第一次体验要做几次"), false);
   assert.equal(hasExplicitPriceRequest("以后有优惠 WhatsApp 发我"), false);
 });
+
+test("Siew Siew #517: 'Package?' after verified 骨盆 enquiry selects both current graphics", async () => {
+  const pelvicServices = [{ name:"骨盆调理" },...services];
+  const pelvicAliases = [{alias:"骨盆",officialService:"骨盆调理"},...aliases];
+  const pelvicPromotion = {
+    name:"骨盆调理套餐",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    validFrom:"2000-01-01",validUntil:"2999-12-31",
+    packages:[
+      {name:"Package A",imageUrl:"https://example.test/30",
+        caption:"本月限时优惠，原价优惠 RM488，优惠后仅需 RM388"},
+      {name:"Package B",imageUrl:"https://example.test/31",
+        caption:"本月限时优惠，原价 RM388，现在只需 RM288"},
+    ],
+  };
+  const customer = turn("user",
+    "Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊", 90000);
+  const history = [customer,
+    turn("assistant","骨盆调理是一项徒手护理。",85000),
+    turn("assistant","骨盆调理 Before & After",80000),
+    turn("user","Package?",1000)];
+  const params = {customerText:"Package?",conversationHistory:history,
+    services:pelvicServices,serviceAliases:pelvicAliases,
+    promotions:[pelvicPromotion],now};
+  const decision = resolveShadowPriceException(params);
+  assert.equal(decision?.source,"direct_customer_package_request");
+  assert.deepEqual(decision?.prices.map(p=>p.price),["RM388","RM288"]);
+  const approved = resolveApprovedPricingAssessment({
+    mode:"shadow",shadowException:decision,...params,resultMedia:[],
+  });
+  assert.equal(approved.reason,"approved");
+  const quoted = ensureVerifiedPriceReply({
+    ...params,treatment:approved.decision.treatment,
+    pricingDecision:approved.decision,reply:"I will send the details",
+    language:"en",priceOnlyResponse:true,
+  });
+  assert.match(quoted.reply,/Package A.*RM388/su);
+  assert.match(quoted.reply,/Package B.*RM288/su);
+  const prior=clinicConfig.automatedFollowUp;
+  clinicConfig.automatedFollowUp={...prior,assessmentFirstPricingEnabled:true};
+  try {
+    const media=await resolvePricePromotionForReply({
+      ...params,aiPricingEnabled:true,pricingDecision:approved.decision,
+      treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+      contactId:517,language:"zh",textSendSucceeded:true,
+      flagged:false,bookingReady:false,keywordReason:null,needsAttention:false,
+      wasPromoRecentlySent:async()=>false,
+      hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.deepEqual(media?.packages.map(p=>p.name),["Package A","Package B"]);
+    assert.equal(await resolvePricePromotionForReply({
+      ...params,aiPricingEnabled:true,pricingDecision:approved.decision,
+      treatment:"骨盆调理",verifiedServiceFromText:"骨盆调理",
+      contactId:517,language:"zh",textSendSucceeded:true,
+      wasPromoRecentlySent:async()=>true,
+      hasUnconfirmedMediaDelivery:async()=>false,
+    }),null,"never resend accepted graphics");
+  } finally { clinicConfig.automatedFollowUp=prior; }
+
+  assert.equal(resolveShadowPriceException({
+    ...params,conversationHistory:[
+      customer,turn("assistant","[Verified STAFF message] 骨盆调理",10000,true),
+      turn("user","Package?",1000),
+    ],
+  }),null,"a staff reply blocks package selection");
+  assert.equal(resolveShadowPriceException({
+    ...params,conversationHistory:[turn("user","Hi～",90000),
+      turn("assistant","你可以了解骨盆调理",85000),
+      turn("user","Package?",1000)],
+  }),null,"ad and AI text alone cannot select a treatment");
+  assert.equal(resolveShadowPriceException({
+    ...params,conversationHistory:history.slice(0,-1).concat(
+      turn("user","有优惠的话以后再通知",1000)),
+    customerText:"有优惠的话以后再通知",
+  }),null,"future marketing permission cannot trigger current graphics");
+});
