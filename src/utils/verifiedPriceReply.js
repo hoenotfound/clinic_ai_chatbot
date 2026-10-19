@@ -402,7 +402,7 @@ function ensureVerifiedPriceReply({
     const amount = item.price;
     const namedPackage = item.name !== "Main offer" ? ` ${item.name}` : "";
     const offerName = `${treatment}${namedPackage}`;
-    const asksForOneSession = /(?:for|per|is\\s+for)\\s*(?:one|1|a)\\s*(?:time|session|treatment|visit)|(?:一|1)次(?:护理|護理|疗程|療程)?/iu
+    const asksForOneSession = /(?:for|per|is\s+for)\s*(?:one|1|a)\s*(?:time|session|treatment|visit)|(?:一|1)次(?:护理|護理|疗程|療程)?/iu
       .test(String(customerText || ""));
     // Never infer per-session billing from a confirmed amount. A configured
     // sessionsIncluded value is the only supported quantity authority.
