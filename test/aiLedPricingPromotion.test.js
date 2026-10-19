@@ -647,3 +647,65 @@ test("compound-question recognition excludes frequency, objections, free assessm
     assert.equal(result,null,text);
   }
 });
+
+
+test("Neutro 9D caption-only RM488 offer yields one verified price and one matching graphic",async()=>{
+  const offer={
+    name:"9D 逆龄抗衰 First Trial",linkedService:"9D 逆龄抗衰",
+    sendOnPriceQuery:true,imageUrl:"https://example.test/9d-graphic",
+    caption:"9D逆龄抗衰仪器护理",followUpMessage:
+      "🎊 限时优惠\n9D 逆龄精雕\n只需要 RM 4️⃣8️⃣8️⃣ (原价 RM1,288)\n额外免费 全身通十二经络按摩",
+  };
+  const question="9D逆龄抗衰多少钱？",turns=[{role:"user",content:question}];
+  const d=decide({
+    priceQuery:true,treatment:"9D 逆龄抗衰",customerText:question,
+    conversationHistory:turns,promotions:[offer],
+  });
+  assert.equal(d?.treatment,"9D 逆龄抗衰");
+  assert.deepEqual(d?.prices?.map(item=>item.price),["RM488"]);
+  const quoted=ensureVerifiedPriceReply({
+    customerText:question,reply:"请先来了解",
+    treatment:d.treatment,pricingDecision:d,language:"zh",
+    conversationHistory:turns,services,serviceAliases:aliases,promotions:[offer],
+  });
+  assert.match(quoted.reply,/RM488/u);
+  const graphic=await resolvePricePromotionForReply(mediaArgs(d,{
+    customerText:question,conversationHistory:turns,
+    promotions:[offer],contactId:1002,
+  }));
+  assert.deepEqual(graphic?.packages?.map(p=>p.imageUrl),[offer.imageUrl]);
+});
+
+test("Neutro pelvic caption-only Package A RM388 and B RM288 stay scoped with both graphics",async()=>{
+  const pelvis={
+    name:"骨盆调理套餐",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    imageUrl:"",caption:"",
+    packages:[
+      {name:"Package A",imageUrl:"https://example.test/pelvic-a",
+        caption:"本月限时优惠\nRM100 优惠券限时领取（只限100位）\n原价优惠 RM488\n优惠后仅需 RM3️⃣8️⃣8️⃣"},
+      {name:"Package B",imageUrl:"https://example.test/pelvic-b",
+        caption:"本月限时优惠 RM100 OFF\n原价 RM388\n现在只需 RM2️⃣8️⃣8️⃣"},
+    ],
+  };
+  const question="骨盆调理多少钱？",turns=[{role:"user",content:question}];
+  const d=decide({
+    priceQuery:true,treatment:"骨盆调理",customerText:question,
+    conversationHistory:turns,promotions:[pelvis],
+  });
+  assert.equal(d?.treatment,"骨盆调理");
+  assert.deepEqual(d?.prices?.map(p=>[p.name,p.price]),[
+    ["Package A","RM388"],["Package B","RM288"],
+  ]);
+  const reply=ensureVerifiedPriceReply({
+    customerText:question,reply:"可以先来评估",
+    treatment:d.treatment,pricingDecision:d,language:"zh",
+    conversationHistory:turns,services,serviceAliases:aliases,promotions:[pelvis],
+  });
+  assert.match(reply.reply,/RM388/u);
+  assert.match(reply.reply,/RM288/u);
+  const graphics=await resolvePricePromotionForReply(mediaArgs(d,{
+    customerText:question,conversationHistory:turns,
+    promotions:[pelvis],contactId:1003,
+  }));
+  assert.deepEqual(graphics?.packages?.map(p=>p.name),["Package A","Package B"]);
+});

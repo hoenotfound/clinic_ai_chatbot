@@ -143,3 +143,35 @@ test("server only restores configured facts after an independently approved, quo
   assert.ok(server.indexOf("reply = appendRequestedBusinessFacts(") >
     server.indexOf("const priced = ensureVerifiedPriceReply("));
 });
+
+test("location wording is not inferred from anatomical position",()=>{
+  const cases=[
+    "脸的位置不对称，3D小颜术多少钱？",
+    "小腹的位置凸，骨盆调理价钱多少？",
+    "Where is the pain located? What is the price?",
+    "The location of my jawline is unclear. What is the price?",
+    "Sakit kat mana? Berapa harga rawatan?",
+  ];
+  for(const customerText of cases){
+    const priced="3D 小颜术 RM488";
+    assert.equal(appendRequestedBusinessFacts({
+      customerText,reply:priced,...configured,language:"zh",
+    }),priced,customerText);
+  }
+});
+
+test("location intent retains correct business address in three languages",()=>{
+  for(const [customerText,language] of [
+    ["请问地点在哪里？价钱多少？","zh"],
+    ["你们在哪里？3D小颜术多少钱？","zh"],
+    ["你們的位置在哪裡？价钱多少？","zh"],
+    ["Where is your clinic located? How much for 3D?","en"],
+    ["Where are you located? What is the price?","en"],
+    ["Klinik kat mana? Berapa harga 3D?","ms"],
+  ]) {
+    const priced=appendRequestedBusinessFacts({
+      customerText,reply:"3D 小颜术 RM488",...configured,language,
+    });
+    assert.match(priced,/C-12-6, Dataran 3 Two Business Centre/u,customerText);
+  }
+});
