@@ -261,7 +261,10 @@ function isPromotionPricing(value) {
   return isPlainObject(value) && value.currency === "MYR" &&
     Number.isSafeInteger(value.offer) && value.offer > 0 && value.offer <= 1000000 &&
     (value.normal === undefined ||
-      (Number.isSafeInteger(value.normal) && value.normal >= value.offer && value.normal <= 1000000));
+      (Number.isSafeInteger(value.normal) && value.normal >= value.offer && value.normal <= 1000000)) &&
+    (value.sessionsIncluded === undefined ||
+      (Number.isSafeInteger(value.sessionsIncluded) &&
+        value.sessionsIncluded >= 1 && value.sessionsIncluded <= 20));
 }
 
 function isPromotionPackage(value) {
