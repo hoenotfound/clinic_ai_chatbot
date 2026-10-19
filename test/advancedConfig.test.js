@@ -2054,3 +2054,65 @@ test("config repository normalizes legacy result-media triggers without changing
     /const \{ sendAfterPrice: _legacySendAfterPrice, \.\.\.rest \} = entry \|\| \{\}/
   );
 });
+
+
+
+test("Settings validates optional verified sessionsIncluded on single and package promotions", () => {
+  const current = currentConfig();
+  const base = {
+    name: "Consultation First Trial",
+    linkedService: "Consultation",
+    sendOnPriceQuery: true,
+    imageUrl: "https://example.test/trial.jpg",
+    caption: "First-trial consultation",
+  };
+  const price = {currency: "MYR", offer: 488, normal: 888, sessionsIncluded: 1};
+  const single = prepareConfigUpdatePayload({
+    promotions: [{...base, pricing: price}],
+  }, current);
+  assert.equal(single.ok, true, JSON.stringify(single));
+  assert.deepEqual(single.updates.promotions[0].pricing, price);
+
+  const packages = prepareConfigUpdatePayload({
+    promotions: [{
+      ...base, imageUrl: "", caption: "",
+      packages: [
+        {name: "Package A", imageUrl: base.imageUrl, caption: "RM388",
+          pricing: {currency: "MYR", offer: 388, normal: 488, sessionsIncluded: 2}},
+        {name: "Package B", imageUrl: base.imageUrl, caption: "RM288",
+          pricing: {currency: "MYR", offer: 288, sessionsIncluded: 3}},
+      ],
+    }],
+  }, current);
+  assert.equal(packages.ok, true, JSON.stringify(packages));
+  assert.equal(packages.updates.promotions[0].packages[0].pricing.sessionsIncluded, 2);
+  assert.equal(packages.updates.promotions[0].packages[1].pricing.sessionsIncluded, 3);
+
+  for (const bad of [0, -1, 1.5, 21, "1", null, true, NaN]) {
+    for (const inPackage of [false, true]) {
+      const entry = inPackage
+        ? {...base, imageUrl: "", caption: "",
+          packages: [{name: "Package A", imageUrl: base.imageUrl,
+            caption: base.caption, pricing: {...price, sessionsIncluded: bad}}]}
+        : {...base, pricing: {...price, sessionsIncluded: bad}};
+      const prepared = prepareConfigUpdatePayload({
+        promotions: [entry],
+      }, current);
+      assert.equal(prepared.ok, false,
+        "invalid sessionsIncluded " + String(bad) + " accepted (package=" + inPackage + ")");
+    }
+  }
+  const withoutCount = prepareConfigUpdatePayload({
+    promotions: [{...base, pricing: {currency: "MYR", offer: 488}}],
+  }, current);
+  assert.equal(withoutCount.ok, true, JSON.stringify(withoutCount));
+  assert.equal(withoutCount.updates.promotions[0].pricing.sessionsIncluded, undefined);
+
+  // Prevent UI regressions: session quantity must remain in price edits and
+  // be exposed to both a single offer and nested package editor.
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
+  assert.match(settings, /Sessions included \(optional\)/u);
+  assert.match(settings, /pricing\?\.sessionsIncluded \?\? null/u);
+  assert.match(settings, /onChange=\{\(event\) => updateSessions\(event\.target\.value\)\}/u);
+  assert.match(settings, /<PromotionPriceFields pricing=\{item\.pricing\}/u);
+});
