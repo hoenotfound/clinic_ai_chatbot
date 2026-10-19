@@ -524,6 +524,8 @@ test("Chinese photo and skin descriptions are not mistaken for image-send promis
     "这张照片是发炎时拍的，不代表治疗效果。",
     "图片可以看到皮肤发红了，是否适合护理需要评估。",
     "皮肤发炎了，建议先咨询合资格医疗专业人员。",
+    "这个配套内容会免费送给你1小时经络按摩。",
+    "我们的套餐内容包括免费送给你全身通淋巴按摩。",
   ];
   for (const reply of descriptions) {
     assert.deepEqual(guardUnconfirmedMediaPromise(reply, "zh"), {
@@ -566,4 +568,22 @@ test("Chinese genuine image-send promises are still removed before optional medi
   assert.deepEqual(guardUnconfirmedMediaPromise(withNormalPrice, "zh"), {
     reply: withNormalPrice, changed: false,
   });
+});
+
+
+test("Complimentary treatment gifts are not attachment-send claims", () => {
+  const cases = [
+    "这个配套内容会免费送给你1小时经络按摩。",
+    "我们的套餐内容包括免费送给你全身通淋巴按摩。",
+    "优惠配套内含赠送经络按摩，护理详情可由中医师评估。",
+  ];
+  for (const reply of cases) {
+    assert.equal(claimsMediaWasOrWillBeSent(reply), false, reply);
+    assert.deepEqual(guardUnconfirmedMediaPromise(reply, "zh"), {
+      reply, changed: false,
+    });
+  }
+  const imagePromise = "我现在发送配套图片给你参考。";
+  assert.equal(claimsMediaWasOrWillBeSent(imagePromise), true);
+  assert.equal(guardUnconfirmedMediaPromise(imagePromise, "zh").changed, true);
 });
