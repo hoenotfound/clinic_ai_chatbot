@@ -623,3 +623,62 @@ test("Chinese development or publication news is not an attachment-send claim", 
   assert.match(fixed.reply, /我们正在开发新的配套内容/u);
   assert.doesNotMatch(fixed.reply, /已经发给你/u);
 });
+
+
+
+test("Chinese image references, publication and negation never become delivery promises", () => {
+  const factual = [
+    "我们分享的图片只是教学参考。",
+    "我们发表有关配套内容的声明。",
+    "我们不发图，只想介绍配套资料。",
+    "我们不发优惠图给你。",
+    "我们不会发送图片给你。",
+    "我们还没发优惠图给你。",
+    "我们没有把图片发过去。",
+    "我们不是发图片给你，而是在解释护理内容。",
+    "我们已经分享的图片只是教学参考。",
+    "我们只是分享了临床案例图片，不是发给你。",
+    "我们下个月会发布最新配套资料。",
+    "我们正在开发新的配套内容。",
+    "我们分享图片作为护理示例。",
+    "图片里的皮肤发红了，需要先评估。",
+    "配套 RM388，图片仅供介绍，不代表实际效果。",
+  ];
+  for (const reply of factual) {
+    assert.equal(claimsMediaWasOrWillBeSent(reply), false, reply);
+    assert.deepEqual(guardUnconfirmedMediaPromise(reply, "zh"), {
+      reply, changed: false,
+    }, reply);
+  }
+});
+
+test("Chinese send promises require affirmative delivery and preserve other clauses", () => {
+  const promised = [
+    "优惠图片我已经发给你了。",
+    "图片已经发了。",
+    "资料我刚才转发了。",
+    "我已经把图片发出去。",
+    "我现在发送配套图片给你参考。",
+    "我们会分享配套资料。",
+    "我会发优惠图。",
+    "我们把图片分享给你参考。",
+    "现在我会分享配套资料。",
+  ];
+  for (const reply of promised) {
+    assert.equal(claimsMediaWasOrWillBeSent(reply), true, reply);
+    const guarded = guardUnconfirmedMediaPromise(reply, "zh");
+    assert.equal(guarded.changed, true, reply);
+    assert.notEqual(guarded.reply, reply);
+  }
+
+  const mixed = "骨盆调理套餐 A RM388。我们分享的图片只是教学参考。优惠图片我已经发给你了。";
+  const guarded = guardUnconfirmedMediaPromise(mixed, "zh");
+  assert.equal(guarded.changed, true);
+  assert.match(guarded.reply, /骨盆调理套餐 A RM388/u);
+  assert.match(guarded.reply, /我们分享的图片只是教学参考/u);
+  assert.doesNotMatch(guarded.reply, /已经发给你/u);
+
+  const contrast = "我们不发旧图，但我现在会发送另一张优惠图给你。";
+  assert.equal(claimsMediaWasOrWillBeSent(contrast), true,
+    "an earlier refusal cannot hide a later explicit send promise");
+});
