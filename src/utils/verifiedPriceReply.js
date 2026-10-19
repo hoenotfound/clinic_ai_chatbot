@@ -183,6 +183,11 @@ function verifiedPricesForService(treatment, promotions, customerText = "", conv
     result.push({
       name: String(option.name).trim(), title: String(option.title || "").trim(),
       price: configured || unique[0], afterVoucher,
+      // Optional explicit package unit evidence. "First Trial" or the model's
+      // words do not prove that the amount covers exactly one session.
+      ...(Number.isSafeInteger(structured?.sessionsIncluded) &&
+        structured.sessionsIncluded >= 1 && structured.sessionsIncluded <= 20
+        ? { sessionsIncluded: structured.sessionsIncluded } : {}),
     });
   }
   if (automatic.length === 1 && allowTextOnlyOffers) {
@@ -396,19 +401,39 @@ function ensureVerifiedPriceReply({
     const item = prices[0];
     const amount = item.price;
     const namedPackage = item.name !== "Main offer" ? ` ${item.name}` : "";
-    // Never imply an after-voucher price is unconditional.
-    const voucher = item.afterVoucher
+    const offerName = `${treatment}${namedPackage}`;
+    const asksForOneSession = /(?:for|per|is\\s+for)\\s*(?:one|1|a)\\s*(?:time|session|treatment|visit)|(?:一|1)次(?:护理|護理|疗程|療程)?/iu
+      .test(String(customerText || ""));
+    // Never infer per-session billing from a confirmed amount. A configured
+    // sessionsIncluded value is the only supported quantity authority.
+    const verifiedSessions = Number.isSafeInteger(item.sessionsIncluded)
+      ? item.sessionsIncluded : null;
+    const unitNote = !asksForOneSession ? ""
+      : verifiedSessions === 1
+        ? locale.startsWith("ms") ? " Pakej ini merangkumi satu sesi."
+          : locale.startsWith("en") ? " This package covers one session."
+            : " 这个配套包含一次护理。"
+        : verifiedSessions !== null
+          ? locale.startsWith("ms") ? ` Pakej ini merangkumi ${verifiedSessions} sesi.`
+            : locale.startsWith("en") ? ` This package covers ${verifiedSessions} sessions.`
+              : ` 这个配套包含 ${verifiedSessions} 次护理。`
+          : locale.startsWith("ms")
+            ? " Pihak pusat boleh sahkan bilangan sesi yang termasuk dalam pakej ini."
+            : locale.startsWith("en")
+              ? " Our centre can confirm how many sessions are included in this package."
+              : " 这个配套包含几次护理，需要由门店确认哦。";
+    const voucherNote = item.afterVoucher
       ? locale.startsWith("ms")
-        ? " Harga selepas baucar tertakluk kepada kelayakan dan pengesahan pusat."
+        ? " Harga selepas baucar tertakluk pada kelayakan dan pengesahan pusat."
         : locale.startsWith("en")
           ? " The after-voucher price is subject to eligibility and confirmation by the centre."
-          : " 如使用优惠券，需符合领取及使用条件，请以门店确认为准。"
+          : " 使用优惠券需符合领取及使用条件，请以门店确认为准。"
       : "";
     const answer = locale.startsWith("ms")
-      ? `Ya, ${amount} ialah harga semasa untuk satu sesi ${treatment}${namedPackage} 😊${voucher}`
+      ? `Ya, harga promosi semasa untuk ${offerName} ialah ${amount} 😊${unitNote}${voucherNote}`
       : locale.startsWith("en")
-        ? `Yes, ${amount} is the current price for one ${treatment}${namedPackage} session 😊${voucher}`
-        : `是的，${amount} 是目前 ${treatment}${namedPackage} 一次护理的价格哦 😊${voucher}`;
+        ? `Yes, the current ${offerName} package offer is ${amount} 😊${unitNote}${voucherNote}`
+        : `是的，${offerName} 目前的配套优惠价是 ${amount} 😊${unitNote}${voucherNote}`;
     return { reply: answer, restored: true };
   }
   const entries = prices.map((item) =>
