@@ -6,8 +6,34 @@
 const UNSAFE_CLINICAL_CLAIM =
   /(?:90\s*%.{0,75}(?:collagen|胶原蛋白|膠原蛋白)|(?:collagen|胶原蛋白|膠原蛋白).{0,75}90\s*%|无副作用|無副作用|no\s+side\s+effects|without\s+(?:any\s+)?side\s+effects|无疼痛感|無疼痛感|(?:完全|绝对|絕對|100\s*%)\s*(?:无痛|無痛)|guaranteed\s+(?:result|outcome|cure|effect)|(?:颅骨|顱骨|头骨|頭骨)\s*(?:骨缝|骨縫).{0,24}(?:变小|變小|缩小|縮小))/iu;
 
+// A sentence like "we cannot guarantee no side effects" is the opposite of
+// the guarantee we are trying to prevent. Check the grammar close to each
+// unsafe phrase, without allowing a disclaimer elsewhere in the caption to
+// excuse an unsafe promise in another clause.
+const EN_NEGATED_PROMISE =
+  /(?:\b(?:cannot|can't|can not|couldn't|do not|don't|never|unable to|not able to|will not|won't)\b.{0,24}\b(?:guarantee|promise|assure|claim)\b|\b(?:no|not)\s+(?:guarantee|promise)\b|\b(?:not)\s+guaranteed\b)\s*(?:that\s+)?(?:there\s+(?:are|will be)\s+)?[^.!?;]{0,35}$/iu;
+const ZH_NEGATED_PROMISE =
+  /(?:不能|无法|無法|不會|不会|不|没法|沒有辦法|没有办法)\s*(?:保证|保證|承诺|承諾|确保|確保|代表|意味著|意味着)\s*[^。！？；;]{0,26}$/iu;
+const CONTRAST = /(?:\b(?:but|however|yet|instead|although)\b|(?:但|但是|不过|不過|然而|却|卻))/iu;
+
+function isNegatedRiskClaim(source, matchIndex) {
+  // A punctuation boundary stops a disclaimer from blessing later claims.
+  const before = source.slice(Math.max(0, matchIndex - 100), matchIndex);
+  const clauses = before.split(/[。！!？?；;\n，,]|\.\s+/u);
+  const clause = clauses.at(-1) || "";
+  const negation = EN_NEGATED_PROMISE.exec(clause) ||
+    ZH_NEGATED_PROMISE.exec(clause);
+  if (!negation) return false;
+  return !CONTRAST.test(clause.slice(negation.index + negation[0].length));
+}
+
 function hasUnsafeClinicalPromotionCopy(text) {
-  return UNSAFE_CLINICAL_CLAIM.test(String(text || "").normalize("NFKC"));
+  const source = String(text || "").normalize("NFKC");
+  const matches = source.matchAll(new RegExp(UNSAFE_CLINICAL_CLAIM.source, "giu"));
+  for (const match of matches) {
+    if (!isNegatedRiskClaim(source, match.index)) return true;
+  }
+  return false;
 }
 
 // Use a common check for reactive pricing graphics, follow-up promotion copy
