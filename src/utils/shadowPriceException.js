@@ -65,8 +65,8 @@ function shadowVerifiedPrice({
 // session with a separately verified treatment, current active price and an
 // earlier assistant quote of that exact price. The ad/CRM label cannot supply
 // the missing treatment.
-const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\\s+|is\\s+it\\s+)?(?:RM|MYR)\\s*([1-9]\\d{1,4})\\s*(?:(?:for|per|is\\s+for)\\s*(?:one|1|a)\\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\\s*(?:一|1)次(?:护理|護理|疗程|療程)?)\\s*(?:only|right|correct|ya|ah|吗|嗎|呢)?[\\s?？。!.！]*$/iu;
-const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不考慮|not\\s+interested|instead|another\\s+treatment|different\\s+treatment|stop|unsubscribe|退订|退訂)/iu;
+const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\s+|is\s+it\s+)?(?:RM|MYR)\s*([1-9]\d{1,4})\s*(?:(?:for|per|is\s+for)\s*(?:one|1|a)\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\s*(?:一|1)次(?:护理|護理|疗程|療程)?)\s*(?:only|right|correct|ya|ah|吗|嗎|呢)?[\s?？。!.！]*$/iu;
+const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不考慮|not\s+interested|instead|another\s+treatment|different\s+treatment|stop|unsubscribe|退订|退訂)/iu;
 
 function resolvePreviouslyQuotedSessionPrice({
   customerText, conversationHistory, services, serviceAliases, promotions,
