@@ -23,7 +23,9 @@ function guardUnconfirmedMediaPromise(reply, language = "zh") {
   const source = String(reply || "");
   // Split clauses, not entire messages, so "Package A RM388，I'll send the
   // image" preserves the pricing fact that was already checked upstream.
-  const chunks = source.split(/(?<=[，,;；。！？!?])|\n+|(?<=\.)\s+(?=[A-Z])/u)
+  // Commas between numeric digits belong to money (RM1,288), not clauses.
+  // Splitting there can corrupt the already-authorized price shown to a lead.
+  const chunks = source.split(/(?<=[，;；。！？!?])|(?<=,)(?!\d)|\n+|(?<=\.)\s+(?=[A-Z])/u)
     .map(text => text.trim()).filter(Boolean);
   if (!chunks.some(part => claimsMediaWasOrWillBeSent(part) ||
       EMPTY_LIST_CLAIM.test(part))) return { reply: source, changed: false };
