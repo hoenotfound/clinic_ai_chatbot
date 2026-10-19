@@ -64,7 +64,9 @@ test("Amanda #567: recent previously quoted RM488 confirms one 3D session", asyn
     pricingDecision: approval.decision,
     language: "en", priceOnlyResponse: true,
   });
-  assert.match(quote.reply, /Yes, RM488 is the current price for one 3D 小颜术 session/u);
+  assert.match(quote.reply, /current 3D 小颜术 package offer is RM488/u);
+  assert.match(quote.reply, /centre can confirm how many sessions are included/u);
+  assert.doesNotMatch(quote.reply, /covers one session|price for one .* session/iu);
   assert.doesNotMatch(quote.reply, /Which treatment|send.*image/iu);
 
   const prior = clinicConfig.automatedFollowUp;
@@ -407,4 +409,102 @@ test("Unsafe copy is blocked across translated promotions and promotional follow
   assert.equal(promotionHasUnsafeClinicalCopy({
     caption:"We cannot guarantee results. Ask the practitioner.",
   }),false);
+});
+
+
+test("Money with thousands separators survives media-claim cleanup", () => {
+  for (const source of [
+    "9D original price RM1,288. I'll send the graphic.",
+    "原价 RM1,288，优惠后 RM488，我把优惠图发给你。",
+    "原价 RM1,288, I'll share the picture.",
+    "The current offer is RM1,288, I'll send the picture.",
+  ]) {
+    const result = guardUnconfirmedMediaPromise(source, "en");
+    assert.equal(result.changed, true, source);
+    assert.ok(result.reply.includes("RM1,288"), result.reply);
+    assert.doesNotMatch(result.reply, /RM1,\n288/u);
+    assert.doesNotMatch(result.reply, /send the (?:picture|graphic)|发给你/iu);
+  }
+  const untouched = "Normal RM1,288, trial RM488.";
+  assert.deepEqual(guardUnconfirmedMediaPromise(untouched, "en"), {
+    reply: untouched, changed: false,
+  });
+});
+
+test("RM488? confirms only the verified amount, not an invented session count", () => {
+  const history = [
+    ...amanda().slice(0, -1), turn("user", "RM488?", 1000),
+  ];
+  const decision = resolveShadowPriceException(args({
+    customerText: "RM488?", conversationHistory: history,
+  }));
+  assert.equal(decision?.source, "confirmed_prior_quote");
+  const reply = ensureVerifiedPriceReply({
+    customerText: "RM488?", reply: "Is the price still correct?",
+    treatment: "3D 小颜术", pricingDecision: decision,
+    services, serviceAliases: aliases, promotions, conversationHistory: history,
+    language: "en",
+  });
+  assert.match(reply.reply, /current .* package offer is RM488/iu);
+  assert.doesNotMatch(reply.reply, /one session|how many sessions|per session/iu);
+});
+
+test("Exactly one-session wording requires structured promotion evidence", () => {
+  const explicit = promotions.map(item => ({
+    ...item, pricing: {...item.pricing, sessionsIncluded: 1},
+  }));
+  const one = resolveShadowPriceException(args({promotions: explicit}));
+  assert.equal(one.prices[0].sessionsIncluded, 1);
+  const quoted = ensureVerifiedPriceReply({
+    ...args({promotions: explicit}), treatment: one.treatment,
+    pricingDecision: one, reply: "Which treatment?", language: "en",
+  });
+  assert.match(quoted.reply, /package covers one session/u);
+
+  const two = resolveShadowPriceException(args({
+    promotions: promotions.map(item => ({
+      ...item, pricing: {...item.pricing, sessionsIncluded: 2},
+    })),
+  }));
+  const multi = ensureVerifiedPriceReply({
+    ...args(), treatment: two.treatment, pricingDecision: two,
+    reply: "Which treatment?", language: "en",
+  });
+  assert.match(multi.reply, /package covers 2 sessions/u);
+  assert.doesNotMatch(multi.reply, /one session/u);
+});
+
+test("Risk disclaimers remain allowed while positive guarantees are blocked", () => {
+  const { hasUnsafeClinicalPromotionCopy } =
+    require("../src/utils/promotionClinicalCopyPolicy");
+  for (const safe of [
+    "We cannot guarantee no side effects.",
+    "We do not guarantee no side effects.",
+    "We cannot guarantee 90% collagen recovery.",
+    "不能保证完全无痛或没有风险。",
+    "我们无法保证无副作用，需由中医师评估。",
+    "We cannot guarantee results. Each customer is different.",
+  ]) {
+    assert.equal(hasUnsafeClinicalPromotionCopy(safe), false, safe);
+    assert.equal(promotionHasUnsafeClinicalCopy({caption: safe}), false, safe);
+  }
+  for (const unsafe of [
+    "There are no side effects.",
+    "We guarantee no side effects.",
+    "Guaranteed results for every customer.",
+    "Fully restore 90% collagen.",
+    "我们的疗程完全无痛。",
+    "这个护理无副作用。",
+    "不能保证无副作用。但是这项护理无副作用。",
+    "We cannot guarantee no side effects. Our treatment has no side effects.",
+    "We cannot guarantee 90% collagen, but we will restore 90% collagen.",
+  ]) {
+    assert.equal(hasUnsafeClinicalPromotionCopy(unsafe), true, unsafe);
+  }
+  assert.equal(promotionHasUnsafeClinicalCopy({
+    mediaTranslations: {
+      en: {caption: "We cannot guarantee no side effects."},
+    },
+    followUpMessage: "护理完全无痛。",
+  }), true, "a harmless disclaimer must not excuse another unsafe claim");
 });
