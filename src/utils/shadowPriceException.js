@@ -68,6 +68,42 @@ function shadowVerifiedPrice({
 const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\s+|is\s+it\s+)?(?:RM|MYR)\s*([1-9]\d{1,4})\s*(?:(?:for|per|is\s+for)\s*(?:one|1|a)\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\s*(?:一|1)次(?:护理|護理|疗程|療程)?)\s*(?:only|right|correct|ya|ah|吗|嗎|呢)?[\s?？。!.！]*$/iu;
 const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不考慮|not\s+interested|instead|another\s+treatment|different\s+treatment|stop|unsubscribe|退订|退訂)/iu;
 
+// An explicit "Package?" is a request to see the options NOW, not
+// consent to future marketing. Require a fresh customer-authored service name
+// in the same verified session and a reply explaining that very service.
+// A standalone ad name, assistant suggestion or old staff message is not enough.
+function resolveDirectCustomerPackageRequest({
+  customerText, conversationHistory, services, serviceAliases, promotions,
+} = {}) {
+  const text = String(customerText || "").trim();
+  if (!/^(?:packages?|pakej|配套|套餐)[\s?？。!.！]*$/iu.test(text)) return null;
+  const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const before = turns.slice(0, -1);
+  const candidates = serviceCandidates(services, serviceAliases);
+  const customerTurns = before
+    .map((turn, index) => ({ turn, index }))
+    .filter(({ turn }) => turn?.role === "user");
+  if (customerTurns.length !== 1) return null;
+  const { turn, index } = customerTurns[0];
+  const selected = pricingMessageText(turn).trim();
+  const mentions = [...new Set(findServicesInText(selected, candidates))];
+  const service = safeServiceFromCustomer(selected, services, serviceAliases);
+  if (!service || mentions.length !== 1 || mentions[0] !== service.name ||
+      PRICE_TOPIC_CHANGE.test(selected) ||
+      !/(?:有兴趣|有興趣|想了解|想知道|想问|想問|感兴趣|感興趣|interested|enquir|inquir|berminat|nak\s+tahu)/iu.test(selected)) return null;
+  const responses = before.slice(index + 1);
+  if (!responses.length || responses.length > 4 ||
+      responses.some(item => item?.role !== "assistant" || isVerifiedStaffTurn(item)) ||
+      !responses.some(item => pricingMessageText(item).includes(service.name) ||
+        (service.name === "骨盆调理" && pricingMessageText(item).includes("骨盆")))) return null;
+  const prices = verifiedPricesForService(service.name, promotions, text, turns);
+  if (!prices?.length) return null;
+  return Object.freeze({
+    source: "direct_customer_package_request", treatment: service.name,
+    type: "price", prices, clarifiedPriceService: null,
+  });
+}
+
 function resolvePreviouslyQuotedSessionPrice({
   customerText, conversationHistory, services, serviceAliases, promotions,
 } = {}) {
@@ -143,6 +179,12 @@ function resolveShadowPriceException({
       clarifiedPriceService: clarification,
     });
   }
+  const packageRequest = resolveDirectCustomerPackageRequest({
+    customerText: text, conversationHistory: session, services, serviceAliases,
+    promotions,
+  });
+  if (packageRequest) return packageRequest;
+
   const quotedPriceConfirmation = resolvePreviouslyQuotedSessionPrice({
     customerText: text, conversationHistory: session, services, serviceAliases,
     promotions,
@@ -202,4 +244,4 @@ function resolveShadowPriceException({
   });
 }
 
-module.exports = { resolveShadowPriceException, recentVerifiedPricingSession, resolvePreviouslyQuotedSessionPrice };
+module.exports = { resolveShadowPriceException, recentVerifiedPricingSession, resolvePreviouslyQuotedSessionPrice, resolveDirectCustomerPackageRequest };
