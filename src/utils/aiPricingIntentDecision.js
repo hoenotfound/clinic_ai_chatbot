@@ -5,7 +5,7 @@
 // context; all quoted prices must come from active configured offers.
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
-const { stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
+const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPriceRequest, hasExplicitPackageOptionsRequest, hasFuturePromotionPermissionWithoutPrice, isStandalonePriceQuestion } = require("./customerEnquiryEvidence");
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -57,7 +57,7 @@ const PRICE_QUESTION_CLAUSE =
 function hasCurrentPriceAmountRequest(customerText) {
   const current = String(customerText || "").trim();
   return CURRENT_PRICE_AMOUNT_REQUEST.test(current) ||
-    PRICE_QUESTION_CLAUSE.test(current);
+    PRICE_QUESTION_CLAUSE.test(current) || isFirstTrialAmountQuestion(current);
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;

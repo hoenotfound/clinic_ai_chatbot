@@ -36,6 +36,7 @@ const { resolveShadowPriceException } = require("./utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
+const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -1128,6 +1129,7 @@ async function processIncomingMessage(
           customerText: text, conversationHistory: history, metaAdContext,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
+          allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
@@ -1277,6 +1279,7 @@ async function processIncomingMessage(
       services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
       resultMedia: clinicConfig.resultMedia,
       flagged, bookingReady, keywordReason, marketingStopQuestion,
+      allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
     });
     const approvedPricingDecision = pricingApproval.decision;
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
@@ -1447,6 +1450,18 @@ async function processIncomingMessage(
         text, history, mediaLanguage
       );
       if (feeClarification) reply = feeClarification;
+    }
+
+    // Images are optional and sent only AFTER Meta accepts this text.
+    // A later delivery failure must never turn an AI promise into a lie.
+    // Even when a verified price is quoted, do not claim graphics are sent
+    // before the separate media selector and provider confirm acceptance.
+    if (!flagged && !marketingStopQuestion) {
+      const mediaPromise = guardUnconfirmedMediaPromise(reply, mediaLanguage);
+      if (mediaPromise.changed) {
+        console.warn("[Reply guard] Removed unconfirmed outbound media claim.");
+        reply = mediaPromise.reply;
+      }
     }
 
     // Preserve the useful original service explanation. If an eligible first

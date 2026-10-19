@@ -716,23 +716,34 @@ function PromotionFollowUpTranslationsEditor({ value = {}, onChange }) {
 }
 
 function PromotionPriceFields({ pricing, onChange }) {
-  // Store ordinary numeric MYR amounts, not price information parsed from
-  // translated captions, images, or emoji-digit promotional copy.
+  // Verified quantities must be supplied by clinic staff, never inferred from
+  // "First Trial", promotional graphics, or model output.
+  const makePrice = (offer, normal, sessionsIncluded) => (
+    offer === null ? undefined : {
+      currency: "MYR",
+      offer,
+      ...(normal === null ? {} : { normal }),
+      ...(sessionsIncluded === null ? {} : { sessionsIncluded }),
+    }
+  );
   const updatePrice = (field, raw) => {
     const amount = raw === "" ? null : Number(raw);
     const offer = field === "offer" ? amount : pricing?.offer ?? null;
     const normal = field === "normal" ? amount : pricing?.normal ?? null;
-    onChange(offer === null
-      ? undefined
-      : { currency: "MYR", offer, ...(normal === null ? {} : { normal }) });
+    // A price edit must not silently drop a previously confirmed session count.
+    onChange(makePrice(offer, normal, pricing?.sessionsIncluded ?? null));
+  };
+  const updateSessions = (raw) => {
+    const amount = raw === "" ? null : Number(raw);
+    onChange(makePrice(pricing?.offer ?? null, pricing?.normal ?? null, amount));
   };
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
       <p className="text-xs font-semibold">Verified MYR prices (optional)</p>
       <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-        Use numeric amounts such as 488. When omitted, the existing caption-verification method remains in use.
+        Enter verified numeric amounts. A session count is optional and should only be set when the clinic has confirmed exactly how many sessions the offer includes.
       </p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <div>
           <label className={labelClass}>Current offer price (RM)</label>
           <input type="number" min="1" max="1000000" step="1" className={inputClass}
@@ -745,6 +756,16 @@ function PromotionPriceFields({ pricing, onChange }) {
             disabled={pricing?.offer == null}
             value={pricing?.normal ?? ""}
             onChange={(event) => updatePrice("normal", event.target.value)} />
+        </div>
+        <div>
+          <label className={labelClass}>Sessions included (optional)</label>
+          <input type="number" min="1" max="20" step="1" className={inputClass}
+            disabled={pricing?.offer == null}
+            value={pricing?.sessionsIncluded ?? ""}
+            onChange={(event) => updateSessions(event.target.value)} />
+          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            Leave blank if unverified; never assume one session.
+          </p>
         </div>
       </div>
     </div>

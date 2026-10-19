@@ -12,6 +12,7 @@ const {
   getPricePromotionBundle,
 } = require("./activePromotion");
 const { mediaVariants, resolveLocalizedMedia } = require("./mediaLocalization");
+const { promotionHasUnsafeClinicalCopy } = require("./promotionClinicalCopyPolicy");
 
 /**
  * Resolves whether the current AI reply is allowed to trigger promotional media.
@@ -95,6 +96,10 @@ async function resolvePricePromotionForReply({
     !Array.isArray(pricingDecision.prices) || !pricingDecision.prices.length ||
     !["price", "package_options"].includes(pricingDecision.type)
   )) return skip("no_approved_pricing_decision");
+  // A confirmed old quote should not generate a second marketing graphic.
+  if (aiPricingEnabled && pricingDecision?.source === "confirmed_prior_quote") {
+    return skip("price_confirmation_no_new_graphic");
+  }
   const clarificationService = aiPricingEnabled
     ? pricingDecision.clarifiedPriceService
     : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
@@ -211,6 +216,13 @@ async function resolvePricePromotionForReply({
       : genericBundle;
   }
   if (!bundle) return skip("no_matching_promotion_package");
+
+  // A configured graphic caption can still contain legacy, unverified
+  // clinical promises. Never send those automatically just because the
+  // monetary amount itself is verified. The text-only price can still be
+  // returned by the independently approved reply path.
+  if (promotionHasUnsafeClinicalCopy(bundle.promotion))
+    return skip("unverified_clinical_promo_copy");
 
   // Missing verification must never mean permission to retry a possibly
   // accepted image. Keep the AI text reply independent of this optional send.

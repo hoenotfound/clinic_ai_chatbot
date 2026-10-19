@@ -1,5 +1,6 @@
 const { findMentionedPromotionPackages, promotionPackages } = require("./activePromotion");
 const { resolveLocalizedMedia, mediaVariants } = require("./mediaLocalization");
+const { promotionHasUnsafeClinicalCopy } = require("./promotionClinicalCopyPolicy");
 const { inferConfiguredServiceFromText } = require("./serviceInterest");
 const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 
@@ -67,6 +68,8 @@ function evaluatePricingReminder({
     return { offer:null, offers:[], reason:"no_pricing_interest" };
   }
 
+  if (promotionHasUnsafeClinicalCopy(matching[0]))
+    return { offer: null, offers: [], reason: "unverified_clinical_promo_copy" };
   const packages = promotionPackages(matching[0]);
   if (!packages.length) return { offer: null, offers: [], reason: "missing_promotion" };
 

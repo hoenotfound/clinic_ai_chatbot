@@ -19,6 +19,7 @@ const {
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
 const { randomUUID } = require("node:crypto");
+const { promotionHasUnsafeClinicalCopy } = require("../utils/promotionClinicalCopyPolicy");
 const channelMessaging = require("./channelMessagingService");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 const mediaStorage = require("./mediaStorageService");
@@ -516,6 +517,7 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
   );
   if (matches.length !== 1) return null;
   const [promotion] = matches;
+  if (promotionHasUnsafeClinicalCopy(promotion)) return null;
 
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
@@ -617,6 +619,7 @@ function activePromotionFollowUpStillConfigured(
   if (matches.length !== 1) return false;
 
   const [promotion] = matches;
+  if (promotionHasUnsafeClinicalCopy(promotion)) return false;
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
     : [];
