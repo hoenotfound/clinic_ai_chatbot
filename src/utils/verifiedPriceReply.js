@@ -393,12 +393,22 @@ function ensureVerifiedPriceReply({
   // producing another generic price menu or promising to resend an image.
   if (aiLed && pricingDecision.source === "confirmed_prior_quote" &&
       prices.length === 1) {
-    const amount = prices[0].price;
+    const item = prices[0];
+    const amount = item.price;
+    const namedPackage = item.name !== "Main offer" ? ` ${item.name}` : "";
+    // Never imply an after-voucher price is unconditional.
+    const voucher = item.afterVoucher
+      ? locale.startsWith("ms")
+        ? " Harga selepas baucar tertakluk kepada kelayakan dan pengesahan pusat."
+        : locale.startsWith("en")
+          ? " The after-voucher price is subject to eligibility and confirmation by the centre."
+          : " 如使用优惠券，需符合领取及使用条件，请以门店确认为准。"
+      : "";
     const answer = locale.startsWith("ms")
-      ? `Ya, ${amount} ialah harga semasa untuk satu sesi ${treatment} 😊`
+      ? `Ya, ${amount} ialah harga semasa untuk satu sesi ${treatment}${namedPackage} 😊${voucher}`
       : locale.startsWith("en")
-        ? `Yes, ${amount} is the current price for one ${treatment} session 😊`
-        : `是的，${amount} 是目前 ${treatment} 一次护理的价格哦 😊`;
+        ? `Yes, ${amount} is the current price for one ${treatment}${namedPackage} session 😊${voucher}`
+        : `是的，${amount} 是目前 ${treatment}${namedPackage} 一次护理的价格哦 😊${voucher}`;
     return { reply: answer, restored: true };
   }
   const entries = prices.map((item) =>
