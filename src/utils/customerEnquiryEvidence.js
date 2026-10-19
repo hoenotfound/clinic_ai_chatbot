@@ -170,6 +170,17 @@ function hasCustomerPriceEnquiry(customerText) {
 
 // A specific monetary treatment-price question is narrower than asking
 // whether offers/packages exist or consenting to future promotional updates.
+// A first-trial amount question can omit the word "price": e.g.
+// "请问首次体验是多少呢". Require the monetary "多少" form so that
+// questions about session duration, results or treatment suitability do not
+// accidentally authorize a sales quote or picture.
+function isFirstTrialAmountQuestion(customerText) {
+  const text = String(customerText || "").normalize("NFKC").trim();
+  return text.length <= 80 &&
+    /(?:首次|初次|第一次)\\s*(?:体验|體驗|护理|護理|疗程|療程)?\\s*(?:的|是|要|收费|收費|费用|費用|价[格钱錢]|價格|大概|大约|大約|需要)?\\s*(?:多少(?:钱|錢)?|几多(?:钱|錢)?|幾多(?:钱|錢)?)(?:呢|啊|呀|吗|嗎)?[\\s?？。!！]*$/iu.test(text) &&
+    !/(?:多久|多长|多長|几次|幾次|多[久长長]|几[分钟鐘]|幾[分钟鐘]|几小时|幾小時)/iu.test(text);
+}
+
 function isStandalonePriceQuestion(customerText) {
   const t = String(customerText || "").normalize("NFKC").trim();
   return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t);
@@ -193,6 +204,7 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   );
   if (!current) return false;
   if (isContextualBarePriceQuestion(current, treatment)) return true;
+  if (isFirstTrialAmountQuestion(current)) return true;
   // A customer refusing to discuss prices is not making a price request.
   const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost)\b/iu.test(current);
   if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
@@ -228,4 +240,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { LOCAL_MONETARY_QUESTION, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasExplicitPackageOptionsRequest, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { isFirstTrialAmountQuestion, LOCAL_MONETARY_QUESTION, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasExplicitPackageOptionsRequest, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
