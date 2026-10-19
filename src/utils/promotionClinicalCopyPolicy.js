@@ -11,9 +11,9 @@ const UNSAFE_CLINICAL_CLAIM =
 // unsafe phrase, without allowing a disclaimer elsewhere in the caption to
 // excuse an unsafe promise in another clause.
 const EN_NEGATED_PROMISE =
-  /(?:\b(?:cannot|can't|can not|couldn't|do not|don't|never|unable to|not able to|will not|won't)\b.{0,24}\b(?:guarantee|promise|assure|claim)\b|\b(?:no|not)\s+(?:guarantee|promise)\b|\b(?:not)\s+guaranteed\b)\s*(?:that\s+)?(?:there\s+(?:are|will be)\s+)?[^.!?;]{0,35}$/iu;
+  /\b(?:cannot|can't|can not|couldn't|do not|don't|never|unable to|not able to|will not|won't)\b.{0,24}\b(?:guarantee|promise|assure|claim)\b|\b(?:no|not)\s+(?:guarantee|promise)\b/giu;
 const ZH_NEGATED_PROMISE =
-  /(?:不能|无法|無法|不會|不会|不|没法|沒有辦法|没有办法)\s*(?:保证|保證|承诺|承諾|确保|確保|代表|意味著|意味着)\s*[^。！？；;]{0,26}$/iu;
+  /(?:不能|无法|無法|不會|不会|不|没法|沒有辦法|没有办法)\s*(?:保证|保證|承诺|承諾|确保|確保|代表|意味著|意味着)/gu;
 const CONTRAST = /(?:\b(?:but|however|yet|instead|although)\b|(?:但|但是|不过|不過|然而|却|卻))/iu;
 
 function isNegatedRiskClaim(source, matchIndex) {
@@ -21,10 +21,15 @@ function isNegatedRiskClaim(source, matchIndex) {
   const before = source.slice(Math.max(0, matchIndex - 100), matchIndex);
   const clauses = before.split(/[。！!？?；;\n，,]|\.\s+/u);
   const clause = clauses.at(-1) || "";
-  const negation = EN_NEGATED_PROMISE.exec(clause) ||
-    ZH_NEGATED_PROMISE.exec(clause);
-  if (!negation) return false;
-  return !CONTRAST.test(clause.slice(negation.index + negation[0].length));
+  if (/\bnot\s*$/iu.test(clause)) return true; // "not guaranteed results"
+  const negations = [
+    ...clause.matchAll(EN_NEGATED_PROMISE),
+    ...clause.matchAll(ZH_NEGATED_PROMISE),
+  ].sort((a, b) => a.index - b.index);
+  const last = negations.at(-1);
+  if (!last) return false;
+  const afterNegation = clause.slice(last.index + last[0].length);
+  return afterNegation.length <= 40 && !CONTRAST.test(afterNegation);
 }
 
 function hasUnsafeClinicalPromotionCopy(text) {
