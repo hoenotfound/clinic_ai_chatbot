@@ -177,7 +177,7 @@ function hasCustomerPriceEnquiry(customerText) {
 function isFirstTrialAmountQuestion(customerText) {
   const text = String(customerText || "").normalize("NFKC").trim();
   return text.length <= 80 &&
-    /(?:首次|初次|第一次)\\s*(?:体验|體驗|护理|護理|疗程|療程)?\\s*(?:的|是|要|收费|收費|费用|費用|价[格钱錢]|價格|大概|大约|大約|需要)?\\s*(?:多少(?:钱|錢)?|几多(?:钱|錢)?|幾多(?:钱|錢)?)(?:呢|啊|呀|吗|嗎)?[\\s?？。!！]*$/iu.test(text) &&
+    /(?:首次|初次|第一次)\s*(?:体验|體驗|护理|護理|疗程|療程)?\s*(?:的|是|要|收费|收費|费用|費用|价[格钱錢]|價格|大概|大约|大約|需要)?\s*(?:多少(?:钱|錢)?|几多(?:钱|錢)?|幾多(?:钱|錢)?)(?:呢|啊|呀|吗|嗎)?[\s?？。!！]*$/iu.test(text) &&
     !/(?:多久|多长|多長|几次|幾次|多[久长長]|几[分钟鐘]|幾[分钟鐘]|几小时|幾小時)/iu.test(text);
 }
 
