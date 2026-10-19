@@ -7,7 +7,7 @@ const { resolveShadowPriceException } = require("../src/utils/shadowPriceExcepti
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
-const { guardUnconfirmedMediaPromise } = require("../src/utils/unconfirmedMediaPromiseGuard");
+const { guardUnconfirmedMediaPromise, claimsMediaWasOrWillBeSent } = require("../src/utils/unconfirmedMediaPromiseGuard");
 const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
 const { hasCurrentPriceAmountRequest } = require("../src/utils/aiPricingIntentDecision");
 const { promotionHasUnsafeClinicalCopy } = require("../src/utils/promotionClinicalCopyPolicy");
@@ -507,4 +507,63 @@ test("Risk disclaimers remain allowed while positive guarantees are blocked", ()
     },
     followUpMessage: "护理完全无痛。",
   }), true, "a harmless disclaimer must not excuse another unsafe claim");
+});
+
+
+test("Chinese photo and skin descriptions are not mistaken for image-send promises", () => {
+  const descriptions = [
+    "这张图片可以看到脸部稍微发红了。",
+    "图片里脸部有点发红了，实际状况要评估。",
+    "这张图片发红了，给你参考。",
+    "这张图片发炎了。",
+    "我发现图片的颜色偏红。",
+    "我们把发红的图片拍下来供中医师评估。",
+    "有个客户分享说发炎了，看图片可见。",
+    "照片已经发黄了，需要检查。",
+    "我们看到发红的皮肤图片。",
+    "这张照片是发炎时拍的，不代表治疗效果。",
+    "图片可以看到皮肤发红了，是否适合护理需要评估。",
+    "皮肤发炎了，建议先咨询合资格医疗专业人员。",
+  ];
+  for (const reply of descriptions) {
+    assert.deepEqual(guardUnconfirmedMediaPromise(reply, "zh"), {
+      reply, changed: false,
+    }, reply);
+  }
+  assert.equal(claimsMediaWasOrWillBeSent(
+    "这张图片可以看到脸部稍微发红了。"
+  ), false);
+});
+
+test("Chinese genuine image-send promises are still removed before optional media", () => {
+  const claims = [
+    "好的，骨盆调理限时配套内容发给你参考看看哦～",
+    "我们把优惠图发给你参考。",
+    "图片我已经发给你了。",
+    "我已经把优惠图发过去了。",
+    "我会发优惠图。",
+    "我给你发图片。",
+    "配套详情我发给你。",
+    "图片已经发了。",
+    "我已经把图片发出去。",
+    "现在我会分享配套资料。",
+    "资料我刚才转发了。",
+  ];
+  for (const text of claims) {
+    assert.equal(claimsMediaWasOrWillBeSent(text), true, text);
+    const guarded = guardUnconfirmedMediaPromise(text, "zh");
+    assert.equal(guarded.changed, true, text);
+    assert.ok(guarded.reply);
+    assert.notEqual(guarded.reply, text);
+  }
+
+  const mixed = "骨盆调理套餐 A 目前 RM388，图片我已经发给你了。";
+  const cleaned = guardUnconfirmedMediaPromise(mixed, "zh");
+  assert.equal(cleaned.changed, true);
+  assert.match(cleaned.reply, /骨盆调理套餐 A 目前 RM388/u);
+  assert.doesNotMatch(cleaned.reply, /已经发给你/u);
+  const withNormalPrice = "9D 的原价是 RM1,288，皮肤发红了请先让中医师评估。";
+  assert.deepEqual(guardUnconfirmedMediaPromise(withNormalPrice, "zh"), {
+    reply: withNormalPrice, changed: false,
+  });
 });
