@@ -8,6 +8,8 @@ const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPrici
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { guardUnconfirmedMediaPromise } = require("../src/utils/unconfirmedMediaPromiseGuard");
+const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
+const { hasCurrentPriceAmountRequest } = require("../src/utils/aiPricingIntentDecision");
 
 const now = Date.now();
 const services = [{ name: "3D 小颜术" }, { name: "9D 逆龄抗衰" }];
@@ -131,4 +133,13 @@ test("Siew Siew #517: do not promise images that have not been accepted", () => 
   assert.deepEqual(guardUnconfirmedMediaPromise(factual, "zh"), {
     reply: factual, changed: false,
   });
+});
+
+test("Sharon #537: first-trial amount question is an explicit pricing enquiry", () => {
+  const question = "请问首次体验是多少呢";
+  assert.equal(hasExplicitPriceRequest(question), true);
+  assert.equal(hasCurrentPriceAmountRequest(question), true);
+  assert.equal(hasExplicitPriceRequest("请问首次体验需要多久呢"), false);
+  assert.equal(hasCurrentPriceAmountRequest("第一次体验要做几次"), false);
+  assert.equal(hasExplicitPriceRequest("以后有优惠 WhatsApp 发我"), false);
 });
