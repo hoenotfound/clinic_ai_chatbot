@@ -164,11 +164,21 @@ function resolvePreviouslyQuotedSessionPrice({
   // customer is confirming. Promo original prices, staff captions and ads
   // are not evidence that the AI quoted this specific current offer.
   const quotePattern = new RegExp("\\b(?:RM|MYR)\\s*" + amount + "\\b", "iu");
-  const assistantQuote = before.slice(selectedAt + 1).some(turn =>
-    turn?.role === "assistant" && !isVerifiedStaffTurn(turn) &&
-    pricingMessageText(turn).includes(service.name) &&
-    quotePattern.test(pricingMessageText(turn))
-  );
+  const assistantQuote = before.slice(selectedAt + 1).some(turn => {
+    if (turn?.role !== "assistant" || isVerifiedStaffTurn(turn)) return false;
+    const message = pricingMessageText(turn);
+    if (!message.includes(service.name)) return false;
+    if (prices.length === 1) return quotePattern.test(message);
+    // For multi-package promotions a different package's original price
+    // cannot establish that THIS package was previously quoted.
+    const start = message.indexOf(matched[0].name);
+    if (start < 0) return false;
+    const nextPackageStarts = prices.filter(item => item.name !== matched[0].name)
+      .map(item => message.indexOf(item.name, start + matched[0].name.length))
+      .filter(index => index >= 0);
+    const end = nextPackageStarts.length ? Math.min(...nextPackageStarts) : message.length;
+    return quotePattern.test(message.slice(start, end));
+  });
   if (!assistantQuote) return null;
   return Object.freeze({
     source: "confirmed_prior_quote", treatment: service.name,
