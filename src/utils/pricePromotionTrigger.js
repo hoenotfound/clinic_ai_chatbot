@@ -95,6 +95,10 @@ async function resolvePricePromotionForReply({
     !Array.isArray(pricingDecision.prices) || !pricingDecision.prices.length ||
     !["price", "package_options"].includes(pricingDecision.type)
   )) return skip("no_approved_pricing_decision");
+  // A confirmed old quote should not generate a second marketing graphic.
+  if (aiPricingEnabled && pricingDecision?.source === "confirmed_prior_quote") {
+    return skip("price_confirmation_no_new_graphic");
+  }
   const clarificationService = aiPricingEnabled
     ? pricingDecision.clarifiedPriceService
     : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
