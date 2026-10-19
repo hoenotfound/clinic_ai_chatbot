@@ -11,6 +11,8 @@ const {
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { resolveAiPricingDecision } = require("./aiPricingIntentDecision");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
+const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -58,6 +60,58 @@ function shadowVerifiedPrice({
   });
 }
 
+// A short confirmation of a price we actually quoted is different from a new
+// treatment selection. Resolve it only against a recent, staff-free customer
+// session with a separately verified treatment, current active price and an
+// earlier assistant quote of that exact price. The ad/CRM label cannot supply
+// the missing treatment.
+const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\\s+|is\\s+it\\s+)?(?:RM|MYR)\\s*([1-9]\\d{1,4})\\s*(?:(?:for|per|is\\s+for)\\s*(?:one|1|a)\\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\\s*(?:一|1)次(?:护理|護理|疗程|療程)?)\\s*(?:only|right|correct|ya|ah|吗|嗎|呢)?[\\s?？。!.！]*$/iu;
+const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不考慮|not\\s+interested|instead|another\\s+treatment|different\\s+treatment|stop|unsubscribe|退订|退訂)/iu;
+
+function resolvePreviouslyQuotedSessionPrice({
+  customerText, conversationHistory, services, serviceAliases, promotions,
+} = {}) {
+  const found = PRIOR_QUOTED_SESSION_PRICE.exec(String(customerText || "").trim());
+  if (!found) return null;
+  const amount = Number(found[1]);
+  const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const before = turns.slice(0, -1);
+  const candidates = serviceCandidates(services, serviceAliases);
+  let service = null, selectedAt = -1;
+
+  for (let i = before.length - 1; i >= 0; i--) {
+    if (before[i]?.role !== "user") continue;
+    const customer = pricingMessageText(before[i]).trim();
+    if (!customer || PRICE_TOPIC_CHANGE.test(customer)) return null;
+    const mentions = [...new Set(findServicesInText(customer, candidates))];
+    if (mentions.length > 1) return null;
+    if (!mentions.length) continue;
+    service = safeServiceFromCustomer(customer, services, serviceAliases);
+    if (!service || service.name !== mentions[0]) return null;
+    selectedAt = i;
+    break;
+  }
+  if (!service) return null;
+  const prices = verifiedPricesForService(
+    service.name, promotions, customerText, turns
+  );
+  if (!prices?.length || !prices.some(item => item.price === "RM" + amount)) return null;
+  // Only a real, previous automatic quote can establish which amount the
+  // customer is confirming. Promo original prices, staff captions and ads
+  // are not evidence that the AI quoted this specific current offer.
+  const quotePattern = new RegExp("\\b(?:RM|MYR)\\s*" + amount + "\\b", "iu");
+  const assistantQuote = before.slice(selectedAt + 1).some(turn =>
+    turn?.role === "assistant" && !isVerifiedStaffTurn(turn) &&
+    pricingMessageText(turn).includes(service.name) &&
+    quotePattern.test(pricingMessageText(turn))
+  );
+  if (!assistantQuote) return null;
+  return Object.freeze({
+    source: "confirmed_prior_quote", treatment: service.name,
+    type: "price", prices, clarifiedPriceService: null,
+  });
+}
+
 // Shadow remains read-only for model-only guesses and normal package intent.
 // These exceptions require a new, DB-timestamped customer-led session and
 // validated active prices. Old staff activity is not inherited across a fresh
@@ -89,6 +143,11 @@ function resolveShadowPriceException({
       clarifiedPriceService: clarification,
     });
   }
+  const quotedPriceConfirmation = resolvePreviouslyQuotedSessionPrice({
+    customerText: text, conversationHistory: session, services, serviceAliases,
+    promotions,
+  });
+  if (quotedPriceConfirmation) return quotedPriceConfirmation;
   if (!hasExplicitPriceRequest(text)) return null;
 
   const first = resolveRecentFirstTreatmentPriceService({
@@ -143,4 +202,4 @@ function resolveShadowPriceException({
   });
 }
 
-module.exports = { resolveShadowPriceException, recentVerifiedPricingSession };
+module.exports = { resolveShadowPriceException, recentVerifiedPricingSession, resolvePreviouslyQuotedSessionPrice };
