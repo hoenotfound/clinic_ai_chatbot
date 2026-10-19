@@ -1129,6 +1129,7 @@ async function processIncomingMessage(
           customerText: text, conversationHistory: history, metaAdContext,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
+          allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
           complimentaryAssessmentExperienceEnabled:
             clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
         }) : null;
@@ -1278,6 +1279,7 @@ async function processIncomingMessage(
       services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
       resultMedia: clinicConfig.resultMedia,
       flagged, bookingReady, keywordReason, marketingStopQuestion,
+      allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
     });
     const approvedPricingDecision = pricingApproval.decision;
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
