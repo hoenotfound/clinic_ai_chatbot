@@ -7,7 +7,7 @@
 // address. "位置" (body position), English "located" (symptom location)
 // and generic Malay "kat mana" are NOT sufficient by themselves.
 const BUSINESS_LOCATION_ZH =
-  /(?:地址|地[点點]|(?:诊所|診所|门店|門店|中心|分行|店面|店址|店铺|店舖|贵店|貴店|你们|你們|你家|你那边|你那邊|你们那边|你們那邊).{0,16}(?:在哪(?:里|裡|儿|兒)?|哪[里裡]|位置|怎么去|怎麼去)|(?:在哪(?:里|裡|儿|兒)?|哪[里裡]).{0,16}(?:诊所|診所|门店|門店|中心|分行|店面|店址|店铺|店舖))/iu;
+  /(?:地址|地[点點](?:\\s*[?？]|.{0,8}(?:在哪(?:里|裡|儿|兒)?|哪[里裡]|位置))|(?:诊所|診所|门店|門店|中心|分行|店面|店址|店铺|店舖|贵店|貴店|你们|你們|你家|你那边|你那邊|你们那边|你們那邊).{0,16}(?:在哪(?:里|裡|儿|兒)?|哪[里裡]|位置|怎么去|怎麼去)|(?:在哪(?:里|裡|儿|兒)?|哪[里裡]).{0,16}(?:诊所|診所|门店|門店|中心|分行|店面|店址|店铺|店舖))/iu;
 const BUSINESS_LOCATION_EN =
   /\b(?:address|directions|(?:your|the|this|clinic|centre|center|branch|outlet|shop|store|business)\s+location|where\s+(?:are\s+you(?:\s+located)?|is\s+(?:(?:your|the|this)\s+)?(?:clinic|centre|center|branch|outlet|shop|store|business)(?:\s+located)?)|where\s+can\s+i\s+find\s+you|(?:your|the)\s+(?:clinic|centre|center|branch|outlet)\s+(?:address|location)|(?:clinic|centre|center|branch|outlet)\s+near\s+me)\b/iu;
 const BUSINESS_LOCATION_MS =
