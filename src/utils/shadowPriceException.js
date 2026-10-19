@@ -65,7 +65,8 @@ function shadowVerifiedPrice({
 // session with a separately verified treatment, current active price and an
 // earlier assistant quote of that exact price. The ad/CRM label cannot supply
 // the missing treatment.
-const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\s+|is\s+it\s+)?(?:RM|MYR)\s*([1-9]\d{1,4})\s*(?:(?:for|per|is\s+for)\s*(?:one|1|a)\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\s*(?:一|1)次(?:护理|護理|疗程|療程)?)\s*(?:only|right|correct|ya|ah|吗|嗎|呢)?[\s?？。!.！]*$/iu;
+const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\s+|is\s+it\s+)?(?:RM|MYR)\s*([1-9]\d{1,4})\s*(?:(?:for|per|is\s+for)\s*(?:one|1|a)\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\s*(?:一|1)次(?:护理|護理|疗程|療程)?)?\s*(?:(?:only|right|correct|ya|ah|吗|嗎)\s*)?[?？!！。.\s]*$/iu;
+const PRICE_CONFIRMATION_QUESTION = /[?？]|(?:\b(?:right|correct)\b|吗|嗎)\s*[.!。！]*$/iu;
 const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不考慮|not\s+interested|instead|another\s+treatment|different\s+treatment|stop|unsubscribe|退订|退訂)/iu;
 
 // An explicit "Package?" is a request to see the options NOW, not
@@ -74,41 +75,66 @@ const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不�
 // A standalone ad name, assistant suggestion or old staff message is not enough.
 function resolveDirectCustomerPackageRequest({
   customerText, conversationHistory, services, serviceAliases, promotions,
+  allowOfferEnquiries = false,
 } = {}) {
   const text = String(customerText || "").trim();
-  if (!/^(?:packages?|pakej|配套|套餐)[\s?？。!.！]*$/iu.test(text)) return null;
+  // Keep the existing opt-in for package-only enquiries authoritative.
+  if (allowOfferEnquiries !== true ||
+      !/^(?:packages?|pakej|配套|套餐)[\s?？。!.！]*$/iu.test(text)) return null;
   const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
   const before = turns.slice(0, -1);
   const candidates = serviceCandidates(services, serviceAliases);
-  const customerTurns = before
-    .map((turn, index) => ({ turn, index }))
-    .filter(({ turn }) => turn?.role === "user");
-  if (customerTurns.length !== 1) return null;
-  const { turn, index } = customerTurns[0];
-  const selected = pricingMessageText(turn).trim();
-  const mentions = [...new Set(findServicesInText(selected, candidates))];
-  const service = safeServiceFromCustomer(selected, services, serviceAliases);
-  if (!service || mentions.length !== 1 || mentions[0] !== service.name ||
-      PRICE_TOPIC_CHANGE.test(selected) ||
-      !/(?:有兴趣|有興趣|想了解|想知道|想问|想問|感兴趣|感興趣|interested|enquir|inquir|berminat|nak\s+tahu)/iu.test(selected)) return null;
-  const responses = before.slice(index + 1);
+  const priorCustomers = before.flatMap((turn, index) =>
+    turn?.role === "user" ? [index] : []).slice(-4);
+  if (!priorCustomers.length) return null;
+
+  let service = null, selectedIndex = -1;
+  for (let pos = priorCustomers.length - 1; pos >= 0; pos--) {
+    const index = priorCustomers[pos];
+    const source = pricingMessageText(before[index]).trim();
+    if (!source || PRICE_TOPIC_CHANGE.test(source)) return null;
+    const mentions = [...new Set(findServicesInText(source, candidates))];
+    if (mentions.length > 1) return null;
+    if (mentions.length) {
+      const named = safeServiceFromCustomer(source, services, serviceAliases);
+      if (!named || named.name !== mentions[0]) return null;
+      if (!/(?:有兴趣|有興趣|想了解|想知道|想问|想問|感兴趣|感興趣|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(source))
+        return null;
+      service = named;
+      selectedIndex = index;
+      break;
+    }
+    // A brief follow-up about the same treatment may bridge the selection,
+    // but a broad new topic or unrelated request cannot.
+    if (!/^(?:有(?:什么|什麼)效果|效果(?:呢|怎么样|怎樣|如何)?|有效(?:吗|嗎|果)?|做(?:一|1)次(?:有(?:什么|什麼)效果)?|(?:多久|多长|多長|会不会痛|會不會痛)|how\s+(?:does\s+it\s+work|long)|(?:what|any)\s+(?:results?|benefits?)|is\s+it\s+effective)[\s?？。!.！]*$/iu.test(source))
+      return null;
+  }
+  if (!service) return null;
+
+  // A bot must have acknowledged the customer's selected service. Otherwise
+  // its own advertisement/suggestion might be incorrectly treated as consent.
+  const firstNextCustomer = priorCustomers.find(index => index > selectedIndex);
+  const responses = before.slice(selectedIndex + 1,
+    firstNextCustomer === undefined ? before.length : firstNextCustomer);
   if (!responses.length || responses.length > 4 ||
-      responses.some(item => item?.role !== "assistant" || isVerifiedStaffTurn(item)) ||
+      responses.some(item => item?.role !== "assistant" ||
+        isVerifiedStaffTurn(item) || !pricingMessageText(item).trim()) ||
       !responses.some(item => pricingMessageText(item).includes(service.name) ||
-        (service.name === "骨盆调理" && pricingMessageText(item).includes("骨盆")))) return null;
+        (service.name === "骨盆调理" && pricingMessageText(item).includes("骨盆"))))
+    return null;
   const prices = verifiedPricesForService(service.name, promotions, text, turns);
   if (!prices?.length) return null;
   return Object.freeze({
     source: "direct_customer_package_request", treatment: service.name,
-    type: "price", prices, clarifiedPriceService: null,
+    type: "package_options", prices, clarifiedPriceService: null,
   });
 }
-
 function resolvePreviouslyQuotedSessionPrice({
   customerText, conversationHistory, services, serviceAliases, promotions,
 } = {}) {
-  const found = PRIOR_QUOTED_SESSION_PRICE.exec(String(customerText || "").trim());
-  if (!found) return null;
+  const confirmation = String(customerText || "").trim();
+  const found = PRIOR_QUOTED_SESSION_PRICE.exec(confirmation);
+  if (!found || !PRICE_CONFIRMATION_QUESTION.test(confirmation)) return null;
   const amount = Number(found[1]);
   const turns = Array.isArray(conversationHistory) ? conversationHistory : [];
   const before = turns.slice(0, -1);
@@ -131,7 +157,9 @@ function resolvePreviouslyQuotedSessionPrice({
   const prices = verifiedPricesForService(
     service.name, promotions, customerText, turns
   );
-  if (!prices?.length || !prices.some(item => item.price === "RM" + amount)) return null;
+  const matched = prices?.filter(item => item.price === "RM" + amount) || [];
+  // An amount that belongs to multiple packages is ambiguous, never guess.
+  if (matched.length !== 1) return null;
   // Only a real, previous automatic quote can establish which amount the
   // customer is confirming. Promo original prices, staff captions and ads
   // are not evidence that the AI quoted this specific current offer.
@@ -144,7 +172,7 @@ function resolvePreviouslyQuotedSessionPrice({
   if (!assistantQuote) return null;
   return Object.freeze({
     source: "confirmed_prior_quote", treatment: service.name,
-    type: "price", prices, clarifiedPriceService: null,
+    type: "price", prices: matched, clarifiedPriceService: null,
   });
 }
 
@@ -155,7 +183,8 @@ function resolvePreviouslyQuotedSessionPrice({
 function resolveShadowPriceException({
   customerText, conversationHistory = [], metaAdContext = null,
   services = [], serviceAliases = [], promotions = [],
-  complimentaryAssessmentExperienceEnabled = false, now = Date.now(),
+  complimentaryAssessmentExperienceEnabled = false,
+  allowOfferEnquiries = false, now = Date.now(),
 } = {}) {
   const text = String(customerText || "").trim();
   if (!text || hasClinicalMediaRisk(text)) return null;
@@ -181,7 +210,7 @@ function resolveShadowPriceException({
   }
   const packageRequest = resolveDirectCustomerPackageRequest({
     customerText: text, conversationHistory: session, services, serviceAliases,
-    promotions,
+    promotions, allowOfferEnquiries,
   });
   if (packageRequest) return packageRequest;
 
