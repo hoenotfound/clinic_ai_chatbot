@@ -587,3 +587,39 @@ test("Complimentary treatment gifts are not attachment-send claims", () => {
   assert.equal(claimsMediaWasOrWillBeSent(imagePromise), true);
   assert.equal(guardUnconfirmedMediaPromise(imagePromise, "zh").changed, true);
 });
+
+
+test("Chinese development or publication news is not an attachment-send claim", () => {
+  const descriptions = [
+    "我们正在开发新的配套内容。",
+    "我们下个月会发布最新配套资料。",
+    "我们计划研发配套内容，等确认再公布。",
+    "我们将会发布新的套餐详情。",
+    "我们已经发布配套照片到主页了。",
+    "我们会继续研发新套餐，后续以门店公告为准。",
+  ];
+  for (const reply of descriptions) {
+    assert.equal(claimsMediaWasOrWillBeSent(reply), false, reply);
+    assert.deepEqual(guardUnconfirmedMediaPromise(reply, "zh"), {
+      reply, changed: false,
+    }, reply);
+  }
+
+  const sendPromises = [
+    "我们会发新的配套优惠给你参考。",
+    "现在我会发送配套图给你。",
+    "我们会分享新的配套资料。",
+    "配套图片已经发给你了。",
+  ];
+  for (const source of sendPromises) {
+    assert.equal(claimsMediaWasOrWillBeSent(source), true, source);
+    const guarded = guardUnconfirmedMediaPromise(source, "zh");
+    assert.equal(guarded.changed, true, source);
+    assert.notEqual(guarded.reply, source);
+  }
+  const mixed = "我们正在开发新的配套内容。图片我已经发给你了。";
+  const fixed = guardUnconfirmedMediaPromise(mixed, "zh");
+  assert.equal(fixed.changed, true);
+  assert.match(fixed.reply, /我们正在开发新的配套内容/u);
+  assert.doesNotMatch(fixed.reply, /已经发给你/u);
+});
