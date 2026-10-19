@@ -204,7 +204,6 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   );
   if (!current) return false;
   if (isContextualBarePriceQuestion(current, treatment)) return true;
-  if (isFirstTrialAmountQuestion(current)) return true;
   // A customer refusing to discuss prices is not making a price request.
   const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost)\b/iu.test(current);
   if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
@@ -227,7 +226,7 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (/\bhow\s+much\b/iu.test(current) &&
       !ENGLISH_MONEY_QUESTION.test(current) &&
       !/(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fee|rm\s*\d+)\b)/iu.test(current)) return false;
-  return LOCAL_MONETARY_QUESTION.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
+  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
 
 function hasCustomerServiceEnquiry(customerText) {
