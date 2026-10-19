@@ -10,6 +10,7 @@ const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTr
 const { guardUnconfirmedMediaPromise } = require("../src/utils/unconfirmedMediaPromiseGuard");
 const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
 const { hasCurrentPriceAmountRequest } = require("../src/utils/aiPricingIntentDecision");
+const { promotionHasUnsafeClinicalCopy } = require("../src/utils/promotionClinicalCopyPolicy");
 
 const now = Date.now();
 const services = [{ name: "3D 小颜术" }, { name: "9D 逆龄抗衰" }];
@@ -165,9 +166,10 @@ test("Siew Siew #517: 'Package?' after verified 骨盆 enquiry selects both curr
     turn("user","Package?",1000)];
   const params = {customerText:"Package?",conversationHistory:history,
     services:pelvicServices,serviceAliases:pelvicAliases,
-    promotions:[pelvicPromotion],now};
+    promotions:[pelvicPromotion],allowOfferEnquiries:true,now};
   const decision = resolveShadowPriceException(params);
   assert.equal(decision?.source,"direct_customer_package_request");
+  assert.equal(decision?.type,"package_options");
   assert.deepEqual(decision?.prices.map(p=>p.price),["RM388","RM288"]);
   const approved = resolveApprovedPricingAssessment({
     mode:"shadow",shadowException:decision,...params,resultMedia:[],
@@ -251,4 +253,158 @@ test("9D legacy 90% collagen graphic remains blocked even if its price is verifi
     assert.equal(media,null);
     assert.equal(skipReason,"unverified_clinical_promo_copy");
   } finally { clinicConfig.automatedFollowUp=prior; }
+});
+
+
+test("Package-only pricing respects the opt-in and supports bounded multi-turn discussions", () => {
+  const pelvicServices=[{name:"骨盆调理"},{name:"3D 小颜术"}];
+  const aliases=[{alias:"骨盆",officialService:"骨盆调理"}, {alias:"3D",officialService:"3D 小颜术"}];
+  const promotion={
+    name:"骨盆 A/B",linkedService:"骨盆调理",
+    sendOnPriceQuery:true,validFrom:"2000-01-01",validUntil:"2999-12-31",
+    packages:[
+      {name:"Package A",caption:"优惠后仅需 RM388",imageUrl:"https://example.test/a"},
+      {name:"Package B",caption:"现在只需 RM288",imageUrl:"https://example.test/b"},
+    ],
+  };
+  const opening=turn("user","我想了解骨盆调理",80000);
+  const reply=turn("assistant","骨盆调理是徒手体态护理。",75000);
+  const bridge=turn("user","有什么效果？",35000);
+  const followup=turn("assistant","会先让中医师了解情况，评估适合的护理。",30000);
+  const ask=turn("user","Package?",1000);
+  const args={customerText:"Package?",conversationHistory:[opening,reply,bridge,followup,ask],
+    services:pelvicServices,serviceAliases:aliases,promotions:[promotion],now};
+  assert.equal(resolveShadowPriceException({...args,allowOfferEnquiries:false}),null,
+    "disabled package-only setting cannot be bypassed");
+  const allowed=resolveShadowPriceException({...args,allowOfferEnquiries:true});
+  assert.equal(allowed?.source,"direct_customer_package_request");
+  assert.deepEqual(allowed.prices.map(item=>item.price),["RM388","RM288"]);
+  assert.equal(resolveApprovedPricingAssessment({
+    mode:"shadow",shadowException:allowed,...args,
+    allowOfferEnquiries:false,
+  }).decision,null,"approval must independently check opt-in");
+  assert.equal(resolveApprovedPricingAssessment({
+    mode:"shadow",shadowException:allowed,...args,
+    allowOfferEnquiries:true,
+  }).reason,"approved");
+
+  const changed={...args,allowOfferEnquiries:true};
+  const end=turn("user","Package?",1000);
+  assert.equal(resolveShadowPriceException({
+    ...changed,conversationHistory:[opening,reply,
+      turn("user","另外想了解3D",35000),
+      turn("assistant","3D 是脸部护理",30000),end],
+  }),null,"service switch cannot reuse pelvic pricing");
+  assert.equal(resolveShadowPriceException({
+    ...changed,conversationHistory:[opening,reply,
+      turn("user","先不聊这个",35000),
+      turn("assistant","好的",30000),end],
+  }),null,"topic reset cannot reuse earlier selection");
+  assert.equal(resolveShadowPriceException({
+    ...changed,conversationHistory:[opening,reply,
+      turn("assistant","[Verified STAFF message] 请问需要帮助吗？",36000,true),
+      bridge,followup,end],
+  }),null,"staff interruption cannot be crossed");
+  assert.equal(resolveShadowPriceException({
+    ...changed,conversationHistory:[opening,reply,
+      turn("user","地址",35000),
+      turn("assistant","我们在PJ",30000),end],
+  }),null,"unrelated topic cannot carry the old offer");
+  assert.equal(resolveShadowPriceException({
+    ...changed,conversationHistory:[opening,reply,
+      ...Array.from({length:5},(_,i)=>[
+        turn("user","有什么效果？",25000-4000*i),
+        turn("assistant","请让中医师评估",24000-4000*i),
+      ]).flat(),end],
+  }),null,"max four previous customer turns");
+});
+
+test("A bare amount is not a confirmation; exact multi-package price resolves just one item", () => {
+  const history=amanda();
+  const bare=[...history.slice(0,-1),turn("user","RM488",1000)];
+  assert.equal(resolveShadowPriceException(args({
+    customerText:"RM488",conversationHistory:bare,
+  })),null);
+  const pelvicServices=[{name:"骨盆调理"}];
+  const pelvicAliases=[{alias:"骨盆",officialService:"骨盆调理"}];
+  const pelvicPromotion={
+    name:"骨盆调理套餐",linkedService:"骨盆调理",sendOnPriceQuery:true,
+    validFrom:"2000-01-01",validUntil:"2999-12-31",
+    packages:[
+      {name:"Package A",caption:"优惠后仅需 RM388",imageUrl:"https://example.test/a"},
+      {name:"Package B",caption:"现在只需 RM288",imageUrl:"https://example.test/b"},
+    ],
+  };
+  const argsPelvis={
+    customerText:"RM388 for one time?",
+    conversationHistory:[
+      turn("user","想了解骨盆调理",18000),
+      turn("assistant","骨盆调理的配套价格：Package A RM388，Package B RM288",17000),
+      turn("user","RM388 for one time?",1000)],
+    services:pelvicServices,serviceAliases:pelvicAliases,
+    promotions:[pelvicPromotion],now,
+  };
+  const decision=resolveShadowPriceException(argsPelvis);
+  assert.equal(decision?.source,"confirmed_prior_quote");
+  assert.deepEqual(decision?.prices.map(item=>[item.name,item.price]),
+    [["Package A","RM388"]]);
+  const quote=ensureVerifiedPriceReply({
+    ...argsPelvis,treatment:"骨盆调理",pricingDecision:decision,
+    reply:"Our packages are available",language:"en",
+  });
+  assert.match(quote.reply,/Package A.*session/u);
+  assert.doesNotMatch(quote.reply,/RM288|Package B/u);
+  const ambiguous={...pelvicPromotion,packages:[
+    ...pelvicPromotion.packages,
+    {name:"Package C",caption:"优惠后仅需 RM388",imageUrl:"https://example.test/c"},
+  ]};
+  assert.equal(resolveShadowPriceException({
+    ...argsPelvis,promotions:[ambiguous],
+  }),null,"shared amount across packages must not be guessed");
+});
+
+test("Price confirmations do not authorize another promotional graphic", async () => {
+  const decision=resolveShadowPriceException(args());
+  assert.ok(decision);
+  let skipped=null;
+  const media=await resolvePricePromotionForReply({
+    ...args(),aiPricingEnabled:true,pricingDecision:decision,
+    treatment:decision.treatment,verifiedServiceFromText:decision.treatment,
+    priceQuery:true,contactId:567,textSendSucceeded:true,
+    onSkip:reason=>{skipped=reason;},
+    wasPromoRecentlySent:async()=>false,
+    hasUnconfirmedMediaDelivery:async()=>false,
+  });
+  assert.equal(media,null);
+  assert.equal(skipped,"price_confirmation_no_new_graphic");
+});
+
+test("Multilingual media guard removes false past/present claims and preserves independent facts",()=>{
+  const cases=[
+    ["骨盆套餐 A 是 RM388，我已经把优惠图发过去了","RM388"],
+    ["我们今天有优惠。图片我已经发给你了","我们今天有优惠"],
+    ["骨盆套餐 B 是 RM288，配套内容发给你看看","RM288"],
+    ["3D trial is RM488. I'll send you the package details now","RM488"],
+    ["Harga RM388. Saya akan hantar gambar promosi","RM388"],
+    ["我已经把优惠图发过去了",null],
+  ];
+  for(const [reply,fact] of cases){
+    const outcome=guardUnconfirmedMediaPromise(reply,"zh");
+    assert.equal(outcome.changed,true,reply);
+    assert.doesNotMatch(outcome.reply,/发过去了|发给你|send you|hantar gambar/iu);
+    if(fact)assert.match(outcome.reply,new RegExp(fact));
+  }
+});
+
+test("Unsafe copy is blocked across translated promotions and promotional follow-up variants",()=>{
+  assert.equal(promotionHasUnsafeClinicalCopy({
+    caption:"Normal treatment copy",followUpMessage:"Normal price copy",
+    mediaTranslations:{en:{caption:"restore 90% of collagen"}},
+  }),true);
+  assert.equal(promotionHasUnsafeClinicalCopy({
+    caption:"Normal copy",followUpTranslations:{ms:"no side effects"},
+  }),true);
+  assert.equal(promotionHasUnsafeClinicalCopy({
+    caption:"We cannot guarantee results. Ask the practitioner.",
+  }),false);
 });
