@@ -60,7 +60,7 @@ function resolveApprovedPricingAssessment({
   customerText = "", conversationHistory = [], services = [],
   serviceAliases = [], resultMedia = [], flagged = false,
   bookingReady = false, keywordReason = null,
-  marketingStopQuestion = false, now = Date.now(),
+  marketingStopQuestion = false, allowOfferEnquiries = false, now = Date.now(),
 } = {}) {
   const rejected = reason => ({ decision: null, reason });
   if (!["shadow", "enabled"].includes(mode)) return rejected("mode_off");
@@ -77,7 +77,11 @@ function resolveApprovedPricingAssessment({
       !(services || []).some(service => service?.name === candidate.treatment)) {
     return rejected("invalid_treatment_or_intent");
   }
-  if (mode !== "enabled" && candidate.type !== "price") {
+  const approvedShadowOptions = mode === "shadow" &&
+    allowOfferEnquiries === true &&
+    candidate.source === "direct_customer_package_request" &&
+    candidate.type === "package_options";
+  if (mode !== "enabled" && candidate.type !== "price" && !approvedShadowOptions) {
     return rejected("shadow_package_intent_unverified");
   }
 
