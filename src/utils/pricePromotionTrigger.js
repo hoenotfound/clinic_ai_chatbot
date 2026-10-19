@@ -12,6 +12,7 @@ const {
   getPricePromotionBundle,
 } = require("./activePromotion");
 const { mediaVariants, resolveLocalizedMedia } = require("./mediaLocalization");
+const { promotionHasUnsafeClinicalCopy } = require("./promotionClinicalCopyPolicy");
 
 /**
  * Resolves whether the current AI reply is allowed to trigger promotional media.
@@ -220,11 +221,8 @@ async function resolvePricePromotionForReply({
   // clinical promises. Never send those automatically just because the
   // monetary amount itself is verified. The text-only price can still be
   // returned by the independently approved reply path.
-  const unsafePromoCopy = /(?:90\s*%.{0,60}(?:collagen|胶原蛋白|膠原蛋白)|(?:collagen|胶原蛋白|膠原蛋白).{0,60}90\s*%|无副作用|無副作用|no\s+side\s+effects|无疼痛感|無疼痛感|guaranteed\s+(?:result|outcome))/iu;
-  if (bundle.packages.some(option =>
-    mediaVariants(option).some(variant =>
-      unsafePromoCopy.test(String(variant.caption || "")))
-  )) return skip("unverified_clinical_promo_copy");
+  if (promotionHasUnsafeClinicalCopy(bundle.promotion))
+    return skip("unverified_clinical_promo_copy");
 
   // Missing verification must never mean permission to retry a possibly
   // accepted image. Keep the AI text reply independent of this optional send.
