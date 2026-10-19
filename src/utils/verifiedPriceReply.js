@@ -388,6 +388,19 @@ function ensureVerifiedPriceReply({
     const parts = [safeInfo, confirm, acknowledgement].filter(Boolean);
     return { reply: parts.join("\n\n"), restored: true };
   }
+  // "RM488 for one time?" follows a previously sent, verified offer.
+  // Answer the customer's session-price confirmation directly instead of
+  // producing another generic price menu or promising to resend an image.
+  if (aiLed && pricingDecision.source === "confirmed_prior_quote" &&
+      prices.length === 1) {
+    const amount = prices[0].price;
+    const answer = locale.startsWith("ms")
+      ? `Ya, ${amount} ialah harga semasa untuk satu sesi ${treatment} 😊`
+      : locale.startsWith("en")
+        ? `Yes, ${amount} is the current price for one ${treatment} session 😊`
+        : `是的，${amount} 是目前 ${treatment} 一次护理的价格哦 😊`;
+    return { reply: answer, restored: true };
+  }
   const entries = prices.map((item) =>
     `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
   ).join("\n");
