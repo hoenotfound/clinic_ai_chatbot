@@ -218,3 +218,37 @@ test("Siew Siew #517: 'Package?' after verified 骨盆 enquiry selects both curr
     customerText:"有优惠的话以后再通知",
   }),null,"future marketing permission cannot trigger current graphics");
 });
+
+test("9D legacy 90% collagen graphic remains blocked even if its price is verified", async () => {
+  const prior = clinicConfig.automatedFollowUp;
+  clinicConfig.automatedFollowUp={...prior,assessmentFirstPricingEnabled:true};
+  try {
+    const promotion={
+      name:"9D First Trial", linkedService:"9D 逆龄抗衰",
+      validFrom:"2000-01-01",validUntil:"2999-12-31",
+      sendOnPriceQuery:true,imageUrl:"https://example.test/promo-images/21",
+      pricing:{offer:488,normal:1288,currency:"MYR"},
+      caption:"Stimulate and restore 90% of collagen",
+      followUpMessage:"🎊 限时优惠，只需要 RM488，原价 RM1,288",
+    };
+    let skipReason=null;
+    const candidate={
+      type:"price",treatment:"9D 逆龄抗衰",prices:[
+        {name:"Main offer",price:"RM488"}],
+    };
+    const media=await resolvePricePromotionForReply({
+      customerText:"9D 价格多少",conversationHistory:[
+        turn("user","9D 价格多少",1000)],
+      aiPricingEnabled:true,pricingDecision:candidate,
+      treatment:"9D 逆龄抗衰",verifiedServiceFromText:"9D 逆龄抗衰",
+      contactId:537,textSendSucceeded:true,flagged:false,
+      bookingReady:false,keywordReason:null,needsAttention:false,
+      services,serviceAliases:aliases,promotions:[promotion],resultMedia:[],
+      onSkip:reason=>{skipReason=reason},
+      wasPromoRecentlySent:async()=>false,
+      hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.equal(media,null);
+    assert.equal(skipReason,"unverified_clinical_promo_copy");
+  } finally { clinicConfig.automatedFollowUp=prior; }
+});
