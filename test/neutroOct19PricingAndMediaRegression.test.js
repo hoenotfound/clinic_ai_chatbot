@@ -606,7 +606,7 @@ test("Chinese development or publication news is not an attachment-send claim", 
   }
 
   const sendPromises = [
-    "我们会发新的配套优惠给你参考。",
+    "我们会发新的配套优惠图给你参考。",
     "现在我会发送配套图给你。",
     "我们会分享新的配套资料。",
     "配套图片已经发给你了。",
