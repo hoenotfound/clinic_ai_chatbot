@@ -36,6 +36,7 @@ const { resolveShadowPriceException } = require("./utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
+const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -1447,6 +1448,18 @@ async function processIncomingMessage(
         text, history, mediaLanguage
       );
       if (feeClarification) reply = feeClarification;
+    }
+
+    // Images are optional and sent only AFTER Meta accepts this text.
+    // A later delivery failure must never turn an AI promise into a lie.
+    // Even when a verified price is quoted, do not claim graphics are sent
+    // before the separate media selector and provider confirm acceptance.
+    if (!flagged && !marketingStopQuestion) {
+      const mediaPromise = guardUnconfirmedMediaPromise(reply, mediaLanguage);
+      if (mediaPromise.changed) {
+        console.warn("[Reply guard] Removed unconfirmed outbound media claim.");
+        reply = mediaPromise.reply;
+      }
     }
 
     // Preserve the useful original service explanation. If an eligible first
