@@ -1,21 +1,36 @@
 "use strict";
 
-// The reply is sent before optional promotional or result images. Even when
-// the media selector later approves an image, Meta may reject the actual send.
-// Never let an AI text response promise or claim that an attachment was sent.
-const MEDIA_PROMISE = /(?:发|發|传|傳|送|分享).{0,35}(?:给你|給你|给您|給您|参考|參考|看看)|(?:图片|圖片|优惠|優惠|配套|套餐|资料|資料|详情|詳情|内容|內容).{0,35}(?:发|發|传|傳|分享).{0,22}(?:给你|給你|参考|參考|看看)|\b(?:i(?:'ll| will|'ve| have)?|we(?:'ll| will|'ve| have)?|let me)\b.{0,45}\b(?:send|share|sent|forward)\b.{0,55}\b(?:photo|image|picture|graphic|offer|promo|details|package)\b|\b(?:sending|shared|sent)\b.{0,35}\b(?:the|your|some)\b.{0,20}\b(?:details|packages|offers|photos|images)\b|\b(?:saya|kami)\b.{0,24}\b(?:hantar|kongsikan)\b.{0,45}\b(?:gambar|promosi|tawaran|pakej)\b/iu;
-const EMPTY_LIST_CLAIM = /(?:有这(?:两|2)种|有以下(?:两|2)?种|(?:配套|套餐|packages?)\s*(?:如下|以下|below)|these (?:two|2) (?:packages|offers))\s*[:：]\s*$/imu;
+// Promo images are a separate optional send after the AI text, and can still
+// be rejected by the provider. Remove claims of planned/completed attachments
+// before sending the text, preserving independent factual clauses.
+const CN_MEDIA_OBJECT = /(?:图片|圖片|优惠图|優惠圖|配套图|套餐图|图|圖|照片|配套(?:内容|資料|资料)|套餐(?:内容|資料|资料)|優惠(?:詳情|详情)|优惠(?:詳情|详情)|详情|詳情|资料|資料)/u;
+const CN_SEND = /(?:发|發|传|傳|发送|發送|分享|送).{0,25}(?:给你|給你|给您|給您|过去|過去|来|來|看看|参考|參考|了)/u;
+const CN_ALREADY = /(?:已经|已經|刚刚|剛剛|刚才|剛才|都|已|就).{0,25}(?:发|發|传|傳|发送|發送|分享|送)/u;
+const CN_SEND_FIRST = /(?:我|我们|我們).{0,20}(?:发|發|传|傳|发送|發送|分享|送).{0,45}(?:图片|圖片|图|圖|照片|详情|詳情|资料|資料|配套|套餐|優惠|优惠)/u;
+const EN_MEDIA_SEND = /\b(?:i(?:'ll| will|'ve| have)?|we(?:'ll| will|'ve| have)?|let me|already|just)\b.{0,48}\b(?:send|share|sent|forward|shared)\b.{0,70}\b(?:image|photo|picture|graphic|offer|promo|promotion|package|details)\b|\b(?:sending|shared|sent)\b.{0,48}\b(?:image|photo|picture|graphic|offer|promo|package|details)\b/iu;
+const MS_MEDIA_SEND = /\b(?:saya|kami)\b.{0,35}\b(?:hantar|kongsikan|dah\s+hantar|sudah\s+hantar)\b.{0,55}\b(?:gambar|promosi|tawaran|pakej|butiran)\b/iu;
+const EMPTY_LIST_CLAIM = /(?:有这(?:两|2)种|有以下(?:两|2)?种|(?:配套|套餐|packages?)\s*(?:如下|以下|below)|these (?:two|2) (?:packages|offers))\s*[:：]\s*$/iu;
+
+function claimsMediaWasOrWillBeSent(text) {
+  const value = String(text || "");
+  return (CN_MEDIA_OBJECT.test(value) &&
+    (CN_SEND.test(value) || CN_ALREADY.test(value))) ||
+    CN_SEND_FIRST.test(value) || EN_MEDIA_SEND.test(value) ||
+    MS_MEDIA_SEND.test(value);
+}
 
 function guardUnconfirmedMediaPromise(reply, language = "zh") {
   const source = String(reply || "");
-  if (!MEDIA_PROMISE.test(source) && !EMPTY_LIST_CLAIM.test(source)) {
-    return { reply: source, changed: false };
-  }
-  const chunks = source.split(/\n+|(?<=[。！？!?])\s*/u)
+  // Split clauses, not entire messages, so "Package A RM388，I'll send the
+  // image" preserves the pricing fact that was already checked upstream.
+  const chunks = source.split(/(?<=[，,;；。！？!?])|\n+|(?<=\.)\s+(?=[A-Z])/u)
     .map(text => text.trim()).filter(Boolean);
-  const safe = chunks.filter(text =>
-    !MEDIA_PROMISE.test(text) && !EMPTY_LIST_CLAIM.test(text)
-  ).join("\n").trim();
+  if (!chunks.some(part => claimsMediaWasOrWillBeSent(part) ||
+      EMPTY_LIST_CLAIM.test(part))) return { reply: source, changed: false };
+
+  const kept = chunks.filter(part =>
+    !claimsMediaWasOrWillBeSent(part) && !EMPTY_LIST_CLAIM.test(part));
+  const safe = kept.join("\n").trim();
   if (safe) return { reply: safe, changed: true };
   const locale = String(language || "").toLowerCase();
   const fallback = locale.startsWith("ms")
@@ -26,4 +41,4 @@ function guardUnconfirmedMediaPromise(reply, language = "zh") {
   return { reply: fallback, changed: true };
 }
 
-module.exports = { guardUnconfirmedMediaPromise };
+module.exports = { guardUnconfirmedMediaPromise, claimsMediaWasOrWillBeSent };
