@@ -1839,10 +1839,10 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     // Never route an automated recorded follow-up through the staff voice
     // sender without explicit fresh staff action and policy review.
     if (message.is_automated_follow_up === true &&
-        String(message.media_mime_type || "").toLowerCase() === "audio/ogg") {
+        ["audio/ogg", "audio/mpeg"].includes(String(message.media_mime_type || "").toLowerCase())) {
       return res.status(409).json({
         code: "automated_voice_retry_requires_manual_review",
-        error: "This automated voice note cannot be retried directly. Review WhatsApp delivery (especially if unconfirmed), then send a new staff voice note from the Inbox only if appropriate and permitted by the 24-hour reply window.",
+        error: "This automated voice note cannot be retried directly. Check the channel's delivery status (especially if unconfirmed), then send a new staff voice note only after reviewing the customer's reply window and consent.",
       });
     }
 
