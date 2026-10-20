@@ -363,3 +363,62 @@ test("ordinary social attachment errors retain existing failure handling", async
   assert.equal(result.success, false);
   assert.equal(result.unknown, undefined);
 });
+
+
+test("a definitive automated audio 4xx is marked unsent, but a Meta 5xx remains ambiguous", async (t) => {
+  const before = { fetch: global.fetch, token: process.env.INSTAGRAM_PAGE_ACCESS_TOKEN,
+    page: process.env.INSTAGRAM_PAGE_ID };
+  t.after(() => {
+    global.fetch = before.fetch;
+    if (before.token === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = before.token;
+    if (before.page === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = before.page;
+  });
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "test-token";
+  process.env.INSTAGRAM_PAGE_ID = "page-id";
+  const send = () => metaAttachments.sendUrlAttachment("instagram", "recipient",
+    "audio", "https://media.example.test/recording.m4a", { autoFollowUp: true });
+  global.fetch = async (_url, options) => {
+    assert.ok(options.signal, "customer-facing Meta Send API must be bounded");
+    return new Response(JSON.stringify({ error: { message: "Unsupported audio" } }), { status: 400 });
+  };
+  const rejected = await send();
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.audioNotDelivered, true);
+  assert.equal(rejected.unknown, undefined);
+
+  global.fetch = async () => new Response("temporary outage", { status: 503 });
+  const uncertain = await send();
+  assert.equal(uncertain.unknown, true);
+  assert.equal(uncertain.audioNotDelivered, undefined);
+});
+
+test("Messenger attachment upload has a deadline and cannot itself deliver a voice note", async (t) => {
+  const oldFetch = global.fetch;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  const oldPage = process.env.FACEBOOK_PAGE_ID;
+  t.after(() => {
+    global.fetch = oldFetch;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+    if (oldPage === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = oldPage;
+  });
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "test-token";
+  process.env.FACEBOOK_PAGE_ID = "page-id";
+  let requests = 0;
+  global.fetch = async (url, options) => {
+    requests++;
+    assert.match(url, /message_attachments$/);
+    assert.ok(options.signal, "Meta upload must have an abortable deadline");
+    throw new Error("simulated upload timeout");
+  };
+  const result = await metaAttachments.sendBuffer("facebook", "psid",
+    "audio", Buffer.from("voice"), "audio/mpeg", "voice.mp3",
+    { autoFollowUp: true });
+  assert.equal(result.success, false);
+  assert.equal(result.audioNotDelivered, true);
+  assert.equal(result.unknown, undefined);
+  assert.equal(requests, 1, "no customer-facing Send API was called");
+});
