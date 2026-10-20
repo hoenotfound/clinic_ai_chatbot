@@ -180,6 +180,85 @@ function resolveContinuedTreatmentPriceService({
   return null;
 }
 
+// A customer can answer an automated appointment question ("weekday") AND
+// ask for the treatment's price in the same message. Do not mistake that for
+// a new service enquiry, but never use CRM/ad/model guesses as price authority.
+//
+// This path is deliberately narrower than ordinary price-context carryover:
+// - real, recent customer-authored single-treatment choice + bot confirmation
+// - immediate bot question about scheduling
+// - current customer message both answers scheduling AND explicitly asks price
+// - no staff intervention, topic switch, ambiguity or stale conversation
+// - trusted conversationStore timestamps for every turn
+const BOOKING_RESPONSE_WITH_PRICE =
+  /(?:\b(?:weekdays?|weekends?|working\s+days?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|平日|平时|平時|周末|週末|工作日|星期[一二三四五六日天]|礼拜[一二三四五六日天])/iu;
+const BOOKING_TIME_QUESTION =
+  /(?:\b(?:weekday|weekend|available|availability|which\s+day|what\s+day|when|appointment|booking|time\s+slot)\b|平日|平时|平時|周末|週末|哪天|哪一[天日]|星期几|星期幾|几时|幾時|时段|時段|什么时候|什麼時候|哪(?:个|個)?时间|哪(?:个|個)?日期|预约|預約)/iu;
+const OTHER_PRICE_SUBJECT =
+  /(?:其他|其它|另外|别的|別的|不(?:是|要|想)|another|other|different)\s*(?:疗程|療程|治疗|治療|护理|護理|项目|項目|package|treatment|service|rawatan)/iu;
+
+function resolveBookingResponsePriceService({
+  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  if (!current || current.length > 115 || !BOOKING_RESPONSE_WITH_PRICE.test(current) ||
+      !hasExplicitPriceRequest(current) || hasClinicalMediaRisk(current) ||
+      TOPIC_CHANGE.test(current) || TOPIC_RESET.test(current) ||
+      OTHER_PRICE_SUBJECT.test(current) || BROAD_PRICE_QUESTION.test(current) ||
+      !Number.isFinite(now)) return null;
+
+  const candidates = serviceCandidates(services, serviceAliases);
+  // Current message must refer back to a treatment, never name a new one.
+  if (findServicesInText(current, candidates).length) return null;
+
+  const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(x => x?.role === "user" || x?.role === "assistant");
+  if (turns.length < 3 || turns.length > 30 ||
+      turns.at(-1)?.role !== "user" ||
+      typeof turns.at(-1).content !== "string" ||
+      turns.at(-1).content.trim() !== current ||
+      turns.at(-2)?.role !== "assistant" ||
+      isVerifiedStaffTurn(turns.at(-2)) ||
+      !BOOKING_TIME_QUESTION.test(pricingMessageText(turns.at(-2)))) return null;
+
+  // Scope the search to a small, uninterrupted conversation, not the entire
+  // account's earlier sales history. The most recent customer-selected
+  // treatment must match any single-service anchor in the scheduling prompt.
+  const latest = turns.slice(-16);
+  for (let i = latest.length - 2; i >= 0; i--) {
+    const turn = latest[i];
+    const text = pricingMessageText(turn).trim();
+    if (turn.role === "assistant") {
+      if (isVerifiedStaffTurn(turn)) return null;
+      continue;
+    }
+    if (typeof turn.content !== "string" || !text ||
+        TOPIC_CHANGE.test(text) || TOPIC_RESET.test(text) ||
+        OTHER_PRICE_SUBJECT.test(text) || hasClinicalMediaRisk(text)) return null;
+    const mentions = findServicesInText(text, candidates);
+    const selected = safeServiceFromCustomer(text, services, serviceAliases);
+    if (mentions.length > 1 || (mentions.length && (!selected ||
+        mentions[0] !== selected.name))) return null;
+    if (!selected) {
+      // The immediate booking assistant must follow a customer topic,
+      // not a long chain of unrelated user messages.
+      if (!/(?:\b(?:weekday|weekend)\b|平日|周末|週末|星期|时间|時間|价钱|價錢|价格|價格|price|harga|多少钱|多少錢|骨盆|体态|體態|脸|臉)/iu.test(text)) return null;
+      continue;
+    }
+    // Real DB timestamps are mandatory to carry commercial context.
+    const globalIndex = turns.length - latest.length + i;
+    if (!isRecentPricingThread(turns, globalIndex, now)) return null;
+    const assistantServices = findServicesInText(
+      pricingMessageText(turns.at(-2)), candidates
+    );
+    if (assistantServices.length !== 1 ||
+        assistantServices[0] !== selected.name) return null;
+    return selected;
+  }
+  return null;
+}
+
 // Narrow legacy-safe case: the current amount question immediately follows
 // the FIRST customer-authored treatment selection, with only recent automated
 // assistant replies/photos between them. Unlike the extended assessment thread,
@@ -202,6 +281,11 @@ function resolveVerifiedPriceFollowUpService({
   if (!current || current.length > 115 ||
       !(hasExplicitPriceRequest(current) || isStandalonePriceQuestion(current)) ||
       TOPIC_RESET.test(current) || BROAD_PRICE_QUESTION.test(current)) return null;
+
+  const bookingResponse = resolveBookingResponsePriceService({
+    customerText: current, conversationHistory, services, serviceAliases,
+  });
+  if (bookingResponse) return bookingResponse;
 
   if (allowContinuedPriceContext === true) {
     const continued = resolveContinuedTreatmentPriceService({
@@ -283,5 +367,5 @@ module.exports = {
   isContextualPriceReference, isContinuedTreatmentPriceQuestion,
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
-  resolveRecentFirstTreatmentPriceService,
+  resolveRecentFirstTreatmentPriceService, resolveBookingResponsePriceService,
 };
