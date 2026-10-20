@@ -2116,3 +2116,26 @@ test("Settings validates optional verified sessionsIncluded on single and packag
   assert.match(settings, /onChange=\{\(event\) => updateSessions\(event\.target\.value\)\}/u);
   assert.match(settings, /<PromotionPriceFields pricing=\{item\.pricing\}/u);
 });
+
+
+test("automaticMediaHold is validated, editable and never removed by the Promotions Settings serializer", () => {
+  const base={
+    name:"9D 逆龄抗衰 First Trial",linkedService:"9D 逆龄抗衰",
+    imageUrl:"https://example.test/legacy9d.jpg",caption:"Approved written caption",
+    sendOnPriceQuery:true,pricing:{currency:"MYR",offer:488,normal:1288},
+  };
+  const prepared=prepareConfigUpdatePayload({
+    promotions:[{...base,automaticMediaHold:true}],
+  },currentConfig());
+  assert.equal(prepared.ok,true,JSON.stringify(prepared));
+  assert.equal(prepared.updates.promotions[0].automaticMediaHold,true);
+  assert.deepEqual(prepared.updates.promotions[0].pricing,base.pricing);
+  const invalid=prepareConfigUpdatePayload({
+    promotions:[{...base,automaticMediaHold:"true"}],
+  },currentConfig());
+  assert.equal(invalid.ok,false);
+  const settings=read("portal-frontend/src/pages/Settings.jsx");
+  assert.match(settings,/Hold automatic promotional media until artwork is approved/u);
+  assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
+  assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
+});
