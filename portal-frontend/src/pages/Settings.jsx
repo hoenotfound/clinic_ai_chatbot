@@ -2124,9 +2124,9 @@ function PromotionsTab({ config, onSaved, onError }) {
                         checked={item.automaticMediaHold === true}
                         onChange={(e) => updateItem(index, { automaticMediaHold: e.target.checked })} />
                       <span>
-                        <span className="block font-semibold">Hold automatic promotional media until artwork is approved</span>
+                        <span className="block font-semibold">Pause automatic promotion graphics and promotion-based follow-ups</span>
                         <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
-                          Prevent promotional graphics and automated offer follow-ups for this campaign. Verified text prices remain available. Inspect the text inside the image before removing the hold.
+                          Blocks this promotion's pricing graphics, pricing reminders, and promotion-specific automated follow-up text and attachments until the artwork and copy are approved. Ordinary general follow-ups and verified customer-requested price replies are not blocked. Review the words inside the image before clearing this hold.
                         </span>
                       </span>
                     </label>
