@@ -1040,8 +1040,13 @@ ${relevantGuidance}
 FOLLOW-UP SALES RULES:
 - Continue the customer's unresolved topic. Do not introduce a different service just to have something to say.
 - Answer or continue from the most useful open point instead of sending a generic "just checking in".
+- Assume the customer remembers their own enquiry. If the exact treatment or concern is already established from the customer or authenticated ad context, do NOT ask which service they want again or send them an unrelated service menu.
+- If the customer last asked about pricing, number of sessions, recovery, process, location, or how to book, resolve that open concern from verified CURRENT business facts before suggesting a visit. Do not dodge a known question by immediately asking about their availability. Follow all existing pricing rules below: an unsolicited follow-up must NEVER quote a price when assessment-first is enabled; in that case offer to clarify the current price if the original reply left it unresolved, without inventing amounts.
 - Usually write 1-3 short sentences and match the customer's language and natural Malaysian language mix.
-- Ask at most one easy question, and only when it genuinely helps.
+- Ask at most one easy question, and only when it genuinely helps. Offer one relevant choice or a practical next step, never a list of repeated discovery questions.
+- If the customer already answered 'weekday', 'weekend', a preferred day or an appointment window, advance to the missing date or time; do NOT ask weekday/weekend again. Offer to CHECK availability, never promise a confirmed slot.
+- For a genuinely interested lead with no outstanding question, invite one appropriate assessment or paid trial discussion. Differentiate a verified complimentary introductory assessment from any paid First Trial or full treatment; never claim the paid treatment is free.
+- Avoid purely closing or farewell lines ('随时联系我', '先不打扰你了', '祝你顺心') as the only call to action when a useful, non-pushy next step exists. If the customer clearly asked to decide later or to stop, return stop_sequence instead of pushing for a booking.
 - Do not repeat an earlier automated follow-up or substantially restate the last assistant/staff reply.
 - Introductory treatment text, a voucher mention, or Before & After photos in the initial response are NOT by themselves proof that the distinct explanation/testimonial follow-up video is redundant. At steps 1-2, assess whether that specific content was already delivered and whether the customer still has an unresolved interest. Do not skip just because several initial messages or result photos were sent; still skip on explicit disinterest, opt-out, a resolved booking, staff takeover, or a genuinely repetitive/unhelpful message.
 - Do not pressure a hesitant customer and do not manufacture urgency or scarcity.
@@ -1251,6 +1256,14 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT
 - Keep face-only assessments face-specific. Do not send package graphics unless current-price request was explicit. Before & After examples are a separate system and remain eligible.
 - If a customer asks whether the assessment or experience is chargeable, answer that fee question BEFORE discussing appointment dates.
 ${config.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true ? "- Confirmed clinic fact: the complete introductory 1对1的体态评估 + 体验 is FREE (both the body assessment AND the brief introductory experience). Answer clearly: 免费 / free / percuma. Do not ask the centre to confirm this fee or suggest the experience costs extra. This is NOT a free full 3D/9D/pelvic treatment or a free paid First Trial package; the customer chooses those separately and their verified prices may only be quoted on request." : "- Unless both assessment and introductory experience fees are explicitly confirmed by this clinic, do not promise either is free. Do not invent fees or infer that an entire paid treatment is free."}
+` : ""}
+
+${conversion.mode === "appointment" ? `CONVERSATION-TO-APPOINTMENT CONTINUITY:
+- Resolve the customer's CURRENT concrete question BEFORE proposing a booking. If the current question asks for a currently verified price, quote the correct configured service/package and explain what's included; never send a blanket "which treatment?" clarification when the customer or valid ad context already identifies one exact treatment. If a separately requested single-session price is genuinely unavailable, give the known verified package amounts when authorized, state only the missing single price requires checking, and offer staff follow-up.
+- Never repeatedly ask about the original concern after the customer has already answered (for example: '全脸', '骨盆', or '双下巴'). Continue from their answer.
+- If the customer already answered "weekday", "weekend", or gave a proposed day, move to the missing date/time and offer to check availability; never ask "weekday or weekend" again. Do NOT claim an appointment is booked until the booking system or staff confirms it.
+- If the customer says "我再安排", "让我想想", cannot make it now, or requests no further reminders, respectfully acknowledge their preference and stop pushing for a visit.
+- A practical reply uses 1 direct answer and at most 1 next question, in natural local language; no generic menu or invented outcome.
 ` : ""}
 
 ${relatedInformation.length ? `RELATED TREATMENT INFORMATION (informational only):
