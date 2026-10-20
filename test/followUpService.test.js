@@ -3543,24 +3543,37 @@ test("held campaign suppresses promotion text and artwork, but ordinary first fo
 });
 
 
-test("native voice follow-up stores audio/ogg and uses the WhatsApp voice send path", async () => {
-  enableTool();
-  const voiceKey = "clients/neutro/messages/follow-up-config/voice.ogg";
-  clinicConfig.automatedFollowUp.voiceKey = voiceKey;
-  clinicConfig.automatedFollowUp.voiceFilename = "pelvis-message.mp3";
 
+test("native voice sends only a matching approved recording and persists its real transcript", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const key = `${mediaStorage.followUpConfigVideoPrefix()}english.ogg`;
+  const previewKey = `${mediaStorage.followUpConfigVideoPrefix()}english-preview.mp3`;
+  const transcript = "Hello, would you like to arrange an assessment?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "hello.mp3", approved: true },
+  };
   const originals = {
     shared: mediaStorage.isSharedFollowUpConfigKey,
     head: mediaStorage.getSharedFollowUpMediaInfo,
     download: mediaStorage.downloadMedia,
     audio: channelMessaging.sendAudioBuffer,
+    poolQuery: pool.query,
   };
   let claim = null;
   let voiceCall = null;
   try {
-    mediaStorage.isSharedFollowUpConfigKey = (key) => key === voiceKey;
-    mediaStorage.getSharedFollowUpMediaInfo = async () => ({ mimeType: "audio/ogg", bytes: 16 });
+    mediaStorage.isSharedFollowUpConfigKey = keyArg => keyArg === key;
+    mediaStorage.getSharedFollowUpMediaInfo = async () => ({
+      mimeType: "audio/ogg", bytes: 16,
+      metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+      },
+    });
     mediaStorage.downloadMedia = async () => Buffer.from("OggS-OpusHead");
+    pool.query = async () => ({ rows: [] }); // No prior delivery of this media key.
     channelMessaging.sendAudioBuffer = async (...args) => {
       voiceCall = args;
       return { success: true, wamid: "wamid-voice-follow-up" };
@@ -3568,11 +3581,10 @@ test("native voice follow-up stores audio/ogg and uses the WhatsApp voice send p
     followUpRepo.findCandidates = async () => [{
       contact_id: 901, channel: "whatsapp", whatsapp_number: "60120000901",
       trigger_message_id: 900, next_follow_up_step: 1,
-      recent_inbound_messages: ["Tell me more about Pelvic Care"],
-      treatment_interest: "Pelvic Care",
-      trigger_message_content: "Thank you for your enquiry",
+      recent_inbound_messages: ["Hello, can you tell me more about this treatment?"],
+      treatment_interest: "Pelvic Care", trigger_message_content: "Thank you for your enquiry",
     }];
-    followUpRepo.saveIfStillEligible = async (input) => {
+    followUpRepo.saveIfStillEligible = async input => {
       claim = input;
       return { id: 902, contact_id: 901, delivery_status: null };
     };
@@ -3582,10 +3594,12 @@ test("native voice follow-up stores audio/ogg and uses the WhatsApp voice send p
 
     await runAutomatedFollowUps();
 
-    assert.equal(claim.mediaKey, voiceKey);
+    assert.equal(claim.mediaKey, key);
     assert.equal(claim.mediaMimeType, "audio/ogg");
+    assert.match(claim.content, /Automated voice note, en; transcript/);
+    assert.ok(claim.content.includes(transcript));
+    assert.ok(!claim.content.includes("Checking in"));
     assert.equal(voiceCall[0].channel, "whatsapp");
-    assert.equal(voiceCall[0].whatsapp_number, "60120000901");
     assert.equal(voiceCall[2], "audio/ogg");
     assert.equal(voiceCall[3], "voice.ogg");
     assert.equal(voiceCall[4].autoFollowUp, true);
@@ -3595,5 +3609,6 @@ test("native voice follow-up stores audio/ogg and uses the WhatsApp voice send p
     mediaStorage.getSharedFollowUpMediaInfo = originals.head;
     mediaStorage.downloadMedia = originals.download;
     channelMessaging.sendAudioBuffer = originals.audio;
+    pool.query = originals.poolQuery;
   }
 });
