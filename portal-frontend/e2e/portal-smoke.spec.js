@@ -2627,6 +2627,42 @@ test("After-24-hour planner selects approved text messages without changing trea
       mediaKey: "clients/clinic/video.mp4", videoCodecVerified: true,
     }),
   ]));
+
+  // The day card should take staff directly to the already configured video,
+  // without creating a second rule or deleting the saved attachment.
+  await planner.getByRole("button", { name: "Treatment media for +50h follow-up" }).click();
+  const videoEditor = page.getByRole("region", { name: "Extended template rule 1" });
+  await expect(videoEditor).toBeFocused();
+  await expect(videoEditor.getByLabel("Extended template slot 1")).toHaveValue("50");
+  await expect(videoEditor.getByLabel("Extended template treatment 1")).toHaveValue("骨盆调理");
+  await expect(videoEditor).toContainText("Attached: video.mp4");
+  await expect(page.getByRole("region", { name: "Extended template rule 3" })).toHaveCount(0);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("After-24-hour media shortcut creates a draft for the selected time, never activates sending", async ({ page }) => {
+  let writes = 0;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "3D 小颜术", description: "" }],
+      automatedFollowUp: { freeEntry: { enabled: false, templateName: "",
+        language: "auto", slotsHours: [26, 50, 98], templateRules: [] } },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: () => { writes += 1; },
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
+  await planner.getByRole("button", { name: "Treatment media for +98h follow-up" }).click();
+  const editor = page.getByRole("region", { name: "Extended template rule 1" });
+  await expect(editor).toBeFocused();
+  await expect(editor.getByLabel("Extended template slot 1")).toHaveValue("98");
+  await expect(editor.getByLabel("Extended template treatment 1")).toHaveValue("");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  expect(writes).toBe(0);
   await expectNoHorizontalPageOverflow(page);
 });
 
