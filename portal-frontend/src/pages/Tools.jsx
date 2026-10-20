@@ -3534,6 +3534,8 @@ function FollowUpTool({
                 </p>
               )}
             </div>
+            <h3 className="mt-4 text-sm font-bold">1. Choose a default approved message</h3>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">This is the fallback text used when a scheduled time has no day-specific template.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <ApprovedFollowUpTemplatePicker
                 id="free-entry-default-template"
@@ -3580,7 +3582,8 @@ function FollowUpTool({
                 Only the identical template name in this approved language may be used. Otherwise skip.
               </span>
             </label>
-            <label className="mt-3 block text-xs font-semibold">
+            <h3 className="mt-4 text-sm font-bold">2. Choose your follow-up times</h3>
+            <label className="mt-2 block text-xs font-semibold">
               Extended template schedule
               <select
                 value={(form.freeEntry?.slotsHours || []).join(",")}
@@ -3591,15 +3594,15 @@ function FollowUpTool({
                 className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
                 aria-label="Free-entry follow-up schedule"
               >
-                <option value="26,50,74,98,122,162">Days 1-6 and before Day 7 closes (six reminders)</option>
-                <option value="26,50,98,162">Days 1, 2, 4 and near Day 7 (four reminders)</option>
-                <option value="26,50,98">Days 1, 2 and 4 (three reminders)</option>
+                <option value="26,50,98">Simple: +26h, +50h, +98h (3 possible times)</option>
+                <option value="26,50,98,162">Four possible times: +26h, +50h, +98h, +162h</option>
+                <option value="26,50,74,98,122,162">Six possible times: +26h to +162h (max 3 distinct sends)</option>
               </select>
             </label>
             <section aria-label="After 24 hours guided setup" className="mt-5 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/20 p-3 sm:p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-bold">Choose the message for each follow-up time</h3>
+                  <h3 className="text-sm font-bold">3. Choose the message for each follow-up time</h3>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                     Each time uses the default approved text template above unless you choose another.
                     For individual treatment videos or images, open the advanced editor below.
@@ -3649,7 +3652,7 @@ function FollowUpTool({
                           aria-label={`Message for +${hours}h follow-up`}
                           value={selectedName}
                           onChange={(event) => setSimpleSlotTemplate(hours, event.target.value)}
-                          disabled={!templateCatalog}
+                          disabled={!templateCatalog || matches.length > 1}
                           className="mt-1.5 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white p-2.5 text-sm"
                         >
                           <option value="">Use default text message</option>
