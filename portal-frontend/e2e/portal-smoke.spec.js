@@ -1530,6 +1530,122 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Follow-up advanced delivery options keep trigger and quiet hours together without losing draft changes", async ({ page }) => {
+  let savedFollowUp = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    onConfigUpdate: (payload) => { savedFollowUp = payload.automatedFollowUp; },
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+
+  const disclosure = page.getByRole("button", { name: /Advanced delivery options/ });
+  const panel = page.getByRole("region", { name: "Advanced delivery settings" });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(panel).not.toBeVisible();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("radio", { name: /Staff messages only/ })).toBeVisible();
+  await expect(panel.getByRole("switch", { name: "Follow-up quiet hours" })).toBeVisible();
+
+  await panel.getByRole("radio", { name: /Staff messages only/ }).check();
+  await panel.getByLabel("Follow-up quiet hours start").fill("01:00");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+
+  await disclosure.click();
+  await expect(panel).not.toBeVisible();
+  await expect(disclosure).toContainText("Staff replies only");
+  await expect(disclosure).toContainText("01:00–07:00");
+
+  await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tab", { name: "Sequence" }).click();
+  await disclosure.click();
+  await expect(panel.getByRole("radio", { name: /Staff messages only/ })).toBeChecked();
+  await expect(panel.getByLabel("Follow-up quiet hours start")).toHaveValue("01:00");
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedFollowUp?.triggerMode).toBe("staff");
+  expect(savedFollowUp.quietHours.start).toBe("01:00");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Invalid quiet hours automatically reveal the advanced delivery panel on save", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        message: "Checking in with you.",
+        quietHours: { enabled: true, start: "02:00", end: "02:00" },
+      },
+    },
+  });
+  await page.goto("/tools");
+
+  const disclosure = page.getByRole("button", { name: /Advanced delivery options/ });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(page.getByRole("tab", { name: "Sequence" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Choose two different valid times for follow-up quiet hours.");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  const panel = page.getByRole("region", { name: "Advanced delivery settings" });
+  await expect(panel.getByLabel("Follow-up quiet hours start")).toHaveValue("02:00");
+  await expect(panel.getByLabel("Follow-up quiet hours end")).toHaveValue("02:00");
+});
+
+test("Strict WhatsApp billing protection opens when enabled and remains collapsible", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        message: "Checking in with you.",
+        whatsappFreeOnly: { enabled: true, allow24hServiceReplies: true },
+      },
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+
+  const disclosure = page.locator("#follow-up-panel-whatsapp > details").first();
+  const switchControl = disclosure.getByRole("switch", { name: "Block potentially paid WhatsApp sends" });
+  await expect(disclosure).toHaveAttribute("open", "");
+  await expect(switchControl).toBeVisible();
+  await expect(switchControl).toHaveAttribute("aria-checked", "true");
+  await disclosure.locator("summary").click();
+  await expect(disclosure).not.toHaveAttribute("open", "");
+  await expect(switchControl).not.toBeVisible();
+  await disclosure.locator("summary").click();
+  await expect(disclosure).toHaveAttribute("open", "");
+  await expect(switchControl).toBeVisible();
+});
+
+test("Inactive strict billing settings start collapsed and open without changing the saved configuration", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto("/tools");
+
+  const tabs = page.getByRole("tablist", { name: "Follow-up sections" });
+  await expect(tabs).toContainText("Everyday");
+  await expect(tabs).toContainText("Advanced");
+  await tabs.getByRole("tab", { name: "WhatsApp templates" }).click();
+
+  const disclosure = page.locator("#follow-up-panel-whatsapp > details").first();
+  const switchControl = disclosure.getByRole("switch", { name: "Block potentially paid WhatsApp sends" });
+  await expect(disclosure).not.toHaveAttribute("open", "");
+  await expect(switchControl).not.toBeVisible();
+  await disclosure.locator("summary").click();
+  await expect(disclosure).toHaveAttribute("open", "");
+  await expect(switchControl).toHaveAttribute("aria-checked", "false");
+  await expect(switchControl).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Phase 7 performance tab shows mature reply rates, preliminary conversions and media breakdown", async ({ page }) => {
   const calls=[];
   const performance={
