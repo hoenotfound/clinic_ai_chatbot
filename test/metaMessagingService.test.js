@@ -1047,3 +1047,86 @@ test("Meta webhook carries Messenger and Instagram quick-reply provenance into S
     assert.equal(Object.hasOwn(emptyPayload[0], "buttonPayload"), false);
   }
 });
+
+
+test("automated voice text fallback bounds Meta POST and never falsely fails an uncertain send", async (t) => {
+  const previousFetch = global.fetch;
+  const oldPage = process.env.FACEBOOK_PAGE_ID;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = previousFetch;
+    if (oldPage === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = oldPage;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+  process.env.FACEBOOK_PAGE_ID = "test-page";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "test-token";
+  const send = () => meta.sendText("facebook", "psid-1", "Checking in", {
+    autoFollowUp: true, voiceFollowUpTextFallback: true,
+  });
+  let calls = 0;
+  global.fetch = async (_url, options) => {
+    calls++;
+    assert.ok(options.signal, "fallback text Meta POST must have a deadline");
+    assert.deepEqual(JSON.parse(options.body).message, { text: "Checking in" });
+    throw Object.assign(new Error("The request was aborted"), { name: "TimeoutError" });
+  };
+  const timeout = await send();
+  assert.equal(timeout.success, false);
+  assert.equal(timeout.unknown, true);
+  assert.equal(timeout.ambiguous, true);
+  assert.match(timeout.error, /unconfirmed/);
+
+  global.fetch = async (_url, options) => {
+    assert.ok(options.signal);
+    return new Response(JSON.stringify({ error: { message: "server unavailable" } }), { status: 503 });
+  };
+  const server = await send();
+  assert.equal(server.success, false);
+  assert.equal(server.unknown, true);
+  assert.equal(server.ambiguous, true);
+
+  global.fetch = async () => new Response("{}", { status: 200 });
+  const noId = await send();
+  assert.equal(noId.success, false);
+  assert.equal(noId.unknown, true);
+
+  global.fetch = async () => new Response(JSON.stringify({ error: { message: "Invalid recipient" } }), { status: 400 });
+  const rejected = await send();
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.unknown, undefined);
+  assert.equal(rejected.error, "Invalid recipient");
+
+  global.fetch = async () => new Response(JSON.stringify({ message_id: "mid-text-ok" }), { status: 200 });
+  const accepted = await send();
+  assert.equal(accepted.success, true);
+  assert.equal(accepted.externalMessageId, "mid-text-ok");
+  assert.equal(calls, 1);
+});
+
+test("ordinary social text sends retain their original transport semantics", async (t) => {
+  const previousFetch = global.fetch;
+  const oldPage = process.env.INSTAGRAM_PAGE_ID;
+  const oldToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = previousFetch;
+    if (oldPage === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = oldPage;
+    if (oldToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = oldToken;
+  });
+  process.env.INSTAGRAM_PAGE_ID = "ig-page";
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-token";
+  global.fetch = async (_url, options) => {
+    assert.equal(options.signal, undefined, "normal social messages must not inherit fallback timeout");
+    return new Response(JSON.stringify({ message_id: "mid-normal" }), { status: 200 });
+  };
+  const normal = await meta.sendText("instagram", "igsid-1", "Hello", { autoFollowUp: true });
+  assert.equal(normal.success, true);
+  assert.equal(normal.externalMessageId, "mid-normal");
+  global.fetch = async () => { throw new Error("network dropped"); };
+  const failed = await meta.sendText("instagram", "igsid-1", "Hello");
+  assert.equal(failed.success, false);
+  assert.equal(failed.unknown, undefined);
+});
