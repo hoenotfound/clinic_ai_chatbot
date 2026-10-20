@@ -1651,8 +1651,9 @@ function ServiceVoicePicker({ voiceNotes = {}, voicePreviewUrls = {}, uploading,
         </label>
       </>}
       <p className="mt-3 text-[10px] leading-4 text-[var(--color-text-muted)]">
-        Max 120 seconds. WhatsApp receives a native OGG/Opus voice bubble.
-        Preview uses MP3 for iPhone and Safari. Voice cannot contain a text caption.
+        Max 120 seconds. WhatsApp receives a native voice bubble; Messenger and Instagram
+        receive a playable audio attachment. Preview uses MP3 for iPhone and Safari.
+        A voice recording replaces the text follow-up rather than adding a caption.
       </p>
     </div>
   );
@@ -4359,7 +4360,8 @@ function FollowUpTool({
                       {previewServiceName ? `Automated follow-up · ${previewServiceName}` : "Automated follow-up"}
                     </p>
                     {previewVoiceUrl ? (
-                      <p className="text-xs leading-5">Voice note · text is the fallback for non-WhatsApp channels.</p>
+                      <p className="text-xs leading-5">Voice note · approved recordings are sent on WhatsApp, Messenger and Instagram.
+                      Text is used when there is no approved recording in the customer's language.</p>
                     ) : (
                       <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
                     )}
