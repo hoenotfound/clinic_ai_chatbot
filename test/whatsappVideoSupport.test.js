@@ -84,5 +84,6 @@ test("historical Inbox videos defer their media source until a deliberate play a
   assert.match(inboxSource, /uploading=\{Boolean\(message\._uploading\)\}/);
   // The existing authenticated media URL and outbound video sends are unchanged.
   assert.match(inboxSource, /api\.messageMediaUrl\(contactId, message\.id\)/);
-  assert.match(conversationsRouteSource, /mediaStorage\.openMediaStream\(mediaRef\.media_key/);
+  assert.match(conversationsRouteSource, /mediaStorage\\.openMediaStream\\(/[\\s\\S]*voicePlayback\\?\\.key \\|\\| mediaRef\\.media_key/);
+  assert.match(conversationsRouteSource, /voicePlayback\\?\\.mimeType \\|\\|[\\s\\S]*mediaRef\\.media_mime_type/);
 });
