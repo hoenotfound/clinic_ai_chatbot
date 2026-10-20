@@ -236,8 +236,15 @@ function resolveBookingResponsePriceService({
     if (typeof turn.content !== "string" || !text ||
         TOPIC_CHANGE.test(text) || TOPIC_RESET.test(text) ||
         OTHER_PRICE_SUBJECT.test(text) || hasClinicalMediaRisk(text)) return null;
-    const mentions = findServicesInText(text, candidates);
-    const selected = safeServiceFromCustomer(text, services, serviceAliases);
+    // "调整骨盆" contains the incidental two-character substring "整骨".
+    // Both independently configured aliases can otherwise match, despite
+    // the customer naming only their pelvis. Normalize ONLY this exact
+    // customer-authored phrase, never a general ambiguous multi-service text.
+    const plainPelvicChoice = /^(?:调整|調整)\s*骨盆[。.!！]*$/u.test(text)
+      ? services.find(service => service?.name === "骨盆调理") || null : null;
+    const mentions = plainPelvicChoice
+      ? ["骨盆调理"] : findServicesInText(text, candidates);
+    const selected = plainPelvicChoice || safeServiceFromCustomer(text, services, serviceAliases);
     if (mentions.length > 1 || (mentions.length && (!selected ||
         mentions[0] !== selected.name))) return null;
     if (!selected) {
