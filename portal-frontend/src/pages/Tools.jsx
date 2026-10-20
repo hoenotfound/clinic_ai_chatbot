@@ -1770,7 +1770,6 @@ function ServiceOverridesEditor({
   onUploadImage,
   onUploadVideo,
   onUploadVoice,
-  voicePreviewUrls,
   onTranslateMessage,
   forceOpen = false,
 }) {
