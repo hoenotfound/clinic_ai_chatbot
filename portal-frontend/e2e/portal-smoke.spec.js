@@ -1765,6 +1765,12 @@ test("Invalid quiet hours return later-step editors to the visible settings with
       .toContainText(`Editing Follow-up ${stepNumber} of 3`);
     await expect(page.getByRole("region", { name: "Follow-up 1 editor" }))
       .not.toBeVisible();
+    // The Save control is intentionally unavailable without an unsaved edit.
+    // Reproduce a real staff edit before triggering quiet-hours validation.
+    await page.getByRole("region", { name: `Follow-up ${stepNumber} editor` })
+      .getByPlaceholder("Write the next follow-up message.")
+      .fill(`Updated follow-up ${stepNumber}.`);
+    await expect(page.getByText("You have unsaved changes")).toBeVisible();
 
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
@@ -1786,8 +1792,8 @@ test("Invalid quiet hours return later-step editors to the visible settings with
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved?.quietHours?.end).toBe("07:00");
   expect(saved.additionalSteps).toHaveLength(2);
-  expect(saved.additionalSteps[0].message).toBe("Second reminder.");
-  expect(saved.additionalSteps[1].message).toBe("Third reminder.");
+  expect(saved.additionalSteps[0].message).toBe("Updated follow-up 2.");
+  expect(saved.additionalSteps[1].message).toBe("Updated follow-up 3.");
   await expectNoHorizontalPageOverflow(page);
 });
 
