@@ -2328,6 +2328,129 @@ test("Follow-up pricing and WhatsApp tabs fill desktop width", async ({ page }) 
   }
 });
 
+test("Follow-up readiness distinguishes saved live state from unsaved edits on phone and desktop", async ({ page }) => {
+  let writes = 0;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true, delayMinutes: 120, message: "Follow-up reminder",
+        freeEntry: { enabled: false, templateName: "", language: "auto",
+          fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98], templateRules: [] },
+      },
+    },
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: false, freeOnlyEnabled: false,
+      freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+    },
+    onConfigUpdate: () => { writes += 1; },
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await expect(overview.getByLabel("Overall follow-up readiness: Active")).toBeVisible();
+  const regular = overview.getByRole("heading", { name: "24-hour follow-ups" }).locator("..").locator("..");
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(regular).toContainText("Active");
+  await expect(extended).toContainText("Paused");
+  await expect(extended).toContainText("off in saved settings");
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await expect(overview).toContainText("Unsaved changes are not live.");
+  await expect(regular).toContainText("Active");
+  await expect(overview.getByLabel("Overall follow-up readiness: Active")).toBeVisible();
+  expect(writes).toBe(0);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up readiness reports blocked server without obscuring active normal follow-ups", async ({ page }) => {
+  let writes = 0;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true, delayMinutes: 120, message: "Follow-up reminder",
+        freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+          fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98], templateRules: [] },
+      },
+    },
+    followUpStatus: {
+      enabledOnServer: false, enabledInTools: true, freeOnlyEnabled: false,
+      freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: () => { writes += 1; },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await expect(overview.getByLabel("Overall follow-up readiness: Needs attention")).toBeVisible();
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Sending blocked");
+  await expect(extended).toContainText("server sending switch is off");
+  await expect(overview).toContainText("Normal follow-ups may still run.");
+  await extended.getByRole("button", { name: "Review WhatsApp setup" }).click();
+  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  expect(writes).toBe(0);
+});
+
+test("Follow-up readiness verifies approved fallback version, billing safeguards and restricted days", async ({ page }) => {
+  const approvedText = {
+    name: "clinic_reminder", language: "zh_CN", status: "APPROVED", category: "MARKETING",
+    sendable: true, header: { format: "TEXT" }, body: { text: "Follow-up text" }, variableFields: [],
+  };
+  const savedConfig = {
+    enabled: true, delayMinutes: 120, message: "Follow-up reminder",
+    freeEntry: { enabled: true, templateName: "clinic_reminder", language: "auto",
+      fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98, 122], templateRules: [] },
+  };
+  const baseStatus = { enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
+    strictSevenDayBlocked: false, freeOnlyGate: { status: "idle" },
+    billingSafety: { since_switch: 0 } };
+  await mockPortalApi(page, {
+    loggedIn: true, businessConfig: { automatedFollowUp: savedConfig },
+    followUpStatus: baseStatus,
+    templateCatalog: { templates: [approvedText], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Active");
+  await expect(extended).toContainText("Individual sends still require consent");
+
+  // A rejected or unavailable approved version cannot be presented as ready.
+  await page.route("**/api/config/automated-follow-up/template-catalog**", route =>
+    route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify({ templates: [{ ...approvedText, status: "REJECTED", sendable: false }] }) }));
+  await overview.getByRole("button", { name: "Recheck readiness" }).click();
+  await expect(extended).toContainText("Needs setup");
+  await expect(extended).toContainText("lack a supported approved zh_CN version");
+  await expect(overview.getByLabel("Overall follow-up readiness: Needs attention")).toBeVisible();
+});
+
+test("Follow-up readiness shows strict billing block without claiming guaranteed zero-cost sending", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true, delayMinutes: 120, message: "Follow-up reminder",
+        freeEntry: { enabled: true, templateName: "clinic_reminder", language: "auto",
+          fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98], templateRules: [] },
+      },
+    },
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: true,
+      freeOnlyGate: { status: "unknown" }, billingSafety: { since_switch: 1 },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Sending blocked");
+  await expect(extended).toContainText("Meta billable callback");
+  await expect(page.getByRole("alert").filter({ hasText: "WhatsApp billing alarm" })).toBeVisible();
+  await expect(overview).toContainText("not a promise");
+});
+
 test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
