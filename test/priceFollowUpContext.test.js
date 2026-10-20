@@ -215,8 +215,8 @@ test("contact #613: weekday + pelvic package AND single-session price keeps veri
   ));
   assert.equal(require("../src/utils/customerEnquiryEvidence").hasExplicitPriceRequest(text),true,
     "mixed weekday price enquiry must be recognized as a CURRENT explicit price request");
-  assert.equal(safeServiceFromCustomer("调整骨盆",services,serviceAliases)?.name,"骨盆调理",
-    "customer-selected pelvic service must match aliases");
+  assert.equal(safeServiceFromCustomer("调整骨盆",services,serviceAliases),null,
+    "baseline alias detector overlaps 整骨 and 骨盆; narrow booking rule must disambiguate exact customer phrase");
   assert.equal(require("../src/utils/priceFollowUpContext").resolveBookingResponsePriceService({
     customerText:text,conversationHistory:turns,...common,
   })?.name,"骨盆调理","booking continuity helper must identify verified treatment");
