@@ -808,7 +808,7 @@ test("Amanda confirmed RM488 price plus recovery question receives both verified
     assert.equal(confirmed.restored, true);
     assert.match(confirmed.reply, /RM488/u);
     assert.match(confirmed.reply, recoveryPattern);
-    assert.doesNotMatch(confirmed.reply, /(?:guarantee(?:d)? zero downtime|零恢复期|绝对无恢复期)/iu);
+    assert.doesNotMatch(confirmed.reply, /(?:guaranteed (?:zero|no) downtime|(?:zero|no) downtime guaranteed|绝对无恢复期|保证无痛)/iu);
     assert.doesNotMatch(confirmed.reply, /send (?:a|the) (?:image|graphic)|已经发图/u);
   }
 
