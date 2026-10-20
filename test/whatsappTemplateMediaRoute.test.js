@@ -476,3 +476,29 @@ test("Inbox refuses generic Retry for failed or unknown social voice attachments
   assert.equal(h.events.metaSends, 0);
   assert.equal(h.events.metaUploads, 0);
 });
+
+
+test("Inbox rejects generic Retry for unknown automated text after a social voice fallback", async (t) => {
+  const h = await harness(t);
+  let status = "unknown";
+  patch(t, messagesRepo, "acquireMessageRetryLock", async () => async () => {});
+  patch(t, messagesRepo, "getMessageForRetry", async () => ({
+    id: 45, contact_id: 7, role: "assistant",
+    is_automated_follow_up: true,
+    media_mime_type: null, media_key: null,
+    content: "Checking in", delivery_status: status,
+  }));
+  const blocked = await h.retry(45);
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.code, "automated_followup_unknown_retry_requires_review");
+  assert.match(blocked.body.error, /already have reached/i);
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.saved.length, 0);
+
+  // A *definitively failed* ordinary automated text follow-up is not subject
+  // to the new unknown-delivery guard; existing retry checks remain intact.
+  status = "failed";
+  const retry = await h.retry(45);
+  assert.notEqual(retry.body.code, "automated_followup_unknown_retry_requires_review");
+});
