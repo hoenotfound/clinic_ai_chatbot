@@ -1924,7 +1924,13 @@ function FollowUpTool({
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [followUpTab, setFollowUpTab] = useState("sequence");
+  const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [jumpStepIndex, setJumpStepIndex] = useState(null);
+  useEffect(() => {
+    if (validationIssue?.tab === "sequence" && /quiet hours/i.test(validationIssue.message || "")) {
+      setShowDeliveryRules(true);
+    }
+  }, [validationIssue]);
   const [templateCatalog, setTemplateCatalog] = useState(null);
   const [templateCatalogLoading, setTemplateCatalogLoading] = useState(false);
   const [templateCatalogError, setTemplateCatalogError] = useState("");
@@ -2277,7 +2283,7 @@ function FollowUpTool({
                 <div>
                   <h2 className="text-sm font-bold">Sequence at a glance</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Select a step to edit it. These are target times, not promised delivery times.
+                    Select a follow-up to edit its message and attachment. Delivery times are estimates.
                   </p>
                 </div>
                 <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
@@ -2288,18 +2294,10 @@ function FollowUpTool({
                 {allSteps.map((step, index) => {
                   const selected = editingStepIndex === index;
                   const previewingDifferentStep = safePreviewIndex === index && !selected;
-                  const readyLanguages = FOLLOW_UP_LANGUAGES.filter(({ key }) =>
-                    String(step.translations?.[key] || "").trim()
-                  ).length;
                   const overrides = step.serviceOverrides || [];
-                  const readyTargetedLanguages = overrides.reduce(
-                    (count, override) => count + FOLLOW_UP_LANGUAGES.filter(
-                      ({ key }) => String(override.translations?.[key] || "").trim()
-                    ).length,
-                    0
-                  );
-                  const defaultLanguageLabel = step.messageMode === "ai"
-                    ? "Fallback translations" : "Default translations";
+                  const messagePreview = step.messageMode === "ai"
+                    ? "AI writes a message based on this customer's conversation"
+                    : String(step.message || "").trim() || "Add a message to this follow-up";
                   return (
                     <li key={index} className="relative pl-9">
                       {index < allSteps.length - 1 && (
@@ -2328,13 +2326,14 @@ function FollowUpTool({
                         <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">
                           {sequenceTargetSummary(step)}
                         </span>
-                        <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">
-                          {step.messageMode === "ai" ? "AI message with fallback" : "Standard message"} · {index === 0 && translationsNeedRefresh
-                            ? `${defaultLanguageLabel} refresh on save` : `${defaultLanguageLabel}: ${readyLanguages}/3 configured`}
-                          {overrides.length > 0 && (
-                            <> · Service translations: {readyTargetedLanguages}/{overrides.length * FOLLOW_UP_LANGUAGES.length} configured</>
-                          )}
+                        <span className="mt-1 block truncate text-xs text-[var(--color-text-muted)]" title={messagePreview}>
+                          {messagePreview}
                         </span>
+                        {overrides.length > 0 && (
+                          <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">
+                            {overrides.length} treatment-specific {overrides.length === 1 ? "message" : "messages"}
+                          </span>
+                        )}
                         <StepSummaryChips step={step} />
                         {previewingDifferentStep && (
                           <span className="mt-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">
@@ -2384,10 +2383,10 @@ function FollowUpTool({
           <Card>
             <SectionHeading
               number="1"
-              title="Choose when it starts"
-              description="Set the first follow-up timing, who can start a sequence, and when automation should stay quiet."
+              title="When should the first message go out?"
+              description="Set the first message timing. Open advanced options only when you need to change delivery rules."
             />
-            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className={`mt-6 grid gap-6 ${showDeliveryRules ? "lg:grid-cols-2" : ""}`}>
               <FollowUpTimingFields
                 step={form}
                 label="Follow-up 1 timing"
@@ -2396,7 +2395,7 @@ function FollowUpTool({
                 }
               />
 
-              <fieldset>
+              <fieldset className={showDeliveryRules ? "" : "hidden"}>
                 <legend className="text-sm font-semibold">Start the sequence after</legend>
                 <div className="mt-2 space-y-2">
                   <Choice
@@ -2415,7 +2414,25 @@ function FollowUpTool({
               </fieldset>
             </div>
 
-            <div className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+            <button
+              type="button"
+              aria-expanded={showDeliveryRules}
+              onClick={() => setShowDeliveryRules((open) => !open)}
+              className="mt-5 flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-left hover:border-[var(--color-primary)]/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]"
+            >
+              <span>
+                <span className="block text-sm font-semibold">Advanced delivery options</span>
+                <span className="mt-1 block text-xs text-[var(--color-text-muted)]">
+                  {form.triggerMode === "staff" ? "Staff replies only" : "AI and staff replies"} · {form.quietHours?.enabled === false
+                    ? "Quiet hours off"
+                    : `Quiet ${form.quietHours?.start || "00:00"}–${form.quietHours?.end || "07:00"}`}
+                </span>
+              </span>
+              <span className="shrink-0 text-xs font-semibold text-[var(--color-primary)]">
+                {showDeliveryRules ? "Hide" : "Edit"}
+              </span>
+            </button>
+            <div className={`mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 ${showDeliveryRules ? "" : "hidden"}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold">Quiet hours</p>
@@ -3017,10 +3034,20 @@ function FollowUpTool({
 
           </div>
           <div id="follow-up-panel-whatsapp" role="tabpanel" aria-labelledby="follow-up-tab-whatsapp" className={followUpTab === "whatsapp" ? "space-y-5" : "hidden"}>
+          <details
+            defaultOpen={form.whatsappFreeOnly?.enabled === true}
+            className="rounded-xl border border-[var(--color-border)] bg-white p-3 sm:p-4"
+          >
+            <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-1 py-1 text-sm font-semibold">
+              <span>WhatsApp Free Messaging Only</span>
+              <span className="text-xs font-medium text-[var(--color-text-muted)]">
+                {form.whatsappFreeOnly?.enabled ? "On" : "Off"} · Advanced billing protection
+              </span>
+            </summary>
           <Card>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h3 className="text-sm font-semibold">WhatsApp Free Messaging Only</h3>
+                <h3 className="text-sm font-semibold">Billing protection settings</h3>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                   Strict protection for templates, automation and unverified free-entry sends.
                   Optional 24-hour text, staff-media and automated-follow-up permissions below are independent.
@@ -3116,6 +3143,7 @@ function FollowUpTool({
               </label>
             ) : null}
           </Card>
+          </details>
 
           <Card>
             <div className="flex items-center justify-between gap-4">
