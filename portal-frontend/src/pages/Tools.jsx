@@ -2104,6 +2104,7 @@ function FollowUpTool({
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
   const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
   const [focusAdvancedRule, setFocusAdvancedRule] = useState(null);
+  const [jumpExtendedSlotHour, setJumpExtendedSlotHour] = useState(null);
   const [proposedTemplateSchedule, setProposedTemplateSchedule] = useState(null);
   const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
   useEffect(() => {
@@ -2434,6 +2435,20 @@ function FollowUpTool({
     }
   }, [previewServiceName, previewStep]);
 
+  function editExtendedFollowUpHour(hours) {
+    setFollowUpTab("whatsapp");
+    setJumpExtendedSlotHour(hours);
+  }
+
+  useEffect(() => {
+    if (followUpTab !== "whatsapp" || jumpExtendedSlotHour === null) return;
+    const target = document.getElementById(`extended-follow-up-time-${jumpExtendedSlotHour}`);
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    setJumpExtendedSlotHour(null);
+  }, [followUpTab, jumpExtendedSlotHour]);
+
   function editSequenceStep(index) {
     setPreviewStepIndex(index);
     setPreviewServiceName("");
@@ -2675,13 +2690,13 @@ function FollowUpTool({
             <section aria-label="Follow-up sequence overview" className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h2 className="text-sm font-bold">Sequence at a glance</h2>
+                  <h2 className="text-sm font-bold">Customer follow-up journey</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Select a follow-up to edit its message and attachment. Delivery times are estimates.
+                    See regular and extended WhatsApp follow-ups in one place. Select any step to edit it; timing and delivery are conditional.
                   </p>
                 </div>
                 <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
-                  {allSteps.length} of 3 follow-ups
+                  {allSteps.length} regular · {(form.freeEntry?.slotsHours || []).length} extended times
                 </span>
               </div>
               <ol aria-label="Follow-up sequence timeline" className="mt-4 space-y-2">
@@ -2738,6 +2753,53 @@ function FollowUpTool({
                             Previewing only — select Edit step to open the editor
                           </span>
                         )}
+                      </button>
+                    </li>
+                  );
+                })}
+                <li className="relative mt-4 pl-9">
+                  <span aria-hidden="true" className="absolute left-0 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]">W</span>
+                  <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <p className="text-xs font-bold">After 24 hours · WhatsApp templates</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                      Possible attempts only. Requires an approved template, recorded consent and verified Meta eligibility.
+                      Repeated templates, new replies, appointments or billing safeguards may skip a message.
+                    </p>
+                    <p className="mt-2 text-xs font-semibold">
+                      {form.freeEntry?.enabled ? "Enabled in draft setup" : "Paused in draft setup"}
+                    </p>
+                  </div>
+                </li>
+                {(form.freeEntry?.slotsHours || []).map((hours, slotIndex) => {
+                  const rules = (form.freeEntry?.templateRules || []).filter(rule => Number(rule.slotHours) === Number(hours));
+                  const fallback = rules.find(rule => rule.serviceName === "*")?.templateName || form.freeEntry?.templateName || "";
+                  const treatmentRules = rules.filter(rule => rule.serviceName && rule.serviceName !== "*");
+                  const hasMedia = treatmentRules.some(rule => Boolean(rule.mediaKey || rule.mediaUrl));
+                  return (
+                    <li key={`extended-timeline-${hours}-${slotIndex}`} className="relative pl-9">
+                      <span aria-hidden="true" className="absolute left-0 top-3 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-xs font-bold text-[var(--color-text-muted)]">
+                        {allSteps.length + slotIndex + 1}
+                      </span>
+                      <button type="button"
+                        aria-label={`Edit extended WhatsApp +${hours}h follow-up`}
+                        onClick={() => editExtendedFollowUpHour(hours)}
+                        className="w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 py-3 text-left hover:border-[var(--color-primary)]/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]">
+                        <span className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm font-semibold">Extended WhatsApp · +{hours}h</span>
+                          <span className="text-xs font-semibold text-[var(--color-primary)]">Edit template</span>
+                        </span>
+                        <span className="mt-1 block text-xs text-[var(--color-text-muted)]">
+                          {extendedFollowUpSlotLabel(hours)} · possible attempt, not a scheduled guarantee
+                        </span>
+                        <span className="mt-1 block break-words text-xs text-[var(--color-text-muted)]">
+                          {fallback ? `Default template: ${fallback}` : "No default template selected"}
+                        </span>
+                        {treatmentRules.length > 0 && (
+                          <span className="mt-1 block text-xs text-[var(--color-text-muted)]">
+                            {treatmentRules.length} treatment-specific rule{treatmentRules.length === 1 ? "" : "s"}{hasMedia ? " · media configured" : ""}
+                          </span>
+                        )}
+                        {!form.freeEntry?.enabled && <span className="mt-1 block text-xs font-semibold text-amber-800">Extended follow-ups paused</span>}
                       </button>
                     </li>
                   );
@@ -3949,7 +4011,7 @@ function FollowUpTool({
                   const repeatedEarlier = Boolean(effectiveName) &&
                     simpleConfiguredNames.slice(0, slotIndex).includes(effectiveName);
                   return (
-                    <div key={`${hours}-${slotIndex}`} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white p-3">
+                    <div key={`${hours}-${slotIndex}`} id={`extended-follow-up-time-${hours}`} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl border border-[var(--color-border)] bg-white p-3">
                       <p className="text-sm font-semibold">Follow-up time {slotIndex + 1}</p>
                       <p className="mt-1 text-xs text-[var(--color-text-muted)]">{extendedFollowUpSlotLabel(hours)}</p>
                       <label className="mt-3 block text-xs font-semibold">
