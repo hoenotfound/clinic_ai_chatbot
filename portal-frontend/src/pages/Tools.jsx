@@ -2690,9 +2690,9 @@ function FollowUpTool({
             <section aria-label="Follow-up sequence overview" className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h2 className="text-sm font-bold">Customer follow-up journey</h2>
+                  <h2 className="text-sm font-bold">Sequence at a glance</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    See regular and extended WhatsApp follow-ups in one place. Select any step to edit it; timing and delivery are conditional.
+                    Customer follow-up journey: regular and extended WhatsApp steps in one place. Select any step to edit it; timing and delivery are conditional.
                   </p>
                 </div>
                 <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
@@ -2757,6 +2757,8 @@ function FollowUpTool({
                     </li>
                   );
                 })}
+              </ol>
+              <ol aria-label="Extended WhatsApp follow-up timeline" className="mt-2 space-y-2">
                 <li className="relative mt-4 pl-9">
                   <span aria-hidden="true" className="absolute left-0 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]">W</span>
                   <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] p-3">
