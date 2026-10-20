@@ -2411,8 +2411,8 @@ function FollowUpTool({
                           </span>
                         )}
                         <StepSummaryChips step={step} />
-                        <span className={`mt-2 block text-[11px] font-semibold ${setupIssue ? "text-amber-700" : "text-[var(--color-primary)]"}`}>
-                          {setupIssue || "Message configured"}
+                        <span className={`mt-2 block text-[11px] font-semibold ${setupIssue ? "text-amber-700" : "text-[var(--color-text-muted)]"}`}>
+                          {setupIssue || "Message added"}
                         </span>
                         {previewingDifferentStep && (
                           <span className="mt-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">
@@ -2428,7 +2428,7 @@ function FollowUpTool({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-[var(--color-primary)]">Editing Follow-up {editingStepIndex + 1} of {allSteps.length}</p>
-                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">{followUpTimingSummary(editingStep)} · {editingIssue || "Message configured"}</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">{followUpTimingSummary(editingStep)} · {editingIssue || "Message added"}</p>
                   </div>
                   {editingStepIndex > 0 && (
                     <button
@@ -2765,7 +2765,7 @@ function FollowUpTool({
               <button
                 type="button"
                 onClick={goToNextStep}
-                disabled={allSteps.length >= 3 && editingStepIndex === 2 || (allSteps.length < 3 && suggestedNextDelay === null)}
+                disabled={allSteps.length === 1 && suggestedNextDelay === null}
                 className="rounded-xl border border-[var(--color-primary)]/25 bg-[var(--color-primary-light)] px-4 py-2.5 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-40"
               >
                 {allSteps.length > 1 ? "Continue to Follow-up 2" : "Add Follow-up 2"}
@@ -2777,7 +2777,7 @@ function FollowUpTool({
 
           <Card>
             <SectionHeading
-              number="3"
+              number={editingStepIndex > 0 ? undefined : "3"}
               title={editingStepIndex > 0 ? `Edit Follow-up ${editingStepIndex + 1}` : "More follow-ups"}
               description={editingStepIndex > 0
                 ? "Only the selected follow-up editor is open. Choose another step in the timeline to switch."
