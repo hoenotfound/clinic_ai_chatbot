@@ -401,9 +401,11 @@ function ensureVerifiedPriceReply({
         : locale.startsWith("en")
           ? `The price for ${treatment} is ${pricingDecision.servicePrice} 😊`
           : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
-      return { reply: text, restored: true };
+      const recovery = recoveryPeriodGuidance(customerText, language);
+      return { reply: [text, recovery].filter(Boolean).join("\n\n"), restored: true };
     }
-    const safeInfo = hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language);
+    const safeInfo = recoveryPeriodGuidance(customerText, language) ||
+      (hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language));
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
       : locale.startsWith("en")
@@ -454,7 +456,10 @@ function ensureVerifiedPriceReply({
       : locale.startsWith("en")
         ? `Yes, the current ${offerName} package offer is ${amount} 😊${unitNote}${voucherNote}`
         : `是的，${offerName} 目前的配套优惠价是 ${amount} 😊${unitNote}${voucherNote}`;
-    return { reply: answer, restored: true };
+    // A verified earlier amount answers the price only. Preserve a fresh
+    // recovery question without inferring a fixed downtime or session count.
+    const recovery = recoveryPeriodGuidance(customerText, language);
+    return { reply: [answer, recovery].filter(Boolean).join("\n\n"), restored: true };
   }
   const entries = prices.map((item) =>
     `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
