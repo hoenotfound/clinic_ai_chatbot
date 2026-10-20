@@ -345,3 +345,23 @@ test("future promotional consent alone is not evidence of immediate price intere
   // This checks only the opt-in wording, not the separate configured timing
   // and permission rules for the actual scheduled follow-up.
 });
+
+
+test("Campaign-wide hold prevents automatic pricing reminders even with safe caption", () => {
+  const held = [{
+    name: "9D trial", linkedService: "9D 逆龄抗衰", automaticMediaHold: true,
+    imageUrl: "https://example.com/old-art.jpg", caption: "Current offer RM488",
+    sendOnPriceQuery: true,
+  }];
+  const result = evaluatePricingReminder({
+    promotions: held, services: [{name: "9D 逆龄抗衰"}],
+    language: "zh",
+    candidate: {
+      treatment_interest: "9D 逆龄抗衰",
+      recent_customer_messages: ["9D price please"],
+    },
+  });
+  assert.equal(result.offer, null);
+  assert.deepEqual(result.offers, []);
+  assert.equal(result.reason, "unverified_clinical_promo_copy");
+});

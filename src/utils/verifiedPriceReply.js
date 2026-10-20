@@ -256,10 +256,30 @@ function nonPriceExplanation(reply) {
 // Compound price + session/duration questions must not retain model-authored
 // session counts or guaranteed treatment outcomes (e.g. "三次一定见效").
 // Offer deterministic, individualized assessment guidance instead.
+// Recovery/downtime is a separate customer question even when a verified
+// price must replace Gemini's original reply. Never promise zero downtime or
+// prescribe an individual recovery period from a marketing conversation.
+const RECOVERY_OR_DOWNTIME_QUESTION =
+  /(?:修复期|修復期|恢复期|恢復期|康复期|康復期|修复时间|修復時間|恢复时间|恢復時間|(?:需要|需|要|是否需要)\s*休息\s*(?:多久|多长|多長|(?:几|幾|多少)\s*天|几日|幾日)?|\bdowntime\b|\brecovery\s*(?:time|period)?\b|\bhealing\s*(?:time|period)\b|\baftercare\b|\btime\s+to\s+recover\b|\b(?:masa|tempoh)\s+pemulihan\b|\bpemulihan\b)/iu;
+
+function recoveryPeriodGuidance(customerText, language = "zh") {
+  if (!RECOVERY_OR_DOWNTIME_QUESTION.test(String(customerText || ""))) return "";
+  const locale = String(language || "zh").toLowerCase();
+  if (locale.startsWith("ms")) {
+    return "Tentang tempoh pemulihan, reaksi selepas rawatan berbeza mengikut individu. Kami tidak boleh menjamin tiada masa pemulihan. Pengamal boleh menilai kesesuaian serta terangkan penjagaan selepas rawatan dahulu.";
+  }
+  if (locale.startsWith("en")) {
+    return "Regarding downtime or recovery, reactions vary by person and we cannot guarantee zero downtime. Our practitioner can assess your suitability and explain aftercare before treatment.";
+  }
+  return "至于修复期／恢复时间，每个人护理后的反应可能不同，不能保证完全没有恢复期哦。中医师会先评估是否适合，再说明护理后的注意事项。";
+}
+
 const SESSION_OR_DURATION_QUESTION =
   /(?:[几幾多]\s*(?:次|回|个疗程|個療程)|多少\s*(?:次|个疗程|個療程)|(?:要|需要)\s*做\s*(?:几|幾|多少)\s*次|多久|多长|多長|\bhow\s+many\s+sessions?\b|\bhow\s+long\b|\bberapa\s+(?:kali|sesi|lama)\b)/iu;
 
 function safeNonPriceExplanation(customerText, original, language) {
+  const recovery = recoveryPeriodGuidance(customerText, language);
+  if (recovery) return recovery;
   if (!SESSION_OR_DURATION_QUESTION.test(String(customerText || ""))) {
     return nonPriceExplanation(original);
   }
@@ -381,9 +401,11 @@ function ensureVerifiedPriceReply({
         : locale.startsWith("en")
           ? `The price for ${treatment} is ${pricingDecision.servicePrice} 😊`
           : `${treatment} 的价格是 ${pricingDecision.servicePrice} 😊`;
-      return { reply: text, restored: true };
+      const recovery = recoveryPeriodGuidance(customerText, language);
+      return { reply: [text, recovery].filter(Boolean).join("\n\n"), restored: true };
     }
-    const safeInfo = hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language);
+    const safeInfo = recoveryPeriodGuidance(customerText, language) ||
+      (hasClinicalMediaRisk(customerText) ? "" : safeNonPriceExplanation(customerText, original, language));
     const confirm = locale.startsWith("ms")
       ? "Harga rawatan ini perlu disahkan oleh pihak pusat ya."
       : locale.startsWith("en")
@@ -434,7 +456,10 @@ function ensureVerifiedPriceReply({
       : locale.startsWith("en")
         ? `Yes, the current ${offerName} package offer is ${amount} 😊${unitNote}${voucherNote}`
         : `是的，${offerName} 目前的配套优惠价是 ${amount} 😊${unitNote}${voucherNote}`;
-    return { reply: answer, restored: true };
+    // A verified earlier amount answers the price only. Preserve a fresh
+    // recovery question without inferring a fixed downtime or session count.
+    const recovery = recoveryPeriodGuidance(customerText, language);
+    return { reply: [answer, recovery].filter(Boolean).join("\n\n"), restored: true };
   }
   const entries = prices.map((item) =>
     `• ${item.name === "Main offer" ? treatment : item.name}${item.title && item.name !== "Main offer" ? `（${item.title}）` : ""}：${item.price}`
@@ -463,12 +488,15 @@ function ensureVerifiedPriceReply({
   // re-append Gemini's unrelated clinic-wide service catalog.
   // Preserve the second question using deterministic clinical guidance,
   // not an unchecked model efficacy or fixed-session promise.
+  const recoveryGuidance = recoveryPeriodGuidance(customerText, language);
   const independentServiceQuestion =
-    SESSION_OR_DURATION_QUESTION.test(String(customerText || ""));
-  const explanation = hasClinicalMediaRisk(customerText) ||
-    ((priceOnlyResponse === true ||
-      (aiLed && pricingDecision.source === "meta_ad")) && !independentServiceQuestion)
-      ? "" : safeNonPriceExplanation(customerText, original, language);
+    SESSION_OR_DURATION_QUESTION.test(String(customerText || "")) ||
+    Boolean(recoveryGuidance);
+  const explanation = recoveryGuidance ||
+    (hasClinicalMediaRisk(customerText) ||
+      ((priceOnlyResponse === true ||
+        (aiLed && pricingDecision.source === "meta_ad")) && !independentServiceQuestion)
+      ? "" : safeNonPriceExplanation(customerText, original, language));
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
   return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }

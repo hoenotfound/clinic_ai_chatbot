@@ -1724,6 +1724,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       _offerType: Array.isArray(p.packages) && p.packages.length > 0 ? "packages" : "single",
       linkedService: p.linkedService || "",
       sendOnPriceQuery: p.sendOnPriceQuery === true,
+      automaticMediaHold: p.automaticMediaHold === true,
       packages: Array.isArray(p.packages)
         ? p.packages.map((item) => ({
             ...item,
@@ -1765,6 +1766,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         name: service ? `${service} Promotion` : "",
         linkedService: service,
         sendOnPriceQuery: true,
+        automaticMediaHold: false,
         _offerType: "single",
         packages: [],
         imageUrl: "",
@@ -1881,6 +1883,7 @@ function PromotionsTab({ config, onSaved, onError }) {
           name: p.name.trim(),
           linkedService: p.linkedService.trim(),
           sendOnPriceQuery: p.sendOnPriceQuery === true,
+          ...(p.automaticMediaHold === true ? { automaticMediaHold: true } : {}),
           packages: packageMode
             ? (Array.isArray(p.packages) ? p.packages : [])
                 .filter((item) =>
@@ -2112,6 +2115,18 @@ function PromotionsTab({ config, onSaved, onError }) {
                         <span className="block font-semibold">Send automatically on price/package enquiries</span>
                         <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
                           The AI only sends media when it can match this service and offer safely.
+                        </span>
+                      </span>
+                    </label>
+
+                    <label className="flex min-h-12 items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 text-sm">
+                      <input type="checkbox" className="mt-0.5"
+                        checked={item.automaticMediaHold === true}
+                        onChange={(e) => updateItem(index, { automaticMediaHold: e.target.checked })} />
+                      <span>
+                        <span className="block font-semibold">Pause automatic promotion graphics and promotion-based follow-ups</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
+                          Blocks this promotion's pricing graphics, pricing reminders, and promotion-specific automated follow-up text and attachments until the artwork and copy are approved. Ordinary general follow-ups and verified customer-requested price replies are not blocked. Review the words inside the image before clearing this hold.
                         </span>
                       </span>
                     </label>

@@ -45,6 +45,12 @@ function hasUnsafeClinicalPromotionCopy(text) {
 // and delayed price reminders so another path cannot silently bypass a hold.
 function promotionHasUnsafeClinicalCopy(value) {
   if (!value || typeof value !== "object") return false;
+  // The historically named automaticMediaHold is a campaign-level pause:
+  // artwork text cannot be checked here, so prohibit both automatic graphics
+  // and promotion-specific automated follow-up *text* while the hold is set.
+  // Independently verified prices in direct customer replies remain available.
+  // General, non-promotion follow-ups are governed by their own settings.
+  if (value.automaticMediaHold === true) return true;
   const translations = Object.values(value.mediaTranslations || {});
   const followUpTranslations = Object.values(value.followUpTranslations || {});
   const copy = [
