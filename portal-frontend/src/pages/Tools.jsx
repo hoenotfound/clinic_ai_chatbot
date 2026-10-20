@@ -1532,170 +1532,153 @@ function ServiceVideoPicker({
   );
 }
 
-function ServiceVoicePicker({ voiceKey, voiceFilename, uploading, onUpload, onChange, label = "Voice note" }) {
+function ServiceVoicePicker({ voiceNotes = {}, uploading, onUpload, onChange, label = "Voice note" }) {
   const inputRef = useRef(null);
+  const [language, setLanguage] = useState("zh");
+  const [temporaryPreviewUrls, setTemporaryPreviewUrls] = useState({});
+  const note = voiceNotes?.[language] || null;
+  const previewUrl = note?.previewKey
+    ? temporaryPreviewUrls[note.previewKey] ||
+      `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(note.previewKey)}`
+    : "";
+
   async function chooseFile(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    const uploaded = await onUpload(file);
-    if (uploaded?.key) onChange(uploaded);
+    const uploaded = await onUpload(file, language);
+    if (!uploaded?.key || !uploaded?.transcript || !uploaded?.previewKey) return;
+    setTemporaryPreviewUrls(current => ({ ...current, [uploaded.previewKey]: uploaded.previewUrl }));
+    onChange({ ...voiceNotes, [language]: {
+      key: uploaded.key, previewKey: uploaded.previewKey,
+      filename: uploaded.filename, transcript: uploaded.transcript, approved: false,
+    } });
   }
+
+  function modifyNote(patch) {
+    if (!note) return;
+    onChange({ ...voiceNotes, [language]: { ...note, ...patch } });
+  }
+
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold">{label}</p>
-          <p className="truncate text-[10px] text-[var(--color-text-muted)]">
-            {voiceKey ? voiceFilename || "Voice recording ready" : "Upload a recording, then save to activate"}
-          </p>
-        </div>
+      <p className="text-xs font-semibold">{label} · Language recordings</p>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Only the matching customer language is sent. Missing languages use translated text instead.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Voice recording language">
+        {FOLLOW_UP_LANGUAGES.map(({key, label: title}) => (
+          <button type="button" key={key} onClick={() => setLanguage(key)}
+            aria-pressed={language === key}
+            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${language === key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+            {title}{voiceNotes?.[key]?.key ? " ✓" : ""}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="max-w-56 truncate text-xs text-[var(--color-text-muted)]">
+          {note ? note.filename : "No recording uploaded for this language"}
+        </span>
         <input ref={inputRef} type="file" accept=".ogg,.mp3,.m4a,.mp4,.wav,.webm,.aac,audio/*"
-          className="hidden" aria-label={`${label} upload`} onChange={chooseFile} />
-        <div className="flex shrink-0 gap-3">
+          className="hidden" aria-label={`${label} upload ${language}`} onChange={chooseFile} />
+        <div className="flex gap-3">
           <button type="button" disabled={uploading} onClick={() => inputRef.current?.click()}
             className="text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50">
-            {uploading ? "Processing…" : voiceKey ? "Replace" : "Upload voice"}
+            {uploading ? "Transcribing…" : note ? "Replace" : "Upload voice"}
           </button>
-          {voiceKey && <button type="button" disabled={uploading}
-            onClick={() => onChange({ key: "", filename: "" })}
-            className="text-xs text-[var(--color-text-muted)]">Remove</button>}
+          {note && <button type="button" disabled={uploading}
+            className="text-xs text-[var(--color-text-muted)]"
+            onClick={() => {
+              const next = { ...voiceNotes };
+              delete next[language];
+              onChange(next);
+            }}>Remove</button>}
         </div>
       </div>
-      {voiceKey && <audio className="mt-3 w-full" controls preload="none"
-        src={`/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(voiceKey)}`} />}
-      <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
-        Native WhatsApp voice note, not an attached file. Only sent within the 24-hour reply window.
-        Voice notes cannot carry text captions; text is used for other channels.
+      {note && <>
+        <audio key={note.previewKey} className="mt-3 w-full" controls preload="none" src={previewUrl} />
+        <label className="mt-3 block text-xs font-semibold">Transcript from the recording (read only)</label>
+        <p className="mt-1 rounded-lg border border-[var(--color-border)] bg-white p-2.5 text-xs leading-5 whitespace-pre-wrap">
+          {note.transcript}
+        </p>
+        <label className="mt-3 flex items-start gap-2 text-xs leading-5">
+          <input type="checkbox" checked={note.approved === true}
+            onChange={event => modifyNote({ approved: event.target.checked })}
+            className="mt-1" />
+          I listened to this recording and confirmed its transcript and language.
+          It contains no unsolicited prices or unsafe treatment claims.
+        </label>
+      </>}
+      <p className="mt-3 text-[10px] leading-4 text-[var(--color-text-muted)]">
+        Max 120 seconds. WhatsApp receives a native OGG/Opus voice bubble.
+        Preview uses MP3 for iPhone and Safari. Voice cannot contain a text caption.
       </p>
     </div>
   );
 }
 
 function FollowUpMediaPicker({
-  imageUrl,
-  videoKey,
-  videoFilename,
-  voiceKey,
-  voiceFilename,
-  uploadingImage,
-  uploadingVideo,
-  uploadingVoice,
-  onUploadImage,
-  onUploadVideo,
-  onUploadVoice,
-  onChange,
+  imageUrl, videoKey, videoFilename, voiceNotes = {},
+  uploadingImage, uploadingVideo, uploadingVoice,
+  onUploadImage, onUploadVideo, onUploadVoice, onChange,
   label = "Media",
   description = "Optional. Attach one image, video or voice note.",
 }) {
-  const initialType = voiceKey ? "voice" : videoKey ? "video" : imageUrl ? "image" : "none";
+  const hasVoice = Object.values(voiceNotes || {}).some(note => note?.key);
+  const initialType = hasVoice ? "voice" : videoKey ? "video" : imageUrl ? "image" : "none";
   const [selectedType, setSelectedType] = useState(initialType);
 
   useEffect(() => {
-    if (voiceKey) setSelectedType("voice");
+    if (hasVoice) setSelectedType("voice");
     else if (videoKey) setSelectedType("video");
     else if (imageUrl) setSelectedType("image");
-    // Keep a newly selected empty media picker open during type switches.
-    // Only an explicit removal action should select "No media".
-  }, [imageUrl, videoKey, voiceKey]);
+  }, [hasVoice, videoKey, imageUrl]);
 
   function choose(type) {
     setSelectedType(type);
-    const hasOtherMedia = (imageUrl && type !== "image") ||
-      (videoKey && type !== "video") || (voiceKey && type !== "voice");
-    if (type === "none" || hasOtherMedia) {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceKey: "", voiceFilename: "" });
+    if (type === "none" || (type === "voice" && (imageUrl || videoKey)) ||
+        (type !== "voice" && hasVoice) ||
+        (type === "image" && videoKey) || (type === "video" && imageUrl)) {
+      onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceNotes: {} });
     }
   }
 
   return (
     <div className="mt-5 border-t border-[var(--color-border)] pt-5">
-      <div>
-        <p className="text-sm font-semibold">{label}</p>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
+      <p className="text-sm font-semibold">{label}</p>
+      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
+      <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
+        role="radiogroup" aria-label={`${label} type`}>
+        {[["none", "No media"], ["image", "Image"], ["video", "Video"], ["voice", "Voice note"]].map(([type, title]) =>
+          <button key={type} type="button" role="radio" aria-checked={selectedType === type}
+            onClick={() => choose(type)} disabled={uploadingImage || uploadingVideo || uploadingVoice}
+            className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition sm:text-xs ${selectedType === type
+              ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+              : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+            {title}
+          </button>
+        )}
       </div>
-
-      <div
-        className="mt-3 grid grid-cols-4 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
-        role="radiogroup"
-        aria-label={`${label} type`}
-      >
-        {[
-          ["none", "No media"],
-          ["image", "Image"],
-          ["video", "Video"],
-          ["voice", "Voice note"],
-        ].map(([type, text]) => {
-          const active = selectedType === type;
-          return (
-            <button
-              key={type}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => choose(type)}
-              disabled={uploadingImage || uploadingVideo || uploadingVoice}
-              className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition sm:text-xs ${active
-                ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
-            >
-              {text}
-            </button>
-          );
-        })}
-      </div>
-
       {selectedType === "image" && (
-        <StepImagePicker
-          imageUrl={imageUrl}
-          uploading={uploadingImage}
-          onUpload={onUploadImage}
-          onChange={(nextImageUrl) => {
-            if (!nextImageUrl) setSelectedType("none");
-            onChange({
-              imageUrl: nextImageUrl,
-              videoKey: "",
-              videoFilename: "",
-              voiceKey: "",
-              voiceFilename: "",
-            });
-          }}
-          label={`${label} image`}
-        />
+        <StepImagePicker imageUrl={imageUrl} uploading={uploadingImage} onUpload={onUploadImage}
+          onChange={url => {
+            if (!url) setSelectedType("none");
+            onChange({ imageUrl: url, videoKey: "", videoFilename: "", voiceNotes: {} });
+          }} label={`${label} image`} />
       )}
-
       {selectedType === "voice" && (
-        <ServiceVoicePicker
-          voiceKey={voiceKey}
-          voiceFilename={voiceFilename}
-          uploading={uploadingVoice}
+        <ServiceVoicePicker voiceNotes={voiceNotes} uploading={uploadingVoice}
           onUpload={onUploadVoice}
-          onChange={({ key, filename }) => {
-            if (!key) setSelectedType("none");
-            onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceKey: key, voiceFilename: filename });
-          }}
-          label={`${label} voice note`}
-        />
+          onChange={notes => onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceNotes: notes })}
+          label={`${label} voice note`} />
       )}
       {selectedType === "video" && (
-        <ServiceVideoPicker
-          videoKey={videoKey}
-          videoFilename={videoFilename}
-          uploading={uploadingVideo}
-          onUpload={onUploadVideo}
-          onChange={({ key, filename }) => {
+        <ServiceVideoPicker videoKey={videoKey} videoFilename={videoFilename} uploading={uploadingVideo}
+          onUpload={onUploadVideo} onChange={({key, filename}) => {
             if (!key) setSelectedType("none");
-            onChange({
-              imageUrl: "",
-              videoKey: key,
-              videoFilename: filename,
-              voiceKey: "",
-              voiceFilename: "",
-            });
-          }}
-          label={`${label} video`}
-          description="MP4 up to 16MB. Export as H.264 video with AAC audio; no server conversion."
-        />
+            onChange({ imageUrl: "", videoKey: key, videoFilename: filename, voiceNotes: {} });
+          }} label={`${label} video`}
+          description="MP4 up to 16MB. Export as H.264 video with AAC audio; no server conversion." />
       )}
     </div>
   );
