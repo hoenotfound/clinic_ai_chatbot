@@ -157,7 +157,7 @@ test("post-window template fallback is revalidated without counting its own pend
 });
 
 
-test("day 4 and day 6 stay disabled while Strict RM0 is off, even with 7-day env flag", async () => {
+test("seven-day follow-ups work with Strict RM0 OFF only with real independent Meta proof", async () => {
   const original = clinicConfig.automatedFollowUp;
   const prior = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
   try {
@@ -165,21 +165,29 @@ test("day 4 and day 6 stay disabled while Strict RM0 is off, even with 7-day env
     clinicConfig.automatedFollowUp = {
       ...original, whatsappFreeOnly: { enabled: false, activatedAt: null },
     };
-    let queried = false;
-    const db = { query: async () => { queried = true; return { rows: [{ verified: true }] }; } };
-    const aligned = await worker.alignedSettings({
-      sevenDayVerified: true, slots: [48,66,96,144],
-    },db);
-    assert.equal(aligned.sevenDayVerified,false);
-    assert.equal(queried,false,"strict-disabled workers must not attempt post-72h eligibility");
-    const ad = {
+    const slots = [48, 66, 96, 144];
+    let proofLookups = 0;
+    const verified = await worker.alignedSettings({ sevenDayVerified:true, slots }, {
+      query: async () => {
+        proofLookups++;
+        return { rows: [{ verified:true }] };
+      },
+    });
+    assert.equal(proofLookups,1);
+    assert.equal(verified.sevenDayVerified,true,
+      "independent post-72h nonbillable evidence allows the seven-day schedule without Strict RM0");
+
+    const customer = {
       first_inbound_at:"2026-10-01T00:00:00Z",
       first_reply_at:"2026-10-01T00:02:00Z",
       last_inbound_at:"2026-10-01T00:00:00Z",
-      evidence_type:"free_entry_point",source_is_ctwa:true,
-      sevenDayVerified:aligned.sevenDayVerified,
+      evidence_type:"free_entry_point", source_is_ctwa:true,
+      sevenDayVerified:verified.sevenDayVerified,
     };
-    assert.equal(worker.selectedSlot(ad,aligned.slots,new Date("2026-10-05T01:00:00Z")),null);
+    assert.equal(worker.selectedSlot(customer,slots,new Date("2026-10-05T01:05:00Z")),96);
+    assert.equal(worker.selectedSlot({
+      ...customer,claimed_slots:[48,66,96],
+    },slots,new Date("2026-10-07T01:05:00Z")),144);
   } finally {
     clinicConfig.automatedFollowUp=original;
     if (prior === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
@@ -187,25 +195,57 @@ test("day 4 and day 6 stay disabled while Strict RM0 is off, even with 7-day env
   }
 });
 
-test("day 4 and day 6 need verified post-72h Meta receipts as well as Strict RM0", async () => {
+test("independent seven-day proof fails closed when missing, flag OFF or DB unavailable", async () => {
   const original = clinicConfig.automatedFollowUp;
   const prior = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
   try {
-    process.env.WHATSAPP_FEP_7DAY_VERIFIED="true";
     clinicConfig.automatedFollowUp = {
-      ...original, whatsappFreeOnly:{enabled:true,activatedAt:"2026-10-15T00:00:00Z"},
+      ...original, whatsappFreeOnly: { enabled:false, activatedAt:null },
     };
-    const unverified = await worker.alignedSettings({sevenDayVerified:true}, {
+    process.env.WHATSAPP_FEP_7DAY_VERIFIED="true";
+    const notVerified = await worker.alignedSettings({sevenDayVerified:true}, {
       query:async () => ({rows:[{verified:false}]}),
     });
-    assert.equal(unverified.sevenDayVerified,false);
-    const verified = await worker.alignedSettings({sevenDayVerified:true}, {
-      query:async () => ({rows:[{verified:true}]}),
+    assert.equal(notVerified.sevenDayVerified,false);
+    const unavailable = await worker.alignedSettings({sevenDayVerified:true}, {
+      query:async () => { throw Error("temporary Neon failure"); },
     });
-    assert.equal(verified.sevenDayVerified,true);
+    assert.equal(unavailable.sevenDayVerified,false);
+    // An account-level proof outage must NOT block the already working 48h slot.
+    const candidate = {
+      first_inbound_at:"2026-10-01T00:00:00Z",
+      first_reply_at:"2026-10-01T00:02:00Z",
+      last_inbound_at:"2026-10-01T00:00:00Z",
+      evidence_type:"free_entry_point",source_is_ctwa:true,
+      sevenDayVerified:unavailable.sevenDayVerified,
+    };
+    assert.equal(worker.selectedSlot(candidate,[48,66,96,144],
+      new Date("2026-10-03T00:05:00Z")),48);
+    assert.equal(worker.selectedSlot(candidate,[48,66,96,144],
+      new Date("2026-10-05T01:05:00Z")),null);
+
+    process.env.WHATSAPP_FEP_7DAY_VERIFIED="false";
+    let queries=0;
+    const disabled=await worker.alignedSettings({sevenDayVerified:true}, {
+      query:async () => { queries++; return {rows:[{verified:true}]}; },
+    });
+    assert.equal(disabled.sevenDayVerified,false,
+      "verified account history alone does not override the explicit rollout flag");
+    assert.equal(queries,0);
+    const notRequested=await worker.alignedSettings({sevenDayVerified:false}, {
+      query:async () => { throw Error("should not query"); },
+    });
+    assert.equal(notRequested.sevenDayVerified,false);
   } finally {
     clinicConfig.automatedFollowUp=original;
     if (prior === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
     else process.env.WHATSAPP_FEP_7DAY_VERIFIED=prior;
   }
+});
+
+test("four configured extended slots are not stopped by the old three-send cap", () => {
+  const code = fs.readFileSync(path.join(__dirname,
+    "../src/services/whatsappFreeEntryFollowUpService.js"), "utf8");
+  assert.match(code,/sent.status='accepted'\) < LEAST\(CARDINALITY\(\$4::integer\[\]\), 4\)/);
+  assert.match(code,/sent.status = 'accepted'\) < LEAST\(CARDINALITY\(\$2::integer\[\]\), 4\)/);
 });
