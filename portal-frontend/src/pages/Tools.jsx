@@ -69,6 +69,7 @@ const FOLLOW_UP_LANGUAGES = [
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_FOLLOW_UP_VOICE_BYTES = 8 * 1024 * 1024;
 
 function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
@@ -101,6 +102,8 @@ function normalizeServiceOverrides(value) {
         imageUrl: String(item?.imageUrl || ""),
         videoKey: String(item?.videoKey || ""),
         videoFilename: String(item?.videoFilename || ""),
+        voiceKey: String(item?.voiceKey || ""),
+        voiceFilename: String(item?.voiceFilename || ""),
       };
     })
     .filter(Boolean);
@@ -128,6 +131,8 @@ function normalizeSequenceStep(value = {}) {
     imageUrl: value.imageUrl || "",
     videoKey: value.videoKey || "",
     videoFilename: value.videoFilename || "",
+    voiceKey: value.voiceKey || "",
+    voiceFilename: value.voiceFilename || "",
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 }
@@ -166,6 +171,8 @@ function normalizeFollowUpSettings(value = {}) {
     imageUrl: settings.imageUrl || "",
     videoKey: settings.videoKey || "",
     videoFilename: settings.videoFilename || "",
+    voiceKey: settings.voiceKey || "",
+    voiceFilename: settings.voiceFilename || "",
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 
@@ -230,6 +237,8 @@ function followUpFormFromSettings(value = {}) {
     imageUrl: settings.imageUrl,
     videoKey: settings.videoKey,
     videoFilename: settings.videoFilename,
+    voiceKey: settings.voiceKey,
+    voiceFilename: settings.voiceFilename,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
     freeEntry: settings.freeEntry,
@@ -313,6 +322,7 @@ export default function Tools() {
   const [reviewTranslations, setReviewTranslations] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
   const { user, permissions } = useAuth();
@@ -572,6 +582,28 @@ export default function Tools() {
     }
   }
 
+  async function uploadFollowUpVoice(file) {
+    if (!file) return null;
+    const extension = String(file.name || "").toLowerCase().split(".").pop();
+    if (!["ogg", "mp3", "m4a", "mp4", "wav", "webm", "aac"].includes(extension)) {
+      showToast("Choose an audio recording (MP3, M4A, WAV, OGG or WebM).", "error");
+      return null;
+    }
+    if (file.size > MAX_FOLLOW_UP_VOICE_BYTES || file.size === 0) {
+      showToast("Voice recordings must be between 1 byte and 8MB.", "error");
+      return null;
+    }
+    setUploadingVoice(true);
+    try {
+      return await api.uploadFollowUpVoice(file);
+    } catch (error) {
+      showToast(error.message || "Could not upload voice recording.", "error");
+      return null;
+    } finally {
+      setUploadingVoice(false);
+    }
+  }
+
   function followUpValidationError() {
     // Keep the existing save checks intact while identifying the editor location.
     const issue = (message, tab = "sequence", stepIndex = null, target = null) =>
@@ -605,6 +637,7 @@ export default function Tools() {
         message: form.message,
         imageUrl: form.imageUrl,
         videoKey: form.videoKey,
+        voiceKey: form.voiceKey,
         serviceOverrides: form.serviceOverrides,
       },
       ...(form.additionalSteps || []),
@@ -633,8 +666,8 @@ export default function Tools() {
       const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
-      if (String(step.imageUrl || "").trim() && String(step.videoKey || "").trim()) {
-        return issue(`Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index);
+      if ([step.imageUrl, step.videoKey, step.voiceKey].filter((key) => String(key || "").trim()).length > 1) {
+        return issue(`Follow-up ${index + 1} can use only one attachment.`, "sequence", index);
       }
       if (
         timingMode === "before_window_expiry" &&
@@ -687,8 +720,8 @@ export default function Tools() {
         if (targetedMessage.length > 1000) {
           return issue(`Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`, "sequence", index, "service");
         }
-        if (String(override.imageUrl || "").trim() && String(override.videoKey || "").trim()) {
-          return issue(`${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index, "service");
+        if ([override.imageUrl, override.videoKey, override.voiceKey].filter((key) => String(key || "").trim()).length > 1) {
+          return issue(`${serviceName} in Follow-up ${index + 1} can use only one attachment.`, "sequence", index, "service");
         }
         const serviceKey = serviceName.toLocaleLowerCase();
         if (seenServices.has(serviceKey)) {
@@ -756,6 +789,8 @@ export default function Tools() {
         imageUrl: String(item.imageUrl || "").trim(),
         videoKey: String(item.videoKey || "").trim(),
         videoFilename: String(item.videoFilename || "").trim(),
+        voiceKey: String(item.voiceKey || "").trim(),
+        voiceFilename: String(item.voiceFilename || "").trim(),
       };
     });
   }
@@ -797,6 +832,8 @@ export default function Tools() {
         imageUrl: step.imageUrl || "",
         videoKey: step.videoKey || "",
         videoFilename: step.videoFilename || "",
+        voiceKey: step.voiceKey || "",
+        voiceFilename: step.voiceFilename || "",
         serviceOverrides: preparedServiceOverrides(
           step.serviceOverrides,
           generatedByMessage
@@ -883,6 +920,8 @@ export default function Tools() {
           imageUrl: form.imageUrl,
           videoKey: form.videoKey,
           videoFilename: form.videoFilename,
+          voiceKey: form.voiceKey,
+          voiceFilename: form.voiceFilename,
           serviceOverrides,
           additionalSteps,
           freeEntry: {
@@ -1070,6 +1109,7 @@ export default function Tools() {
             translating={translating}
             uploadingImage={uploadingImage}
             uploadingVideo={uploadingVideo}
+            uploadingVoice={uploadingVoice}
             saving={saving}
             services={config.services || []}
             clinicName={config.businessName || config.clinicName || ""}
@@ -1083,6 +1123,7 @@ export default function Tools() {
             onTranslateMessage={generateTranslationsForMessage}
             onUploadImage={uploadFollowUpImage}
             onUploadVideo={uploadFollowUpVideo}
+            onUploadVoice={uploadFollowUpVoice}
             onSave={handleSave}
             toasts={toasts}
             dismissToast={dismissToast}
@@ -2227,6 +2268,7 @@ function FollowUpTool({
         translating ||
         uploadingImage ||
         uploadingVideo ||
+        uploadingVoice ||
         !hasUnsavedChanges
       }
       onSave={onSave}
