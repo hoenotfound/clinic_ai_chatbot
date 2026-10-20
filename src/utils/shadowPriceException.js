@@ -67,6 +67,23 @@ function shadowVerifiedPrice({
 // the missing treatment.
 const PRIOR_QUOTED_SESSION_PRICE = /^(?:so\s+|is\s+it\s+)?(?:RM|MYR)\s*([1-9]\d{1,4})\s*(?:(?:for|per|is\s+for)\s*(?:one|1|a)\s*(?:time|session|treatment|visit)|(?:是|就|只需)?\s*(?:一|1)次(?:护理|護理|疗程|療程)?)?\s*(?:(?:only|right|correct|ya|ah|吗|嗎)\s*)?[?？!！。.\s]*$/iu;
 const PRICE_CONFIRMATION_QUESTION = /[?？]|(?:\b(?:right|correct)\b|吗|嗎)\s*[.!。！]*$/iu;
+
+// Only allow a second, recovery-related question after an explicit, previously
+// quoted price confirmation. This does not grant pricing authorization for a
+// service change, a different amount, or a general compound request.
+const RECOVERY_FOLLOWUP_ONLY =
+  /^(?:(?:(?:需要|需不需要|需|有没有|有沒有|是否有|会有|會有|有|要)?\s*(?:修复期|修復期|恢复期|恢復期|康复期|康復期|恢复时间|恢復時間|修复时间|修復時間)\s*(?:吗|嗎|呢|多久|几天|幾天|大概多久|要多久)?)|(?:需要|要)\s*休息(?:几|幾|多少)?天|(?:(?:is\s+there|any|what\s+about|how\s+long(?:\s+is)?)\s+(?:(?:any|a|the)\s+)?(?:downtime|recovery(?:\s+(?:time|period))?|healing(?:\s+time)?|aftercare))|(?:ada|perlu|berapa\s+lama)\s+(?:(?:masa|tempoh)\s+)?pemulihan)\s*[?？!.。！]*$/iu;
+
+function priorQuoteConfirmationPart(customerText) {
+  const text = String(customerText || "").trim();
+  const question = text.search(/[?？]/u);
+  if (question < 0) return text;
+  const after = text.slice(question + 1).trim();
+  if (!after) return text;
+  if (!RECOVERY_FOLLOWUP_ONLY.test(after)) return null;
+  return text.slice(0, question + 1);
+}
+
 const PRICE_TOPIC_CHANGE = /(?:换个|換個|另外|不要|不想|不考虑|不考慮|not\s+interested|instead|another\s+treatment|different\s+treatment|stop|unsubscribe|退订|退訂)/iu;
 
 // An explicit "Package?" is a request to see the options NOW, not
@@ -132,7 +149,8 @@ function resolveDirectCustomerPackageRequest({
 function resolvePreviouslyQuotedSessionPrice({
   customerText, conversationHistory, services, serviceAliases, promotions,
 } = {}) {
-  const confirmation = String(customerText || "").trim();
+  const confirmation = priorQuoteConfirmationPart(customerText);
+  if (!confirmation) return null;
   const found = PRIOR_QUOTED_SESSION_PRICE.exec(confirmation);
   if (!found || !PRICE_CONFIRMATION_QUESTION.test(confirmation)) return null;
   const amount = Number(found[1]);
