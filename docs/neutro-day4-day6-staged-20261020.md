@@ -17,7 +17,8 @@
 - Never run multiple missed slots at once or backfill older conversations.
 - Retain 00:00–07:00 MYT quiet hours and all existing protections: consent, opt-out, 24h silence after inbound, appointment/visit, human intervention, temperature, billing evidence, previous attempt outcomes, template approval and language. Do not promise clinical outcomes or claim that the paid trial is free.
 - Meta provider acceptance alone is not delivery; Meta delivery evidence alone is not pricing proof.
-- Both new templates have no media, placeholders or buttons; category MARKETING, languages zh_CN, en_US, ms.
+- Both new templates have no media, placeholders, buttons or visible Stop promotions footer; category MARKETING, languages zh_CN, en_US, ms.
+- This is a **copy-only** change: retain working inbound marketing opt-out detection, consent enforcement, unsubscribe suppression, and related safety checks. Existing approved 48h/66h template bodies remain unchanged.
 
 ## Draft 96h / ns_day4_checkin
 
@@ -26,21 +27,18 @@ Hi～想再关心一下你之前咨询的护理 😊
 
 如果你还有疑问，例如护理过程、想了解自己的情况，或者想先让中医师评估，都可以直接回复我。我们可以先聊清楚，不需要急着决定。
 
-不想再收到跟进讯息，可以回复 Stop promotions。
 
 ### en_US
 Hi~ Just checking in about the treatment you enquired about 😊
 
 If you still have questions about the process or would like our TCM practitioner to understand your concerns before an assessment, feel free to reply. There's no rush to decide.
 
-Reply Stop promotions to stop promotional follow-ups.
 
 ### ms
 Hai~ Nak tanya khabar tentang rawatan yang anda pernah tanya 😊
 
 Kalau masih ada soalan tentang proses rawatan atau nak tabib TCM fahamkan keadaan anda sebelum penilaian, boleh balas mesej ini. Tak perlu buat keputusan sekarang.
 
-Balas Stop promotions jika tak mahu mesej susulan promosi.
 
 ## Draft 144h / ns_day6_invitation
 
@@ -49,21 +47,18 @@ Hi～如果你之后还想了解之前问的护理，随时找我们就好 😊
 
 想询问收费、了解评估或体验，或者安排合适的时间，都可以直接回复这里。方便的时候再聊，不急哦。
 
-不想再收到跟进讯息，可以回复 Stop promotions。
 
 ### en_US
 Hi~ We're here if you'd like to continue the conversation about the treatment you asked us about 😊
 
 Feel free to reply anytime to ask about current pricing, an assessment or trial, or a suitable time to visit. No rush at all.
 
-Reply Stop promotions to stop promotional follow-ups.
 
 ### ms
 Hai~ Kalau nak tahu lagi tentang rawatan yang pernah anda tanya, boleh balas mesej ini bila-bila masa 😊
 
 Boleh tanya harga semasa, penilaian atau sesi percubaan, atau masa yang sesuai untuk datang. Tak perlu tergesa-gesa.
 
-Balas Stop promotions jika tak mahu mesej susulan promosi.
 
 ## Proposed FUTURE config patch (do not execute without approval)
 
