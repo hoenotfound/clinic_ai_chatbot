@@ -37,7 +37,7 @@ function extractErrorText(data, fallback) {
   return data?.error?.error_user_msg || data?.error?.message || data?.message || fallback;
 }
 
-async function uploadAttachment(channel, type, buffer, mimeType, filename) {
+async function uploadAttachment(channel, type, buffer, mimeType, filename, options = {}) {
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
@@ -57,7 +57,11 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename) {
       method: "POST",
       headers: { Authorization: `Bearer ${config.token}` },
       body: form,
-      signal: AbortSignal.timeout(ATTACHMENT_UPLOAD_TIMEOUT_MS),
+      // Don't impose the new 12s voice deadline on unrelated staff image/video
+      // uploads; keep the historical transport behavior for those formats.
+      ...(options.autoFollowUp === true && type === "audio"
+        ? { signal: AbortSignal.timeout(ATTACHMENT_UPLOAD_TIMEOUT_MS) }
+        : {}),
     });
     const raw = await response.text();
     let data = {};
@@ -132,7 +136,9 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(ATTACHMENT_SEND_TIMEOUT_MS),
+      ...(options.autoFollowUp === true && type === "audio"
+        ? { signal: AbortSignal.timeout(ATTACHMENT_SEND_TIMEOUT_MS) }
+        : {}),
     });
     const raw = await response.text();
     let data = {};
@@ -218,7 +224,7 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
     };
   }
 
-  const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename);
+  const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename, options);
   if (!uploaded.success) {
     // Attachment upload cannot deliver a customer message. The subsequent
     // Send API was never contacted, even if the upload itself timed out.
