@@ -812,3 +812,14 @@ test("production assessment-first pricing guard uses only verified text-service 
   assert.match(server,/guardAssessmentFirstPricingReply\(\{[\s\S]*?treatment: verifiedPriceService\?\.name \|\| null,[\s\S]*?requireVerifiedTreatment: true,/);
   assert.doesNotMatch(server,/guardAssessmentFirstPricingReply\(\{[\s\S]{0,400}treatment: verifiedPriceService\?\.name \|\| details\?\.treatment/);
 });
+
+
+test("appointment replies keep known treatment, current price question and weekday preference", () => {
+  const prompt=buildSystemPrompt({channel:"whatsapp",conversationContext:{selectedServices:["骨盆调理"]}});
+  assert.match(prompt,/CONVERSATION-TO-APPOINTMENT CONTINUITY/);
+  assert.match(prompt,/CURRENT concrete question BEFORE proposing a booking/);
+  assert.match(prompt,/Do NOT claim an appointment is booked/);
+  assert.match(prompt,/never ask "weekday or weekend" again/);
+  assert.match(prompt,/do not ask which treatment/i);
+  assert.match(prompt,/Never repeatedly ask about the original concern/);
+});
