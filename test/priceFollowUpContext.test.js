@@ -213,6 +213,13 @@ test("contact #613: weekday + pelvic package AND single-session price keeps veri
     ["assistant","Hi～关于小腹突出和骨盆调理，你一般 weekday 还是 weekend 比较方便来PJ？"],
     ["user",text],
   ));
+  assert.equal(require("../src/utils/customerEnquiryEvidence").hasExplicitPriceRequest(text),true,
+    "mixed weekday price enquiry must be recognized as a CURRENT explicit price request");
+  assert.equal(safeServiceFromCustomer("调整骨盆",services,serviceAliases)?.name,"骨盆调理",
+    "customer-selected pelvic service must match aliases");
+  assert.equal(require("../src/utils/priceFollowUpContext").resolveBookingResponsePriceService({
+    customerText:text,conversationHistory:turns,...common,
+  })?.name,"骨盆调理","booking continuity helper must identify verified treatment");
   assert.equal(resolved(text,turns),"骨盆调理",
     "mixed booking answer must resolve from customer-authored treatment, not ad metadata");
   const quoted=textReply(text,turns);
