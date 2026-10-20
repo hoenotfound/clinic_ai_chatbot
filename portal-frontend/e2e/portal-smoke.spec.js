@@ -2509,6 +2509,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   await expect(page.locator("#free-entry-default-template option", { hasText: "clinic_unapproved" })).toHaveCount(0);
   await expect(page.getByLabel("Approved template preview").first()).toContainText("We can answer your questions.");
 
+  await page.getByText("Advanced: treatment-specific templates and media").click();
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
   await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
   const rule = page.getByLabel("Approved marketing template for rule 1");
@@ -2546,6 +2547,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
   });
   await page.reload();
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByText("Advanced: treatment-specific templates and media").click();
   await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
   await expect(page.getByLabel("Extended template treatment 1")).toHaveValue("骨盆调理");
   await page.getByRole("tab", { name: "Pricing" }).click();
@@ -2557,6 +2559,105 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     mediaKey: "clients/test-clinic/messages/follow-up-config/pricing-package.jpg",
   });
   await expectNoHorizontalPageOverflow(page);
+});
+
+test("After-24-hour planner selects approved text messages without changing treatment media", async ({ page }) => {
+  const saved = [];
+  const approved = (name, format, text, status = "APPROVED", category = "MARKETING") => ({
+    name, language: "zh_CN", status, category, sendable: status === "APPROVED",
+    header: { format }, body: { text }, variableFields: [],
+  });
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", priceRange: "RM388", description: "" }],
+      automatedFollowUp: {
+        enabled: true, delayMinutes: 120, message: "Default reply.",
+        freeEntry: {
+          enabled: false, templateName: "clinic_text_1", language: "auto",
+          fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98],
+          templateRules: [{
+            slotHours: 50, serviceName: "骨盆调理", templateName: "clinic_video",
+            mediaKey: "clients/clinic/video.mp4", mediaUrl: "", mediaSourceId: "video:test",
+            videoCodecVerified: true,
+          }],
+        },
+      },
+    },
+    templateCatalog: {
+      templates: [
+        approved("clinic_text_1", "TEXT", "How can we help you today?"),
+        approved("clinic_text_2", "TEXT", "Would you like to arrange a free trial?"),
+        approved("clinic_video", "VIDEO", "Treatment customer testimonial"),
+        approved("clinic_rejected", "TEXT", "Unsupported text", "REJECTED"),
+        approved("clinic_utility", "TEXT", "Appointment details", "APPROVED", "UTILITY"),
+      ],
+      reusableMedia: [],
+    },
+    onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+
+  const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
+  await expect(planner).toBeVisible();
+  await expect(planner.getByLabel("Message for +26h follow-up")).toHaveValue("");
+  await expect(planner.getByLabel("Message for +50h follow-up"))
+    .toHaveValue("");
+  await expect(planner).toContainText("1 treatment-specific rule retained in Advanced.");
+  const firstChoices = planner.getByLabel("Message for +26h follow-up");
+  await expect(firstChoices.locator('option[value="clinic_text_1"]')).toHaveCount(1);
+  await expect(firstChoices.locator('option[value="clinic_text_2"]')).toHaveCount(1);
+  await expect(firstChoices.locator('option[value="clinic_video"]')).toHaveCount(0);
+  await expect(firstChoices.locator('option[value="clinic_rejected"]')).toHaveCount(0);
+  await expect(firstChoices.locator('option[value="clinic_utility"]')).toHaveCount(0);
+
+  await firstChoices.selectOption("clinic_text_2");
+  await expect(planner).toContainText("Would you like to arrange a free trial?");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+
+  expect(saved[0].freeEntry.templateName).toBe("clinic_text_1");
+  expect(saved[0].freeEntry.slotsHours).toEqual([26, 50, 98]);
+  expect(saved[0].freeEntry.templateRules).toEqual(expect.arrayContaining([
+    expect.objectContaining({ slotHours: 26, serviceName: "*", templateName: "clinic_text_2" }),
+    expect.objectContaining({
+      slotHours: 50, serviceName: "骨盆调理", templateName: "clinic_video",
+      mediaKey: "clients/clinic/video.mp4", videoCodecVerified: true,
+    }),
+  ]));
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("After-24-hour planner preserves saved media template when opening quick controls", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        freeEntry: {
+          enabled: false, templateName: "clinic_text", language: "auto",
+          slotsHours: [26, 50, 98], templateRules: [{
+            slotHours: 26, serviceName: "*", templateName: "ns_fu_meridian_gift",
+            mediaKey: "", mediaUrl: "", mediaSourceId: "", videoCodecVerified: false,
+          }],
+        },
+      },
+    },
+    templateCatalog: { templates: [
+      { name: "clinic_text", language: "zh_CN", status: "APPROVED", category: "MARKETING",
+        sendable: true, header: { format: "TEXT" }, body: { text: "Hello" }, variableFields: [] },
+      { name: "ns_fu_meridian_gift", language: "zh_CN", status: "APPROVED", category: "MARKETING",
+        sendable: true, header: { format: "IMAGE" }, body: { text: "Gift approved" }, variableFields: [{ component: "body", index: 1 }] },
+    ], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
+  await expect(planner.getByLabel("Message for +26h follow-up")).toHaveValue("ns_fu_meridian_gift");
+  await expect(planner).toContainText("Gift approved");
+  await expect(planner.getByLabel("Message for +26h follow-up")).toContainText("edit media in Advanced");
+  await expect(page.getByText("You have unsaved changes")).toHaveCount(0);
 });
 
 test("WhatsApp template picker uploads new JPG or video and preserves selected media until saved", async ({ page }) => {
@@ -2584,6 +2685,7 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
   });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByText("Advanced: treatment-specific templates and media").click();
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
   await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
   await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_media_image");
@@ -2638,6 +2740,7 @@ test("Delayed treatment image upload cannot attach to a changed rule", async ({ 
     (route) => { delayedRequest = route; });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByText("Advanced: treatment-specific templates and media").click();
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
   await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
   await page.getByLabel("Approved marketing template for rule 1").selectOption("clinic_image_offer");
