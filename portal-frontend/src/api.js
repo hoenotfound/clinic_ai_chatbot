@@ -376,6 +376,18 @@ export const api = {
     }
     return res.json();
   },
+  uploadFollowUpVoice: async (file) => {
+    const form = new FormData();
+    form.append("voice", file);
+    const res = await fetch(`${BASE}/config/automated-follow-up/voice`, {
+      method: "POST", credentials: "include", body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed (${res.status})`);
+    }
+    return res.json();
+  },
   translateFollowUp: (message) =>
     request("/config/automated-follow-up/translations", {
       method: "POST",
