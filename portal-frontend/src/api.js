@@ -376,9 +376,10 @@ export const api = {
     }
     return res.json();
   },
-  uploadFollowUpVoice: async (file) => {
+  uploadFollowUpVoice: async (file, language) => {
     const form = new FormData();
     form.append("voice", file);
+    form.append("language", language);
     const res = await fetch(`${BASE}/config/automated-follow-up/voice`, {
       method: "POST", credentials: "include", body: form,
     });
