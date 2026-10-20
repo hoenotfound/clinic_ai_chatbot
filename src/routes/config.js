@@ -133,18 +133,6 @@ function handleFollowUpVoiceUpload(req, res, next) {
   });
 }
 
-function isFollowUpVoiceKey(value) {
-  if (value === undefined || value === "") return true;
-  if (!isString(value) || value.length > 1024 || value.includes("..")) return false;
-  try {
-    return mediaStorage.isOwnedStoredMediaKey(value) &&
-      value.startsWith(mediaStorage.followUpConfigVideoPrefix()) &&
-      value.toLowerCase().endsWith(".ogg");
-  } catch {
-    return false;
-  }
-}
-
 function isFollowUpVideoKey(value) {
   if (value === undefined || value === "") return true;
   if (!isString(value) || value.length > 1024 || value.includes("..")) return false;
@@ -410,8 +398,6 @@ function isFollowUpServiceOverride(value) {
     (value.imageUrl === undefined || isString(value.imageUrl)) &&
     isFollowUpVideoKey(value.videoKey) &&
     voiceNotes !== null &&
-    (value.voiceFilename === undefined ||
-      (isString(value.voiceFilename) && value.voiceFilename.trim().length <= 255)) &&
     (value.videoFilename === undefined ||
       (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
     [imageUrl, videoKey, voiceNotesPresent(voiceNotes) ? "voice" : ""].filter(Boolean).length <= 1
@@ -442,8 +428,6 @@ function isFollowUpStep(value) {
     isString(value.imageUrl) &&
     isFollowUpVideoKey(value.videoKey) &&
     voiceNotes !== null &&
-    (value.voiceFilename === undefined ||
-      (isString(value.voiceFilename) && value.voiceFilename.trim().length <= 255)) &&
     (value.videoFilename === undefined ||
       (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
     [value.imageUrl.trim(), String(value.videoKey || "").trim(), voiceNotesPresent(normalizeVoiceNotes(value.voiceNotes, mediaStorage)) ? "voice" : ""].filter(Boolean).length <= 1 &&
