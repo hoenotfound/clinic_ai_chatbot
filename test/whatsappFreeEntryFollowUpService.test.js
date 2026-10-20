@@ -155,3 +155,57 @@ test("post-window template fallback is revalidated without counting its own pend
   assert.match(code, /resolve\(candidate, slotHours, active, catalog, \{ skipPreferred: true \}\)/);
   assert.match(code, /mediaAlreadyShared\(spec\.mediaKey/);
 });
+
+
+test("day 4 and day 6 stay disabled while Strict RM0 is off, even with 7-day env flag", async () => {
+  const original = clinicConfig.automatedFollowUp;
+  const prior = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+  try {
+    process.env.WHATSAPP_FEP_7DAY_VERIFIED = "true";
+    clinicConfig.automatedFollowUp = {
+      ...original, whatsappFreeOnly: { enabled: false, activatedAt: null },
+    };
+    let queried = false;
+    const db = { query: async () => { queried = true; return { rows: [{ verified: true }] }; } };
+    const aligned = await worker.alignedSettings({
+      sevenDayVerified: true, slots: [48,66,96,144],
+    },db);
+    assert.equal(aligned.sevenDayVerified,false);
+    assert.equal(queried,false,"strict-disabled workers must not attempt post-72h eligibility");
+    const ad = {
+      first_inbound_at:"2026-10-01T00:00:00Z",
+      first_reply_at:"2026-10-01T00:02:00Z",
+      last_inbound_at:"2026-10-01T00:00:00Z",
+      evidence_type:"free_entry_point",source_is_ctwa:true,
+      sevenDayVerified:aligned.sevenDayVerified,
+    };
+    assert.equal(worker.selectedSlot(ad,aligned.slots,new Date("2026-10-05T01:00:00Z")),null);
+  } finally {
+    clinicConfig.automatedFollowUp=original;
+    if (prior === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+    else process.env.WHATSAPP_FEP_7DAY_VERIFIED=prior;
+  }
+});
+
+test("day 4 and day 6 need verified post-72h Meta receipts as well as Strict RM0", async () => {
+  const original = clinicConfig.automatedFollowUp;
+  const prior = process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+  try {
+    process.env.WHATSAPP_FEP_7DAY_VERIFIED="true";
+    clinicConfig.automatedFollowUp = {
+      ...original, whatsappFreeOnly:{enabled:true,activatedAt:"2026-10-15T00:00:00Z"},
+    };
+    const unverified = await worker.alignedSettings({sevenDayVerified:true}, {
+      query:async () => ({rows:[{verified:false}]}),
+    });
+    assert.equal(unverified.sevenDayVerified,false);
+    const verified = await worker.alignedSettings({sevenDayVerified:true}, {
+      query:async () => ({rows:[{verified:true}]}),
+    });
+    assert.equal(verified.sevenDayVerified,true);
+  } finally {
+    clinicConfig.automatedFollowUp=original;
+    if (prior === undefined) delete process.env.WHATSAPP_FEP_7DAY_VERIFIED;
+    else process.env.WHATSAPP_FEP_7DAY_VERIFIED=prior;
+  }
+});
