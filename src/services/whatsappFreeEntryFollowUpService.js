@@ -290,7 +290,13 @@ function settings(env = process.env) {
 // beyond 72h. Fail closed when pricing evidence is unavailable, before any
 // attempt is claimed or a template is uploaded to Meta.
 async function alignedSettings(active, database = pool) {
-  if (!active || !zeroCostGuard.enabled()) return active;
+  if (!active) return active;
+  // Day 4–7 MUST NOT be dispatched without active Strict RM0 protection.
+  // An environment flag or a historical nonbillable callback alone cannot
+  // authorize a paid-risk automated marketing template.
+  if (!zeroCostGuard.enabled()) return { ...active, sevenDayVerified: false };
+  // Independently verified post-72h Meta evidence is also mandatory.
+  // Missing DB evidence (or a failed query) must never unlock longer slots.
   const ceiling = await zeroCostGuard.authorizedCeilingHours({ database });
   return { ...active, sevenDayVerified: ceiling === 168 };
 }
