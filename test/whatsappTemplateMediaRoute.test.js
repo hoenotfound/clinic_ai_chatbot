@@ -455,3 +455,24 @@ test("Inbox refuses generic Retry for failed and uncertain automated voice witho
   assert.equal(h.events.metaUploads, 0);
   assert.equal(h.events.saved.length, 0);
 });
+
+test("Inbox refuses generic Retry for failed or unknown social voice attachments", async (t) => {
+  const h = await harness(t);
+  let status = "failed";
+  patch(t, messagesRepo, "acquireMessageRetryLock", async () => async () => {});
+  patch(t, messagesRepo, "getMessageForRetry", async () => ({
+    id: 42, contact_id: 7, role: "assistant",
+    is_automated_follow_up: true,
+    media_mime_type: "audio/mpeg",
+    media_key: "clients/bb-demo/messages/follow-up-config/voice-preview.mp3",
+    content: "🎤 [Automated voice note, zh; transcript] 您好",
+    delivery_status: status,
+  }));
+  for (status of ["failed", "unknown"]) {
+    const response = await h.retry(42);
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, "automated_voice_retry_requires_manual_review");
+  }
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.metaUploads, 0);
+});
