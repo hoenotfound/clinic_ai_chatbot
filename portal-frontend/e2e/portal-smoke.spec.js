@@ -1111,6 +1111,139 @@ test("Sequence timeline navigates existing editors without changing schedule or 
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Guided follow-up builder opens only the selected editor and keeps unsaved steps", async ({ page }) => {
+  let saved = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [],
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        triggerMode: "all",
+        message: "First message.",
+        translations: { en: "First message.", ms: "", zh: "" },
+        additionalSteps: [
+          { delayMinutes: 480, timingMode: "after_reply", message: "Second message." },
+          { delayMinutes: 1200, timingMode: "after_reply", message: "Third message." },
+        ],
+      },
+    },
+    onConfigUpdate: (payload) => { saved = payload.automatedFollowUp; },
+  });
+  await page.goto("/tools");
+  const timeline = page.getByRole("list", { name: "Follow-up sequence timeline" });
+  const firstEditor = page.getByRole("region", { name: "Follow-up 1 editor" });
+  const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
+  const thirdEditor = page.getByRole("region", { name: "Follow-up 3 editor" });
+
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 1 of 3");
+  await expect(firstEditor).toBeVisible();
+  await timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
+  await expect(secondEditor).toBeFocused();
+  await expect(firstEditor).not.toBeVisible();
+  await expect(thirdEditor.getByPlaceholder("Write the next follow-up message.")).not.toBeVisible();
+  await secondEditor.getByPlaceholder("Write the next follow-up message.").fill("Updated second message.");
+
+  await secondEditor.getByRole("button", { name: "Continue to Follow-up 3" }).click();
+  await expect(thirdEditor).toBeFocused();
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message.")).not.toBeVisible();
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 3 of 3");
+  await page.getByRole("button", { name: "Back to Follow-up 1" }).click();
+  await expect(firstEditor).toBeVisible();
+  await expect(thirdEditor.getByPlaceholder("Write the next follow-up message.")).not.toBeVisible();
+  await expect(timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }))
+    .toContainText("Updated second message.");
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved?.additionalSteps?.[0]?.message).toBe("Updated second message.");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Guided builder adds the next step and flags missing draft copy without changing send behavior", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+
+  const timeline = page.getByRole("list", { name: "Follow-up sequence timeline" });
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 1 of 1");
+  await page.getByRole("button", { name: "How to set up a follow-up" }).click();
+  await expect(page.getByText(/The scheduler still decides whether a customer is eligible/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Add Follow-up 2" }).click();
+  const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
+  await expect(secondEditor).toBeFocused();
+  await expect(page.getByRole("region", { name: "Follow-up 1 editor" })).not.toBeVisible();
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
+  await expect(timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }))
+    .toContainText("Add a message");
+
+  await secondEditor.getByPlaceholder("Write the next follow-up message.").fill("Checking whether you have any questions.");
+  await expect(timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }))
+    .toContainText("Message added");
+  await secondEditor.getByRole("button", { name: "Previous follow-up" }).click();
+  await expect(page.getByRole("region", { name: "Follow-up 1 editor" })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Guided builder continues to an existing second step even if no third step can be added", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "First reminder.",
+        translations: { en: "First reminder.", ms: "BM reminder.", zh: "中文跟进。" },
+        additionalSteps: [
+          { delayMinutes: 1380, timingMode: "after_reply", message: "Second reminder." },
+        ],
+      },
+    },
+  });
+  await page.goto("/tools");
+  const next = page.getByRole("button", { name: "Continue to Follow-up 2" });
+  await expect(next).toBeEnabled();
+  await next.click();
+
+  const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
+  await expect(secondEditor).toBeFocused();
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message."))
+    .toHaveValue("Second reminder.");
+  await expect(page.getByRole("region", { name: "Follow-up 1 editor" })).not.toBeVisible();
+  const heading = page.getByRole("heading", { name: "Edit Follow-up 2" });
+  await expect(heading).toBeVisible();
+  await expect(heading.locator("xpath=../..").locator(":scope > span")).toHaveCount(0);
+  await expect(secondEditor.getByRole("button", { name: "Add Follow-up 3" })).toBeDisabled();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up message-added status is not a timing or translation readiness guarantee", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "A valid message with a delay that needs checking.",
+      },
+    },
+  });
+  await page.goto("/tools");
+  const first = page.getByRole("list", { name: "Follow-up sequence timeline" })
+    .getByRole("button", { name: "Edit Follow-up 1 from sequence overview" });
+  await expect(first).toContainText("Message added");
+  await expect(first).not.toContainText("Message configured");
+
+  await page.locator("#follow-up-panel-sequence input[type='number']").first().fill("2");
+  await expect(first).toContainText("Message added");
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Message added");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("needs a delay between 5 minutes and 23 hours.");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Pricing catalog previews service packages, localized media and saved reminder controls", async ({ page }) => {
   // Serve stable mock thumbnails so image load failures cannot hide <img>
   // before assertions check which localized source is currently selected.
@@ -1596,6 +1729,72 @@ test("Invalid quiet hours automatically reveal the advanced delivery panel on sa
   const panel = page.getByRole("region", { name: "Advanced delivery settings" });
   await expect(panel.getByLabel("Follow-up quiet hours start")).toHaveValue("02:00");
   await expect(panel.getByLabel("Follow-up quiet hours end")).toHaveValue("02:00");
+});
+
+test("Invalid quiet hours return later-step editors to the visible settings without losing drafts", async ({ page }) => {
+  let saved = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "First reminder.",
+        quietHours: { enabled: true, start: "02:00", end: "02:00" },
+        additionalSteps: [
+          { delayMinutes: 480, timingMode: "after_reply", message: "Second reminder." },
+          { delayMinutes: 1200, timingMode: "after_reply", message: "Third reminder." },
+        ],
+      },
+    },
+    onConfigUpdate: (payload) => { saved = payload.automatedFollowUp; },
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+
+  const timeline = page.getByRole("list", { name: "Follow-up sequence timeline" });
+  const disclosure = page.getByRole("button", { name: /Advanced delivery options/ });
+  const panel = page.getByRole("region", { name: "Advanced delivery settings" });
+  const start = panel.getByLabel("Follow-up quiet hours start");
+
+  for (const stepNumber of [2, 3]) {
+    await timeline.getByRole("button", {
+      name: `Edit Follow-up ${stepNumber} from sequence overview`,
+    }).click();
+    await expect(page.getByLabel("Selected follow-up"))
+      .toContainText(`Editing Follow-up ${stepNumber} of 3`);
+    await expect(page.getByRole("region", { name: "Follow-up 1 editor" }))
+      .not.toBeVisible();
+    // The Save control is intentionally unavailable without an unsaved edit.
+    // Reproduce a real staff edit before triggering quiet-hours validation.
+    await page.getByRole("region", { name: `Follow-up ${stepNumber} editor` })
+      .getByPlaceholder("Write the next follow-up message.")
+      .fill(`Updated follow-up ${stepNumber}.`);
+    await expect(page.getByText("You have unsaved changes")).toBeVisible();
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+      .toContainText("Choose two different valid times for follow-up quiet hours.");
+    await expect(page.getByLabel("Selected follow-up"))
+      .toContainText("Editing Follow-up 1 of 3");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(panel).toBeVisible();
+    await expect(start).toBeFocused();
+    await expect(start).toHaveValue("02:00");
+    await expect(panel.getByLabel("Follow-up quiet hours end")).toHaveValue("02:00");
+    await expect(page.getByRole("region", { name: "Follow-up 1 editor" }))
+      .toBeVisible();
+    expect(saved).toBeNull();
+  }
+
+  await panel.getByLabel("Follow-up quiet hours end").fill("07:00");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved?.quietHours?.end).toBe("07:00");
+  expect(saved.additionalSteps).toHaveLength(2);
+  expect(saved.additionalSteps[0].message).toBe("Updated follow-up 2.");
+  expect(saved.additionalSteps[1].message).toBe("Updated follow-up 3.");
+  await expectNoHorizontalPageOverflow(page);
 });
 
 test("Strict WhatsApp billing protection opens when enabled and remains collapsible", async ({ page }) => {
