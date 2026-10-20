@@ -2143,39 +2143,40 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
 });
 
 
-test("follow-up voice settings accept clinic-owned Ogg and reject mixed or foreign media", () => {
+test("follow-up voice settings require approved, safe, clinic-owned language assets", () => {
   const mediaStorage = require("../src/services/mediaStorageService");
   const current = currentConfig();
-  const key = `${mediaStorage.followUpConfigVideoPrefix()}test-recording.ogg`;
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const note = {
+    key: `${prefix}recording.ogg`,
+    previewKey: `${prefix}recording-preview.mp3`,
+    transcript: "Hello, would you like to arrange your assessment?",
+    filename: "hello.mp3",
+    approved: true,
+  };
   const followUp = {
-    enabled: false,
-    triggerMode: "all",
-    delayMinutes: 120,
+    enabled: false, triggerMode: "all", delayMinutes: 120,
     message: "Checking in",
     translations: { en: "Checking in", ms: "Checking in", zh: "Checking in" },
-    imageUrl: "",
-    voiceKey: key,
-    voiceFilename: "greeting.mp3",
+    imageUrl: "", voiceNotes: { en: note },
     serviceOverrides: [{
-      serviceName: "Consultation",
-      message: "Consultation check-in",
+      serviceName: "Consultation", message: "Consultation check-in",
       translations: { en: "Consultation check-in", ms: "Consultation check-in", zh: "Consultation check-in" },
-      voiceKey: key,
-      voiceFilename: "consultation.mp3",
+      voiceNotes: { en: note },
     }],
   };
-  const valid = prepareConfigUpdatePayload({ automatedFollowUp: followUp }, current);
-  assert.equal(valid.ok, true);
-  assert.equal(valid.updates.automatedFollowUp.voiceKey, key);
-  assert.equal(valid.updates.automatedFollowUp.serviceOverrides[0].voiceKey, key);
-
-  const mixed = prepareConfigUpdatePayload({
-    automatedFollowUp: { ...followUp, imageUrl: "https://example.com/promo.png" },
+  const check = (patch) => prepareConfigUpdatePayload({
+    automatedFollowUp: { ...followUp, ...patch },
   }, current);
-  assert.equal(mixed.ok, false);
-
-  const foreign = prepareConfigUpdatePayload({
-    automatedFollowUp: { ...followUp, voiceKey: "messages/another-contact/voice.ogg" },
-  }, current);
-  assert.equal(foreign.ok, false);
+  const valid = check({});
+  assert.equal(valid.ok, true, JSON.stringify(valid));
+  assert.equal(valid.updates.automatedFollowUp.voiceNotes.en.transcript, note.transcript);
+  assert.equal(valid.updates.automatedFollowUp.serviceOverrides[0].voiceNotes.en.key, note.key);
+  assert.equal(check({ imageUrl: "https://example.com/promo.png" }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, key: "messages/another-contact/voice.ogg" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, approved: false } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Only RM488 today!" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { de: note } }).ok, false);
 });
+
