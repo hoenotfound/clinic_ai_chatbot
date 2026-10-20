@@ -586,7 +586,8 @@ export default function Tools() {
     }
     const validSlotHours = new Set(form.freeEntry?.slotsHours || []);
     const serviceNames = new Set((config?.services || [])
-      .map((service) => String(service?.name || "").trim().toLocaleLowerCase()));
+      .map((service) => normalizeExtendedServiceName(service?.name))
+      .filter(Boolean));
     const seenRules = new Set();
     for (const [index, rule] of (form.freeEntry?.templateRules || []).entries()) {
       const slotHours = Number(rule?.slotHours);
@@ -597,13 +598,13 @@ export default function Tools() {
         return invalid(`Extended rule ${index + 1} uses +${slotHours}h, which is not in the selected schedule. Reassign its time or remove the rule.`);
       }
       if (!serviceName) return invalid(`Choose a treatment for extended rule ${index + 1}.`);
-      if (serviceName !== "*" && !serviceNames.has(serviceName.toLocaleLowerCase())) {
+      if (serviceName !== "*" && !serviceNames.has(normalizeExtendedServiceName(serviceName))) {
         return invalid(`Choose a current clinic treatment for extended rule ${index + 1}.`);
       }
       if (!/^[a-z0-9_]+$/.test(templateName)) {
         return invalid(`Choose an approved marketing template for extended rule ${index + 1}.`);
       }
-      const key = `${slotHours}:${serviceName.toLocaleLowerCase()}`;
+      const key = `${slotHours}:${normalizeExtendedServiceName(serviceName)}`;
       if (seenRules.has(key)) return invalid(`Extended rule ${index + 1} duplicates another rule at this time for this treatment.`);
       seenRules.add(key);
     }
@@ -1645,6 +1646,13 @@ function sequenceTargetSummary(step) {
     : `Target: ${formatDelay(Number(step?.delayMinutes || 0))} after the sequence-start message`;
 }
 
+// Mirrors the server's normalizeServiceText so saved valid names are not rejected.
+function normalizeExtendedServiceName(value) {
+  return typeof value === "string"
+    ? value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase()
+    : "";
+}
+
 function extendedFollowUpSlotLabel(hours) {
   const days = Math.max(1, Math.round(Number(hours) / 24));
   return `About ${days} day${days === 1 ? "" : "s"} later (+${hours}h)`;
@@ -2117,7 +2125,7 @@ function FollowUpTool({
     const incompatible = (form.freeEntry?.templateRules || []).filter(
       (rule) => !nextHours.includes(Number(rule.slotHours)));
     if (incompatible.length) {
-      setProposedTemplateSchedule({ hours: nextHours, incompatible });
+      setProposedTemplateSchedule({ hours: nextHours, baseHours: [...currentHours], incompatible });
       return;
     }
     setProposedTemplateSchedule(null);
@@ -2129,6 +2137,22 @@ function FollowUpTool({
   function confirmTemplateSchedule() {
     if (!proposedTemplateSchedule) return;
     const nextHours = proposedTemplateSchedule.hours;
+    const currentHours = form.freeEntry?.slotsHours || [];
+    const incompatibleNow = (form.freeEntry?.templateRules || []).filter(
+      (rule) => !nextHours.includes(Number(rule.slotHours)));
+    // Recheck the CURRENT full rules (including media) at the confirmation click.
+    // A rule added or edited while the dialog is visible requires fresh approval.
+    if (JSON.stringify(currentHours) !== JSON.stringify(proposedTemplateSchedule.baseHours)) {
+      setProposedTemplateSchedule(null);
+      return;
+    }
+    if (JSON.stringify(incompatibleNow) !== JSON.stringify(proposedTemplateSchedule.incompatible)) {
+      setProposedTemplateSchedule({
+        ...proposedTemplateSchedule,
+        incompatible: incompatibleNow,
+      });
+      return;
+    }
     setForm((current) => ({
       ...current,
       freeEntry: {
@@ -3736,7 +3760,7 @@ function FollowUpTool({
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2">No changes have been applied. Keep the current plan, or explicitly remove only the listed rules.</p>
+                <p className="mt-2">No schedule changes have been applied. If these rules change while this warning is open, the list will be updated and you must confirm again.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" onClick={() => setProposedTemplateSchedule(null)}
                     className="rounded-lg border border-amber-500 bg-white px-3 py-2 font-semibold">
