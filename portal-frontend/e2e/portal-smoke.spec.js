@@ -2666,6 +2666,140 @@ test("After-24-hour media shortcut creates a draft for the selected time, never 
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Changing extended schedule requires confirmation before deleting video rules", async ({ page }) => {
+  const saved = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", description: "" }],
+      automatedFollowUp: {
+        freeEntry: {
+          enabled: false, templateName: "clinic_text", language: "auto",
+          slotsHours: [26, 50, 74, 98, 122, 162],
+          templateRules: [
+            { slotHours: 74, serviceName: "骨盆调理", templateName: "clinic_video",
+              mediaKey: "clients/clinic/old.mp4", mediaUrl: "", mediaSourceId: "",
+              videoCodecVerified: true },
+            { slotHours: 50, serviceName: "*", templateName: "clinic_text",
+              mediaKey: "", mediaUrl: "", mediaSourceId: "", videoCodecVerified: false },
+          ],
+        },
+      },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  const schedule = page.getByLabel("Free-entry follow-up schedule");
+  await expect(schedule).toHaveValue("26,50,74,98,122,162");
+  await schedule.selectOption("26,50,98");
+  const warning = page.getByRole("alert", { name: "Review extended schedule changes" });
+  await expect(warning).toContainText("+74h");
+  await expect(warning).toContainText("clinic_video");
+  await expect(warning).toContainText("attached image/video");
+  await expect(schedule).toHaveValue("26,50,74,98,122,162");
+  await expect(page.getByText("You have unsaved changes")).toHaveCount(0);
+
+  await warning.getByRole("button", { name: "Keep existing schedule" }).click();
+  await expect(warning).toHaveCount(0);
+  await expect(schedule).toHaveValue("26,50,74,98,122,162");
+
+  await schedule.selectOption("26,50,98");
+  await warning.getByRole("button", { name: "Remove listed rules and change schedule" }).click();
+  await expect(schedule).toHaveValue("26,50,98");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules).toEqual([
+    expect.objectContaining({ slotHours: 50, serviceName: "*", templateName: "clinic_text" }),
+  ]);
+});
+
+test("Incomplete extended media draft opens its editor and saves after correcting both fields", async ({ page }) => {
+  const saved = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", description: "" }],
+      automatedFollowUp: {
+        freeEntry: { enabled: false, templateName: "clinic_text",
+          language: "auto", slotsHours: [26, 50, 98], templateRules: [] },
+      },
+    },
+    templateCatalog: { templates: [{
+      name: "clinic_text", language: "zh_CN", category: "MARKETING",
+      status: "APPROVED", sendable: true,
+      header: { format: "TEXT" }, body: { text: "Hello" }, variableFields: [],
+    }], reusableMedia: [] },
+    onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("region", { name: "After 24 hours guided setup" })
+    .getByRole("button", { name: "Treatment media for +98h follow-up" }).click();
+  await page.getByText("Advanced: treatment-specific templates and media").click();
+  await expect(page.getByRole("region", { name: "Extended template rule 1" })).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Choose a treatment for extended rule 1.");
+  const editor = page.getByRole("region", { name: "Extended template rule 1" });
+  await expect(editor).toBeFocused();
+  await expect(editor).toBeVisible();
+  await editor.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Choose an approved marketing template for extended rule 1.");
+  await expect(editor).toBeFocused();
+  await editor.getByLabel("Approved marketing template for rule 1").selectOption("clinic_text");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules).toEqual([
+    expect.objectContaining({
+      slotHours: 98, serviceName: "骨盆调理", templateName: "clinic_text",
+    }),
+  ]);
+  expect(saved[0].freeEntry.enabled).toBe(false);
+});
+
+test("Planner explains per-time duplicates and approved Chinese English Malay versions", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        freeEntry: { enabled: false, templateName: "clinic_text",
+          language: "auto", fallbackLanguage: "zh_CN",
+          slotsHours: [26, 50, 98], templateRules: [] },
+      },
+    },
+    templateCatalog: { templates: [
+      { name: "clinic_text", language: "zh_CN", category: "MARKETING",
+        status: "APPROVED", sendable: true, header: { format: "TEXT" },
+        body: { text: "Chinese reminder" }, variableFields: [] },
+      { name: "clinic_text", language: "ms", category: "MARKETING",
+        status: "REJECTED", sendable: false, header: { format: "TEXT" },
+        body: { text: "Malay reminder" }, variableFields: [] },
+    ], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
+  const duplicate = planner.getByText(/Same template as an earlier time \(clinic_text\)/);
+  await expect(duplicate).toHaveCount(2);
+  const readiness = planner.getByLabel("Language availability for +50h follow-up");
+  await expect(readiness).toContainText("Chinese: Approved TEXT");
+  await expect(readiness).toContainText("English: Missing approved version");
+  await expect(readiness).toContainText("Malay: Unsupported version");
+  await expect(readiness).toContainText("Not ready for English, Malay");
+  await page.getByLabel("Template language").selectOption("zh_CN");
+  await expect(readiness).not.toContainText("Not ready for English, Malay");
+  await page.getByLabel("Template language").selectOption("en_US");
+  await expect(readiness).toContainText("Not ready for English.");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("After-24-hour planner preserves saved media template when opening quick controls", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
