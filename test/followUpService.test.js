@@ -3546,6 +3546,8 @@ test("held campaign suppresses promotion text and artwork, but ordinary first fo
 
 test("native voice sends only a matching approved recording and persists its real transcript", async () => {
   enableTool();
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "voice-policy-test";
   const { pool } = require("../src/db/db");
   const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
   const key = `${mediaStorage.followUpConfigVideoPrefix()}english.ogg`;
@@ -3610,5 +3612,7 @@ test("native voice sends only a matching approved recording and persists its rea
     mediaStorage.downloadMedia = originals.download;
     channelMessaging.sendAudioBuffer = originals.audio;
     pool.query = originals.poolQuery;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
   }
 });
