@@ -3490,3 +3490,54 @@ test("AI mode does not generate when another worker owns the generation lease", 
   assert.equal(generationCount, 0);
   assert.equal(saveCount, 0);
 });
+
+
+test("held campaign suppresses promotion text and artwork, but ordinary first follow-up continues", async () => {
+  enableTool();
+  clinicConfig.promotions = [{
+    name: "3D unapproved artwork",
+    linkedService: "3D 小颜术",
+    automaticMediaHold: true,
+    sendOnPriceQuery: true,
+    imageUrl: "https://example.test/3d-legacy.jpg",
+    caption: "Approved written description",
+    followUpMessage: "SPECIAL HELD PROMO FOLLOW-UP",
+    followUpImageUrl: "https://example.test/held-followup.jpg",
+    packages: [],
+    validFrom: null,
+    validUntil: null,
+  }];
+  clinicConfig.automatedFollowUp.messageMode = "fixed";
+  clinicConfig.automatedFollowUp.imageUrl = "";
+  let savedContent = null;
+  let imageCalls = 0;
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 8802,
+    whatsapp_number: "60111111802",
+    trigger_message_id: 8801,
+    next_follow_up_step: 1,
+    recent_inbound_messages: ["3D 小颜术多少钱？"],
+    trigger_message_content: "3D 小颜术 RM488",
+  }];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    savedContent = input;
+    return {id:8803,contact_id:8802,delivery_status:null};
+  };
+  whatsapp.sendImage = async () => {
+    imageCalls += 1;
+    return {success:true,wamid:"unexpected-image"};
+  };
+  whatsapp.sendMessage = async () => ({success:true,wamid:"wamid-8803"});
+  messagesRepo.setWhatsappMessageId = async (id,wamid) => ({
+    id,contact_id:8802,whatsapp_message_id:wamid,delivery_status:"pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.ok(savedContent?.content, "the ordinary configured follow-up should still send");
+  assert.doesNotMatch(savedContent.content, /SPECIAL HELD PROMO FOLLOW-UP/u);
+  assert.equal(savedContent.promotionFollowUp === true, false);
+  assert.equal(savedContent.mediaUrl ?? null, null);
+  assert.equal(imageCalls, 0);
+});
