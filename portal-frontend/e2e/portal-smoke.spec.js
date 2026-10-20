@@ -2793,9 +2793,9 @@ test("Planner explains per-time duplicates and approved Chinese English Malay ve
   await expect(readiness).toContainText("English: Missing approved version");
   await expect(readiness).toContainText("Malay: Unsupported version");
   await expect(readiness).toContainText("Not ready for English, Malay");
-  await page.getByLabel("Template language").selectOption("zh_CN");
+  await page.getByLabel("Free-entry template language").selectOption("zh_CN");
   await expect(readiness).not.toContainText("Not ready for English, Malay");
-  await page.getByLabel("Template language").selectOption("en_US");
+  await page.getByLabel("Free-entry template language").selectOption("en_US");
   await expect(readiness).toContainText("Not ready for English.");
   await expectNoHorizontalPageOverflow(page);
 });
