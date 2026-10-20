@@ -1180,9 +1180,67 @@ test("Guided builder adds the next step and flags missing draft copy without cha
 
   await secondEditor.getByPlaceholder("Write the next follow-up message.").fill("Checking whether you have any questions.");
   await expect(timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }))
-    .toContainText("Message configured");
+    .toContainText("Message added");
   await secondEditor.getByRole("button", { name: "Previous follow-up" }).click();
   await expect(page.getByRole("region", { name: "Follow-up 1 editor" })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Guided builder continues to an existing second step even if no third step can be added", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "First reminder.",
+        translations: { en: "First reminder.", ms: "BM reminder.", zh: "中文跟进。" },
+        additionalSteps: [
+          { delayMinutes: 1380, timingMode: "after_reply", message: "Second reminder." },
+        ],
+      },
+    },
+  });
+  await page.goto("/tools");
+  const next = page.getByRole("button", { name: "Continue to Follow-up 2" });
+  await expect(next).toBeEnabled();
+  await next.click();
+
+  const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
+  await expect(secondEditor).toBeFocused();
+  await expect(secondEditor.getByPlaceholder("Write the next follow-up message."))
+    .toHaveValue("Second reminder.");
+  await expect(page.getByRole("region", { name: "Follow-up 1 editor" })).not.toBeVisible();
+  const heading = page.getByRole("heading", { name: "Edit Follow-up 2" });
+  await expect(heading).toBeVisible();
+  await expect(heading.locator("xpath=../..").locator(":scope > span")).toHaveCount(0);
+  await expect(secondEditor.getByRole("button", { name: "Add Follow-up 3" })).toBeDisabled();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Follow-up message-added status is not a timing or translation readiness guarantee", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "A valid message with a delay that needs checking.",
+      },
+    },
+  });
+  await page.goto("/tools");
+  const first = page.getByRole("list", { name: "Follow-up sequence timeline" })
+    .getByRole("button", { name: "Edit Follow-up 1 from sequence overview" });
+  await expect(first).toContainText("Message added");
+  await expect(first).not.toContainText("Message configured");
+
+  await page.locator("#follow-up-panel-sequence input[type='number']").first().fill("2");
+  await expect(first).toContainText("Message added");
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Message added");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("needs a delay between 5 minutes and 23 hours.");
   await expectNoHorizontalPageOverflow(page);
 });
 
