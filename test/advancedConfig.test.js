@@ -2135,7 +2135,9 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
   },currentConfig());
   assert.equal(invalid.ok,false);
   const settings=read("portal-frontend/src/pages/Settings.jsx");
-  assert.match(settings,/Hold automatic promotional media until artwork is approved/u);
+  assert.match(settings,/Pause automatic promotion graphics and promotion-based follow-ups/u);
+  assert.match(settings,/pricing reminders, and promotion-specific automated follow-up text and attachments/u);
+  assert.match(settings,/Ordinary general follow-ups and verified customer-requested price replies are not blocked/u);
   assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
   assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
 });
