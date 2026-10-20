@@ -1731,6 +1731,66 @@ test("Invalid quiet hours automatically reveal the advanced delivery panel on sa
   await expect(panel.getByLabel("Follow-up quiet hours end")).toHaveValue("02:00");
 });
 
+test("Invalid quiet hours return later-step editors to the visible settings without losing drafts", async ({ page }) => {
+  let saved = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        message: "First reminder.",
+        quietHours: { enabled: true, start: "02:00", end: "02:00" },
+        additionalSteps: [
+          { delayMinutes: 480, timingMode: "after_reply", message: "Second reminder." },
+          { delayMinutes: 1200, timingMode: "after_reply", message: "Third reminder." },
+        ],
+      },
+    },
+    onConfigUpdate: (payload) => { saved = payload.automatedFollowUp; },
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+
+  const timeline = page.getByRole("list", { name: "Follow-up sequence timeline" });
+  const disclosure = page.getByRole("button", { name: /Advanced delivery options/ });
+  const panel = page.getByRole("region", { name: "Advanced delivery settings" });
+  const start = panel.getByLabel("Follow-up quiet hours start");
+
+  for (const stepNumber of [2, 3]) {
+    await timeline.getByRole("button", {
+      name: `Edit Follow-up ${stepNumber} from sequence overview`,
+    }).click();
+    await expect(page.getByLabel("Selected follow-up"))
+      .toContainText(`Editing Follow-up ${stepNumber} of 3`);
+    await expect(page.getByRole("region", { name: "Follow-up 1 editor" }))
+      .not.toBeVisible();
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+      .toContainText("Choose two different valid times for follow-up quiet hours.");
+    await expect(page.getByLabel("Selected follow-up"))
+      .toContainText("Editing Follow-up 1 of 3");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    await expect(panel).toBeVisible();
+    await expect(start).toBeFocused();
+    await expect(start).toHaveValue("02:00");
+    await expect(panel.getByLabel("Follow-up quiet hours end")).toHaveValue("02:00");
+    await expect(page.getByRole("region", { name: "Follow-up 1 editor" }))
+      .toBeVisible();
+    expect(saved).toBeNull();
+  }
+
+  await panel.getByLabel("Follow-up quiet hours end").fill("07:00");
+  await expect(page.getByText("You have unsaved changes")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved?.quietHours?.end).toBe("07:00");
+  expect(saved.additionalSteps).toHaveLength(2);
+  expect(saved.additionalSteps[0].message).toBe("Second reminder.");
+  expect(saved.additionalSteps[1].message).toBe("Third reminder.");
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Strict WhatsApp billing protection opens when enabled and remains collapsible", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
