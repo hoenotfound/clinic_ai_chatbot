@@ -3616,3 +3616,87 @@ test("native voice sends only a matching approved recording and persists its rea
     else process.env.CLIENT_SLUG = previousSlug;
   }
 });
+
+test("voice automation falls back to text for missing language, mismatched transcript or duplicate", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "voice-policy-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}review.ogg`;
+  const previewKey = `${prefix}review.mp3`;
+  const transcript = "Hello, can we arrange your assessment?";
+  const note = { key, previewKey, transcript, filename: "voice.mp3", approved: true };
+  const originals = {
+    shared: mediaStorage.isSharedFollowUpConfigKey,
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    query: pool.query,
+    audio: channelMessaging.sendAudioBuffer,
+    text: channelMessaging.sendText,
+  };
+  const sentText = [];
+  const claims = [];
+  let duplicated = false;
+  let matchingMetadata = true;
+  try {
+    mediaStorage.isSharedFollowUpConfigKey = () => true;
+    mediaStorage.getSharedFollowUpMediaInfo = async () => ({
+      mimeType: "audio/ogg", bytes: 1000,
+      metadata: {
+        voicelanguage: "en",
+        voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(
+          matchingMetadata ? transcript : "Different words", "en", previewKey
+        ),
+      },
+    });
+    pool.query = async () => ({ rows: duplicated ? [{ exists: 1 }] : [] });
+    channelMessaging.sendAudioBuffer = async () => {
+      assert.fail("An unsafe, mismatched or duplicate voice note must not be sent");
+    };
+    channelMessaging.sendText = async (contact, message) => {
+      sentText.push(message);
+      return { success: true, wamid: `wamid-text-${sentText.length}` };
+    };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 911, channel: "whatsapp", whatsapp_number: "60120000911",
+      trigger_message_id: 910, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I would like to know more about this treatment."],
+      treatment_interest: "Pelvic Care", trigger_message_content: "Thank you for your enquiry",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      claims.push(input);
+      return { id: 912 + claims.length, contact_id: 911, delivery_status: null };
+    };
+    messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+      id, contact_id: 911, whatsapp_message_id: wamid, delivery_status: "pending",
+    });
+    realtimeEvents.publish = () => {};
+    clinicConfig.automatedFollowUp.voiceNotes = { zh: note };
+    await runAutomatedFollowUps();
+    assert.equal(claims.at(-1).mediaKey, null); // English user, Chinese note.
+    assert.equal(sentText.at(-1), "Checking in");
+
+    clinicConfig.automatedFollowUp.voiceNotes = { en: note };
+    matchingMetadata = false;
+    await runAutomatedFollowUps();
+    assert.equal(claims.at(-1).mediaKey, null); // Digest tampering.
+    assert.equal(sentText.at(-1), "Checking in");
+
+    matchingMetadata = true;
+    duplicated = true;
+    await runAutomatedFollowUps();
+    assert.equal(claims.at(-1).mediaKey, null); // Already sent within seven days.
+    assert.equal(sentText.at(-1), "Checking in");
+    assert.equal(sentText.length, 3);
+  } finally {
+    mediaStorage.isSharedFollowUpConfigKey = originals.shared;
+    mediaStorage.getSharedFollowUpMediaInfo = originals.head;
+    pool.query = originals.query;
+    channelMessaging.sendAudioBuffer = originals.audio;
+    channelMessaging.sendText = originals.text;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
