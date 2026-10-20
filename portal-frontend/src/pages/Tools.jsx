@@ -1949,6 +1949,7 @@ function FollowUpTool({
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
   const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
+  const [focusAdvancedRule, setFocusAdvancedRule] = useState(null);
   const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
   useEffect(() => {
     if (form.whatsappFreeOnly?.enabled === true) setBillingProtectionOpen(true);
@@ -2024,6 +2025,45 @@ function FollowUpTool({
 
   // Quick template choices edit only the all-treatment TEXT rule for a given
   // existing slot. Treatment-specific media rules remain unchanged.
+  function openTreatmentMediaForSlot(slotHours) {
+    const currentRules = form.freeEntry?.templateRules || [];
+    const existingIndex = currentRules.findIndex((rule) =>
+      Number(rule.slotHours) === Number(slotHours) && rule.serviceName && rule.serviceName !== "*");
+    setShowAdvancedTemplateRules(true);
+    if (existingIndex >= 0) {
+      setFocusAdvancedRule(existingIndex);
+      return;
+    }
+    setFocusAdvancedRule(currentRules.length);
+    setForm((current) => ({
+      ...current,
+      freeEntry: {
+        ...current.freeEntry,
+        templateRules: [
+          ...(current.freeEntry?.templateRules || []),
+          {
+            slotHours: Number(slotHours),
+            serviceName: "",
+            templateName: "",
+            mediaUrl: "",
+            mediaKey: "",
+            mediaSourceId: "",
+            videoCodecVerified: false,
+          },
+        ],
+      },
+    }));
+  }
+
+  useEffect(() => {
+    if (focusAdvancedRule === null || !showAdvancedTemplateRules || followUpTab !== "whatsapp") return;
+    const editor = document.getElementById(`extended-template-rule-${focusAdvancedRule}`);
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView({ behavior: "smooth", block: "start" });
+    setFocusAdvancedRule(null);
+  }, [focusAdvancedRule, showAdvancedTemplateRules, followUpTab, form.freeEntry?.templateRules?.length]);
+
   function setSimpleSlotTemplate(slotHours, templateName) {
     setForm((current) => {
       const currentRules = current.freeEntry?.templateRules || [];
@@ -3679,6 +3719,15 @@ function FollowUpTool({
                           Multiple all-treatment rules exist at this time. Review them in Advanced before editing here.
                         </p>
                       )}
+                      <button
+                        type="button"
+                        aria-label={`Treatment media for +${hours}h follow-up`}
+                        disabled={!services?.length}
+                        onClick={() => openTreatmentMediaForSlot(hours)}
+                        className="mt-3 rounded-lg border border-[var(--color-primary)]/25 px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-40"
+                      >
+                        {treatmentCount > 0 ? "Edit treatment-specific video or image" : "Add treatment-specific video or image"}
+                      </button>
                     </div>
                   );
                 })}
@@ -3732,7 +3781,7 @@ function FollowUpTool({
                   }))}>Add template + media</button>
               </div>
               {(form.freeEntry?.templateRules || []).map((rule, index) => (
-                <div key={index} className="grid gap-2 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
+                <div key={index} id={`extended-template-rule-${index}`} role="region" aria-label={`Extended template rule ${index + 1}`} tabIndex={-1} className="grid gap-2 scroll-mt-4 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
                   <label className="text-xs font-semibold">Follow-up slot
                     <select aria-label={`Extended template slot ${index + 1}`} value={rule.slotHours}
                       className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
