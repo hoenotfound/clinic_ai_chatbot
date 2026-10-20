@@ -49,10 +49,12 @@ function configuredFollowUpVideoKeys() {
     ...new Set(
       steps.flatMap((step) => [
         String(step?.videoKey || "").trim(),
+        String(step?.voiceKey || "").trim(),
         ...(Array.isArray(step?.serviceOverrides)
-          ? step.serviceOverrides.map((item) =>
-              String(item?.videoKey || "").trim()
-            )
+          ? step.serviceOverrides.flatMap((item) => [
+              String(item?.videoKey || "").trim(),
+              String(item?.voiceKey || "").trim(),
+            ])
           : []),
       ]).filter(Boolean)
     ),
