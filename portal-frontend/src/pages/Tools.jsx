@@ -665,6 +665,11 @@ export default function Tools() {
       if ([step.imageUrl, step.videoKey, Object.values(step.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
         return issue(`Follow-up ${index + 1} can use only one attachment.`, "sequence", index);
       }
+      if (Object.entries(step.voiceNotes || {}).some(([lang, note]) =>
+        !["zh", "en", "ms"].includes(lang) || !note?.key || !note?.previewKey ||
+        !note?.transcript || note.approved !== true)) {
+        return issue(`Listen to and approve every uploaded voice recording in Follow-up ${index + 1}.`, "sequence", index);
+      }
       if (
         timingMode === "before_window_expiry" &&
         (
@@ -718,6 +723,11 @@ export default function Tools() {
         }
         if ([override.imageUrl, override.videoKey, Object.values(override.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
           return issue(`${serviceName} in Follow-up ${index + 1} can use only one attachment.`, "sequence", index, "service");
+        }
+        if (Object.entries(override.voiceNotes || {}).some(([lang, note]) =>
+          !["zh", "en", "ms"].includes(lang) || !note?.key || !note?.previewKey ||
+          !note?.transcript || note.approved !== true)) {
+          return issue(`Listen to and approve ${serviceName}'s voice recording before saving.`, "sequence", index, "service");
         }
         const serviceKey = serviceName.toLocaleLowerCase();
         if (seenServices.has(serviceKey)) {
