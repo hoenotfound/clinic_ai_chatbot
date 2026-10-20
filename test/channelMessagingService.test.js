@@ -1304,3 +1304,75 @@ test("Facebook image with accepted caption normalizes post-upload cancellation a
   assert.equal(result.partialCaptionSent,true);
   assert.equal(result.captionProviderMessageId,"fb-caption-accepted");
 });
+
+
+test("Messenger audio rechecks the live 24-hour window after upload and cancels expired sends", async (t) => {
+  const previous = metaAttachments.sendBuffer;
+  const priorPolicy = whatsappPolicy.checkFreeformAllowed;
+  t.after(() => {
+    metaAttachments.sendBuffer = previous;
+    whatsappPolicy.checkFreeformAllowed = priorPolicy;
+  });
+  let policyChecks = 0;
+  let sendApiCalls = 0;
+  whatsappPolicy.checkFreeformAllowed = async () => {
+    policyChecks++;
+    return policyChecks === 1 ? { allowed: true } :
+      { allowed: false, code: "outside_customer_service_window" };
+  };
+  metaAttachments.sendBuffer = async (_channel, _recipient, _type, _buffer, _mime, _name, options) => {
+    const eligible = await options.preSendCheck();
+    if (!eligible) return { success: false, cancelled: true };
+    sendApiCalls++;
+    return { success: true, externalMessageId: "should-not-send" };
+  };
+  const result = await messaging.sendAudioBuffer(
+    { id: 19, channel: "facebook", channel_user_id: "psid-19" },
+    Buffer.from("voice"), "audio/mpeg", "voice.mp3",
+    { purpose: "marketing", autoFollowUp: true, requireStaffMode: false });
+  assert.equal(policyChecks, 2);
+  assert.equal(sendApiCalls, 0);
+  assert.equal(result.cancelled, true);
+});
+
+test("Instagram audio rechecks the reply window after conversion and private temporary upload", async (t) => {
+  const prior = {
+    convert: audioConvert.convertToInstagramAudio,
+    upload: mediaStorage.uploadTemporaryMedia,
+    scheduleDelete: mediaStorage.scheduleTemporaryMediaDelete,
+    send: metaAttachments.sendUrlAttachment,
+    policy: whatsappPolicy.checkFreeformAllowed,
+  };
+  t.after(() => {
+    audioConvert.convertToInstagramAudio = prior.convert;
+    mediaStorage.uploadTemporaryMedia = prior.upload;
+    mediaStorage.scheduleTemporaryMediaDelete = prior.scheduleDelete;
+    metaAttachments.sendUrlAttachment = prior.send;
+    whatsappPolicy.checkFreeformAllowed = prior.policy;
+  });
+  let policyChecks = 0;
+  let metaSends = 0;
+  whatsappPolicy.checkFreeformAllowed = async () => {
+    policyChecks++;
+    return policyChecks === 1 ? { allowed: true } :
+      { allowed: false, code: "outside_customer_service_window" };
+  };
+  audioConvert.convertToInstagramAudio = async () => ({
+    buffer: Buffer.from("converted audio"), mimeType: "audio/mp4",
+  });
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    url: "https://private-storage.example.test/audio.m4a", key: "temp/test.m4a",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  metaAttachments.sendUrlAttachment = async () => {
+    metaSends++;
+    throw Error("Expired audio must never reach Meta Send API");
+  };
+  const result = await messaging.sendAudioBuffer(
+    { id: 20, channel: "instagram", channel_user_id: "igsid-20" },
+    Buffer.from("mp3"), "audio/mpeg", "voice.mp3",
+    { purpose: "marketing", autoFollowUp: true, requireStaffMode: false });
+  assert.equal(policyChecks, 2);
+  assert.equal(metaSends, 0);
+  assert.equal(result.cancelled, true);
+});
