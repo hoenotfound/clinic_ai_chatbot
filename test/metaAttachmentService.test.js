@@ -302,3 +302,64 @@ test("Facebook attachment with still-valid ownership sends successfully after up
   assert.equal(posts.length,2);
   assert.match(posts[1],/\/messages$/);
 });
+
+
+test("automated Meta audio marks network, 5xx and missing-ID sends unconfirmed but 4xx rejected", async (t) => {
+  const prevFetch = global.fetch;
+  const prevToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  const prevPage = process.env.INSTAGRAM_PAGE_ID;
+  t.after(() => {
+    global.fetch = prevFetch;
+    if (prevToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = prevToken;
+    if (prevPage === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = prevPage;
+  });
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "test-token";
+  process.env.INSTAGRAM_PAGE_ID = "ig-page-audio";
+  const args = ["instagram", "recipient", "audio",
+    "https://example.test/voice.m4a", { autoFollowUp: true }];
+
+  global.fetch = async () => { throw new Error("request timed out after posting"); };
+  const network = await metaAttachments.sendUrlAttachment(...args);
+  assert.equal(network.success, false);
+  assert.equal(network.unknown, true);
+  assert.equal(network.ambiguous, true);
+  assert.match(network.error, /unconfirmed/);
+
+  global.fetch = async () => new Response(JSON.stringify({ error: { message: "Internal Server Error" } }), { status: 503 });
+  const serverError = await metaAttachments.sendUrlAttachment(...args);
+  assert.equal(serverError.success, false);
+  assert.equal(serverError.unknown, true);
+  assert.equal(serverError.ambiguous, true);
+
+  global.fetch = async () => new Response(JSON.stringify({ ok: true }), { status: 200 });
+  const noId = await metaAttachments.sendUrlAttachment(...args);
+  assert.equal(noId.success, false);
+  assert.equal(noId.unknown, true);
+
+  global.fetch = async () => new Response(JSON.stringify({ error: { message: "Invalid recipient" } }), { status: 400 });
+  const rejected = await metaAttachments.sendUrlAttachment(...args);
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.unknown, undefined);
+  assert.equal(rejected.error, "Invalid recipient");
+});
+
+test("ordinary social attachment errors retain existing failure handling", async (t) => {
+  const prevFetch = global.fetch;
+  const prevToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  const prevPage = process.env.FACEBOOK_PAGE_ID;
+  t.after(() => {
+    global.fetch = prevFetch;
+    if (prevToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = prevToken;
+    if (prevPage === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = prevPage;
+  });
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "test-token";
+  process.env.FACEBOOK_PAGE_ID = "fb-page";
+  global.fetch = async () => { throw new Error("network error"); };
+  const result = await metaAttachments.sendAttachmentId("facebook", "customer", "image", "media-id");
+  assert.equal(result.success, false);
+  assert.equal(result.unknown, undefined);
+});
