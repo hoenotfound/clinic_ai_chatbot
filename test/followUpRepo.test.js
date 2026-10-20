@@ -382,7 +382,7 @@ test("discarding an unsent social follow-up image only removes an unaccepted com
   assert.equal(discarded.contact_id, 23);
 });
 
-test("real follow-up repository permits OGG/Opus voice notes, not arbitrary audio", async (t) => {
+test("real follow-up repository permits OGG WhatsApp and MP3 social voice notes, not arbitrary audio", async (t) => {
   const previousQuery = pool.query;
   t.after(() => { pool.query = previousQuery; });
   const statements = [];
@@ -408,13 +408,16 @@ test("real follow-up repository permits OGG/Opus voice notes, not arbitrary audi
   assert.equal(statements[0].params[13], base.mediaKey);
   assert.equal(statements[0].params[14], "audio/ogg");
 
-  await assert.rejects(
-    followUpRepo.saveIfStillEligible({ ...base, mediaMimeType: "audio/mpeg" }),
-    /Invalid automated follow-up step or delay/
-  );
+  await followUpRepo.saveIfStillEligible({
+    ...base,
+    mediaKey: "clients/neutro/messages/follow-up-config/voice-preview.mp3",
+    mediaMimeType: "audio/mpeg",
+  });
+  assert.equal(statements.length, 2);
+  assert.equal(statements[1].params[14], "audio/mpeg");
   await assert.rejects(
     followUpRepo.saveIfStillEligible({ ...base, mediaMimeType: "image/jpeg" }),
     /Invalid automated follow-up step or delay/
   );
-  assert.equal(statements.length, 1, "unsupported attachments must never reach SQL");
+  assert.equal(statements.length, 2, "unsupported attachments must never reach SQL");
 });
