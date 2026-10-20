@@ -155,7 +155,7 @@ const candidateSql = `
     AND c.whatsapp_marketing_opt_out_at IS NULL
     AND lead.marketing_consent = 'opted_in'
     AND (SELECT count(*) FROM whatsapp_free_entry_followup_attempts sent
-         WHERE sent.first_reply_message_id=first_reply.id AND sent.status='accepted') < 3
+         WHERE sent.first_reply_message_id=first_reply.id AND sent.status='accepted') < LEAST(CARDINALITY($4::integer[]), 4)
     AND lead.is_closed = false
     AND COALESCE(lead.stage_type, 'open') = 'open'
     AND COALESCE(lead.system_key, '') NOT IN ('appointment_set','visited')
@@ -285,20 +285,25 @@ function settings(env = process.env) {
     templateName, language, fallbackLanguage, slots, templateRules, sevenDayVerified };
 }
 
-// The worker and the final provider-send guard MUST agree on the ceiling.
-// When free-only mode is on, the seven-day flag alone cannot consume slots
-// beyond 72h. Fail closed when pricing evidence is unavailable, before any
-// attempt is claimed or a template is uploaded to Meta.
+// Keep the seven-day follow-up ceiling independent of Strict RM0.
+// Customer replies and staff messaging must not depend on a global billing gate.
+// A deliberate rollout flag AND independently qualified, post-72h Meta
+// free_entry_point / billable=false evidence are still mandatory for 96h/144h.
+// Re-check on discovery, claim and immediately before Meta sends. If proof
+// cannot be verified, skip ONLY the post-72h slots (48h/66h still work).
 async function alignedSettings(active, database = pool) {
   if (!active) return active;
-  // Day 4–7 MUST NOT be dispatched without active Strict RM0 protection.
-  // An environment flag or a historical nonbillable callback alone cannot
-  // authorize a paid-risk automated marketing template.
-  if (!zeroCostGuard.enabled()) return { ...active, sevenDayVerified: false };
-  // Independently verified post-72h Meta evidence is also mandatory.
-  // Missing DB evidence (or a failed query) must never unlock longer slots.
-  const ceiling = await zeroCostGuard.authorizedCeilingHours({ database });
-  return { ...active, sevenDayVerified: ceiling === 168 };
+  if (active.sevenDayVerified !== true) {
+    return { ...active, sevenDayVerified: false };
+  }
+  try {
+    const ceiling = await zeroCostGuard.authorizedCeilingHours({ database });
+    return { ...active, sevenDayVerified: ceiling === 168 };
+  } catch (error) {
+    console.warn("[WhatsApp FEP] Day 4–7 proof unavailable; continuing 48h/66h only:",
+      error?.message);
+    return { ...active, sevenDayVerified: false };
+  }
 }
 
 function selectedSlot(candidate, slots, now = new Date()) {
@@ -932,7 +937,7 @@ const potentialDueSql = `
     AND now() < first_reply.created_at + (slot.hours + 12) * interval '1 hour'
     AND (SELECT COUNT(*) FROM whatsapp_free_entry_followup_attempts sent
          WHERE sent.first_reply_message_id = first_reply.id
-           AND sent.status = 'accepted') < 3
+           AND sent.status = 'accepted') < LEAST(CARDINALITY($2::integer[]), 4)
     AND NOT EXISTS (
       SELECT 1 FROM whatsapp_free_entry_followup_attempts prior
       LEFT JOIN whatsapp_free_entry_pricing_evidence prior_billing

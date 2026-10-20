@@ -4,16 +4,16 @@
 - Regular 2h/6h/20h: enabled.
 - Extended template slots: [48,66]. 48h `ns_enquiry_reengagement`, 66h `ns_fu2_general_checkin`.
 - Strict RM0: disabled. Activation timestamp: null.
-- The worker cannot activate 96h/144h while Strict RM0 is disabled, even if the seven-day env flag is true.
-- No independently verified post-72h `free_entry_point`, `billable=false` receipt exists as of 20 October 2026.
+- Strict RM0 remains intentionally disabled. The Day 4/Day 6 scheduler no longer depends on Strict RM0. Longer slots still require a deliberate `WHATSAPP_FEP_7DAY_VERIFIED=true` rollout flag, independent account-level post-72h Meta proof, and all lead-level marketing safeguards.
+- Verified proof now exists: contact #497 had a WhatsApp template sent at 20 Oct 2026 13:46 MYT (~87.6h after the first ad reply), delivered with a Meta `free_entry_point`, `billable=false` receipt. The **exact production `SEVEN_DAY_PROOF_SQL`** returns `verified=true`. This is historical eligibility evidence, **not a guarantee that future marketing templates will be free**.
 - Six template variants were **submitted and then verified APPROVED by Meta on 20 October 2026**. They are **not scheduled or enabled**. Approval only authorizes use of the templates, not guaranteed delivery or free billing.
 - Historical 10 October billable receipt remains unresolved. The messaging account has a payment method; do not promise zero fees.
 
 ## Proposed schedule
 - 48h — current `ns_enquiry_reengagement`
 - 66h — current `ns_fu2_general_checkin`
-- 96h — draft `ns_day4_checkin`: question-oriented gentle check-in
-- 144h — draft `ns_day6_invitation`: low-pressure final invitation
+- 96h — Meta-approved `ns_day4_checkin`: question-oriented gentle check-in (NOT enabled)
+- 144h — Meta-approved `ns_day6_invitation`: low-pressure final invitation (NOT enabled)
 - Never run multiple missed slots at once or backfill older conversations.
 - Retain 00:00–07:00 MYT quiet hours and all existing protections: consent, opt-out, 24h silence after inbound, appointment/visit, human intervention, temperature, billing evidence, previous attempt outcomes, template approval and language. Do not promise clinical outcomes or claim that the paid trial is free.
 - Meta provider acceptance alone is not delivery; Meta delivery evidence alone is not pricing proof.
@@ -68,7 +68,7 @@ Boleh tanya harga semasa, penilaian atau sesi percubaan, atau masa yang sesuai u
 
 ## Proposed FUTURE config patch (do not execute without approval)
 
-Preserve all other clinic_config fields. Once all six Meta templates are APPROVED and billing verification is complete, extend ONLY `automatedFollowUp.freeEntry` by adding slots 96 and 144 and wildcard rules:
+Preserve all other clinic_config fields. For a separately approved rollout, extend ONLY `automatedFollowUp.freeEntry` by adding slots 96 and 144 and wildcard rules; leave Strict RM0 disabled:
 ```json
 {
   "slotsHours": [48, 66, 96, 144],
@@ -95,9 +95,10 @@ Preserve all other clinic_config fields. Once all six Meta templates are APPROVE
 Do not replace existing 48h/66h rules. Config change must be a deliberate later rollout with activation/backfill audit.
 
 ## Activation prerequisites
-1. Explicitly approve and submit six marketing templates, then verify all six APPROVED.
-2. Resolve the historic billable callback in Meta Billing Hub.
-3. Review impact of Strict RM0 and enable only on explicit instruction; this can block legitimate replies.
-4. Verify an independent, qualified >72-hour `free_entry_point`, `billable=false` provider callback on Neutro's own account, not attributable to a newer paid ad re-entry. **Never initiate a potentially paid customer message merely to create proof.**
-5. After evidence exists, verify `WHATSAPP_FEP_7DAY_VERIFIED=true` and test inactive candidate eligibility, 1h safety buffer, quiet-hour behavior, disabled/failed DB paths, billable receipt halts, template locale and opt-outs.
-6. Enable 96/144 only in a separately reviewed rollout. Observe accepted, delivered/read, and billable=false receipts distinctly.
+1. Meta approval of all six variants: verified on 20 Oct 2026.
+2. Independent 87.6h Meta non-billable proof: verified for contact #497 (the production canonical proof query returned true).
+3. Keep Strict RM0 **OFF**, as requested, to avoid blocking normal customer replies. Do not re-enable it as a prerequisite to this sequence.
+4. Reconcile the historic 10 Oct billable receipt in Meta Billing Hub. Future marketing templates **may still be charged**; independent proof does not guarantee RM0 for all recipients or sends.
+5. Explicitly approve a *separate* activation of `WHATSAPP_FEP_7DAY_VERIFIED=true` and live `[48,66,96,144]` config only after a safe rollout review. Neither setting is changed by this PR.
+6. Test candidate eligibility, the 1h expiry buffer, quiet-hour behavior, absence of staff takeover or customer opt-out, blocked previous failed/unknown sends, template language and approval, and the four-slot cap.
+7. Observe Meta accepted vs delivered/read vs `billable=false` receipts after each new send. Stop Day 4/6 on any new `billable=true` receipt or material messaging issue. No customer test sends are authorized by this PR.
