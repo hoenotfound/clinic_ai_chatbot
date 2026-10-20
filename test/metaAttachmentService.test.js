@@ -422,3 +422,50 @@ test("Messenger attachment upload has a deadline and cannot itself deliver a voi
   assert.equal(result.unknown, undefined);
   assert.equal(requests, 1, "no customer-facing Send API was called");
 });
+
+
+test("new 12-second media timeouts are restricted to automated audio", async (t) => {
+  const oldFetch = global.fetch;
+  const oldPage = process.env.FACEBOOK_PAGE_ID;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = oldFetch;
+    if (oldPage === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = oldPage;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+  process.env.FACEBOOK_PAGE_ID = "page-id";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "token";
+  const operations = [];
+  global.fetch = async (url, options) => {
+    operations.push({ url, signal: options.signal });
+    const uploaded = url.endsWith("/message_attachments");
+    return new Response(
+      JSON.stringify(uploaded ? { attachment_id: "att-1" } : { message_id: "mid-1" }),
+      { status: 200 }
+    );
+  };
+  const normalImage = await metaAttachments.sendBuffer("facebook", "psid",
+    "image", Buffer.from("fake image"), "image/png", "image.png", { autoFollowUp: true });
+  assert.equal(normalImage.success, true);
+  assert.equal(operations.length, 2);
+  for (const op of operations) assert.equal(op.signal, undefined,
+    "ordinary social image attachment operations must not inherit 12s voice deadlines");
+
+  operations.length = 0;
+  const manualAudio = await metaAttachments.sendBuffer("facebook", "psid",
+    "audio", Buffer.from("voice bytes"), "audio/mpeg", "voice.mp3", {});
+  assert.equal(manualAudio.success, true);
+  assert.equal(operations.length, 2);
+  for (const op of operations) assert.equal(op.signal, undefined,
+    "staff audio messages must retain preexisting timeout behavior");
+
+  operations.length = 0;
+  const automatedAudio = await metaAttachments.sendBuffer("facebook", "psid",
+    "audio", Buffer.from("voice bytes"), "audio/mpeg", "voice.mp3",
+    { autoFollowUp: true });
+  assert.equal(automatedAudio.success, true);
+  assert.equal(operations.length, 2);
+  for (const op of operations) assert.ok(op.signal, "automated audio requests must be bounded");
+});
