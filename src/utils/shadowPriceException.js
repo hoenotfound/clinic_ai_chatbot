@@ -71,8 +71,27 @@ const PRICE_CONFIRMATION_QUESTION = /[?？]|(?:\b(?:right|correct)\b|吗|嗎)\s*
 // Only allow a second, recovery-related question after an explicit, previously
 // quoted price confirmation. This does not grant pricing authorization for a
 // service change, a different amount, or a general compound request.
-const RECOVERY_FOLLOWUP_ONLY =
-  /^(?:(?:(?:需要|需不需要|需|有没有|有沒有|是否有|会有|會有|有|要)?\s*(?:修复期|修復期|恢复期|恢復期|康复期|康復期|恢复时间|恢復時間|修复时间|修復時間)\s*(?:吗|嗎|呢|多久|几天|幾天|大概多久|要多久)?)|(?:需要|要)\s*休息(?:几|幾|多少)?天|(?:(?:is\s+there|any|what\s+about|how\s+long(?:\s+is)?)\s+(?:(?:any|a|the)\s+)?(?:downtime|recovery(?:\s+(?:time|period))?|healing(?:\s+time)?|aftercare))|(?:ada|perlu|berapa\s+lama)\s+(?:(?:masa|tempoh)\s+)?pemulihan)\s*[?？!.。！]*$/iu;
+// Only recovery-related questions may follow the exact verified RM quote.
+// Other prices, treatments, promotions, or image requests never inherit
+// the old price authorization.
+const RECOVERY_FOLLOWUP_ONLY = new RegExp([
+  String.raw`^(?:`,
+  String.raw`(?:(?:需要|需不需要|需|有没有|有沒有|是否有|会有|會有|有|要)?\s*`,
+  String.raw`(?:修复期|修復期|恢复期|恢復期|康复期|康復期|恢复时间|恢復時間|修复时间|修復時間)`,
+  String.raw`\s*(?:吗|嗎|呢|多久|几天|幾天|大概多久|要多久)?)`,
+  String.raw`|(?:(?:需要|需|要|是否需要)\s*休息\s*(?:多久|多长|多長|(?:几|幾|多少)\s*天|几日|幾日)?)`,
+  String.raw`|(?:(?:is\s+there|any|what\s+about|how\s+long(?:\s+is)?)\s+`,
+  String.raw`(?:(?:any|a|the)\s+)?(?:downtime|recovery(?:\s+(?:time|period))?|healing(?:\s+time)?|aftercare))`,
+  String.raw`|(?:does\s+(?:it|this|the\s+treatment)\s+(?:have|need|require)\s+`,
+  String.raw`(?:(?:any|a|the)\s+)?(?:downtime|recovery(?:\s+(?:time|period))?|healing(?:\s+time)?))`,
+  String.raw`|(?:will\s+(?:i|we)\s+(?:need|have)\s+`,
+  String.raw`(?:(?:any|some|a)\s+)?(?:time\s+to\s+recover|recovery(?:\s+(?:time|period))?|downtime))`,
+  String.raw`|(?:how\s+long\s+does\s+(?:recovery|healing|it|this)\s+(?:take|last))`,
+  String.raw`|(?:how\s+many\s+days\s+(?:of|for)\s+(?:recovery|downtime|healing))`,
+  String.raw`|(?:ada|perlu|berapa\s+lama)\s+`,
+  String.raw`(?:(?:masa|tempoh)\s+)?(?:pemulihan|recovery(?:\s+time)?|downtime)`,
+  String.raw`)\s*[?？!.。！]*$`,
+].join(""), "iu");
 
 function priorQuoteConfirmationPart(customerText) {
   const text = String(customerText || "").trim();
