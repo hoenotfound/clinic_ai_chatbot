@@ -1539,39 +1539,79 @@ function ServiceVideoPicker({
   );
 }
 
+function ServiceVoicePicker({ voiceKey, voiceFilename, uploading, onUpload, onChange, label = "Voice note" }) {
+  const inputRef = useRef(null);
+  async function chooseFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const uploaded = await onUpload(file);
+    if (uploaded?.key) onChange(uploaded);
+  }
+  return (
+    <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">{label}</p>
+          <p className="truncate text-[10px] text-[var(--color-text-muted)]">
+            {voiceKey ? voiceFilename || "Voice recording ready" : "Upload a recording, then save to activate"}
+          </p>
+        </div>
+        <input ref={inputRef} type="file" accept=".ogg,.mp3,.m4a,.mp4,.wav,.webm,.aac,audio/*"
+          className="hidden" aria-label={`${label} upload`} onChange={chooseFile} />
+        <div className="flex shrink-0 gap-3">
+          <button type="button" disabled={uploading} onClick={() => inputRef.current?.click()}
+            className="text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50">
+            {uploading ? "Processing…" : voiceKey ? "Replace" : "Upload voice"}
+          </button>
+          {voiceKey && <button type="button" disabled={uploading}
+            onClick={() => onChange({ key: "", filename: "" })}
+            className="text-xs text-[var(--color-text-muted)]">Remove</button>}
+        </div>
+      </div>
+      {voiceKey && <audio className="mt-3 w-full" controls preload="none"
+        src={`/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(voiceKey)}`} />}
+      <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+        Native WhatsApp voice note, not an attached file. Only sent within the 24-hour reply window.
+        Voice notes cannot carry text captions; text is used for other channels.
+      </p>
+    </div>
+  );
+}
+
 function FollowUpMediaPicker({
   imageUrl,
   videoKey,
   videoFilename,
+  voiceKey,
+  voiceFilename,
   uploadingImage,
   uploadingVideo,
+  uploadingVoice,
   onUploadImage,
   onUploadVideo,
+  onUploadVoice,
   onChange,
   label = "Media",
-  description = "Optional. Attach one image or one MP4 video.",
+  description = "Optional. Attach one image, video or voice note.",
 }) {
-  const initialType = videoKey ? "video" : imageUrl ? "image" : "none";
+  const initialType = voiceKey ? "voice" : videoKey ? "video" : imageUrl ? "image" : "none";
   const [selectedType, setSelectedType] = useState(initialType);
 
   useEffect(() => {
-    if (videoKey) setSelectedType("video");
+    if (voiceKey) setSelectedType("voice");
+    else if (videoKey) setSelectedType("video");
     else if (imageUrl) setSelectedType("image");
     // Keep a newly selected empty media picker open during type switches.
     // Only an explicit removal action should select "No media".
-  }, [imageUrl, videoKey]);
+  }, [imageUrl, videoKey, voiceKey]);
 
   function choose(type) {
     setSelectedType(type);
-    if (type === "none") {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
-      return;
-    }
-    if (type === "image" && videoKey) {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
-    }
-    if (type === "video" && imageUrl) {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
+    const hasOtherMedia = (imageUrl && type !== "image") ||
+      (videoKey && type !== "video") || (voiceKey && type !== "voice");
+    if (type === "none" || hasOtherMedia) {
+      onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceKey: "", voiceFilename: "" });
     }
   }
 
@@ -1583,7 +1623,7 @@ function FollowUpMediaPicker({
       </div>
 
       <div
-        className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
+        className="mt-3 grid grid-cols-4 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
         role="radiogroup"
         aria-label={`${label} type`}
       >
@@ -1591,6 +1631,7 @@ function FollowUpMediaPicker({
           ["none", "No media"],
           ["image", "Image"],
           ["video", "Video"],
+          ["voice", "Voice note"],
         ].map(([type, text]) => {
           const active = selectedType === type;
           return (
@@ -1600,7 +1641,7 @@ function FollowUpMediaPicker({
               role="radio"
               aria-checked={active}
               onClick={() => choose(type)}
-              disabled={uploadingImage || uploadingVideo}
+              disabled={uploadingImage || uploadingVideo || uploadingVoice}
               className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition sm:text-xs ${active
                 ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                 : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
@@ -1622,12 +1663,27 @@ function FollowUpMediaPicker({
               imageUrl: nextImageUrl,
               videoKey: "",
               videoFilename: "",
+              voiceKey: "",
+              voiceFilename: "",
             });
           }}
           label={`${label} image`}
         />
       )}
 
+      {selectedType === "voice" && (
+        <ServiceVoicePicker
+          voiceKey={voiceKey}
+          voiceFilename={voiceFilename}
+          uploading={uploadingVoice}
+          onUpload={onUploadVoice}
+          onChange={({ key, filename }) => {
+            if (!key) setSelectedType("none");
+            onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceKey: key, voiceFilename: filename });
+          }}
+          label={`${label} voice note`}
+        />
+      )}
       {selectedType === "video" && (
         <ServiceVideoPicker
           videoKey={videoKey}
@@ -1640,6 +1696,8 @@ function FollowUpMediaPicker({
               imageUrl: "",
               videoKey: key,
               videoFilename: filename,
+              voiceKey: "",
+              voiceFilename: "",
             });
           }}
           label={`${label} video`}
