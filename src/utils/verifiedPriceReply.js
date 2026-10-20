@@ -260,7 +260,7 @@ function nonPriceExplanation(reply) {
 // price must replace Gemini's original reply. Never promise zero downtime or
 // prescribe an individual recovery period from a marketing conversation.
 const RECOVERY_OR_DOWNTIME_QUESTION =
-  /(?:修复期|修復期|恢复期|恢復期|康复期|康復期|修复时间|修復時間|恢复时间|恢復時間|需要休息(?:几|幾|多少)?天|要休息(?:几|幾|多少)?天|\bdowntime\b|\brecovery\s*(?:time|period)?\b|\bhealing\s*(?:time|period)\b|\baftercare\b|\b(?:masa|tempoh)\s+pemulihan\b)/iu;
+  /(?:修复期|修復期|恢复期|恢復期|康复期|康復期|修复时间|修復時間|恢复时间|恢復時間|(?:需要|需|要|是否需要)\s*休息\s*(?:多久|多长|多長|(?:几|幾|多少)\s*天|几日|幾日)?|\bdowntime\b|\brecovery\s*(?:time|period)?\b|\bhealing\s*(?:time|period)\b|\baftercare\b|\btime\s+to\s+recover\b|\b(?:masa|tempoh)\s+pemulihan\b|\bpemulihan\b)/iu;
 
 function recoveryPeriodGuidance(customerText, language = "zh") {
   if (!RECOVERY_OR_DOWNTIME_QUESTION.test(String(customerText || ""))) return "";
