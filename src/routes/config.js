@@ -8,6 +8,7 @@ const followUpMediaReferencesRepo = require("../db/followUpMediaReferencesRepo")
 const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaStorage = require("../services/mediaStorageService");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
+const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
@@ -101,6 +102,44 @@ function handleFollowUpVideoUpload(req, res, next) {
   });
 }
 
+const MAX_FOLLOW_UP_VOICE_BYTES = 8 * 1024 * 1024;
+const FOLLOW_UP_VOICE_MIME_TYPES = new Set([
+  "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a",
+  "audio/wav", "audio/x-wav", "audio/webm", "audio/ogg", "audio/aac",
+]);
+const followUpVoiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FOLLOW_UP_VOICE_BYTES },
+  fileFilter: (req, file, cb) => {
+    if (!FOLLOW_UP_VOICE_MIME_TYPES.has(String(file.mimetype || "").toLowerCase())) {
+      return cb(new Error("Choose an MP3, M4A, WAV, WebM, OGG or AAC recording."));
+    }
+    cb(null, true);
+  },
+});
+
+function handleFollowUpVoiceUpload(req, res, next) {
+  followUpVoiceUpload.single("voice")(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "Voice recording must be under 8MB." });
+    }
+    return res.status(400).json({ error: err.message || "Could not upload voice recording." });
+  });
+}
+
+function isFollowUpVoiceKey(value) {
+  if (value === undefined || value === "") return true;
+  if (!isString(value) || value.length > 1024 || value.includes("..")) return false;
+  try {
+    return mediaStorage.isOwnedStoredMediaKey(value) &&
+      value.startsWith(mediaStorage.followUpConfigVideoPrefix()) &&
+      value.toLowerCase().endsWith(".ogg");
+  } catch {
+    return false;
+  }
+}
+
 function isFollowUpVideoKey(value) {
   if (value === undefined || value === "") return true;
   if (!isString(value) || value.length > 1024 || value.includes("..")) return false;
@@ -126,10 +165,12 @@ function followUpVideoKeys(value) {
     ...new Set(
       steps.flatMap((step) => [
         String(step?.videoKey || "").trim(),
+        String(step?.voiceKey || "").trim(),
         ...(Array.isArray(step?.serviceOverrides)
-          ? step.serviceOverrides.map((item) =>
-              String(item?.videoKey || "").trim()
-            )
+          ? step.serviceOverrides.flatMap((item) => [
+              String(item?.videoKey || "").trim(),
+              String(item?.voiceKey || "").trim(),
+            ])
           : []),
         ...(Array.isArray(value.freeEntry?.templateRules) ?
           value.freeEntry.templateRules.map((rule) => String(rule.mediaKey || "").trim()) : []),
@@ -353,6 +394,7 @@ function isFollowUpTranslations(value) {
 function isFollowUpServiceOverride(value) {
   const imageUrl = isString(value?.imageUrl) ? value.imageUrl.trim() : "";
   const videoKey = isString(value?.videoKey) ? value.videoKey.trim() : "";
+  const voiceKey = isString(value?.voiceKey) ? value.voiceKey.trim() : "";
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.serviceName) &&
@@ -362,9 +404,12 @@ function isFollowUpServiceOverride(value) {
     isFollowUpTranslations(value.translations) &&
     (value.imageUrl === undefined || isString(value.imageUrl)) &&
     isFollowUpVideoKey(value.videoKey) &&
+    isFollowUpVoiceKey(value.voiceKey) &&
+    (value.voiceFilename === undefined ||
+      (isString(value.voiceFilename) && value.voiceFilename.trim().length <= 255)) &&
     (value.videoFilename === undefined ||
       (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
-    !(imageUrl && videoKey)
+    [imageUrl, videoKey, voiceKey].filter(Boolean).length <= 1
   );
 }
 
@@ -390,9 +435,12 @@ function isFollowUpStep(value) {
     isFollowUpTranslations(value.translations) &&
     isString(value.imageUrl) &&
     isFollowUpVideoKey(value.videoKey) &&
+    isFollowUpVoiceKey(value.voiceKey) &&
+    (value.voiceFilename === undefined ||
+      (isString(value.voiceFilename) && value.voiceFilename.trim().length <= 255)) &&
     (value.videoFilename === undefined ||
       (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
-    !(value.imageUrl.trim() && String(value.videoKey || "").trim()) &&
+    [value.imageUrl.trim(), String(value.videoKey || "").trim(), String(value.voiceKey || "").trim()].filter(Boolean).length <= 1 &&
     Array.isArray(value.serviceOverrides) &&
     value.serviceOverrides.length <= 50 &&
     value.serviceOverrides.every(isFollowUpServiceOverride)
@@ -559,11 +607,15 @@ function prepareFollowUpServiceOverrides(requested) {
       typeof item.imageUrl === "string" ? item.imageUrl.trim() : "";
     const videoKey =
       typeof item.videoKey === "string" ? item.videoKey.trim() : "";
+    const voiceKey = typeof item.voiceKey === "string" ? item.voiceKey.trim() : "";
+    const voiceFilename = typeof item.voiceFilename === "string"
+      ? item.voiceFilename.trim().slice(0, 255) : "";
     const videoFilename =
       typeof item.videoFilename === "string"
         ? item.videoFilename.trim().slice(0, 255)
         : "";
-    if (!isFollowUpVideoKey(videoKey) || (imageUrl && videoKey)) return null;
+    if (!isFollowUpVideoKey(videoKey) || !isFollowUpVoiceKey(voiceKey) ||
+        [imageUrl, videoKey, voiceKey].filter(Boolean).length > 1) return null;
 
     seen.add(normalizedService);
     prepared.push({
@@ -573,6 +625,8 @@ function prepareFollowUpServiceOverrides(requested) {
       imageUrl,
       videoKey,
       videoFilename,
+      voiceKey,
+      voiceFilename,
     });
   }
   return prepared;
@@ -608,6 +662,9 @@ function prepareFollowUpStep(requested) {
     typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
   const videoKey =
     typeof requested.videoKey === "string" ? requested.videoKey.trim() : "";
+  const voiceKey = typeof requested.voiceKey === "string" ? requested.voiceKey.trim() : "";
+  const voiceFilename = typeof requested.voiceFilename === "string"
+    ? requested.voiceFilename.trim().slice(0, 255) : "";
   const videoFilename =
     typeof requested.videoFilename === "string"
       ? requested.videoFilename.trim().slice(0, 255)
@@ -627,6 +684,8 @@ function prepareFollowUpStep(requested) {
     imageUrl,
     videoKey,
     videoFilename,
+    voiceKey,
+    voiceFilename,
     serviceOverrides,
   };
   return serviceOverrides && isFollowUpStep(prepared) ? prepared : null;
@@ -1730,6 +1789,43 @@ router.post(
     }
   }
 );
+
+router.post("/automated-follow-up/voice", handleFollowUpVoiceUpload, async (req, res) => {
+  try {
+    if (!req.file?.buffer?.length) return res.status(400).json({ error: "Choose a recorded voice message." });
+    if (!mediaStorage.isStorageConfigured()) return res.status(503).json({ error: "Private voice storage is not configured." });
+    const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
+    if (!converted?.whatsapp?.buffer?.length) {
+      return res.status(400).json({ error: "This recording could not be converted to a WhatsApp voice note." });
+    }
+    const key = await mediaStorage.uploadMedia(converted.whatsapp.buffer, "audio/ogg", {
+      contactId: "follow-up-config",
+    });
+    return res.status(201).json({
+      key,
+      filename: String(req.file.originalname || "voice.ogg").replace(/[\\/\0]/g, "").slice(0, 255),
+      previewUrl: `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(key)}`,
+    });
+  } catch (error) {
+    console.error("Failed to upload follow-up voice:", error);
+    return res.status(500).json({ error: "Unable to save voice recording." });
+  }
+});
+
+router.get("/automated-follow-up/voice-preview", async (req, res) => {
+  try {
+    const key = String(req.query.key || "").trim();
+    if (!key || !isFollowUpVoiceKey(key)) return res.status(404).send("Not found");
+    if (!mediaStorage.isStorageConfigured()) return res.status(503).send("Voice storage unavailable");
+    const url = mediaStorage.createPresignedGetUrl(key, { expiresSeconds: 5 * 60 });
+    res.set("Cache-Control", "private, no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    return res.redirect(302, url);
+  } catch (error) {
+    console.error("Failed to preview follow-up voice:", error);
+    return res.status(500).send("Unable to load voice preview");
+  }
+});
 
 router.get("/automated-follow-up/video-preview", async (req, res) => {
   try {
