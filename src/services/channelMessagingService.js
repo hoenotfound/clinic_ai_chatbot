@@ -441,20 +441,6 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   const initialCancellation = await preSendCancelled(sendOptions);
   if (initialCancellation) return initialCancellation;
 
-  // Audio encoding and Meta attachment upload can take long enough to cross
-  // the 24-hour customer reply window. Requery live policy immediately before
-  // the social Send API call (not merely before conversion).
-  const socialAudioOptions = ["facebook", "instagram"].includes(channel)
-    ? {
-        ...sendOptions,
-        preSendCheck: async () => {
-          const latest = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
-          if (latest.blocked) return false;
-          return !(await preSendCancelled(optionsForPolicy(options, latest.policy)));
-        },
-      }
-    : sendOptions;
-
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename, options);
     if (!mediaId) {
@@ -615,6 +601,20 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   const sendOptions = optionsForPolicy(options, guard.policy);
   const initialCancellation = await preSendCancelled(sendOptions);
   if (initialCancellation) return initialCancellation;
+
+  // Audio encoding and Meta attachment upload can take long enough to cross
+  // the 24-hour customer reply window. Requery live policy immediately before
+  // the social Send API call (not merely before conversion).
+  const socialAudioOptions = ["facebook", "instagram"].includes(channel)
+    ? {
+        ...sendOptions,
+        preSendCheck: async () => {
+          const latest = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
+          if (latest.blocked) return false;
+          return !(await preSendCancelled(optionsForPolicy(options, latest.policy)));
+        },
+      }
+    : sendOptions;
 
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename, options);
