@@ -319,6 +319,7 @@ export default function Tools() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingVoice, setUploadingVoice] = useState(false);
+  const [voicePreviewUrls, setVoicePreviewUrls] = useState({});
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
   const { user, permissions } = useAuth();
@@ -591,7 +592,13 @@ export default function Tools() {
     }
     setUploadingVoice(true);
     try {
-      return await api.uploadFollowUpVoice(file, language);
+      const uploaded = await api.uploadFollowUpVoice(file, language);
+      if (uploaded?.previewKey && uploaded?.previewUrl) {
+        setVoicePreviewUrls(current => ({
+          ...current, [uploaded.previewKey]: uploaded.previewUrl,
+        }));
+      }
+      return uploaded;
     } catch (error) {
       showToast(error.message || "Could not upload voice recording.", "error");
       return null;
@@ -966,6 +973,7 @@ export default function Tools() {
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
       setConfig(updated);
       setForm(saved);
+      setVoicePreviewUrls({});
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
       setFollowUpSaveIssue(null);
@@ -1127,6 +1135,7 @@ export default function Tools() {
             onUploadImage={uploadFollowUpImage}
             onUploadVideo={uploadFollowUpVideo}
             onUploadVoice={uploadFollowUpVoice}
+            voicePreviewUrls={voicePreviewUrls}
             onSave={handleSave}
             toasts={toasts}
             dismissToast={dismissToast}
@@ -1542,13 +1551,12 @@ function ServiceVideoPicker({
   );
 }
 
-function ServiceVoicePicker({ voiceNotes = {}, uploading, onUpload, onChange, label = "Voice note" }) {
+function ServiceVoicePicker({ voiceNotes = {}, voicePreviewUrls = {}, uploading, onUpload, onChange, label = "Voice note" }) {
   const inputRef = useRef(null);
   const [language, setLanguage] = useState("zh");
-  const [temporaryPreviewUrls, setTemporaryPreviewUrls] = useState({});
   const note = voiceNotes?.[language] || null;
   const previewUrl = note?.previewKey
-    ? temporaryPreviewUrls[note.previewKey] ||
+    ? voicePreviewUrls[note.previewKey] ||
       `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(note.previewKey)}`
     : "";
 
@@ -1558,7 +1566,6 @@ function ServiceVoicePicker({ voiceNotes = {}, uploading, onUpload, onChange, la
     if (!file) return;
     const uploaded = await onUpload(file, language);
     if (!uploaded?.key || !uploaded?.transcript || !uploaded?.previewKey) return;
-    setTemporaryPreviewUrls(current => ({ ...current, [uploaded.previewKey]: uploaded.previewUrl }));
     onChange({ ...voiceNotes, [language]: {
       key: uploaded.key, previewKey: uploaded.previewKey,
       filename: uploaded.filename, transcript: uploaded.transcript, approved: false,
@@ -1628,7 +1635,7 @@ function ServiceVoicePicker({ voiceNotes = {}, uploading, onUpload, onChange, la
 }
 
 function FollowUpMediaPicker({
-  imageUrl, videoKey, videoFilename, voiceNotes = {},
+  imageUrl, videoKey, videoFilename, voiceNotes = {}, voicePreviewUrls = {},
   uploadingImage, uploadingVideo, uploadingVoice,
   onUploadImage, onUploadVideo, onUploadVoice, onChange,
   label = "Media",
@@ -1677,7 +1684,7 @@ function FollowUpMediaPicker({
           }} label={`${label} image`} />
       )}
       {selectedType === "voice" && (
-        <ServiceVoicePicker voiceNotes={voiceNotes} uploading={uploadingVoice}
+        <ServiceVoicePicker voiceNotes={voiceNotes} voicePreviewUrls={voicePreviewUrls} uploading={uploadingVoice}
           onUpload={onUploadVoice}
           onChange={notes => onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceNotes: notes })}
           label={`${label} voice note`} />
@@ -1752,6 +1759,7 @@ function StepSummaryChips({ step }) {
 
 function ServiceOverridesEditor({
   overrides = [],
+  voicePreviewUrls = {},
   services = [],
   onChange,
   stepLabel,
@@ -1762,6 +1770,7 @@ function ServiceOverridesEditor({
   onUploadImage,
   onUploadVideo,
   onUploadVoice,
+  voicePreviewUrls,
   onTranslateMessage,
   forceOpen = false,
 }) {
@@ -1965,6 +1974,7 @@ function ServiceOverridesEditor({
                       onUploadImage={onUploadImage}
                       onUploadVideo={onUploadVideo}
                       onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
                       onChange={(media) =>
                         onChange(
                           overrides.map((override, overrideIndex) =>
@@ -2025,6 +2035,7 @@ function FollowUpTool({
   onUploadImage,
   onUploadVideo,
   onUploadVoice,
+  voicePreviewUrls,
   onSave,
   toasts,
   dismissToast,
@@ -2200,7 +2211,7 @@ function FollowUpTool({
     "Your follow-up message will appear here.";
   const previewVoiceNote = previewMediaSource?.voiceNotes?.[translationLanguage];
   const previewVoiceUrl = previewVoiceNote?.previewKey
-    ? `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(previewVoiceNote.previewKey)}`
+    ? voicePreviewUrls[previewVoiceNote.previewKey] || `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(previewVoiceNote.previewKey)}`
     : "";
   const previewVideoUrl = previewMediaSource?.videoKey
     ? `/api/config/automated-follow-up/video-preview?key=${encodeURIComponent(previewMediaSource.videoKey)}`
@@ -2859,6 +2870,7 @@ function FollowUpTool({
               onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
               onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
               onChange={(media) =>
                 setForm((current) => ({ ...current, ...media }))
               }
@@ -2878,6 +2890,7 @@ function FollowUpTool({
               onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
               onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
               onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
@@ -3034,6 +3047,7 @@ function FollowUpTool({
                             onUploadImage={onUploadImage}
                             onUploadVideo={onUploadVideo}
                             onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
                             onChange={(media) =>
                               updateAdditionalStep(index, media)
                             }
@@ -3052,6 +3066,7 @@ function FollowUpTool({
                             onUploadImage={onUploadImage}
                             onUploadVideo={onUploadVideo}
                             onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
                             onTranslateMessage={onTranslateMessage}
                             onChange={(serviceOverrides) =>
                               updateAdditionalStep(index, { serviceOverrides })
