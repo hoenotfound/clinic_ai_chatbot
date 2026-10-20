@@ -243,7 +243,8 @@ function resolveBookingResponsePriceService({
     if (!selected) {
       // The immediate booking assistant must follow a customer topic,
       // not a long chain of unrelated user messages.
-      if (!/(?:\b(?:weekday|weekend)\b|平日|周末|週末|星期|时间|時間|价钱|價錢|价格|價格|price|harga|多少钱|多少錢|骨盆|体态|體態|脸|臉)/iu.test(text)) return null;
+      if (!hasExplicitPriceRequest(text) &&
+          !/(?:\b(?:weekday|weekend)\b|平日|周末|週末|星期|时间|時間|价钱|價錢|价格|價格|费用|費用|单次|單次|price|harga|多少钱|多少錢|骨盆|小腹|体态|體態|脸|臉)/iu.test(text)) return null;
       continue;
     }
     // Real DB timestamps are mandatory to carry commercial context.
