@@ -1,6 +1,6 @@
 # Neutro Sense | conversion-first WhatsApp follow-up copy v2 (review proposal)
 
-**Status: COPY REVIEW ONLY — NO CONFIG OR META TEMPLATE CHANGES.** Prepared 20 October 2026. Do not enable, edit live templates, send messages, or merge into a rollout as-is.
+**Status: IMPLEMENTATION PR — prompt rules and tests included; new Meta templates require separate confirmation and approval; 48h/66h live template selection and Day 4/Day 6 remain unchanged.** Prepared 20 October 2026. No customer sends are authorized by this PR.
 
 ## Why update
 
@@ -150,4 +150,4 @@ ms:
 - Track **unique contacts** who positively reply within 24h (exclude stop-promotions, another ad's prefilled message, duplicates and wrong-attribution replies); actual confirmed appointments; opt-outs; read/delivered; and Meta pricing billable state.
 - Compare to the old template/control for at least 1–2 weeks or until adequate sample. The historical sample has no positive template replies but is small; don't promise conversion uplift.
 - Manual opt-out handling stays active even though the visible opt-out footer is removed. Review any Meta-required opt-out facilities before submission.
-- No new billable sends, tests, Meta submission, app configuration changes or Strict RM0 changes are authorized by this copy-only proposal.
+- Code now adds follow-up and appointment continuity prompt rules with regression tests. The live Neutro AI instruction updates are separate database configuration changes that must be verified after deployment. New template submissions still need the explicit Meta confirmation step and approval; do not switch templates until APPROVED. Never change Strict RM0, seven-day slots, or actual customer sends as part of this PR.
