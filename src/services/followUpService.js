@@ -1605,7 +1605,7 @@ async function sendCandidate(candidate) {
   // WhatsApp message references that key, so Inbox history and Retry use the
   // same bytes without copying them into each customer's folder.
   const durableVideoKey = !isSocial && effectiveVideoKey ? effectiveVideoKey : null;
-  const durableVoiceKey = effectiveVoice
+  let durableVoiceKey = effectiveVoice
     ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
     : null;
   // Only the transcript of the actual selected recording belongs to a voice
@@ -1767,6 +1767,41 @@ async function sendCandidate(candidate) {
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
     sendResult = { success: false, wamid: null, externalMessageId: null };
+  }
+
+  // Only a definitive pre-delivery audio rejection can use text fallback.
+  // A timeout, 5xx or missing provider ID is UNCERTAIN and must never cause
+  // a second customer-facing message automatically.
+  if (isSocial && durableVoiceKey &&
+      sendResult?.audioNotDelivered === true &&
+      sendResult?.unknown !== true && sendResult?.ambiguous !== true) {
+    try {
+      const updated = await followUpRepo.replaceUnsentSocialVoiceWithText({
+        contactId: candidate.contact_id,
+        messageId: saved.id,
+        content: followUpMessage,
+        messageMode: followUpMessageMode,
+      });
+      if (updated) {
+        saved = updated;
+        durableVoiceKey = null;
+        effectiveVoice = null;
+        publishConversationChange(saved, "message");
+        const recorder = messagesRepo.socialProviderAliasRecorder(saved.id, channel);
+        sendResult = await channelMessaging.sendText(contact, followUpMessage, {
+          purpose: "marketing",
+          preSendCheck: finalPreSendCheck,
+          currentMessageId: saved.id,
+          autoFollowUp: true,
+          ...(recorder ? { onProviderMessageId: recorder } : {}),
+        });
+      }
+    } catch (error) {
+      // Keep the original claimed audio unsent. Never send text unless the
+      // durable row was successfully changed to match the actual payload.
+      console.error("[Follow-up social voice] Safe text fallback failed:", error);
+      sendResult = { success: false, error: "Audio was rejected and the safe text fallback could not be completed. Staff review required." };
+    }
   }
 
   // These specific policy rejections occur BEFORE Meta receives anything.
