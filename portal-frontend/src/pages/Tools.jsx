@@ -1723,7 +1723,7 @@ function sequenceTargetSummary(step) {
 
 function followUpStepSetupIssue(step, services = []) {
   if (!String(step?.message || "").trim()) return "Add a message";
-  if (String(step?.imageUrl || "").trim() && String(step?.videoKey || "").trim()) {
+  if ([step?.imageUrl, step?.videoKey, step?.voiceKey].filter((key) => String(key || "").trim()).length > 1) {
     return "Choose one attachment";
   }
   const allowed = new Set(services.map((item) => String(item?.name || "").trim().toLocaleLowerCase()));
@@ -1732,7 +1732,7 @@ function followUpStepSetupIssue(step, services = []) {
     const service = String(override?.serviceName || "").trim().toLocaleLowerCase();
     if (!service || !String(override?.message || "").trim()) return "Complete service message";
     if (!allowed.has(service) || seen.has(service)) return "Review service selection";
-    if (override.imageUrl && override.videoKey) return "Choose one service attachment";
+    if ([override.imageUrl, override.videoKey, override.voiceKey].filter(Boolean).length > 1) return "Choose one service attachment";
     seen.add(service);
   }
   return "";
@@ -1744,7 +1744,7 @@ function StepSummaryChips({ step }) {
     : 0;
   const chips = [
     ...(step?.messageMode === "ai" ? ["AI"] : []),
-    ...(step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
+    ...(step?.voiceKey ? ["Voice note"] : step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
     ...(serviceCount ? [`${serviceCount} service${serviceCount === 1 ? "" : "s"}`] : []),
   ];
 
@@ -1772,8 +1772,10 @@ function ServiceOverridesEditor({
   translating,
   uploadingImage,
   uploadingVideo,
+  uploadingVoice,
   onUploadImage,
   onUploadVideo,
+  onUploadVoice,
   onTranslateMessage,
   forceOpen = false,
 }) {
@@ -1808,6 +1810,8 @@ function ServiceOverridesEditor({
         imageUrl: "",
         videoKey: "",
         videoFilename: "",
+        voiceKey: "",
+        voiceFilename: "",
       },
     ]);
   }
@@ -1969,10 +1973,14 @@ function ServiceOverridesEditor({
                       imageUrl={item.imageUrl}
                       videoKey={item.videoKey}
                       videoFilename={item.videoFilename}
+                      voiceKey={item.voiceKey}
+                      voiceFilename={item.voiceFilename}
                       uploadingImage={uploadingImage}
                       uploadingVideo={uploadingVideo}
+                      uploadingVoice={uploadingVoice}
                       onUploadImage={onUploadImage}
                       onUploadVideo={onUploadVideo}
+                      onUploadVoice={onUploadVoice}
                       onChange={(media) =>
                         onChange(
                           overrides.map((override, overrideIndex) =>
@@ -2018,6 +2026,7 @@ function FollowUpTool({
   translating,
   uploadingImage,
   uploadingVideo,
+  uploadingVoice,
   saving,
   services,
   clinicName,
@@ -2031,6 +2040,7 @@ function FollowUpTool({
   onTranslateMessage,
   onUploadImage,
   onUploadVideo,
+  onUploadVoice,
   onSave,
   toasts,
   dismissToast,
@@ -2177,6 +2187,8 @@ function FollowUpTool({
       imageUrl: form.imageUrl,
       videoKey: form.videoKey,
       videoFilename: form.videoFilename,
+      voiceKey: form.voiceKey,
+      voiceFilename: form.voiceFilename,
       serviceOverrides: form.serviceOverrides,
     },
     ...(form.additionalSteps || []),
@@ -2196,13 +2208,16 @@ function FollowUpTool({
     ) || null;
   const previewCopySource = previewOverride || previewStep;
   const previewMediaSource =
-    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey)
+    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey || previewOverride.voiceKey)
       ? previewOverride
       : previewStep;
   const previewMessage =
     previewCopySource?.translations?.[translationLanguage] ||
     previewCopySource?.message ||
     "Your follow-up message will appear here.";
+  const previewVoiceUrl = previewMediaSource?.voiceKey
+    ? `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(previewMediaSource.voiceKey)}`
+    : "";
   const previewVideoUrl = previewMediaSource?.videoKey
     ? `/api/config/automated-follow-up/video-preview?key=${encodeURIComponent(previewMediaSource.videoKey)}`
     : "";
@@ -2270,6 +2285,8 @@ function FollowUpTool({
           imageUrl: "",
           videoKey: "",
           videoFilename: "",
+          voiceKey: "",
+          voiceFilename: "",
           serviceOverrides: [],
         },
       ],
@@ -2852,10 +2869,14 @@ function FollowUpTool({
               imageUrl={form.imageUrl}
               videoKey={form.videoKey}
               videoFilename={form.videoFilename}
+              voiceKey={form.voiceKey}
+              voiceFilename={form.voiceFilename}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
+              uploadingVoice={uploadingVoice}
               onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
+              onUploadVoice={onUploadVoice}
               onChange={(media) =>
                 setForm((current) => ({ ...current, ...media }))
               }
@@ -2871,8 +2892,10 @@ function FollowUpTool({
               translating={translating}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
+              uploadingVoice={uploadingVoice}
               onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
+              onUploadVoice={onUploadVoice}
               onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
@@ -3022,10 +3045,14 @@ function FollowUpTool({
                             imageUrl={step.imageUrl}
                             videoKey={step.videoKey}
                             videoFilename={step.videoFilename}
+                            voiceKey={step.voiceKey}
+                            voiceFilename={step.voiceFilename}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
+                            uploadingVoice={uploadingVoice}
                             onUploadImage={onUploadImage}
                             onUploadVideo={onUploadVideo}
+                            onUploadVoice={onUploadVoice}
                             onChange={(media) =>
                               updateAdditionalStep(index, media)
                             }
@@ -3040,8 +3067,10 @@ function FollowUpTool({
                             translating={translating}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
+                            uploadingVoice={uploadingVoice}
                             onUploadImage={onUploadImage}
                             onUploadVideo={onUploadVideo}
+                            onUploadVoice={onUploadVoice}
                             onTranslateMessage={onTranslateMessage}
                             onChange={(serviceOverrides) =>
                               updateAdditionalStep(index, { serviceOverrides })
@@ -3890,6 +3919,9 @@ function FollowUpTool({
                 {previewStep?.messageMode === "ai" && (
                   <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">AI</span>
                 )}
+                {previewMediaSource?.voiceKey && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Voice note</span>
+                )}
                 {previewMediaSource?.videoKey && (
                   <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Video</span>
                 )}
@@ -3947,6 +3979,9 @@ function FollowUpTool({
                   {previewMediaSource?.imageUrl && (
                     <img src={previewMediaSource.imageUrl} alt="" className="max-h-56 w-full object-cover" />
                   )}
+                  {previewMediaSource?.voiceKey && (
+                    <audio src={previewVoiceUrl} controls preload="none" className="w-full px-3 pt-3" />
+                  )}
                   {previewMediaSource?.videoKey && (
                     <video
                       key={previewVideoUrl}
@@ -3961,7 +3996,11 @@ function FollowUpTool({
                     <p className="mb-1 text-[10px] font-semibold text-white/70">
                       {previewServiceName ? `Automated follow-up · ${previewServiceName}` : "Automated follow-up"}
                     </p>
-                    <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+                    {previewVoiceUrl ? (
+                      <p className="text-xs leading-5">Voice note · text is the fallback for non-WhatsApp channels.</p>
+                    ) : (
+                      <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+                    )}
                   </div>
                 </div>
               </div>
