@@ -1790,22 +1790,55 @@ router.post(
 );
 
 router.post("/automated-follow-up/voice", handleFollowUpVoiceUpload, async (req, res) => {
+  let previewKey = "";
   try {
+    const language = String(req.body?.language || "").trim();
+    if (!VOICE_LANGUAGES.includes(language)) {
+      return res.status(400).json({ error: "Choose Chinese, English or Malay before uploading." });
+    }
     if (!req.file?.buffer?.length) return res.status(400).json({ error: "Choose a recorded voice message." });
     if (!mediaStorage.isStorageConfigured()) return res.status(503).json({ error: "Private voice storage is not configured." });
-    const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
-    if (!converted?.whatsapp?.buffer?.length) {
+    const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype, { rejectOverlength: true });
+    if (!converted?.whatsapp?.buffer?.length || !converted?.playback?.buffer?.length) {
       return res.status(400).json({ error: "This recording could not be converted to a WhatsApp voice note." });
     }
+    // Only the transcription of the *actual* uploaded audio can authorize a
+    // scheduled recording. A staff-supplied caption must never substitute it.
+    const transcript = await transcribeStaffAudio(converted.playback.buffer, "audio/mpeg");
+    if (!transcript || unsafeVoiceTranscript(transcript)) {
+      return res.status(422).json({
+        error: !transcript
+          ? "Could not transcribe the recording. Try a clearer voice recording."
+          : "Recording contains a price, unsafe claim or excessive text. Please re-record a safe follow-up.",
+      });
+    }
+
+    previewKey = await mediaStorage.uploadMedia(converted.playback.buffer, "audio/mpeg", {
+      contactId: "follow-up-config",
+    });
     const key = await mediaStorage.uploadMedia(converted.whatsapp.buffer, "audio/ogg", {
       contactId: "follow-up-config",
+      metadata: {
+        voicelanguage: language,
+        voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, language, previewKey),
+      },
     });
     return res.status(201).json({
       key,
+      previewKey,
+      transcript: transcript.trim(),
+      language,
+      approved: false,
       filename: String(req.file.originalname || "voice.ogg").replace(/[\\/\0]/g, "").slice(0, 255),
-      previewUrl: `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(key)}`,
+      previewUrl: mediaStorage.createPresignedGetUrl(previewKey, { expiresSeconds: 5 * 60 }),
     });
   } catch (error) {
+    if (previewKey) {
+      mediaStorage.deleteMedia(previewKey).catch(err =>
+        console.warn("Could not remove incomplete voice preview:", err.message));
+    }
+    if (error?.code === "VOICE_TOO_LONG") return res.status(400).json({ error: error.message, code: error.code });
     console.error("Failed to upload follow-up voice:", error);
     return res.status(500).json({ error: "Unable to save voice recording." });
   }
@@ -1814,7 +1847,11 @@ router.post("/automated-follow-up/voice", handleFollowUpVoiceUpload, async (req,
 router.get("/automated-follow-up/voice-preview", async (req, res) => {
   try {
     const key = String(req.query.key || "").trim();
-    if (!key || !isFollowUpVoiceKey(key)) return res.status(404).send("Not found");
+    const config = configRepo.getConfig();
+    if (!validVoiceAssetKey(key, "mp3", mediaStorage) ||
+        !mediaStorage.isReferencedClinicFollowUpMediaKey(key, config)) {
+      return res.status(404).send("Not found");
+    }
     if (!mediaStorage.isStorageConfigured()) return res.status(503).send("Voice storage unavailable");
     const url = mediaStorage.createPresignedGetUrl(key, { expiresSeconds: 5 * 60 });
     res.set("Cache-Control", "private, no-store");
