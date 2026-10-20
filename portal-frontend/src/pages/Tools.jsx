@@ -1622,6 +1622,23 @@ function sequenceTargetSummary(step) {
     : `Target: ${formatDelay(Number(step?.delayMinutes || 0))} after the sequence-start message`;
 }
 
+function followUpStepSetupIssue(step, services = []) {
+  if (!String(step?.message || "").trim()) return "Add a message";
+  if (String(step?.imageUrl || "").trim() && String(step?.videoKey || "").trim()) {
+    return "Choose one attachment";
+  }
+  const allowed = new Set(services.map((item) => String(item?.name || "").trim().toLocaleLowerCase()));
+  const seen = new Set();
+  for (const override of step?.serviceOverrides || []) {
+    const service = String(override?.serviceName || "").trim().toLocaleLowerCase();
+    if (!service || !String(override?.message || "").trim()) return "Complete service message";
+    if (!allowed.has(service) || seen.has(service)) return "Review service selection";
+    if (override.imageUrl && override.videoKey) return "Choose one service attachment";
+    seen.add(service);
+  }
+  return "";
+}
+
 function StepSummaryChips({ step }) {
   const serviceCount = Array.isArray(step?.serviceOverrides)
     ? step.serviceOverrides.length
@@ -1925,6 +1942,7 @@ function FollowUpTool({
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [followUpTab, setFollowUpTab] = useState("sequence");
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
+  const [showBuilderHelp, setShowBuilderHelp] = useState(false);
   const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
   useEffect(() => {
     if (form.whatsappFreeOnly?.enabled === true) setBillingProtectionOpen(true);
@@ -2014,8 +2032,8 @@ function FollowUpTool({
   useEffect(() => {
     if (!validationIssue) return;
     setFollowUpTab(validationIssue.tab);
-    if (validationIssue.tab === "sequence" && validationIssue.stepIndex > 0) {
-      setExpandedStepIndex(validationIssue.stepIndex - 1);
+    if (validationIssue.tab === "sequence" && Number.isInteger(validationIssue.stepIndex)) {
+      setExpandedStepIndex(validationIssue.stepIndex > 0 ? validationIssue.stepIndex - 1 : null);
       setPreviewStepIndex(validationIssue.stepIndex);
     }
   }, [validationIssue]);
@@ -2053,6 +2071,8 @@ function FollowUpTool({
   // The preview picker must not change which sequence editor is open.
   const editingStepIndex = expandedStepIndex === null ? 0 : expandedStepIndex + 1;
   const previewStep = allSteps[safePreviewIndex] || allSteps[0];
+  const editingStep = allSteps[editingStepIndex] || allSteps[0];
+  const editingIssue = followUpStepSetupIssue(editingStep, services);
   const previewOverride =
     (previewStep?.serviceOverrides || []).find(
       (item) => item.serviceName === previewServiceName
@@ -2114,6 +2134,42 @@ function FollowUpTool({
     editor.scrollIntoView({ behavior: "smooth", block: "start" });
     setJumpStepIndex(null);
   }, [jumpStepIndex, followUpTab, expandedStepIndex]);
+
+  function addAdditionalStep() {
+    if (form.additionalSteps.length >= 2 || suggestedNextDelay === null) return;
+    const nextIndex = form.additionalSteps.length;
+    setForm((current) => ({
+      ...current,
+      additionalSteps: [
+        ...current.additionalSteps,
+        {
+          delayMinutes: suggestedNextDelay,
+          timingMode: "after_reply",
+          beforeWindowExpiryMinutes: 120,
+          messageMode: "fixed",
+          aiInstruction: "",
+          message: "",
+          translations: { en: "", ms: "", zh: "" },
+          imageUrl: "",
+          videoKey: "",
+          videoFilename: "",
+          serviceOverrides: [],
+        },
+      ],
+    }));
+    setExpandedStepIndex(nextIndex);
+    setPreviewStepIndex(nextIndex + 1);
+    setPreviewServiceName("");
+    setJumpStepIndex(nextIndex + 1);
+  }
+
+  function goToNextStep() {
+    if (editingStepIndex + 1 < allSteps.length) {
+      editSequenceStep(editingStepIndex + 1);
+    } else {
+      addAdditionalStep();
+    }
+  }
 
   function updateAdditionalStep(index, patch) {
     setForm((current) => ({
@@ -2314,6 +2370,7 @@ function FollowUpTool({
                   const selected = editingStepIndex === index;
                   const previewingDifferentStep = safePreviewIndex === index && !selected;
                   const overrides = step.serviceOverrides || [];
+                  const setupIssue = followUpStepSetupIssue(step, services);
                   const messagePreview = step.messageMode === "ai"
                     ? "AI writes a message based on this customer's conversation"
                     : String(step.message || "").trim() || "Add a message to this follow-up";
@@ -2354,6 +2411,9 @@ function FollowUpTool({
                           </span>
                         )}
                         <StepSummaryChips step={step} />
+                        <span className={`mt-2 block text-[11px] font-semibold ${setupIssue ? "text-amber-700" : "text-[var(--color-primary)]"}`}>
+                          {setupIssue || "Message configured"}
+                        </span>
                         {previewingDifferentStep && (
                           <span className="mt-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">
                             Previewing only — select Edit step to open the editor
@@ -2364,6 +2424,38 @@ function FollowUpTool({
                   );
                 })}
               </ol>
+              <div aria-label="Selected follow-up" className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/35 px-3.5 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-[var(--color-primary)]">Editing Follow-up {editingStepIndex + 1} of {allSteps.length}</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">{followUpTimingSummary(editingStep)} · {editingIssue || "Message configured"}</p>
+                  </div>
+                  {editingStepIndex > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => editSequenceStep(0)}
+                      className="rounded-lg border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)]"
+                    >
+                      Back to Follow-up 1
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  aria-expanded={showBuilderHelp}
+                  onClick={() => setShowBuilderHelp((open) => !open)}
+                  className="mt-2 text-xs font-semibold text-[var(--color-primary)] hover:underline"
+                >
+                  {showBuilderHelp ? "Hide setup guide" : "How to set up a follow-up"}
+                </button>
+                {showBuilderHelp && (
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Choose a step, write its message or AI fallback, optionally attach one image or video,
+                    and add treatment-specific messages only if needed. Review the preview, then Save changes.
+                    The scheduler still decides whether a customer is eligible.
+                  </p>
+                )}
+              </div>
               {form.pricingReminder?.enabled === true && (
                 <section aria-label="Pricing reminder dependency" className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2399,6 +2491,8 @@ function FollowUpTool({
                 </details>
               </div>
             </section>
+          {editingStepIndex === 0 && (
+          <>
           <Card>
             <SectionHeading
               number="1"
@@ -2666,13 +2760,28 @@ function FollowUpTool({
                 setForm((current) => ({ ...current, serviceOverrides }))
               }
             />
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] pt-4">
+              <p className="text-xs text-[var(--color-text-muted)]">Review the message preview before saving. Images and videos are optional.</p>
+              <button
+                type="button"
+                onClick={goToNextStep}
+                disabled={allSteps.length >= 3 && editingStepIndex === 2 || (allSteps.length < 3 && suggestedNextDelay === null)}
+                className="rounded-xl border border-[var(--color-primary)]/25 bg-[var(--color-primary-light)] px-4 py-2.5 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-40"
+              >
+                {allSteps.length > 1 ? "Continue to Follow-up 2" : "Add Follow-up 2"}
+              </button>
+            </div>
           </Card>
+          </>
+          )}
 
           <Card>
             <SectionHeading
               number="3"
-              title="More follow-ups"
-              description="Add up to two more messages. Keep them collapsed when you are not editing them."
+              title={editingStepIndex > 0 ? `Edit Follow-up ${editingStepIndex + 1}` : "More follow-ups"}
+              description={editingStepIndex > 0
+                ? "Only the selected follow-up editor is open. Choose another step in the timeline to switch."
+                : "Add up to two more messages. Choose a step in the timeline to edit it."}
             />
 
             {form.additionalSteps.length > 0 ? (
@@ -2820,6 +2929,25 @@ function FollowUpTool({
                               updateAdditionalStep(index, { serviceOverrides })
                             }
                           />
+                          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-4">
+                            <button
+                              type="button"
+                              onClick={() => editSequenceStep(index)}
+                              className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-muted)]"
+                            >
+                              Previous follow-up
+                            </button>
+                            {index < 1 && (
+                              <button
+                                type="button"
+                                disabled={suggestedNextDelay === null && allSteps.length < 3}
+                                onClick={goToNextStep}
+                                className="rounded-lg border border-[var(--color-primary)]/25 bg-[var(--color-primary-light)] px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-40"
+                              >
+                                {allSteps.length > index + 2 ? `Continue to Follow-up ${index + 3}` : "Add Follow-up 3"}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2836,32 +2964,7 @@ function FollowUpTool({
             <button
               type="button"
               disabled={form.additionalSteps.length >= 2 || suggestedNextDelay === null}
-              onClick={() => {
-                if (suggestedNextDelay === null) return;
-                const nextIndex = form.additionalSteps.length;
-                setForm((current) => ({
-                  ...current,
-                  additionalSteps: [
-                    ...current.additionalSteps,
-                    {
-                      delayMinutes: suggestedNextDelay,
-                      timingMode: "after_reply",
-                      beforeWindowExpiryMinutes: 120,
-                      messageMode: "fixed",
-                      aiInstruction: "",
-                      message: "",
-                      translations: { en: "", ms: "", zh: "" },
-                      imageUrl: "",
-                      videoKey: "",
-                      videoFilename: "",
-                      serviceOverrides: [],
-                    },
-                  ],
-                }));
-                setExpandedStepIndex(nextIndex);
-                setPreviewStepIndex(nextIndex + 1);
-                setPreviewServiceName("");
-              }}
+              onClick={addAdditionalStep}
               className="mt-4 rounded-xl border border-[var(--color-primary)]/25 bg-white px-4 py-2.5 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               + Add follow-up
