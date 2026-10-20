@@ -1654,6 +1654,8 @@ function ServiceVoicePicker({ voiceNotes = {}, voicePreviewUrls = {}, uploading,
         Max 120 seconds. WhatsApp receives a native voice bubble; Messenger and Instagram
         receive a playable audio attachment. Preview uses MP3 for iPhone and Safari.
         A voice recording replaces the text follow-up rather than adding a caption.
+        Recordings uploaded before MP3 integrity fingerprints were introduced must be reuploaded
+        for Messenger/Instagram; they still work on WhatsApp and use text fallback elsewhere.
       </p>
     </div>
   );
