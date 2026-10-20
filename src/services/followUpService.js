@@ -740,7 +740,8 @@ function deliveryErrorFor(channel, sendResult, rejectedError) {
   // Policy/final-eligibility failures contain a useful reason staff need to
   // see. Other provider failures keep the existing channel-specific wording.
   return sendResult?.error &&
-    (sendResult?.policyBlocked || sendResult?.preSendCheckFailed)
+    (sendResult?.policyBlocked || sendResult?.preSendCheckFailed ||
+      sendResult?.voiceIntegrityBlocked === true)
     ? sendResult.error
     : rejectedError;
 }
@@ -1164,7 +1165,8 @@ async function sendConfiguredVoiceFollowUp(contact, note, language, options) {
   // before handing any customer media to the provider's send layer.
   const approved = await verifiedVoiceDelivery(note, language, channel);
   if (!approved) {
-    return { success: false, error: "Voice recording metadata no longer matches the approved transcript or its playback copy." };
+    return { success: false, voiceIntegrityBlocked: true,
+      error: "Voice recording metadata no longer matches its approved transcript or MP3 integrity seal. Please reupload before sending." };
   }
   const isSocial = channel === "facebook" || channel === "instagram";
   const buffer = await mediaStorage.downloadMedia(
@@ -1173,7 +1175,8 @@ async function sendConfiguredVoiceFollowUp(contact, note, language, options) {
   // Never hand mismatched MP3 bytes to the provider, including if someone
   // replaced the object between the metadata check and the actual download.
   if (isSocial && createHash("sha256").update(buffer).digest("hex") !== approved) {
-    return { success: false, error: "The approved MP3 recording failed its SHA-256 integrity check. Please reupload the voice note." };
+    return { success: false, voiceIntegrityBlocked: true,
+      error: "The approved MP3 recording failed its SHA-256 integrity check. Please reupload the voice note." };
   }
   return channelMessaging.sendAudioBuffer(
     contact, buffer, isSocial ? "audio/mpeg" : "audio/ogg",
@@ -1657,7 +1660,9 @@ async function sendCandidate(candidate) {
 
   publishConversationChange(saved, "message");
 
-  const rejectedError = rejectedFollowUpError(channel);
+  const rejectedError = isSocial && durableVoiceKey
+    ? `${channelMessaging.labelForChannel(channel)} did not confirm the automated voice note. Review Meta delivery and the reply window before creating a new staff recording; do not retry the automated voice directly.`
+    : rejectedFollowUpError(channel);
 
   const finalPreSendCheck = async () => {
     const liveSettings = getActiveSettings();
