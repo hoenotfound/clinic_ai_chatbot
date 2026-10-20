@@ -3705,6 +3705,7 @@ test("voice automation falls back to text for missing language, mismatched trans
 test("Messenger and Instagram send approved follow-up recordings as one tracked audio message", async () => {
   enableTool();
   const { pool } = require("../src/db/db");
+  const { createHash } = require("node:crypto");
   const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
   const previousSlug = process.env.CLIENT_SLUG;
   process.env.CLIENT_SLUG = "social-voice-test";
@@ -3734,6 +3735,7 @@ test("Messenger and Instagram send approved follow-up recordings as one tracked 
         mimeType: "audio/ogg", bytes: 1000, metadata: {
           voicelanguage: "en", voicepreviewkey: previewKey,
           voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update("MP3 preview bytes").digest("hex"),
         },
       };
       assert.equal(target, previewKey);
@@ -3809,6 +3811,7 @@ test("Messenger and Instagram send approved follow-up recordings as one tracked 
 test("social follow-up rejects unverified MP3 preview and falls back to text without audio upload", async () => {
   enableTool();
   const { pool } = require("../src/db/db");
+  const { createHash } = require("node:crypto");
   const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
   const previousSlug = process.env.CLIENT_SLUG;
   process.env.CLIENT_SLUG = "social-voice-test";
@@ -3832,6 +3835,7 @@ test("social follow-up rejects unverified MP3 preview and falls back to text wit
       ? { mimeType: "audio/ogg", bytes: 100, metadata: {
         voicelanguage: "en", voicepreviewkey: previewKey,
         voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update("unused preview").digest("hex"),
       } }
       : { mimeType: "application/octet-stream", bytes: 400 };
     pool.query = async () => ({ rows: [] });
