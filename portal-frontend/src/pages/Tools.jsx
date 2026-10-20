@@ -2053,6 +2053,51 @@ function ServiceOverridesEditor({
   );
 }
 
+const EXTENDED_ATTEMPT_STATUSES = {
+  accepted: { label: "Accepted by WhatsApp", description: "The provider accepted the request; delivery to the customer is not confirmed here.", action: "Check the conversation and provider delivery status before assuming it arrived." },
+  sending: { label: "Sending / confirmation pending", description: "This attempt has no final recorded provider outcome.", action: "Review provider evidence before sending anything manually." },
+  failed: { label: "Failed", description: "The recorded attempt failed; a customer message is not confirmed.", action: "Inspect the provider error and check the WhatsApp reply window before considering another message." },
+  unknown: { label: "Delivery unknown", description: "The system cannot confirm whether WhatsApp received or delivered this attempt.", action: "Check the provider record and the Inbox. Do not retry blindly." },
+  cancelled: { label: "Not sent (cancelled)", description: "The system cancelled the attempt; this is not a confirmed customer delivery.", action: "Check the eligibility or template reason before taking action." },
+};
+const EXTENDED_ELIGIBILITY_MESSAGES = {
+  opted_out: ["Customer opted out", "Do not send marketing unless the customer opts in again."],
+  marketing_consent_missing: ["Marketing permission not recorded", "Review recorded consent before any promotional message."],
+  whatsapp_opt_in_missing: ["WhatsApp opt-in not verified", "Check the customer's WhatsApp opt-in evidence."],
+  human_takeover: ["Human handling active", "Review the conversation; staff are handling this contact."],
+  staff_attention: ["Staff attention required", "Review the customer conversation before acting."],
+  booked_or_closed: ["Booked or closed", "Do not chase a lead who is already booked or closed."],
+  first_response_not_confirmed: ["First business reply unverified", "Check that the qualifying business reply was delivered and recorded."],
+  charged_by_meta: ["Meta reported a charge", "Review the Meta billing record before assuming any free-entry eligibility."],
+  free_entry_billing_unconfirmed: ["Free-entry billing not confirmed", "Wait for verified Meta pricing evidence; do not force a template send."],
+  expired: ["Eligibility period expired", "A new approved contact opportunity is required before marketing."],
+  previous_send_unconfirmed: ["Previous send unresolved", "Check the previous provider attempt; avoid duplicate sends."],
+  previous_template_pricing_unconfirmed: ["Previous template billing unresolved", "Verify the prior template's pricing evidence."],
+  staff_intervened: ["Staff intervened", "Review the conversation. Automation may not be appropriate now."],
+  waiting_for_business_reply: ["Waiting for qualifying reply", "Check the most recent business reply and eligibility window."],
+  recent_customer_reply: ["Customer recently replied", "Respond to the customer instead of repeating an automated reminder."],
+  minimum_message_spacing: ["Too soon after another message", "Allow the normal message spacing; do not bypass the worker."],
+  passes_initial_checks_verify_schedule: ["Initial checks passed", "This is not a scheduled send; other worker checks still apply."],
+};
+function extendedEligibilityDescription(raw) {
+  const key = String(raw || "").trim();
+  return EXTENDED_ELIGIBILITY_MESSAGES[key] ||
+    [key ? key.replaceAll("_", " ") : "Eligibility unknown", "Review the saved contact record and provider evidence before acting."];
+}
+function extendedAttemptStatus(raw) {
+  return EXTENDED_ATTEMPT_STATUSES[String(raw || "").trim().toLowerCase()] ||
+    { label: String(raw || "Unknown status").replaceAll("_", " "),
+      description: "Only a recorded provider status is available; delivery cannot be inferred.",
+      action: "Review the conversation and provider evidence before taking action." };
+}
+function extendedAttemptTime(value) {
+  if (!value || Number.isNaN(Date.parse(value))) return "Time not recorded";
+  return new Date(value).toLocaleString("en-MY", {
+    timeZone: "Asia/Kuala_Lumpur", day: "numeric", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }) + " MYT";
+}
+
 function FollowUpTool({
   isAdmin,
   form,
@@ -4197,27 +4242,80 @@ function FollowUpTool({
                     ))}
                   </div>
                   <h3 className="mt-5 text-sm font-bold">Recent template attempts</h3>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Statuses are recorded attempts, not proof of delivery or a complete Meta billing statement.
+                    No controls on this page resend messages.
+                  </p>
                   {(freeEntryStatus.recentAttempts || []).length ? (
                     <div className="mt-2 space-y-2">
-                      {(freeEntryStatus.recentAttempts || []).slice(0, 10).map((item, index) => (
-                        <div key={index} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
-                          <p className="font-semibold">Contact #{item.contact_id} · {item.slot_hours}h · {String(item.status || "unknown").replaceAll("_", " ")}</p>
-                          {item.error && <p className="mt-1 break-words text-red-600">{item.error}</p>}
-                          {item.billable && <p className="mt-1 font-semibold text-red-600">Meta reported billable</p>}
-                        </div>
-                      ))}
+                      {(freeEntryStatus.recentAttempts || []).slice(0, 10).map((item, index) => {
+                        const outcome = extendedAttemptStatus(item.status);
+                        const treatment = (freeEntryStatus.contactDetails || []).find(
+                          contact => String(contact.contact_id) === String(item.contact_id))?.treatment_interest;
+                        return (
+                          <article key={index} className="rounded-xl border border-[var(--color-border)] p-3 text-xs">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold">Contact #{item.contact_id}{treatment ? ` · ${treatment}` : ""}</p>
+                                <p className="mt-1 text-[var(--color-text-muted)]">
+                                  WhatsApp template · +{item.slot_hours}h potential follow-up · {extendedAttemptTime(item.created_at)}
+                                </p>
+                              </div>
+                              <span className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs font-semibold">
+                                {outcome.label}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-xs leading-5">{outcome.description}</p>
+                            <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                              <strong>Recommended action:</strong> {outcome.action}
+                            </p>
+                            {item.billable && <p role="alert" className="mt-2 font-semibold text-red-700">
+                              Meta reported this attempt as billable. Check the Billing Hub for actual charges.
+                            </p>}
+                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                              <Link to={`/inbox?contact=${encodeURIComponent(item.contact_id)}`}
+                                className="inline-flex min-h-10 items-center rounded-lg border border-[var(--color-border)] px-3 font-semibold text-[var(--color-primary)]">
+                                Open conversation
+                              </Link>
+                              {(item.error || item.status) && (
+                                <details className="min-w-0">
+                                  <summary className="cursor-pointer text-xs font-semibold text-[var(--color-text-muted)]">Technical details</summary>
+                                  <p className="mt-1 break-words">Recorded status: {item.status || "unknown"}</p>
+                                  {item.error && <p className="mt-1 break-words">Provider detail: {item.error}</p>}
+                                </details>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                   ) : <p className="mt-2 text-xs text-[var(--color-text-muted)]">No extended template attempts recorded.</p>}
                   <h3 className="mt-5 text-sm font-bold">Recent lead eligibility</h3>
                   {(freeEntryStatus.contactDetails || []).length ? (
                     <div className="mt-2 space-y-2">
-                      {(freeEntryStatus.contactDetails || []).slice(0, 12).map((item) => (
-                        <div key={item.contact_id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
-                          <p className="font-semibold">Contact #{item.contact_id}{item.treatment_interest ? ` · ${item.treatment_interest}` : ""}</p>
-                          <p className="mt-1 text-[var(--color-text-muted)]">{String(item.eligibility_reason || "Unknown").replaceAll("_", " ")}</p>
-                          {item.last_skip_reason && <p className="mt-1 text-amber-700">Last skipped: {String(item.last_skip_reason).replaceAll("_", " ")}</p>}
-                        </div>
-                      ))}
+                      {(freeEntryStatus.contactDetails || []).slice(0, 12).map((item) => {
+                        const [label, advice] = extendedEligibilityDescription(item.eligibility_reason);
+                        const [skipLabel] = extendedEligibilityDescription(item.last_skip_reason);
+                        return (
+                          <article key={item.contact_id} className="rounded-xl border border-[var(--color-border)] p-3 text-xs">
+                            <p className="text-sm font-semibold">Contact #{item.contact_id}{item.treatment_interest ? ` · ${item.treatment_interest}` : ""}</p>
+                            <p className="mt-2 font-semibold">{label}</p>
+                            <p className="mt-1 text-[var(--color-text-muted)]">{advice}</p>
+                            {item.last_skip_reason && <p className="mt-2 text-amber-800">Most recent skip: {skipLabel}</p>}
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Link to={`/inbox?contact=${encodeURIComponent(item.contact_id)}`}
+                                className="inline-flex min-h-10 items-center rounded-lg border border-[var(--color-border)] px-3 font-semibold text-[var(--color-primary)]">
+                                Open conversation
+                              </Link>
+                              <details className="min-w-0">
+                                <summary className="cursor-pointer py-2 text-xs font-semibold text-[var(--color-text-muted)]">Technical details</summary>
+                                <p className="mt-1 break-all">Eligibility: {item.eligibility_reason || "not recorded"}</p>
+                                <p className="mt-1 break-all">Latest skip: {item.last_skip_reason || "not recorded"}</p>
+                              </details>
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                   ) : <p className="mt-2 text-xs text-[var(--color-text-muted)]">No recent eligibility records.</p>}
                   <p className="mt-4 text-xs text-[var(--color-text-muted)]">
