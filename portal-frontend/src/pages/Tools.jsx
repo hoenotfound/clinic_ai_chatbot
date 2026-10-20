@@ -5162,6 +5162,9 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
       <span className="min-w-0 xl:flex-1">
         <span className={`block text-[11px] font-semibold leading-3.5 sm:hidden ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{shortTitle}</span>
         <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] xl:whitespace-nowrap xl:text-sm xl:font-bold xl:leading-5 ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
+        <span aria-hidden="true" className={`mt-1 block text-[11px] font-semibold leading-4 xl:hidden ${enabled ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+          {enabled ? "On" : "Off"}
+        </span>
         <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">
           <span className={enabled ? "font-semibold text-[var(--color-primary)]" : "font-semibold text-[var(--color-text-muted)]"}>{enabled ? "On" : "Off"}</span>
           <span className="mx-1" aria-hidden="true">·</span>
