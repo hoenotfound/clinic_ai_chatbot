@@ -3731,7 +3731,7 @@ function FollowUpTool({
                 <p className="mt-1">These rules are attached to times excluded from the new schedule:</p>
                 <ul className="mt-1 list-disc space-y-1 pl-5">
                   {proposedTemplateSchedule.incompatible.map((rule, index) => (
-                    <li key={index}>+${rule.slotHours}h · {rule.serviceName === "*" ? "All treatments" : rule.serviceName || "Treatment not selected"} · {rule.templateName || "Incomplete draft"}
+                    <li key={index}>+{rule.slotHours}h · {rule.serviceName === "*" ? "All treatments" : rule.serviceName || "Treatment not selected"} · {rule.templateName || "Incomplete draft"}
                       {(rule.mediaKey || rule.mediaUrl) ? " · attached image/video" : ""}
                     </li>
                   ))}
