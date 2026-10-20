@@ -2716,6 +2716,128 @@ test("Changing extended schedule requires confirmation before deleting video rul
   ]);
 });
 
+test("Schedule deletion warning refreshes if another excluded-time rule is added before confirmation", async ({ page }) => {
+  const saved = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", description: "" }],
+      automatedFollowUp: {
+        freeEntry: {
+          enabled: false, templateName: "clinic_text", language: "auto",
+          slotsHours: [26, 50, 74, 98, 122, 162],
+          templateRules: [{
+            slotHours: 74, serviceName: "骨盆调理", templateName: "clinic_video",
+            mediaKey: "clients/clinic/old.mp4", mediaUrl: "",
+            mediaSourceId: "", videoCodecVerified: true,
+          }],
+        },
+      },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  const schedule = page.getByLabel("Free-entry follow-up schedule");
+  await schedule.selectOption("26,50,98");
+  const warning = page.getByRole("alert", { name: "Review extended schedule changes" });
+  await expect(warning).toContainText("+74h");
+  await expect(warning).not.toContainText("+122h");
+
+  // Add a second excluded-time rule WHILE the first confirmation is showing.
+  await page.getByText("Advanced: treatment-specific templates and media").click();
+  await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
+  await page.getByLabel("Extended template slot 2").selectOption("122");
+  await expect(page.getByRole("region", { name: "Extended template rule 2" })).toBeVisible();
+
+  // A stale confirmation must not delete the new, undisclosed rule.
+  await warning.getByRole("button", { name: "Remove listed rules and change schedule" }).click();
+  await expect(schedule).toHaveValue("26,50,74,98,122,162");
+  await expect(warning).toContainText("+74h");
+  await expect(warning).toContainText("+122h");
+  await expect(page.getByRole("region", { name: "Extended template rule 2" })).toBeVisible();
+  expect(saved).toHaveLength(0);
+
+  // The updated list gets a fresh, explicit confirmation.
+  await warning.getByRole("button", { name: "Remove listed rules and change schedule" }).click();
+  await expect(schedule).toHaveValue("26,50,98");
+  await expect(page.getByRole("region", { name: "Extended template rule 1" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.slotsHours).toEqual([26, 50, 98]);
+  expect(saved[0].freeEntry.templateRules).toEqual([]);
+});
+
+test("Existing Unicode-equivalent treatment rule saves with backend-compatible normalization", async ({ page }) => {
+  const saved = [];
+  const template = (name) => ({
+    name, language: "zh_CN", category: "MARKETING",
+    status: "APPROVED", sendable: true, header: { format: "TEXT" },
+    body: { text: "An approved marketing follow-up." }, variableFields: [],
+  });
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "3D  小颜术", description: "" }],
+      automatedFollowUp: {
+        freeEntry: {
+          enabled: false, templateName: "clinic_text", language: "auto",
+          slotsHours: [26, 50, 98],
+          templateRules: [{
+            slotHours: 50, serviceName: "３D   小颜术", templateName: "clinic_text",
+            mediaKey: "", mediaUrl: "", videoCodecVerified: false,
+          }],
+        },
+      },
+    },
+    templateCatalog: { templates: [template("clinic_text"), template("clinic_other")], reusableMedia: [] },
+    onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByLabel("Message for +26h follow-up").selectOption("clinic_other");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0].freeEntry.templateRules).toEqual(expect.arrayContaining([
+    expect.objectContaining({ slotHours: 50, serviceName: "３D   小颜术", templateName: "clinic_text" }),
+    expect.objectContaining({ slotHours: 26, serviceName: "*", templateName: "clinic_other" }),
+  ]));
+});
+
+test("Unicode-equivalent duplicate treatment rules are rejected before sending a save request", async ({ page }) => {
+  let writes = 0;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "3D  小颜术", description: "" }],
+      automatedFollowUp: {
+        freeEntry: {
+          enabled: false, templateName: "clinic_text", language: "auto",
+          slotsHours: [26, 50, 98], templateRules: [
+            { slotHours: 50, serviceName: "3D  小颜术", templateName: "clinic_text", mediaKey: "", mediaUrl: "" },
+            { slotHours: 50, serviceName: "３D 小颜术", templateName: "clinic_text", mediaKey: "", mediaUrl: "" },
+          ],
+        },
+      },
+    },
+    templateCatalog: { templates: [{
+      name: "clinic_text", language: "zh_CN", category: "MARKETING",
+      status: "APPROVED", sendable: true, header: { format: "TEXT" },
+      body: { text: "Approved follow-up" }, variableFields: [],
+    }], reusableMedia: [] },
+    onConfigUpdate: () => { writes += 1; },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByLabel("Approved template fallback language").selectOption("en_US");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
+    .toContainText("Extended rule 2 duplicates another rule at this time for this treatment.");
+  await expect(page.getByRole("region", { name: "Extended template rule 2" })).toBeFocused();
+  expect(writes).toBe(0);
+});
+
 test("Incomplete extended media draft opens its editor and saves after correcting both fields", async ({ page }) => {
   const saved = [];
   await mockPortalApi(page, {
