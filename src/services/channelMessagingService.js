@@ -441,6 +441,20 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   const initialCancellation = await preSendCancelled(sendOptions);
   if (initialCancellation) return initialCancellation;
 
+  // Audio encoding and Meta attachment upload can take long enough to cross
+  // the 24-hour customer reply window. Requery live policy immediately before
+  // the social Send API call (not merely before conversion).
+  const socialAudioOptions = ["facebook", "instagram"].includes(channel)
+    ? {
+        ...sendOptions,
+        preSendCheck: async () => {
+          const latest = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
+          if (latest.blocked) return false;
+          return !(await preSendCancelled(optionsForPolicy(options, latest.policy)));
+        },
+      }
+    : sendOptions;
+
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename, options);
     if (!mediaId) {
@@ -632,6 +646,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         success: false,
         wamid: null,
         externalMessageId: null,
+        audioNotDelivered: options.autoFollowUp === true,
         error: "The voice recording could not be converted to an Instagram-supported audio format.",
       };
     }
@@ -646,14 +661,14 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         if (requireStaffMode && !(await stillInStaffMode(contact))) {
           return staffModeChangedResult();
         }
-        const cancelled = await preSendCancelled(sendOptions);
+        const cancelled = await preSendCancelled(socialAudioOptions);
         if (cancelled) return cancelled;
         return metaAttachments.sendUrlAttachment(
           channel,
           recipientFor(contact),
           "audio",
           mediaUrl,
-          sendOptions
+          socialAudioOptions
         );
       }
     );
@@ -677,7 +692,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         buffer,
         mimeType,
         filename,
-        sendOptions
+        socialAudioOptions
       )
     );
     await notifyProviderMessageId(sendOptions, result, channel);
