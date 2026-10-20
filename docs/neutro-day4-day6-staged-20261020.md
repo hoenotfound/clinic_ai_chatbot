@@ -6,7 +6,7 @@
 - Strict RM0: disabled. Activation timestamp: null.
 - The worker cannot activate 96h/144h while Strict RM0 is disabled, even if the seven-day env flag is true.
 - No independently verified post-72h `free_entry_point`, `billable=false` receipt exists as of 20 October 2026.
-- Six template variants were **submitted to Meta for review on 20 October 2026** (all were PENDING when checked). They are **not approved, scheduled or enabled**. Never interpret the creation result as authorization to send.
+- Six template variants were **submitted and then verified APPROVED by Meta on 20 October 2026**. They are **not scheduled or enabled**. Approval only authorizes use of the templates, not guaranteed delivery or free billing.
 - Historical 10 October billable receipt remains unresolved. The messaging account has a payment method; do not promise zero fees.
 
 ## Proposed schedule
@@ -60,11 +60,11 @@ Hai~ Kalau nak tahu lagi tentang rawatan yang pernah anda tanya, boleh balas mes
 Boleh tanya harga semasa, penilaian atau sesi percubaan, atau masa yang sesuai untuk datang. Tak perlu tergesa-gesa.
 
 
-## Submitted Meta template IDs (still INACTIVE)
+## Approved Meta template IDs (still INACTIVE)
 - ns_day4_checkin: zh_CN `1435254485366265`; en_US `4570871286487882`; ms `1407915471017988`.
 - ns_day6_invitation: zh_CN `1772823270653473`; en_US `28000490849627139`; ms `2164038377822531`.
-- All six submitted as MARKETING, without a visible unsubscribe footer. The chatbot's opt-out processing and marketing-consent checks are unchanged.
-- Confirm final approval for all languages before any later rollout. Meta acceptance to review is NOT message delivery or billing evidence.
+- All six verified APPROVED as MARKETING, without a visible unsubscribe footer. The chatbot's opt-out processing and marketing-consent checks are unchanged.
+- Approval independently verified for all six language variants. Meta template approval is NOT message delivery or billing evidence.
 
 ## Proposed FUTURE config patch (do not execute without approval)
 
