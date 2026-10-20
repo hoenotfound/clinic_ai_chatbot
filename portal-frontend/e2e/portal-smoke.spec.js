@@ -2328,6 +2328,61 @@ test("Follow-up pricing and WhatsApp tabs fill desktop width", async ({ page }) 
   }
 });
 
+test("Unified follow-up journey edits regular and extended steps without sending or saving", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      services: [{ name: "骨盆调理", description: "" }],
+      automatedFollowUp: {
+        enabled: true, delayMinutes: 120, message: "FU one", translations: { en: "FU one", ms: "FU one", zh: "FU one" },
+        additionalSteps: [{ delayMinutes: 360, message: "FU two",
+          translations: { en: "FU two", ms: "FU two", zh: "FU two" } }],
+        freeEntry: {
+          enabled: true, templateName: "clinic_text", language: "zh_CN",
+          slotsHours: [50, 98], templateRules: [
+            { slotHours: 98, serviceName: "骨盆调理", templateName: "pelvic_video", mediaKey: "clients/clinic/video.mp4" },
+          ],
+        },
+      },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: (payload) => writes.push(payload),
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  await expect(journey).toContainText("Customer follow-up journey");
+  await expect(journey).toContainText("After 24 hours · WhatsApp templates");
+  await expect(journey).toContainText("Default template: clinic_text");
+  await expect(journey).toContainText("media configured");
+  await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
+  await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
+  await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
+  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#extended-follow-up-time-98")).toBeFocused();
+  await expect(page.getByLabel("Message for +98h follow-up")).toBeVisible();
+  expect(writes).toHaveLength(0);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Unified follow-up journey shows extended pause and missing template without implying delivery", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: {
+        enabled: false, delayMinutes: 120, message: "Hello",
+        freeEntry: { enabled: false, templateName: "", slotsHours: [26], templateRules: [] },
+      },
+    },
+  });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  await expect(journey).toContainText("Extended follow-ups paused");
+  await expect(journey).toContainText("No default template selected");
+  await expect(journey).toContainText("possible attempt, not a scheduled guarantee");
+});
+
 test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
