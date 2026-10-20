@@ -664,8 +664,8 @@ function isReferencedClinicFollowUpMediaKey(key, config, env = process.env) {
   const followUp = config.automatedFollowUp || {};
   const steps = [followUp, ...(Array.isArray(followUp.additionalSteps) ? followUp.additionalSteps : [])];
   for (const step of steps) {
-    if (step.videoKey === key || step.voiceKey === key) return true;
-    if (Array.isArray(step.serviceOverrides) && step.serviceOverrides.some((entry) => entry.videoKey === key || entry.voiceKey === key))
+    if (step.videoKey === key || Object.values(step.voiceNotes || {}).some(note => note?.key === key || note?.previewKey === key)) return true;
+    if (Array.isArray(step.serviceOverrides) && step.serviceOverrides.some((entry) => entry.videoKey === key || Object.values(entry.voiceNotes || {}).some(note => note?.key === key || note?.previewKey === key)))
       return true;
   }
   return Array.isArray(followUp.freeEntry?.templateRules) &&
