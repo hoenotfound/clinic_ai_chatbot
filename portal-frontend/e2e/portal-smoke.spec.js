@@ -1549,7 +1549,7 @@ test("Follow-up advanced delivery options keep trigger and quiet hours together 
   await expect(panel.getByRole("radio", { name: /Staff messages only/ })).toBeVisible();
   await expect(panel.getByRole("switch", { name: "Follow-up quiet hours" })).toBeVisible();
 
-  await panel.getByRole("radio", { name: /Staff messages only/ }).check();
+  await panel.getByText("Staff messages only", { exact: true }).click();
   await panel.getByLabel("Follow-up quiet hours start").fill("01:00");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
 
