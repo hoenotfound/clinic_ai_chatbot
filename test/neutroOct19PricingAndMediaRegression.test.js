@@ -790,6 +790,14 @@ test("Amanda confirmed RM488 price plus recovery question receives both verified
     ["en", "Rm488 for one time? Is there downtime?", /Regarding downtime or recovery/iu],
     ["zh", "RM488 for one time? 需要修复期吗？", /至于修复期／恢复时间/u],
     ["zh", "RM488? 恢复期多久？", /至于修复期／恢复时间/u],
+    ["en", "RM488? Does it have downtime?", /Regarding downtime or recovery/iu],
+    ["en", "RM488? Does it need recovery time?", /Regarding downtime or recovery/iu],
+    ["en", "RM488? How long does recovery take?", /Regarding downtime or recovery/iu],
+    ["en", "RM488? How many days of recovery?", /Regarding downtime or recovery/iu],
+    ["en", "RM488? Will I need time to recover?", /Regarding downtime or recovery/iu],
+    ["zh", "RM488? 需要休息多久？", /至于修复期／恢复时间/u],
+    ["zh", "RM488? 要休息几天？", /至于修复期／恢复时间/u],
+    ["ms", "RM488? Perlu recovery time?", /Tentang tempoh pemulihan/iu],
     ["ms", "RM488 for one time? Ada tempoh pemulihan?", /Tentang tempoh pemulihan/iu],
   ];
   for (const [language, text, recoveryPattern] of cases) {
@@ -816,6 +824,10 @@ test("Amanda confirmed RM488 price plus recovery question receives both verified
     "RM488 for one time? What about RM288?",
     "RM488? Is the 9D price different?",
     "RM488? 需要骨盆调理吗？",
+    "RM488? Does the 9D treatment need recovery time?",
+    "RM488? How long does the other package recovery take?",
+    "RM488? Is there downtime and can you send me the graphic?",
+    "RM488? 9D需要休息多久？",
     "RM488? Send me a discount picture.",
   ]) {
     const history = [...amanda().slice(0, -1), turn("user", text, 1000)];
