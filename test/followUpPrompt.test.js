@@ -260,3 +260,26 @@ test("follow-up prompt only includes branch and hours detail when scheduling is 
     Object.assign(config, original);
   }
 });
+
+
+test("follow-up conversion prompt carries customer context and moves booking forward", () => {
+  const prompt = buildFollowUpPrompt({
+    channel: "whatsapp",
+    followUpContext: {
+      stepNumber: 3,
+      treatmentInterest: "骨盆调理",
+      stageName: "Interested",
+      instruction: "Ask for an actionable date or time, without pressure.",
+    },
+  });
+  assert.match(prompt, /do NOT ask which service they want again/);
+  assert.match(prompt, /pricing, number of sessions, recovery, process, location, or how to book/);
+  assert.match(prompt, /an unsolicited follow-up must NEVER quote a price when assessment-first is enabled/);
+  assert.match(prompt, /Ask at most one easy question/);
+  assert.match(prompt, /If the customer already answered 'weekday', 'weekend'/);
+  assert.match(prompt, /advance to the missing date or time/);
+  assert.match(prompt, /never promise a confirmed slot/);
+  assert.match(prompt, /paid First Trial or full treatment/);
+  assert.match(prompt, /return stop_sequence instead of pushing for a booking/);
+  assert.match(prompt, /Ask for an actionable date or time, without pressure/);
+});
