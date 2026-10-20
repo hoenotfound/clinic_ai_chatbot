@@ -901,6 +901,7 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await page.goto("/tools");
   await expect(page.getByRole("heading", { name: "Automated follow-up" })).toBeVisible();
 
+  await page.getByRole("button", { name: /Advanced delivery options/ }).click();
   await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByLabel("Follow-up quiet hours start")).toHaveValue("00:00");
   await expect(page.getByLabel("Follow-up quiet hours end")).toHaveValue("07:00");
@@ -1500,6 +1501,7 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await expect(page.getByRole("heading", { name: "Sequence at a glance" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Conditional pricing reminder" })).not.toBeVisible();
 
+  await page.getByRole("button", { name: /Advanced delivery options/ }).click();
   await page.getByRole("switch", { name: "Follow-up quiet hours" }).click();
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
 
