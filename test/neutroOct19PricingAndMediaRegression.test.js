@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const clinicConfig = require("../src/config/clinicConfig");
-const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
+const { resolveShadowPriceException, resolvePreviouslyQuotedSessionPrice } = require("../src/utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { ensureVerifiedPriceReply, verifiedPricesForService } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
@@ -782,4 +782,62 @@ test("Structured pelvic A and B prices retain package identity and voucher condi
   assert.match(response.reply,/Package A[\s\S]*RM388/u);
   assert.match(response.reply,/Package B[\s\S]*RM288/u);
   assert.match(response.reply,/优惠券/u);
+});
+
+
+test("Amanda confirmed RM488 price plus recovery question receives both verified price and cautious recovery guidance", () => {
+  const cases = [
+    ["en", "Rm488 for one time? Is there downtime?", /Regarding downtime or recovery/iu],
+    ["zh", "RM488 for one time? 需要修复期吗？", /至于修复期／恢复时间/u],
+    ["zh", "RM488? 恢复期多久？", /至于修复期／恢复时间/u],
+    ["ms", "RM488 for one time? Ada tempoh pemulihan?", /Tentang tempoh pemulihan/iu],
+  ];
+  for (const [language, text, recoveryPattern] of cases) {
+    const history = [...amanda().slice(0, -1), turn("user", text, 1000)];
+    const decision = resolveShadowPriceException(args({
+      customerText: text, conversationHistory: history,
+    }));
+    assert.equal(decision?.source, "confirmed_prior_quote", text);
+    assert.equal(decision.prices?.[0]?.price, "RM488");
+    const confirmed = ensureVerifiedPriceReply({
+      customerText: text, reply: "Would you like to book?",
+      treatment: decision.treatment, pricingDecision: decision,
+      services, serviceAliases: aliases, promotions, language,
+      conversationHistory: history, priceOnlyResponse: true,
+    });
+    assert.equal(confirmed.restored, true);
+    assert.match(confirmed.reply, /RM488/u);
+    assert.match(confirmed.reply, recoveryPattern);
+    assert.doesNotMatch(confirmed.reply, /(?:guarantee(?:d)? zero downtime|零恢复期|绝对无恢复期)/iu);
+    assert.doesNotMatch(confirmed.reply, /send (?:a|the) (?:image|graphic)|已经发图/u);
+  }
+
+  for (const text of [
+    "RM488 for one time? What about RM288?",
+    "RM488? Is the 9D price different?",
+    "RM488? 需要骨盆调理吗？",
+    "RM488? Send me a discount picture.",
+  ]) {
+    const history = [...amanda().slice(0, -1), turn("user", text, 1000)];
+    assert.equal(resolvePreviouslyQuotedSessionPrice(args({
+      customerText: text, conversationHistory: history,
+    })), null, text);
+  }
+});
+
+test("Verified text-only service prices preserve a simultaneous downtime question", () => {
+  const decision = {
+    type: "price", source: "service_price", treatment: "3D 小颜术",
+    prices: [], servicePrice: "RM488",
+  };
+  const text = "What is the price and recovery time?";
+  const result = ensureVerifiedPriceReply({
+    customerText: text, reply: "Please come for an assessment.",
+    pricingDecision: decision, treatment: decision.treatment,
+    services, serviceAliases: aliases, promotions: [],
+    language: "en", priceOnlyResponse: true,
+  });
+  assert.equal(result.restored, true);
+  assert.match(result.reply, /RM488/u);
+  assert.match(result.reply, /downtime or recovery/iu);
 });
