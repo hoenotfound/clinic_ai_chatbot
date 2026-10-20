@@ -612,7 +612,7 @@ async function saveIfStillEligible({
     numericStep < 1 ||
     numericStep > MAX_FOLLOW_UP_STEPS ||
     !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode) ||
-    (normalizedMediaKey && !["video/mp4", "audio/ogg"].includes(normalizedMediaMimeType)) ||
+    (normalizedMediaKey && !["video/mp4", "audio/ogg", "audio/mpeg"].includes(normalizedMediaMimeType)) ||
     (!normalizedMediaKey && normalizedMediaMimeType)
   ) {
     throw new TypeError("Invalid automated follow-up step or delay.");
