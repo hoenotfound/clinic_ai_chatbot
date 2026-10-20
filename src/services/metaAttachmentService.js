@@ -138,17 +138,36 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
     if (!response.ok) {
       const error = extractErrorText(data, raw || `${label} returned HTTP ${response.status}.`);
       console.error(`${label} ${logLabel} failed:`, response.status, error);
+      // A 5xx response from the message-send endpoint is not proof that
+      // Meta rejected the message. Do not label automated voice as definitely
+      // failed or encourage an unsafe duplicate recording.
+      if (options.autoFollowUp === true && type === "audio" && response.status >= 500) {
+        return { success: false, unknown: true, ambiguous: true,
+          wamid: null, externalMessageId: null,
+          error: `${label} voice-note delivery is unconfirmed after Meta HTTP ${response.status}. Check Meta before attempting a new send.` };
+      }
       return { success: false, wamid: null, externalMessageId: null, error };
     }
 
+    const externalMessageId = data?.message_id || data?.id || null;
+    if (!externalMessageId && options.autoFollowUp === true && type === "audio") {
+      return { success: false, unknown: true, ambiguous: true,
+        wamid: null, externalMessageId: null,
+        error: `${label} accepted the voice-note request without a message ID. Delivery is unconfirmed; check Meta before attempting a new send.` };
+    }
     return {
       success: true,
       wamid: null,
-      externalMessageId: data?.message_id || data?.id || null,
+      externalMessageId,
       error: null,
     };
   } catch (err) {
     console.error(`${label} ${logLabel} threw an error:`, err);
+    if (options.autoFollowUp === true && type === "audio") {
+      return { success: false, unknown: true, ambiguous: true,
+        wamid: null, externalMessageId: null,
+        error: `${label} voice-note delivery is unconfirmed after a network error. Check Meta before attempting a new send.` };
+    }
     return {
       success: false,
       wamid: null,
