@@ -2781,7 +2781,7 @@ function FollowUpTool({
               title={editingStepIndex > 0 ? `Edit Follow-up ${editingStepIndex + 1}` : "More follow-ups"}
               description={editingStepIndex > 0
                 ? "Only the selected follow-up editor is open. Choose another step in the timeline to switch."
-                : "Add up to two more messages. Choose a step in the timeline to edit it."}
+                : "Add up to two more messages. Keep them collapsed when you are not editing them. Use the timeline to switch."}
             />
 
             {form.additionalSteps.length > 0 ? (
