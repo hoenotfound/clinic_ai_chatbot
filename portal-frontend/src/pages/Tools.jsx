@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
 import LeadDistribution from "./LeadDistribution";
-import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../components/FollowUpTemplatePicker";
+import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker, supportedForAutomation } from "../components/FollowUpTemplatePicker";
 import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
 import FollowUpActivity from "../components/FollowUpActivity";
 import FollowUpHealth from "../components/FollowUpHealth";
@@ -1622,6 +1622,11 @@ function sequenceTargetSummary(step) {
     : `Target: ${formatDelay(Number(step?.delayMinutes || 0))} after the sequence-start message`;
 }
 
+function extendedFollowUpSlotLabel(hours) {
+  const days = Math.max(1, Math.round(Number(hours) / 24));
+  return `About ${days} day${days === 1 ? "" : "s"} later (+${hours}h)`;
+}
+
 function followUpStepSetupIssue(step, services = []) {
   if (!String(step?.message || "").trim()) return "Add a message";
   if (String(step?.imageUrl || "").trim() && String(step?.videoKey || "").trim()) {
@@ -1943,6 +1948,7 @@ function FollowUpTool({
   const [followUpTab, setFollowUpTab] = useState("sequence");
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
+  const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
   const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
   useEffect(() => {
     if (form.whatsappFreeOnly?.enabled === true) setBillingProtectionOpen(true);
@@ -2015,6 +2021,33 @@ function FollowUpTool({
       refreshTemplateCatalog();
     }
   }, [followUpTab, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
+
+  // Quick template choices edit only the all-treatment TEXT rule for a given
+  // existing slot. Treatment-specific media rules remain unchanged.
+  function setSimpleSlotTemplate(slotHours, templateName) {
+    setForm((current) => {
+      const currentRules = current.freeEntry?.templateRules || [];
+      const previous = currentRules.find((rule) =>
+        Number(rule.slotHours) === Number(slotHours) && rule.serviceName === "*");
+      const nextRules = currentRules.filter((rule) =>
+        !(Number(rule.slotHours) === Number(slotHours) && rule.serviceName === "*"));
+      if (templateName) {
+        nextRules.push({
+          ...(previous || {}),
+          slotHours: Number(slotHours),
+          serviceName: "*",
+          templateName,
+          // A different template may have a different header requirement.
+          // Never silently reuse an incompatible old media attachment.
+          mediaUrl: previous?.templateName === templateName ? previous.mediaUrl || "" : "",
+          mediaKey: previous?.templateName === templateName ? previous.mediaKey || "" : "",
+          mediaSourceId: previous?.templateName === templateName ? previous.mediaSourceId || "" : "",
+          videoCodecVerified: previous?.templateName === templateName && previous.videoCodecVerified === true,
+        });
+      }
+      return { ...current, freeEntry: { ...current.freeEntry, templateRules: nextRules } };
+    });
+  }
 
   function updateTemplateRule(index, patch, expectedRule = null, expectedLanguage = null) {
     setForm((current) => ({
@@ -2109,6 +2142,18 @@ function FollowUpTool({
     : "";
   const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
   const suggestedNextDelay = nextSequenceDelay(lastDelay);
+  const simpleApprovedTextTemplates = [...new Map(
+    (templateCatalog?.templates || [])
+      .filter((template) => supportedForAutomation(template) && (template.header?.format || "TEXT") === "TEXT")
+      .map((template) => [template.name, template])
+  ).values()].sort((a, b) => a.name.localeCompare(b.name));
+  const simpleRuleSlots = form.freeEntry?.slotsHours || [];
+  const simpleConfiguredNames = simpleRuleSlots.map((hours) =>
+    (form.freeEntry?.templateRules || []).find((rule) =>
+      Number(rule.slotHours) === Number(hours) && rule.serviceName === "*")?.templateName
+      || form.freeEntry?.templateName || ""
+  ).filter(Boolean);
+  const hasDuplicateExtendedNames = new Set(simpleConfiguredNames).size < simpleConfiguredNames.length;
   const hasPromotionFollowUps = (Array.isArray(promotions) ? promotions : []).some(
     (promotion) =>
       String(promotion?.followUpMessage || "").trim() ||
@@ -3551,10 +3596,114 @@ function FollowUpTool({
                 <option value="26,50,98">Days 1, 2 and 4 (three reminders)</option>
               </select>
             </label>
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center justify-between gap-3">
+            <section aria-label="After 24 hours guided setup" className="mt-5 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/20 p-3 sm:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <p className="text-xs font-semibold">Day-specific approved templates & image/video attachments</p>
+                  <h3 className="text-sm font-bold">Choose the message for each follow-up time</h3>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Each time uses the default approved text template above unless you choose another.
+                    For individual treatment videos or images, open the advanced editor below.
+                  </p>
+                </div>
+                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
+                  Up to 3 distinct template sends, not one send per time
+                </span>
+              </div>
+              {hasDuplicateExtendedNames && (
+                <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  Some times use the same template. The existing worker does not repeat a template name during a verified period;
+                  later times may be skipped. Pick distinct approved templates if you want separate messages.
+                </p>
+              )}
+              {!form.freeEntry?.templateName && (
+                <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  Choose a default approved text template above before enabling extended follow-ups.
+                </p>
+              )}
+              {form.freeEntry?.enabled === true && !freeEntryStatus?.enabledOnServer && (
+                <p role="status" className="mt-3 text-xs text-amber-800">
+                  The server has not confirmed extended sending is active. Selecting templates here does not enable the server.
+                </p>
+              )}
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {simpleRuleSlots.map((hours, slotIndex) => {
+                  const matches = (form.freeEntry?.templateRules || []).filter((rule) =>
+                    Number(rule.slotHours) === Number(hours) && rule.serviceName === "*");
+                  const selectedRule = matches[0] || null;
+                  const selectedName = selectedRule?.templateName || "";
+                  const effectiveName = selectedName || form.freeEntry?.templateName || "";
+                  const treatmentCount = (form.freeEntry?.templateRules || []).filter((rule) =>
+                    Number(rule.slotHours) === Number(hours) && rule.serviceName && rule.serviceName !== "*").length;
+                  const preview = (templateCatalog?.templates || []).find((template) =>
+                    template.name === effectiveName && template.language ===
+                      (form.freeEntry?.language === "auto" ? "zh_CN" : form.freeEntry?.language)
+                  ) || (templateCatalog?.templates || []).find((template) => template.name === effectiveName);
+                  const isTextChoice = !selectedName || simpleApprovedTextTemplates.some((template) => template.name === selectedName);
+                  return (
+                    <div key={`${hours}-${slotIndex}`} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white p-3">
+                      <p className="text-sm font-semibold">Follow-up time {slotIndex + 1}</p>
+                      <p className="mt-1 text-xs text-[var(--color-text-muted)]">{extendedFollowUpSlotLabel(hours)}</p>
+                      <label className="mt-3 block text-xs font-semibold">
+                        Message at this time
+                        <select
+                          aria-label={`Message for +${hours}h follow-up`}
+                          value={selectedName}
+                          onChange={(event) => setSimpleSlotTemplate(hours, event.target.value)}
+                          disabled={!templateCatalog}
+                          className="mt-1.5 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white p-2.5 text-sm"
+                        >
+                          <option value="">Use default text message</option>
+                          {selectedName && !isTextChoice && <option value={selectedName}>{selectedName} · edit media in Advanced</option>}
+                          {simpleApprovedTextTemplates.map((template) =>
+                            <option key={template.name} value={template.name}>
+                              {template.name}
+                            </option>
+                          )}
+                        </select>
+                      </label>
+                      {effectiveName ? (
+                        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-[var(--color-text-muted)]">
+                          {preview?.body?.text || `Configured: ${effectiveName} (preview unavailable)`}
+                        </p>
+                      ) : <p className="mt-2 text-xs text-amber-800">No approved message selected.</p>}
+                      {treatmentCount > 0 && (
+                        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                          {treatmentCount} treatment-specific rule{treatmentCount === 1 ? "" : "s"} retained in Advanced.
+                        </p>
+                      )}
+                      {matches.length > 1 && (
+                        <p role="status" className="mt-2 text-xs text-amber-800">
+                          Multiple all-treatment rules exist at this time. Review them in Advanced before editing here.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                These are possible attempts measured from the first qualifying reply, not guaranteed delivery times.
+                Sends require approval, recorded marketing consent, qualifying CTWA billing evidence, and a valid server window.
+                Customer replies, bookings, opt-outs and quiet hours can stop or skip messages.
+              </p>
+              <button type="button"
+                onClick={() => setShowAdvancedTemplateRules(true)}
+                className="mt-3 rounded-lg border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)]"
+              >
+                Configure treatment-specific videos, images and advanced rules
+              </button>
+            </section>
+            <details
+              open={showAdvancedTemplateRules}
+              onToggle={(event) => setShowAdvancedTemplateRules(event.currentTarget.open)}
+              className="mt-3 rounded-xl border border-[var(--color-border)] bg-white p-3"
+            >
+              <summary className="cursor-pointer text-xs font-semibold text-[var(--color-primary)]">
+                Advanced: treatment-specific templates and media
+              </summary>
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold">Day-specific approved templates & image/video attachments</p>
                   <p className="text-[11px] text-[var(--color-text-muted)]">
                     Choose a slot and All treatments for a day-specific template, or select one treatment to override it.
                     For ns_fu1_service_checkin, the treatment name is filled automatically. For ns_fu_pricing_graphic
@@ -3650,6 +3799,7 @@ function FollowUpTool({
                 </div>
               ))}
             </div>
+            </details>
             <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
               At most three distinct approved extended templates can be sent per verified period, even if you select a schedule with more slots. Template names are never repeated. If pelvic Package A/B
               is unclear, the pricing-image template is skipped instead of guessing. An offer without the advertised
