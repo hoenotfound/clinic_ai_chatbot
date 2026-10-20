@@ -1799,6 +1799,7 @@ router.post("/automated-follow-up/voice", handleFollowUpVoiceUpload, async (req,
     }
     if (!req.file?.buffer?.length) return res.status(400).json({ error: "Choose a recorded voice message." });
     if (!mediaStorage.isStorageConfigured()) return res.status(503).json({ error: "Private voice storage is not configured." });
+    if (!mediaStorage.getMediaIsolationStatus().prefix) return res.status(503).json({ error: "Voice follow-ups require a configured CLIENT_SLUG for private storage." });
     const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype, { rejectOverlength: true });
     if (!converted?.whatsapp?.buffer?.length || !converted?.playback?.buffer?.length) {
       return res.status(400).json({ error: "This recording could not be converted to a WhatsApp voice note." });
