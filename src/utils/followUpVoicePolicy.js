@@ -22,7 +22,10 @@ function unsafeVoiceTranscript(transcript) {
 
 function validVoiceAssetKey(key, extension, mediaStorage) {
   if (typeof key !== "string" || !key || key.length > 1024 || key.includes("..")) return false;
-  return key.startsWith(mediaStorage.followUpConfigVideoPrefix()) &&
+  const prefix = mediaStorage.getMediaIsolationStatus().prefix;
+  // Voice assets require tenant-isolated R2 objects; legacy shared prefixes
+  // are not sufficient proof of ownership for upload, playback or delivery.
+  return Boolean(prefix) && key.startsWith(`${prefix}/messages/follow-up-config/`) &&
     mediaStorage.isOwnedStoredMediaKey(key) &&
     key.toLowerCase().endsWith("." + extension);
 }
