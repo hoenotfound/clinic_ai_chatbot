@@ -98,7 +98,8 @@ function normalizeServiceOverrides(value) {
       typeof item?.imageUrl === "string" ? item.imageUrl.trim() : "";
     const videoKey =
       typeof item?.videoKey === "string" ? item.videoKey.trim() : "";
-    if (imageUrl && videoKey) return null;
+    const voiceKey = typeof item?.voiceKey === "string" ? item.voiceKey.trim() : "";
+    if ([imageUrl, videoKey, voiceKey].filter(Boolean).length > 1) return null;
 
     normalized.push({
       serviceName,
@@ -110,6 +111,9 @@ function normalizeServiceOverrides(value) {
         typeof item?.videoFilename === "string"
           ? item.videoFilename.trim().slice(0, 255)
           : "",
+      voiceKey,
+      voiceFilename: typeof item?.voiceFilename === "string"
+        ? item.voiceFilename.trim().slice(0, 255) : "",
     });
   }
   return normalized;
@@ -140,8 +144,10 @@ function normalizeFollowUpStep(value) {
     message.length > 1000 ||
     (value?.imageUrl !== undefined && typeof value.imageUrl !== "string") ||
     (value?.videoKey !== undefined && typeof value.videoKey !== "string") ||
+    (value?.voiceKey !== undefined && typeof value.voiceKey !== "string") ||
+    (value?.voiceFilename !== undefined && typeof value.voiceFilename !== "string") ||
     (value?.videoFilename !== undefined && typeof value.videoFilename !== "string") ||
-    (String(value?.imageUrl || "").trim() && String(value?.videoKey || "").trim())
+    [String(value?.imageUrl || "").trim(), String(value?.videoKey || "").trim(), String(value?.voiceKey || "").trim()].filter(Boolean).length > 1
   ) {
     return null;
   }
@@ -170,6 +176,9 @@ function normalizeFollowUpStep(value) {
       typeof value?.videoFilename === "string"
         ? value.videoFilename.trim().slice(0, 255)
         : "",
+    voiceKey: value.voiceKey?.trim() || "",
+    voiceFilename: typeof value?.voiceFilename === "string"
+      ? value.voiceFilename.trim().slice(0, 255) : "",
     serviceOverrides,
   };
 }
@@ -687,7 +696,7 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
   // service actually has media configured. Otherwise keep the general media
   // as the safe fallback, preserving the existing general-image behavior.
   const targetedMedia =
-    targeted && (targeted.imageUrl || targeted.videoKey) ? targeted : null;
+    targeted && (targeted.imageUrl || targeted.videoKey || targeted.voiceKey) ? targeted : null;
   const mediaSource = targetedMedia || step;
   return {
     message: source.translations[language] || source.message,
@@ -696,6 +705,8 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     selectedImageUrl: mediaSource.imageUrl || "",
     selectedVideoKey: mediaSource.videoKey || "",
     selectedVideoFilename: mediaSource.videoFilename || "",
+    selectedVoiceKey: mediaSource.voiceKey || "",
+    selectedVoiceFilename: mediaSource.voiceFilename || "",
     promotionFollowUp: false,
     promotionPackageSelection,
   };
@@ -1120,6 +1131,26 @@ function enforceAssessmentFirstFollowUpCopy({
 
 // Policy denials without a Meta provider request are not delivery failures.
 // Ambiguous one-shot reservations and programming/context errors require staff review.
+async function sendConfiguredVoiceFollowUp(contact, voiceKey, options) {
+  // Never send an arbitrary object as a voice note. Config validation checks
+  // the key on save; check ownership and actual MIME again at dispatch.
+  if (!mediaStorage.isSharedFollowUpConfigKey(voiceKey) || !voiceKey.endsWith(".ogg")) {
+    return { success: false, error: "Configured voice recording is outside this clinic's media storage." };
+  }
+  const info = await mediaStorage.getSharedFollowUpMediaInfo(voiceKey);
+  if (info.mimeType !== "audio/ogg" || !Number.isFinite(info.bytes) ||
+      info.bytes <= 0 || info.bytes > 8 * 1024 * 1024) {
+    return { success: false, error: "Configured voice recording is missing or invalid." };
+  }
+  const buffer = await mediaStorage.downloadMedia(voiceKey, { maxBytes: 8 * 1024 * 1024 });
+  return channelMessaging.sendAudioBuffer(contact, buffer, "audio/ogg", "voice.ogg", {
+    ...options,
+    requireStaffMode: false,
+  });
+}
+
+// Only free-form WhatsApp messages within the active customer reply window
+// can use the voice flag. The channel guard still enforces that window.
 const POSTPONABLE_POLICY_CODES = new Set([
   "zero_cost_unverified_free_entry",
   "zero_cost_previous_send_unreconciled",
@@ -1195,6 +1226,7 @@ async function sendCandidate(candidate) {
   let selectedVideoKey = fallbackSelection.selectedVideoKey || "";
   let selectedVideoFilename =
     fallbackSelection.selectedVideoFilename || "";
+  const selectedVoiceKey = fallbackSelection.selectedVoiceKey || "";
   let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
   let promotionPackageName = fallbackSelection.promotionPackageName || null;
   let promotionFollowUpImageUrl =
@@ -1457,6 +1489,8 @@ async function sendCandidate(candidate) {
       ? "" : selectedFollowUpImage;
   let effectiveVideoKey =
     !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
+  const effectiveVoiceKey = !originalHasPrice && !promotionFollowUp &&
+    (contact.channel === "whatsapp") && selectedVoiceKey ? selectedVoiceKey : "";
 
   // An absent or unconfigured video must never be described as if it were
   // attached, even when an AI model or old fallback copy says otherwise.
@@ -1521,6 +1555,7 @@ async function sendCandidate(candidate) {
   // WhatsApp message references that key, so Inbox history and Retry use the
   // same bytes without copying them into each customer's folder.
   const durableVideoKey = !isSocial && effectiveVideoKey ? effectiveVideoKey : null;
+  const durableVoiceKey = effectiveVoiceKey || null;
 
   // WhatsApp can send its media + caption as one tracked message. Messenger
   // and Instagram keep the sequence claim as text and persist media companions
@@ -1532,8 +1567,8 @@ async function sendCandidate(candidate) {
       triggerMessageId: candidate.trigger_message_id,
       content: followUpMessage,
       mediaUrl: !isSocial && effectiveImageUrl ? effectiveImageUrl : null,
-      mediaKey: durableVideoKey,
-      mediaMimeType: durableVideoKey ? "video/mp4" : null,
+      mediaKey: durableVoiceKey || durableVideoKey,
+      mediaMimeType: durableVoiceKey ? "audio/ogg" : durableVideoKey ? "video/mp4" : null,
       stepIndex,
       targetedService:
         followUpMessageMode === "ai_personalized"
@@ -1638,7 +1673,9 @@ async function sendCandidate(candidate) {
         currentMessageId: saved.id,
         autoFollowUp: true,
       };
-      sendResult = effectiveVideoKey
+      sendResult = effectiveVoiceKey
+        ? await sendConfiguredVoiceFollowUp(contact, effectiveVoiceKey, policyOptions)
+        : effectiveVideoKey
         ? await channelMessaging.sendVideoByStoredKey(
             contact,
             durableVideoKey,
@@ -1726,7 +1763,7 @@ async function sendCandidate(candidate) {
   if (!sendResult?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      `${uncertainSend ? "Delivery unconfirmed" : "Delivery failed"}: Automated follow-up #${saved.id} (step ${stepIndex}, ${durableVideoKey ? "video" : effectiveImageUrl ? "image" : "text"}): ${deliveryError}`,
+      `${uncertainSend ? "Delivery unconfirmed" : "Delivery failed"}: Automated follow-up #${saved.id} (step ${stepIndex}, ${durableVoiceKey ? "voice" : durableVideoKey ? "video" : effectiveImageUrl ? "image" : "text"}): ${deliveryError}`,
       saved.id
     );
     return;
