@@ -3541,3 +3541,59 @@ test("held campaign suppresses promotion text and artwork, but ordinary first fo
   assert.equal(savedContent.mediaUrl ?? null, null);
   assert.equal(imageCalls, 0);
 });
+
+
+test("native voice follow-up stores audio/ogg and uses the WhatsApp voice send path", async () => {
+  enableTool();
+  const voiceKey = "clients/neutro/messages/follow-up-config/voice.ogg";
+  clinicConfig.automatedFollowUp.voiceKey = voiceKey;
+  clinicConfig.automatedFollowUp.voiceFilename = "pelvis-message.mp3";
+
+  const originals = {
+    shared: mediaStorage.isSharedFollowUpConfigKey,
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia,
+    audio: channelMessaging.sendAudioBuffer,
+  };
+  let claim = null;
+  let voiceCall = null;
+  try {
+    mediaStorage.isSharedFollowUpConfigKey = (key) => key === voiceKey;
+    mediaStorage.getSharedFollowUpMediaInfo = async () => ({ mimeType: "audio/ogg", bytes: 16 });
+    mediaStorage.downloadMedia = async () => Buffer.from("OggS-OpusHead");
+    channelMessaging.sendAudioBuffer = async (...args) => {
+      voiceCall = args;
+      return { success: true, wamid: "wamid-voice-follow-up" };
+    };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 901, channel: "whatsapp", whatsapp_number: "60120000901",
+      trigger_message_id: 900, next_follow_up_step: 1,
+      recent_inbound_messages: ["Tell me more about Pelvic Care"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "Thank you for your enquiry",
+    }];
+    followUpRepo.saveIfStillEligible = async (input) => {
+      claim = input;
+      return { id: 902, contact_id: 901, delivery_status: null };
+    };
+    messagesRepo.setWhatsappMessageId = async (id, wamid) =>
+      ({ id, contact_id: 901, whatsapp_message_id: wamid, delivery_status: "pending" });
+    realtimeEvents.publish = () => {};
+
+    await runAutomatedFollowUps();
+
+    assert.equal(claim.mediaKey, voiceKey);
+    assert.equal(claim.mediaMimeType, "audio/ogg");
+    assert.equal(voiceCall[0].channel, "whatsapp");
+    assert.equal(voiceCall[0].whatsapp_number, "60120000901");
+    assert.equal(voiceCall[2], "audio/ogg");
+    assert.equal(voiceCall[3], "voice.ogg");
+    assert.equal(voiceCall[4].autoFollowUp, true);
+    assert.equal(voiceCall[4].requireStaffMode, false);
+  } finally {
+    mediaStorage.isSharedFollowUpConfigKey = originals.shared;
+    mediaStorage.getSharedFollowUpMediaInfo = originals.head;
+    mediaStorage.downloadMedia = originals.download;
+    channelMessaging.sendAudioBuffer = originals.audio;
+  }
+});
