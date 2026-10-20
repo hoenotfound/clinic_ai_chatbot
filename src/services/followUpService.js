@@ -18,7 +18,7 @@ const {
   findAmbiguousPromotionPackageTerm,
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
-const { randomUUID } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 const { promotionHasUnsafeClinicalCopy } = require("../utils/promotionClinicalCopyPolicy");
 const {
   normalizeVoiceNotes, voiceNotesPresent, selectedVoiceNote,
@@ -1144,23 +1144,37 @@ async function verifiedVoiceDelivery(note, language, channel) {
   if (channel === "whatsapp") return true;
   if (!["facebook", "instagram"].includes(channel) ||
       !validVoiceAssetKey(note.previewKey, "mp3", mediaStorage)) return false;
+  // The trusted OGG upload metadata anchors the MP3's actual bytes, rather
+  // than merely its key, MIME type or size. Legacy recordings without this
+  // upload-time seal remain usable on WhatsApp but must be reuploaded before
+  // sending through Meta's social-channel audio APIs.
+  const original = await mediaStorage.getSharedFollowUpMediaInfo(note.key);
+  const expectedSha256 = String(original.metadata?.voicepreviewsha256 || "");
+  if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) return false;
   const preview = await mediaStorage.getSharedFollowUpMediaInfo(note.previewKey);
-  return preview.mimeType === "audio/mpeg" &&
-    Number.isFinite(preview.bytes) && preview.bytes > 0 &&
-    preview.bytes <= 8 * 1024 * 1024;
+  if (preview.mimeType !== "audio/mpeg" ||
+      !Number.isFinite(preview.bytes) || preview.bytes <= 0 ||
+      preview.bytes > 8 * 1024 * 1024) return false;
+  return expectedSha256;
 }
 
 async function sendConfiguredVoiceFollowUp(contact, note, language, options) {
   const channel = contact.channel || "whatsapp";
   // Revalidate immutable transcript metadata and private audio copies right
   // before handing any customer media to the provider's send layer.
-  if (!(await verifiedVoiceDelivery(note, language, channel))) {
+  const approved = await verifiedVoiceDelivery(note, language, channel);
+  if (!approved) {
     return { success: false, error: "Voice recording metadata no longer matches the approved transcript or its playback copy." };
   }
   const isSocial = channel === "facebook" || channel === "instagram";
   const buffer = await mediaStorage.downloadMedia(
     isSocial ? note.previewKey : note.key, { maxBytes: 8 * 1024 * 1024 }
   );
+  // Never hand mismatched MP3 bytes to the provider, including if someone
+  // replaced the object between the metadata check and the actual download.
+  if (isSocial && createHash("sha256").update(buffer).digest("hex") !== approved) {
+    return { success: false, error: "The approved MP3 recording failed its SHA-256 integrity check. Please reupload the voice note." };
+  }
   return channelMessaging.sendAudioBuffer(
     contact, buffer, isSocial ? "audio/mpeg" : "audio/ogg",
     isSocial ? "voice.mp3" : "voice.ogg",
@@ -1777,11 +1791,11 @@ async function sendCandidate(candidate) {
     return;
   }
 
-  const uncertainSend = channel === "whatsapp" &&
-    (sendResult?.ambiguous === true || sendResult?.unknown === true ||
-      sendResult?.policyCode === "zero_cost_service_reply_already_attempted");
+  const uncertainSend =
+    sendResult?.ambiguous === true || sendResult?.unknown === true ||
+    (channel === "whatsapp" && sendResult?.policyCode === "zero_cost_service_reply_already_attempted");
   const deliveryError = uncertainSend
-    ? (sendResult?.error || "WhatsApp delivery is unconfirmed; check Meta before retrying.")
+    ? (sendResult?.error || `${channelMessaging.labelForChannel(channel)} delivery is unconfirmed; check Meta before any manual resend.`)
     : deliveryErrorFor(channel, sendResult, rejectedError);
   let finalMessage = saved;
   if (sendResult?.wamid) {
