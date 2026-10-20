@@ -4125,6 +4125,9 @@ test("confirmed Messenger audio 4xx converts the same follow-up row to text with
       assert.equal(contact.channel, "facebook");
       assert.equal(message, "Checking in");
       assert.equal(options.currentMessageId, 722);
+      assert.equal(options.autoFollowUp, true);
+      assert.equal(options.voiceFollowUpTextFallback, true,
+        "the converted voice claim must select the bounded text transport");
       assert.equal(await options.preSendCheck(), true);
       return { success: true, externalMessageId: "mid-text-fallback" };
     };
