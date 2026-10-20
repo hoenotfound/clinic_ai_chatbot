@@ -176,7 +176,7 @@ async function convertToInstagramAudio(inputBuffer, inputMimeType) {
  *   playback: {buffer: Buffer, mimeType: string}
  * }|null>}
  */
-async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
+async function convertToWhatsAppVoice(inputBuffer, inputMimeType, { rejectOverlength = false } = {}) {
   const tmpDir = os.tmpdir();
   const id = crypto.randomUUID();
   const inputPath = path.join(tmpDir, `${id}-voice-in${extensionForMimeType(inputMimeType)}`);
@@ -185,6 +185,22 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
 
   try {
     await fs.writeFile(inputPath, inputBuffer);
+    if (rejectOverlength) {
+      const duration = await new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(inputPath, (err, data) => {
+          if (err) return reject(err);
+          const seconds = Number(data?.format?.duration);
+          return Number.isFinite(seconds) && seconds > 0
+            ? resolve(seconds)
+            : reject(new Error("Cannot determine recording duration"));
+        });
+      });
+      if (duration > MAX_WHATSAPP_VOICE_SECONDS) {
+        const err = new Error("Voice recording must be 120 seconds or shorter. Please trim it before uploading.");
+        err.code = "VOICE_TOO_LONG";
+        throw err;
+      }
+    }
 
     // Meta requires native voice messages to be mono Ogg with the Opus codec.
     // Reset timestamps from the browser recording before OGG muxing. Without
@@ -240,6 +256,7 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
       playback,
     };
   } catch (err) {
+    if (err?.code === "VOICE_TOO_LONG") throw err;
     console.error("Voice-message conversion failed:", err);
     return null;
   } finally {
