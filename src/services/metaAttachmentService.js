@@ -1,6 +1,10 @@
 const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
 
 const GRAPH_API_VERSION = "v26.0";
+// Hard deadlines keep one stalled Meta request from blocking the sequential
+// follow-up worker indefinitely. An aborted customer-facing send is UNKNOWN.
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 12_000;
+const ATTACHMENT_SEND_TIMEOUT_MS = 12_000;
 
 function channelLabel(channel) {
   if (channel === "facebook") return "Facebook Messenger";
@@ -53,6 +57,7 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename) {
       method: "POST",
       headers: { Authorization: `Bearer ${config.token}` },
       body: form,
+      signal: AbortSignal.timeout(ATTACHMENT_UPLOAD_TIMEOUT_MS),
     });
     const raw = await response.text();
     let data = {};
@@ -99,6 +104,7 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
       success: false,
       wamid: null,
       externalMessageId: null,
+      ...(options.autoFollowUp === true && type === "audio" ? { audioNotDelivered: true } : {}),
       error: `${label} is not configured on this server.`,
     };
   }
@@ -126,6 +132,7 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ATTACHMENT_SEND_TIMEOUT_MS),
     });
     const raw = await response.text();
     let data = {};
@@ -146,7 +153,9 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
           wamid: null, externalMessageId: null,
           error: `${label} voice-note delivery is unconfirmed after Meta HTTP ${response.status}. Check Meta before attempting a new send.` };
       }
-      return { success: false, wamid: null, externalMessageId: null, error };
+      return { success: false, wamid: null, externalMessageId: null,
+        ...(options.autoFollowUp === true && type === "audio"
+          ? { audioNotDelivered: true } : {}), error };
     }
 
     const externalMessageId = data?.message_id || data?.id || null;
@@ -211,10 +220,13 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
 
   const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename);
   if (!uploaded.success) {
+    // Attachment upload cannot deliver a customer message. The subsequent
+    // Send API was never contacted, even if the upload itself timed out.
     return {
       success: false,
       wamid: null,
       externalMessageId: null,
+      ...(options.autoFollowUp === true && type === "audio" ? { audioNotDelivered: true } : {}),
       error: uploaded.error,
     };
   }
