@@ -9,6 +9,11 @@ const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaStorage = require("../services/mediaStorageService");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
+const { transcribeStaffAudio } = require("../services/transcriptionService");
+const {
+  VOICE_LANGUAGES, voiceTranscriptDigest, unsafeVoiceTranscript,
+  normalizeVoiceNotes, voiceNotesPresent, validVoiceAssetKey,
+} = require("../utils/followUpVoicePolicy");
 const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
@@ -165,11 +170,11 @@ function followUpVideoKeys(value) {
     ...new Set(
       steps.flatMap((step) => [
         String(step?.videoKey || "").trim(),
-        String(step?.voiceKey || "").trim(),
+        ...Object.values(step?.voiceNotes || {}).flatMap(note => [String(note?.key || ""), String(note?.previewKey || "")]),
         ...(Array.isArray(step?.serviceOverrides)
           ? step.serviceOverrides.flatMap((item) => [
               String(item?.videoKey || "").trim(),
-              String(item?.voiceKey || "").trim(),
+              ...Object.values(item?.voiceNotes || {}).flatMap(note => [String(note?.key || ""), String(note?.previewKey || "")]),
             ])
           : []),
         ...(Array.isArray(value.freeEntry?.templateRules) ?
@@ -394,7 +399,7 @@ function isFollowUpTranslations(value) {
 function isFollowUpServiceOverride(value) {
   const imageUrl = isString(value?.imageUrl) ? value.imageUrl.trim() : "";
   const videoKey = isString(value?.videoKey) ? value.videoKey.trim() : "";
-  const voiceKey = isString(value?.voiceKey) ? value.voiceKey.trim() : "";
+  const voiceNotes = normalizeVoiceNotes(value?.voiceNotes, mediaStorage);
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.serviceName) &&
@@ -404,12 +409,12 @@ function isFollowUpServiceOverride(value) {
     isFollowUpTranslations(value.translations) &&
     (value.imageUrl === undefined || isString(value.imageUrl)) &&
     isFollowUpVideoKey(value.videoKey) &&
-    isFollowUpVoiceKey(value.voiceKey) &&
+    voiceNotes !== null &&
     (value.voiceFilename === undefined ||
       (isString(value.voiceFilename) && value.voiceFilename.trim().length <= 255)) &&
     (value.videoFilename === undefined ||
       (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
-    [imageUrl, videoKey, voiceKey].filter(Boolean).length <= 1
+    [imageUrl, videoKey, voiceNotesPresent(voiceNotes) ? "voice" : ""].filter(Boolean).length <= 1
   );
 }
 
@@ -435,12 +440,12 @@ function isFollowUpStep(value) {
     isFollowUpTranslations(value.translations) &&
     isString(value.imageUrl) &&
     isFollowUpVideoKey(value.videoKey) &&
-    isFollowUpVoiceKey(value.voiceKey) &&
+    voiceNotes !== null &&
     (value.voiceFilename === undefined ||
       (isString(value.voiceFilename) && value.voiceFilename.trim().length <= 255)) &&
     (value.videoFilename === undefined ||
       (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
-    [value.imageUrl.trim(), String(value.videoKey || "").trim(), String(value.voiceKey || "").trim()].filter(Boolean).length <= 1 &&
+    [value.imageUrl.trim(), String(value.videoKey || "").trim(), voiceNotesPresent(normalizeVoiceNotes(value.voiceNotes, mediaStorage)) ? "voice" : ""].filter(Boolean).length <= 1 &&
     Array.isArray(value.serviceOverrides) &&
     value.serviceOverrides.length <= 50 &&
     value.serviceOverrides.every(isFollowUpServiceOverride)
@@ -607,15 +612,13 @@ function prepareFollowUpServiceOverrides(requested) {
       typeof item.imageUrl === "string" ? item.imageUrl.trim() : "";
     const videoKey =
       typeof item.videoKey === "string" ? item.videoKey.trim() : "";
-    const voiceKey = typeof item.voiceKey === "string" ? item.voiceKey.trim() : "";
-    const voiceFilename = typeof item.voiceFilename === "string"
-      ? item.voiceFilename.trim().slice(0, 255) : "";
+    const voiceNotes = normalizeVoiceNotes(item.voiceNotes, mediaStorage);
     const videoFilename =
       typeof item.videoFilename === "string"
         ? item.videoFilename.trim().slice(0, 255)
         : "";
-    if (!isFollowUpVideoKey(videoKey) || !isFollowUpVoiceKey(voiceKey) ||
-        [imageUrl, videoKey, voiceKey].filter(Boolean).length > 1) return null;
+    if (!isFollowUpVideoKey(videoKey) || voiceNotes === null ||
+        [imageUrl, videoKey, voiceNotesPresent(voiceNotes) ? "voice" : ""].filter(Boolean).length > 1) return null;
 
     seen.add(normalizedService);
     prepared.push({
@@ -625,8 +628,7 @@ function prepareFollowUpServiceOverrides(requested) {
       imageUrl,
       videoKey,
       videoFilename,
-      voiceKey,
-      voiceFilename,
+      voiceNotes,
     });
   }
   return prepared;
@@ -662,9 +664,7 @@ function prepareFollowUpStep(requested) {
     typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
   const videoKey =
     typeof requested.videoKey === "string" ? requested.videoKey.trim() : "";
-  const voiceKey = typeof requested.voiceKey === "string" ? requested.voiceKey.trim() : "";
-  const voiceFilename = typeof requested.voiceFilename === "string"
-    ? requested.voiceFilename.trim().slice(0, 255) : "";
+  const voiceNotes = normalizeVoiceNotes(requested.voiceNotes, mediaStorage);
   const videoFilename =
     typeof requested.videoFilename === "string"
       ? requested.videoFilename.trim().slice(0, 255)
@@ -684,11 +684,10 @@ function prepareFollowUpStep(requested) {
     imageUrl,
     videoKey,
     videoFilename,
-    voiceKey,
-    voiceFilename,
+    voiceNotes,
     serviceOverrides,
   };
-  return serviceOverrides && isFollowUpStep(prepared) ? prepared : null;
+  return serviceOverrides && voiceNotes !== null && isFollowUpStep(prepared) ? prepared : null;
 }
 
 function followUpTargetedServiceNames(value) {
