@@ -190,3 +190,105 @@ test("short referential price questions still resolve the explicitly discussed s
     assert.doesNotMatch(quote.reply,/Package A.*RM388/su,text);
   }
 });
+
+
+function withTrustedPricingDates(turns, startAgoHours=3) {
+  const start=Date.now()-startAgoHours*60*60*1000;
+  turns.forEach((turn,i)=>Object.defineProperties(turn,{
+    pricingCreatedAtMs:{value:start+i*60_000,enumerable:false},
+    pricingStaffAuthored:{value:false,enumerable:false},
+  }));
+  return turns;
+}
+
+test("contact #613: weekday + pelvic package AND single-session price keeps verified treatment",async()=>{
+  const text="Weekday.. 想知道配套及单次价钱😁";
+  const turns=withTrustedPricingDates(history(
+    ["user","Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"],
+    ["assistant","我们的骨盆调理主要是徒手体态护理，你可以先了解一下～"],
+    ["user","小腹突出。。 可以知道调理一次的费用吗？"],
+    ["assistant","目前骨盆调理单次费用需要团队确认哦"],
+    ["user","调整骨盆"],
+    ["assistant","目前骨盆调理单次的费用需要门店确认。"],
+    ["assistant","Hi～关于小腹突出和骨盆调理，你一般 weekday 还是 weekend 比较方便来PJ？"],
+    ["user",text],
+  ));
+  assert.equal(resolved(text,turns),"骨盆调理",
+    "mixed booking answer must resolve from customer-authored treatment, not ad metadata");
+  const quoted=textReply(text,turns);
+  assert.equal(quoted.restored,true);
+  assert.match(quoted.reply,/Package A.*RM388/su);
+  assert.match(quoted.reply,/Package B.*RM288/su);
+  assert.doesNotMatch(quoted.reply,/RM999|请问你想了解哪一项疗程/u);
+  assert.deepEqual((await media(text,turns,"骨盆调理"))?.packages.map(x=>x.name),["Package A","Package B"]);
+});
+
+test("mixed scheduling/price reply never borrows an ad-only or bot-inferred service",()=>{
+  const current="Weekday.. 想知道配套及单次价钱😁";
+  assert.equal(resolved(current,withTrustedPricingDates(history(
+    ["assistant","关于骨盆调理的护理，你平日还是周末比较方便？"],
+    ["user",current],
+  ))),null);
+  assert.equal(resolved(current,withTrustedPricingDates(history(
+    ["user","想了解价钱"],
+    ["assistant","骨盆调理你平日还是周末比较方便？"],
+    ["user",current],
+  ))),null);
+});
+
+test("mixed booking/price context fails closed on staff, wrong service, new topic and stale timestamps",()=>{
+  const current="Weekday.. 想知道配套及单次价钱😁";
+  const clean=()=>withTrustedPricingDates(history(
+    ["user","我想了解骨盆调理"],["assistant","骨盆调理可以先评估"],
+    ["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],["user",current],
+  ));
+  assert.equal(resolved(current,clean()),"骨盆调理");
+
+  const staff=clean();
+  staff.splice(2,0,{role:"assistant",content:"[Verified STAFF message] 请先别自动发价钱",pricingStaffAuthored:true,pricingCreatedAtMs:Date.now()});
+  assert.equal(resolved(current,staff),null,"verified staff text breaks continuity");
+  const structuredStaff=clean();
+  const mediaStaff={role:"assistant",content:[{type:"text",text:"[Verified STAFF message] 看看先"}]};
+  Object.defineProperties(mediaStaff,{pricingStaffAuthored:{value:true},pricingCreatedAtMs:{value:Date.now()}});
+  structuredStaff.splice(2,0,mediaStaff);
+  assert.equal(resolved(current,structuredStaff),null,"structured staff media breaks continuity");
+
+  const different=withTrustedPricingDates(history(
+    ["user","我想了解骨盆调理"],["assistant","好的"],
+    ["user","现在我想了解3D 小颜术"],["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],
+    ["user",current],
+  ));
+  assert.equal(resolved(current,different),null,"last customer service may not be silently overridden");
+
+  const topic=withTrustedPricingDates(history(
+    ["user","我想了解骨盆调理"],["assistant","好的"],
+    ["user","换个话题聊按摩"],["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],
+    ["user",current],
+  ));
+  assert.equal(resolved(current,topic),null);
+
+  const ambiguous=withTrustedPricingDates(history(
+    ["user","我想了解3D 小颜术 和 骨盆调理"],
+    ["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],
+    ["user",current],
+  ));
+  assert.equal(resolved(current,ambiguous),null);
+
+  const stale=withTrustedPricingDates(history(
+    ["user","我想了解骨盆调理"],["assistant","骨盆调理 weekdays 还是 weekends?"],
+    ["user",current],
+  ),26);
+  assert.equal(resolved(current,stale),null,"historical price context cannot be reused");
+
+  const untrusted=history(
+    ["user","我想了解骨盆调理"],["assistant","骨盆调理 weekdays 还是 weekends?"],
+    ["user",current],
+  );
+  assert.equal(resolved(current,untrusted),null,"missing DB timestamps must fail closed");
+
+  const unrelated="Weekday.. 想知道其他疗程及单次价钱";
+  assert.equal(resolved(unrelated,withTrustedPricingDates(history(
+    ["user","我想了解骨盆调理"],["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],
+    ["user",unrelated],
+  ))),null);
+});
