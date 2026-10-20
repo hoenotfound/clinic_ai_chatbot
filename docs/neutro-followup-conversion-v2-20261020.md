@@ -1,6 +1,6 @@
 # Neutro Sense | conversion-first WhatsApp follow-up copy v2 (review proposal)
 
-**Status: IMPLEMENTATION PR — prompt rules and tests included; new Meta templates require separate confirmation and approval; 48h/66h live template selection and Day 4/Day 6 remain unchanged.** Prepared 20 October 2026. No customer sends are authorized by this PR.
+**Status: conversion fixes and Meta V2 templates approved 20 October 2026.** AI prompt code in PR #363 is deployed. Follow-up overrides updated in Neon; PR #365 fixes verified combined booking/price replies. Live template switch is staged until CI passes. Day 4/Day 6 stay inactive, Strict RM0 remains OFF. No customer test sends were requested.
 
 ## Why update
 
@@ -55,7 +55,7 @@ Pelvic example:
 
 ## Stage 2: NEW approved-template submissions required for any replacement
 
-Do not edit current 48h `ns_enquiry_reengagement` or 66h `ns_fu2_general_checkin` in place: they are approved and live. Create separately named `ns_48h_choice_v2` and `ns_66h_assessment_v2`, each with zh_CN/en_US/ms, MARKETING, no media and no body variables, then wait for approval and explicitly switch the two Neon template rules. The old templates continue working until the switch.
+Do not edit the original 48h `ns_enquiry_reengagement` or 66h `ns_fu2_general_checkin` in place. Six `ns_48h_choice_v2` / `ns_66h_assessment_v2` variants are now Meta APPROVED in zh_CN, en_US and ms, MARKETING, without visible opt-out footer or media. The old templates continue working until the separate 48h/66h Neon template-rule switch after passing CI. Opt-out processing and marketing consent gates stay enabled.
 
 ### 48h `ns_48h_choice_v2`: easy information choice
 
@@ -90,6 +90,17 @@ ms:
 > Hai~ Kalau nak tahu sama ada rawatan ini sesuai untuk anda, saya boleh bantu semak masa penilaian dengan tabib TCM 😊
 >
 > Anda lebih senang datang ke PJ hari bekerja atau hujung minggu?
+
+## Verified implementation details (20 October 2026)
+
+- Meta approved IDs: 48h zh_CN `1401488341716707`, en_US `1425732386437481`, ms `1609779080621227`; 66h zh_CN `934306646183486`, en_US `2145755342680107`, ms `1998682787447393`.
+- Production Neon 2h service-specific explanation media for 骨盆调理 and 徒手体态调理 were **preserved**.
+- 3D 小颜术, 9D 逆龄抗衰 and 3D+9D combo now have **text-only** 2h fallbacks. No authentic 2h process video exists to attach to these service overrides, and none was fabricated/reused.
+- The five existing 6h testimonial video keys were all **preserved** while making their captions more conversational.
+- The four 20h service-specific booking fallbacks were rewritten to invite a date/time without repeating the weekday/weekend question; 3D/9D paid trials are never represented as free.
+- PR #365 adds a narrow, timestamp-bounded **mixed weekday + price** resolver sourced from customer-authored treatment, not model/ad/CRM guesses. Includes staff, stale, ambiguity and topic-change safeguards. A single previously verified price or customer choice is required; do not generalize it to old template replies.
+- Meta classification approval and post-72h historical nonbillable evidence are not guarantees of zero fees for future messages.
+- Following implementation, compare unique positive replies within 24h, confirmed appointments, opt-outs and billable Meta receipts; avoid double-counting conversations with multiple follow-ups.
 
 ## Stage 3: revised future Day 4 and Day 6 — NOT LIVE YET
 
