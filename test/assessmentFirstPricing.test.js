@@ -820,6 +820,6 @@ test("appointment replies keep known treatment, current price question and weekd
   assert.match(prompt,/CURRENT concrete question BEFORE proposing a booking/);
   assert.match(prompt,/Do NOT claim an appointment is booked/);
   assert.match(prompt,/never ask "weekday or weekend" again/);
-  assert.match(prompt,/never send a blanket "which treatment\\?" clarification/i);
+  assert.match(prompt,/never send a blanket "which treatment\?" clarification/i);
   assert.match(prompt,/Never repeatedly ask about the original concern/);
 });
