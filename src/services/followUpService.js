@@ -1793,6 +1793,9 @@ async function sendCandidate(candidate) {
           preSendCheck: finalPreSendCheck,
           currentMessageId: saved.id,
           autoFollowUp: true,
+          // Only this safely converted audio claim uses bounded Meta text
+          // delivery and unknown-on-timeout semantics.
+          voiceFollowUpTextFallback: true,
           ...(recorder ? { onProviderMessageId: recorder } : {}),
         });
       }
