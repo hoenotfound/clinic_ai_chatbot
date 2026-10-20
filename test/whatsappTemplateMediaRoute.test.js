@@ -430,3 +430,28 @@ test("targeted promo template cannot bypass matching rules through multipart upl
   assert.equal(h.events.r2Uploads, 0);
   assert.equal(h.events.metaSends, 0);
 });
+
+test("Inbox refuses generic Retry for failed and uncertain automated voice without Meta calls", async (t) => {
+  const h = await harness(t);
+  let status = "failed";
+  patch(t, messagesRepo, "acquireMessageRetryLock", async () => async () => {});
+  patch(t, messagesRepo, "getMessageForRetry", async () => ({
+    id: 41, contact_id: 7, role: "assistant",
+    is_automated_follow_up: true,
+    media_mime_type: "audio/ogg",
+    media_key: "clients/neutro/messages/follow-up-config/voice.ogg",
+    content: "🎤 [Automated voice note, en; transcript] Hello",
+    delivery_status: status,
+  }));
+  const failed = await h.retry(41);
+  assert.equal(failed.status, 409);
+  assert.equal(failed.body.code, "automated_voice_retry_requires_manual_review");
+
+  status = "unknown";
+  const ambiguous = await h.retry(41);
+  assert.equal(ambiguous.status, 409);
+  assert.equal(ambiguous.body.code, "automated_voice_retry_requires_manual_review");
+  assert.equal(h.events.metaSends, 0);
+  assert.equal(h.events.metaUploads, 0);
+  assert.equal(h.events.saved.length, 0);
+});

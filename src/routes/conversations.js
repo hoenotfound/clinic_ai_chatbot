@@ -23,6 +23,7 @@ const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService")
 const { prepareStoredInboxImage } = require("../services/inboxImagePreparationService");
 const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
+const { resolveAutomatedVoicePlayback } = require("../services/followUpVoicePlaybackService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
@@ -926,10 +927,23 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
       storage: mediaStorage,
     })) return;
 
-    const media = await mediaStorage.openMediaStream(mediaRef.media_key, {
-      range: requestedRange.range,
-    });
-    const mimeType =
+    // Meta's native voice format is OGG/Opus. Safari/iOS require MP3 for
+    // reliable Inbox playback; resolve only a verified linked preview asset.
+    // Missing/corrupt MP3 must not grant access to another R2 object.
+    let voicePlayback = null;
+    if (mediaRef.is_automated_follow_up === true &&
+        mediaRef.media_mime_type === "audio/ogg") {
+      try {
+        voicePlayback = await resolveAutomatedVoicePlayback(mediaRef, mediaStorage);
+      } catch (err) {
+        console.warn("[Inbox automated voice] MP3 preview unavailable:", err?.message);
+      }
+    }
+    const media = await mediaStorage.openMediaStream(
+      voicePlayback?.key || mediaRef.media_key,
+      { range: requestedRange.range }
+    );
+    const mimeType = voicePlayback?.mimeType ||
       mediaRef.media_mime_type || media.contentType || "application/octet-stream";
 
     const responseHeaders = {
@@ -1817,6 +1831,18 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     if (!["failed", "unknown"].includes(message.delivery_status)) {
       return res.status(409).json({
         error: "Only failed or unconfirmed messages can be retried.",
+      });
+    }
+
+    // A generic Retry click does not attest the recording, consent or previous
+    // Meta delivery. In particular, an unknown send might have been delivered.
+    // Never route an automated recorded follow-up through the staff voice
+    // sender without explicit fresh staff action and policy review.
+    if (message.is_automated_follow_up === true &&
+        String(message.media_mime_type || "").toLowerCase() === "audio/ogg") {
+      return res.status(409).json({
+        code: "automated_voice_retry_requires_manual_review",
+        error: "This automated voice note cannot be retried directly. Review WhatsApp delivery (especially if unconfirmed), then send a new staff voice note from the Inbox only if appropriate and permitted by the 24-hour reply window.",
       });
     }
 

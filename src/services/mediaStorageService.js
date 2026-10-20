@@ -664,8 +664,8 @@ function isReferencedClinicFollowUpMediaKey(key, config, env = process.env) {
   const followUp = config.automatedFollowUp || {};
   const steps = [followUp, ...(Array.isArray(followUp.additionalSteps) ? followUp.additionalSteps : [])];
   for (const step of steps) {
-    if (step.videoKey === key) return true;
-    if (Array.isArray(step.serviceOverrides) && step.serviceOverrides.some((entry) => entry.videoKey === key))
+    if (step.videoKey === key || Object.values(step.voiceNotes || {}).some(note => note?.key === key || note?.previewKey === key)) return true;
+    if (Array.isArray(step.serviceOverrides) && step.serviceOverrides.some((entry) => entry.videoKey === key || Object.values(entry.voiceNotes || {}).some(note => note?.key === key || note?.previewKey === key)))
       return true;
   }
   return Array.isArray(followUp.freeEntry?.templateRules) &&
@@ -901,6 +901,34 @@ async function pruneStaleFollowUpConfigVideos({
       .filter(Boolean)
   );
   const prefix = followUpConfigVideoPrefix(env);
+
+  // Each past native-voice Inbox message references its WhatsApp OGG key,
+  // while its iOS-playable MP3 is linked by immutable R2 object metadata.
+  // Preserve the MP3 whenever the recorded OGG is still referenced, even
+  // after staff replace the current follow-up configuration. Fail closed on
+  // inspection errors rather than accidentally purging historical playback.
+  const keptVoiceKeys = [...keep].filter(key =>
+    key.startsWith(prefix) && key.endsWith(".ogg")
+  );
+  try {
+    for (let i = 0; i < keptVoiceKeys.length; i += 8) {
+      const previews = await Promise.all(keptVoiceKeys.slice(i, i + 8).map(async key => {
+        const info = await getSharedFollowUpMediaInfo(key);
+        const previewKey = String(info?.metadata?.voicepreviewkey || "");
+        return info?.mimeType === "audio/ogg" &&
+          previewKey.startsWith(prefix) &&
+          previewKey.endsWith(".mp3") &&
+          !previewKey.includes("..") &&
+          isOwnedStoredMediaKey(previewKey, env)
+            ? previewKey : null;
+      }));
+      for (const key of previews) if (key) keep.add(key);
+    }
+  } catch (error) {
+    console.warn("[R2 follow-up media] Cannot verify historic voice preview links; skipping unsafe prune:", error?.message);
+    return 0;
+  }
+
   const bucket = getBucketName();
   let continuationToken;
   let deleted = 0;

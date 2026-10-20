@@ -3541,3 +3541,162 @@ test("held campaign suppresses promotion text and artwork, but ordinary first fo
   assert.equal(savedContent.mediaUrl ?? null, null);
   assert.equal(imageCalls, 0);
 });
+
+
+
+test("native voice sends only a matching approved recording and persists its real transcript", async () => {
+  enableTool();
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "voice-policy-test";
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const key = `${mediaStorage.followUpConfigVideoPrefix()}english.ogg`;
+  const previewKey = `${mediaStorage.followUpConfigVideoPrefix()}english-preview.mp3`;
+  const transcript = "Hello, would you like to arrange an assessment?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "hello.mp3", approved: true },
+  };
+  const originals = {
+    shared: mediaStorage.isSharedFollowUpConfigKey,
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia,
+    audio: channelMessaging.sendAudioBuffer,
+    poolQuery: pool.query,
+  };
+  let claim = null;
+  let voiceCall = null;
+  try {
+    mediaStorage.isSharedFollowUpConfigKey = keyArg => keyArg === key;
+    mediaStorage.getSharedFollowUpMediaInfo = async () => ({
+      mimeType: "audio/ogg", bytes: 16,
+      metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+      },
+    });
+    mediaStorage.downloadMedia = async () => Buffer.from("OggS-OpusHead");
+    pool.query = async () => ({ rows: [] }); // No prior delivery of this media key.
+    channelMessaging.sendAudioBuffer = async (...args) => {
+      voiceCall = args;
+      return { success: true, wamid: "wamid-voice-follow-up" };
+    };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 901, channel: "whatsapp", whatsapp_number: "60120000901",
+      trigger_message_id: 900, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, can you tell me more about this treatment?"],
+      treatment_interest: "Pelvic Care", trigger_message_content: "Thank you for your enquiry",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      claim = input;
+      return { id: 902, contact_id: 901, delivery_status: null };
+    };
+    messagesRepo.setWhatsappMessageId = async (id, wamid) =>
+      ({ id, contact_id: 901, whatsapp_message_id: wamid, delivery_status: "pending" });
+    realtimeEvents.publish = () => {};
+
+    await runAutomatedFollowUps();
+
+    assert.equal(claim.mediaKey, key);
+    assert.equal(claim.mediaMimeType, "audio/ogg");
+    assert.match(claim.content, /Automated voice note, en; transcript/);
+    assert.ok(claim.content.includes(transcript));
+    assert.ok(!claim.content.includes("Checking in"));
+    assert.equal(voiceCall[0].channel, "whatsapp");
+    assert.equal(voiceCall[2], "audio/ogg");
+    assert.equal(voiceCall[3], "voice.ogg");
+    assert.equal(voiceCall[4].autoFollowUp, true);
+    assert.equal(voiceCall[4].requireStaffMode, false);
+  } finally {
+    mediaStorage.isSharedFollowUpConfigKey = originals.shared;
+    mediaStorage.getSharedFollowUpMediaInfo = originals.head;
+    mediaStorage.downloadMedia = originals.download;
+    channelMessaging.sendAudioBuffer = originals.audio;
+    pool.query = originals.poolQuery;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
+
+test("voice automation falls back to text for missing language, mismatched transcript or duplicate", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "voice-policy-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}review.ogg`;
+  const previewKey = `${prefix}review.mp3`;
+  const transcript = "Hello, can we arrange your assessment?";
+  const note = { key, previewKey, transcript, filename: "voice.mp3", approved: true };
+  const originals = {
+    shared: mediaStorage.isSharedFollowUpConfigKey,
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    query: pool.query,
+    audio: channelMessaging.sendAudioBuffer,
+    text: channelMessaging.sendText,
+  };
+  const sentText = [];
+  const claims = [];
+  let duplicated = false;
+  let matchingMetadata = true;
+  try {
+    mediaStorage.isSharedFollowUpConfigKey = () => true;
+    mediaStorage.getSharedFollowUpMediaInfo = async () => ({
+      mimeType: "audio/ogg", bytes: 1000,
+      metadata: {
+        voicelanguage: "en",
+        voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(
+          matchingMetadata ? transcript : "Different words", "en", previewKey
+        ),
+      },
+    });
+    pool.query = async () => ({ rows: duplicated ? [{ exists: 1 }] : [] });
+    channelMessaging.sendAudioBuffer = async () => {
+      assert.fail("An unsafe, mismatched or duplicate voice note must not be sent");
+    };
+    channelMessaging.sendText = async (contact, message) => {
+      sentText.push(message);
+      return { success: true, wamid: `wamid-text-${sentText.length}` };
+    };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 911, channel: "whatsapp", whatsapp_number: "60120000911",
+      trigger_message_id: 910, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I would like to know more about this treatment."],
+      treatment_interest: "Pelvic Care", trigger_message_content: "Thank you for your enquiry",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      claims.push(input);
+      return { id: 912 + claims.length, contact_id: 911, delivery_status: null };
+    };
+    messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+      id, contact_id: 911, whatsapp_message_id: wamid, delivery_status: "pending",
+    });
+    realtimeEvents.publish = () => {};
+    clinicConfig.automatedFollowUp.voiceNotes = { zh: note };
+    await runAutomatedFollowUps();
+    assert.equal(claims.at(-1).mediaKey, null); // English user, Chinese note.
+    assert.equal(sentText.at(-1), "Checking in");
+
+    clinicConfig.automatedFollowUp.voiceNotes = { en: note };
+    matchingMetadata = false;
+    await runAutomatedFollowUps();
+    assert.equal(claims.at(-1).mediaKey, null); // Digest tampering.
+    assert.equal(sentText.at(-1), "Checking in");
+
+    matchingMetadata = true;
+    duplicated = true;
+    await runAutomatedFollowUps();
+    assert.equal(claims.at(-1).mediaKey, null); // Already sent within seven days.
+    assert.equal(sentText.at(-1), "Checking in");
+    assert.equal(sentText.length, 3);
+  } finally {
+    mediaStorage.isSharedFollowUpConfigKey = originals.shared;
+    mediaStorage.getSharedFollowUpMediaInfo = originals.head;
+    pool.query = originals.query;
+    channelMessaging.sendAudioBuffer = originals.audio;
+    channelMessaging.sendText = originals.text;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});

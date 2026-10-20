@@ -69,6 +69,7 @@ const FOLLOW_UP_LANGUAGES = [
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_FOLLOW_UP_VOICE_BYTES = 8 * 1024 * 1024;
 
 function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
@@ -101,6 +102,7 @@ function normalizeServiceOverrides(value) {
         imageUrl: String(item?.imageUrl || ""),
         videoKey: String(item?.videoKey || ""),
         videoFilename: String(item?.videoFilename || ""),
+        voiceNotes: item?.voiceNotes && typeof item.voiceNotes === "object" ? item.voiceNotes : {},
       };
     })
     .filter(Boolean);
@@ -128,6 +130,7 @@ function normalizeSequenceStep(value = {}) {
     imageUrl: value.imageUrl || "",
     videoKey: value.videoKey || "",
     videoFilename: value.videoFilename || "",
+    voiceNotes: value.voiceNotes && typeof value.voiceNotes === "object" ? value.voiceNotes : {},
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 }
@@ -166,6 +169,7 @@ function normalizeFollowUpSettings(value = {}) {
     imageUrl: settings.imageUrl || "",
     videoKey: settings.videoKey || "",
     videoFilename: settings.videoFilename || "",
+    voiceNotes: settings.voiceNotes && typeof settings.voiceNotes === "object" ? settings.voiceNotes : {},
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 
@@ -230,6 +234,7 @@ function followUpFormFromSettings(value = {}) {
     imageUrl: settings.imageUrl,
     videoKey: settings.videoKey,
     videoFilename: settings.videoFilename,
+    voiceNotes: settings.voiceNotes,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
     freeEntry: settings.freeEntry,
@@ -313,6 +318,8 @@ export default function Tools() {
   const [reviewTranslations, setReviewTranslations] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
+  const [voicePreviewUrls, setVoicePreviewUrls] = useState({});
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
   const { user, permissions } = useAuth();
@@ -572,6 +579,34 @@ export default function Tools() {
     }
   }
 
+  async function uploadFollowUpVoice(file, language) {
+    if (!file) return null;
+    const extension = String(file.name || "").toLowerCase().split(".").pop();
+    if (!["ogg", "mp3", "m4a", "mp4", "wav", "webm", "aac"].includes(extension)) {
+      showToast("Choose an audio recording (MP3, M4A, WAV, OGG or WebM).", "error");
+      return null;
+    }
+    if (file.size > MAX_FOLLOW_UP_VOICE_BYTES || file.size === 0) {
+      showToast("Voice recordings must be between 1 byte and 8MB.", "error");
+      return null;
+    }
+    setUploadingVoice(true);
+    try {
+      const uploaded = await api.uploadFollowUpVoice(file, language);
+      if (uploaded?.previewKey && uploaded?.previewUrl) {
+        setVoicePreviewUrls(current => ({
+          ...current, [uploaded.previewKey]: uploaded.previewUrl,
+        }));
+      }
+      return uploaded;
+    } catch (error) {
+      showToast(error.message || "Could not upload voice recording.", "error");
+      return null;
+    } finally {
+      setUploadingVoice(false);
+    }
+  }
+
   function followUpValidationError() {
     // Keep the existing save checks intact while identifying the editor location.
     const issue = (message, tab = "sequence", stepIndex = null, target = null, ruleIndex = null) =>
@@ -629,6 +664,7 @@ export default function Tools() {
         message: form.message,
         imageUrl: form.imageUrl,
         videoKey: form.videoKey,
+        voiceNotes: form.voiceNotes,
         serviceOverrides: form.serviceOverrides,
       },
       ...(form.additionalSteps || []),
@@ -657,8 +693,13 @@ export default function Tools() {
       const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
-      if (String(step.imageUrl || "").trim() && String(step.videoKey || "").trim()) {
-        return issue(`Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index);
+      if ([step.imageUrl, step.videoKey, Object.values(step.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
+        return issue(`Follow-up ${index + 1} can use only one attachment.`, "sequence", index);
+      }
+      if (Object.entries(step.voiceNotes || {}).some(([lang, note]) =>
+        !["zh", "en", "ms"].includes(lang) || !note?.key || !note?.previewKey ||
+        !note?.transcript || note.approved !== true)) {
+        return issue(`Listen to and approve every uploaded voice recording in Follow-up ${index + 1}.`, "sequence", index);
       }
       if (
         timingMode === "before_window_expiry" &&
@@ -711,8 +752,13 @@ export default function Tools() {
         if (targetedMessage.length > 1000) {
           return issue(`Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`, "sequence", index, "service");
         }
-        if (String(override.imageUrl || "").trim() && String(override.videoKey || "").trim()) {
-          return issue(`${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`, "sequence", index, "service");
+        if ([override.imageUrl, override.videoKey, Object.values(override.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
+          return issue(`${serviceName} in Follow-up ${index + 1} can use only one attachment.`, "sequence", index, "service");
+        }
+        if (Object.entries(override.voiceNotes || {}).some(([lang, note]) =>
+          !["zh", "en", "ms"].includes(lang) || !note?.key || !note?.previewKey ||
+          !note?.transcript || note.approved !== true)) {
+          return issue(`Listen to and approve ${serviceName}'s voice recording before saving.`, "sequence", index, "service");
         }
         const serviceKey = serviceName.toLocaleLowerCase();
         if (seenServices.has(serviceKey)) {
@@ -780,6 +826,7 @@ export default function Tools() {
         imageUrl: String(item.imageUrl || "").trim(),
         videoKey: String(item.videoKey || "").trim(),
         videoFilename: String(item.videoFilename || "").trim(),
+        voiceNotes: item.voiceNotes || {},
       };
     });
   }
@@ -821,6 +868,7 @@ export default function Tools() {
         imageUrl: step.imageUrl || "",
         videoKey: step.videoKey || "",
         videoFilename: step.videoFilename || "",
+        voiceNotes: step.voiceNotes || {},
         serviceOverrides: preparedServiceOverrides(
           step.serviceOverrides,
           generatedByMessage
@@ -907,6 +955,7 @@ export default function Tools() {
           imageUrl: form.imageUrl,
           videoKey: form.videoKey,
           videoFilename: form.videoFilename,
+          voiceNotes: form.voiceNotes || {},
           serviceOverrides,
           additionalSteps,
           freeEntry: {
@@ -948,6 +997,7 @@ export default function Tools() {
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
       setConfig(updated);
       setForm(saved);
+      setVoicePreviewUrls({});
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
       setFollowUpSaveIssue(null);
@@ -1094,6 +1144,7 @@ export default function Tools() {
             translating={translating}
             uploadingImage={uploadingImage}
             uploadingVideo={uploadingVideo}
+            uploadingVoice={uploadingVoice}
             saving={saving}
             services={config.services || []}
             clinicName={config.businessName || config.clinicName || ""}
@@ -1107,6 +1158,8 @@ export default function Tools() {
             onTranslateMessage={generateTranslationsForMessage}
             onUploadImage={uploadFollowUpImage}
             onUploadVideo={uploadFollowUpVideo}
+            onUploadVoice={uploadFollowUpVoice}
+            voicePreviewUrls={voicePreviewUrls}
             onSave={handleSave}
             toasts={toasts}
             dismissToast={dismissToast}
@@ -1522,112 +1575,151 @@ function ServiceVideoPicker({
   );
 }
 
+function ServiceVoicePicker({ voiceNotes = {}, voicePreviewUrls = {}, uploading, onUpload, onChange, label = "Voice note" }) {
+  const inputRef = useRef(null);
+  const [language, setLanguage] = useState("zh");
+  const note = voiceNotes?.[language] || null;
+  const previewUrl = note?.previewKey
+    ? voicePreviewUrls[note.previewKey] ||
+      `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(note.previewKey)}`
+    : "";
+
+  async function chooseFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const uploaded = await onUpload(file, language);
+    if (!uploaded?.key || !uploaded?.transcript || !uploaded?.previewKey) return;
+    onChange({ ...voiceNotes, [language]: {
+      key: uploaded.key, previewKey: uploaded.previewKey,
+      filename: uploaded.filename, transcript: uploaded.transcript, approved: false,
+    } });
+  }
+
+  function modifyNote(patch) {
+    if (!note) return;
+    onChange({ ...voiceNotes, [language]: { ...note, ...patch } });
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <p className="text-xs font-semibold">{label} · Language recordings</p>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Only the matching customer language is sent. Missing languages use translated text instead.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Voice recording language">
+        {FOLLOW_UP_LANGUAGES.map(({key, label: title}) => (
+          <button type="button" key={key} onClick={() => setLanguage(key)}
+            aria-pressed={language === key}
+            className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${language === key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+            {title}{voiceNotes?.[key]?.key ? " ✓" : ""}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="max-w-56 truncate text-xs text-[var(--color-text-muted)]">
+          {note ? note.filename : "No recording uploaded for this language"}
+        </span>
+        <input ref={inputRef} type="file" accept=".ogg,.mp3,.m4a,.mp4,.wav,.webm,.aac,audio/*"
+          className="hidden" aria-label={`${label} upload ${language}`} onChange={chooseFile} />
+        <div className="flex gap-3">
+          <button type="button" disabled={uploading} onClick={() => inputRef.current?.click()}
+            className="text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50">
+            {uploading ? "Transcribing…" : note ? "Replace" : "Upload voice"}
+          </button>
+          {note && <button type="button" disabled={uploading}
+            className="text-xs text-[var(--color-text-muted)]"
+            onClick={() => {
+              const next = { ...voiceNotes };
+              delete next[language];
+              onChange(next);
+            }}>Remove</button>}
+        </div>
+      </div>
+      {note && <>
+        <audio key={note.previewKey} className="mt-3 w-full" controls preload="none" src={previewUrl} />
+        <label className="mt-3 block text-xs font-semibold">Transcript from the recording (read only)</label>
+        <p className="mt-1 rounded-lg border border-[var(--color-border)] bg-white p-2.5 text-xs leading-5 whitespace-pre-wrap">
+          {note.transcript}
+        </p>
+        <label className="mt-3 flex items-start gap-2 text-xs leading-5">
+          <input type="checkbox" checked={note.approved === true}
+            onChange={event => modifyNote({ approved: event.target.checked })}
+            className="mt-1" />
+          I listened to this recording and confirmed its transcript and language.
+          It contains no unsolicited prices or unsafe treatment claims.
+        </label>
+      </>}
+      <p className="mt-3 text-[10px] leading-4 text-[var(--color-text-muted)]">
+        Max 120 seconds. WhatsApp receives a native OGG/Opus voice bubble.
+        Preview uses MP3 for iPhone and Safari. Voice cannot contain a text caption.
+      </p>
+    </div>
+  );
+}
+
 function FollowUpMediaPicker({
-  imageUrl,
-  videoKey,
-  videoFilename,
-  uploadingImage,
-  uploadingVideo,
-  onUploadImage,
-  onUploadVideo,
-  onChange,
+  imageUrl, videoKey, videoFilename, voiceNotes = {}, voicePreviewUrls = {},
+  uploadingImage, uploadingVideo, uploadingVoice,
+  onUploadImage, onUploadVideo, onUploadVoice, onChange,
   label = "Media",
-  description = "Optional. Attach one image or one MP4 video.",
+  description = "Optional. Attach one image, video or voice note.",
 }) {
-  const initialType = videoKey ? "video" : imageUrl ? "image" : "none";
+  const hasVoice = Object.values(voiceNotes || {}).some(note => note?.key);
+  const initialType = hasVoice ? "voice" : videoKey ? "video" : imageUrl ? "image" : "none";
   const [selectedType, setSelectedType] = useState(initialType);
 
   useEffect(() => {
-    if (videoKey) setSelectedType("video");
+    if (hasVoice) setSelectedType("voice");
+    else if (videoKey) setSelectedType("video");
     else if (imageUrl) setSelectedType("image");
-    // Keep a newly selected empty media picker open during type switches.
-    // Only an explicit removal action should select "No media".
-  }, [imageUrl, videoKey]);
+  }, [hasVoice, videoKey, imageUrl]);
 
   function choose(type) {
     setSelectedType(type);
-    if (type === "none") {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
-      return;
-    }
-    if (type === "image" && videoKey) {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
-    }
-    if (type === "video" && imageUrl) {
-      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
+    if (type === "none" || (type === "voice" && (imageUrl || videoKey)) ||
+        (type !== "voice" && hasVoice) ||
+        (type === "image" && videoKey) || (type === "video" && imageUrl)) {
+      onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceNotes: {} });
     }
   }
 
   return (
     <div className="mt-5 border-t border-[var(--color-border)] pt-5">
-      <div>
-        <p className="text-sm font-semibold">{label}</p>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
+      <p className="text-sm font-semibold">{label}</p>
+      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
+      <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
+        role="radiogroup" aria-label={`${label} type`}>
+        {[["none", "No media"], ["image", "Image"], ["video", "Video"], ["voice", "Voice note"]].map(([type, title]) =>
+          <button key={type} type="button" role="radio" aria-checked={selectedType === type}
+            onClick={() => choose(type)} disabled={uploadingImage || uploadingVideo || uploadingVoice}
+            className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition sm:text-xs ${selectedType === type
+              ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+              : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+            {title}
+          </button>
+        )}
       </div>
-
-      <div
-        className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
-        role="radiogroup"
-        aria-label={`${label} type`}
-      >
-        {[
-          ["none", "No media"],
-          ["image", "Image"],
-          ["video", "Video"],
-        ].map(([type, text]) => {
-          const active = selectedType === type;
-          return (
-            <button
-              key={type}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              onClick={() => choose(type)}
-              disabled={uploadingImage || uploadingVideo}
-              className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition sm:text-xs ${active
-                ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
-            >
-              {text}
-            </button>
-          );
-        })}
-      </div>
-
       {selectedType === "image" && (
-        <StepImagePicker
-          imageUrl={imageUrl}
-          uploading={uploadingImage}
-          onUpload={onUploadImage}
-          onChange={(nextImageUrl) => {
-            if (!nextImageUrl) setSelectedType("none");
-            onChange({
-              imageUrl: nextImageUrl,
-              videoKey: "",
-              videoFilename: "",
-            });
-          }}
-          label={`${label} image`}
-        />
+        <StepImagePicker imageUrl={imageUrl} uploading={uploadingImage} onUpload={onUploadImage}
+          onChange={url => {
+            if (!url) setSelectedType("none");
+            onChange({ imageUrl: url, videoKey: "", videoFilename: "", voiceNotes: {} });
+          }} label={`${label} image`} />
       )}
-
+      {selectedType === "voice" && (
+        <ServiceVoicePicker voiceNotes={voiceNotes} voicePreviewUrls={voicePreviewUrls} uploading={uploadingVoice}
+          onUpload={onUploadVoice}
+          onChange={notes => onChange({ imageUrl: "", videoKey: "", videoFilename: "", voiceNotes: notes })}
+          label={`${label} voice note`} />
+      )}
       {selectedType === "video" && (
-        <ServiceVideoPicker
-          videoKey={videoKey}
-          videoFilename={videoFilename}
-          uploading={uploadingVideo}
-          onUpload={onUploadVideo}
-          onChange={({ key, filename }) => {
+        <ServiceVideoPicker videoKey={videoKey} videoFilename={videoFilename} uploading={uploadingVideo}
+          onUpload={onUploadVideo} onChange={({key, filename}) => {
             if (!key) setSelectedType("none");
-            onChange({
-              imageUrl: "",
-              videoKey: key,
-              videoFilename: filename,
-            });
-          }}
-          label={`${label} video`}
-          description="MP4 up to 16MB. Export as H.264 video with AAC audio; no server conversion."
-        />
+            onChange({ imageUrl: "", videoKey: key, videoFilename: filename, voiceNotes: {} });
+          }} label={`${label} video`}
+          description="MP4 up to 16MB. Export as H.264 video with AAC audio; no server conversion." />
       )}
     </div>
   );
@@ -1680,7 +1772,7 @@ function extendedTemplateLanguageReadiness(catalog, name) {
 
 function followUpStepSetupIssue(step, services = []) {
   if (!String(step?.message || "").trim()) return "Add a message";
-  if (String(step?.imageUrl || "").trim() && String(step?.videoKey || "").trim()) {
+  if ([step?.imageUrl, step?.videoKey, Object.values(step?.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
     return "Choose one attachment";
   }
   const allowed = new Set(services.map((item) => String(item?.name || "").trim().toLocaleLowerCase()));
@@ -1689,7 +1781,7 @@ function followUpStepSetupIssue(step, services = []) {
     const service = String(override?.serviceName || "").trim().toLocaleLowerCase();
     if (!service || !String(override?.message || "").trim()) return "Complete service message";
     if (!allowed.has(service) || seen.has(service)) return "Review service selection";
-    if (override.imageUrl && override.videoKey) return "Choose one service attachment";
+    if ([override.imageUrl, override.videoKey, Object.values(override.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) return "Choose one service attachment";
     seen.add(service);
   }
   return "";
@@ -1701,7 +1793,7 @@ function StepSummaryChips({ step }) {
     : 0;
   const chips = [
     ...(step?.messageMode === "ai" ? ["AI"] : []),
-    ...(step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
+    ...(Object.values(step?.voiceNotes || {}).some(note => note?.key) ? ["Voice note"] : step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
     ...(serviceCount ? [`${serviceCount} service${serviceCount === 1 ? "" : "s"}`] : []),
   ];
 
@@ -1723,14 +1815,17 @@ function StepSummaryChips({ step }) {
 
 function ServiceOverridesEditor({
   overrides = [],
+  voicePreviewUrls = {},
   services = [],
   onChange,
   stepLabel,
   translating,
   uploadingImage,
   uploadingVideo,
+  uploadingVoice,
   onUploadImage,
   onUploadVideo,
+  onUploadVoice,
   onTranslateMessage,
   forceOpen = false,
 }) {
@@ -1765,6 +1860,7 @@ function ServiceOverridesEditor({
         imageUrl: "",
         videoKey: "",
         videoFilename: "",
+        voiceNotes: {},
       },
     ]);
   }
@@ -1926,10 +2022,14 @@ function ServiceOverridesEditor({
                       imageUrl={item.imageUrl}
                       videoKey={item.videoKey}
                       videoFilename={item.videoFilename}
+                      voiceNotes={item.voiceNotes}
                       uploadingImage={uploadingImage}
                       uploadingVideo={uploadingVideo}
+                      uploadingVoice={uploadingVoice}
                       onUploadImage={onUploadImage}
                       onUploadVideo={onUploadVideo}
+                      onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
                       onChange={(media) =>
                         onChange(
                           overrides.map((override, overrideIndex) =>
@@ -1975,6 +2075,7 @@ function FollowUpTool({
   translating,
   uploadingImage,
   uploadingVideo,
+  uploadingVoice,
   saving,
   services,
   clinicName,
@@ -1988,6 +2089,8 @@ function FollowUpTool({
   onTranslateMessage,
   onUploadImage,
   onUploadVideo,
+  onUploadVoice,
+  voicePreviewUrls,
   onSave,
   toasts,
   dismissToast,
@@ -2257,6 +2360,7 @@ function FollowUpTool({
       imageUrl: form.imageUrl,
       videoKey: form.videoKey,
       videoFilename: form.videoFilename,
+      voiceNotes: form.voiceNotes,
       serviceOverrides: form.serviceOverrides,
     },
     ...(form.additionalSteps || []),
@@ -2276,13 +2380,17 @@ function FollowUpTool({
     ) || null;
   const previewCopySource = previewOverride || previewStep;
   const previewMediaSource =
-    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey)
+    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey || Object.values(previewOverride.voiceNotes || {}).some(note => note?.key))
       ? previewOverride
       : previewStep;
   const previewMessage =
     previewCopySource?.translations?.[translationLanguage] ||
     previewCopySource?.message ||
     "Your follow-up message will appear here.";
+  const previewVoiceNote = previewMediaSource?.voiceNotes?.[translationLanguage];
+  const previewVoiceUrl = previewVoiceNote?.previewKey
+    ? voicePreviewUrls[previewVoiceNote.previewKey] || `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(previewVoiceNote.previewKey)}`
+    : "";
   const previewVideoUrl = previewMediaSource?.videoKey
     ? `/api/config/automated-follow-up/video-preview?key=${encodeURIComponent(previewMediaSource.videoKey)}`
     : "";
@@ -2362,6 +2470,7 @@ function FollowUpTool({
           imageUrl: "",
           videoKey: "",
           videoFilename: "",
+          voiceNotes: {},
           serviceOverrides: [],
         },
       ],
@@ -2418,6 +2527,7 @@ function FollowUpTool({
         translating ||
         uploadingImage ||
         uploadingVideo ||
+        uploadingVoice ||
         !hasUnsavedChanges
       }
       onSave={onSave}
@@ -2943,10 +3053,14 @@ function FollowUpTool({
               imageUrl={form.imageUrl}
               videoKey={form.videoKey}
               videoFilename={form.videoFilename}
+              voiceNotes={form.voiceNotes}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
+              uploadingVoice={uploadingVoice}
               onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
+              onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
               onChange={(media) =>
                 setForm((current) => ({ ...current, ...media }))
               }
@@ -2962,8 +3076,11 @@ function FollowUpTool({
               translating={translating}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
+              uploadingVoice={uploadingVoice}
               onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
+              onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
               onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
@@ -3113,10 +3230,14 @@ function FollowUpTool({
                             imageUrl={step.imageUrl}
                             videoKey={step.videoKey}
                             videoFilename={step.videoFilename}
+                            voiceNotes={step.voiceNotes}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
+                            uploadingVoice={uploadingVoice}
                             onUploadImage={onUploadImage}
                             onUploadVideo={onUploadVideo}
+                            onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
                             onChange={(media) =>
                               updateAdditionalStep(index, media)
                             }
@@ -3131,8 +3252,11 @@ function FollowUpTool({
                             translating={translating}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
+                            uploadingVoice={uploadingVoice}
                             onUploadImage={onUploadImage}
                             onUploadVideo={onUploadVideo}
+                            onUploadVoice={onUploadVoice}
+          voicePreviewUrls={voicePreviewUrls}
                             onTranslateMessage={onTranslateMessage}
                             onChange={(serviceOverrides) =>
                               updateAdditionalStep(index, { serviceOverrides })
@@ -4157,6 +4281,9 @@ function FollowUpTool({
                 {previewStep?.messageMode === "ai" && (
                   <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">AI</span>
                 )}
+                {Object.values(previewMediaSource?.voiceNotes || {}).some(note => note?.key) && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Voice note</span>
+                )}
                 {previewMediaSource?.videoKey && (
                   <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Video</span>
                 )}
@@ -4214,6 +4341,9 @@ function FollowUpTool({
                   {previewMediaSource?.imageUrl && (
                     <img src={previewMediaSource.imageUrl} alt="" className="max-h-56 w-full object-cover" />
                   )}
+                  {previewVoiceNote?.previewKey && (
+                    <audio src={previewVoiceUrl} controls preload="none" className="w-full px-3 pt-3" />
+                  )}
                   {previewMediaSource?.videoKey && (
                     <video
                       key={previewVideoUrl}
@@ -4228,7 +4358,11 @@ function FollowUpTool({
                     <p className="mb-1 text-[10px] font-semibold text-white/70">
                       {previewServiceName ? `Automated follow-up · ${previewServiceName}` : "Automated follow-up"}
                     </p>
-                    <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+                    {previewVoiceUrl ? (
+                      <p className="text-xs leading-5">Voice note · text is the fallback for non-WhatsApp channels.</p>
+                    ) : (
+                      <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+                    )}
                   </div>
                 </div>
               </div>

@@ -2141,3 +2141,49 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
   assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
   assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
 });
+
+
+test("follow-up voice settings require approved, safe, clinic-owned language assets", () => {
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "voice-policy-test";
+  try {
+  const mediaStorage = require("../src/services/mediaStorageService");
+  const current = currentConfig();
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const note = {
+    key: `${prefix}recording.ogg`,
+    previewKey: `${prefix}recording-preview.mp3`,
+    transcript: "Hello, would you like to arrange your assessment?",
+    filename: "hello.mp3",
+    approved: true,
+  };
+  const followUp = {
+    enabled: false, triggerMode: "all", delayMinutes: 120,
+    message: "Checking in",
+    translations: { en: "Checking in", ms: "Checking in", zh: "Checking in" },
+    imageUrl: "", voiceNotes: { en: note },
+    serviceOverrides: [{
+      serviceName: "Consultation", message: "Consultation check-in",
+      translations: { en: "Consultation check-in", ms: "Consultation check-in", zh: "Consultation check-in" },
+      voiceNotes: { en: note },
+    }],
+  };
+  const check = (patch) => prepareConfigUpdatePayload({
+    automatedFollowUp: { ...followUp, ...patch },
+  }, current);
+  const valid = check({});
+  assert.equal(valid.ok, true, JSON.stringify(valid));
+  assert.equal(valid.updates.automatedFollowUp.voiceNotes.en.transcript, note.transcript);
+  assert.equal(valid.updates.automatedFollowUp.serviceOverrides[0].voiceNotes.en.key, note.key);
+  assert.equal(check({ imageUrl: "https://example.com/promo.png" }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, key: "messages/another-contact/voice.ogg" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, approved: false } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Only RM488 today!" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { de: note } }).ok, false);
+  } finally {
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
+

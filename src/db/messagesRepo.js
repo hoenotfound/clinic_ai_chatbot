@@ -661,7 +661,8 @@ async function getMessagePageForContact(
 // the whole object through Postgres/base64 before it can start responding.
 async function getMessageMediaReferenceForContact(contactId, messageId) {
   const result = await pool.query(
-    `SELECT media_key, media_mime_type, media_filename
+    `SELECT media_key, media_mime_type, media_filename,
+            is_automated_follow_up, content
      FROM messages
      WHERE id = $1 AND contact_id = $2 AND media_key IS NOT NULL`,
     [messageId, contactId]
@@ -759,6 +760,7 @@ async function getMessageForRetry(contactId, messageId) {
     key &&
     ((row.whatsapp_template?.mediaFormat === "IMAGE" ||
       row.whatsapp_template?.mediaFormat === "VIDEO") ||
+      (row.is_automated_follow_up === true && mimeType === "audio/ogg") ||
       (mimeType && !mimeType.startsWith("image/") && !mimeType.startsWith("audio/")))
   ) {
     // All media-header templates retry from their durable R2 key, including

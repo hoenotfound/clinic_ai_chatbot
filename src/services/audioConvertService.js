@@ -4,6 +4,8 @@ const fs = require("fs/promises");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
+const { spawn } = require("node:child_process");
+const { parseFfmpegDuration } = require("./followUpVideoPreparationService");
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 const MAX_WHATSAPP_VOICE_SECONDS = 120;
@@ -176,7 +178,7 @@ async function convertToInstagramAudio(inputBuffer, inputMimeType) {
  *   playback: {buffer: Buffer, mimeType: string}
  * }|null>}
  */
-async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
+async function convertToWhatsAppVoice(inputBuffer, inputMimeType, { rejectOverlength = false } = {}) {
   const tmpDir = os.tmpdir();
   const id = crypto.randomUUID();
   const inputPath = path.join(tmpDir, `${id}-voice-in${extensionForMimeType(inputMimeType)}`);
@@ -185,6 +187,47 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
 
   try {
     await fs.writeFile(inputPath, inputBuffer);
+    if (rejectOverlength) {
+      // ffmpeg-static ships the ffmpeg executable but not necessarily ffprobe.
+      // Probe the input with that same bundled binary, fail closed if unknown.
+      const duration = await new Promise((resolve, reject) => {
+        const child = spawn(ffmpegPath, ["-hide_banner", "-nostdin", "-i", inputPath], {
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        let stderr = "";
+        let settled = false;
+        const finish = (error, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const timer = setTimeout(() => {
+          child.kill("SIGKILL");
+          finish(new Error("Audio duration inspection timed out"));
+        }, 10000);
+        timer.unref?.();
+        child.on("error", error => finish(error));
+        child.stderr.on("data", chunk => {
+          if (stderr.length < 65536) stderr += chunk.toString("utf8");
+        });
+        child.on("close", () => {
+          if (!/Stream #[^\n]*Audio:/i.test(stderr)) {
+            finish(new Error("No audio stream was found in the recording"));
+            return;
+          }
+          const seconds = parseFfmpegDuration(stderr);
+          if (!seconds) return finish(new Error("Cannot determine recording duration"));
+          finish(null, seconds);
+        });
+      });
+      if (duration > MAX_WHATSAPP_VOICE_SECONDS) {
+        const err = new Error("Voice recording must be 120 seconds or shorter. Please trim it before uploading.");
+        err.code = "VOICE_TOO_LONG";
+        throw err;
+      }
+    }
 
     // Meta requires native voice messages to be mono Ogg with the Opus codec.
     // Reset timestamps from the browser recording before OGG muxing. Without
@@ -240,6 +283,7 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
       playback,
     };
   } catch (err) {
+    if (err?.code === "VOICE_TOO_LONG") throw err;
     console.error("Voice-message conversion failed:", err);
     return null;
   } finally {

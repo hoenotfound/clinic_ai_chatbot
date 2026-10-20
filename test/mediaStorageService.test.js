@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { S3Client, CopyObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
+const { S3Client, CopyObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, HeadObjectCommand } = require("@aws-sdk/client-s3");
 const mediaStorage = require("../src/services/mediaStorageService");
 
 test("new permanent media keys are isolated by client slug", () => {
@@ -690,4 +690,57 @@ test("failed temporary upload schedules removal of its abandoned object", async 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(cleaned.length, 1);
   assert.match(cleaned[0], /^clients\/neutro\/meta-outbound\/77\//);
+});
+
+test("follow-up media prune retains historical MP3 voice previews linked to saved OGG rows", async (t) => {
+  const oldSend = S3Client.prototype.send;
+  const keys = ["CLIENT_SLUG", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"];
+  const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  Object.assign(process.env, {
+    CLIENT_SLUG: "neutro",
+    R2_ACCOUNT_ID: "cleanup-voice",
+    R2_ACCESS_KEY_ID: "key",
+    R2_SECRET_ACCESS_KEY: "secret",
+    R2_BUCKET_NAME: "private-media",
+  });
+  t.after(() => {
+    S3Client.prototype.send = oldSend;
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const root = "clients/neutro/messages/follow-up-config/";
+  const keptVoice = root + "historical.ogg";
+  const keptPlayback = root + "historical.mp3";
+  const deleted = [];
+  S3Client.prototype.send = async command => {
+    if (command instanceof HeadObjectCommand) {
+      assert.equal(command.input.Key, keptVoice);
+      return {
+        ContentLength: 1024, ContentType: "audio/ogg",
+        Metadata: { voicepreviewkey: keptPlayback },
+      };
+    }
+    if (command instanceof ListObjectsV2Command) {
+      return {
+        Contents: ["historical.ogg", "historical.mp3", "orphan.mp3"].map(k => ({
+          Key: root + k, LastModified: new Date("2026-09-01T00:00:00Z"),
+        })),
+        IsTruncated: false,
+      };
+    }
+    if (command instanceof DeleteObjectsCommand) {
+      deleted.push(...command.input.Delete.Objects.map(item => item.Key));
+      return { Errors: [] };
+    }
+    throw Error("Unexpected R2 operation");
+  };
+  const count = await mediaStorage.pruneStaleFollowUpConfigVideos({
+    env: { ...process.env },
+    now: new Date("2026-10-20T00:00:00Z").getTime(),
+    referencedKeys: [keptVoice],
+  });
+  assert.equal(count, 1);
+  assert.deepEqual(deleted, [root + "orphan.mp3"]);
 });

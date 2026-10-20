@@ -4035,6 +4035,9 @@ function MessageBubble({
     : "AI";
   const mediaMimeType = String(message.media_mime_type || "").toLowerCase();
   const isAudio = mediaMimeType.startsWith("audio/");
+  const automatedVoiceTranscript = isAudio && message.is_automated_follow_up
+    ? String(message.content || "").match(/^🎤 \[Automated voice note, (?:zh|en|ms); transcript\]\s*([\s\S]*)$/u)?.[1] || ""
+    : "";
   const isVideo = mediaMimeType.startsWith("video/");
   const isImage = mediaMimeType.startsWith("image/") || (!mediaMimeType && !!message.media_url);
   const isDocument = Boolean(
@@ -4290,7 +4293,12 @@ function MessageBubble({
             </div>
           )
         )}
-        {message.content && (!isSticker || !hasImage) && (
+        {automatedVoiceTranscript ? (
+          <details className="mt-1.5 max-w-full text-xs">
+            <summary className="cursor-pointer font-semibold">Voice note · view transcript (staff only)</summary>
+            <p className="mt-1 whitespace-pre-wrap break-words opacity-85">{automatedVoiceTranscript}</p>
+          </details>
+        ) : message.content && (!isSticker || !hasImage) && (
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
         <div className={`mt-1.5 flex items-center gap-1.5 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>

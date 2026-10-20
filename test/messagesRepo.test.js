@@ -1149,3 +1149,21 @@ test("unknown or still-unconfirmed result photo blocks automatic repeat beyond s
     /Unconfirmed media requires/
   );
 });
+
+test("automated OGG follow-up Retry lookup preserves the R2 key without downloading voice bytes", async (t) => {
+  const originalQuery = pool.query;
+  const originalDownload = mediaStorage.downloadMedia;
+  t.after(() => { pool.query = originalQuery; mediaStorage.downloadMedia = originalDownload; });
+  mediaStorage.downloadMedia = async () => { throw Error("Automated voice Retry must not download R2 bytes"); };
+  pool.query = async () => ({ rows: [{
+    id: 125, contact_id: 7, role: "assistant",
+    is_automated_follow_up: true,
+    media_key: "clients/neutro/messages/follow-up-config/voice.ogg",
+    media_mime_type: "audio/ogg",
+    content: "🎤 [Automated voice note, en; transcript] Hello",
+    delivery_status: "unknown",
+  }] });
+  const row = await messagesRepo.getMessageForRetry(7, 125);
+  assert.equal(row.media_key, "clients/neutro/messages/follow-up-config/voice.ogg");
+  assert.equal(row.media_base64, null);
+});
