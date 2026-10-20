@@ -422,7 +422,8 @@ async function authorizedCeilingHours({ database = pool, env = process.env } = {
   if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() !== "true") {
     return 72;
   }
-  if (!enabled()) return 168;
+  // Do not regard a disabled Strict RM0 switch as independent 7-day
+  // billing evidence: the status/diagnostic reader must fail closed too.
   const query = typeof database?.query === "function"
     ? database.query.bind(database) : null;
   if (!query) throw new Error("WhatsApp free-only pricing database unavailable");
