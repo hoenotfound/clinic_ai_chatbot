@@ -2141,3 +2141,41 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
   assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
   assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
 });
+
+
+test("follow-up voice settings accept clinic-owned Ogg and reject mixed or foreign media", () => {
+  const mediaStorage = require("../src/services/mediaStorageService");
+  const current = currentConfig();
+  const key = `${mediaStorage.followUpConfigVideoPrefix()}test-recording.ogg`;
+  const followUp = {
+    enabled: false,
+    triggerMode: "all",
+    delayMinutes: 120,
+    message: "Checking in",
+    translations: { en: "Checking in", ms: "Checking in", zh: "Checking in" },
+    imageUrl: "",
+    voiceKey: key,
+    voiceFilename: "greeting.mp3",
+    serviceOverrides: [{
+      serviceName: "Consultation",
+      message: "Consultation check-in",
+      translations: { en: "Consultation check-in", ms: "Consultation check-in", zh: "Consultation check-in" },
+      voiceKey: key,
+      voiceFilename: "consultation.mp3",
+    }],
+  };
+  const valid = prepareConfigUpdatePayload({ automatedFollowUp: followUp }, current);
+  assert.equal(valid.ok, true);
+  assert.equal(valid.updates.automatedFollowUp.voiceKey, key);
+  assert.equal(valid.updates.automatedFollowUp.serviceOverrides[0].voiceKey, key);
+
+  const mixed = prepareConfigUpdatePayload({
+    automatedFollowUp: { ...followUp, imageUrl: "https://example.com/promo.png" },
+  }, current);
+  assert.equal(mixed.ok, false);
+
+  const foreign = prepareConfigUpdatePayload({
+    automatedFollowUp: { ...followUp, voiceKey: "messages/another-contact/voice.ogg" },
+  }, current);
+  assert.equal(foreign.ok, false);
+});
