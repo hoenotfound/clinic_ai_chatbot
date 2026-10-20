@@ -102,8 +102,7 @@ function normalizeServiceOverrides(value) {
         imageUrl: String(item?.imageUrl || ""),
         videoKey: String(item?.videoKey || ""),
         videoFilename: String(item?.videoFilename || ""),
-        voiceKey: String(item?.voiceKey || ""),
-        voiceFilename: String(item?.voiceFilename || ""),
+        voiceNotes: item?.voiceNotes && typeof item.voiceNotes === "object" ? item.voiceNotes : {},
       };
     })
     .filter(Boolean);
@@ -131,8 +130,7 @@ function normalizeSequenceStep(value = {}) {
     imageUrl: value.imageUrl || "",
     videoKey: value.videoKey || "",
     videoFilename: value.videoFilename || "",
-    voiceKey: value.voiceKey || "",
-    voiceFilename: value.voiceFilename || "",
+    voiceNotes: value.voiceNotes && typeof value.voiceNotes === "object" ? value.voiceNotes : {},
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 }
@@ -171,8 +169,7 @@ function normalizeFollowUpSettings(value = {}) {
     imageUrl: settings.imageUrl || "",
     videoKey: settings.videoKey || "",
     videoFilename: settings.videoFilename || "",
-    voiceKey: settings.voiceKey || "",
-    voiceFilename: settings.voiceFilename || "",
+    voiceNotes: settings.voiceNotes && typeof settings.voiceNotes === "object" ? settings.voiceNotes : {},
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 
@@ -237,8 +234,7 @@ function followUpFormFromSettings(value = {}) {
     imageUrl: settings.imageUrl,
     videoKey: settings.videoKey,
     videoFilename: settings.videoFilename,
-    voiceKey: settings.voiceKey,
-    voiceFilename: settings.voiceFilename,
+    voiceNotes: settings.voiceNotes,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
     freeEntry: settings.freeEntry,
@@ -582,7 +578,7 @@ export default function Tools() {
     }
   }
 
-  async function uploadFollowUpVoice(file) {
+  async function uploadFollowUpVoice(file, language) {
     if (!file) return null;
     const extension = String(file.name || "").toLowerCase().split(".").pop();
     if (!["ogg", "mp3", "m4a", "mp4", "wav", "webm", "aac"].includes(extension)) {
@@ -595,7 +591,7 @@ export default function Tools() {
     }
     setUploadingVoice(true);
     try {
-      return await api.uploadFollowUpVoice(file);
+      return await api.uploadFollowUpVoice(file, language);
     } catch (error) {
       showToast(error.message || "Could not upload voice recording.", "error");
       return null;
@@ -637,7 +633,7 @@ export default function Tools() {
         message: form.message,
         imageUrl: form.imageUrl,
         videoKey: form.videoKey,
-        voiceKey: form.voiceKey,
+        voiceNotes: form.voiceNotes,
         serviceOverrides: form.serviceOverrides,
       },
       ...(form.additionalSteps || []),
@@ -666,7 +662,7 @@ export default function Tools() {
       const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
-      if ([step.imageUrl, step.videoKey, step.voiceKey].filter((key) => String(key || "").trim()).length > 1) {
+      if ([step.imageUrl, step.videoKey, Object.values(step.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
         return issue(`Follow-up ${index + 1} can use only one attachment.`, "sequence", index);
       }
       if (
@@ -720,7 +716,7 @@ export default function Tools() {
         if (targetedMessage.length > 1000) {
           return issue(`Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`, "sequence", index, "service");
         }
-        if ([override.imageUrl, override.videoKey, override.voiceKey].filter((key) => String(key || "").trim()).length > 1) {
+        if ([override.imageUrl, override.videoKey, Object.values(override.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
           return issue(`${serviceName} in Follow-up ${index + 1} can use only one attachment.`, "sequence", index, "service");
         }
         const serviceKey = serviceName.toLocaleLowerCase();
@@ -789,8 +785,7 @@ export default function Tools() {
         imageUrl: String(item.imageUrl || "").trim(),
         videoKey: String(item.videoKey || "").trim(),
         videoFilename: String(item.videoFilename || "").trim(),
-        voiceKey: String(item.voiceKey || "").trim(),
-        voiceFilename: String(item.voiceFilename || "").trim(),
+        voiceNotes: item.voiceNotes || {},
       };
     });
   }
@@ -832,8 +827,7 @@ export default function Tools() {
         imageUrl: step.imageUrl || "",
         videoKey: step.videoKey || "",
         videoFilename: step.videoFilename || "",
-        voiceKey: step.voiceKey || "",
-        voiceFilename: step.voiceFilename || "",
+        voiceNotes: step.voiceNotes || {},
         serviceOverrides: preparedServiceOverrides(
           step.serviceOverrides,
           generatedByMessage
@@ -920,8 +914,7 @@ export default function Tools() {
           imageUrl: form.imageUrl,
           videoKey: form.videoKey,
           videoFilename: form.videoFilename,
-          voiceKey: form.voiceKey,
-          voiceFilename: form.voiceFilename,
+          voiceNotes: form.voiceNotes || {},
           serviceOverrides,
           additionalSteps,
           freeEntry: {
@@ -1723,7 +1716,7 @@ function sequenceTargetSummary(step) {
 
 function followUpStepSetupIssue(step, services = []) {
   if (!String(step?.message || "").trim()) return "Add a message";
-  if ([step?.imageUrl, step?.videoKey, step?.voiceKey].filter((key) => String(key || "").trim()).length > 1) {
+  if ([step?.imageUrl, step?.videoKey, Object.values(step?.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) {
     return "Choose one attachment";
   }
   const allowed = new Set(services.map((item) => String(item?.name || "").trim().toLocaleLowerCase()));
@@ -1732,7 +1725,7 @@ function followUpStepSetupIssue(step, services = []) {
     const service = String(override?.serviceName || "").trim().toLocaleLowerCase();
     if (!service || !String(override?.message || "").trim()) return "Complete service message";
     if (!allowed.has(service) || seen.has(service)) return "Review service selection";
-    if ([override.imageUrl, override.videoKey, override.voiceKey].filter(Boolean).length > 1) return "Choose one service attachment";
+    if ([override.imageUrl, override.videoKey, Object.values(override.voiceNotes || {}).some(note => note?.key) ? "voice" : ""].filter(Boolean).length > 1) return "Choose one service attachment";
     seen.add(service);
   }
   return "";
@@ -1744,7 +1737,7 @@ function StepSummaryChips({ step }) {
     : 0;
   const chips = [
     ...(step?.messageMode === "ai" ? ["AI"] : []),
-    ...(step?.voiceKey ? ["Voice note"] : step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
+    ...(Object.values(step?.voiceNotes || {}).some(note => note?.key) ? ["Voice note"] : step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
     ...(serviceCount ? [`${serviceCount} service${serviceCount === 1 ? "" : "s"}`] : []),
   ];
 
@@ -1810,8 +1803,7 @@ function ServiceOverridesEditor({
         imageUrl: "",
         videoKey: "",
         videoFilename: "",
-        voiceKey: "",
-        voiceFilename: "",
+        voiceNotes: {},
       },
     ]);
   }
@@ -1973,8 +1965,7 @@ function ServiceOverridesEditor({
                       imageUrl={item.imageUrl}
                       videoKey={item.videoKey}
                       videoFilename={item.videoFilename}
-                      voiceKey={item.voiceKey}
-                      voiceFilename={item.voiceFilename}
+                      voiceNotes={item.voiceNotes}
                       uploadingImage={uploadingImage}
                       uploadingVideo={uploadingVideo}
                       uploadingVoice={uploadingVoice}
@@ -2187,8 +2178,7 @@ function FollowUpTool({
       imageUrl: form.imageUrl,
       videoKey: form.videoKey,
       videoFilename: form.videoFilename,
-      voiceKey: form.voiceKey,
-      voiceFilename: form.voiceFilename,
+      voiceNotes: form.voiceNotes,
       serviceOverrides: form.serviceOverrides,
     },
     ...(form.additionalSteps || []),
@@ -2208,15 +2198,16 @@ function FollowUpTool({
     ) || null;
   const previewCopySource = previewOverride || previewStep;
   const previewMediaSource =
-    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey || previewOverride.voiceKey)
+    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey || Object.values(previewOverride.voiceNotes || {}).some(note => note?.key))
       ? previewOverride
       : previewStep;
   const previewMessage =
     previewCopySource?.translations?.[translationLanguage] ||
     previewCopySource?.message ||
     "Your follow-up message will appear here.";
-  const previewVoiceUrl = previewMediaSource?.voiceKey
-    ? `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(previewMediaSource.voiceKey)}`
+  const previewVoiceNote = previewMediaSource?.voiceNotes?.[translationLanguage];
+  const previewVoiceUrl = previewVoiceNote?.previewKey
+    ? `/api/config/automated-follow-up/voice-preview?key=${encodeURIComponent(previewVoiceNote.previewKey)}`
     : "";
   const previewVideoUrl = previewMediaSource?.videoKey
     ? `/api/config/automated-follow-up/video-preview?key=${encodeURIComponent(previewMediaSource.videoKey)}`
@@ -2285,8 +2276,7 @@ function FollowUpTool({
           imageUrl: "",
           videoKey: "",
           videoFilename: "",
-          voiceKey: "",
-          voiceFilename: "",
+          voiceNotes: {},
           serviceOverrides: [],
         },
       ],
@@ -2869,8 +2859,7 @@ function FollowUpTool({
               imageUrl={form.imageUrl}
               videoKey={form.videoKey}
               videoFilename={form.videoFilename}
-              voiceKey={form.voiceKey}
-              voiceFilename={form.voiceFilename}
+              voiceNotes={form.voiceNotes}
               uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
               uploadingVoice={uploadingVoice}
@@ -3045,8 +3034,7 @@ function FollowUpTool({
                             imageUrl={step.imageUrl}
                             videoKey={step.videoKey}
                             videoFilename={step.videoFilename}
-                            voiceKey={step.voiceKey}
-                            voiceFilename={step.voiceFilename}
+                            voiceNotes={step.voiceNotes}
                             uploadingImage={uploadingImage}
                             uploadingVideo={uploadingVideo}
                             uploadingVoice={uploadingVoice}
@@ -3919,7 +3907,7 @@ function FollowUpTool({
                 {previewStep?.messageMode === "ai" && (
                   <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">AI</span>
                 )}
-                {previewMediaSource?.voiceKey && (
+                {Object.values(previewMediaSource?.voiceNotes || {}).some(note => note?.key) && (
                   <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Voice note</span>
                 )}
                 {previewMediaSource?.videoKey && (
@@ -3979,7 +3967,7 @@ function FollowUpTool({
                   {previewMediaSource?.imageUrl && (
                     <img src={previewMediaSource.imageUrl} alt="" className="max-h-56 w-full object-cover" />
                   )}
-                  {previewMediaSource?.voiceKey && (
+                  {previewVoiceNote?.previewKey && (
                     <audio src={previewVoiceUrl} controls preload="none" className="w-full px-3 pt-3" />
                   )}
                   {previewMediaSource?.videoKey && (
