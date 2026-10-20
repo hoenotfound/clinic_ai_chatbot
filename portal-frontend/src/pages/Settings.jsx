@@ -1883,7 +1883,7 @@ function PromotionsTab({ config, onSaved, onError }) {
           name: p.name.trim(),
           linkedService: p.linkedService.trim(),
           sendOnPriceQuery: p.sendOnPriceQuery === true,
-          automaticMediaHold: p.automaticMediaHold === true,
+          ...(p.automaticMediaHold === true ? { automaticMediaHold: true } : {}),
           packages: packageMode
             ? (Array.isArray(p.packages) ? p.packages : [])
                 .filter((item) =>
