@@ -1136,15 +1136,36 @@ async function verifiedVoiceMedia(key, note, language) {
   return isVoiceAssetMetadataValid(info, note, language);
 }
 
+// Messenger and Instagram send a standard audio attachment, not WhatsApp's
+// native voice flag. The already-approved MP3 preview must still be tied to
+// the original OGG transcript digest, and the MP3 itself must be verified.
+async function verifiedVoiceDelivery(note, language, channel) {
+  if (!(await verifiedVoiceMedia(note.key, note, language))) return false;
+  if (channel === "whatsapp") return true;
+  if (!["facebook", "instagram"].includes(channel) ||
+      !validVoiceAssetKey(note.previewKey, "mp3", mediaStorage)) return false;
+  const preview = await mediaStorage.getSharedFollowUpMediaInfo(note.previewKey);
+  return preview.mimeType === "audio/mpeg" &&
+    Number.isFinite(preview.bytes) && preview.bytes > 0 &&
+    preview.bytes <= 8 * 1024 * 1024;
+}
+
 async function sendConfiguredVoiceFollowUp(contact, note, language, options) {
-  // Check the R2 asset's immutable upload transcript digest at dispatch too.
-  if (!(await verifiedVoiceMedia(note.key, note, language))) {
-    return { success: false, error: "Voice recording metadata no longer matches the approved transcript." };
+  const channel = contact.channel || "whatsapp";
+  // Revalidate immutable transcript metadata and private audio copies right
+  // before handing any customer media to the provider's send layer.
+  if (!(await verifiedVoiceDelivery(note, language, channel))) {
+    return { success: false, error: "Voice recording metadata no longer matches the approved transcript or its playback copy." };
   }
-  const buffer = await mediaStorage.downloadMedia(note.key, { maxBytes: 8 * 1024 * 1024 });
-  return channelMessaging.sendAudioBuffer(contact, buffer, "audio/ogg", "voice.ogg", {
-    ...options, requireStaffMode: false,
-  });
+  const isSocial = channel === "facebook" || channel === "instagram";
+  const buffer = await mediaStorage.downloadMedia(
+    isSocial ? note.previewKey : note.key, { maxBytes: 8 * 1024 * 1024 }
+  );
+  return channelMessaging.sendAudioBuffer(
+    contact, buffer, isSocial ? "audio/mpeg" : "audio/ogg",
+    isSocial ? "voice.mp3" : "voice.ogg",
+    { ...options, requireStaffMode: false }
+  );
 }
 
 // Only free-form WhatsApp messages within the active customer reply window
@@ -1488,14 +1509,14 @@ async function sendCandidate(candidate) {
   let effectiveVideoKey =
     !originalHasPrice && !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
   let effectiveVoice = !originalHasPrice && !promotionFollowUp &&
-    channel === "whatsapp" ? selectedVoice : null;
-  // A voice recording is a stand-alone WhatsApp message, not a caption.
+    ["whatsapp", "facebook", "instagram"].includes(channel) ? selectedVoice : null;
+  // A voice recording is a stand-alone message, not a caption.
   // Validate its own speech rather than the independently generated fallback.
   if (effectiveVoice) {
     try {
-      if (!(await verifiedVoiceMedia(effectiveVoice.key, effectiveVoice, language)) ||
+      if (!(await verifiedVoiceDelivery(effectiveVoice, language, channel)) ||
           await previouslySentVideo({ database: pool, contactId: candidate.contact_id,
-            mediaKey: effectiveVoice.key })) {
+            mediaKey: isSocial ? effectiveVoice.previewKey : effectiveVoice.key })) {
         effectiveVoice = null;
       }
     } catch (error) {
@@ -1567,16 +1588,17 @@ async function sendCandidate(candidate) {
   // WhatsApp message references that key, so Inbox history and Retry use the
   // same bytes without copying them into each customer's folder.
   const durableVideoKey = !isSocial && effectiveVideoKey ? effectiveVideoKey : null;
-  const durableVoiceKey = effectiveVoice?.key || null;
+  const durableVoiceKey = effectiveVoice
+    ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
+    : null;
   // Only the transcript of the actual selected recording belongs to a voice
   // message. Never store an AI-generated text reply as if it was delivered.
   const storedContent = effectiveVoice
     ? `🎤 [Automated voice note, ${language}; transcript] ${effectiveVoice.transcript}`
     : followUpMessage;
 
-  // WhatsApp can send its media + caption as one tracked message. Messenger
-  // and Instagram keep the sequence claim as text and persist media companions
-  // separately so either provider message can be retried without duplication.
+  // Audio is one tracked outbound message on all channels. Social image/video
+  // follow-ups keep their separate media-companion behavior unchanged.
   let saved;
   try {
     saved = await followUpRepo.saveIfStillEligible({
@@ -1585,7 +1607,9 @@ async function sendCandidate(candidate) {
       content: storedContent,
       mediaUrl: !isSocial && effectiveImageUrl && !effectiveVoice ? effectiveImageUrl : null,
       mediaKey: durableVoiceKey || durableVideoKey,
-      mediaMimeType: durableVoiceKey ? "audio/ogg" : durableVideoKey ? "video/mp4" : null,
+      mediaMimeType: durableVoiceKey
+        ? isSocial ? "audio/mpeg" : "audio/ogg"
+        : durableVideoKey ? "video/mp4" : null,
       stepIndex,
       targetedService:
         followUpMessageMode === "ai_personalized"
@@ -1649,7 +1673,7 @@ async function sendCandidate(candidate) {
     if (!eligible) return false;
     if (durableVoiceKey) {
       try {
-        if (!(await verifiedVoiceMedia(durableVoiceKey, effectiveVoice, language)) ||
+        if (!(await verifiedVoiceDelivery(effectiveVoice, language, channel)) ||
             await previouslySentVideo({ database: pool,
               contactId: candidate.contact_id, mediaKey: durableVoiceKey,
               excludeMessageId: saved.id })) return false;
@@ -1677,23 +1701,20 @@ async function sendCandidate(candidate) {
   let sendResult;
   try {
     if (isSocial) {
-      // Record the follow-up text separately from an optional image so an image
-      // failure/retry can never duplicate a text message Meta already accepted.
-      const textProviderRecorder = messagesRepo.socialProviderAliasRecorder(
-        saved.id,
-        channel
-      );
-      sendResult = await channelMessaging.sendText(
-        contact,
-        followUpMessage,
-        {
-          purpose: "marketing",
-          preSendCheck: finalPreSendCheck,
-          ...(textProviderRecorder
-            ? { onProviderMessageId: textProviderRecorder }
-            : {}),
-        }
-      );
+      // Exactly one provider message: an audio attachment when available,
+      // otherwise the existing text fallback. Persist the provider alias as
+      // soon as Meta accepts the send to reconcile uncertain outcomes.
+      const providerRecorder = messagesRepo.socialProviderAliasRecorder(saved.id, channel);
+      const socialOptions = {
+        purpose: "marketing",
+        preSendCheck: finalPreSendCheck,
+        currentMessageId: saved.id,
+        autoFollowUp: true,
+        ...(providerRecorder ? { onProviderMessageId: providerRecorder } : {}),
+      };
+      sendResult = effectiveVoice
+        ? await sendConfiguredVoiceFollowUp(contact, effectiveVoice, language, socialOptions)
+        : await channelMessaging.sendText(contact, followUpMessage, socialOptions);
     } else {
       const policyOptions = {
         purpose: "marketing",
