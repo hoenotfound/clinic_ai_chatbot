@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const clinicConfig = require("../src/config/clinicConfig");
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
-const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 const { guardUnconfirmedMediaPromise, claimsMediaWasOrWillBeSent } = require("../src/utils/unconfirmedMediaPromiseGuard");
 const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
@@ -681,4 +681,105 @@ test("Chinese send promises require affirmative delivery and preserve other clau
   const contrast = "我们不发旧图，但我现在会发送另一张优惠图给你。";
   assert.equal(claimsMediaWasOrWillBeSent(contrast), true,
     "an earlier refusal cannot hide a later explicit send promise");
+});
+
+
+test("Compound 3D price and recovery-period enquiry answers both parts without guaranteed downtime", () => {
+  const decision = {
+    type: "price", treatment: "3D 小颜术",
+    source: "recent_customer", prices: [{name: "Main offer", price: "RM488"}],
+  };
+  for (const [language, text, recoveryPattern] of [
+    ["zh", "价格？需修复期？", /修复期|恢复时间/u],
+    ["zh", "3D多少钱，恢复期多久？", /修复期|恢复时间/u],
+    ["en", "How much and is there downtime?", /downtime or recovery/iu],
+    ["ms", "Berapa harga dan tempoh pemulihan?", /tempoh pemulihan/iu],
+  ]) {
+    const result = ensureVerifiedPriceReply({
+      customerText: text, reply: "Would you like to book?",
+      treatment: decision.treatment,
+      pricingDecision: decision,
+      priceOnlyResponse: true,
+      services, serviceAliases: aliases, promotions,
+      language,
+    });
+    assert.equal(result.restored, true, text);
+    assert.match(result.reply, /RM488/u);
+    assert.match(result.reply, recoveryPattern);
+    assert.doesNotMatch(result.reply, /no downtime|zero downtime|无恢复期|零恢复期|保证无痛/iu);
+  }
+});
+
+test("Structured 9D pricing is available in text while unapproved artwork remains held", async () => {
+  const promo = [{
+    name: "9D 逆龄抗衰 First Trial", linkedService: "9D 逆龄抗衰",
+    validFrom: "2000-01-01", validUntil: "2999-12-31",
+    sendOnPriceQuery: true, automaticMediaHold: true,
+    pricing: {currency: "MYR", offer: 488, normal: 1288},
+    imageUrl: "https://example.test/9d-legacy-creative.jpg",
+    caption: "9D 仪器类紧致提拉护理，适合与否由中医师评估，效果因人而异。",
+    followUpMessage: "限时优惠！只需要 RM488（原价 RM1,288）。赠送1小时十二经络按摩。",
+    mediaTranslations: {en: {caption: "9D facial contour treatment; suitability assessed individually."}},
+  }];
+  const price = verifiedPricesForService("9D 逆龄抗衰",promo,"9D 价格多少？");
+  assert.deepEqual(price?.map(x=>x.price),["RM488"]);
+  assert.equal(promotionHasUnsafeClinicalCopy(promo[0]),true,
+    "a clean caption cannot override an unapproved image hold");
+  const decision = { type:"price", treatment:"9D 逆龄抗衰", source:"current_customer", prices:price };
+  const reply = ensureVerifiedPriceReply({
+    customerText:"9D 价格多少？", reply:"请咨询门店", treatment:"9D 逆龄抗衰",
+    pricingDecision:decision, services,serviceAliases:aliases,promotions:promo,language:"zh",
+  });
+  assert.match(reply.reply,/RM488/u);
+  const old = clinicConfig.automatedFollowUp;
+  clinicConfig.automatedFollowUp = {...old,assessmentFirstPricingEnabled:true};
+  try {
+    let reason = "";
+    const media = await resolvePricePromotionForReply({
+      priceQuery:true,packageQuery:false,pricingDecision:decision,aiPricingEnabled:true,
+      treatment:decision.treatment,verifiedServiceFromText:decision.treatment,
+      customerText:"9D 价格多少？",promotions:promo,services,serviceAliases:aliases,
+      textSendSucceeded:true, flagged:false,bookingReady:false,keywordReason:null,
+      needsAttention:false,contactId:12345,onSkip:value=>{reason=value;},
+      wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
+    });
+    assert.equal(media,null);
+    assert.equal(reason,"unverified_clinical_promo_copy");
+  } finally {
+    clinicConfig.automatedFollowUp=old;
+  }
+});
+
+test("Structured pelvic A and B prices retain package identity and voucher condition", () => {
+  const pelvic = [{
+    name:"骨盆调理套餐",linkedService:"骨盆调理",
+    sendOnPriceQuery:true,validFrom:"2000-01-01",validUntil:"2999-12-31",
+    imageUrl:"",caption:"",
+    packages:[
+      {name:"Package A",imageUrl:"https://example.test/a.jpg",
+       pricing:{currency:"MYR",offer:388,normal:488},
+       caption:"RM100 优惠券限时领取。原价 RM488，优惠后仅需 RM388。",
+       mediaTranslations:{
+         en:{caption:"RM100 voucher. Original price RM488. After voucher, only RM388."},
+         ms:{caption:"Baucar RM100. Harga asal RM488. Selepas baucar RM388."}}},
+      {name:"Package B",imageUrl:"https://example.test/b.jpg",
+       pricing:{currency:"MYR",offer:288,normal:388},
+       caption:"本月限时优惠 RM100 OFF，原价 RM388，现在只需 RM288。",
+       mediaTranslations:{en:{caption:"Original price RM388. Now only RM288."}}},
+    ],
+  }];
+  const options=verifiedPricesForService("骨盆调理",pelvic,"骨盆调理配套多少钱？");
+  assert.deepEqual(options?.map(x=>[x.name,x.price]),[
+    ["Package A","RM388"],["Package B","RM288"]
+  ]);
+  assert.equal(options[0].afterVoucher,true);
+  const response=ensureVerifiedPriceReply({
+    customerText:"骨盆调理配套多少钱？",reply:"欢迎了解",
+    treatment:"骨盆调理",pricingDecision:{
+      type:"package_options",treatment:"骨盆调理",source:"current_customer",prices:options,
+    },services:[{name:"骨盆调理"}],serviceAliases:[],promotions:pelvic,language:"zh",
+  });
+  assert.match(response.reply,/Package A[\s\S]*RM388/u);
+  assert.match(response.reply,/Package B[\s\S]*RM288/u);
+  assert.match(response.reply,/优惠券/u);
 });
