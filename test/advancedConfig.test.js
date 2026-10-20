@@ -2144,6 +2144,9 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
 
 
 test("follow-up voice settings require approved, safe, clinic-owned language assets", () => {
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "voice-policy-test";
+  try {
   const mediaStorage = require("../src/services/mediaStorageService");
   const current = currentConfig();
   const prefix = mediaStorage.followUpConfigVideoPrefix();
@@ -2178,5 +2181,9 @@ test("follow-up voice settings require approved, safe, clinic-owned language ass
   assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Only RM488 today!" } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, false);
   assert.equal(check({ voiceNotes: { de: note } }).ok, false);
+  } finally {
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
 });
 
