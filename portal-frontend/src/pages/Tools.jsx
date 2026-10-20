@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
 import LeadDistribution from "./LeadDistribution";
-import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker } from "../components/FollowUpTemplatePicker";
+import { ApprovedFollowUpTemplatePicker, FollowUpTemplateMediaPicker, supportedForAutomation } from "../components/FollowUpTemplatePicker";
 import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
 import FollowUpActivity from "../components/FollowUpActivity";
 import FollowUpHealth from "../components/FollowUpHealth";
@@ -574,8 +574,8 @@ export default function Tools() {
 
   function followUpValidationError() {
     // Keep the existing save checks intact while identifying the editor location.
-    const issue = (message, tab = "sequence", stepIndex = null, target = null) =>
-      ({ message, tab, stepIndex, target });
+    const issue = (message, tab = "sequence", stepIndex = null, target = null, ruleIndex = null) =>
+      ({ message, tab, stepIndex, target, ruleIndex });
     if (form.freeEntry?.enabled) {
       if (!/^[a-z0-9_]+$/.test(String(form.freeEntry.templateName || ""))) {
         return issue("Enter an approved WhatsApp MARKETING template name before enabling free-entry follow-ups.", "whatsapp");
@@ -583,6 +583,30 @@ export default function Tools() {
       if (!Array.isArray(form.freeEntry.slotsHours) || !form.freeEntry.slotsHours.length) {
         return issue("Select an extended WhatsApp follow-up schedule.", "whatsapp");
       }
+    }
+    const validSlotHours = new Set(form.freeEntry?.slotsHours || []);
+    const serviceNames = new Set((config?.services || [])
+      .map((service) => normalizeExtendedServiceName(service?.name))
+      .filter(Boolean));
+    const seenRules = new Set();
+    for (const [index, rule] of (form.freeEntry?.templateRules || []).entries()) {
+      const slotHours = Number(rule?.slotHours);
+      const serviceName = String(rule?.serviceName || "").trim();
+      const templateName = String(rule?.templateName || "").trim();
+      const invalid = (message) => issue(message, "whatsapp", null, "extended-rule", index);
+      if (!validSlotHours.has(slotHours)) {
+        return invalid(`Extended rule ${index + 1} uses +${slotHours}h, which is not in the selected schedule. Reassign its time or remove the rule.`);
+      }
+      if (!serviceName) return invalid(`Choose a treatment for extended rule ${index + 1}.`);
+      if (serviceName !== "*" && !serviceNames.has(normalizeExtendedServiceName(serviceName))) {
+        return invalid(`Choose a current clinic treatment for extended rule ${index + 1}.`);
+      }
+      if (!/^[a-z0-9_]+$/.test(templateName)) {
+        return invalid(`Choose an approved marketing template for extended rule ${index + 1}.`);
+      }
+      const key = `${slotHours}:${normalizeExtendedServiceName(serviceName)}`;
+      if (seenRules.has(key)) return invalid(`Extended rule ${index + 1} duplicates another rule at this time for this treatment.`);
+      seenRules.add(key);
     }
     const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
     const quietStart = String(form.quietHours?.start || "").trim();
@@ -1622,6 +1646,38 @@ function sequenceTargetSummary(step) {
     : `Target: ${formatDelay(Number(step?.delayMinutes || 0))} after the sequence-start message`;
 }
 
+// Mirrors the server's normalizeServiceText so saved valid names are not rejected.
+function normalizeExtendedServiceName(value) {
+  return typeof value === "string"
+    ? value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase()
+    : "";
+}
+
+function extendedFollowUpSlotLabel(hours) {
+  const days = Math.max(1, Math.round(Number(hours) / 24));
+  return `About ${days} day${days === 1 ? "" : "s"} later (+${hours}h)`;
+}
+
+const EXTENDED_TEMPLATE_LOCALES = [
+  { code: "zh_CN", label: "Chinese" },
+  { code: "en_US", label: "English" },
+  { code: "ms", label: "Malay" },
+];
+
+function extendedTemplateLanguageReadiness(catalog, name) {
+  const versions = (catalog?.templates || []).filter((t) => t.name === name);
+  const approved = versions.filter(supportedForAutomation);
+  const format = approved[0]?.header?.format || "TEXT";
+  return EXTENDED_TEMPLATE_LOCALES.map(({ code, label }) => {
+    const version = versions.find((t) =>
+      t.language === code || (code === "en_US" && t.language === "en"));
+    const ready = Boolean(version && supportedForAutomation(version) &&
+      (version.header?.format || "TEXT") === format);
+    return { code, label, ready, status: ready ? `Approved ${format}` :
+      version ? "Unsupported version" : "Missing approved version" };
+  });
+}
+
 function followUpStepSetupIssue(step, services = []) {
   if (!String(step?.message || "").trim()) return "Add a message";
   if (String(step?.imageUrl || "").trim() && String(step?.videoKey || "").trim()) {
@@ -1943,6 +1999,9 @@ function FollowUpTool({
   const [followUpTab, setFollowUpTab] = useState("sequence");
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
+  const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
+  const [focusAdvancedRule, setFocusAdvancedRule] = useState(null);
+  const [proposedTemplateSchedule, setProposedTemplateSchedule] = useState(null);
   const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
   useEffect(() => {
     if (form.whatsappFreeOnly?.enabled === true) setBillingProtectionOpen(true);
@@ -2016,6 +2075,121 @@ function FollowUpTool({
     }
   }, [followUpTab, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
 
+  // Quick template choices edit only the all-treatment TEXT rule for a given
+  // existing slot. Treatment-specific media rules remain unchanged.
+  function openTreatmentMediaForSlot(slotHours) {
+    const currentRules = form.freeEntry?.templateRules || [];
+    const existingIndex = currentRules.findIndex((rule) =>
+      Number(rule.slotHours) === Number(slotHours) && rule.serviceName && rule.serviceName !== "*");
+    setShowAdvancedTemplateRules(true);
+    if (existingIndex >= 0) {
+      setFocusAdvancedRule(existingIndex);
+      return;
+    }
+    setFocusAdvancedRule(currentRules.length);
+    setForm((current) => ({
+      ...current,
+      freeEntry: {
+        ...current.freeEntry,
+        templateRules: [
+          ...(current.freeEntry?.templateRules || []),
+          {
+            slotHours: Number(slotHours),
+            serviceName: "",
+            templateName: "",
+            mediaUrl: "",
+            mediaKey: "",
+            mediaSourceId: "",
+            videoCodecVerified: false,
+          },
+        ],
+      },
+    }));
+  }
+
+  useEffect(() => {
+    if (focusAdvancedRule === null || !showAdvancedTemplateRules || followUpTab !== "whatsapp") return;
+    const editor = document.getElementById(`extended-template-rule-${focusAdvancedRule}`);
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView({ behavior: "smooth", block: "start" });
+    setFocusAdvancedRule(null);
+  }, [focusAdvancedRule, showAdvancedTemplateRules, followUpTab, form.freeEntry?.templateRules?.length]);
+
+  function requestTemplateSchedule(nextHours) {
+    const currentHours = form.freeEntry?.slotsHours || [];
+    if (nextHours.join(",") === currentHours.join(",")) {
+      setProposedTemplateSchedule(null);
+      return;
+    }
+    const incompatible = (form.freeEntry?.templateRules || []).filter(
+      (rule) => !nextHours.includes(Number(rule.slotHours)));
+    if (incompatible.length) {
+      setProposedTemplateSchedule({ hours: nextHours, baseHours: [...currentHours], incompatible });
+      return;
+    }
+    setProposedTemplateSchedule(null);
+    setForm((current) => ({
+      ...current, freeEntry: { ...current.freeEntry, slotsHours: nextHours },
+    }));
+  }
+
+  function confirmTemplateSchedule() {
+    if (!proposedTemplateSchedule) return;
+    const nextHours = proposedTemplateSchedule.hours;
+    const currentHours = form.freeEntry?.slotsHours || [];
+    const incompatibleNow = (form.freeEntry?.templateRules || []).filter(
+      (rule) => !nextHours.includes(Number(rule.slotHours)));
+    // Recheck the CURRENT full rules (including media) at the confirmation click.
+    // A rule added or edited while the dialog is visible requires fresh approval.
+    if (JSON.stringify(currentHours) !== JSON.stringify(proposedTemplateSchedule.baseHours)) {
+      setProposedTemplateSchedule(null);
+      return;
+    }
+    if (JSON.stringify(incompatibleNow) !== JSON.stringify(proposedTemplateSchedule.incompatible)) {
+      setProposedTemplateSchedule({
+        ...proposedTemplateSchedule,
+        incompatible: incompatibleNow,
+      });
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      freeEntry: {
+        ...current.freeEntry,
+        slotsHours: nextHours,
+        templateRules: (current.freeEntry?.templateRules || []).filter(
+          (rule) => nextHours.includes(Number(rule.slotHours))),
+      },
+    }));
+    setProposedTemplateSchedule(null);
+  }
+
+  function setSimpleSlotTemplate(slotHours, templateName) {
+    setForm((current) => {
+      const currentRules = current.freeEntry?.templateRules || [];
+      const previous = currentRules.find((rule) =>
+        Number(rule.slotHours) === Number(slotHours) && rule.serviceName === "*");
+      const nextRules = currentRules.filter((rule) =>
+        !(Number(rule.slotHours) === Number(slotHours) && rule.serviceName === "*"));
+      if (templateName) {
+        nextRules.push({
+          ...(previous || {}),
+          slotHours: Number(slotHours),
+          serviceName: "*",
+          templateName,
+          // A different template may have a different header requirement.
+          // Never silently reuse an incompatible old media attachment.
+          mediaUrl: previous?.templateName === templateName ? previous.mediaUrl || "" : "",
+          mediaKey: previous?.templateName === templateName ? previous.mediaKey || "" : "",
+          mediaSourceId: previous?.templateName === templateName ? previous.mediaSourceId || "" : "",
+          videoCodecVerified: previous?.templateName === templateName && previous.videoCodecVerified === true,
+        });
+      }
+      return { ...current, freeEntry: { ...current.freeEntry, templateRules: nextRules } };
+    });
+  }
+
   function updateTemplateRule(index, patch, expectedRule = null, expectedLanguage = null) {
     setForm((current) => ({
       ...current,
@@ -2032,6 +2206,11 @@ function FollowUpTool({
   useEffect(() => {
     if (!validationIssue) return;
     setFollowUpTab(validationIssue.tab);
+    if (validationIssue.tab === "whatsapp" && validationIssue.target === "extended-rule" &&
+        Number.isInteger(validationIssue.ruleIndex)) {
+      setShowAdvancedTemplateRules(true);
+      setFocusAdvancedRule(validationIssue.ruleIndex);
+    }
     if (validationIssue.tab === "sequence") {
       if (Number.isInteger(validationIssue.stepIndex)) {
         setExpandedStepIndex(validationIssue.stepIndex > 0 ? validationIssue.stepIndex - 1 : null);
@@ -2109,6 +2288,18 @@ function FollowUpTool({
     : "";
   const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
   const suggestedNextDelay = nextSequenceDelay(lastDelay);
+  const simpleApprovedTextTemplates = [...new Map(
+    (templateCatalog?.templates || [])
+      .filter((template) => supportedForAutomation(template) && (template.header?.format || "TEXT") === "TEXT")
+      .map((template) => [template.name, template])
+  ).values()].sort((a, b) => a.name.localeCompare(b.name));
+  const simpleRuleSlots = form.freeEntry?.slotsHours || [];
+  const simpleConfiguredNames = simpleRuleSlots.map((hours) =>
+    (form.freeEntry?.templateRules || []).find((rule) =>
+      Number(rule.slotHours) === Number(hours) && rule.serviceName === "*")?.templateName
+      || form.freeEntry?.templateName || ""
+  ).filter(Boolean);
+  const hasDuplicateExtendedNames = new Set(simpleConfiguredNames).size < simpleConfiguredNames.length;
   const hasPromotionFollowUps = (Array.isArray(promotions) ? promotions : []).some(
     (promotion) =>
       String(promotion?.followUpMessage || "").trim() ||
@@ -3489,6 +3680,8 @@ function FollowUpTool({
                 </p>
               )}
             </div>
+            <h3 className="mt-4 text-sm font-bold">1. Choose a default approved message</h3>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">This is the fallback text used when a scheduled time has no day-specific template.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <ApprovedFollowUpTemplatePicker
                 id="free-entry-default-template"
@@ -3535,26 +3728,199 @@ function FollowUpTool({
                 Only the identical template name in this approved language may be used. Otherwise skip.
               </span>
             </label>
-            <label className="mt-3 block text-xs font-semibold">
+            <h3 className="mt-4 text-sm font-bold">2. Choose your follow-up times</h3>
+            <label className="mt-2 block text-xs font-semibold">
               Extended template schedule
               <select
                 value={(form.freeEntry?.slotsHours || []).join(",")}
-                onChange={(event) => setForm((current) => ({
-                  ...current,
-                  freeEntry: { ...current.freeEntry, slotsHours: event.target.value.split(",").map(Number) }
-                }))}
+                onChange={(event) => requestTemplateSchedule(event.target.value.split(",").map(Number))}
                 className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-sm"
                 aria-label="Free-entry follow-up schedule"
               >
-                <option value="26,50,74,98,122,162">Days 1-6 and before Day 7 closes (six reminders)</option>
-                <option value="26,50,98,162">Days 1, 2, 4 and near Day 7 (four reminders)</option>
-                <option value="26,50,98">Days 1, 2 and 4 (three reminders)</option>
+                {!["26,50,98", "26,50,98,162", "26,50,74,98,122,162"].includes(
+                  (form.freeEntry?.slotsHours || []).join(",")) && (
+                    <option value={(form.freeEntry?.slotsHours || []).join(",")}>
+                      Current custom schedule ({(form.freeEntry?.slotsHours || []).join(", ")}h)
+                    </option>
+                  )}
+                <option value="26,50,98">Simple: +26h, +50h, +98h (3 possible times)</option>
+                <option value="26,50,98,162">Four possible times: +26h, +50h, +98h, +162h</option>
+                <option value="26,50,74,98,122,162">Six possible times: +26h to +162h (max 3 distinct sends)</option>
               </select>
             </label>
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center justify-between gap-3">
+            {proposedTemplateSchedule && (
+              <section role="alert" aria-label="Review extended schedule changes"
+                className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-950">
+                <p className="font-semibold">This schedule would remove configured messages or media.</p>
+                <p className="mt-1">These rules are attached to times excluded from the new schedule:</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {proposedTemplateSchedule.incompatible.map((rule, index) => (
+                    <li key={index}>+{rule.slotHours}h · {rule.serviceName === "*" ? "All treatments" : rule.serviceName || "Treatment not selected"} · {rule.templateName || "Incomplete draft"}
+                      {(rule.mediaKey || rule.mediaUrl) ? " · attached image/video" : ""}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2">No schedule changes have been applied. If these rules change while this warning is open, the list will be updated and you must confirm again.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setProposedTemplateSchedule(null)}
+                    className="rounded-lg border border-amber-500 bg-white px-3 py-2 font-semibold">
+                    Keep existing schedule
+                  </button>
+                  <button type="button" onClick={confirmTemplateSchedule}
+                    className="rounded-lg border border-amber-700 bg-amber-100 px-3 py-2 font-semibold">
+                    Remove listed rules and change schedule
+                  </button>
+                </div>
+              </section>
+            )}
+            <section aria-label="After 24 hours guided setup" className="mt-5 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/20 p-3 sm:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <p className="text-xs font-semibold">Day-specific approved templates & image/video attachments</p>
+                  <h3 className="text-sm font-bold">3. Choose the message for each follow-up time</h3>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Each time uses the default approved text template above unless you choose another.
+                    For individual treatment videos or images, open the advanced editor below.
+                  </p>
+                </div>
+                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
+                  Up to 3 distinct template sends, not one send per time
+                </span>
+              </div>
+              {hasDuplicateExtendedNames && (
+                <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  Some times use the same template. The existing worker does not repeat a template name during a verified period;
+                  later times may be skipped. Pick distinct approved templates if you want separate messages.
+                </p>
+              )}
+              {!form.freeEntry?.templateName && (
+                <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  Choose a default approved text template above before enabling extended follow-ups.
+                </p>
+              )}
+              {form.freeEntry?.enabled === true && !freeEntryStatus?.enabledOnServer && (
+                <p role="status" className="mt-3 text-xs text-amber-800">
+                  The server has not confirmed extended sending is active. Selecting templates here does not enable the server.
+                </p>
+              )}
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {simpleRuleSlots.map((hours, slotIndex) => {
+                  const matches = (form.freeEntry?.templateRules || []).filter((rule) =>
+                    Number(rule.slotHours) === Number(hours) && rule.serviceName === "*");
+                  const selectedRule = matches[0] || null;
+                  const selectedName = selectedRule?.templateName || "";
+                  const effectiveName = selectedName || form.freeEntry?.templateName || "";
+                  const treatmentCount = (form.freeEntry?.templateRules || []).filter((rule) =>
+                    Number(rule.slotHours) === Number(hours) && rule.serviceName && rule.serviceName !== "*").length;
+                  const preview = (templateCatalog?.templates || []).find((template) =>
+                    template.name === effectiveName && template.language ===
+                      (form.freeEntry?.language === "auto" ? "zh_CN" : form.freeEntry?.language)
+                  ) || (templateCatalog?.templates || []).find((template) => template.name === effectiveName);
+                  const isTextChoice = !selectedName || simpleApprovedTextTemplates.some((template) => template.name === selectedName);
+                  const readiness = effectiveName ? extendedTemplateLanguageReadiness(templateCatalog, effectiveName) : [];
+                  const requiredLocales = form.freeEntry?.language === "auto"
+                    ? EXTENDED_TEMPLATE_LOCALES.map(({ code }) => code)
+                    : [form.freeEntry?.language || "zh_CN"];
+                  const unavailableLocales = readiness.filter((locale) =>
+                    requiredLocales.includes(locale.code) && !locale.ready);
+                  const repeatedEarlier = Boolean(effectiveName) &&
+                    simpleConfiguredNames.slice(0, slotIndex).includes(effectiveName);
+                  return (
+                    <div key={`${hours}-${slotIndex}`} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white p-3">
+                      <p className="text-sm font-semibold">Follow-up time {slotIndex + 1}</p>
+                      <p className="mt-1 text-xs text-[var(--color-text-muted)]">{extendedFollowUpSlotLabel(hours)}</p>
+                      <label className="mt-3 block text-xs font-semibold">
+                        Message at this time
+                        <select
+                          aria-label={`Message for +${hours}h follow-up`}
+                          value={selectedName}
+                          onChange={(event) => setSimpleSlotTemplate(hours, event.target.value)}
+                          disabled={!templateCatalog || matches.length > 1}
+                          className="mt-1.5 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-white p-2.5 text-sm"
+                        >
+                          <option value="">Use default text message</option>
+                          {selectedName && !isTextChoice && <option value={selectedName}>{selectedName} · edit media in Advanced</option>}
+                          {simpleApprovedTextTemplates.map((template) =>
+                            <option key={template.name} value={template.name}>
+                              {template.name}
+                            </option>
+                          )}
+                        </select>
+                      </label>
+                      {effectiveName ? (
+                        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-[var(--color-text-muted)]">
+                          {preview?.body?.text || `Configured: ${effectiveName} (preview unavailable)`}
+                        </p>
+                      ) : <p className="mt-2 text-xs text-amber-800">No approved message selected.</p>}
+                      {effectiveName && templateCatalog && (
+                        <div aria-label={`Language availability for +${hours}h follow-up`}
+                          className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
+                          <p className="text-[11px] font-semibold">Approved language versions</p>
+                          {readiness.map((locale) => (
+                            <p key={locale.code} className={`text-[11px] ${locale.ready ? "text-[var(--color-text-muted)]" : "text-amber-800"}`}>
+                              {locale.label}: {locale.status}
+                            </p>
+                          ))}
+                          {unavailableLocales.length > 0 && (
+                            <p role="status" className="mt-1 text-[11px] text-amber-800">
+                              Not ready for {unavailableLocales.map((locale) => locale.label).join(", ")}.
+                              The worker may skip customers without a compatible approved version.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {repeatedEarlier && (
+                        <p role="status" className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                          Same template as an earlier time ({effectiveName}). The worker does not resend a template
+                          name already used in this period, so this time may be skipped unless a distinct treatment-specific rule applies.
+                        </p>
+                      )}
+                      {treatmentCount > 0 && (
+                        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                          {treatmentCount} treatment-specific rule{treatmentCount === 1 ? "" : "s"} retained in Advanced.
+                        </p>
+                      )}
+                      {matches.length > 1 && (
+                        <p role="status" className="mt-2 text-xs text-amber-800">
+                          Multiple all-treatment rules exist at this time. Review them in Advanced before editing here.
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Treatment media for +${hours}h follow-up`}
+                        disabled={!services?.length}
+                        onClick={() => openTreatmentMediaForSlot(hours)}
+                        className="mt-3 rounded-lg border border-[var(--color-primary)]/25 px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-40"
+                      >
+                        {treatmentCount > 0 ? "Edit treatment-specific video or image" : "Add treatment-specific video or image"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                These are possible attempts measured from the first qualifying reply, not guaranteed delivery times.
+                Sends require approval, recorded marketing consent, qualifying CTWA billing evidence, and a valid server window.
+                Customer replies, bookings, opt-outs and quiet hours can stop or skip messages.
+              </p>
+              <button type="button"
+                onClick={() => setShowAdvancedTemplateRules(true)}
+                className="mt-3 rounded-lg border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)]"
+              >
+                Configure treatment-specific videos, images and advanced rules
+              </button>
+            </section>
+            <details
+              open={showAdvancedTemplateRules}
+              onToggle={(event) => setShowAdvancedTemplateRules(event.currentTarget.open)}
+              className="mt-3 rounded-xl border border-[var(--color-border)] bg-white p-3"
+            >
+              <summary className="cursor-pointer text-xs font-semibold text-[var(--color-primary)]">
+                Advanced: treatment-specific templates and media
+              </summary>
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold">Day-specific approved templates & image/video attachments</p>
                   <p className="text-[11px] text-[var(--color-text-muted)]">
                     Choose a slot and All treatments for a day-specific template, or select one treatment to override it.
                     For ns_fu1_service_checkin, the treatment name is filled automatically. For ns_fu_pricing_graphic
@@ -3580,7 +3946,7 @@ function FollowUpTool({
                   }))}>Add template + media</button>
               </div>
               {(form.freeEntry?.templateRules || []).map((rule, index) => (
-                <div key={index} className="grid gap-2 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
+                <div key={index} id={`extended-template-rule-${index}`} role="region" aria-label={`Extended template rule ${index + 1}`} tabIndex={-1} className="grid gap-2 scroll-mt-4 rounded-xl border border-[var(--color-border)] p-3 sm:grid-cols-2">
                   <label className="text-xs font-semibold">Follow-up slot
                     <select aria-label={`Extended template slot ${index + 1}`} value={rule.slotHours}
                       className="mt-1 w-full rounded-lg border border-[var(--color-border)] p-2"
@@ -3650,6 +4016,7 @@ function FollowUpTool({
                 </div>
               ))}
             </div>
+            </details>
             <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
               At most three distinct approved extended templates can be sent per verified period, even if you select a schedule with more slots. Template names are never repeated. If pelvic Package A/B
               is unclear, the pricing-image template is skipped instead of guessing. An offer without the advertised
