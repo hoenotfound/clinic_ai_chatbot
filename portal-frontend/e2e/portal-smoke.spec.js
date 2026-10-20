@@ -1034,9 +1034,9 @@ test("Sequence timeline navigates existing editors without changing schedule or 
   const second = timeline.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" });
   const third = timeline.getByRole("button", { name: "Edit Follow-up 3 from sequence overview" });
   await expect(first).toHaveAttribute("aria-current", "step");
-  await expect(first).toContainText("Default translations: 3/3 configured");
-  await expect(second).toContainText("Default translations: 3/3 configured");
-  await expect(second).toContainText("Service translations: 1/3 configured");
+  await expect(first).toContainText("First reminder.");
+  await expect(second).toContainText("Second reminder.");
+  await expect(second).toContainText("1 treatment-specific message");
   await expect(third).toContainText("before the 24-hour reply window closes");
   await page.getByText("Why might a step not send?").click();
   await expect(page.getByText(/A customer reply stops the remaining steps in the current sequence/)).toBeVisible();
@@ -1058,7 +1058,7 @@ test("Sequence timeline navigates existing editors without changing schedule or 
       rect.top < (scrollArea?.bottom ?? window.innerHeight) - 30;
   })).toBe(true);
   await thirdMessage.fill("Updated third testimonial.");
-  await expect(third).toContainText("Default translations: 0/3 configured");
+  await expect(third).toContainText("Updated third testimonial.");
 
   await second.click();
   const secondEditor = page.getByRole("region", { name: "Follow-up 2 editor" });
