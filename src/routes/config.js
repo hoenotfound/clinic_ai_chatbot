@@ -171,6 +171,7 @@ const VALIDATORS = {
         isString(p.caption) &&
         (p.linkedService === undefined || isString(p.linkedService)) &&
         (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean") &&
+        (p.automaticMediaHold === undefined || typeof p.automaticMediaHold === "boolean") &&
         isPromotionPricing(p.pricing) &&
         (
           p.followUpMessage === undefined ||
