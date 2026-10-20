@@ -45,6 +45,9 @@ function hasUnsafeClinicalPromotionCopy(text) {
 // and delayed price reminders so another path cannot silently bypass a hold.
 function promotionHasUnsafeClinicalCopy(value) {
   if (!value || typeof value !== "object") return false;
+  // Artwork text is not machine-verified by the caption filter. Hold every
+  // automatic promotion/media path until staff approve the actual image too.
+  if (value.automaticMediaHold === true) return true;
   const translations = Object.values(value.mediaTranslations || {});
   const followUpTranslations = Object.values(value.followUpTranslations || {});
   const copy = [
