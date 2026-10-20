@@ -2120,7 +2120,7 @@ test("Settings validates optional verified sessionsIncluded on single and packag
 
 test("automaticMediaHold is validated, editable and never removed by the Promotions Settings serializer", () => {
   const base={
-    name:"9D 逆龄抗衰 First Trial",linkedService:"9D 逆龄抗衰",
+    name:"Consultation First Trial",linkedService:"Consultation",
     imageUrl:"https://example.test/legacy9d.jpg",caption:"Approved written caption",
     sendOnPriceQuery:true,pricing:{currency:"MYR",offer:488,normal:1288},
   };
