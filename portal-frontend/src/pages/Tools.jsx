@@ -2032,21 +2032,39 @@ function FollowUpTool({
   useEffect(() => {
     if (!validationIssue) return;
     setFollowUpTab(validationIssue.tab);
-    if (validationIssue.tab === "sequence" && Number.isInteger(validationIssue.stepIndex)) {
-      setExpandedStepIndex(validationIssue.stepIndex > 0 ? validationIssue.stepIndex - 1 : null);
-      setPreviewStepIndex(validationIssue.stepIndex);
+    if (validationIssue.tab === "sequence") {
+      if (Number.isInteger(validationIssue.stepIndex)) {
+        setExpandedStepIndex(validationIssue.stepIndex > 0 ? validationIssue.stepIndex - 1 : null);
+        setPreviewStepIndex(validationIssue.stepIndex);
+      } else if (/quiet hours/i.test(validationIssue.message || "")) {
+        // Quiet hours live in Follow-up 1's advanced panel, even when the
+        // user attempted to save while editing a later follow-up.
+        setExpandedStepIndex(null);
+        setPreviewStepIndex(0);
+      }
     }
   }, [validationIssue]);
 
   useEffect(() => {
     if (!validationIssue || followUpTab !== validationIssue.tab) return;
+    const quietHoursIssue = validationIssue.tab === "sequence" &&
+      /quiet hours/i.test(validationIssue.message || "");
+    if (quietHoursIssue && (expandedStepIndex !== null || !showDeliveryRules)) return;
     if (validationIssue.stepIndex > 0 &&
         expandedStepIndex !== validationIssue.stepIndex - 1) return;
-    const targetId = validationIssue.tab === "sequence" && validationIssue.stepIndex > 0
-      ? `follow-up-step-${validationIssue.stepIndex + 1}`
-      : `follow-up-panel-${validationIssue.tab}`;
+    const targetId = quietHoursIssue
+      ? "follow-up-advanced-delivery-panel"
+      : validationIssue.tab === "sequence" && validationIssue.stepIndex > 0
+        ? `follow-up-step-${validationIssue.stepIndex + 1}`
+        : `follow-up-panel-${validationIssue.tab}`;
     document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [validationIssue, followUpTab, expandedStepIndex]);
+    if (quietHoursIssue) {
+      // Place keyboard focus where the staff member can correct the error.
+      (document.getElementById("follow-up-quiet-start") ||
+       document.querySelector('[aria-controls="follow-up-advanced-delivery-panel"]'))
+        ?.focus({ preventScroll: true });
+    }
+  }, [validationIssue, followUpTab, expandedStepIndex, showDeliveryRules]);
 
   const allSteps = [
     {
