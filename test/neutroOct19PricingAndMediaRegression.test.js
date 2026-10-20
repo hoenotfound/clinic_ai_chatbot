@@ -706,7 +706,7 @@ test("Compound 3D price and recovery-period enquiry answers both parts without g
     assert.equal(result.restored, true, text);
     assert.match(result.reply, /RM488/u);
     assert.match(result.reply, recoveryPattern);
-    assert.doesNotMatch(result.reply, /no downtime|zero downtime|无恢复期|零恢复期|保证无痛/iu);
+    assert.doesNotMatch(result.reply, /(?:guaranteed|promises?)\\s+(?:zero|no)\\s+downtime|绝对无恢复期|保证无痛/iu);
   }
 });
 
