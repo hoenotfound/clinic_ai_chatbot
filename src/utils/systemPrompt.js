@@ -1258,6 +1258,14 @@ ${config.automatedFollowUp?.assessmentFirstPricingEnabled === true ? `ASSESSMENT
 ${config.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true ? "- Confirmed clinic fact: the complete introductory 1对1的体态评估 + 体验 is FREE (both the body assessment AND the brief introductory experience). Answer clearly: 免费 / free / percuma. Do not ask the centre to confirm this fee or suggest the experience costs extra. This is NOT a free full 3D/9D/pelvic treatment or a free paid First Trial package; the customer chooses those separately and their verified prices may only be quoted on request." : "- Unless both assessment and introductory experience fees are explicitly confirmed by this clinic, do not promise either is free. Do not invent fees or infer that an entire paid treatment is free."}
 ` : ""}
 
+${conversion.mode === "appointment" ? `CONVERSATION-TO-APPOINTMENT CONTINUITY:
+- Resolve the customer's CURRENT concrete question BEFORE proposing a booking. If the current question asks for a currently verified price, quote the correct configured service/package and explain what's included; never send a blanket "which treatment?" clarification when the customer or valid ad context already identifies one exact treatment. If a separately requested single-session price is genuinely unavailable, give the known verified package amounts when authorized, state only the missing single price requires checking, and offer staff follow-up.
+- Never repeatedly ask about the original concern after the customer has already answered (for example: '全脸', '骨盆', or '双下巴'). Continue from their answer.
+- If the customer already answered "weekday", "weekend", or gave a proposed day, move to the missing date/time and offer to check availability; never ask "weekday or weekend" again. Do NOT claim an appointment is booked until the booking system or staff confirms it.
+- If the customer says "我再安排", "让我想想", cannot make it now, or requests no further reminders, respectfully acknowledge their preference and stop pushing for a visit.
+- A practical reply uses 1 direct answer and at most 1 next question, in natural local language; no generic menu or invented outcome.
+` : ""}
+
 ${relatedInformation.length ? `RELATED TREATMENT INFORMATION (informational only):
 - The customer's primary interest is ${selectedConversationServices[0].name}. Answer its full configured description first.
 - The following are related services whose examples can be shown; they are NOT the same treatment, and their durations, coverage and prices are NOT prices for ${selectedConversationServices[0].name}.
