@@ -1846,6 +1846,17 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
+    // An unknown automated follow-up (including text created from an
+    // explicitly rejected social voice attachment) might already have reached
+    // the customer. Generic Retry cannot establish non-delivery or opt-in.
+    if (message.is_automated_follow_up === true &&
+        message.delivery_status === "unknown") {
+      return res.status(409).json({
+        code: "automated_followup_unknown_retry_requires_review",
+        error: "This automated follow-up may already have reached the customer. Review provider delivery and the reply window before composing a new staff message; automatic Retry is blocked.",
+      });
+    }
+
     if (message.whatsapp_template?.automatedFreeEntry === true) {
       // A timed-out Meta request may already have reached the customer or
       // incurred a charge. Never reuse an expired signed R2 URL or bypass the
