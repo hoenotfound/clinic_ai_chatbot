@@ -419,6 +419,7 @@ function isFollowUpServiceOverride(value) {
 }
 
 function isFollowUpStep(value) {
+  const voiceNotes = normalizeVoiceNotes(value?.voiceNotes, mediaStorage);
   const timingMode = value?.timingMode || "after_reply";
   const beforeWindowExpiryMinutes = Number(value?.beforeWindowExpiryMinutes ?? 120);
   return (
