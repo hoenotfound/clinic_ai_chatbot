@@ -6,6 +6,7 @@ const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
   repeatsSchedulingNudge,
+  isSchedulingNudge,
   unansweredAssistantMessages,
   followUpCopyViolation,
   hasUnsafeClinicalFollowUpClaim,
@@ -652,4 +653,60 @@ test("fixed and automated reminders respect the latest unanswered turn", () => {
   assert.equal(followUpCopyViolation(repeated,conversation),"repeated_scheduling_nudge");
   assert.equal(followUpCopyViolation(repeated,[...conversation,
     {id:4,role:"user",content:"周末可以"}]),null);
+});
+
+
+test("Malaysian Chinese scheduling nudges are recognised without question marks", () => {
+  const requests = [
+    "你平日还是周末比较方便呢",
+    "你哪一天比较方便过来呀",
+    "你平时比较方便 weekdays 还是 weekend 呢～",
+    "这周哪一天方便过来 PJ 看看呢？",
+    "Can you visit next week?",
+    "Would you be available this weekend",
+  ];
+  for (const text of requests) {
+    assert.equal(isSchedulingNudge(text), true, text);
+    assert.equal(repeatsSchedulingNudge(text,
+      ["你平日还是周末比较方便呢"]), true, text);
+  }
+  const informational = [
+    "平日的护理项目可以到店询问",
+    "平日如何保养呢",
+    "你可以选择周末的护理时间",
+    "我们的营业时间包括周末",
+    "护理结束后您可以随时提问 😊",
+  ];
+  for (const text of informational) {
+    assert.equal(isSchedulingNudge(text), false, text);
+  }
+  assert.equal(repeatsSchedulingNudge(
+    "你哪一天比较方便过来呀", ["平日如何保养呢"]), false);
+  const conversation = [
+    {role:"user",content:"想了解 3D 小颜术"},
+    {role:"assistant",content:"你平日还是周末比较方便呢"},
+  ];
+  assert.equal(followUpCopyViolation("你哪一天比较方便过来呀",
+    conversation),"repeated_scheduling_nudge");
+});
+
+test("unsupported simple Chinese guarantees are blocked but cautious negatives are allowed", () => {
+  for (const message of [
+    "没有恢复期哦",
+    "做完没有恢复期",
+    "不会有副作用",
+    "完全没有风险",
+    "一般无需休息，可照常工作",
+    "护理后直接上班",
+    "No side effects",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(message),true,message);
+  for (const message of [
+    "不能保证没有恢复期",
+    "不能保证完全没有恢复期",
+    "并不是没有恢复期，具体感受因人而异",
+    "We cannot guarantee no downtime.",
+    "护理后可能会有不适，因人而异",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(message),false,message);
+  assert.equal(followUpCopyViolation("做完没有恢复期",
+    []),"unsafe_clinical_promise");
 });
