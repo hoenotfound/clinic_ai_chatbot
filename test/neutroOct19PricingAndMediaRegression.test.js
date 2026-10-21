@@ -223,7 +223,9 @@ test("Siew Siew #517: 'Package?' after verified 骨盆 enquiry selects both curr
   }),null,"future marketing permission cannot trigger current graphics");
 });
 
-test("9D legacy 90% collagen graphic remains blocked even if its price is verified", async () => {
+test("Verified 9D promo image uses administrator-configured clinical wording without a content veto", async () => {
+  const priorTrust=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
   const prior = clinicConfig.automatedFollowUp;
   clinicConfig.automatedFollowUp={...prior,assessmentFirstPricingEnabled:true};
   try {
@@ -252,9 +254,11 @@ test("9D legacy 90% collagen graphic remains blocked even if its price is verifi
       wasPromoRecentlySent:async()=>false,
       hasUnconfirmedMediaDelivery:async()=>false,
     });
-    assert.equal(media,null);
-    assert.equal(skipReason,"unverified_clinical_promo_copy");
-  } finally { clinicConfig.automatedFollowUp=prior; }
+    assert.equal(skipReason,null);
+    assert.equal(media?.packages?.length,1);
+    assert.equal(media.packages[0].caption,promotion.caption);
+  } finally { clinicConfig.automatedFollowUp=prior;
+    clinicConfig.trustAdminConfiguredContent=priorTrust; }
 });
 
 
@@ -744,7 +748,7 @@ test("Structured 9D pricing is available in text while unapproved artwork remain
       wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
     });
     assert.equal(media,null);
-    assert.equal(reason,"unverified_clinical_promo_copy");
+    assert.equal(reason,"promotion_manually_paused");
   } finally {
     clinicConfig.automatedFollowUp=old;
   }
