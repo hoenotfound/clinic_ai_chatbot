@@ -281,7 +281,7 @@ function isSubstantiallySimilar(message, previousMessages) {
 // another unanswered scheduling follow-up should instead help with an actual
 // concern or be skipped, without consuming a customer's attention.
 const SCHEDULING_NUDGE =
-  /(?:平日|周末|週末|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|方便.{0,15}(?:过来|過來|来|來)|这周.{0,15}方便|這週.{0,15}方便|\\b(?:weekdays?|weekends?|which\\s+day|what\\s+day|when\\s+(?:would|can|could)|would\\s+.{0,25}\\bsuit\\s+you)\\b)/iu;
+  /(?:平日|周末|週末|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|方便.{0,15}(?:过来|過來|来|來)|这周.{0,15}方便|這週.{0,15}方便|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|would\s+.{0,25}\bsuit\s+you)\b)/iu;
 function repeatsSchedulingNudge(message, previousMessages = []) {
   const current = cleanContent(message);
   return current.length <= 240 && /[?？]/u.test(current) &&
