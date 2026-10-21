@@ -2072,7 +2072,7 @@ function followUpReadinessTone(level) {
 // Read-only presentation of SAVED config and observed server checks.
 // It never asserts that a specific customer is eligible or that Meta will bill RM0.
 function followUpOperationalReadiness({
-  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, status,
+  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, assessmentFirstPricingEnabled, status,
   statusError, statusLoading, catalog, catalogLoading, catalogError,
 }) {
   const normal = !savedEnabled
@@ -2128,11 +2128,21 @@ function followUpOperationalReadiness({
     const requiredLocales = savedFreeEntry?.language === "auto"
       ? ["zh_CN", "en_US", "ms"]
       : [savedFreeEntry?.language || "zh_CN"];
+    // Check the selections the worker can actually use at configured slots.
+    // The default text template is not selected if every slot has a wildcard
+    // override; counting it would hide an entirely blocked sequence.
+    const selectedSlots = savedFreeEntry.slotsHours || [];
+    const selectedRules = (savedFreeEntry.templateRules || []).filter(rule =>
+      selectedSlots.some(hours => Number(hours) === Number(rule.slotHours)));
     const names = [
-      { name: savedFreeEntry.templateName, defaultText: true },
-      ...(savedFreeEntry.templateRules || []).map(rule => ({ name: rule.templateName, rule })),
+      ...selectedSlots.filter(hours => !selectedRules.some(rule =>
+        Number(rule.slotHours) === Number(hours) && rule.serviceName === "*"))
+        .map(() => ({ name: savedFreeEntry.templateName, defaultText: true })),
+      ...selectedRules.map(rule => ({ name: rule.templateName, rule })),
     ];
     const problems = [];
+    let usableVersions = 0;
+    let conditionalImages = 0;
     for (const locale of requiredLocales) {
       for (const { name, defaultText, rule } of names) {
         const valid = (catalog.templates || []).find(template =>
@@ -2141,13 +2151,28 @@ function followUpOperationalReadiness({
           supportedForAutomation(template) &&
           (!defaultText || (template.header?.format || "TEXT") === "TEXT"));
         if (!valid) { problems.push(locale + ": " + (name || "missing template")); continue; }
-        if (!rule) continue;
         const format = valid.header?.format || "TEXT";
         const automaticImage = format === "IMAGE" && AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES.has(name);
-        if ((format === "VIDEO" || format === "IMAGE") && !automaticImage &&
+        if (automaticImage && assessmentFirstPricingEnabled) {
+          problems.push(locale + ": " + name + " unavailable with assessment-first pricing");
+          continue;
+        }
+        if (automaticImage && (rule?.mediaKey || rule?.mediaUrl)) {
+          problems.push(locale + ": " + name + " cannot override automatic promotion media");
+          continue;
+        }
+        if (automaticImage) {
+          // The worker requires one unambiguous, eligible promotion for the
+          // customer's treatment. Catalog approval alone cannot verify it.
+          conditionalImages++;
+          continue;
+        }
+        if (rule && (format === "VIDEO" || format === "IMAGE") &&
             (!(rule.mediaKey || rule.mediaUrl) || (format === "VIDEO" && rule.videoCodecVerified !== true))) {
           problems.push(locale + ": " + name + " media");
+          continue;
         }
+        usableVersions++;
       }
     }
     const longSlots = (savedFreeEntry?.slotsHours || []).some(hours => Number(hours) > 72);
@@ -2160,8 +2185,14 @@ function followUpOperationalReadiness({
         rule.slotHours === hours && rule.serviceName === "*")?.templateName || savedFreeEntry.templateName);
     const duplicates = selectedNames.length > new Set(selectedNames.filter(Boolean)).size;
     if (problems.length > 0) {
-      extended = asExtended("attention", savedFreeEntry.language === "auto" ? "Partially available" : "Needs setup",
-        `${problems.length} language/template combination(s) are unsupported or missing required media (${problems.slice(0, 3).join(", ")}). The worker may skip those customers.`);
+      const hasPotentialPath = usableVersions > 0 || conditionalImages > 0;
+      extended = asExtended("attention", hasPotentialPath ? "Partially available" : "Needs setup",
+        `${problems.length} language/template combination(s) cannot be used (${problems.slice(0, 3).join(", ")}). ${hasPotentialPath
+          ? "Some combinations may still work, subject to customer eligibility and media checks."
+          : "No configured language/template combination is currently usable. Review approved templates and media."}`);
+    } else if (conditionalImages > 0) {
+      extended = asExtended("attention", usableVersions > 0 ? "Partially available" : "Needs verification",
+        "Automatically selected promotion images need an unambiguous, eligible image for each customer's treatment. Meta approval alone cannot verify these sends.");
     } else if (post72hUnverified) {
       extended = asExtended("attention", "Partially available",
         "Days 4–7 are restricted without verified post-72-hour Meta free-entry evidence and rollout authorization. Earlier eligible slots may still work.");
@@ -2176,10 +2207,17 @@ function followUpOperationalReadiness({
   const overall =
     normal.level === "paused" && extended.level === "paused"
       ? { level: "paused", label: "Paused", detail: "Both follow-up paths are off." }
-      : normal.level === "blocked" && extended.level !== "active"
-        ? { level: "blocked", label: "Sending blocked", detail: "The global automation switch prevents follow-up sends." }
+      : (normal.level === "paused" || normal.level === "blocked") &&
+        (extended.level === "paused" || extended.level === "blocked")
+        ? { level: "blocked", label: "Sending blocked",
+            detail: normal.level === "blocked"
+              ? "The global automation switch prevents follow-up sends."
+              : "Extended WhatsApp cannot send while the saved 24-hour follow-up switch is off. Enable and save normal follow-ups first." }
         : normal.level === "attention" || extended.level === "blocked" || extended.level === "attention"
-          ? { level: "attention", label: "Needs attention", detail: savedEnabled ? "Normal follow-ups may still run. Extended WhatsApp needs review." : "Review the details below before expecting messages." }
+          ? { level: "attention", label: "Needs attention",
+              detail: normal.level === "active"
+                ? "Normal follow-ups may still run. Extended WhatsApp needs review."
+                : "Review the details below before expecting messages." }
           : { level: "active", label: "Active", detail: "At least one path is enabled; actual customer sends always depend on eligibility." };
   return { overall, normal, extended };
 }
@@ -2610,7 +2648,7 @@ function FollowUpTool({
   ).filter(Boolean);
   const hasDuplicateExtendedNames = new Set(simpleConfiguredNames).size < simpleConfiguredNames.length;
   const operationalReadiness = followUpOperationalReadiness({
-    savedEnabled, savedFreeEntryEnabled, savedFreeEntry,
+    savedEnabled, savedFreeEntryEnabled, savedFreeEntry, assessmentFirstPricingEnabled,
     status: freeEntryStatus, statusError: freeEntryStatusError,
     statusLoading: freeEntryStatusLoading, catalog: templateCatalog,
     catalogLoading: templateCatalogLoading, catalogError: templateCatalogError,
@@ -2813,7 +2851,7 @@ function FollowUpTool({
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
           <p>Template server: {freeEntryStatusError ? "Verification failed" : !freeEntryStatus ? "Checking or unavailable" : freeEntryStatus.enabledOnServer ? "On" : "Off"}
             {" · "}Tools: {savedFreeEntryEnabled ? "On" : "Off"}</p>
-          <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(); }}
+          <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(true); }}
             disabled={freeEntryStatusLoading || templateCatalogLoading}
             className="min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 font-semibold text-[var(--color-primary)] disabled:opacity-50">
             {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck readiness"}
@@ -3009,7 +3047,7 @@ function FollowUpTool({
                       Repeated templates, new replies, appointments or billing safeguards may skip a message.
                     </p>
                     <p className="mt-2 text-xs font-semibold">
-                      {form.freeEntry?.enabled ? "Enabled in draft setup" : "Paused in draft setup"}
+                      {!form.freeEntry?.enabled ? "Paused" : !form.enabled || !savedEnabled ? "Sending blocked" : "Enabled"}
                     </p>
                   </div>
                 </li>
