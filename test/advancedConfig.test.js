@@ -2179,7 +2179,13 @@ test("follow-up voice settings require approved, safe, clinic-owned language ass
   assert.equal(check({ voiceNotes: { en: { ...note, key: "messages/another-contact/voice.ogg" } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, approved: false } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Only RM488 today!" } } }).ok, false);
-  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, true);
+  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, false);
+  // Tenant-scoped trust is explicitly enabled by this clinic's administrator.
+  const beforeTrust = clinicConfig.trustAdminConfiguredContent;
+  try {
+    clinicConfig.trustAdminConfiguredContent = true;
+    assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, true);
+  } finally { clinicConfig.trustAdminConfiguredContent = beforeTrust; }
   assert.equal(check({ voiceNotes: { de: note } }).ok, false);
   } finally {
     if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
