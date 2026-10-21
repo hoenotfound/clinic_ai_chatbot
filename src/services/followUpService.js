@@ -19,7 +19,7 @@ const {
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
 const { randomUUID, createHash } = require("node:crypto");
-const { isPromotionManuallyPaused } = require("../utils/promotionClinicalCopyPolicy");
+const { configuredPromotionCopyBlocked } = require("../utils/promotionClinicalCopyPolicy");
 const {
   normalizeVoiceNotes, voiceNotesPresent, selectedVoiceNote,
   isVoiceAssetMetadataValid, validVoiceAssetKey, unsafeVoiceTranscript,
@@ -525,7 +525,7 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
   );
   if (matches.length !== 1) return null;
   const [promotion] = matches;
-  if (isPromotionManuallyPaused(promotion)) return null;
+  if (configuredPromotionCopyBlocked(promotion, clinicConfig.trustAdminConfiguredContent === true)) return null;
 
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
@@ -627,7 +627,7 @@ function activePromotionFollowUpStillConfigured(
   if (matches.length !== 1) return false;
 
   const [promotion] = matches;
-  if (isPromotionManuallyPaused(promotion)) return false;
+  if (configuredPromotionCopyBlocked(promotion, clinicConfig.trustAdminConfiguredContent === true)) return false;
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
     : [];
@@ -1621,8 +1621,10 @@ async function sendCandidate(candidate) {
   // configured by clinic staff; do not silently veto their exact wording.
   // Appointment repetition, consent, pricing, provider and delivery gates
   // still apply to every mode.
-  let copyViolation = followUpMessageMode === "ai_personalized" &&
-    followUpAiService.hasUnsafeClinicalFollowUpClaim(followUpMessage)
+  const shouldReviewClinical = followUpMessageMode === "ai_personalized" ||
+    clinicConfig.trustAdminConfiguredContent !== true;
+  let copyViolation = shouldReviewClinical &&
+    outboundVariants.some(copy => followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
     ? "unsafe_clinical_promise" : null;
   if (!copyViolation && outboundVariants.some(copy =>
       followUpAiService.isSchedulingNudge(copy))) {
@@ -1632,7 +1634,8 @@ async function sendCandidate(candidate) {
       });
       for (const copy of outboundVariants) {
         copyViolation = followUpAiService.followUpCopyViolation(
-          copy, safetyContext?.messages || []
+          copy, safetyContext?.messages || [],
+          { checkClinicalCopy: shouldReviewClinical }
         );
         if (copyViolation) break;
       }
