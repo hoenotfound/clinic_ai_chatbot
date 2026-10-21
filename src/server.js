@@ -1002,6 +1002,10 @@ async function processIncomingMessage(
             metaAdContext,
             metaAdCreativeService,
             keywordReason,
+            isTextMessage: !mediaType || mediaType === "text",
+            hasExistingBooking: Boolean(bookingContext?.appointmentAt ||
+              bookingContext?.acceptedStaffOffer ||
+              /^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))),
             services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
           }) : null;
