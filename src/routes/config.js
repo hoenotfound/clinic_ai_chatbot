@@ -1123,6 +1123,30 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
   }
 
   if (
+    Object.prototype.hasOwnProperty.call(updates, "adFirstReply") ||
+    Object.prototype.hasOwnProperty.call(updates, "services")
+  ) {
+    const adFirstReply = Object.prototype.hasOwnProperty.call(updates, "adFirstReply")
+      ? updates.adFirstReply : currentConfig.adFirstReply;
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services : currentConfig.services;
+    if (adFirstReply?.enabled === true) {
+      const knownServices = new Set((Array.isArray(services) ? services : [])
+        .map(item => String(item?.name || "").trim()).filter(Boolean));
+      const unknown = (Array.isArray(adFirstReply.replies) ? adFirstReply.replies : [])
+        .find(item => !knownServices.has(String(item?.service || "").trim()));
+      if (unknown) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Fixed Meta ad reply references an unavailable treatment: "${unknown.service}". Remap or remove it before enabling the feature or changing treatments.`,
+          invalidKeys: ["adFirstReply"],
+        };
+      }
+    }
+  }
+
+  if (
     Object.prototype.hasOwnProperty.call(updates, "resultMedia") ||
     Object.prototype.hasOwnProperty.call(updates, "services")
   ) {
