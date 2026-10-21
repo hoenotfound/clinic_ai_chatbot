@@ -2341,7 +2341,7 @@ test("Follow-up readiness distinguishes saved live state from unsaved edits on p
     },
     followUpStatus: {
       enabledOnServer: true, enabledInTools: false, freeOnlyEnabled: false,
-      freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+      automaticRepliesEnabled: true, freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
     },
     onConfigUpdate: () => { writes += 1; },
   });
@@ -2375,7 +2375,7 @@ test("Follow-up readiness reports blocked server without obscuring active normal
     },
     followUpStatus: {
       enabledOnServer: false, enabledInTools: true, freeOnlyEnabled: false,
-      freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+      automaticRepliesEnabled: true, freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
     },
     templateCatalog: { templates: [], reusableMedia: [] },
     onConfigUpdate: () => { writes += 1; },
@@ -2403,6 +2403,7 @@ test("Follow-up readiness verifies approved fallback version, billing safeguards
       fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98, 122], templateRules: [] },
   };
   const baseStatus = { enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
+    automaticRepliesEnabled: true, sevenDayVerified: false, periodMaxHours: 72,
     strictSevenDayBlocked: false, freeOnlyGate: { status: "idle" },
     billingSafety: { since_switch: 0 } };
   await mockPortalApi(page, {
@@ -2413,16 +2414,16 @@ test("Follow-up readiness verifies approved fallback version, billing safeguards
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
-  await expect(extended).toContainText("Active");
-  await expect(extended).toContainText("Individual sends still require consent");
+  await expect(extended).toContainText("Partially available");
+  await expect(extended).toContainText("language/template combination");
 
   // A rejected or unavailable approved version cannot be presented as ready.
   await page.route("**/api/config/automated-follow-up/template-catalog**", route =>
     route.fulfill({ status: 200, contentType: "application/json",
       body: JSON.stringify({ templates: [{ ...approvedText, status: "REJECTED", sendable: false }] }) }));
   await overview.getByRole("button", { name: "Recheck readiness" }).click();
-  await expect(extended).toContainText("Needs setup");
-  await expect(extended).toContainText("lack a supported approved zh_CN version");
+  await expect(extended).toContainText("Partially available");
+  await expect(extended).toContainText("unsupported or missing required media");
   await expect(overview.getByLabel("Overall follow-up readiness: Needs attention")).toBeVisible();
 });
 
@@ -2438,7 +2439,7 @@ test("Follow-up readiness shows strict billing block without claiming guaranteed
     },
     followUpStatus: {
       enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: true,
-      freeOnlyGate: { status: "unknown" }, billingSafety: { since_switch: 1 },
+      automaticRepliesEnabled: true, freeOnlyGate: { status: "unknown" }, billingSafety: { since_switch: 1 },
     },
     templateCatalog: { templates: [], reusableMedia: [] },
   });
@@ -2449,6 +2450,45 @@ test("Follow-up readiness shows strict billing block without claiming guaranteed
   await expect(extended).toContainText("Meta billable callback");
   await expect(page.getByRole("alert").filter({ hasText: "WhatsApp billing alarm" })).toBeVisible();
   await expect(overview).toContainText("not a promise");
+});
+
+test("Readiness blocks both paths when global automated replies are off", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true,
+    businessConfig: { automatedFollowUp: { enabled: true, delayMinutes: 120,
+      message: "Hello", freeEntry: { enabled: true, templateName: "approved_text",
+        language: "zh_CN", slotsHours: [26] } } },
+    followUpStatus: { automaticRepliesEnabled: false, enabledOnServer: true,
+      enabledInTools: true, freeOnlyEnabled: false, billingSafety: { since_switch: 0 } },
+    templateCatalog: { templates: [], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await expect(overview.getByLabel("Overall follow-up readiness: Sending blocked")).toBeVisible();
+  await expect(overview).toContainText("The global automated replies server switch is off.");
+});
+
+test("Readiness distinguishes approved all-language coverage from missing post-72h evidence", async ({ page }) => {
+  const templates = ["zh_CN", "en_US", "ms"].map(language => ({
+    name: "approved_text", language, category: "MARKETING", status: "APPROVED",
+    sendable: true, header: { format: "TEXT" }, body: { text: "Follow-up" }, variableFields: [],
+  }));
+  const base = { automaticRepliesEnabled: true, enabledOnServer: true,
+    enabledInTools: true, freeOnlyEnabled: false, sevenDayVerified: true,
+    periodMaxHours: 168, verifiedPost72h: false, freeOnlyGate: { status: "idle" },
+    billingSafety: { since_switch: 0 } };
+  await mockPortalApi(page, { loggedIn: true,
+    businessConfig: { automatedFollowUp: { enabled: true, delayMinutes: 120,
+      message: "Hello", freeEntry: { enabled: true, templateName: "approved_text",
+        language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98, 122] } } },
+    followUpStatus: base, templateCatalog: { templates, reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Partially available");
+  await expect(extended).toContainText("Days 4–7 are restricted");
+  // The worker never guarantees multiple sends with the same template.
+  await expect(extended).not.toContainText("Actual sending still requires");
 });
 
 test("Tools mobile navigation displays visual saved On and Off states", async ({ page }) => {
