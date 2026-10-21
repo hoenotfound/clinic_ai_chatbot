@@ -619,6 +619,8 @@ test("follow-up clinical guarantees are rejected, cautious explanation is allowe
   const cautious = "每个人的反应不同，不能保证没有恢复期。";
   assert.equal(hasUnsafeClinicalFollowUpClaim(unsafe), true);
   assert.equal(hasUnsafeClinicalFollowUpClaim(cautious), false);
+  assert.equal(hasUnsafeClinicalFollowUpClaim("We cannot guarantee no downtime."), false);
+  assert.equal(hasUnsafeClinicalFollowUpClaim("There is no downtime for everyone."), true);
   assert.equal(followUpCopyViolation(unsafe, []), "unsafe_clinical_promise");
   let calls = 0;
   aiService.getReplyWithEnv = async () => JSON.stringify({
