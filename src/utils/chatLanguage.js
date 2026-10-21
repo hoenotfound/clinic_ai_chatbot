@@ -157,7 +157,7 @@ function detectMessageLanguage(input) {
 // One-word administrative shorthand often follows a conversation already held
 // in Chinese or Malay. It asks a question, not for a switch to English.
 const ENGLISH_ADMIN_SHORTHAND =
-  /^(?:price|prices|pricing|location|address|cost|fee|fees|hours|opening hours|packages?|promo)[\\s?.!！。？]*$/iu;
+  /^(?:price|prices|pricing|location|address|cost|fee|fees|hours|opening hours|packages?|promo)[\s?.!！。？]*$/iu;
 
 function detectConversationLanguage(recentMessages, fallback = "en") {
   for (const message of recentMessages || []) {
