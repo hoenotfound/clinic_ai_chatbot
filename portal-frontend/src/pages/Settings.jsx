@@ -2725,6 +2725,23 @@ function ResultMediaSection({ config, onSaved, onError }) {
   );
 }
 
+
+function suggestedAdReply(service) {
+  const name = String(service || "").trim();
+  const isPelvic = /骨盆|pelvic/i.test(name);
+  const is3d = /3d/i.test(name);
+  const is9d = /9d/i.test(name);
+  let zh = `Hi～欢迎来到我们这里 😊\n\n看到你对${name}有兴趣～\n\n你比较想了解护理过程，还是想先看看适不适合自己呢？`;
+  if (isPelvic) zh = "Hi～欢迎来到 Neutro Sense 😊\n\n看到你对我们的骨盆调理有兴趣～\n\n想了解一下，你目前比较在意的是小腹突出、腰髋紧绷，还是体态不平衡呢？";
+  else if (is3d && !is9d) zh = "Hi～欢迎来到 Neutro Sense 😊\n\n看到你对我们的 3D 小颜术有兴趣～\n\n你目前比较想改善脸部轮廓、大小脸，还是下颌线不明显的问题呢？";
+  else if (is9d && !is3d) zh = "Hi～欢迎来到 Neutro Sense 😊\n\n看到你对我们的 9D 逆龄抗衰有兴趣～\n\n想了解一下，你比较在意脸部松弛、轮廓下垂，还是整体紧致度呢？";
+  return {
+    zh,
+    en: `Hi! Thanks for reaching out 😊\n\nI see you're interested in ${name}. What would you most like to know about it?`,
+    ms: `Hai! Terima kasih kerana menghubungi kami 😊\n\nSaya nampak anda berminat dengan ${name}. Apa yang anda ingin tahu tentang rawatan ini?`,
+  };
+}
+
 function AiBehaviorTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
@@ -2733,7 +2750,22 @@ function AiBehaviorTab({ config, onSaved, onError }) {
     sop: config.sop || "",
     aiPricingIntentMode: config.aiPricingIntentMode || "off",
     aiPricingOfferEnquiriesEnabled: config.aiPricingOfferEnquiriesEnabled === true,
+    adFirstReply: {
+      enabled: config.adFirstReply?.enabled === true,
+      replies: (config.adFirstReply?.replies || []).map(item => ({
+        service: item.service,
+        translations: { zh: item.translations?.zh || "", en: item.translations?.en || "", ms: item.translations?.ms || "" },
+      })),
+    },
   });
+  const [newAdService, setNewAdService] = useState("");
+  const configuredAdServices = (config.services || []).map(item => item.name).filter(Boolean);
+  const availableAdServices = configuredAdServices.filter(service =>
+    !(form.adFirstReply?.replies || []).some(item => item.service === service)
+  );
+  const updateAdFirstReply = (updater) => {
+    setForm(prev => ({ ...prev, adFirstReply: updater(prev.adFirstReply) }));
+  };
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
@@ -2770,6 +2802,70 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           Leave unchecked to send promotion images only for monetary price enquiries.
           Staff takeover, duplicate, verified offer and channel billing checks always apply.
         </p>
+      </Field>
+      <Field label="Fixed first reply for Meta ad leads" hint="Save a Gemini reply-generation call when a new ad lead sends a standard prefilled enquiry.">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.adFirstReply.enabled}
+            onChange={(event) => updateAdFirstReply(current => ({ ...current, enabled: event.target.checked }))} />
+          Use a fixed first reply for recognised ad enquiries
+        </label>
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+          Only for a first message linked to a recent Meta ad with a verified treatment.
+          Questions about prices, clinical concerns, edited or unclear messages still use AI.
+          If the customer's language has no saved reply, AI handles it.
+          Existing Before / After, pricing, delivery and follow-up rules remain in place.
+        </p>
+        <div className="mt-4 space-y-4">
+          {form.adFirstReply.replies.map((item, index) => (
+            <div key={item.service} className="rounded-xl border border-[var(--color-border)] p-3.5">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold">{item.service}</span>
+                <button type="button" className="text-xs font-medium text-red-600 hover:underline"
+                  onClick={() => updateAdFirstReply(current => ({
+                    ...current, replies: current.replies.filter((_, i) => i !== index),
+                  }))}>Remove</button>
+              </div>
+              {[
+                ["zh", "Chinese reply"],
+                ["en", "English reply"],
+                ["ms", "Malay reply"],
+              ].map(([language, label]) => (
+                <label key={language} className="mb-3 block">
+                  <span className={labelClass}>{label}</span>
+                  <textarea rows={3} maxLength={1200} className={textareaClass}
+                    value={item.translations[language] || ""}
+                    onChange={(event) => updateAdFirstReply(current => ({
+                      ...current,
+                      replies: current.replies.map((reply, i) => i === index ? {
+                        ...reply,
+                        translations: { ...reply.translations, [language]: event.target.value },
+                      } : reply),
+                    }))}
+                  />
+                </label>
+              ))}
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <select aria-label="Treatment for fixed ad reply" className={`${inputClass} min-w-0 flex-1`}
+              value={availableAdServices.includes(newAdService) ? newAdService : ""}
+              onChange={(event) => setNewAdService(event.target.value)}>
+              <option value="">Select a treatment</option>
+              {availableAdServices.map(service => <option key={service} value={service}>{service}</option>)}
+            </select>
+            <button type="button" disabled={!availableAdServices.includes(newAdService)}
+              className="min-h-11 rounded-xl border border-[var(--color-border)] px-4 text-sm font-semibold disabled:opacity-50"
+              onClick={() => {
+                updateAdFirstReply(current => ({
+                  ...current,
+                  replies: [...current.replies, {
+                    service: newAdService, translations: suggestedAdReply(newAdService),
+                  }],
+                }));
+                setNewAdService("");
+              }}>Add treatment</button>
+          </div>
+        </div>
       </Field>
       <Field label="Texting style" hint="Concrete rules for how the AI writes messages (length, tone, punctuation, etc.).">
         <textarea
