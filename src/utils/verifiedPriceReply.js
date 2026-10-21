@@ -497,8 +497,15 @@ function ensureVerifiedPriceReply({
       ((priceOnlyResponse === true ||
         (aiLed && pricingDecision.source === "meta_ad")) && !independentServiceQuestion)
       ? "" : safeNonPriceExplanation(customerText, original, language));
+  const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"
+    ? (locale.startsWith("ms")
+      ? "Saya boleh sahkan harga rawatan ini dahulu. Bila sebut kedua-dua, adakah anda maksudkan dua rawatan berbeza atau dua bahagian yang ingin diperbaiki?"
+      : locale.startsWith("en")
+        ? "I can confirm this treatment's price first. By both, did you mean two different treatments or two concerns within this treatment?"
+        : "先给你这项疗程的核实价格 😊 你说的两项是指两种不同疗程，还是想改善的两个部位呢？")
+    : "";
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
-  return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
+  return { reply: [explanation, quote, bothQuestion, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }
 
 // A model draft can claim "Here are the regular prices:" yet contain no
