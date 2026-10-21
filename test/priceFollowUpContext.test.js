@@ -381,6 +381,7 @@ test("empty treatment-price headings cannot borrow voucher face value or another
     "9D 的价格是：RM488",
     "9D 的价格是：\n9D First Trial RM488",
     "9D 的价格是：\nRM488（赠送全身通十二经络）",
+    "9D 的价格是：RM488，另送 RM100 优惠券",
     "3D 的价格是：RM488\n9D 的价格：RM488",
   ]) assert.equal(guardUnfulfilledPriceQuote(legitimate,"zh").changed,false,legitimate);
 });
