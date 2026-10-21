@@ -195,6 +195,7 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
+  trustAdminConfiguredContent: (v) => typeof v === "boolean",
   promotions: (v) =>
     Array.isArray(v) &&
     v.every(
