@@ -35,7 +35,7 @@ const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricing
 const { resolveShadowPriceException } = require("./utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply, verifiedPricesForService } = require("./utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1476,6 +1476,16 @@ async function processIncomingMessage(
         services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
       });
       reply = invited.reply;
+    }
+
+    // Never send a draft that offers a price list but omits all amounts.
+    // Only a separately approved pricing decision may supply a monetary quote.
+    if (!flagged && !marketingStopQuestion) {
+      const completeQuote = guardUnfulfilledPriceQuote(reply, mediaLanguage);
+      if (completeQuote.changed) {
+        console.warn("[Reply guard] Replaced unfulfilled price-list promise.");
+        reply = completeQuote.reply;
+      }
     }
 
     // A marketing STOP must not become a price/promotion reply even if the
