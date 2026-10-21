@@ -871,6 +871,11 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                   </div>
                   <PromotionPriceFields pricing={item.pricing}
                     onChange={(pricing) => updatePackage(index, "pricing", pricing)} />
+                  <label className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] p-3 text-xs">
+                    <input type="checkbox" checked={item.automaticMediaHold === true}
+                      onChange={(e) => updatePackage(index, "automaticMediaHold", e.target.checked)} />
+                    <span>Pause this package. A paused package also pauses automatic sending for its campaign until staff clears it.</span>
+                  </label>
                   <div>
                     <label className={labelClass}>Caption sent with this image</label>
                     <textarea
@@ -1923,6 +1928,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   aliases: cleanStrings(item.aliases || []),
                   imageUrl: String(item.imageUrl || "").trim(),
                   caption: String(item.caption || "").trim(),
+                  ...(item.automaticMediaHold === true ? { automaticMediaHold: true } : {}),
                   ...(item.pricing ? { pricing: item.pricing } : {}),
                   ...(Object.keys(cleanMediaTranslations(item.mediaTranslations)).length
                     ? { mediaTranslations: cleanMediaTranslations(item.mediaTranslations) }
@@ -2065,6 +2071,15 @@ function PromotionsTab({ config, onSaved, onError }) {
               <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-4">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+                  {needsCopyReview && (
+                    <p role="status" className="mt-2 rounded-lg border border-[var(--color-border)] px-2.5 py-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                      Review possible unsupported clinical or numerical claims in this promotion and its translations. This is an advisory only and does not block saving or sending when clinic trust is enabled. Artwork pixels are not scanned.
+                    </p>
+                  )}
+                  {(item.automaticMediaHold === true || item.packages?.some(p => p.automaticMediaHold === true)) && (
+                    <p className="mt-1.5 text-xs font-medium text-[var(--color-text-muted)]">Manually paused — automatic media and promotional follow-ups are disabled.</p>
+                  )}
+
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     {item.linkedService && (
                       <span className="max-w-full truncate rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
@@ -2159,7 +2174,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                       <span>
                         <span className="block font-semibold">Pause automatic promotion graphics and promotion-based follow-ups</span>
                         <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
-                          This switch is controlled by clinic staff. While checked, automatic pricing graphics, reminders and promotion-based follow-ups are paused. When unchecked, the chatbot uses your configured captions and artwork without applying an AI clinical-copy censor; you are responsible for reviewing their accuracy and compliance. Customer eligibility, duplicate protection and provider rules still apply.
+                          This switch is controlled by clinic staff. While checked, automatic pricing graphics, reminders and promotion-based follow-ups are paused. When unchecked, the chatbot follows this clinic's Trust content setting above; you are responsible for reviewing their accuracy and compliance. Customer eligibility, duplicate protection and provider rules still apply.
                         </span>
                       </span>
                     </label>
