@@ -83,15 +83,17 @@ test("only applies to a true first inbound turn, never to reopened or staff conv
   assert.equal(attempt({ conversationHistory: [{ role: "assistant" }] }), null);
   assert.equal(attempt({ keywordReason: "complaint" }), null);
   assert.equal(attempt({ hasStaffHandoff: true }), null);
+  assert.equal(attempt({ hasExistingBooking: true }), null);
+  assert.equal(attempt({ isTextMessage: false }), null);
 });
 
-test("uses exactly the customer's language, and refuses unsanctioned commercial copy", () => {
+test("uses exactly the customer's language and respects staff-configured copy", () => {
   assert.equal(attempt({ language: "ms-MY" })?.reply, translations.ms);
   assert.equal(attempt({ language: "en" })?.reply, translations.en);
   const untranslated = { enabled: true, replies: [{ service: "骨盆调理", translations: { ...translations, ms: "" } }] };
   assert.equal(attempt({ config: untranslated, language: "ms" }), null);
   const priceText = { enabled: true, replies: [{ service: "骨盆调理", translations: { ...translations, zh: "骨盆特价 RM388" } }] };
-  assert.equal(attempt({ config: priceText }), null);
+  assert.equal(attempt({ config: priceText })?.reply, "骨盆特价 RM388");
 });
 
 test("prefill recogniser does not absorb edited or compound customer questions", () => {
@@ -101,6 +103,8 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，不过要多少钱？"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣\n我要退款"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
+  assert.equal(isStandardAdPrefill("我想了解骨盆调理大概几次能见效"), false);
+  assert.equal(isStandardAdPrefill("I am interested in pelvic treatment but how long does it take"), false);
 });
 
 test("handler selects fixed reply before model and skips configured introductory duplication", () => {
