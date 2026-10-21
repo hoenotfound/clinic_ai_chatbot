@@ -58,8 +58,16 @@ test("requires enabled, recent and unambiguous configured Meta-ad treatment", ()
   assert.equal(attempt({ metaAdContext: { ...ad, attributedAt: new Date(now - 8 * 86400_000).toISOString() } }), null);
   assert.equal(attempt({ metaAdContext: { ...ad, serviceHint: "3D 小颜术" } }), null);
   assert.equal(attempt({ metaAdCreativeService: "3D 小颜术" }), null);
+  assert.equal(attempt({ metaAdCreativeService: null, customerText: "Hi, I'm interested in this" }), null,
+    "a generic enquiry must not use treatment guessed from ad name");
+  const adNameOnly = { ...ad, serviceHintSource: "ad_name" };
+  assert.equal(attempt({ metaAdContext: adNameOnly, metaAdCreativeService: null }), config.replies[0].translations.zh,
+    "explicit named treatment may safely match an ad-name-only service when no creative conflicts");
   assert.equal(attempt({ config: { enabled: true, replies: [] } }), null);
   assert.equal(attempt({ config: { enabled: true, replies: [config.replies[0], config.replies[0]] } }), null);
+  const misses = [];
+  assert.equal(attempt({ metaAdCreativeService: null, customerText: "Hi, I'm interested in this", onSkip: reason => misses.push(reason) }), null);
+  assert.deepEqual(misses, ["generic_enquiry_without_verified_creative"]);
 });
 
 test("fails to AI on current price, appointment, clinical, service-switch or non-prefill questions", () => {
@@ -85,6 +93,8 @@ test("only applies to a true first inbound turn, never to reopened or staff conv
   assert.equal(attempt({ hasStaffHandoff: true }), null);
   assert.equal(attempt({ hasExistingBooking: true }), null);
   assert.equal(attempt({ isTextMessage: false }), null);
+  assert.equal(attempt({ isFirstMessage: false, conversationHistory: [{role: "user"}] }), null,
+    "filtered AI history is not sufficient to claim this is a first message");
 });
 
 test("uses exactly the customer's language and respects staff-configured copy", () => {
@@ -105,6 +115,14 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
   assert.equal(isStandardAdPrefill("我想了解骨盆调理大概几次能见效"), false);
   assert.equal(isStandardAdPrefill("I am interested in pelvic treatment but how long does it take"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 9D tomorrow at 3pm"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 9D at 3"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 9D next weekend"), false);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D esok petang"), false);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D pukul 3"), false);
+  assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，明天可以预约吗"), false);
+  assert.equal(isStandardAdPrefill("我对9D有兴趣，下午3点有位吗"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 3D 小颜术"), true);
 });
 
 test("handler selects fixed reply before model and skips configured introductory duplication", () => {
@@ -116,4 +134,6 @@ test("handler selects fixed reply before model and skips configured introductory
   assert.match(source, /!generateFirstIntro && !fixedAdFirstReply/);
   assert.match(source, /generateFirstIntro && !fixedAdFirstReply/);
   assert.match(source, /serviceQuerySource = fixedAdFirstReply.serviceQuerySource/);
+  assert.match(source, /isFirstMessage: wasFirstMessage === true/);
+  assert.match(source, /assessmentFirstPricingEnabled === true &&\s*!fixedAdFirstReply/);
 });
