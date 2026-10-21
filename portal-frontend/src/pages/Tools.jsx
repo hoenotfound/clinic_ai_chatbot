@@ -2307,6 +2307,19 @@ function FollowUpTool({
       refreshTemplateCatalog();
     }
   }, [followUpTab, savedFreeEntryEnabled, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
+  const saveWasInProgress = useRef(false);
+  useEffect(() => {
+    if (saving) {
+      saveWasInProgress.current = true;
+    } else if (saveWasInProgress.current) {
+      saveWasInProgress.current = false;
+      if (!hasUnsavedChanges) {
+        refreshFreeEntryStatus();
+        if (savedFreeEntryEnabled) refreshTemplateCatalog(true);
+      }
+    }
+  }, [saving, hasUnsavedChanges, savedFreeEntryEnabled,
+      refreshFreeEntryStatus, refreshTemplateCatalog]);
 
   // Quick template choices edit only the all-treatment TEXT rule for a given
   // existing slot. Treatment-specific media rules remain unchanged.
