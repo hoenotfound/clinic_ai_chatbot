@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const { isStandardAdPrefill, resolveFixedAdFirstReply } =
   require("../src/utils/fixedAdFirstReply");
 const { resolveResultMediaForReply } = require("../src/utils/resultMediaTrigger");
+const { prepareConfigUpdatePayload } = require("../src/routes/config");
 
 const services = [
   { name: "骨盆调理" },
@@ -117,6 +118,11 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("Saya nak tahu tentang 9D"), true);
   assert.equal(isStandardAdPrefill("Saya berminat dengan 9D"), true);
   assert.equal(isStandardAdPrefill("I am interested in 9D"), true);
+  assert.equal(isStandardAdPrefill("I am interested in 9D does it work"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 9D is it effective"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 9D do you have pictures"), false);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D bagaimana prosesnya"), false);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D saya dah cuba sebelum ni"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，不过要多少钱？"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣\n我要退款"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
@@ -254,4 +260,40 @@ test("verified fixed-reply intent remains eligible for independently guarded Bef
     "missing verified creative must never enable generic ad images");
   assert.equal((await runSelector(fixed, optIn, { textSendSucceeded: false })), null,
     "provider rejection must still prevent media");
+});
+
+test("saving ad-first-reply settings rejects stale treatment links while preserving disabled drafts", () => {
+  const good = { enabled: true, replies: [{
+    service: "骨盆调理", translations,
+  }] };
+  const current = {
+    services: services.map(item => ({
+      ...item, description: "", priceRange: "", duration: "",
+    })),
+    adFirstReply: good,
+    resultMedia: [],
+    automatedFollowUp: { enabled: false, additionalSteps: [] },
+  };
+  const accepted = prepareConfigUpdatePayload({ adFirstReply: good }, current);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.updates.adFirstReply.enabled, true);
+
+  const stale = {
+    enabled: true,
+    replies: [{ service: "Previously Removed Treatment", translations }],
+  };
+  const declined = prepareConfigUpdatePayload({ adFirstReply: stale }, current);
+  assert.equal(declined.ok, false);
+  assert.deepEqual(declined.invalidKeys, ["adFirstReply"]);
+
+  const disabledDraft = prepareConfigUpdatePayload({
+    adFirstReply: { ...stale, enabled: false },
+  }, current);
+  assert.equal(disabledDraft.ok, true, "disabled drafts can be saved for later repair");
+
+  const removed = prepareConfigUpdatePayload({
+    services: current.services.filter(item => item.name !== "骨盆调理"),
+  }, current);
+  assert.equal(removed.ok, false, "cannot silently orphan an enabled first reply");
+  assert.deepEqual(removed.invalidKeys, ["adFirstReply"]);
 });
