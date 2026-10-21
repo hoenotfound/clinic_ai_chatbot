@@ -2392,6 +2392,69 @@ test("Follow-up readiness reports blocked server without obscuring active normal
   expect(writes).toBe(0);
 });
 
+test("Follow-up readiness reports sending blocked when normal follow-ups are paused but extended remains enabled", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: false, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
+      automaticRepliesEnabled: true, freeOnlyGate: { status: "idle" },
+      billingSafety: { since_switch: 0 },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await expect(overview.getByLabel("Overall follow-up readiness: Sending blocked")).toBeVisible();
+  const normal = overview.getByRole("heading", { name: "24-hour follow-ups" }).locator("..").locator("..");
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(normal).toContainText("Paused");
+  await expect(extended).toContainText("Sending blocked");
+  await expect(overview).toContainText("Enable and save normal follow-ups first.");
+});
+
+test("Follow-up readiness Recheck forces a fresh Meta catalog and reflects changed approval", async ({ page }) => {
+  const approvedTemplates = ["zh_CN", "en_US", "ms"].map(language => ({
+    name: "clinic_text", language, status: "APPROVED", category: "MARKETING",
+    sendable: true, header: { format: "TEXT" }, body: { text: "Follow-up" }, variableFields: [],
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+        slotsHours: [26], templateRules: [] },
+    } },
+    followUpStatus: {
+      automaticRepliesEnabled: true, enabledOnServer: true, enabledInTools: true,
+      freeOnlyEnabled: false, sevenDayVerified: false, periodMaxHours: 72,
+      billingSafety: { since_switch: 0 }, freeOnlyGate: { status: "idle" },
+    },
+    templateCatalog: { templates: approvedTemplates, reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Active");
+
+  const requests = [];
+  await page.route("**/api/config/automated-follow-up/template-catalog**", route => {
+    requests.push(new URL(route.request().url()).searchParams.get("refresh"));
+    return route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ templates: approvedTemplates.filter(t => t.language !== "ms"), reusableMedia: [] }),
+    });
+  });
+  await overview.getByRole("button", { name: "Recheck readiness" }).click();
+  await expect(extended).toContainText("Partially available");
+  await expect(extended).toContainText("ms: clinic_text");
+  expect(requests).toContain("true");
+});
+
 test("Follow-up readiness verifies approved fallback version, billing safeguards and restricted days", async ({ page }) => {
   const approvedText = {
     name: "clinic_reminder", language: "zh_CN", status: "APPROVED", category: "MARKETING",
