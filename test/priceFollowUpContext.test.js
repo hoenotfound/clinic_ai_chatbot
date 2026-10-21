@@ -362,3 +362,25 @@ test("empty single-service price headings are suppressed in Chinese and English"
     "你好，欢迎了解 9D 逆龄抗衰，我们提供中医师评估 😊","zh"
   ).changed,false);
 });
+
+
+test("empty treatment-price headings cannot borrow voucher face value or another treatment's price", () => {
+  for (const reply of [
+    "9D 逆龄抗衰的价格是：\nRM100 优惠券",
+    "9D 逆龄抗衰的价格是：\nvoucher RM100",
+    "9D 逆龄抗衰的价格是：\n3D 小颜术 RM488",
+    "9D 价格：\n目前有 RM100 优惠券\n3D 小颜术 RM488",
+    "9D 价格：\n暂未确认\n\n3D 的价格：RM488",
+    "9D 的价格是：\nRM488 优惠券\n欢迎预约",
+  ]) {
+    const result = guardUnfulfilledPriceQuote(reply,"zh");
+    assert.equal(result.changed,true,reply);
+    assert.doesNotMatch(result.reply,/\bRM\s*\d+/iu);
+  }
+  for (const legitimate of [
+    "9D 的价格是：RM488",
+    "9D 的价格是：\n9D First Trial RM488",
+    "9D 的价格是：\nRM488（赠送全身通十二经络）",
+    "3D 的价格是：RM488\n9D 的价格：RM488",
+  ]) assert.equal(guardUnfulfilledPriceQuote(legitimate,"zh").changed,false,legitimate);
+});
