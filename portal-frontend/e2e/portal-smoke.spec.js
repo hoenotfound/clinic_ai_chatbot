@@ -3005,6 +3005,95 @@ test("Unified timeline shows unsaved extended enablement as draft only", async (
   expect(writes).toHaveLength(0);
 });
 
+test("Extended WhatsApp activity explains accepted versus unknown and links safely to Inbox", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
+      billingSafety: { since_switch: 0 }, freeOnlyGate: { status: "idle" },
+      recentAttempts: [
+        { attempt_id: 501, contact_id: 486, slot_hours: 50, status: "accepted", created_at: "2026-10-19T10:00:00Z", billable: false },
+        { attempt_id: 502, contact_id: 487, slot_hours: 98, status: "unknown", created_at: "2026-10-19T11:00:00Z",
+          error: "provider receipt unknown", billable: false },
+        { attempt_id: 503, contact_id: 488, slot_hours: 122, status: "failed", created_at: "2026-10-19T12:00:00Z",
+          error: "provider failed", billable: true },
+      ],
+      contactDetails: [
+        { contact_id: 486, treatment_interest: "9D 逆龄抗衰",
+          eligibility_reason: "marketing_consent_missing", last_skip_reason: "human_takeover" },
+        { contact_id: 487, eligibility_reason: "opted_out", last_skip_reason: "opted_out" },
+      ],
+    },
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const activity = page.locator("#follow-up-template-activity");
+  await expect(activity).toContainText("Accepted by WhatsApp");
+  await expect(activity).toContainText("delivery to the customer is not confirmed");
+  await expect(activity).toContainText("Delivery unknown");
+  await expect(activity).toContainText("Do not retry blindly");
+  await expect(activity).toContainText("Meta reported this attempt as billable");
+  await expect(activity).toContainText("Marketing permission not recorded");
+  await expect(activity).toContainText("Customer opted out");
+  await expect(activity).toContainText("Marketing permission not recorded");
+  await expect(activity.locator("article").first()).not.toContainText("9D 逆龄抗衰");
+  await expect(activity).toContainText("Historical attempts do not display the contact's current treatment");
+  const links = activity.getByRole("link", { name: "Open conversation" });
+  await expect(links).toHaveCount(5);
+  await expect(links.first()).toHaveAttribute("href", "/inbox?contact=486");
+  await expect(links.nth(1)).toHaveAttribute("href", "/inbox?contact=487");
+  await expect(links.nth(2)).toHaveAttribute("href", "/inbox?contact=488");
+  const details = activity.getByText("Technical details").first();
+  await details.click();
+  await expect(activity).toContainText("Recorded error: provider receipt unknown");
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Extended eligibility explains pause, low interest and missing distinct language templates", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true,
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: true,
+      recentAttempts: [],
+      contactDetails: [
+        { contact_id: 12, eligibility_reason: "customer_asked_to_decide_later" },
+        { contact_id: 13, eligibility_reason: "low_interest_extra_followup" },
+        { contact_id: 14, eligibility_reason: "no_distinct_approved_template_in_customer_language" },
+      ],
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const area = page.locator("#follow-up-template-activity");
+  await expect(area).toContainText("Customer requested more time");
+  await expect(area).toContainText("Additional reminder intentionally skipped");
+  await expect(area).toContainText("No distinct approved template in customer's language");
+  await expect(area.getByRole("link", { name: "Open conversation" })).toHaveCount(3);
+});
+
+test("Extended follow-up activity remains safe when provider status is unrecognized", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    followUpStatus: {
+      enabledOnServer: false, enabledInTools: false,
+      recentAttempts: [{ attempt_id: 504, contact_id: 123, slot_hours: 26, status: "queued_for_review",
+        created_at: null, billable: false }],
+      contactDetails: [{ contact_id: 123, eligibility_reason: "unrecognized_gate",
+        last_skip_reason: "unrecognized_skip" }],
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const activity = page.locator("#follow-up-template-activity");
+  await expect(activity).toContainText("queued for review");
+  await expect(activity).toContainText("Only a recorded provider status is available");
+  await expect(activity).toContainText("Time not recorded");
+  await expect(activity).toContainText("unrecognized gate");
+  await expect(activity).toContainText("Review the saved contact record");
+  await expect(activity.getByRole("button", { name: /retry|send/i })).toHaveCount(0);
+  await expect(activity.getByRole("link", { name: "Open conversation" })).toHaveCount(2);
+});
+
 test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
