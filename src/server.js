@@ -33,6 +33,7 @@ const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackage
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException } = require("./utils/shadowPriceException");
+const { resolveStaffInterruptedPriceContext, formatStaffInterruptedPriceContext } = require("./utils/staffInterruptedPriceContext");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -1485,6 +1486,31 @@ async function processIncomingMessage(
       if (completeQuote.changed) {
         console.warn("[Reply guard] Replaced unfulfilled price-list promise.");
         reply = completeQuote.reply;
+      }
+    }
+
+    // A prior verified staff turn deliberately revokes automatic PRICE
+    // authorization. Still acknowledge the independently customer-selected
+    // treatment if the latest bot response clearly stayed on that service:
+    // asking "which treatment?" again is confusing. This never enables a
+    // numeric quote, pricing image, or offer and never bypasses staff handoff.
+    if (!flagged && !marketingStopQuestion && aiPricingMode === "shadow" &&
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        !approvedPricingDecision && !verifiedPriceService &&
+        !shadowPriceException && !numberedPricingSelection &&
+        !scopedPackagePrice) {
+      const staffInterruptedService = resolveStaffInterruptedPriceContext({
+        customerText: text, conversationHistory: history,
+        services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+      });
+      if (staffInterruptedService) {
+        reply = formatStaffInterruptedPriceContext(
+          staffInterruptedService, mediaLanguage
+        );
+        console.info("[Pricing clarification] Retained previously customer-selected " +
+          "treatment without restoring staff-interrupted price authority: " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
       }
     }
 
