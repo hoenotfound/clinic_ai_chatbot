@@ -4285,6 +4285,7 @@ test("final fixed follow-up copy guard persists a continuable step skip instead 
 });
 
 test("admin-authored fixed recovery wording is not censored by the AI copy filter", async () => {
+  clinicConfig.trustAdminConfiguredContent = true;
   enableTool();
   clinicConfig.automatedFollowUp.message = "做完没有恢复期哦";
   clinicConfig.automatedFollowUp.translations = {
