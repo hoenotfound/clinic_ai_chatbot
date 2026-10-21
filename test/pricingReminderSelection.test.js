@@ -363,5 +363,5 @@ test("Campaign-wide hold prevents automatic pricing reminders even with safe cap
   });
   assert.equal(result.offer, null);
   assert.deepEqual(result.offers, []);
-  assert.equal(result.reason, "unverified_clinical_promo_copy");
+  assert.equal(result.reason, "promotion_manually_paused");
 });
