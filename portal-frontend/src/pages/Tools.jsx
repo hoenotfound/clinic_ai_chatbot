@@ -1131,6 +1131,8 @@ export default function Tools() {
             setFreeOnlyImpactConfirmed={setFreeOnlyImpactConfirmed}
             savedEnabled={savedEnabled}
             savedFreeEntryEnabled={config?.automatedFollowUp?.freeEntry?.enabled === true}
+            savedFreeEntry={config?.automatedFollowUp?.freeEntry || savedSettings.freeEntry}
+            savedQuietHours={config?.automatedFollowUp?.quietHours || savedSettings.quietHours}
             validationIssue={followUpSaveIssue}
             onDismissValidationIssue={() => setFollowUpSaveIssue(null)}
             hasUnsavedChanges={hasUnsavedChanges}
@@ -2056,6 +2058,204 @@ function ServiceOverridesEditor({
   );
 }
 
+const AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES = new Set(["ns_fu_pricing_graphic", "ns_fu_meridian_gift"]);
+
+function followUpReadinessTone(level) {
+  return level === "active"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : level === "blocked"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : level === "attention"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)]";
+}
+
+// Read-only presentation of SAVED config and observed server checks.
+// It never asserts that a specific customer is eligible or that Meta will bill RM0.
+function followUpOperationalReadiness({
+  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, savedQuietHours, assessmentFirstPricingEnabled, status,
+  statusError, statusLoading, catalog, catalogLoading, catalogError,
+}) {
+  const normal = !savedEnabled
+    ? { level: "paused", label: "Paused", detail: "Normal follow-ups are off in saved settings." }
+    : status?.automaticRepliesEnabled === false
+      ? { level: "blocked", label: "Sending blocked", detail: "The global automated replies server switch is off." }
+      : !status || statusError || typeof status.automaticRepliesEnabled !== "boolean"
+        ? { level: "attention", label: statusLoading ? "Checking…" : "Needs verification",
+            detail: "The global automation switch is not confirmed. Saved settings alone do not prove sending is enabled." }
+        : { level: "active", label: "Active", detail: "Enabled in saved settings and globally allowed. Each conversation still requires an eligible reply window." };
+  const asExtended = (level, label, detail, target = "whatsapp") =>
+    ({ level, label, detail, target });
+  let extended;
+  if (!savedFreeEntryEnabled) {
+    extended = asExtended("paused", "Paused", "Extended WhatsApp templates are off in saved settings.");
+  } else if (!savedEnabled) {
+    extended = asExtended("blocked", "Sending blocked", "Normal follow-ups must be enabled for extended templates to run. Review the main follow-up switch.", "sequence");
+  } else if (statusError) {
+    extended = asExtended("attention", "Needs verification", "Could not verify the WhatsApp server or billing status. Do not assume extended sending is active.");
+  } else if (!status) {
+    extended = asExtended("attention", statusLoading ? "Checking…" : "Needs verification",
+      "Checking server eligibility and billing protection before showing readiness.");
+  } else if (status.automaticRepliesEnabled === false) {
+    extended = asExtended("blocked", "Sending blocked",
+      "The global automated replies server switch is off.");
+  } else if (typeof status.automaticRepliesEnabled !== "boolean") {
+    extended = asExtended("attention", "Needs verification",
+      "The global automation switch is unverified. Recheck readiness.");
+  } else if (status.enabledInTools !== true) {
+    extended = asExtended("attention", "Needs verification",
+      "Saved settings and server-reported Tools activation disagree. Refresh and investigate before relying on sends.");
+  } else if (status.enabledOnServer !== true) {
+    extended = asExtended("blocked", "Sending blocked",
+      "The server sending switch is off. Update the server configuration before expecting extended templates.");
+  } else if (status.freeOnlyEnabled === true && Number(status.billingSafety?.since_switch || 0) > 0) {
+    extended = asExtended("blocked", "Sending blocked",
+      "A Meta billable callback triggered strict billing protection. Review the billing alarm; no automatic retry.");
+  } else if (status.freeOnlyEnabled === true && status.freeOnlyGate?.status &&
+             status.freeOnlyGate.status !== "idle") {
+    extended = asExtended("blocked", "Sending blocked",
+      "A strict-mode send is awaiting billing verification. Investigate the reservation before another attempt.");
+  } else if (!savedFreeEntry?.activatedAt ||
+             !Number.isFinite(Date.parse(savedFreeEntry.activatedAt))) {
+    extended = asExtended("attention", "Needs setup",
+      "The saved extended follow-up activation time is missing or invalid. Save the extended setup again to establish a valid activation time.");
+  } else if (!savedFreeEntry?.templateName) {
+    extended = asExtended("attention", "Needs setup", "Choose and save a default approved MARKETING text template.");
+  } else if (catalogError) {
+    extended = asExtended("attention", "Needs verification",
+      "Could not confirm Meta template approval. Existing saved templates remain unchanged.");
+  } else if (!catalog || catalogLoading) {
+    extended = asExtended("attention", "Checking…",
+      "Checking approved Meta templates; configuration is not yet verified.");
+  } else {
+    // In auto mode the worker uses each customer's detected language, not
+    // the configured fallback language as a substitute.
+    const requiredLocales = savedFreeEntry?.language === "auto"
+      ? ["zh_CN", "en_US", "ms"]
+      : [savedFreeEntry?.language || "zh_CN"];
+    // Check the selections the worker can actually use at configured slots.
+    // The default text template is not selected if every slot has a wildcard
+    // override; counting it would hide an entirely blocked sequence.
+    const selectedSlots = savedFreeEntry.slotsHours || [];
+    // Match both constraints in whatsappFreeEntryWindow: slot < ceiling, and
+    // send time strictly before ceiling minus its one-hour expiry buffer.
+    // At ceiling-1h a slot cannot run at its nominal due time. The final
+    // eligible slot MAY shift earlier if configured quiet hours overlap the
+    // safety deadline, but that depends on each customer's first reply time.
+    const sevenDayAuthorized = status.sevenDayVerified === true &&
+      Number(status.periodMaxHours || 72) >= 168 &&
+      status.verifiedPost72h === true &&
+      (status.freeOnlyEnabled !== true || Number(status.strictCeilingHours || 72) >= 168);
+    const ceilingHours = sevenDayAuthorized ? 168 : 72;
+    const boundaryHour = ceilingHours - 1;
+    const restrictedSlots = selectedSlots.filter(hours => Number(hours) >= ceilingHours);
+    const bufferBoundarySlots = selectedSlots.filter(hours => Number(hours) === boundaryHour);
+    const conditionalBoundarySlots = savedQuietHours?.enabled === true ? bufferBoundarySlots : [];
+    const blockedBoundarySlots = savedQuietHours?.enabled === true ? [] : bufferBoundarySlots;
+    const regularlyEligibleSlots = selectedSlots.filter(hours => Number(hours) < boundaryHour);
+    const eligibleSlots = [...regularlyEligibleSlots, ...conditionalBoundarySlots];
+    const timingWarnings = [
+      ...(restrictedSlots.length ? [
+        "Times at +72h or later require verified seven-day Meta eligibility and rollout authorization."
+      ] : []),
+      ...(blockedBoundarySlots.length ? [
+        "A +71h slot cannot send at its normal due time: the 72-hour window has a one-hour safety buffer, and quiet-hours early sending is disabled."
+      ] : []),
+      ...(conditionalBoundarySlots.length ? [
+        "A +71h slot is only conditionally possible if quiet hours move the final attempt earlier; eligibility depends on the customer's first reply and cannot be verified in advance."
+      ] : []),
+    ].join(" ");
+    const selectedRules = (savedFreeEntry.templateRules || []).filter(rule =>
+      eligibleSlots.some(hours => Number(hours) === Number(rule.slotHours)));
+    const names = [
+      ...eligibleSlots.filter(hours => !selectedRules.some(rule =>
+        Number(rule.slotHours) === Number(hours) && rule.serviceName === "*"))
+        .map(() => ({ name: savedFreeEntry.templateName, defaultText: true })),
+      ...selectedRules.map(rule => ({ name: rule.templateName, rule })),
+    ];
+    const problems = [];
+    let usableVersions = 0;
+    let conditionalImages = 0;
+    for (const locale of requiredLocales) {
+      for (const { name, defaultText, rule } of names) {
+        const valid = (catalog.templates || []).find(template =>
+          template.name === name &&
+          (template.language === locale || (locale === "en_US" && template.language === "en")) &&
+          supportedForAutomation(template) &&
+          (!defaultText || (template.header?.format || "TEXT") === "TEXT"));
+        if (!valid) { problems.push(locale + ": " + (name || "missing template")); continue; }
+        const format = valid.header?.format || "TEXT";
+        const automaticImage = format === "IMAGE" && AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES.has(name);
+        if (automaticImage && assessmentFirstPricingEnabled) {
+          problems.push(locale + ": " + name + " unavailable with assessment-first pricing");
+          continue;
+        }
+        if (automaticImage && (rule?.mediaKey || rule?.mediaUrl)) {
+          problems.push(locale + ": " + name + " cannot override automatic promotion media");
+          continue;
+        }
+        if (automaticImage) {
+          // The worker requires one unambiguous, eligible promotion for the
+          // customer's treatment. Catalog approval alone cannot verify it.
+          conditionalImages++;
+          continue;
+        }
+        if (rule && (format === "VIDEO" || format === "IMAGE") &&
+            (!(rule.mediaKey || rule.mediaUrl) || (format === "VIDEO" && rule.videoCodecVerified !== true))) {
+          problems.push(locale + ": " + name + " media");
+          continue;
+        }
+        usableVersions++;
+      }
+    }
+    const selectedNames = (savedFreeEntry?.slotsHours || []).map(hours =>
+      (savedFreeEntry.templateRules || []).find(rule =>
+        rule.slotHours === hours && rule.serviceName === "*")?.templateName || savedFreeEntry.templateName);
+    const duplicates = selectedNames.length > new Set(selectedNames.filter(Boolean)).size;
+    if (eligibleSlots.length === 0) {
+      extended = asExtended("blocked", "Sending blocked",
+        `No configured extended follow-up time can be sent at its nominal due time under the current ${ceilingHours}-hour eligibility ceiling. ${timingWarnings} Configure a time before +${boundaryHour}h or verify eligibility for the seven-day window.`);
+    } else if (problems.length > 0) {
+      const hasPotentialPath = usableVersions > 0 || conditionalImages > 0;
+      extended = asExtended("attention", hasPotentialPath ? "Partially available" : "Needs setup",
+        `${problems.length} language/template combination(s) cannot be used (${problems.slice(0, 3).join(", ")}). ${hasPotentialPath
+          ? "Some combinations may still work, subject to customer eligibility and media checks."
+          : "No configured language/template combination is currently usable. Review approved templates and media."} ${timingWarnings}`);
+    } else if (conditionalImages > 0) {
+      extended = asExtended("attention", usableVersions > 0 ? "Partially available" : "Needs verification",
+        `Automatically selected promotion images need an unambiguous, eligible image for each customer's treatment. Meta approval alone cannot verify these sends. ${timingWarnings}`);
+    } else if (timingWarnings) {
+      extended = asExtended("attention",
+        regularlyEligibleSlots.length > 0 ? "Partially available" : "Needs verification",
+        `${timingWarnings} ${regularlyEligibleSlots.length > 0
+          ? "Earlier configured slots may still work if the customer remains eligible."
+          : "No configured slot has an independently confirmed normal send time."}`);
+    } else if (duplicates) {
+      extended = asExtended("attention", "Partially available",
+        "Later slots may be skipped because the same marketing template cannot be resent in one verified period.");
+    } else {
+      extended = asExtended("active", "Active",
+        "Saved settings, server switch and selected template versions appear ready. Individual sends still require consent, verified eligibility, and Meta billing checks.");
+    }
+  }
+  const overall =
+    normal.level === "paused" && extended.level === "paused"
+      ? { level: "paused", label: "Paused", detail: "Both follow-up paths are off." }
+      : (normal.level === "paused" || normal.level === "blocked") &&
+        (extended.level === "paused" || extended.level === "blocked")
+        ? { level: "blocked", label: "Sending blocked",
+            detail: normal.level === "blocked"
+              ? "The global automation switch prevents follow-up sends."
+              : "Extended WhatsApp cannot send while the saved 24-hour follow-up switch is off. Enable and save normal follow-ups first." }
+        : normal.level === "attention" || extended.level === "blocked" || extended.level === "attention"
+          ? { level: "attention", label: "Needs attention",
+              detail: normal.level === "active"
+                ? "Normal follow-ups may still run. Extended WhatsApp needs review."
+                : "Review the details below before expecting messages." }
+          : { level: "active", label: "Active", detail: "At least one path is enabled; actual customer sends always depend on eligibility." };
+  return { overall, normal, extended };
+}
+
 function FollowUpTool({
   isAdmin,
   form,
@@ -2065,6 +2265,8 @@ function FollowUpTool({
   setFreeOnlyImpactConfirmed,
   savedEnabled,
   savedFreeEntryEnabled,
+  savedFreeEntry,
+  savedQuietHours,
   validationIssue,
   onDismissValidationIssue,
   hasUnsavedChanges,
@@ -2176,10 +2378,24 @@ function FollowUpTool({
     }
   }, []);
   useEffect(() => {
-    if (followUpTab === "whatsapp" && !templateCatalog && !templateCatalogLoading && !templateCatalogError) {
+    if ((followUpTab === "whatsapp" || savedFreeEntryEnabled) &&
+        !templateCatalog && !templateCatalogLoading && !templateCatalogError) {
       refreshTemplateCatalog();
     }
-  }, [followUpTab, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
+  }, [followUpTab, savedFreeEntryEnabled, templateCatalog, templateCatalogLoading, templateCatalogError, refreshTemplateCatalog]);
+  const saveWasInProgress = useRef(false);
+  useEffect(() => {
+    if (saving) {
+      saveWasInProgress.current = true;
+    } else if (saveWasInProgress.current) {
+      saveWasInProgress.current = false;
+      if (!hasUnsavedChanges) {
+        refreshFreeEntryStatus();
+        if (savedFreeEntryEnabled) refreshTemplateCatalog(true);
+      }
+    }
+  }, [saving, hasUnsavedChanges, savedFreeEntryEnabled,
+      refreshFreeEntryStatus, refreshTemplateCatalog]);
 
   // Quick template choices edit only the all-treatment TEXT rule for a given
   // existing slot. Treatment-specific media rules remain unchanged.
@@ -2411,6 +2627,12 @@ function FollowUpTool({
       || form.freeEntry?.templateName || ""
   ).filter(Boolean);
   const hasDuplicateExtendedNames = new Set(simpleConfiguredNames).size < simpleConfiguredNames.length;
+  const operationalReadiness = followUpOperationalReadiness({
+    savedEnabled, savedFreeEntryEnabled, savedFreeEntry, savedQuietHours, assessmentFirstPricingEnabled,
+    status: freeEntryStatus, statusError: freeEntryStatusError,
+    statusLoading: freeEntryStatusLoading, catalog: templateCatalog,
+    catalogLoading: templateCatalogLoading, catalogError: templateCatalogError,
+  });
   const hasPromotionFollowUps = (Array.isArray(promotions) ? promotions : []).some(
     (promotion) =>
       String(promotion?.followUpMessage || "").trim() ||
@@ -2552,24 +2774,54 @@ function FollowUpTool({
         </div>
       )}
 
-      <section aria-label="Follow-up activation overview" className="mb-4 rounded-xl border border-[var(--color-border)] bg-white px-4 py-3.5">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-          <div>
-            <span className="text-[var(--color-text-muted)]">24-hour follow-ups: </span>
-            <span className="font-semibold">{form.enabled !== savedEnabled ? "Pending save" : form.enabled ? "On" : "Off"}</span>
+      <section aria-label="Follow-up activation overview" className="mb-4 rounded-xl border border-[var(--color-border)] bg-white px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold">Automation readiness</h2>
+            <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+              Based on saved settings, server evidence and Meta template checks—not a promise that any customer will receive a message.
+            </p>
           </div>
-          <div>
-            <span className="text-[var(--color-text-muted)]">Extended WhatsApp templates: </span>
-            <span className="font-semibold">
-              {form.freeEntry?.enabled !== savedFreeEntryEnabled
-                ? "Pending save"
-                : form.freeEntry?.enabled ? "On in Tools" : "Off"}
-            </span>
-          </div>
-          <div>
-            <span className="text-[var(--color-text-muted)]">Template server: </span>
-            <span className="font-semibold">{freeEntryStatusLoading && !freeEntryStatus ? "Checking…" : freeEntryStatus ? (freeEntryStatus.enabledOnServer ? "On" : "Off") : "Unknown"}</span>
-          </div>
+          <span aria-label={`Overall follow-up readiness: ${operationalReadiness.overall.label}`}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${followUpReadinessTone(operationalReadiness.overall.level)}`}>
+            {operationalReadiness.overall.label}
+          </span>
+        </div>
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">{operationalReadiness.overall.detail}</p>
+        {hasUnsavedChanges && (
+          <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Unsaved changes are not live. The statuses below describe your last saved configuration.
+          </p>
+        )}
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {[
+            { title: "24-hour follow-ups", status: operationalReadiness.normal, tab: "sequence" },
+            { title: "Extended WhatsApp templates", status: operationalReadiness.extended,
+              tab: operationalReadiness.extended.target || "whatsapp" },
+          ].map((item) => (
+            <div key={item.title} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">{item.title}</h3>
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${followUpReadinessTone(item.status.level)}`}>
+                  {item.status.label}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{item.status.detail}</p>
+              <button type="button" onClick={() => setFollowUpTab(item.tab)}
+                className="mt-3 min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 text-xs font-semibold text-[var(--color-primary)]">
+                {item.tab === "sequence" ? "Review sequence" : "Review WhatsApp setup"}
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
+          <p>Template server: {freeEntryStatusError ? "Verification failed" : !freeEntryStatus ? "Checking or unavailable" : freeEntryStatus.enabledOnServer ? "On" : "Off"}
+            {" · "}Tools: {savedFreeEntryEnabled ? "On" : "Off"}</p>
+          <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(true); }}
+            disabled={freeEntryStatusLoading || templateCatalogLoading}
+            className="min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 font-semibold text-[var(--color-primary)] disabled:opacity-50">
+            {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck readiness"}
+          </button>
         </div>
         {form.freeEntry?.enabled === true && freeEntryStatus && !freeEntryStatus.enabledOnServer && (
           <p role="status" className="mt-2 text-xs text-amber-700">
@@ -5029,6 +5281,9 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
       <span className="min-w-0 xl:flex-1">
         <span className={`block text-[11px] font-semibold leading-3.5 sm:hidden ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{shortTitle}</span>
         <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] xl:whitespace-nowrap xl:text-sm xl:font-bold xl:leading-5 ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
+        <span aria-hidden="true" className={`mt-1 block text-[11px] font-semibold leading-4 xl:hidden ${enabled ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+          {enabled ? "On" : "Off"}
+        </span>
         <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">
           <span className={enabled ? "font-semibold text-[var(--color-primary)]" : "font-semibold text-[var(--color-text-muted)]"}>{enabled ? "On" : "Off"}</span>
           <span className="mx-1" aria-hidden="true">·</span>
