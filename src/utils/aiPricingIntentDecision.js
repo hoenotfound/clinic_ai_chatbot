@@ -9,7 +9,8 @@ const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPr
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
-const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService } = require("./priceFollowUpContext");
+const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
+} = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
 
@@ -244,13 +245,19 @@ function resolveAiPricingDecision({
         current, complimentaryAssessmentExperienceEnabled, conversationHistory
       )) return null;
 
+  const concernContinuation = resolveAnsweredConcernPriceService({
+    customerText: current, conversationHistory, services, serviceAliases, now,
+  });
+  const bothContinuation = resolveAnsweredConcernBothContinuation({
+    customerText: current, conversationHistory, services, serviceAliases, now,
+  });
   const clarifiedPriceService = resolveClarifiedPriceService({
     customerText: current, conversationHistory, services, serviceAliases,
   });
   // Model intent alone must never turn a normal treatment question into an
   // unsolicited graphic. Clear keywords retain deterministic recovery if
   // Gemini misses them; natural cost wording still works when Gemini sees it.
-  const monetary = Boolean(clarifiedPriceService) ||
+  const monetary = Boolean(clarifiedPriceService || concernContinuation || bothContinuation) ||
     (explicitAmount && (priceQuery === true || hasExplicitPriceRequest(current))) ||
     (isStandalonePriceQuestion(current) && priceQuery === true) ||
     (isContinuedTreatmentPriceQuestion(current) && hasExplicitPriceRequest(current));
@@ -266,6 +273,9 @@ function resolveAiPricingDecision({
   }) : null;
   const anchor = continued
     ? { treatment: continued.name, source: "continued_customer" }
+    : concernContinuation || bothContinuation
+      ? { treatment: (concernContinuation || bothContinuation).name,
+          source: bothContinuation ? "customer_concern_both" : "customer_concern_continuation" }
     : verifiedServiceAnchor({
         customerText: current, conversationHistory, services, serviceAliases,
         modelTreatment: treatment,
