@@ -2776,8 +2776,13 @@ function FollowUpTool({
                       Repeated templates, new replies, appointments or billing safeguards may skip a message.
                     </p>
                     <p className="mt-2 text-xs font-semibold">
-                      {!form.freeEntry?.enabled ? "Paused" : !form.enabled || !savedEnabled ? "Sending blocked" : "Enabled"}
+                      Saved setup: {!savedFreeEntryEnabled ? "Paused" : !savedEnabled ? "Sending blocked" : "Enabled in Tools"}
                     </p>
+                    {hasUnsavedChanges && (
+                      <p className="mt-1 text-xs text-amber-800">
+                        Draft preview: {!form.freeEntry?.enabled ? "Paused" : !form.enabled ? "Sending blocked" : "Enabled if saved"} (not live)
+                      </p>
+                    )}
                   </div>
                 </li>
                 {(form.freeEntry?.slotsHours || []).map((hours, slotIndex) => {
