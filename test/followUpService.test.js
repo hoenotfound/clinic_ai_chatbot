@@ -4284,7 +4284,7 @@ test("final fixed follow-up copy guard persists a continuable step skip instead 
   assert.match(terminalFollowUpDecisionSql("d"), /reason NOT LIKE 'step_skip:%'/u);
 });
 
-test("final fixed recovery-safety guard skips only one step without sending the promise", async () => {
+test("admin-authored fixed recovery wording is not censored by the AI copy filter", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.message = "做完没有恢复期哦";
   clinicConfig.automatedFollowUp.translations = {
@@ -4306,9 +4306,8 @@ test("final fixed recovery-safety guard skips only one step without sending the 
     saved++;return null;
   };
   await runAutomatedFollowUps();
-  assert.equal(saved,0);
-  assert.equal(decision?.action,"skip");
-  assert.equal(decision?.reason,"step_skip: unsafe_clinical_promise");
+  assert.equal(saved,1);
+  assert.equal(decision,null);
 });
 
 
