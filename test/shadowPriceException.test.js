@@ -321,3 +321,79 @@ test("ad-only phrase broadening cannot quote fees, objections, stale ads or swit
   assert.equal(price({customerText:"什么价钱呢？",conversationHistory:history,
     metaAdContext:stale}),null);
 });
+
+
+// Regression for 21 Oct contact #643. The advertised Meta creative was 3D,
+// but the customer independently selected 9D, answered a symptom question,
+// then asked for the amount. The 9D choice remains authoritative.
+test("Shadow: 9D customer choice survives one bot-invited concern answer", () => {
+  const priceQuestion = "请问是不是什么价钱呢";
+  const services9D = [
+    { name: "3D 小颜术" }, { name: "9D 逆龄抗衰" },
+  ];
+  const aliases9D = [
+    { alias: "3D", officialService: "3D 小颜术" },
+    { alias: "9D", officialService: "9D 逆龄抗衰" },
+  ];
+  const offers9D = [{
+    name: "9D First Trial", linkedService: "9D 逆龄抗衰",
+    sendOnPriceQuery: true, imageUrl: "https://example.test/9d.jpg",
+    caption: "限时优惠，现在只需 RM488", validFrom: "2000-01-01", validUntil: "2999-12-31",
+  }];
+  const conversation = [
+    turn("user", "Hi～想了解 Neutro Sense TCM 9D 护理，有后续配套和优惠可以 WhatsApp 发我 😊", 150_000),
+    turn("assistant", "9D 逆龄抗衰是我们针对紧致提拉的护理。", 140_000),
+    turn("assistant", "9D Before & After", 135_000),
+    turn("assistant", "可以告诉我你比较在意的部位，例如下颚线或法令纹吗？", 120_000),
+    turn("user", "紧致和下颚线", 60_000),
+    turn("assistant", "了解，9D 逆龄抗衰针对紧致和下颚线。平日还是周末方便？", 55_000),
+    turn("user", priceQuestion, 0),
+  ];
+  const args = {
+    customerText: priceQuestion, conversationHistory: conversation,
+    services: services9D, serviceAliases: aliases9D, promotions: offers9D,
+    // A conflicting acquisition ad may not override customer-named 9D.
+    metaAdContext: {
+      serviceHint: "3D 小颜术", serviceHintSource: "ad_name",
+      attributedAt: new Date(now - 160_000).toISOString(),
+    },
+    now, complimentaryAssessmentExperienceEnabled: true,
+  };
+  const actual = resolveShadowPriceException(args);
+  assert.equal(actual?.source, "customer_concern_continuation");
+  assert.equal(actual?.treatment, "9D 逆龄抗衰");
+  assert.deepEqual(actual?.prices.map(x => x.price), ["RM488"]);
+
+  const quoted = ensureVerifiedPriceReply({
+    customerText: priceQuestion,
+    reply: "请问你想了解哪项疗程的价格？",
+    treatment: actual?.treatment,
+    pricingDecision: actual, language: "zh",
+    services: services9D, serviceAliases: aliases9D,
+    promotions: offers9D, conversationHistory: conversation,
+  });
+  assert.match(quoted.reply, /9D.*RM488/su);
+  assert.doesNotMatch(quoted.reply, /哪项疗程的价格/u);
+
+  const alternate = (index, replacement) =>
+    conversation.map((item, i) => i === index ? replacement : item);
+  assert.equal(resolveShadowPriceException({
+    ...args, conversationHistory: alternate(5, turn("assistant", "3D 小颜术适合你。", 55_000)),
+  }), null, "bot changing treatment cannot silently authorize 9D");
+  assert.equal(resolveShadowPriceException({
+    ...args, conversationHistory: alternate(5, turn("assistant", "9D 逆龄抗衰适合你。", 55_000, true)),
+  }), null, "staff intervention must break price continuity");
+  assert.equal(resolveShadowPriceException({
+    ...args, conversationHistory: alternate(4, turn("user", "想改做其他疗程", 60_000)),
+  }), null, "customer topic switch must break continuity");
+  assert.equal(resolveShadowPriceException({
+    ...args, conversationHistory: alternate(0, turn("user", "想了解护理", 150_000)),
+  }), null, "a model or ad label cannot supply a customer-selected service");
+  assert.equal(resolveShadowPriceException({
+    ...args, conversationHistory: alternate(0, { role: "user", content: conversation[0].content }),
+  }), null, "untrusted timestamps must fail closed");
+  assert.equal(resolveShadowPriceException({
+    ...args, customerText: "需修复期？",
+    conversationHistory: alternate(6, turn("user", "需修复期？", 0)),
+  }), null, "recovery question alone does not authorize a price");
+});
