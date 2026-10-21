@@ -2726,15 +2726,16 @@ function ResultMediaSection({ config, onSaved, onError }) {
 }
 
 
-function suggestedAdReply(service) {
+function suggestedAdReply(service, businessName) {
+  const clinicName = String(businessName || "我们").trim();
   const name = String(service || "").trim();
   const isPelvic = /骨盆|pelvic/i.test(name);
   const is3d = /3d/i.test(name);
   const is9d = /9d/i.test(name);
   let zh = `Hi～欢迎来到我们这里 😊\n\n看到你对${name}有兴趣～\n\n你比较想了解护理过程，还是想先看看适不适合自己呢？`;
-  if (isPelvic) zh = "Hi～欢迎来到 Neutro Sense 😊\n\n看到你对我们的骨盆调理有兴趣～\n\n想了解一下，你目前比较在意的是小腹突出、腰髋紧绷，还是体态不平衡呢？";
-  else if (is3d && !is9d) zh = "Hi～欢迎来到 Neutro Sense 😊\n\n看到你对我们的 3D 小颜术有兴趣～\n\n你目前比较想改善脸部轮廓、大小脸，还是下颌线不明显的问题呢？";
-  else if (is9d && !is3d) zh = "Hi～欢迎来到 Neutro Sense 😊\n\n看到你对我们的 9D 逆龄抗衰有兴趣～\n\n想了解一下，你比较在意脸部松弛、轮廓下垂，还是整体紧致度呢？";
+  if (isPelvic) zh = `Hi～欢迎来到 ${clinicName} 😊\n\n看到你对我们的骨盆调理有兴趣～\n\n想了解一下，你目前比较在意的是小腹突出、腰髋紧绷，还是体态不平衡呢？`;
+  else if (is3d && !is9d) zh = `Hi～欢迎来到 ${clinicName} 😊\n\n看到你对我们的 3D 小颜术有兴趣～\n\n你目前比较想改善脸部轮廓、大小脸，还是下颌线不明显的问题呢？`;
+  else if (is9d && !is3d) zh = `Hi～欢迎来到 ${clinicName} 😊\n\n看到你对我们的 9D 逆龄抗衰有兴趣～\n\n想了解一下，你比较在意脸部松弛、轮廓下垂，还是整体紧致度呢？`;
   return {
     zh,
     en: `Hi! Thanks for reaching out 😊\n\nI see you're interested in ${name}. What would you most like to know about it?`,
@@ -2859,7 +2860,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
                 updateAdFirstReply(current => ({
                   ...current,
                   replies: [...current.replies, {
-                    service: newAdService, translations: suggestedAdReply(newAdService),
+                    service: newAdService, translations: suggestedAdReply(newAdService, config.businessName || config.clinicName),
                   }],
                 }));
                 setNewAdService("");
