@@ -127,8 +127,11 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
     );
   }
 
+  // Only inbound CUSTOMER photos belong in AI vision context. Staff/AI media
+  // attachments are previous outbound messages, not images the assistant may
+  // claim to have inspected; Claude also prohibits image blocks in assistant turns.
   const isPhotoRow = (r) =>
-    r.has_media_attachment &&
+    r.role === "user" && r.has_media_attachment &&
     r.media_mime_type?.startsWith("image/");
   const photoIndices = [];
   for (let i = rows.length - 1; i >= 0 && photoIndices.length < MAX_PHOTOS_IN_AI_CONTEXT; i--) {

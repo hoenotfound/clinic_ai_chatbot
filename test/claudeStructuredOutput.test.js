@@ -8,6 +8,7 @@ const {
   DEFAULT_REPLY_MAX_TOKENS,
   TRUNCATION_RETRY_MAX_TOKENS,
   buildClaudeOutputSchema,
+  buildClaudeMessages,
   getReply,
 } = require("../src/services/claudeService");
 const { buildCandidates, runCandidate } = require("../src/services/aiService");
@@ -211,4 +212,61 @@ test("Claude exposes itself as primary when AI_PROVIDER=claude", () => {
 
   assert.equal(candidates[0].provider, "claude");
   assert.equal(candidates[0].label, "Claude primary");
+});
+
+
+test("Claude fallback preserves inbound vision while replacing assistant image attachments with text", async () => {
+  const history = [
+    { role: "user", content: "我想了解9D" },
+    { role: "assistant", content: [
+      { type: "text", text: "给你看看9D的介绍" },
+      { type: "image", mimeType: "image/png", data: "outgoing-price-image" },
+    ] },
+    { role: "user", content: [
+      { type: "text", text: "我的照片适合这个吗？" },
+      { type: "image", mimeType: "image/jpeg", data: "incoming-customer-image" },
+    ] },
+  ];
+  const normalized = buildClaudeMessages(history);
+  assert.equal(normalized[1].role, "assistant");
+  assert.deepEqual(normalized[1].content[0], {
+    type: "text", text: "给你看看9D的介绍",
+  });
+  assert.equal(normalized[1].content.some(x => x.type === "image"), false);
+  assert.match(normalized[1].content[1].text, /Previously sent image attachment/);
+  assert.equal(normalized[1].content[1].text.includes("outgoing-price-image"), false);
+  assert.deepEqual(normalized[2].content[1], {
+    type: "image",
+    source: {
+      type: "base64", media_type: "image/jpeg", data: "incoming-customer-image",
+    },
+  });
+  let sent = null;
+  await getReply(history, { surface: "conversation" }, "test-claude-key", "wrkspc-test", {
+    fetchImpl: async (_url, request) => {
+      sent = JSON.parse(request.body);
+      return response({
+        type: "message",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: JSON.stringify(validConversationReply()) }],
+      });
+    },
+  });
+  assert.deepEqual(sent.messages, normalized);
+  assert.equal(sent.messages[1].content.some(x => x.type === "image"), false);
+});
+
+test("Claude never sends an empty assistant block list for image-only history", () => {
+  const messages = buildClaudeMessages([
+    { role: "assistant", content: [
+      { type: "image", mimeType: "image/png", data: "outgoing-photo" },
+      { type: "text", text: "" },
+    ] },
+    { role: "user", content: [
+      { type: "image", mimeType: "image/jpeg", data: "incoming-photo" },
+    ] },
+  ]);
+  assert.ok(messages[0].content.length > 0);
+  assert.equal(messages[0].content.every(x => x.type === "text" && x.text), true);
+  assert.equal(messages[1].content[0].type, "image");
 });
