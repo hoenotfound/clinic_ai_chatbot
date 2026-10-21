@@ -277,6 +277,20 @@ function isSubstantiallySimilar(message, previousMessages) {
   );
 }
 
+// Asking for a convenient day again is not new information. A reply after
+// another unanswered scheduling follow-up should instead help with an actual
+// concern or be skipped, without consuming a customer's attention.
+const SCHEDULING_NUDGE =
+  /(?:平日|周末|週末|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|方便.{0,15}(?:过来|過來|来|來)|这周.{0,15}方便|這週.{0,15}方便|\\b(?:weekdays?|weekends?|which\\s+day|what\\s+day|when\\s+(?:would|can|could)|would\\s+.{0,25}\\bsuit\\s+you)\\b)/iu;
+function repeatsSchedulingNudge(message, previousMessages = []) {
+  const current = cleanContent(message);
+  return current.length <= 240 && /[?？]/u.test(current) &&
+    SCHEDULING_NUDGE.test(current) &&
+    (previousMessages || []).some(previous =>
+      /[?？]/u.test(String(previous || "")) &&
+      SCHEDULING_NUDGE.test(String(previous || "")));
+}
+
 function shouldSuppressStaffPromotionHumanReview({
   conversation,
   triggerMessageId,
@@ -536,6 +550,13 @@ async function generatePersonalizedFollowUp({
       ...priorFollowUps,
       ...recentNormalAssistant.slice(-1),
     ];
+    if (repeatsSchedulingNudge(result.message, priorFollowUps)) {
+      if (attempt === 0) {
+        avoidMessage = "Earlier follow-up already asked when the customer can visit. Do NOT ask for a weekday, weekend, day or appointment time again. Offer genuinely new useful information or skip. Rejected draft: " + result.message.slice(0, 300);
+        continue;
+      }
+      return { action: "skip", message: "", reason: "repeated_scheduling_nudge", topic: result.topic || "" };
+    }
     if (!isSubstantiallySimilar(result.message, comparisonMessages)) {
       return result;
     }
@@ -553,6 +574,7 @@ module.exports = {
   MAX_CONTEXT_MESSAGES,
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  repeatsSchedulingNudge,
   needsSchedulingContext,
   previousFollowUps,
   asksForNonexistentBranchChoice,
