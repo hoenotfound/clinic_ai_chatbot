@@ -291,6 +291,43 @@ function repeatsSchedulingNudge(message, previousMessages = []) {
       SCHEDULING_NUDGE.test(String(previous || "")));
 }
 
+// Only prompts after the latest customer message are truly unanswered.
+// An intervening customer reply restarts the conversation; earlier nudges
+// must never block a new, customer-requested appointment discussion.
+function unansweredAssistantMessages(conversation = []) {
+  const turns = (Array.isArray(conversation) ? conversation : [])
+    .filter(message => message?.role === "assistant" || message?.role === "user");
+  let lastUser = -1;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "user") { lastUser = i; break; }
+  }
+  return turns.slice(lastUser + 1)
+    .filter(item => item.role === "assistant" &&
+      item.delivery_status !== "failed" &&
+      item.delivery_status !== "cancelled" &&
+      cleanContent(item.content))
+    .slice(-8).map(item => cleanContent(item.content));
+}
+
+// AI and fixed follow-ups must not promise zero downtime, zero pain, an
+// immediate return to work or no side effects for every customer.
+// Reject only strong absolute claims, not cautious individualized guidance.
+const UNSAFE_CLINICAL_PROMISE =
+  /(?:基本(?:上)?|完全|绝对|絕對|保证|保證|肯定|几乎|幾乎|100%)\s*(?:是|都|可以|不用|不需要|没有|沒有|无|無)?\s*(?:没有|沒有|无|無|不需要|不用)\s*(?:任何|什么|什麼)?\s*(?:恢复期|恢復期|修复期|修復期|风险|風險|副作用|痛|疼痛)|(?:做完|护理后|護理後|疗程后|療程後).{0,18}(?:马上|立刻|立即|直接|一定).{0,22}(?:正常上班|正常工作|正常活动|正常活動|恢复日常|恢復日常)|(?:guaranteed|always|100%\s*guaranteed|zero|no)\s+(?:downtime|recovery(?:\s+time)?|pain|side\s+effects?|risks?)|(?:no|zero)\s+(?:recovery|downtime|side\s+effects?)\s+(?:at\s+all|for\s+everyone)/iu;
+function hasUnsafeClinicalFollowUpClaim(message) {
+  return UNSAFE_CLINICAL_PROMISE.test(cleanContent(message));
+}
+
+function followUpCopyViolation(message, conversation = []) {
+  if (hasUnsafeClinicalFollowUpClaim(message)) return "unsafe_clinical_promise";
+  const unanswered = unansweredAssistantMessages(conversation);
+  if (repeatsSchedulingNudge(message, unanswered)) return "repeated_scheduling_nudge";
+  // A slightly reworded fixed reminder must not bypass the model's semantic
+  // duplication gate; restrict this to genuinely unanswered recent messages.
+  if (isSubstantiallySimilar(message, unanswered.slice(-3))) return "repeated_unanswered_message";
+  return null;
+}
+
 function shouldSuppressStaffPromotionHumanReview({
   conversation,
   triggerMessageId,
@@ -494,6 +531,7 @@ async function generatePersonalizedFollowUp({
 
   const priorFollowUps = previousFollowUps(conversation, triggerMessageId);
   const recentNormalAssistant = recentNormalAssistantMessages(trimmed);
+  const unansweredReplies = unansweredAssistantMessages(conversation);
   const includeSchedulingContext = needsSchedulingContext(conversation, {
     branchName,
     appointmentStatus,
@@ -549,8 +587,16 @@ async function generatePersonalizedFollowUp({
     const comparisonMessages = [
       ...priorFollowUps,
       ...recentNormalAssistant.slice(-1),
+      ...unansweredReplies,
     ];
-    if (repeatsSchedulingNudge(result.message, priorFollowUps)) {
+    if (hasUnsafeClinicalFollowUpClaim(result.message)) {
+      if (attempt === 0) {
+        avoidMessage = "Prior draft asserted an unsafe medical/recovery guarantee. Remove claims of zero downtime, no side effects, no pain, or guaranteed return to normal activities. Use cautious individualized wording or skip. Rejected draft: " + result.message.slice(0, 300);
+        continue;
+      }
+      return { action: "skip", message: "", reason: "unsafe_clinical_promise", topic: result.topic || "" };
+    }
+    if (repeatsSchedulingNudge(result.message, unansweredReplies)) {
       if (attempt === 0) {
         avoidMessage = "Earlier follow-up already asked when the customer can visit. Do NOT ask for a weekday, weekend, day or appointment time again. Offer genuinely new useful information or skip. Rejected draft: " + result.message.slice(0, 300);
         continue;
@@ -575,6 +621,9 @@ module.exports = {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
   repeatsSchedulingNudge,
+  unansweredAssistantMessages,
+  hasUnsafeClinicalFollowUpClaim,
+  followUpCopyViolation,
   needsSchedulingContext,
   previousFollowUps,
   asksForNonexistentBranchChoice,
