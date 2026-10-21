@@ -1,6 +1,7 @@
 const { findMentionedPromotionPackages, promotionPackages } = require("./activePromotion");
 const { resolveLocalizedMedia, mediaVariants } = require("./mediaLocalization");
-const { isPromotionManuallyPaused } = require("./promotionClinicalCopyPolicy");
+const { configuredPromotionCopyBlocked, isPromotionManuallyPaused } = require("./promotionClinicalCopyPolicy");
+const clinicConfig = require("../config/clinicConfig");
 const { inferConfiguredServiceFromText } = require("./serviceInterest");
 const { stripFutureFollowUpPermission } = require("./customerEnquiryEvidence");
 
@@ -68,8 +69,10 @@ function evaluatePricingReminder({
     return { offer:null, offers:[], reason:"no_pricing_interest" };
   }
 
-  if (isPromotionManuallyPaused(matching[0]))
-    return { offer: null, offers: [], reason: "promotion_manually_paused" };
+  if (configuredPromotionCopyBlocked(
+    matching[0], clinicConfig.trustAdminConfiguredContent === true
+  )) return { offer: null, offers: [], reason: isPromotionManuallyPaused(matching[0])
+    ? "promotion_manually_paused" : "unverified_clinical_promo_copy" };
   const packages = promotionPackages(matching[0]);
   if (!packages.length) return { offer: null, offers: [], reason: "missing_promotion" };
 
