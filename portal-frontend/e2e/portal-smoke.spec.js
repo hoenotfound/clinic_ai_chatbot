@@ -2355,7 +2355,10 @@ test("Unified follow-up journey edits regular and extended steps without sending
   await expect(journey).toContainText("Customer follow-up journey");
   await expect(journey).toContainText("After 24 hours · WhatsApp templates");
   await expect(journey).toContainText("Default template: clinic_text");
+  await expect(journey).toContainText("May be skipped — this marketing template was selected earlier");
   await expect(journey).toContainText("media configured");
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await expect(journey).toContainText("Previewing unsaved configuration");
   await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
   await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
   await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
