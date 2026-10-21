@@ -224,6 +224,8 @@ test("Siew Siew #517: 'Package?' after verified 骨盆 enquiry selects both curr
 });
 
 test("Verified 9D promo image uses administrator-configured clinical wording without a content veto", async () => {
+  const priorTrust=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
   const prior = clinicConfig.automatedFollowUp;
   clinicConfig.automatedFollowUp={...prior,assessmentFirstPricingEnabled:true};
   try {
@@ -255,7 +257,8 @@ test("Verified 9D promo image uses administrator-configured clinical wording wit
     assert.equal(skipReason,null);
     assert.equal(media?.packages?.length,1);
     assert.equal(media.packages[0].caption,promotion.caption);
-  } finally { clinicConfig.automatedFollowUp=prior; }
+  } finally { clinicConfig.automatedFollowUp=prior;
+    clinicConfig.trustAdminConfiguredContent=priorTrust; }
 });
 
 
