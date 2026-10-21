@@ -58,6 +58,7 @@ const {
   isEarlyContextualAdEnquiry,
 } = require("./utils/resultMediaTrigger");
 const { isContextualAdServiceEnquiry } = require("./utils/customerEnquiryEvidence");
+const { resolveFixedAdFirstReply } = require("./utils/fixedAdFirstReply");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const {
@@ -931,6 +932,7 @@ async function processIncomingMessage(
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
+    let fixedAdFirstReply = null;
     // Treat a digit as a pricing choice only when it answers a recent,
     // assistant-authored numbered service menu in an active price thread.
     // This avoids Gemini timeout/fallback and spurious clinical reviews for "1".
@@ -990,12 +992,45 @@ async function processIncomingMessage(
       } catch (bookingContextErr) {
         console.warn(`Failed to load appointment state for contact ${contact.id}:`, bookingContextErr);
       }
+      fixedAdFirstReply = !keywordReason && !marketingStopQuestion
+        ? resolveFixedAdFirstReply({
+            config: clinicConfig.adFirstReply,
+            // Use the durable all-message first-turn evidence. The AI context
+            // filters failed/sticker rows and is not a reliable uniqueness test.
+            isFirstMessage: wasFirstMessage === true,
+            conversationHistory: history,
+            customerText: text,
+            language: mediaLanguage,
+            metaAdContext,
+            metaAdCreativeService,
+            keywordReason,
+            isTextMessage: !mediaType || mediaType === "text",
+            hasExistingBooking: Boolean(acceptedStaffOffer ||
+              bookingContext?.appointmentAt ||
+              bookingContext?.acceptedStaffOffer ||
+              /^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))),
+            services: clinicConfig.services,
+            serviceAliases: clinicConfig.serviceAliases,
+            onSkip: (reason) => {
+              if (metaAdContext) console.info(
+                "[Fixed ad first reply] decision=ai_fallback contact=" + contact.id +
+                " inbound=" + savedInbound.id + " reason=" + reason
+              );
+            },
+          }) : null;
       if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
         // model outcome. Price and media remain subject to downstream guards.
         aiReply = "我帮你核对这项疗程的最新配套价格 😊";
         priceQuery = true;
         details = { treatment: numberedPricingSelection.treatment };
+      } else if (fixedAdFirstReply) {
+        aiReply = fixedAdFirstReply.reply;
+        serviceQuery = fixedAdFirstReply.serviceQuery;
+        serviceQuerySource = fixedAdFirstReply.serviceQuerySource;
+        details = { treatment: fixedAdFirstReply.treatment };
+        console.info("[Fixed ad first reply] contact=" + contact.id +
+          " inbound=" + savedInbound.id + " treatment=" + fixedAdFirstReply.treatment);
       } else {
         const rawAiReply = await ai.getReply(replyHistory, {
           bookingContext,
@@ -1332,10 +1367,10 @@ async function processIncomingMessage(
               services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
             }) : null);
 
-    let reply = isFirstMessage && !flagged && !generateFirstIntro
+    let reply = isFirstMessage && !flagged && !generateFirstIntro && !fixedAdFirstReply
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
-    if (isFirstMessage && !flagged && generateFirstIntro) {
+    if (isFirstMessage && !flagged && generateFirstIntro && !fixedAdFirstReply) {
       const guardedIntro = preserveOriginalIntroFacts(clinicConfig.introMessage, aiReply);
       reply = guardedIntro.reply;
       if (guardedIntro.usedOriginalFallback) {
@@ -1468,7 +1503,10 @@ async function processIncomingMessage(
     // treatment enquiry omits an assessment invitation, append just one
     // invitation without replacing the answer or altering result-media intent.
     if (!flagged && !marketingStopQuestion &&
-        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        !fixedAdFirstReply) {
+      // A fixed reply is a staff-authored complete message; do not append a
+      // second sales question. Price/safety/billing guards still run normally.
       const invited = ensureFirstAssessmentInvitation({
         isFirstMessage, customerText: text, reply, flagged, language: mediaLanguage,
         serviceQuery, treatment: details?.treatment,

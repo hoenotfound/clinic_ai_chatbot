@@ -195,6 +195,18 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
+  adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
+    Array.isArray(v.replies) && v.replies.length <= 30 &&
+    new Set(v.replies.map(item => item?.service)).size === v.replies.length &&
+    v.replies.every(item =>
+      isPlainObject(item) && isNonEmptyString(item.service) &&
+      item.service.length <= 180 &&
+      isPlainObject(item.translations) &&
+      ["zh", "en", "ms"].every(language =>
+        typeof item.translations[language] === "string" &&
+        item.translations[language].length <= 1200
+      )
+    ),
   trustAdminConfiguredContent: (v) => typeof v === "boolean",
   promotions: (v) =>
     Array.isArray(v) &&
@@ -1107,6 +1119,30 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           `Follow-up targeting still references "${staleTarget}", which is not a configured service. Remap or remove that targeted follow-up before saving the service change.`,
         invalidKeys: ["automatedFollowUp"],
       };
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "adFirstReply") ||
+    Object.prototype.hasOwnProperty.call(updates, "services")
+  ) {
+    const adFirstReply = Object.prototype.hasOwnProperty.call(updates, "adFirstReply")
+      ? updates.adFirstReply : currentConfig.adFirstReply;
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services : currentConfig.services;
+    if (adFirstReply?.enabled === true) {
+      const knownServices = new Set((Array.isArray(services) ? services : [])
+        .map(item => String(item?.name || "").trim()).filter(Boolean));
+      const unknown = (Array.isArray(adFirstReply.replies) ? adFirstReply.replies : [])
+        .find(item => !knownServices.has(String(item?.service || "").trim()));
+      if (unknown) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Fixed Meta ad reply references an unavailable treatment: "${unknown.service}". Remap or remove it before enabling the feature or changing treatments.`,
+          invalidKeys: ["adFirstReply"],
+        };
+      }
     }
   }
 

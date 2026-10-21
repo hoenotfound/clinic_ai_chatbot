@@ -106,6 +106,7 @@ function harness({ failDelivery = false } = {}) {
     shouldGenerateLocalizedIntro: () => false,
     loadMetaAdReplyContext: async () => null,
     resolveMetaAdCreativeService: () => null,
+    resolveFixedAdFirstReply: () => null,
     ai: {
       getReply: async () => JSON.stringify({
         reply: "This needs checking.", outcome: "review_required",
