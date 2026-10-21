@@ -745,7 +745,7 @@ test("Structured 9D pricing is available in text while unapproved artwork remain
       wasPromoRecentlySent:async()=>false,hasUnconfirmedMediaDelivery:async()=>false,
     });
     assert.equal(media,null);
-    assert.equal(reason,"unverified_clinical_promo_copy");
+    assert.equal(reason,"promotion_manually_paused");
   } finally {
     clinicConfig.automatedFollowUp=old;
   }
