@@ -19,7 +19,7 @@ const {
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
 const { randomUUID, createHash } = require("node:crypto");
-const { promotionHasUnsafeClinicalCopy } = require("../utils/promotionClinicalCopyPolicy");
+const { isPromotionManuallyPaused } = require("../utils/promotionClinicalCopyPolicy");
 const {
   normalizeVoiceNotes, voiceNotesPresent, selectedVoiceNote,
   isVoiceAssetMetadataValid, validVoiceAssetKey, unsafeVoiceTranscript,
@@ -525,7 +525,7 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
   );
   if (matches.length !== 1) return null;
   const [promotion] = matches;
-  if (promotionHasUnsafeClinicalCopy(promotion)) return null;
+  if (isPromotionManuallyPaused(promotion)) return null;
 
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
@@ -627,7 +627,7 @@ function activePromotionFollowUpStillConfigured(
   if (matches.length !== 1) return false;
 
   const [promotion] = matches;
-  if (promotionHasUnsafeClinicalCopy(promotion)) return false;
+  if (isPromotionManuallyPaused(promotion)) return false;
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
     : [];
