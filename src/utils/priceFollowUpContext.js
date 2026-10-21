@@ -267,6 +267,56 @@ function resolveBookingResponsePriceService({
   return null;
 }
 
+// A customer can name ONE treatment, answer the bot's question about their
+// concerns, and then ask "what's the price?". The symptom answer is not a new
+// service choice. Carry the customer-authored choice across only this tightly
+// bounded, timestamped exchange. In particular, an ad/CRM label or a bot's
+// independent suggestion must never create the price authorization.
+function resolveAnsweredConcernPriceService({
+  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  if (!current || current.length > 90 || !hasExplicitPriceRequest(current) ||
+      hasClinicalMediaRisk(current) || TOPIC_CHANGE.test(current) ||
+      TOPIC_RESET.test(current) || BROAD_PRICE_QUESTION.test(current)) return null;
+  const candidates = serviceCandidates(services, serviceAliases);
+  if (findServicesInText(current, candidates).length) return null;
+  const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(turn => turn?.role === "user" || turn?.role === "assistant");
+  const userIndexes = turns.flatMap((turn, index) => turn.role === "user" ? [index] : []);
+  // Exactly one customer choice, one answer to an invited concern question
+  // and the CURRENT price question. Do not scan across older customer topics.
+  if (userIndexes.length !== 3 || userIndexes[2] !== turns.length - 1 ||
+      pricingMessageText(turns.at(-1)).trim() !== current) return null;
+  const [choiceIndex, concernIndex, priceIndex] = userIndexes;
+  if (!isRecentPricingThread(turns, choiceIndex, now) ||
+      turns.slice(choiceIndex).some(isVerifiedStaffTurn)) return null;
+  const choiceText = pricingMessageText(turns[choiceIndex]).trim();
+  const choice = safeServiceFromCustomer(choiceText, services, serviceAliases);
+  if (!choice || findServicesInText(choiceText, candidates).length !== 1 ||
+      !/(?:有兴趣|有興趣|感兴趣|感興趣|想了解|想知道|想问|想問|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(choiceText) ||
+      hasClinicalMediaRisk(choiceText)) return null;
+  const concern = pricingMessageText(turns[concernIndex]).trim();
+  if (!concern || concern.length > 75 || hasExplicitPriceRequest(concern) ||
+      hasClinicalMediaRisk(concern) || TOPIC_CHANGE.test(concern) ||
+      TOPIC_RESET.test(concern) || findServicesInText(concern, candidates).length ||
+      !/(?:紧致|緊緻|下颚线|下顎線|轮廓|輪廓|法令纹|法令紋|咬肌|双下巴|雙下巴|脸型|臉型|小腹|腰臀|体态|體態|firmness|jawline|contour|nasolabial|pelvis)/iu.test(concern)) return null;
+  const beforeConcern = turns.slice(choiceIndex + 1, concernIndex);
+  const invitation = beforeConcern.at(-1);
+  if (!invitation || invitation.role !== "assistant" ||
+      !/(?:在意|想改善|主要|哪一|哪个|哪個|哪块|哪塊|部位|方面|concern|which\s+(?:part|area)|what\s+(?:area|concern))/iu.test(pricingMessageText(invitation)) ||
+      !beforeConcern.some(turn => turn.role === "assistant" &&
+        findServicesInText(pricingMessageText(turn), candidates).includes(choice.name))) return null;
+  const afterConcern = turns.slice(concernIndex + 1, priceIndex);
+  if (afterConcern.length !== 1 || afterConcern[0].role !== "assistant") return null;
+  const acknowledgedServices = [...new Set(findServicesInText(
+    pricingMessageText(afterConcern[0]), candidates
+  ))];
+  return acknowledgedServices.length === 1 && acknowledgedServices[0] === choice.name
+    ? choice : null;
+}
+
 // Narrow legacy-safe case: the current amount question immediately follows
 // the FIRST customer-authored treatment selection, with only recent automated
 // assistant replies/photos between them. Unlike the extended assessment thread,
@@ -376,4 +426,5 @@ module.exports = {
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
   resolveRecentFirstTreatmentPriceService, resolveBookingResponsePriceService,
+  resolveAnsweredConcernPriceService,
 };
