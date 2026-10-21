@@ -2136,8 +2136,8 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
   assert.equal(invalid.ok,false);
   const settings=read("portal-frontend/src/pages/Settings.jsx");
   assert.match(settings,/Pause automatic promotion graphics and promotion-based follow-ups/u);
-  assert.match(settings,/pricing reminders, and promotion-specific automated follow-up text and attachments/u);
-  assert.match(settings,/Ordinary general follow-ups and verified customer-requested price replies are not blocked/u);
+  assert.match(settings,/This switch is controlled by clinic staff/u);
+  assert.match(settings,/without applying an AI clinical-copy censor/u);
   assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
   assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
 });
@@ -2179,7 +2179,7 @@ test("follow-up voice settings require approved, safe, clinic-owned language ass
   assert.equal(check({ voiceNotes: { en: { ...note, key: "messages/another-contact/voice.ogg" } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, approved: false } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Only RM488 today!" } } }).ok, false);
-  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, false);
+  assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, true);
   assert.equal(check({ voiceNotes: { de: note } }).ok, false);
   } finally {
     if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
