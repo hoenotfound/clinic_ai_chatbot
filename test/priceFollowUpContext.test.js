@@ -333,3 +333,32 @@ test("compound price and downtime question has an immediate, cautious answer", a
   assert.match(quote.reply, /修复期|恢复时间/u);
   assert.match(quote.reply, /不能保证完全没有恢复期/u);
 });
+
+
+test("empty single-service price headings are suppressed in Chinese and English", () => {
+  const unpriced = [
+    ["9D 逆龄抗衰的价格是：\n\n目前有优惠", "zh"],
+    ["3D 小颜术价钱：\n\n可以预约", "zh"],
+    ["The price for 9D is:\n\nWe have a first trial", "en"],
+    ["3D regular price:\n\nCurrently on promotion", "en"],
+  ];
+  for (const [reply, language] of unpriced) {
+    const checked = guardUnfulfilledPriceQuote(reply, language);
+    assert.equal(checked.changed, true, reply);
+    assert.doesNotMatch(checked.reply, /\b(?:RM|MYR)\s*\d+/iu);
+    assert.doesNotMatch(checked.reply, /Regular Price|价格是：|价钱：/iu);
+    assert.doesNotMatch(checked.reply, /两项|兩項|both prices/iu,
+      "a one-service question should not claim the customer asked for two");
+  }
+  for (const quoted of [
+    "9D 逆龄抗衰的价格是：RM488",
+    "The price for 9D is: RM488",
+    "3D 小颜术的价格是 RM488",
+  ]) assert.equal(guardUnfulfilledPriceQuote(quoted,"zh").changed,false,quoted);
+  assert.equal(guardUnfulfilledPriceQuote(
+    "好的呀～给你参考一下这两项的 Regular Price 哦：\n\n暂未找到核实的价格","zh"
+  ).changed,true);
+  assert.equal(guardUnfulfilledPriceQuote(
+    "你好，欢迎了解 9D 逆龄抗衰，我们提供中医师评估 😊","zh"
+  ).changed,false);
+});
