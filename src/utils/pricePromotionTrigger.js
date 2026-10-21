@@ -12,7 +12,7 @@ const {
   getPricePromotionBundle,
 } = require("./activePromotion");
 const { mediaVariants, resolveLocalizedMedia } = require("./mediaLocalization");
-const { isPromotionManuallyPaused } = require("./promotionClinicalCopyPolicy");
+const { configuredPromotionCopyBlocked, isPromotionManuallyPaused } = require("./promotionClinicalCopyPolicy");
 
 /**
  * Resolves whether the current AI reply is allowed to trigger promotional media.
@@ -223,8 +223,10 @@ async function resolvePricePromotionForReply({
   // The administrator's explicit Pause is the only promotion-content
   // veto. Clinic-authored captions and image artwork are sent as configured;
   // service/price authority, Meta policy and duplicate delivery remain gated.
-  if (isPromotionManuallyPaused(bundle.promotion))
-    return skip("promotion_manually_paused");
+  if (configuredPromotionCopyBlocked(
+    bundle.promotion, clinicConfig.trustAdminConfiguredContent === true
+  )) return skip(isPromotionManuallyPaused(bundle.promotion)
+    ? "promotion_manually_paused" : "unverified_clinical_promo_copy");
 
   // Missing verification must never mean permission to retry a possibly
   // accepted image. Keep the AI text reply independent of this optional send.
