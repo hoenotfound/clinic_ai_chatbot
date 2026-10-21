@@ -612,7 +612,7 @@ async function saveIfStillEligible({
     numericStep < 1 ||
     numericStep > MAX_FOLLOW_UP_STEPS ||
     !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode) ||
-    (normalizedMediaKey && !["video/mp4", "audio/ogg"].includes(normalizedMediaMimeType)) ||
+    (normalizedMediaKey && !["video/mp4", "audio/ogg", "audio/mpeg"].includes(normalizedMediaMimeType)) ||
     (!normalizedMediaKey && normalizedMediaMimeType)
   ) {
     throw new TypeError("Invalid automated follow-up step or delay.");
@@ -1195,6 +1195,47 @@ async function isClaimStillEligible({ messageId, contactId }) {
   return result.rows[0]?.eligible === true;
 }
 
+/**
+ * Convert an unaccepted social MP3 follow-up into the pre-reviewed text
+ * fallback. Only call this after a definitive proof the audio Send API did
+ * not deliver any message (upload failure or explicit 4xx rejection).
+ * Use the same message row/step, preventing duplicate automated attempts.
+ */
+async function replaceUnsentSocialVoiceWithText({
+  messageId, contactId, content, messageMode = "fixed",
+}) {
+  if (!Number.isSafeInteger(Number(messageId)) || Number(messageId) < 1 ||
+      !Number.isSafeInteger(Number(contactId)) || Number(contactId) < 1 ||
+      typeof content !== "string" || !content.trim() || content.length > 1000 ||
+      !FOLLOW_UP_MESSAGE_MODES.has(messageMode)) {
+    throw new TypeError("Invalid social voice text fallback.");
+  }
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     UPDATE messages m
+     SET content = $3, media_key = NULL, media_mime_type = NULL,
+         automated_follow_up_message_mode = $4
+     FROM contacts c, conversation_lock
+     WHERE m.id = $2 AND m.contact_id = $1
+       AND c.id = m.contact_id
+       AND c.channel IN ('facebook', 'instagram')
+       AND m.is_automated_follow_up = true
+       AND m.automated_follow_up_for_message_id IS NOT NULL
+       AND m.media_mime_type = 'audio/mpeg'
+       AND m.media_key IS NOT NULL
+       AND m.delivery_status IS NULL
+       AND m.whatsapp_message_id IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM social_provider_message_ids a WHERE a.message_id = m.id
+       )
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [Number(contactId), Number(messageId), content, messageMode]
+  );
+  return result.rows[0] || null;
+}
+
 async function discardUnsentClaim({ messageId, contactId }) {
   const numericMessageId = Number(messageId);
   const numericContactId = Number(contactId);
@@ -1402,6 +1443,7 @@ module.exports = {
   saveIfStillEligible,
   isClaimStillEligible,
   discardUnsentClaim,
+  replaceUnsentSocialVoiceWithText,
   saveSocialImageCompanion,
   saveSocialVideoCompanion,
   discardUnsentSocialImageCompanion,

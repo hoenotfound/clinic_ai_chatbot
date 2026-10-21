@@ -760,7 +760,7 @@ async function getMessageForRetry(contactId, messageId) {
     key &&
     ((row.whatsapp_template?.mediaFormat === "IMAGE" ||
       row.whatsapp_template?.mediaFormat === "VIDEO") ||
-      (row.is_automated_follow_up === true && mimeType === "audio/ogg") ||
+      (row.is_automated_follow_up === true && ["audio/ogg", "audio/mpeg"].includes(mimeType)) ||
       (mimeType && !mimeType.startsWith("image/") && !mimeType.startsWith("audio/")))
   ) {
     // All media-header templates retry from their durable R2 key, including

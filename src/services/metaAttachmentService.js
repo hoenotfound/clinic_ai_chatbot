@@ -1,6 +1,10 @@
 const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
 
 const GRAPH_API_VERSION = "v26.0";
+// Hard deadlines keep one stalled Meta request from blocking the sequential
+// follow-up worker indefinitely. An aborted customer-facing send is UNKNOWN.
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 12_000;
+const ATTACHMENT_SEND_TIMEOUT_MS = 12_000;
 
 function channelLabel(channel) {
   if (channel === "facebook") return "Facebook Messenger";
@@ -33,7 +37,7 @@ function extractErrorText(data, fallback) {
   return data?.error?.error_user_msg || data?.error?.message || data?.message || fallback;
 }
 
-async function uploadAttachment(channel, type, buffer, mimeType, filename) {
+async function uploadAttachment(channel, type, buffer, mimeType, filename, options = {}) {
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
@@ -53,6 +57,11 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename) {
       method: "POST",
       headers: { Authorization: `Bearer ${config.token}` },
       body: form,
+      // Don't impose the new 12s voice deadline on unrelated staff image/video
+      // uploads; keep the historical transport behavior for those formats.
+      ...(options.autoFollowUp === true && type === "audio"
+        ? { signal: AbortSignal.timeout(ATTACHMENT_UPLOAD_TIMEOUT_MS) }
+        : {}),
     });
     const raw = await response.text();
     let data = {};
@@ -99,6 +108,7 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
       success: false,
       wamid: null,
       externalMessageId: null,
+      ...(options.autoFollowUp === true && type === "audio" ? { audioNotDelivered: true } : {}),
       error: `${label} is not configured on this server.`,
     };
   }
@@ -126,6 +136,9 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      ...(options.autoFollowUp === true && type === "audio"
+        ? { signal: AbortSignal.timeout(ATTACHMENT_SEND_TIMEOUT_MS) }
+        : {}),
     });
     const raw = await response.text();
     let data = {};
@@ -138,17 +151,38 @@ async function postAttachment(channel, recipientId, type, payload, logLabel, opt
     if (!response.ok) {
       const error = extractErrorText(data, raw || `${label} returned HTTP ${response.status}.`);
       console.error(`${label} ${logLabel} failed:`, response.status, error);
-      return { success: false, wamid: null, externalMessageId: null, error };
+      // A 5xx response from the message-send endpoint is not proof that
+      // Meta rejected the message. Do not label automated voice as definitely
+      // failed or encourage an unsafe duplicate recording.
+      if (options.autoFollowUp === true && type === "audio" && response.status >= 500) {
+        return { success: false, unknown: true, ambiguous: true,
+          wamid: null, externalMessageId: null,
+          error: `${label} voice-note delivery is unconfirmed after Meta HTTP ${response.status}. Check Meta before attempting a new send.` };
+      }
+      return { success: false, wamid: null, externalMessageId: null,
+        ...(options.autoFollowUp === true && type === "audio"
+          ? { audioNotDelivered: true } : {}), error };
     }
 
+    const externalMessageId = data?.message_id || data?.id || null;
+    if (!externalMessageId && options.autoFollowUp === true && type === "audio") {
+      return { success: false, unknown: true, ambiguous: true,
+        wamid: null, externalMessageId: null,
+        error: `${label} accepted the voice-note request without a message ID. Delivery is unconfirmed; check Meta before attempting a new send.` };
+    }
     return {
       success: true,
       wamid: null,
-      externalMessageId: data?.message_id || data?.id || null,
+      externalMessageId,
       error: null,
     };
   } catch (err) {
     console.error(`${label} ${logLabel} threw an error:`, err);
+    if (options.autoFollowUp === true && type === "audio") {
+      return { success: false, unknown: true, ambiguous: true,
+        wamid: null, externalMessageId: null,
+        error: `${label} voice-note delivery is unconfirmed after a network error. Check Meta before attempting a new send.` };
+    }
     return {
       success: false,
       wamid: null,
@@ -190,12 +224,15 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
     };
   }
 
-  const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename);
+  const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename, options);
   if (!uploaded.success) {
+    // Attachment upload cannot deliver a customer message. The subsequent
+    // Send API was never contacted, even if the upload itself timed out.
     return {
       success: false,
       wamid: null,
       externalMessageId: null,
+      ...(options.autoFollowUp === true && type === "audio" ? { audioNotDelivered: true } : {}),
       error: uploaded.error,
     };
   }

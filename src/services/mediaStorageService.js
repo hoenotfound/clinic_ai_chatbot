@@ -939,6 +939,35 @@ async function pruneStaleFollowUpConfigVideos({
       Prefix: prefix,
       ContinuationToken: continuationToken,
     }));
+    // A Messenger/Instagram history row persists the MP3 playback key, but
+    // the approved SHA-256 fingerprint lives on the linked original OGG.
+    // Retain that OGG even after the clinic replaces the current recording.
+    // Inspect every stale OGG candidate if historical MP3 keys are referenced;
+    // on any HEAD failure, fail closed rather than deleting approval evidence.
+    const retainedMp3Keys = new Set([...keep].filter(key =>
+      key.startsWith(prefix) && key.endsWith(".mp3")
+    ));
+    if (retainedMp3Keys.size > 0) {
+      const oggCandidates = (page.Contents || [])
+        .filter(obj => isStaleTemporaryObject(obj, { now, olderThanMs }))
+        .map(obj => obj?.Key)
+        .filter(key => key?.startsWith(prefix) &&
+          key.endsWith(".ogg") && !keep.has(key));
+      try {
+        for (let offset = 0; offset < oggCandidates.length; offset += 8) {
+          const related = await Promise.all(oggCandidates.slice(offset, offset + 8).map(async key => {
+            const info = await getSharedFollowUpMediaInfo(key);
+            return info.mimeType === "audio/ogg" &&
+              retainedMp3Keys.has(String(info.metadata?.voicepreviewkey || ""))
+              ? key : null;
+          }));
+          for (const key of related) if (key) keep.add(key);
+        }
+      } catch (err) {
+        console.warn("[R2 follow-up media] Cannot verify social voice approval links; skipping unsafe prune:", err?.message);
+        return deleted;
+      }
+    }
     const staleKeys = (page.Contents || [])
       .filter((object) => isStaleTemporaryObject(object, { now, olderThanMs }))
       .map((object) => object?.Key)
