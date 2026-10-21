@@ -2137,7 +2137,7 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
   const settings=read("portal-frontend/src/pages/Settings.jsx");
   assert.match(settings,/Pause automatic promotion graphics and promotion-based follow-ups/u);
   assert.match(settings,/This switch is controlled by clinic staff/u);
-  assert.match(settings,/without applying an AI clinical-copy censor/u);
+  assert.match(settings,/When unchecked, the chatbot follows this clinic.s Trust content setting/u);
   assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
   assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
 });
