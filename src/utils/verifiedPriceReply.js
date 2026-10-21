@@ -526,7 +526,8 @@ const UNFULFILLED_MULTIPLE_PRICES =
 // adjacent price section instead of accepting any RM amount anywhere.
 const VISIBLE_MONETARY_AMOUNT =
   /\b(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?\b|(?:[价價](?:格|钱|錢)|收费|收費|费用|費用|harga|prices?|cost|fee)\s*(?:是|为|為|is|are)?\s*[:：]?\s*[1-9]\d{2,5}(?!\d)/giu;
-const VOUCHER_LABEL = /(?:优惠券|優惠券|折扣券|抵用券|voucher|coupon|baucar)/iu;
+const VOUCHER_PREFIX = /(?:优惠券|優惠券|折扣券|抵用券|voucher|coupon|baucar)\s*(?:面额|面額|价值|價值|worth|of)?\s*[:：]?\s*$/iu;
+const VOUCHER_SUFFIX = /^\s*(?:的)?\s*(?:优惠券|優惠券|折扣券|抵用券|voucher|coupon|baucar|off\b)/iu;
 const NAMED_PRICE_TREATMENT = /(?:3D|9D|骨盆(?:调理|調理)?)/giu;
 const PRICE_HEADING_PATTERN = new RegExp(
   "(?:" + UNFULFILLED_PRICE_HEADING.source + ")|(?:" +
@@ -544,7 +545,7 @@ function hasVerifiedAmountForHeading(section, heading) {
     // including "RM100 优惠券" and "voucher RM100".
     const localBefore = before.split(/\n/u).at(-1);
     const localAfter = after.split(/\n/u)[0];
-    if (VOUCHER_LABEL.test(localBefore) || VOUCHER_LABEL.test(localAfter)) return false;
+    if (VOUCHER_PREFIX.test(localBefore) || VOUCHER_SUFFIX.test(localAfter)) return false;
     if (headedServices.length === 1) {
       // "9D price: 3D RM488" does NOT answer the 9D enquiry.
       const line = section.slice(section.lastIndexOf("\n", match.index - 1) + 1,
