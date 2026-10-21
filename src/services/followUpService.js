@@ -1609,30 +1609,33 @@ async function sendCandidate(candidate) {
   let durableVoiceKey = effectiveVoice
     ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
     : null;
-  // Re-check the exact message that will be delivered, after price and media
-  // fallbacks can rewrite its wording. Voice uses its authenticated transcript
-  // rather than the unused text caption. Record a skip atomically so an unchanged candidate
-  // does not regenerate the same suppressed message on every worker sweep.
-  const finalOutboundCopy = effectiveVoice ? effectiveVoice.transcript : followUpMessage;
-  let copyViolation = followUpAiService.hasUnsafeClinicalFollowUpClaim(finalOutboundCopy)
+  // Every payload that can reach Meta must pass AFTER the last rewrite.
+  // A social voice note may fall back to its caption only on a confirmed
+  // pre-delivery audio rejection. Validate BOTH variants now so that path
+  // cannot bypass the safety or unanswered-booking check.
+  const outboundVariants = effectiveVoice
+    ? [effectiveVoice.transcript, followUpMessage]
+    : [followUpMessage];
+  let copyViolation = outboundVariants.some(copy =>
+    followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
     ? "unsafe_clinical_promise" : null;
-  if (!copyViolation) {
-    const potentiallyRepeated = followUpAiService.isSchedulingNudge(finalOutboundCopy);
-    if (potentiallyRepeated) {
-      try {
-        const safetyContext = await followUpRepo.getAiFollowUpContext({
-          contactId: candidate.contact_id,
-        });
+  if (!copyViolation && outboundVariants.some(copy =>
+      followUpAiService.isSchedulingNudge(copy))) {
+    try {
+      const safetyContext = await followUpRepo.getAiFollowUpContext({
+        contactId: candidate.contact_id,
+      });
+      for (const copy of outboundVariants) {
         copyViolation = followUpAiService.followUpCopyViolation(
-          finalOutboundCopy, safetyContext?.messages || []
+          copy, safetyContext?.messages || []
         );
-      } catch (err) {
-        // Only suppress questionable reminders when recent conversation
-        // evidence cannot be loaded; never block essential non-reminder text.
-        if (followUpAiService.isSchedulingNudge(finalOutboundCopy))
-          copyViolation = "recent_conversation_unavailable";
-        console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
+        if (copyViolation) break;
       }
+    } catch (err) {
+      // Fail closed only for potential duplicate reminders if context cannot
+      // be loaded. Do not block unrelated useful informational follow-ups.
+      copyViolation = "recent_conversation_unavailable";
+      console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
     }
   }
   if (copyViolation) {
