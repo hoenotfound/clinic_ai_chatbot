@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const clinicConfig = require("../src/config/clinicConfig");
 const { resolveShadowPriceException } = require("../src/utils/shadowPriceException");
+const { resolveAiPricingDecision } = require("../src/utils/aiPricingIntentDecision");
+const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("../src/utils/pricePromotionTrigger");
 const {
   wasPromoRecentlySentWithExecutor, wasMediaRecentlySentWithExecutor,
@@ -396,4 +398,66 @@ test("Shadow: 9D customer choice survives one bot-invited concern answer", () =>
     ...args, customerText: "需修复期？",
     conversationHistory: alternate(6, turn("user", "需修复期？", 0)),
   }), null, "recovery question alone does not authorize a price");
+});
+
+test("9D context is retained across short administrative and concern replies in both modes", () => {
+  const offers=[{
+    name:"9D First Trial",linkedService:"9D 逆龄抗衰",sendOnPriceQuery:true,
+    imageUrl:"https://example.test/9d",caption:"现在只需 RM488",
+    validFrom:"2000-01-01",validUntil:"2999-12-31",
+  }];
+  const svcs=[{name:"3D 小颜术"},{name:"9D 逆龄抗衰"}];
+  const aliases=[{alias:"9D",officialService:"9D 逆龄抗衰"},
+    {alias:"3D",officialService:"3D 小颜术"}];
+  const chat=[
+    turn("user","Hi～想了解 Neutro Sense TCM 9D 护理",8_400_000),
+    turn("assistant","9D 逆龄抗衰，想改善哪个部位呢？",8_395_000),
+    turn("user","location ?",8_300_000),
+    turn("assistant","我们在 PJ，你主要在意哪方面？",8_295_000),
+    turn("user","紧致和下颚线",90_000),
+    turn("assistant","评估后才可以确认效果，weekdays 还是 weekends？",88_000),
+    turn("user","请问是不是什么价钱呢",0),
+  ];
+  const args={customerText:"请问是不是什么价钱呢",
+    conversationHistory:chat,services:svcs,serviceAliases:aliases,
+    promotions:offers,now};
+  const shadow=resolveShadowPriceException(args);
+  const enabled=resolveAiPricingDecision({...args,priceQuery:false});
+  assert.equal(shadow?.treatment,"9D 逆龄抗衰");
+  assert.equal(enabled?.treatment,"9D 逆龄抗衰");
+  assert.deepEqual(enabled?.prices.map(x=>x.price),["RM488"]);
+  assert.equal(resolveApprovedPricingAssessment({
+    mode:"shadow",shadowException:shadow,customerText:args.customerText,
+    conversationHistory:chat,services:svcs,serviceAliases:aliases,
+  }).reason,"approved");
+  assert.equal(resolveApprovedPricingAssessment({
+    mode:"enabled",aiDecision:enabled,customerText:args.customerText,
+    conversationHistory:chat,services:svcs,serviceAliases:aliases,
+  }).reason,"approved");
+  const bothChat=[...chat,
+    turn("assistant","请问你想了解哪一项疗程的价格呢？",0),
+    turn("user","两项都想要了解😆",0),
+  ];
+  const bothArgs={...args,customerText:"两项都想要了解😆",conversationHistory:bothChat};
+  for(const result of [
+    resolveShadowPriceException(bothArgs),
+    resolveAiPricingDecision({...bothArgs,priceQuery:false}),
+  ]){
+    assert.equal(result?.source,"customer_concern_both");
+    assert.equal(result?.treatment,"9D 逆龄抗衰");
+    const out=ensureVerifiedPriceReply({
+      ...bothArgs,reply:"给你两项 Regular Price：",
+      treatment:result.treatment,pricingDecision:result,language:"zh",
+    });
+    assert.match(out.reply,/9D.*RM488/su);
+    assert.match(out.reply,/两项/u);
+    assert.doesNotMatch(out.reply,/3D 小颜术/u);
+  }
+  const staff=chat.map((x,i)=>i===5?
+    turn("assistant","评估后才能确认效果",88_000,true):x);
+  assert.equal(resolveShadowPriceException({...args,conversationHistory:staff}),null);
+  assert.equal(resolveAiPricingDecision({...args,conversationHistory:staff}),null);
+  const stale=chat.map((x,i)=>i===0?turn("user",x.content,11_000_000):x);
+  assert.equal(resolveShadowPriceException({...args,conversationHistory:stale}),null);
+  assert.equal(resolveAiPricingDecision({...args,conversationHistory:stale}),null);
 });
