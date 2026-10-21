@@ -2359,6 +2359,7 @@ test("Extended WhatsApp activity explains accepted versus unknown and links safe
   await expect(activity).toContainText("Meta reported this attempt as billable");
   await expect(activity).toContainText("Marketing permission not recorded");
   await expect(activity).toContainText("Customer opted out");
+  await expect(activity).toContainText("Marketing permission not recorded");
   const links = activity.getByRole("link", { name: "Open conversation" });
   await expect(links).toHaveCount(5);
   await expect(links.first()).toHaveAttribute("href", "/inbox?contact=486");
@@ -2368,6 +2369,27 @@ test("Extended WhatsApp activity explains accepted versus unknown and links safe
   await details.click();
   await expect(activity).toContainText("provider receipt unknown");
   await expectNoHorizontalPageOverflow(page);
+});
+
+test("Extended eligibility explains pause, low interest and missing distinct language templates", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true,
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: true,
+      recentAttempts: [],
+      contactDetails: [
+        { contact_id: 12, eligibility_reason: "customer_asked_to_decide_later" },
+        { contact_id: 13, eligibility_reason: "low_interest_extra_followup" },
+        { contact_id: 14, eligibility_reason: "no_distinct_approved_template_in_customer_language" },
+      ],
+    },
+  });
+  await page.goto("/tools");
+  await page.getByRole("tab", { name: "Activity" }).click();
+  const area = page.locator("#follow-up-template-activity");
+  await expect(area).toContainText("Customer requested more time");
+  await expect(area).toContainText("Additional reminder intentionally skipped");
+  await expect(area).toContainText("No distinct approved template in customer's language");
+  await expect(area.getByRole("link", { name: "Open conversation" })).toHaveCount(3);
 });
 
 test("Extended follow-up activity remains safe when provider status is unrecognized", async ({ page }) => {
