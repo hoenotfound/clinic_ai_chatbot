@@ -2422,8 +2422,8 @@ test("Follow-up readiness verifies approved fallback version, billing safeguards
     route.fulfill({ status: 200, contentType: "application/json",
       body: JSON.stringify({ templates: [{ ...approvedText, status: "REJECTED", sendable: false }] }) }));
   await overview.getByRole("button", { name: "Recheck readiness" }).click();
-  await expect(extended).toContainText("Partially available");
-  await expect(extended).toContainText("unsupported or missing required media");
+  await expect(extended).toContainText("Needs setup");
+  await expect(extended).toContainText("No configured language/template combination is currently usable");
   await expect(overview.getByLabel("Overall follow-up readiness: Needs attention")).toBeVisible();
 });
 
@@ -2535,11 +2535,16 @@ test("Unified follow-up journey edits regular and extended steps without sending
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Customer follow-up journey");
   await expect(journey).toContainText("After 24 hours · WhatsApp templates");
+  await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
+    .getByText("Enabled", { exact: true })).toBeVisible();
+  await expect(journey).not.toContainText("Enabled in draft setup");
   await expect(journey).toContainText("Default template: clinic_text");
   await expect(journey).toContainText("May be skipped — this marketing template was selected earlier");
   await expect(journey).toContainText("media configured");
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
+  await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
+    .getByText("Enabled", { exact: true })).toBeVisible();
   await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
   await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
   await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
@@ -2563,6 +2568,9 @@ test("Unified follow-up journey shows extended pause and missing template withou
   await page.goto("/tools");
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Extended follow-ups paused");
+  await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
+    .getByText("Paused", { exact: true })).toBeVisible();
+  await expect(journey).not.toContainText("Paused in draft setup");
   await expect(journey).toContainText("No default template selected");
   await expect(journey).toContainText("possible attempt, not a scheduled guarantee");
 });
@@ -2652,6 +2660,204 @@ test("Extended follow-up activity remains safe when provider status is unrecogni
   await expect(activity).toContainText("Review the saved contact record");
   await expect(activity.getByRole("button", { name: /retry|send/i })).toHaveCount(0);
   await expect(activity.getByRole("link", { name: "Open conversation" })).toHaveCount(2);
+});
+
+test("Follow-up readiness reports sending blocked when normal follow-ups are paused but extended remains enabled", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: false, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    followUpStatus: {
+      enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
+      automaticRepliesEnabled: true, freeOnlyGate: { status: "idle" },
+      billingSafety: { since_switch: 0 },
+    },
+    templateCatalog: { templates: [], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await expect(overview.getByLabel("Overall follow-up readiness: Sending blocked")).toBeVisible();
+  const normal = overview.getByRole("heading", { name: "24-hour follow-ups" }).locator("..").locator("..");
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(normal).toContainText("Paused");
+  await expect(extended).toContainText("Sending blocked");
+  await expect(overview).toContainText("Enable and save normal follow-ups first.");
+});
+
+test("Follow-up readiness Recheck forces a fresh Meta catalog and reflects changed approval", async ({ page }) => {
+  const approvedTemplates = ["zh_CN", "en_US", "ms"].map(language => ({
+    name: "clinic_text", language, status: "APPROVED", category: "MARKETING",
+    sendable: true, header: { format: "TEXT" }, body: { text: "Follow-up" }, variableFields: [],
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+        slotsHours: [26], templateRules: [] },
+    } },
+    followUpStatus: {
+      automaticRepliesEnabled: true, enabledOnServer: true, enabledInTools: true,
+      freeOnlyEnabled: false, sevenDayVerified: false, periodMaxHours: 72,
+      billingSafety: { since_switch: 0 }, freeOnlyGate: { status: "idle" },
+    },
+    templateCatalog: { templates: approvedTemplates, reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Active");
+
+  const requests = [];
+  await page.route("**/api/config/automated-follow-up/template-catalog**", route => {
+    requests.push(new URL(route.request().url()).searchParams.get("refresh"));
+    return route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ templates: approvedTemplates.filter(t => t.language !== "ms"), reusableMedia: [] }),
+    });
+  });
+  await overview.getByRole("button", { name: "Recheck readiness" }).click();
+  await expect(extended).toContainText("Partially available");
+  await expect(extended).toContainText("ms: clinic_text");
+  expect(requests).toContain("true");
+});
+
+test("Follow-up readiness respects assessment-first blocking of automatic promotion images", async ({ page }) => {
+  const templates = ["zh_CN", "en_US", "ms"].map(language => ({
+    name: "ns_fu_pricing_graphic", language, status: "APPROVED", category: "MARKETING",
+    sendable: true, header: { format: "IMAGE" }, body: { text: "Offer {{1}}" },
+    variableFields: [{ component: "body", index: 1 }],
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, assessmentFirstPricingEnabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+        slotsHours: [26], templateRules: [
+          { slotHours: 26, serviceName: "*", templateName: "ns_fu_pricing_graphic" },
+        ] },
+    } },
+    followUpStatus: {
+      automaticRepliesEnabled: true, enabledOnServer: true, enabledInTools: true,
+      freeOnlyEnabled: false, freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+    },
+    templateCatalog: { templates, reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Needs setup");
+  await expect(extended).toContainText("unavailable with assessment-first pricing");
+  await expect(extended).not.toContainText("Active");
+});
+
+test("Follow-up readiness treats automatic promotion media as conditional, not verified", async ({ page }) => {
+  const templates = ["zh_CN", "en_US", "ms"].map(language => ({
+    name: "ns_fu_meridian_gift", language, status: "APPROVED", category: "MARKETING",
+    sendable: true, header: { format: "IMAGE" }, body: { text: "Gift {{1}}" },
+    variableFields: [{ component: "body", index: 1 }],
+  }));
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, assessmentFirstPricingEnabled: false, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+        slotsHours: [26], templateRules: [
+          { slotHours: 26, serviceName: "*", templateName: "ns_fu_meridian_gift" },
+        ] },
+    } },
+    followUpStatus: {
+      automaticRepliesEnabled: true, enabledOnServer: true, enabledInTools: true,
+      freeOnlyEnabled: false, freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+    },
+    templateCatalog: { templates, reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Needs verification");
+  await expect(extended).toContainText("unambiguous, eligible image");
+});
+
+test("Follow-up readiness does not accept explicit media on an automatic promotion template", async ({ page }) => {
+  const template = {
+    name: "ns_fu_pricing_graphic", language: "zh_CN", status: "APPROVED", category: "MARKETING",
+    sendable: true, header: { format: "IMAGE" }, body: { text: "Offer {{1}}" },
+    variableFields: [{ component: "body", index: 1 }],
+  };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, assessmentFirstPricingEnabled: false, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [
+          { slotHours: 26, serviceName: "*", templateName: "ns_fu_pricing_graphic",
+            mediaKey: "clients/test-clinic/messages/follow-up-config/image.jpg" },
+        ] },
+    } },
+    followUpStatus: {
+      automaticRepliesEnabled: true, enabledOnServer: true, enabledInTools: true,
+      freeOnlyEnabled: false, freeOnlyGate: { status: "idle" }, billingSafety: { since_switch: 0 },
+    },
+    templateCatalog: { templates: [template], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Needs setup");
+  await expect(extended).toContainText("cannot override automatic promotion media");
+});
+
+test("Unified timeline shows sending blocked when saved or draft regular follow-ups are off", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: false, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: value => writes.push(value),
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
+  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  await expect(extended).not.toContainText("Enabled in draft setup");
+
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await expect(journey).toContainText("Previewing unsaved configuration");
+  // The unsaved parent switch has not enabled extended sending on the server.
+  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(0);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Unified timeline does not show Enabled when the parent switch is disabled in a draft", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: value => writes.push(value),
+  });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
+  await expect(extended.getByText("Enabled", { exact: true })).toBeVisible();
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await expect(journey).toContainText("Previewing unsaved configuration");
+  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(0);
 });
 
 test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
