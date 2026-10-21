@@ -111,6 +111,11 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("我对9D逆龄抗衰有兴趣，可以跟进我，有优惠也发我看看"), true);
   assert.equal(isStandardAdPrefill("Hi, I'm interested in this"), true);
   assert.equal(isStandardAdPrefill("I am interested in 3D 小颜术"), true);
+  assert.equal(isStandardAdPrefill("I'm interested in 9D and want to know the process"), false);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D dan nak tahu cara rawatan"), false);
+  assert.equal(isStandardAdPrefill("Saya nak tahu tentang 9D"), true);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D"), true);
+  assert.equal(isStandardAdPrefill("I am interested in 9D"), true);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，不过要多少钱？"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣\n我要退款"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
