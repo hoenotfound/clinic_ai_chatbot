@@ -22,7 +22,7 @@ const { randomUUID, createHash } = require("node:crypto");
 const { promotionHasUnsafeClinicalCopy } = require("../utils/promotionClinicalCopyPolicy");
 const {
   normalizeVoiceNotes, voiceNotesPresent, selectedVoiceNote,
-  isVoiceAssetMetadataValid, validVoiceAssetKey,
+  isVoiceAssetMetadataValid, validVoiceAssetKey, unsafeVoiceTranscript,
 } = require("../utils/followUpVoicePolicy");
 const channelMessaging = require("./channelMessagingService");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
@@ -1131,7 +1131,8 @@ function enforceAssessmentFirstFollowUpCopy({
 // Policy denials without a Meta provider request are not delivery failures.
 // Ambiguous one-shot reservations and programming/context errors require staff review.
 async function verifiedVoiceMedia(key, note, language) {
-  if (!validVoiceAssetKey(key, "ogg", mediaStorage) ||
+  if (unsafeVoiceTranscript(note?.transcript) ||
+      !validVoiceAssetKey(key, "ogg", mediaStorage) ||
       !mediaStorage.isSharedFollowUpConfigKey(key)) return false;
   const info = await mediaStorage.getSharedFollowUpMediaInfo(key);
   return isVoiceAssetMetadataValid(info, note, language);
@@ -1498,66 +1499,6 @@ async function sendCandidate(candidate) {
     return;
   }
 
-  // Final send boundary covers fixed templates, AI-personalized text and
-  // fallback messages. Record a skip atomically so an unchanged candidate
-  // does not regenerate the same suppressed message on every worker sweep.
-  let copyViolation = followUpAiService.hasUnsafeClinicalFollowUpClaim(followUpMessage)
-    ? "unsafe_clinical_promise" : null;
-  if (!copyViolation) {
-    const potentiallyRepeated = followUpAiService.isSchedulingNudge(followUpMessage);
-    if (potentiallyRepeated) {
-      try {
-        const safetyContext = await followUpRepo.getAiFollowUpContext({
-          contactId: candidate.contact_id,
-        });
-        copyViolation = followUpAiService.followUpCopyViolation(
-          followUpMessage, safetyContext?.messages || []
-        );
-      } catch (err) {
-        // Only suppress questionable reminders when recent conversation
-        // evidence cannot be loaded; never block essential non-reminder text.
-        if (followUpAiService.isSchedulingNudge(followUpMessage))
-          copyViolation = "recent_conversation_unavailable";
-        console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
-      }
-    }
-  }
-  if (copyViolation) {
-    // Skipping one repetitive or unsafe outbound COPY is not an opt-out:
-    // persist a step-level skip so FU2/FU3 may still proceed if eligible.
-    const copyDecision = normalizeFollowUpDecision({
-      action: "skip", reason: copyViolation,
-    });
-    try {
-      await followUpRepo.recordAiDecisionIfStillEligible({
-        contactId: candidate.contact_id,
-        triggerMessageId: candidate.trigger_message_id,
-        stepIndex, action: copyDecision.action, reason: copyDecision.reason,
-        topic: "outbound_copy_guard",
-        delayMinutes: step.delayMinutes,
-        previousDelayMinutes: stepIndex > 1
-          ? settings.steps[stepIndex - 2].delayMinutes : 0,
-        timingMode: step.timingMode,
-        beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
-        quietHours: settings.quietHours,
-        triggerMode: settings.triggerMode,
-        activatedAt: settings.activatedAt,
-      });
-    } finally {
-      if (aiLeaseToken) {
-        await releaseAiGenerationLease({
-          contactId: candidate.contact_id,
-          triggerMessageId: candidate.trigger_message_id,
-          stepIndex, leaseToken: aiLeaseToken,
-        });
-        aiLeaseToken = null;
-      }
-    }
-    console.info("[Follow-up] Skipped unsafe/repeated copy: " + copyViolation +
-      " contact=" + candidate.contact_id + " step=" + stepIndex);
-    return;
-  }
-
   // Guard every follow-up channel and mode just before durable reservation.
   // If configured media was paired with a price-bearing caption, omit the
   // attachment as well: an image itself might display an unasked amount.
@@ -1668,6 +1609,68 @@ async function sendCandidate(candidate) {
   let durableVoiceKey = effectiveVoice
     ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
     : null;
+  // Re-check the exact message that will be delivered, after price and media
+  // fallbacks can rewrite its wording. Voice uses its authenticated transcript
+  // rather than the unused text caption. Record a skip atomically so an unchanged candidate
+  // does not regenerate the same suppressed message on every worker sweep.
+  const finalOutboundCopy = effectiveVoice ? effectiveVoice.transcript : followUpMessage;
+  let copyViolation = followUpAiService.hasUnsafeClinicalFollowUpClaim(finalOutboundCopy)
+    ? "unsafe_clinical_promise" : null;
+  if (!copyViolation) {
+    const potentiallyRepeated = followUpAiService.isSchedulingNudge(finalOutboundCopy);
+    if (potentiallyRepeated) {
+      try {
+        const safetyContext = await followUpRepo.getAiFollowUpContext({
+          contactId: candidate.contact_id,
+        });
+        copyViolation = followUpAiService.followUpCopyViolation(
+          finalOutboundCopy, safetyContext?.messages || []
+        );
+      } catch (err) {
+        // Only suppress questionable reminders when recent conversation
+        // evidence cannot be loaded; never block essential non-reminder text.
+        if (followUpAiService.isSchedulingNudge(finalOutboundCopy))
+          copyViolation = "recent_conversation_unavailable";
+        console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
+      }
+    }
+  }
+  if (copyViolation) {
+    // Skipping one repetitive or unsafe outbound COPY is not an opt-out:
+    // persist a step-level skip so FU2/FU3 may still proceed if eligible.
+    const copyDecision = normalizeFollowUpDecision({
+      action: "skip", reason: copyViolation,
+    });
+    try {
+      await followUpRepo.recordAiDecisionIfStillEligible({
+        contactId: candidate.contact_id,
+        triggerMessageId: candidate.trigger_message_id,
+        stepIndex, action: copyDecision.action, reason: copyDecision.reason,
+        topic: "outbound_copy_guard",
+        delayMinutes: step.delayMinutes,
+        previousDelayMinutes: stepIndex > 1
+          ? settings.steps[stepIndex - 2].delayMinutes : 0,
+        timingMode: step.timingMode,
+        beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+        quietHours: settings.quietHours,
+        triggerMode: settings.triggerMode,
+        activatedAt: settings.activatedAt,
+      });
+    } finally {
+      if (aiLeaseToken) {
+        await releaseAiGenerationLease({
+          contactId: candidate.contact_id,
+          triggerMessageId: candidate.trigger_message_id,
+          stepIndex, leaseToken: aiLeaseToken,
+        });
+        aiLeaseToken = null;
+      }
+    }
+    console.info("[Follow-up] Skipped unsafe/repeated copy: " + copyViolation +
+      " contact=" + candidate.contact_id + " step=" + stepIndex);
+    return;
+  }
+
   // Only the transcript of the actual selected recording belongs to a voice
   // message. Never store an AI-generated text reply as if it was delivered.
   const storedContent = effectiveVoice
