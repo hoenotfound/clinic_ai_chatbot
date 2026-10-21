@@ -6,6 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { isStandardAdPrefill, resolveFixedAdFirstReply } =
   require("../src/utils/fixedAdFirstReply");
+const { resolveResultMediaForReply } = require("../src/utils/resultMediaTrigger");
 
 const services = [
   { name: "骨盆调理" },
@@ -204,4 +205,52 @@ test("actual server decision branch skips Gemini for valid first ad message and 
   const genericCreative = await runtime({ text: "Hi, I'd like to know more about this", language: "en", wasFirstMessage: true, metaAdContext: ad, metaAdCreativeService: "骨盆调理" });
   assert.equal(genericCreative.aiReply, translations.en);
   assert.equal(aiCalls, 3, "verified generic creative saves a model call");
+});
+
+test("verified fixed-reply intent remains eligible for independently guarded Before & After media", async () => {
+  const optIn = "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看";
+  const resultMedia = [{
+    service: "骨盆调理", enabled: true, triggerMode: "service_enquiry",
+    autoSendCount: 1, items: [{
+      imageUrl: "https://example.test/result.jpg",
+      caption: "骨盆调理对比参考",
+    }],
+  }];
+  const runSelector = (fixed, customerText, extra = {}) =>
+    resolveResultMediaForReply({
+      serviceQuery: fixed.serviceQuery,
+      serviceQuerySource: fixed.serviceQuerySource,
+      treatment: fixed.treatment,
+      customerText,
+      priorCustomerTexts: [],
+      metaAdCreativeService: "骨盆调理",
+      priceQuery: false, packageQuery: false, flagged: false,
+      bookingReady: false, keywordReason: null, needsAttention: false,
+      textSendSucceeded: true,
+      resultMedia, services, serviceAliases: aliases, language: "zh",
+      contactId: 7,
+      wasMediaRecentlySent: async () => false,
+      hasUnconfirmedMediaDelivery: async () => false,
+      getMostRecentlySentMediaUrl: async () => null,
+      ...extra,
+    });
+  const fixed = attempt();
+  assert.equal(fixed?.serviceQuery, true);
+  const bundle = await runSelector(fixed, optIn);
+  assert.equal(bundle?.service, "骨盆调理");
+  assert.equal(bundle?.items.length, 1);
+  assert.equal(bundle?.items[0].imageUrl, "https://example.test/result.jpg");
+
+  const genericText = "Hi, I'd like to know more about this";
+  const generic = attempt({
+    customerText: genericText,
+    conversationHistory: [{ role: "user", content: genericText }],
+    language: "en",
+  });
+  assert.equal(generic?.serviceQuerySource, "meta_ad");
+  assert.equal((await runSelector(generic, genericText))?.service, "骨盆调理");
+  assert.equal((await runSelector(generic, genericText, { metaAdCreativeService: null })), null,
+    "missing verified creative must never enable generic ad images");
+  assert.equal((await runSelector(fixed, optIn, { textSendSucceeded: false })), null,
+    "provider rejection must still prevent media");
 });
