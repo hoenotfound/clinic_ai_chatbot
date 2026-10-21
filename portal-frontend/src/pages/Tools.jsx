@@ -2072,9 +2072,14 @@ function followUpOperationalReadiness({
   savedEnabled, savedFreeEntryEnabled, savedFreeEntry, status,
   statusError, statusLoading, catalog, catalogLoading, catalogError,
 }) {
-  const normal = savedEnabled
-    ? { level: "active", label: "Active", detail: "Enabled in saved settings. Sends still depend on each chat's reply window and eligibility." }
-    : { level: "paused", label: "Paused", detail: "Normal follow-ups are off in saved settings." };
+  const normal = !savedEnabled
+    ? { level: "paused", label: "Paused", detail: "Normal follow-ups are off in saved settings." }
+    : status?.automaticRepliesEnabled === false
+      ? { level: "blocked", label: "Sending blocked", detail: "The global automated replies server switch is off." }
+      : !status || statusError || typeof status.automaticRepliesEnabled !== "boolean"
+        ? { level: "attention", label: statusLoading ? "Checking…" : "Needs verification",
+            detail: "The global automation switch is not confirmed. Saved settings alone do not prove sending is enabled." }
+        : { level: "active", label: "Active", detail: "Enabled in saved settings and globally allowed. Each conversation still requires an eligible reply window." };
   const asExtended = (level, label, detail, target = "whatsapp") =>
     ({ level, label, detail, target });
   let extended;
@@ -2087,6 +2092,12 @@ function followUpOperationalReadiness({
   } else if (!status) {
     extended = asExtended("attention", statusLoading ? "Checking…" : "Needs verification",
       "Checking server eligibility and billing protection before showing readiness.");
+  } else if (status.automaticRepliesEnabled === false) {
+    extended = asExtended("blocked", "Sending blocked",
+      "The global automated replies server switch is off.");
+  } else if (typeof status.automaticRepliesEnabled !== "boolean") {
+    extended = asExtended("attention", "Needs verification",
+      "The global automation switch is unverified. Recheck readiness.");
   } else if (status.enabledInTools !== true) {
     extended = asExtended("attention", "Needs verification",
       "Saved settings and server-reported Tools activation disagree. Refresh and investigate before relying on sends.");
@@ -2109,33 +2120,51 @@ function followUpOperationalReadiness({
     extended = asExtended("attention", "Checking…",
       "Checking approved Meta templates; configuration is not yet verified.");
   } else {
-    const fallbackLocale = savedFreeEntry?.language === "auto"
-      ? (savedFreeEntry?.fallbackLanguage || "zh_CN")
-      : (savedFreeEntry?.language || "zh_CN");
+    // In auto mode the worker uses each customer's detected language, not
+    // the configured fallback language as a substitute.
+    const requiredLocales = savedFreeEntry?.language === "auto"
+      ? ["zh_CN", "en_US", "ms"]
+      : [savedFreeEntry?.language || "zh_CN"];
     const names = [
       { name: savedFreeEntry.templateName, defaultText: true },
       ...(savedFreeEntry.templateRules || []).map(rule => ({ name: rule.templateName, rule })),
     ];
-    const problems = names.filter(({ name, defaultText, rule }) => {
-      const versions = (catalog.templates || []).filter(template =>
-        template.name === name && (template.language === fallbackLocale ||
-          (fallbackLocale === "en_US" && template.language === "en")));
-      const valid = versions.find(template => supportedForAutomation(template) &&
-        (!defaultText || (template.header?.format || "TEXT") === "TEXT"));
-      if (!valid) return true;
-      if (!rule) return false;
-      const format = valid.header?.format || "TEXT";
-      if (format === "IMAGE" && AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES.has(name)) return false;
-      return (format === "IMAGE" || format === "VIDEO") &&
-        (!rule.mediaKey && !rule.mediaUrl || format === "VIDEO" && rule.videoCodecVerified !== true);
-    });
+    const problems = [];
+    for (const locale of requiredLocales) {
+      for (const { name, defaultText, rule } of names) {
+        const valid = (catalog.templates || []).find(template =>
+          template.name === name &&
+          (template.language === locale || (locale === "en_US" && template.language === "en")) &&
+          supportedForAutomation(template) &&
+          (!defaultText || (template.header?.format || "TEXT") === "TEXT"));
+        if (!valid) { problems.push(locale + ": " + (name || "missing template")); continue; }
+        if (!rule) continue;
+        const format = valid.header?.format || "TEXT";
+        const automaticImage = format === "IMAGE" && AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES.has(name);
+        if ((format === "VIDEO" || format === "IMAGE") && !automaticImage &&
+            (!(rule.mediaKey || rule.mediaUrl) || (format === "VIDEO" && rule.videoCodecVerified !== true))) {
+          problems.push(locale + ": " + name + " media");
+        }
+      }
+    }
+    const longSlots = (savedFreeEntry?.slotsHours || []).some(hours => Number(hours) > 72);
+    const post72hUnverified = longSlots &&
+      (status.sevenDayVerified !== true || Number(status.periodMaxHours || 72) < 168 ||
+       status.verifiedPost72h !== true ||
+       (status.freeOnlyEnabled === true && Number(status.strictCeilingHours || 72) < 168));
+    const selectedNames = (savedFreeEntry?.slotsHours || []).map(hours =>
+      (savedFreeEntry.templateRules || []).find(rule =>
+        rule.slotHours === hours && rule.serviceName === "*")?.templateName || savedFreeEntry.templateName);
+    const duplicates = selectedNames.length > new Set(selectedNames.filter(Boolean)).size;
     if (problems.length > 0) {
-      extended = asExtended("attention", "Needs setup",
-        `${problems.length} saved template selection(s) lack a supported approved ${fallbackLocale} version or required media. Review the template setup.`);
-    } else if (status.strictSevenDayBlocked === true &&
-               (savedFreeEntry?.slotsHours || []).some(h => Number(h) > 72)) {
+      extended = asExtended("attention", savedFreeEntry.language === "auto" ? "Partially available" : "Needs setup",
+        `${problems.length} language/template combination(s) are unsupported or missing required media (${problems.slice(0, 3).join(", ")}). The worker may skip those customers.`);
+    } else if (post72hUnverified) {
       extended = asExtended("attention", "Partially available",
-        "Days 4–7 are restricted by missing billing evidence. Earlier eligible times may still work; no delivery is guaranteed.");
+        "Days 4–7 are restricted without verified post-72-hour Meta free-entry evidence and rollout authorization. Earlier eligible slots may still work.");
+    } else if (duplicates) {
+      extended = asExtended("attention", "Partially available",
+        "Later slots may be skipped because the same marketing template cannot be resent in one verified period.");
     } else {
       extended = asExtended("active", "Active",
         "Saved settings, server switch and selected template versions appear ready. Individual sends still require consent, verified eligibility, and Meta billing checks.");
@@ -2144,9 +2173,9 @@ function followUpOperationalReadiness({
   const overall =
     normal.level === "paused" && extended.level === "paused"
       ? { level: "paused", label: "Paused", detail: "Both follow-up paths are off." }
-      : extended.level === "blocked" && normal.level === "paused"
-        ? { level: "blocked", label: "Sending blocked", detail: "No follow-up path is currently ready to send." }
-        : extended.level === "blocked" || extended.level === "attention"
+      : normal.level === "blocked" && extended.level !== "active"
+        ? { level: "blocked", label: "Sending blocked", detail: "The global automation switch prevents follow-up sends." }
+        : normal.level === "attention" || extended.level === "blocked" || extended.level === "attention"
           ? { level: "attention", label: "Needs attention", detail: savedEnabled ? "Normal follow-ups may still run. Extended WhatsApp needs review." : "Review the details below before expecting messages." }
           : { level: "active", label: "Active", detail: "At least one path is enabled; actual customer sends always depend on eligibility." };
   return { overall, normal, extended };
