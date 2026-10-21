@@ -2363,7 +2363,7 @@ test("Unified follow-up journey edits regular and extended steps without sending
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
   await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
-    .getByText("Enabled", { exact: true })).toBeVisible();
+    .getByText("Sending blocked", { exact: true })).toBeVisible();
   await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
   await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
   await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
