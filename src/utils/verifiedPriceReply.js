@@ -521,18 +521,53 @@ const DIRECT_EMPTY_PRICE_HEADING =
 const UNFULFILLED_MULTIPLE_PRICES =
   /(?:两|兩|2)\s*(?:项|項|个|個|种|種)|\b(?:both|two\s+(?:treatments?|packages?|prices?))\b/iu;
 
-// hasTreatmentPriceContent() also detects price-HEADING words such as
-// "价格是" without any number. This guard must instead require a visible
-// numeric monetary amount to mark the heading fulfilled.
+// A price heading is not fulfilled by a voucher face value or the price of
+// an unrelated treatment later in the draft. Evaluate EACH heading and its
+// adjacent price section instead of accepting any RM amount anywhere.
 const VISIBLE_MONETARY_AMOUNT =
-  /\b(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?\b|(?:[价價](?:格|钱|錢)|收费|收費|费用|費用|harga|prices?|cost|fee)\s*(?:是|为|為|is|are)?\s*[:：]?\s*[1-9]\d{2,5}(?!\d)/iu;
-
-
+  /\b(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?\b|(?:[价價](?:格|钱|錢)|收费|收費|费用|費用|harga|prices?|cost|fee)\s*(?:是|为|為|is|are)?\s*[:：]?\s*[1-9]\d{2,5}(?!\d)/giu;
+const VOUCHER_LABEL = /(?:优惠券|優惠券|折扣券|抵用券|voucher|coupon|baucar)/iu;
+const NAMED_PRICE_TREATMENT = /(?:3D|9D|骨盆(?:调理|調理)?)/giu;
+const PRICE_HEADING_PATTERN = new RegExp(
+  "(?:" + UNFULFILLED_PRICE_HEADING.source + ")|(?:" +
+  DIRECT_EMPTY_PRICE_HEADING.source + ")", "giu"
+);
+function hasVerifiedAmountForHeading(section, heading) {
+  const matches = [...section.matchAll(VISIBLE_MONETARY_AMOUNT)];
+  const headedServices = [...new Set([...heading.matchAll(NAMED_PRICE_TREATMENT)]
+    .map(m => m[0].toLowerCase()))];
+  return matches.some(match => {
+    const before = section.slice(Math.max(0, match.index - 30), match.index);
+    const after = section.slice(match.index + match[0].length,
+      match.index + match[0].length + 30);
+    // The label immediately before/after a voucher amount disqualifies it,
+    // including "RM100 优惠券" and "voucher RM100".
+    const localBefore = before.split(/\n/u).at(-1);
+    const localAfter = after.split(/\n/u)[0];
+    if (VOUCHER_LABEL.test(localBefore) || VOUCHER_LABEL.test(localAfter)) return false;
+    if (headedServices.length === 1) {
+      // "9D price: 3D RM488" does NOT answer the 9D enquiry.
+      const line = section.slice(section.lastIndexOf("\n", match.index - 1) + 1,
+        section.indexOf("\n", match.index) < 0 ? section.length : section.indexOf("\n", match.index));
+      const quotedServices = [...new Set([...line.matchAll(NAMED_PRICE_TREATMENT)]
+        .map(m => m[0].toLowerCase()))];
+      if (quotedServices.some(name => name !== headedServices[0])) return false;
+    }
+    return true;
+  });
+}
 function guardUnfulfilledPriceQuote(reply, language = "zh") {
   const original = String(reply || "").trim();
-  if (!(UNFULFILLED_PRICE_HEADING.test(original) ||
-        DIRECT_EMPTY_PRICE_HEADING.test(original)) ||
-      VISIBLE_MONETARY_AMOUNT.test(original)) return { reply: original, changed: false };
+  const headings = [...original.matchAll(PRICE_HEADING_PATTERN)];
+  if (!headings.length) return { reply: original, changed: false };
+  const isUnfulfilled = headings.some((heading, index) => {
+    const sectionStart = heading.index + heading[0].length;
+    const nextHeading = headings[index + 1]?.index ?? original.length;
+    // A remote quote or a footnote does not fulfill an earlier empty heading.
+    const section = original.slice(sectionStart, Math.min(nextHeading, sectionStart + 280));
+    return !hasVerifiedAmountForHeading(section, heading[0]);
+  });
+  if (!isUnfulfilled) return { reply: original, changed: false };
   const locale = String(language || "").toLowerCase();
   const comparingTwo = UNFULFILLED_MULTIPLE_PRICES.test(original);
   // Never fabricate an amount. Ambiguity about "both" is a separate case:
