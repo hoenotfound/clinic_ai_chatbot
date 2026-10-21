@@ -31,6 +31,8 @@ const originalSelectPromotionPackageForFollowUp =
   followUpAiService.selectPromotionPackageForFollowUp;
 
 test.beforeEach(() => {
+  // Each test is an independent clinic policy scenario.
+  clinicConfig.trustAdminConfiguredContent = false;
   whatsapp.sendImage = originalWhatsappSendImage;
   channelMessaging.sendVideoByStoredKey = originalSendVideoByStoredKey;
   mediaStorage.copyStoredMediaToMessage = originalCopyStoredMediaToMessage;
