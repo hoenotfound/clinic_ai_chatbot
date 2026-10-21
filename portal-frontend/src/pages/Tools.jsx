@@ -1131,7 +1131,7 @@ export default function Tools() {
             setFreeOnlyImpactConfirmed={setFreeOnlyImpactConfirmed}
             savedEnabled={savedEnabled}
             savedFreeEntryEnabled={config?.automatedFollowUp?.freeEntry?.enabled === true}
-            savedFreeEntry={savedSettings.freeEntry}
+            savedFreeEntry={config?.automatedFollowUp?.freeEntry || savedSettings.freeEntry}
             validationIssue={followUpSaveIssue}
             onDismissValidationIssue={() => setFollowUpSaveIssue(null)}
             hasUnsavedChanges={hasUnsavedChanges}
@@ -2114,6 +2114,10 @@ function followUpOperationalReadiness({
              status.freeOnlyGate.status !== "idle") {
     extended = asExtended("blocked", "Sending blocked",
       "A strict-mode send is awaiting billing verification. Investigate the reservation before another attempt.");
+  } else if (!savedFreeEntry?.activatedAt ||
+             !Number.isFinite(Date.parse(savedFreeEntry.activatedAt))) {
+    extended = asExtended("attention", "Needs setup",
+      "The saved extended follow-up activation time is missing or invalid. Save the extended setup again to establish a valid activation time.");
   } else if (!savedFreeEntry?.templateName) {
     extended = asExtended("attention", "Needs setup", "Choose and save a default approved MARKETING text template.");
   } else if (catalogError) {
@@ -2132,10 +2136,18 @@ function followUpOperationalReadiness({
     // The default text template is not selected if every slot has a wildcard
     // override; counting it would hide an entirely blocked sequence.
     const selectedSlots = savedFreeEntry.slotsHours || [];
+    // The worker requires hour < 72 unless this account has qualified seven-day
+    // rollout and billing evidence. A configured +72h slot is also restricted.
+    const sevenDayAuthorized = status.sevenDayVerified === true &&
+      Number(status.periodMaxHours || 72) >= 168 &&
+      status.verifiedPost72h === true &&
+      (status.freeOnlyEnabled !== true || Number(status.strictCeilingHours || 72) >= 168);
+    const restrictedSlots = selectedSlots.filter(hours => Number(hours) >= 72 && !sevenDayAuthorized);
+    const eligibleSlots = selectedSlots.filter(hours => Number(hours) < 72 || sevenDayAuthorized);
     const selectedRules = (savedFreeEntry.templateRules || []).filter(rule =>
-      selectedSlots.some(hours => Number(hours) === Number(rule.slotHours)));
+      eligibleSlots.some(hours => Number(hours) === Number(rule.slotHours)));
     const names = [
-      ...selectedSlots.filter(hours => !selectedRules.some(rule =>
+      ...eligibleSlots.filter(hours => !selectedRules.some(rule =>
         Number(rule.slotHours) === Number(hours) && rule.serviceName === "*"))
         .map(() => ({ name: savedFreeEntry.templateName, defaultText: true })),
       ...selectedRules.map(rule => ({ name: rule.templateName, rule })),
@@ -2175,16 +2187,15 @@ function followUpOperationalReadiness({
         usableVersions++;
       }
     }
-    const longSlots = (savedFreeEntry?.slotsHours || []).some(hours => Number(hours) > 72);
-    const post72hUnverified = longSlots &&
-      (status.sevenDayVerified !== true || Number(status.periodMaxHours || 72) < 168 ||
-       status.verifiedPost72h !== true ||
-       (status.freeOnlyEnabled === true && Number(status.strictCeilingHours || 72) < 168));
+    const post72hUnverified = restrictedSlots.length > 0;
     const selectedNames = (savedFreeEntry?.slotsHours || []).map(hours =>
       (savedFreeEntry.templateRules || []).find(rule =>
         rule.slotHours === hours && rule.serviceName === "*")?.templateName || savedFreeEntry.templateName);
     const duplicates = selectedNames.length > new Set(selectedNames.filter(Boolean)).size;
-    if (problems.length > 0) {
+    if (eligibleSlots.length === 0) {
+      extended = asExtended("blocked", "Sending blocked",
+        "No configured extended follow-up times are eligible under the current 72-hour ceiling. Times at +72h or later require verified seven-day Meta eligibility; add a 25–71h time or verify the extended rollout.");
+    } else if (problems.length > 0) {
       const hasPotentialPath = usableVersions > 0 || conditionalImages > 0;
       extended = asExtended("attention", hasPotentialPath ? "Partially available" : "Needs setup",
         `${problems.length} language/template combination(s) cannot be used (${problems.slice(0, 3).join(", ")}). ${hasPotentialPath
@@ -2195,7 +2206,7 @@ function followUpOperationalReadiness({
         "Automatically selected promotion images need an unambiguous, eligible image for each customer's treatment. Meta approval alone cannot verify these sends.");
     } else if (post72hUnverified) {
       extended = asExtended("attention", "Partially available",
-        "Days 4–7 are restricted without verified post-72-hour Meta free-entry evidence and rollout authorization. Earlier eligible slots may still work.");
+        "Times at +72h or later are restricted without verified seven-day Meta evidence and rollout authorization. Configured 25–71h slots may still work.");
     } else if (duplicates) {
       extended = asExtended("attention", "Partially available",
         "Later slots may be skipped because the same marketing template cannot be resent in one verified period.");
@@ -3047,8 +3058,13 @@ function FollowUpTool({
                       Repeated templates, new replies, appointments or billing safeguards may skip a message.
                     </p>
                     <p className="mt-2 text-xs font-semibold">
-                      {!form.freeEntry?.enabled ? "Paused" : !form.enabled || !savedEnabled ? "Sending blocked" : "Enabled"}
+                      Saved setup: {!savedFreeEntryEnabled ? "Paused" : !savedEnabled ? "Sending blocked" : "Enabled in Tools"}
                     </p>
+                    {hasUnsavedChanges && (
+                      <p className="mt-1 text-xs text-amber-800">
+                        Draft preview: {!form.freeEntry?.enabled ? "Paused" : !form.enabled ? "Sending blocked" : "Enabled if saved"} (not live)
+                      </p>
+                    )}
                   </div>
                 </li>
                 {(form.freeEntry?.slotsHours || []).map((hours, slotIndex) => {
@@ -4552,19 +4568,19 @@ function FollowUpTool({
                   <h3 className="mt-5 text-sm font-bold">Recent template attempts</h3>
                   <p className="mt-1 text-xs text-[var(--color-text-muted)]">
                     Statuses are recorded attempts, not proof of delivery or a complete Meta billing statement.
+                    Historical attempts do not display the contact's current treatment as if it were the original treatment.
                     No controls on this page resend messages.
                   </p>
                   {(freeEntryStatus.recentAttempts || []).length ? (
                     <div className="mt-2 space-y-2">
                       {(freeEntryStatus.recentAttempts || []).slice(0, 10).map((item, index) => {
                         const outcome = extendedAttemptStatus(item.status);
-                        const treatment = (freeEntryStatus.contactDetails || []).find(
-                          contact => String(contact.contact_id) === String(item.contact_id))?.treatment_interest;
                         return (
-                          <article key={index} className="rounded-xl border border-[var(--color-border)] p-3 text-xs">
+                          <article key={item.attempt_id ?? `${item.contact_id}-${item.slot_hours}-${item.created_at || index}`}
+                            className="rounded-xl border border-[var(--color-border)] p-3 text-xs">
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <p className="text-sm font-semibold">Contact #{item.contact_id}{treatment ? ` · ${treatment}` : ""}</p>
+                                <p className="text-sm font-semibold">Contact #{item.contact_id}</p>
                                 <p className="mt-1 text-[var(--color-text-muted)]">
                                   WhatsApp template · +{item.slot_hours}h potential follow-up · {extendedAttemptTime(item.created_at)}
                                 </p>
@@ -4589,7 +4605,7 @@ function FollowUpTool({
                                 <details className="min-w-0">
                                   <summary className="cursor-pointer text-xs font-semibold text-[var(--color-text-muted)]">Technical details</summary>
                                   <p className="mt-1 break-words">Recorded status: {item.status || "unknown"}</p>
-                                  {item.error && <p className="mt-1 break-words">Provider detail: {item.error}</p>}
+                                  {item.error && <p className="mt-1 break-words">Recorded error: {item.error}</p>}
                                 </details>
                               )}
                             </div>
