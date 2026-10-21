@@ -21,7 +21,7 @@ const PREFILL_MAX_LENGTH = 240;
 // checked separately. Future promotional-consent wording is intentionally
 // NOT a current promotion enquiry.
 const SUBSTANTIVE_OR_BOOKING_INTENT =
-  /(?:可是|不过|不過|但是|因为|因為|怎么办|怎麼辦|怎么|怎麼|如何|多久|几次|幾次|多少|是否|怀孕|懷孕|产后|產後|副作用|安全吗|安全嗎|疼痛|预约|預約|约时间|約時間|几点|幾點|明天|后天|後天|今天|今晚|早上|下午|晚上|周末|週末|星期[一二三四五六日天]|礼拜[一二三四五六日天]|禮拜[一二三四五六日天]|\b(?:but|however|how|why|what|when|where|whether|pain|pregnan(?:t|cy)|book(?:ing)?|appt|appointment|reserve|available|availability|slot|today|tomorrow|tonight|morning|afternoon|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|am|pm|refund|schedule|reschedul(?:e|ing)|esok|lusa|pagi|petang|malam|minggu|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|janji\s*temu|temujanji|pukul|jam\s*\d{1,2})\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/iu;
+  /(?:可是|不过|不過|但是|因为|因為|怎么办|怎麼辦|怎么|怎麼|如何|多久|几次|幾次|多少|是否|怀孕|懷孕|产后|產後|副作用|安全吗|安全嗎|疼痛|预约|預約|约时间|約時間|几点|幾點|明天|后天|後天|今天|今晚|早上|下午|晚上|周末|週末|星期[一二三四五六日天]|礼拜[一二三四五六日天]|禮拜[一二三四五六日天]|\b(?:but|however|how|why|what|when|where|whether|pain|pregnan(?:t|cy)|book(?:ing)?|appt|appointment|reserve|available|availability|slot|today|tomorrow|tonight|morning|afternoon|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|refund|schedule|reschedul(?:e|ing)|esok|lusa|pagi|petang|malam|minggu|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|janji\s*temu|temujanji|pukul|jam\s*\d{1,2})\b|\b(?:at|around)\s*\d{1,2}(?::\d{2})?\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/iu;
 
 function isStandardAdPrefill(value) {
   const text = String(value || "").normalize("NFKC").trim();
