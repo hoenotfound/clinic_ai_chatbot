@@ -1,15 +1,16 @@
 "use strict";
 
 const { pool } = require("../db/db");
-const clinicConfig = require("../config/clinicConfig");
 const { isTelegramEnabled, postTelegramMessage } = require("./telegramAlertService");
 const { configuredAccount } = require("./whatsappZeroCostGuard");
 
+// Billing visibility must remain active even when the strict zero-cost guard is off.
+// Keep the legacy activation timestamp as a historical cutoff when available,
+// but never require the guard itself to be enabled.
 function activeSince() {
-  const config=clinicConfig.automatedFollowUp?.whatsappFreeOnly;
-  const parsed=Date.parse(config?.activatedAt || "");
-  if (config?.enabled !== true || !Number.isFinite(parsed)) return null;
-  return new Date(parsed).toISOString();
+  const raw = process.env.WHATSAPP_BILLING_ALERTS_SINCE;
+  const parsed = Date.parse(raw || "2026-10-01T00:00:00Z");
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
 async function flush({ database=pool, send=postTelegramMessage, env=process.env }={}) {
