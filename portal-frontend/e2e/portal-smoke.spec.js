@@ -2369,7 +2369,7 @@ test("Follow-up readiness reports blocked server without obscuring active normal
     businessConfig: {
       automatedFollowUp: {
         enabled: true, delayMinutes: 120, message: "Follow-up reminder",
-        freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+        freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_text", language: "auto",
           fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98], templateRules: [] },
       },
     },
@@ -2397,7 +2397,7 @@ test("Follow-up readiness reports sending blocked when normal follow-ups are pau
     loggedIn: true,
     businessConfig: { automatedFollowUp: {
       enabled: false, delayMinutes: 120, message: "Hello",
-      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_text", language: "zh_CN",
         slotsHours: [26], templateRules: [] },
     } },
     followUpStatus: {
@@ -2426,7 +2426,7 @@ test("Follow-up readiness Recheck forces a fresh Meta catalog and reflects chang
     loggedIn: true,
     businessConfig: { automatedFollowUp: {
       enabled: true, delayMinutes: 120, message: "Hello",
-      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_text", language: "auto",
         slotsHours: [26], templateRules: [] },
     } },
     followUpStatus: {
@@ -2462,7 +2462,7 @@ test("Follow-up readiness verifies approved fallback version, billing safeguards
   };
   const savedConfig = {
     enabled: true, delayMinutes: 120, message: "Follow-up reminder",
-    freeEntry: { enabled: true, templateName: "clinic_reminder", language: "auto",
+    freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_reminder", language: "auto",
       fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98, 122], templateRules: [] },
   };
   const baseStatus = { enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
@@ -2500,7 +2500,7 @@ test("Follow-up readiness respects assessment-first blocking of automatic promot
     loggedIn: true,
     businessConfig: { automatedFollowUp: {
       enabled: true, assessmentFirstPricingEnabled: true, delayMinutes: 120, message: "Hello",
-      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_text", language: "auto",
         slotsHours: [26], templateRules: [
           { slotHours: 26, serviceName: "*", templateName: "ns_fu_pricing_graphic" },
         ] },
@@ -2529,7 +2529,7 @@ test("Follow-up readiness treats automatic promotion media as conditional, not v
     loggedIn: true,
     businessConfig: { automatedFollowUp: {
       enabled: true, assessmentFirstPricingEnabled: false, delayMinutes: 120, message: "Hello",
-      freeEntry: { enabled: true, templateName: "clinic_text", language: "auto",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_text", language: "auto",
         slotsHours: [26], templateRules: [
           { slotHours: 26, serviceName: "*", templateName: "ns_fu_meridian_gift" },
         ] },
@@ -2557,7 +2557,7 @@ test("Follow-up readiness does not accept explicit media on an automatic promoti
     loggedIn: true,
     businessConfig: { automatedFollowUp: {
       enabled: true, assessmentFirstPricingEnabled: false, delayMinutes: 120, message: "Hello",
-      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_text", language: "zh_CN",
         slotsHours: [26], templateRules: [
           { slotHours: 26, serviceName: "*", templateName: "ns_fu_pricing_graphic",
             mediaKey: "clients/test-clinic/messages/follow-up-config/image.jpg" },
@@ -2576,13 +2576,111 @@ test("Follow-up readiness does not accept explicit media on an automatic promoti
   await expect(extended).toContainText("cannot override automatic promotion media");
 });
 
+test("Readiness blocks a +72h-only sequence without verified seven-day evidence", async ({ page }) => {
+  const template = { name: "clinic_text", language: "zh_CN", status: "APPROVED",
+    category: "MARKETING", sendable: true, header: { format: "TEXT" },
+    body: { text: "Message" }, variableFields: [] };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z",
+        templateName: "clinic_text", language: "zh_CN", slotsHours: [72], templateRules: [] },
+    } },
+    followUpStatus: { automaticRepliesEnabled: true, enabledOnServer: true,
+      enabledInTools: true, freeOnlyEnabled: false, sevenDayVerified: false,
+      periodMaxHours: 72, verifiedPost72h: false, freeOnlyGate: { status: "idle" },
+      billingSafety: { since_switch: 0 } },
+    templateCatalog: { templates: [template], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Sending blocked");
+  await expect(extended).toContainText("No configured extended follow-up times are eligible");
+  await expect(overview.getByLabel("Overall follow-up readiness: Needs attention")).toBeVisible();
+});
+
+test("Readiness distinguishes wholly restricted times from a partly eligible 26h and 98h schedule", async ({ page }) => {
+  const template = { name: "clinic_text", language: "zh_CN", status: "APPROVED",
+    category: "MARKETING", sendable: true, header: { format: "TEXT" },
+    body: { text: "Message" }, variableFields: [] };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z",
+        templateName: "clinic_text", language: "zh_CN", slotsHours: [26, 98],
+        templateRules: [{ slotHours: 98, serviceName: "*", templateName: "not_approved" }] },
+    } },
+    followUpStatus: { automaticRepliesEnabled: true, enabledOnServer: true,
+      enabledInTools: true, freeOnlyEnabled: false, sevenDayVerified: false,
+      periodMaxHours: 72, verifiedPost72h: false, freeOnlyGate: { status: "idle" },
+      billingSafety: { since_switch: 0 } },
+    templateCatalog: { templates: [template], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Partially available");
+  await expect(extended).toContainText("Configured 25–71h slots may still work.");
+  await expect(extended).not.toContainText("not_approved");
+});
+
+test("Readiness allows +72h only when seven-day proof and rollout are verified", async ({ page }) => {
+  const template = { name: "clinic_text", language: "zh_CN", status: "APPROVED",
+    category: "MARKETING", sendable: true, header: { format: "TEXT" },
+    body: { text: "Message" }, variableFields: [] };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z",
+        templateName: "clinic_text", language: "zh_CN", slotsHours: [72], templateRules: [] },
+    } },
+    followUpStatus: { automaticRepliesEnabled: true, enabledOnServer: true,
+      enabledInTools: true, freeOnlyEnabled: false, sevenDayVerified: true,
+      periodMaxHours: 168, verifiedPost72h: true, freeOnlyGate: { status: "idle" },
+      billingSafety: { since_switch: 0 } },
+    templateCatalog: { templates: [template], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Active");
+  await expect(extended).not.toContainText("Sending blocked");
+});
+
+test("Readiness does not mark a saved extended setup active without a valid activation timestamp", async ({ page }) => {
+  const template = { name: "clinic_text", language: "zh_CN", status: "APPROVED",
+    category: "MARKETING", sendable: true, header: { format: "TEXT" },
+    body: { text: "Message" }, variableFields: [] };
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    followUpStatus: { automaticRepliesEnabled: true, enabledOnServer: true,
+      enabledInTools: true, freeOnlyEnabled: false, freeOnlyGate: { status: "idle" },
+      billingSafety: { since_switch: 0 } },
+    templateCatalog: { templates: [template], reusableMedia: [] },
+  });
+  await page.goto("/tools");
+  const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
+  await expect(extended).toContainText("Needs setup");
+  await expect(extended).toContainText("activation time is missing or invalid");
+});
+
 test("Follow-up readiness shows strict billing block without claiming guaranteed zero-cost sending", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
     businessConfig: {
       automatedFollowUp: {
         enabled: true, delayMinutes: 120, message: "Follow-up reminder",
-        freeEntry: { enabled: true, templateName: "clinic_reminder", language: "auto",
+        freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "clinic_reminder", language: "auto",
           fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98], templateRules: [] },
       },
     },
@@ -2604,7 +2702,7 @@ test("Follow-up readiness shows strict billing block without claiming guaranteed
 test("Readiness blocks both paths when global automated replies are off", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true,
     businessConfig: { automatedFollowUp: { enabled: true, delayMinutes: 120,
-      message: "Hello", freeEntry: { enabled: true, templateName: "approved_text",
+      message: "Hello", freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "approved_text",
         language: "zh_CN", slotsHours: [26] } } },
     followUpStatus: { automaticRepliesEnabled: false, enabledOnServer: true,
       enabledInTools: true, freeOnlyEnabled: false, billingSafety: { since_switch: 0 } },
@@ -2627,7 +2725,7 @@ test("Readiness distinguishes approved all-language coverage from missing post-7
     billingSafety: { since_switch: 0 } };
   await mockPortalApi(page, { loggedIn: true,
     businessConfig: { automatedFollowUp: { enabled: true, delayMinutes: 120,
-      message: "Hello", freeEntry: { enabled: true, templateName: "approved_text",
+      message: "Hello", freeEntry: { enabled: true, activatedAt: "2026-10-20T00:00:00Z", templateName: "approved_text",
         language: "auto", fallbackLanguage: "zh_CN", slotsHours: [26, 50, 98, 122] } } },
     followUpStatus: base, templateCatalog: { templates, reusableMedia: [] },
   });
