@@ -1498,6 +1498,64 @@ async function sendCandidate(candidate) {
     return;
   }
 
+  // Final send boundary covers fixed templates, AI-personalized text and
+  // fallback messages. Record a skip atomically so an unchanged candidate
+  // does not regenerate the same suppressed message on every worker sweep.
+  let copyViolation = followUpAiService.hasUnsafeClinicalFollowUpClaim(followUpMessage)
+    ? "unsafe_clinical_promise" : null;
+  if (!copyViolation) {
+    const potentiallyRepeated = followUpAiService.repeatsSchedulingNudge(
+      followUpMessage, ["平日还是周末方便？"]
+    ) || followUpMessageMode === "fixed" || followUpMessageMode === "ai_fallback";
+    if (potentiallyRepeated) {
+      try {
+        const safetyContext = await followUpRepo.getAiFollowUpContext({
+          contactId: candidate.contact_id,
+        });
+        copyViolation = followUpAiService.followUpCopyViolation(
+          followUpMessage, safetyContext?.messages || []
+        );
+      } catch (err) {
+        // Only suppress questionable reminders when recent conversation
+        // evidence cannot be loaded; never block essential non-reminder text.
+        if (followUpAiService.repeatsSchedulingNudge(
+          followUpMessage, ["平日还是周末方便？"]
+        )) copyViolation = "recent_conversation_unavailable";
+        console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
+      }
+    }
+  }
+  if (copyViolation) {
+    try {
+      await followUpRepo.recordAiDecisionIfStillEligible({
+        contactId: candidate.contact_id,
+        triggerMessageId: candidate.trigger_message_id,
+        stepIndex, action: "skip", reason: copyViolation,
+        topic: "outbound_copy_guard",
+        delayMinutes: step.delayMinutes,
+        previousDelayMinutes: stepIndex > 1
+          ? settings.steps[stepIndex - 2].delayMinutes : 0,
+        timingMode: step.timingMode,
+        beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+        quietHours: settings.quietHours,
+        triggerMode: settings.triggerMode,
+        activatedAt: settings.activatedAt,
+      });
+    } finally {
+      if (aiLeaseToken) {
+        await releaseAiGenerationLease({
+          contactId: candidate.contact_id,
+          triggerMessageId: candidate.trigger_message_id,
+          stepIndex, leaseToken: aiLeaseToken,
+        });
+        aiLeaseToken = null;
+      }
+    }
+    console.info("[Follow-up] Skipped unsafe/repeated copy: " + copyViolation +
+      " contact=" + candidate.contact_id + " step=" + stepIndex);
+    return;
+  }
+
   // Guard every follow-up channel and mode just before durable reservation.
   // If configured media was paired with a price-bearing caption, omit the
   // attachment as well: an image itself might display an unasked amount.
