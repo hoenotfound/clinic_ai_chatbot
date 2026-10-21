@@ -871,6 +871,11 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                   </div>
                   <PromotionPriceFields pricing={item.pricing}
                     onChange={(pricing) => updatePackage(index, "pricing", pricing)} />
+                  <label className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] p-3 text-xs">
+                    <input type="checkbox" checked={item.automaticMediaHold === true}
+                      onChange={(e) => updatePackage(index, "automaticMediaHold", e.target.checked)} />
+                    <span>Pause this package. A paused package also pauses automatic sending for its campaign until staff clears it.</span>
+                  </label>
                   <div>
                     <label className={labelClass}>Caption sent with this image</label>
                     <textarea
@@ -1716,7 +1721,27 @@ function FaqsTab({ config, onSaved, onError }) {
   );
 }
 
+// Non-blocking reviewer reminder for clinic-authored promotion copy. This
+// detects obvious unsupported absolute claims; it does not inspect artwork
+// pixels and does not veto Save or automatic delivery.
+function promotionCopyMayNeedReview(promotion) {
+  const parts = (entry) => [
+    entry?.caption, entry?.followUpMessage,
+    ...Object.values(entry?.mediaTranslations || {}).map(value =>
+      typeof value === "string" ? value : value?.caption),
+    ...Object.values(entry?.followUpTranslations || {}).map(value =>
+      typeof value === "string" ? value : value?.message),
+  ];
+  const copy = [ ...parts(promotion),
+    ...(promotion?.packages || []).flatMap(parts) ].filter(Boolean).join("\n");
+  return /(?:90\s*%[^\n。.!?]{0,80}(?:collagen|胶原蛋白|膠原蛋白)|(?:collagen|胶原蛋白|膠原蛋白)[^\n。.!?]{0,80}90\s*%|无副作用|無副作用|no\s+side\s+effects|完全(?:无痛|無痛)|(?:保证|保證|guaranteed)\s*(?:无痛|無痛|效果|result|outcome))/iu
+    .test(copy);
+}
+
 function PromotionsTab({ config, onSaved, onError }) {
+  const [trustAdminConfiguredContent, setTrustAdminConfiguredContent] = useState(
+    config.trustAdminConfiguredContent === true
+  );
   const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
   const [items, setItems] = useState(() =>
     (config.promotions || []).map((p) => ({
@@ -1903,6 +1928,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   aliases: cleanStrings(item.aliases || []),
                   imageUrl: String(item.imageUrl || "").trim(),
                   caption: String(item.caption || "").trim(),
+                  ...(item.automaticMediaHold === true ? { automaticMediaHold: true } : {}),
                   ...(item.pricing ? { pricing: item.pricing } : {}),
                   ...(Object.keys(cleanMediaTranslations(item.mediaTranslations)).length
                     ? { mediaTranslations: cleanMediaTranslations(item.mediaTranslations) }
@@ -1983,7 +2009,7 @@ function PromotionsTab({ config, onSaved, onError }) {
 
     setSaving(true);
     try {
-      const updated = await api.updateConfig({ promotions: cleaned });
+      const updated = await api.updateConfig({ promotions: cleaned, trustAdminConfiguredContent });
       setItems(cleaned.map((p) => ({
         ...p,
         _offerType: p.packages.length > 0 ? "packages" : "single",
@@ -2011,11 +2037,24 @@ function PromotionsTab({ config, onSaved, onError }) {
         </p>
       )}
 
+      <label className="mb-4 flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm">
+        <input type="checkbox" className="mt-1"
+          checked={trustAdminConfiguredContent}
+          onChange={(event) => setTrustAdminConfiguredContent(event.target.checked)} />
+        <span>
+          <span className="block font-semibold">Trust clinic-configured promotional and follow-up content</span>
+          <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">
+            Clinic-specific choice. When enabled, clinic-authored captions, fixed follow-ups and approved voice notes are not blocked for clinical wording. AI-generated messages, price verification, manual Pause, opt-outs and provider restrictions remain protected. Review your artwork and factual claims before enabling.
+          </span>
+        </span>
+      </label>
+
       <div className="space-y-3">
         {items.map((item, index) => {
           const expanded = openIndex === index;
           const packageMode = item._offerType === "packages";
           const displayName = item.name || item.linkedService || "New promotion";
+          const needsCopyReview = promotionCopyMayNeedReview(item);
           const offerSummary = packageMode
             ? `${item.packages.length} package${item.packages.length === 1 ? "" : "s"}`
             : "Single offer";
@@ -2032,6 +2071,15 @@ function PromotionsTab({ config, onSaved, onError }) {
               <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-4">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+                  {needsCopyReview && (
+                    <p role="status" className="mt-2 rounded-lg border border-[var(--color-border)] px-2.5 py-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                      Review possible unsupported clinical or numerical claims in this promotion and its translations. This is an advisory only and does not block saving or sending when clinic trust is enabled. Artwork pixels are not scanned.
+                    </p>
+                  )}
+                  {(item.automaticMediaHold === true || item.packages?.some(p => p.automaticMediaHold === true)) && (
+                    <p className="mt-1.5 text-xs font-medium text-[var(--color-text-muted)]">Manually paused — automatic media and promotional follow-ups are disabled.</p>
+                  )}
+
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     {item.linkedService && (
                       <span className="max-w-full truncate rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
@@ -2126,7 +2174,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                       <span>
                         <span className="block font-semibold">Pause automatic promotion graphics and promotion-based follow-ups</span>
                         <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
-                          Blocks this promotion's pricing graphics, pricing reminders, and promotion-specific automated follow-up text and attachments until the artwork and copy are approved. Ordinary general follow-ups and verified customer-requested price replies are not blocked. Review the words inside the image before clearing this hold.
+                          This switch is controlled by clinic staff. While checked, automatic pricing graphics, reminders and promotion-based follow-ups are paused. When unchecked, the chatbot follows this clinic's Trust content setting above; you are responsible for reviewing their accuracy and compliance. Customer eligibility, duplicate protection and provider rules still apply.
                         </span>
                       </span>
                     </label>
@@ -2724,7 +2772,6 @@ function ResultMediaSection({ config, onSaved, onError }) {
     </div>
   );
 }
-
 
 function suggestedAdReply(service, businessName) {
   const clinicName = String(businessName || "我们").trim();

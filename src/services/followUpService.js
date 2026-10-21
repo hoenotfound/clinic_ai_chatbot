@@ -19,7 +19,7 @@ const {
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
 const { randomUUID, createHash } = require("node:crypto");
-const { promotionHasUnsafeClinicalCopy } = require("../utils/promotionClinicalCopyPolicy");
+const { configuredPromotionCopyBlocked } = require("../utils/promotionClinicalCopyPolicy");
 const {
   normalizeVoiceNotes, voiceNotesPresent, selectedVoiceNote,
   isVoiceAssetMetadataValid, validVoiceAssetKey, unsafeVoiceTranscript,
@@ -525,7 +525,7 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
   );
   if (matches.length !== 1) return null;
   const [promotion] = matches;
-  if (promotionHasUnsafeClinicalCopy(promotion)) return null;
+  if (configuredPromotionCopyBlocked(promotion, clinicConfig.trustAdminConfiguredContent === true)) return null;
 
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
@@ -627,7 +627,7 @@ function activePromotionFollowUpStillConfigured(
   if (matches.length !== 1) return false;
 
   const [promotion] = matches;
-  if (promotionHasUnsafeClinicalCopy(promotion)) return false;
+  if (configuredPromotionCopyBlocked(promotion, clinicConfig.trustAdminConfiguredContent === true)) return false;
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
     : [];
@@ -1616,7 +1616,19 @@ async function sendCandidate(candidate) {
   const outboundVariants = effectiveVoice
     ? [effectiveVoice.transcript, followUpMessage]
     : [followUpMessage];
+  // The medical-copy heuristic applies to AI-written replies only. Fixed
+  // steps, selected promotional copy and recorded voice are explicitly
+  // configured by clinic staff; do not silently veto their exact wording.
+  // Appointment repetition, consent, pricing, provider and delivery gates
+  // still apply to every mode.
+  const trustStaffCopy = clinicConfig.trustAdminConfiguredContent === true;
+  const reviewClinicalCopy = (copy) =>
+    !trustStaffCopy ||
+    (followUpMessageMode === "ai_personalized" && copy === followUpMessage);
+  // Trust staff-approved voice even when a different AI-generated text caption
+  // is present; AI text must continue to pass clinical-copy scrutiny.
   let copyViolation = outboundVariants.some(copy =>
+    reviewClinicalCopy(copy) &&
     followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
     ? "unsafe_clinical_promise" : null;
   if (!copyViolation && outboundVariants.some(copy =>
@@ -1627,7 +1639,8 @@ async function sendCandidate(candidate) {
       });
       for (const copy of outboundVariants) {
         copyViolation = followUpAiService.followUpCopyViolation(
-          copy, safetyContext?.messages || []
+          copy, safetyContext?.messages || [],
+          { checkClinicalCopy: reviewClinicalCopy(copy) }
         );
         if (copyViolation) break;
       }

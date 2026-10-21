@@ -207,6 +207,7 @@ const VALIDATORS = {
         item.translations[language].length <= 1200
       )
     ),
+  trustAdminConfiguredContent: (v) => typeof v === "boolean",
   promotions: (v) =>
     Array.isArray(v) &&
     v.every(
@@ -326,6 +327,7 @@ function isPromotionPackage(value) {
     ) &&
     isString(value.imageUrl) &&
     isString(value.caption) &&
+    (value.automaticMediaHold === undefined || typeof value.automaticMediaHold === "boolean") &&
     (
       value.followUpMessage === undefined ||
       (isString(value.followUpMessage) && value.followUpMessage.trim().length <= 1000)

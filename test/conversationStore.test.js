@@ -238,3 +238,45 @@ test("aiVisibleRows removes sticker placeholders while retaining real customer t
 
   assert.deepEqual(rows.map((row) => row.id), [81]);
 });
+
+
+test("AI history keeps the latest customer photo but never loads assistant-sent graphics", async (t) => {
+  const originalPage = messagesRepo.getMessagePageForContact;
+  const originalMedia = messagesRepo.getMessageMediaForContact;
+  t.after(() => {
+    messagesRepo.getMessagePageForContact = originalPage;
+    messagesRepo.getMessageMediaForContact = originalMedia;
+  });
+
+  const rows = [
+    { id: 101, role: "user", content: "Before photo",
+      has_media_attachment: true, media_mime_type: "image/jpeg" },
+    { id: 102, role: "assistant", content: "Here is the price graphic",
+      has_media_attachment: true, media_mime_type: "image/png",
+      delivery_status: "sent" },
+    { id: 103, role: "user", content: "What about this picture?",
+      has_media_attachment: true, media_mime_type: "image/jpeg" },
+    { id: 104, role: "user", content: "price?",
+      has_media_attachment: false },
+  ];
+  const mediaReads = [];
+  messagesRepo.getMessagePageForContact = async () => ({ rows, hasMore: false });
+  messagesRepo.getMessageMediaForContact = async (contactId, messageId) => {
+    mediaReads.push(messageId);
+    return { media_mime_type: "image/jpeg", media_base64: "customer-photo-bytes" };
+  };
+
+  const history = await conversationStore.getHistoryForContact(7, {
+    throughMessageId: 104,
+  });
+
+  assert.deepEqual(mediaReads, [103], "only latest inbound photo is read");
+  assert.equal(history[0].content, "Before photo");
+  assert.equal(history[1].content, "Here is the price graphic");
+  assert.equal(history[1].role, "assistant");
+  assert.deepEqual(history[2].content, [
+    { type: "text", text: "What about this picture?" },
+    { type: "image", mimeType: "image/jpeg", data: "customer-photo-bytes" },
+  ]);
+  assert.equal(history[3].content, "price?");
+});

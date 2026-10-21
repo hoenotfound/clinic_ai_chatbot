@@ -33,6 +33,7 @@ const CONFIG_KEYS = [
   "leadScoring",
   "leadDistribution",
   "promotions",
+  "trustAdminConfiguredContent",
   "aiPricingIntentMode",
   "aiPricingOfferEnquiriesEnabled",
   "adFirstReply",

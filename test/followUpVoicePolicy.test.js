@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const storage = require("../src/services/mediaStorageService");
+const clinicConfig = require("../src/config/clinicConfig");
 const {
   normalizeVoiceNotes, selectedVoiceNote, unsafeVoiceTranscript,
   voiceTranscriptDigest, isVoiceAssetMetadataValid, validVoiceAssetKey,
@@ -15,11 +16,15 @@ test("voice language selection never falls back to the wrong language", () => {
   assert.equal(selectedVoiceNote(notes, "zh")?.transcript, "您好");
 });
 
-test("voice transcript policy blocks prices and unsafe guarantees", () => {
+test("voice transcript policy blocks unsolicited prices but trusts staff-approved speech", () => {
+  const prior=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
+  try {
   assert.equal(unsafeVoiceTranscript(""), true);
   assert.equal(unsafeVoiceTranscript("First trial only RM488."), true);
-  assert.equal(unsafeVoiceTranscript("Guaranteed results with no side effects."), true);
+  assert.equal(unsafeVoiceTranscript("Guaranteed results with no side effects."), false);
   assert.equal(unsafeVoiceTranscript("Let's arrange an assessment first."), false);
+  } finally { clinicConfig.trustAdminConfiguredContent=prior; }
 });
 
 test("configured voice must match the exact upload transcript, language and preview", () => {
@@ -61,12 +66,15 @@ test("legacy unscoped recording keys and unapproved recordings cannot activate",
 });
 
 
-test("voice transcript clinical policy matches text follow-ups without treating safety questions as guarantees", () => {
+test("configured clinical speech is not censored; exact approval and integrity still matter", () => {
+  const prior=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
+  try {
   for (const promise of [
     "没有恢复期哦", "做完没有恢复期",
     "不会有副作用", "一般无需休息，可照常工作",
     "No downtime", "There are no side effects",
-  ]) assert.equal(unsafeVoiceTranscript(promise), true, promise);
+  ]) assert.equal(unsafeVoiceTranscript(promise), false, promise);
   for (const questionOrDisclaimer of [
     "你想知道有没有恢复期吗？",
     "会不会有副作用呢？",
@@ -74,8 +82,9 @@ test("voice transcript clinical policy matches text follow-ups without treating 
     "不能保证没有恢复期",
     "We cannot guarantee no downtime.",
   ]) assert.equal(unsafeVoiceTranscript(questionOrDisclaimer), false, questionOrDisclaimer);
-  assert.equal(unsafeVoiceTranscript("你想知道有没有恢复期吗？做完没有恢复期哦"), true);
+  assert.equal(unsafeVoiceTranscript("你想知道有没有恢复期吗？做完没有恢复期哦"), false);
   assert.equal(selectedVoiceNote({ zh: {
     approved: true, key: "test.ogg", transcript: "没有恢复期哦",
-  } }, "zh"), null);
+  } }, "zh")?.transcript, "没有恢复期哦");
+  } finally { clinicConfig.trustAdminConfiguredContent=prior; }
 });

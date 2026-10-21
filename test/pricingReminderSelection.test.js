@@ -363,5 +363,34 @@ test("Campaign-wide hold prevents automatic pricing reminders even with safe cap
   });
   assert.equal(result.offer, null);
   assert.deepEqual(result.offers, []);
-  assert.equal(result.reason, "unverified_clinical_promo_copy");
+  assert.equal(result.reason, "promotion_manually_paused");
+});
+
+
+test("administrator-configured 9D captions are not automatically censored in reminder selection", () => {
+  const clinicConfig=require("../src/config/clinicConfig");
+  const prior=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
+  try {
+  const campaign = [{
+    name:"9D 逆龄抗衰 First Trial",linkedService:"9D 逆龄抗衰",
+    sendOnPriceQuery:true,automaticMediaHold:false,
+    imageUrl:"https://example.test/9d-price.jpg",
+    caption:"把脸部90%的胶原蛋白统统刺激，并恢复回来",
+    mediaTranslations:{
+      en:{ caption:"Restore 90% of collagen" },
+    },
+  }];
+  const result=evaluatePricingReminder({
+    promotions:campaign,services:[{name:"9D 逆龄抗衰"}],
+    language:"zh",
+    candidate:{
+      treatment_interest:"9D 逆龄抗衰",
+      recent_customer_messages:["9D 价格多少"],
+    },
+  });
+  assert.equal(result.reason,null);
+  assert.equal(result.offer?.caption,campaign[0].caption);
+  assert.equal(result.offer?.imageUrl,campaign[0].imageUrl);
+  } finally { clinicConfig.trustAdminConfiguredContent=prior; }
 });
