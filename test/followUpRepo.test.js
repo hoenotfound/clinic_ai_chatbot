@@ -382,7 +382,7 @@ test("discarding an unsent social follow-up image only removes an unaccepted com
   assert.equal(discarded.contact_id, 23);
 });
 
-test("real follow-up repository permits OGG/Opus voice notes, not arbitrary audio", async (t) => {
+test("real follow-up repository permits OGG WhatsApp and MP3 social voice notes, not arbitrary audio", async (t) => {
   const previousQuery = pool.query;
   t.after(() => { pool.query = previousQuery; });
   const statements = [];
@@ -408,13 +408,45 @@ test("real follow-up repository permits OGG/Opus voice notes, not arbitrary audi
   assert.equal(statements[0].params[13], base.mediaKey);
   assert.equal(statements[0].params[14], "audio/ogg");
 
-  await assert.rejects(
-    followUpRepo.saveIfStillEligible({ ...base, mediaMimeType: "audio/mpeg" }),
-    /Invalid automated follow-up step or delay/
-  );
+  await followUpRepo.saveIfStillEligible({
+    ...base,
+    mediaKey: "clients/neutro/messages/follow-up-config/voice-preview.mp3",
+    mediaMimeType: "audio/mpeg",
+  });
+  assert.equal(statements.length, 2);
+  assert.equal(statements[1].params[14], "audio/mpeg");
   await assert.rejects(
     followUpRepo.saveIfStillEligible({ ...base, mediaMimeType: "image/jpeg" }),
     /Invalid automated follow-up step or delay/
   );
-  assert.equal(statements.length, 1, "unsupported attachments must never reach SQL");
+  assert.equal(statements.length, 2, "unsupported attachments must never reach SQL");
+});
+
+
+test("confirmed-undelivered social audio can atomically become one text fallback", async (t) => {
+  const previousQuery = pool.query;
+  t.after(() => { pool.query = previousQuery; });
+  const paramsSeen = [];
+  pool.query = async (sql, params) => {
+    assert.match(sql, /pg_advisory_xact_lock/);
+    assert.match(sql, /m\.media_mime_type = 'audio\/mpeg'/);
+    assert.match(sql, /m\.delivery_status IS NULL/);
+    assert.match(sql, /m\.whatsapp_message_id IS NULL/);
+    assert.match(sql, /social_provider_message_ids/);
+    assert.match(sql, /media_key = NULL, media_mime_type = NULL/);
+    assert.match(sql, /c\.channel IN \('facebook', 'instagram'\)/);
+    paramsSeen.push(params);
+    return { rows: [{ id: 802, contact_id: 801, content: params[2],
+      media_mime_type: null, has_media_attachment: false }] };
+  };
+  const updated = await followUpRepo.replaceUnsentSocialVoiceWithText({
+    contactId: 801, messageId: 802, content: "Checking in",
+    messageMode: "fixed",
+  });
+  assert.equal(updated.content, "Checking in");
+  assert.deepEqual(paramsSeen, [[801, 802, "Checking in", "fixed"]]);
+  await assert.rejects(() => followUpRepo.replaceUnsentSocialVoiceWithText({
+    contactId: 801, messageId: 802, content: "", messageMode: "fixed",
+  }), /Invalid social voice text fallback/);
+  assert.equal(paramsSeen.length, 1);
 });

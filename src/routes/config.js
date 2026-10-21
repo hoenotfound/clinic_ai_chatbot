@@ -1561,7 +1561,6 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
         sevenDayEvidence.rows[0]?.verified !== true,
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
-      // Expose the global kill switch used by both follow-up workers.
       automaticRepliesEnabled: require("../services/automaticReplyControl").automatedRepliesEnabled(),
       periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
       sevenDayVerified: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true",
@@ -1810,6 +1809,10 @@ router.post("/automated-follow-up/voice", handleFollowUpVoiceUpload, async (req,
         voicelanguage: language,
         voicepreviewkey: previewKey,
         voicetranscripthash: voiceTranscriptDigest(transcript, language, previewKey),
+        // Anchored in the original OGG object's upload-time metadata. The
+        // social MP3 must match this byte digest before Meta ever receives it.
+        voicepreviewsha256: crypto.createHash("sha256")
+          .update(converted.playback.buffer).digest("hex"),
       },
     });
     return res.status(201).json({

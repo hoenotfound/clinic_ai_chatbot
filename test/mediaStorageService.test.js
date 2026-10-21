@@ -744,3 +744,83 @@ test("follow-up media prune retains historical MP3 voice previews linked to save
   assert.equal(count, 1);
   assert.deepEqual(deleted, [root + "orphan.mp3"]);
 });
+
+
+test("follow-up cleanup preserves original OGG approval metadata referenced only by a social MP3", async (t) => {
+  const oldSend = S3Client.prototype.send;
+  const keys = ["CLIENT_SLUG", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"];
+  const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  Object.assign(process.env, {
+    CLIENT_SLUG: "social-retention-test", R2_ACCOUNT_ID: "retention-test",
+    R2_ACCESS_KEY_ID: "key", R2_SECRET_ACCESS_KEY: "secret", R2_BUCKET_NAME: "private-media",
+  });
+  t.after(() => {
+    S3Client.prototype.send = oldSend;
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const root = mediaStorage.followUpConfigVideoPrefix();
+  const socialMp3 = root + "approved.mp3";
+  const originalOgg = root + "approved.ogg";
+  const deleted = [];
+  const oldDate = new Date("2026-09-01T00:00:00Z");
+  S3Client.prototype.send = async command => {
+    if (command instanceof ListObjectsV2Command) {
+      return { Contents: ["approved.mp3", "approved.ogg", "unreferenced.ogg"].map(name => ({
+        Key: root + name, LastModified: oldDate,
+      })), IsTruncated: false };
+    }
+    if (command instanceof HeadObjectCommand) {
+      return { ContentLength: 100, ContentType: "audio/ogg",
+        Metadata: { voicepreviewkey: command.input.Key === originalOgg
+          ? socialMp3 : root + "unreferenced.mp3" } };
+    }
+    if (command instanceof DeleteObjectsCommand) {
+      deleted.push(...command.input.Delete.Objects.map(o => o.Key));
+      return { Errors: [] };
+    }
+    throw Error("Unexpected R2 command");
+  };
+  const count = await mediaStorage.pruneStaleFollowUpConfigVideos({
+    env: { ...process.env }, now: new Date("2026-10-20T00:00:00Z").getTime(),
+    referencedKeys: [socialMp3],
+  });
+  assert.equal(count, 1);
+  assert.deepEqual(deleted, [root + "unreferenced.ogg"]);
+});
+
+test("follow-up cleanup fails closed if approval evidence HEAD cannot be verified", async (t) => {
+  const oldSend = S3Client.prototype.send;
+  const keys = ["CLIENT_SLUG", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"];
+  const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  Object.assign(process.env, {
+    CLIENT_SLUG: "social-prune-failclosed", R2_ACCOUNT_ID: "prune-failclosed",
+    R2_ACCESS_KEY_ID: "key", R2_SECRET_ACCESS_KEY: "secret", R2_BUCKET_NAME: "private-media",
+  });
+  t.after(() => {
+    S3Client.prototype.send = oldSend;
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const root = mediaStorage.followUpConfigVideoPrefix();
+  let deletes = 0;
+  S3Client.prototype.send = async command => {
+    if (command instanceof ListObjectsV2Command) {
+      return { Contents: [{ Key: root + "unverified.ogg",
+        LastModified: new Date("2026-09-01T00:00:00Z") }], IsTruncated: false };
+    }
+    if (command instanceof HeadObjectCommand) throw Error("R2 HEAD unavailable");
+    if (command instanceof DeleteObjectsCommand) { deletes++; return { Errors: [] }; }
+    throw Error("Unexpected R2");
+  };
+  const count = await mediaStorage.pruneStaleFollowUpConfigVideos({
+    env: { ...process.env }, now: new Date("2026-10-20T00:00:00Z").getTime(),
+    referencedKeys: [root + "historical.mp3"],
+  });
+  assert.equal(count, 0);
+  assert.equal(deletes, 0);
+});
