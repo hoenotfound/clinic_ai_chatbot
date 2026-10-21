@@ -2061,6 +2061,15 @@ const EXTENDED_ATTEMPT_STATUSES = {
   cancelled: { label: "Not sent (cancelled)", description: "The system cancelled the attempt; this is not a confirmed customer delivery.", action: "Check the eligibility or template reason before taking action." },
 };
 const EXTENDED_ELIGIBILITY_MESSAGES = {
+  customer_asked_to_decide_later: ["Customer requested more time", "Respect their request. Do not send extra reminders while they are considering."],
+  low_interest_extra_followup: ["Additional reminder intentionally skipped", "The customer's interest was too low for another extended message. Wait for a new enquiry."],
+  no_distinct_approved_template_in_customer_language: ["No distinct approved template in customer's language", "Approve a suitable language version or choose a different template for that time. Never resend an earlier template."],
+  template_already_used: ["Template already sent", "Choose a different approved template for later follow-ups, if the customer remains eligible."],
+  quiet_hours: ["Quiet hours", "Wait for the configured permitted period; the worker decides whether another attempt is allowed."],
+  billing_preflight_deferred: ["Meta billing verification pending", "Review verified billing evidence. Do not force a manual resend."],
+  free_only_policy_deferred_no_provider_send: ["Policy-protected deferral", "The worker did not submit a provider send. Verify the reply window before retrying."],
+  media_validation_failed: ["Media validation failed", "Check the approved template's required image or video attachment."],
+  unsupported_or_ambiguous_template_media: ["Template or media cannot be selected safely", "Check the service-specific matching, approval and media selection."],
   opted_out: ["Customer opted out", "Do not send marketing unless the customer opts in again."],
   marketing_consent_missing: ["Marketing permission not recorded", "Review recorded consent before any promotional message."],
   whatsapp_opt_in_missing: ["WhatsApp opt-in not verified", "Check the customer's WhatsApp opt-in evidence."],
