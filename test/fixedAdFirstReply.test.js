@@ -83,6 +83,8 @@ test("fails to AI on current price, appointment, clinical, service-switch or non
     "我对3D小颜术有兴趣",
     "我对骨盆调理有兴趣，可是我很痛，需要医生吗？",
     "stop promotions",
+    "我对骨盆调理不感兴趣",
+    "我对骨盆调理没有兴趣",
   ]) {
     assert.equal(attempt({ customerText }), null, customerText);
   }
@@ -123,6 +125,12 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("I am interested in 9D do you have pictures"), false);
   assert.equal(isStandardAdPrefill("Saya berminat dengan 9D bagaimana prosesnya"), false);
   assert.equal(isStandardAdPrefill("Saya berminat dengan 9D saya dah cuba sebelum ni"), false);
+  assert.equal(isStandardAdPrefill("我对9D不感兴趣"), false);
+  assert.equal(isStandardAdPrefill("我对9D没有兴趣"), false);
+  assert.equal(isStandardAdPrefill("我对9D不是很有兴趣"), false);
+  assert.equal(isStandardAdPrefill("我对9D没什么兴趣"), false);
+  assert.equal(isStandardAdPrefill("I am interested in 9D not really"), false);
+  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D tak jadi"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，不过要多少钱？"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣\n我要退款"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
