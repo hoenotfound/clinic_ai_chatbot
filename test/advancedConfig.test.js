@@ -2136,8 +2136,8 @@ test("automaticMediaHold is validated, editable and never removed by the Promoti
   assert.equal(invalid.ok,false);
   const settings=read("portal-frontend/src/pages/Settings.jsx");
   assert.match(settings,/Pause automatic promotion graphics and promotion-based follow-ups/u);
-  assert.match(settings,/pricing reminders, and promotion-specific automated follow-up text and attachments/u);
-  assert.match(settings,/Ordinary general follow-ups and verified customer-requested price replies are not blocked/u);
+  assert.match(settings,/This switch is controlled by clinic staff/u);
+  assert.match(settings,/When unchecked, the chatbot follows this clinic.s Trust content setting/u);
   assert.match(settings,/automaticMediaHold: p\.automaticMediaHold === true/u);
   assert.match(settings,/onChange=\{\(e\) => updateItem\(index, \{ automaticMediaHold: e\.target\.checked \}\)\}/u);
 });
@@ -2180,6 +2180,12 @@ test("follow-up voice settings require approved, safe, clinic-owned language ass
   assert.equal(check({ voiceNotes: { en: { ...note, approved: false } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Only RM488 today!" } } }).ok, false);
   assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, false);
+  // Tenant-scoped trust is explicitly enabled by this clinic's administrator.
+  const beforeTrust = clinicConfig.trustAdminConfiguredContent;
+  try {
+    clinicConfig.trustAdminConfiguredContent = true;
+    assert.equal(check({ voiceNotes: { en: { ...note, transcript: "Guaranteed results with no side effects!" } } }).ok, true);
+  } finally { clinicConfig.trustAdminConfiguredContent = beforeTrust; }
   assert.equal(check({ voiceNotes: { de: note } }).ok, false);
   } finally {
     if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
@@ -2187,3 +2193,41 @@ test("follow-up voice settings require approved, safe, clinic-owned language ass
   }
 });
 
+
+
+test("clinic-specific administrator trust setting validates strictly and survives independent Settings changes", () => {
+  const current=currentConfig();
+  assert.equal(prepareConfigUpdatePayload({trustAdminConfiguredContent:"true"}, current).ok,false);
+  const trusted=prepareConfigUpdatePayload({trustAdminConfiguredContent:true}, current);
+  assert.equal(trusted.ok,true,JSON.stringify(trusted));
+  assert.equal(trusted.updates.trustAdminConfiguredContent,true);
+  const disabled=prepareConfigUpdatePayload({trustAdminConfiguredContent:false}, {...current,trustAdminConfiguredContent:true});
+  assert.equal(disabled.updates.trustAdminConfiguredContent,false);
+  const ordinary=prepareConfigUpdatePayload({ promotions:[] }, {...current,trustAdminConfiguredContent:true});
+  assert.equal(ordinary.ok,true);
+  assert.equal(Object.hasOwn(ordinary.updates,"trustAdminConfiguredContent"),false);
+  const settings=read("portal-frontend/src/pages/Settings.jsx");
+  assert.match(settings,/Trust clinic-configured promotional and follow-up content/u);
+  assert.match(settings,/promotionCopyMayNeedReview\(item\)/u);
+  assert.match(settings,/advisory only and does not block saving or sending/u);
+  assert.match(settings,/trustAdminConfiguredContent \}/u);
+});
+
+test("nested package pauses validate and are preserved across Promotions saves", () => {
+  const current=currentConfig();
+  const heldPromotion={
+    name:"Pelvic Package AB",linkedService:"Consultation",
+    sendOnPriceQuery:true,imageUrl:"",caption:"",
+    packages:[{name:"Package A",imageUrl:"https://example.test/a.jpg",caption:"a",
+      automaticMediaHold:true}],
+  };
+  const validated=prepareConfigUpdatePayload({promotions:[heldPromotion]},current);
+  assert.equal(validated.ok,true,JSON.stringify(validated));
+  assert.equal(validated.updates.promotions[0].packages[0].automaticMediaHold,true);
+  const bad=structuredClone(heldPromotion);
+  bad.packages[0].automaticMediaHold="true";
+  assert.equal(prepareConfigUpdatePayload({promotions:[bad]},current).ok,false);
+  const settings=read("portal-frontend/src/pages/Settings.jsx");
+  assert.match(settings,/item\.automaticMediaHold === true \? \{ automaticMediaHold: true \}/u);
+  assert.match(settings,/Pause this package/u);
+});
