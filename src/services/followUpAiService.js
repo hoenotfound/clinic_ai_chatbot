@@ -280,21 +280,31 @@ function isSubstantiallySimilar(message, previousMessages) {
 // Asking for a convenient day again is not new information. A reply after
 // another unanswered scheduling follow-up should instead help with an actual
 // concern or be skipped, without consuming a customer's attention.
+// Detect actual scheduling QUESTIONS, not informational weekday mentions.
+// Malaysian Chinese questions often end with 呢/呀/咯 rather than ? or ？.
 const SCHEDULING_NUDGE =
-  /(?:平日|周末|週末|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|方便.{0,15}(?:过来|過來|来|來)|这周.{0,15}方便|這週.{0,15}方便|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|would\s+.{0,25}\bsuit\s+you)\b)/iu;
+  /(?:平日|平时|平時|周末|週末|周[一二三四五六日]|星期[一二三四五六日天几幾]|礼拜[一二三四五六日天]|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|这周|這週|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|what\s+time|next\s+week|this\s+week)\b)/iu;
+const SCHEDULING_VISIT_CONTEXT =
+  /(?:方便|有空|得空|过来|過來|来店|來店|到店|来看看|來看看|来看|來看|预约|預約|安排|时段|時段|约时间|約時間|\b(?:available|availability|free|visit|come|drop\s+by|appointment|book|schedule|convenient|suit|prefer|make\s+it)\b)/iu;
+const SCHEDULING_QUESTION_END =
+  /(?:吗|嗎|呢|呀|啊|咯|啦|么|麼)[\s～~!！。.…😊🙂☺️]*$/u;
+const SCHEDULING_ENGLISH_REQUEST =
+  /\b(?:can|could|would)\s+you\b.{0,70}\b(?:come|visit|make\s+it|available|free|drop\s+by)\b|\b(?:please\s+(?:tell|share|let)|let\s+me\s+know)\b.{0,70}\b(?:available|free|visit|come|day|time)\b/iu;
 function isSchedulingNudge(message) {
   const current = cleanContent(message);
-  return current.length <= 240 && /[?？]/u.test(current) &&
-    SCHEDULING_NUDGE.test(current);
+  if (!current || current.length > 240) return false;
+  const schedulingTopic = SCHEDULING_NUDGE.test(current) ||
+    SCHEDULING_ENGLISH_REQUEST.test(current);
+  const actuallyBooking = SCHEDULING_VISIT_CONTEXT.test(current) ||
+    SCHEDULING_ENGLISH_REQUEST.test(current);
+  const asksForAnswer = /[?？]/u.test(current) ||
+    SCHEDULING_QUESTION_END.test(current) ||
+    SCHEDULING_ENGLISH_REQUEST.test(current);
+  return schedulingTopic && actuallyBooking && asksForAnswer;
 }
-
 function repeatsSchedulingNudge(message, previousMessages = []) {
-  const current = cleanContent(message);
-  return current.length <= 240 && /[?？]/u.test(current) &&
-    SCHEDULING_NUDGE.test(current) &&
-    (previousMessages || []).some(previous =>
-      /[?？]/u.test(String(previous || "")) &&
-      SCHEDULING_NUDGE.test(String(previous || "")));
+  return isSchedulingNudge(message) &&
+    (previousMessages || []).some(previous => isSchedulingNudge(previous));
 }
 
 // Only prompts after the latest customer message are truly unanswered.
@@ -320,16 +330,25 @@ function unansweredAssistantMessages(conversation = []) {
 // Reject only strong absolute claims, not cautious individualized guidance.
 const UNSAFE_CLINICAL_PROMISE =
   /(?:基本(?:上)?|完全|绝对|絕對|保证|保證|肯定|几乎|幾乎|100%)\s*(?:是|都|可以|不用|不需要|没有|沒有|无|無)?\s*(?:没有|沒有|无|無|不需要|不用)\s*(?:任何|什么|什麼)?\s*(?:恢复期|恢復期|修复期|修復期|风险|風險|副作用|痛|疼痛)|(?:做完|护理后|護理後|疗程后|療程後).{0,18}(?:马上|立刻|立即|直接|一定).{0,22}(?:正常上班|正常工作|正常活动|正常活動|恢复日常|恢復日常)|(?:guaranteed|always|100%\s*guaranteed|zero|no)\s+(?:downtime|recovery(?:\s+time)?|pain|side\s+effects?|risks?)|(?:no|zero)\s+(?:recovery|downtime|side\s+effects?)\s+(?:at\s+all|for\s+everyone)/iu;
+// Unqualified Chinese guarantees are unsafe even without words like "完全".
+// Do not classify a question or a disclaimer as a promise.
+const UNSAFE_CLINICAL_DIRECT =
+  /(?:没有|沒有|无|無|零|不会有|不會有|不会出现|不會出現|绝无|絕無)\s*(?:任何|什么|什麼)?\s*(?:恢复期|恢復期|修复期|修復期|副作用|后遗症|後遺症|风险|風險|疼痛|痛(?:感)?)(?!\s*[?？])/iu;
+const UNSAFE_IMMEDIATE_ACTIVITY =
+  /(?:一般|通常|做完|护理后|護理後|疗程后|療程後).{0,16}(?:无需休息|無需休息|不用休息|不需要休息|无需请假|無需請假|直接上班|马上上班|立即上班|正常上班|照常工作)/iu;
+
 function hasUnsafeClinicalFollowUpClaim(message) {
   const copy = cleanContent(message);
   // "Cannot guarantee zero downtime" is a safety disclaimer, NOT a
   // guarantee. Remove only this bounded negated phrase before looking for
   // a separate unsafe promise elsewhere in the same message.
   const withoutDisclaimer = copy.replace(
-    /(?:不能|无法|無法|不會|不会|不)\s*(?:保证|保證|承诺|承諾)\s*(?:(?:完全|绝对|絕對|基本(?:上)?)\s*)?(?:没有|沒有|无|無|零)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛)|(?:cannot|can't|can\s+not|do\s+not|don't|never)\s+guarantee\s+(?:zero|no)\s+(?:downtime|recovery(?:\s+time)?|pain|side\s+effects?|risks?)/giu,
+    /(?:不能|无法|無法|不會|不会|不)\s*(?:保证|保證|承诺|承諾)\s*(?:(?:完全|绝对|絕對|基本(?:上)?)\s*)?(?:没有|沒有|无|無|零)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛)|(?:不(?:一定|代表)|并非|並非|并不是|並不是|不是|不能说|不能說)\s*(?:完全|绝对|絕對)?\s*(?:没有|沒有|无|無)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛)|(?:cannot|can't|can\s+not|do\s+not|don't|never)\s+guarantee\s+(?:zero|no)\s+(?:downtime|recovery(?:\s+time)?|pain|side\s+effects?|risks?)/giu,
     ""
   );
-  return UNSAFE_CLINICAL_PROMISE.test(withoutDisclaimer);
+  return UNSAFE_CLINICAL_PROMISE.test(withoutDisclaimer) ||
+    UNSAFE_CLINICAL_DIRECT.test(withoutDisclaimer) ||
+    UNSAFE_IMMEDIATE_ACTIVITY.test(withoutDisclaimer);
 }
 
 function followUpCopyViolation(message, conversation = []) {
