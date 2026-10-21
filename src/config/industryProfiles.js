@@ -32,6 +32,7 @@ function deepClone(value) {
 
 function neutralAutomationDefaults() {
   return {
+    adFirstReply: { enabled: false, replies: [] },
     automatedFollowUp: {
       enabled: false,
       delayMinutes: 120,
