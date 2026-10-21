@@ -326,7 +326,7 @@ function hasUnsafeClinicalFollowUpClaim(message) {
   // guarantee. Remove only this bounded negated phrase before looking for
   // a separate unsafe promise elsewhere in the same message.
   const withoutDisclaimer = copy.replace(
-    /(?:不能|无法|無法|不會|不会|不)\s*(?:保证|保證|承诺|承諾)\s*(?:(?:完全|绝对|絕對|基本(?:上)?)\s*)?(?:没有|沒有|无|無|零)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛)/giu,
+    /(?:不能|无法|無法|不會|不会|不)\s*(?:保证|保證|承诺|承諾)\s*(?:(?:完全|绝对|絕對|基本(?:上)?)\s*)?(?:没有|沒有|无|無|零)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛)|(?:cannot|can't|can\s+not|do\s+not|don't|never)\s+guarantee\s+(?:zero|no)\s+(?:downtime|recovery(?:\s+time)?|pain|side\s+effects?|risks?)/giu,
     ""
   );
   return UNSAFE_CLINICAL_PROMISE.test(withoutDisclaimer);
