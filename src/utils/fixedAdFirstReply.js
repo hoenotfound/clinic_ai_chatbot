@@ -7,7 +7,6 @@ const {
   hasCustomerPriceEnquiry,
   hasExplicitPackageOptionsRequest,
   isContextualAdServiceEnquiry,
-  hasCustomerServiceEnquiry,
 } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
@@ -112,7 +111,9 @@ function resolveFixedAdFirstReply({
   return {
     reply: reply.trim(),
     treatment,
-    serviceQuery: contextual || hasCustomerServiceEnquiry(customerText),
+    // The pattern itself proves a current treatment enquiry, even where the
+    // shared legacy keyword list does not contain this clinic's service name.
+    serviceQuery: true,
     serviceQuerySource: contextual ? "meta_ad" : "customer_message",
   };
 }
