@@ -41,10 +41,10 @@ function isStandardAdPrefill(value) {
   const malaySubject = malay?.[1] || "";
   const englishIsSimple = Boolean(english) &&
     !/[;,]/u.test(englishSubject) &&
-    !/\b(?:and|but|because|also|would|could|can|want|need|tell|explain|please|whether|if|for\s+next|next\s+(?:week|month)|this\s+(?:week|month)|after\s+work)\b/iu.test(englishSubject);
+    !/\b(?:and|but|because|also|would|could|can|does|do|is\s+it|are\s+there|have|has|want|need|tell|explain|please|whether|if|for\s+next|next\s+(?:week|month)|this\s+(?:week|month)|after\s+work)\b/iu.test(englishSubject);
   const malayIsSimple = Boolean(malay) &&
     !/[;,]/u.test(malaySubject) &&
-    !/\b(?:dan|juga|tapi|tetapi|sebab|kerana|nak|mahu|boleh|berapa|ada|macam|kalau|ingin|minta|bolehkah|untuk\s+esok)\b/iu.test(malaySubject);
+    !/\b(?:dan|juga|tapi|tetapi|sebab|kerana|nak|mahu|boleh|berapa|bagaimana|kenapa|mengapa|pernah|sudah|dah|ada|macam|kalau|ingin|minta|bolehkah|untuk\s+esok)\b/iu.test(malaySubject);
   return chineseInterest.test(body) || englishIsSimple || malayIsSimple;
 }
 
