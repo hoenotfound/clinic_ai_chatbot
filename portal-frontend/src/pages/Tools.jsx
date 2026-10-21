@@ -2072,7 +2072,7 @@ function followUpReadinessTone(level) {
 // Read-only presentation of SAVED config and observed server checks.
 // It never asserts that a specific customer is eligible or that Meta will bill RM0.
 function followUpOperationalReadiness({
-  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, status,
+  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, assessmentFirstPricingEnabled, status,
   statusError, statusLoading, catalog, catalogLoading, catalogError,
 }) {
   const normal = !savedEnabled
@@ -2133,6 +2133,8 @@ function followUpOperationalReadiness({
       ...(savedFreeEntry.templateRules || []).map(rule => ({ name: rule.templateName, rule })),
     ];
     const problems = [];
+    let usableVersions = 0;
+    let conditionalImages = 0;
     for (const locale of requiredLocales) {
       for (const { name, defaultText, rule } of names) {
         const valid = (catalog.templates || []).find(template =>
@@ -2141,13 +2143,24 @@ function followUpOperationalReadiness({
           supportedForAutomation(template) &&
           (!defaultText || (template.header?.format || "TEXT") === "TEXT"));
         if (!valid) { problems.push(locale + ": " + (name || "missing template")); continue; }
-        if (!rule) continue;
         const format = valid.header?.format || "TEXT";
         const automaticImage = format === "IMAGE" && AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES.has(name);
-        if ((format === "VIDEO" || format === "IMAGE") && !automaticImage &&
+        if (automaticImage && assessmentFirstPricingEnabled) {
+          problems.push(locale + ": " + name + " unavailable with assessment-first pricing");
+          continue;
+        }
+        if (automaticImage) {
+          // The worker requires one unambiguous, eligible promotion for the
+          // customer's treatment. Catalog approval alone cannot verify it.
+          conditionalImages++;
+          continue;
+        }
+        if (rule && (format === "VIDEO" || format === "IMAGE") &&
             (!(rule.mediaKey || rule.mediaUrl) || (format === "VIDEO" && rule.videoCodecVerified !== true))) {
           problems.push(locale + ": " + name + " media");
+          continue;
         }
+        usableVersions++;
       }
     }
     const longSlots = (savedFreeEntry?.slotsHours || []).some(hours => Number(hours) > 72);
@@ -2160,8 +2173,14 @@ function followUpOperationalReadiness({
         rule.slotHours === hours && rule.serviceName === "*")?.templateName || savedFreeEntry.templateName);
     const duplicates = selectedNames.length > new Set(selectedNames.filter(Boolean)).size;
     if (problems.length > 0) {
-      extended = asExtended("attention", savedFreeEntry.language === "auto" ? "Partially available" : "Needs setup",
-        `${problems.length} language/template combination(s) are unsupported or missing required media (${problems.slice(0, 3).join(", ")}). The worker may skip those customers.`);
+      const hasPotentialPath = usableVersions > 0 || conditionalImages > 0;
+      extended = asExtended("attention", hasPotentialPath ? "Partially available" : "Needs setup",
+        `${problems.length} language/template combination(s) cannot be used (${problems.slice(0, 3).join(", ")}). ${hasPotentialPath
+          ? "Some combinations may still work, subject to customer eligibility and media checks."
+          : "No configured language/template combination is currently usable. Review approved templates and media."}`);
+    } else if (conditionalImages > 0) {
+      extended = asExtended("attention", usableVersions > 0 ? "Partially available" : "Needs verification",
+        "Automatically selected promotion images need an unambiguous, eligible image for each customer's treatment. Meta approval alone cannot verify these sends.");
     } else if (post72hUnverified) {
       extended = asExtended("attention", "Partially available",
         "Days 4–7 are restricted without verified post-72-hour Meta free-entry evidence and rollout authorization. Earlier eligible slots may still work.");
@@ -2562,7 +2581,7 @@ function FollowUpTool({
   ).filter(Boolean);
   const hasDuplicateExtendedNames = new Set(simpleConfiguredNames).size < simpleConfiguredNames.length;
   const operationalReadiness = followUpOperationalReadiness({
-    savedEnabled, savedFreeEntryEnabled, savedFreeEntry,
+    savedEnabled, savedFreeEntryEnabled, savedFreeEntry, assessmentFirstPricingEnabled,
     status: freeEntryStatus, statusError: freeEntryStatusError,
     statusLoading: freeEntryStatusLoading, catalog: templateCatalog,
     catalogLoading: templateCatalogLoading, catalogError: templateCatalogError,
