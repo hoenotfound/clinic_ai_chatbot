@@ -1621,10 +1621,15 @@ async function sendCandidate(candidate) {
   // configured by clinic staff; do not silently veto their exact wording.
   // Appointment repetition, consent, pricing, provider and delivery gates
   // still apply to every mode.
-  const shouldReviewClinical = followUpMessageMode === "ai_personalized" ||
-    clinicConfig.trustAdminConfiguredContent !== true;
-  let copyViolation = shouldReviewClinical &&
-    outboundVariants.some(copy => followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
+  const trustStaffCopy = clinicConfig.trustAdminConfiguredContent === true;
+  const reviewClinicalCopy = (copy) =>
+    !trustStaffCopy ||
+    (followUpMessageMode === "ai_personalized" && copy === followUpMessage);
+  // Trust staff-approved voice even when a different AI-generated text caption
+  // is present; AI text must continue to pass clinical-copy scrutiny.
+  let copyViolation = outboundVariants.some(copy =>
+    reviewClinicalCopy(copy) &&
+    followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
     ? "unsafe_clinical_promise" : null;
   if (!copyViolation && outboundVariants.some(copy =>
       followUpAiService.isSchedulingNudge(copy))) {
@@ -1635,7 +1640,7 @@ async function sendCandidate(candidate) {
       for (const copy of outboundVariants) {
         copyViolation = followUpAiService.followUpCopyViolation(
           copy, safetyContext?.messages || [],
-          { checkClinicalCopy: shouldReviewClinical }
+          { checkClinicalCopy: reviewClinicalCopy(copy) }
         );
         if (copyViolation) break;
       }
