@@ -35,6 +35,7 @@ const CONFIG_KEYS = [
   "promotions",
   "aiPricingIntentMode",
   "aiPricingOfferEnquiriesEnabled",
+  "adFirstReply",
   "resultMedia",
   "services",
   "serviceAliases",
