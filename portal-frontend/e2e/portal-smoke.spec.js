@@ -2335,10 +2335,10 @@ test("Extended WhatsApp activity explains accepted versus unknown and links safe
       enabledOnServer: true, enabledInTools: true, freeOnlyEnabled: false,
       billingSafety: { since_switch: 0 }, freeOnlyGate: { status: "idle" },
       recentAttempts: [
-        { contact_id: 486, slot_hours: 50, status: "accepted", created_at: "2026-10-19T10:00:00Z", billable: false },
-        { contact_id: 487, slot_hours: 98, status: "unknown", created_at: "2026-10-19T11:00:00Z",
+        { attempt_id: 501, contact_id: 486, slot_hours: 50, status: "accepted", created_at: "2026-10-19T10:00:00Z", billable: false },
+        { attempt_id: 502, contact_id: 487, slot_hours: 98, status: "unknown", created_at: "2026-10-19T11:00:00Z",
           error: "provider receipt unknown", billable: false },
-        { contact_id: 488, slot_hours: 122, status: "failed", created_at: "2026-10-19T12:00:00Z",
+        { attempt_id: 503, contact_id: 488, slot_hours: 122, status: "failed", created_at: "2026-10-19T12:00:00Z",
           error: "provider failed", billable: true },
       ],
       contactDetails: [
@@ -2360,6 +2360,8 @@ test("Extended WhatsApp activity explains accepted versus unknown and links safe
   await expect(activity).toContainText("Marketing permission not recorded");
   await expect(activity).toContainText("Customer opted out");
   await expect(activity).toContainText("Marketing permission not recorded");
+  await expect(activity.locator("article").first()).not.toContainText("9D 逆龄抗衰");
+  await expect(activity).toContainText("Historical attempts do not display the contact's current treatment");
   const links = activity.getByRole("link", { name: "Open conversation" });
   await expect(links).toHaveCount(5);
   await expect(links.first()).toHaveAttribute("href", "/inbox?contact=486");
@@ -2367,7 +2369,7 @@ test("Extended WhatsApp activity explains accepted versus unknown and links safe
   await expect(links.nth(2)).toHaveAttribute("href", "/inbox?contact=488");
   const details = activity.getByText("Technical details").first();
   await details.click();
-  await expect(activity).toContainText("provider receipt unknown");
+  await expect(activity).toContainText("Recorded error: provider receipt unknown");
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -2397,7 +2399,7 @@ test("Extended follow-up activity remains safe when provider status is unrecogni
     loggedIn: true,
     followUpStatus: {
       enabledOnServer: false, enabledInTools: false,
-      recentAttempts: [{ contact_id: 123, slot_hours: 26, status: "queued_for_review",
+      recentAttempts: [{ attempt_id: 504, contact_id: 123, slot_hours: 26, status: "queued_for_review",
         created_at: null, billable: false }],
       contactDetails: [{ contact_id: 123, eligibility_reason: "unrecognized_gate",
         last_skip_reason: "unrecognized_skip" }],
