@@ -513,16 +513,34 @@ function ensureVerifiedPriceReply({
 // to a customer. This guard never supplies unverified numeric amounts.
 const UNFULFILLED_PRICE_HEADING =
   /(?:给你|給你|供你|参考|參考|提供|以下|如下|here\s+are|these\s+are|current|regular|standard|normal).{0,65}(?:价钱|價錢|价格|價格|收费|收費|regular\s+price|prices?|harga).{0,24}[:：]/iu;
+// The model may output a bare service-specific heading ("9D 的价格是：")
+// with no number. It must not escape the guard merely because it omitted
+// "here are" / "给你参考". Restrict to a real heading ending in a colon.
+const DIRECT_EMPTY_PRICE_HEADING =
+  /(?:^|[\n。；;!?！？])\s*[^\n:：]{0,75}?(?:价钱|價錢|价格|價格|收费|收費|费用|費用|(?:the\s+)?prices?(?:\s+(?:for|of)\s+[^\n:：]{1,45})?|(?:regular|normal|first[\s-]?trial)\s+price|harga(?:\s+[^\n:：]{0,35})?)\s*(?:是|为|為|如下|is|are)?\s*[:：]/iu;
+const UNFULFILLED_MULTIPLE_PRICES =
+  /(?:两|兩|2)\s*(?:项|項|个|個|种|種)|\b(?:both|two\s+(?:treatments?|packages?|prices?))\b/iu;
+
 function guardUnfulfilledPriceQuote(reply, language = "zh") {
   const original = String(reply || "").trim();
-  if (!UNFULFILLED_PRICE_HEADING.test(original) ||
+  if (!(UNFULFILLED_PRICE_HEADING.test(original) ||
+        DIRECT_EMPTY_PRICE_HEADING.test(original)) ||
       hasTreatmentPriceContent(original)) return { reply: original, changed: false };
   const locale = String(language || "").toLowerCase();
+  const comparingTwo = UNFULFILLED_MULTIPLE_PRICES.test(original);
+  // Never fabricate an amount. Ambiguity about "both" is a separate case:
+  // do not ask about two treatments when the customer never mentioned two.
   const safe = locale.startsWith("ms")
-    ? "Saya faham anda mahu tahu harganya 😊 Jumlah yang sah belum dapat disahkan, jadi saya tak mahu memberi angka yang salah. Anda nak bandingkan dua rawatan atau dua bahagian untuk rawatan yang sama?"
+    ? (comparingTwo
+      ? "Saya faham anda mahu tahu kedua-dua harga 😊 Jumlah yang sah belum dapat disahkan. Adakah anda maksudkan dua rawatan atau dua masalah dalam satu rawatan?"
+      : "Saya faham anda mahu tahu harga 😊 Jumlah yang sah belum dapat disahkan, jadi saya tak mahu beri angka yang salah. Rawatan yang mana satu anda ingin semak?")
     : locale.startsWith("en")
-      ? "I understand you'd like the prices 😊 I don't have a verified amount to quote yet, so I don't want to give you the wrong figure. Are you comparing two treatments, or two concerns within one treatment?"
-      : "明白，你想先了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你说的两项，是想比较两种疗程，还是同一疗程针对两个部位呢？";
+      ? (comparingTwo
+        ? "I understand you'd like both prices 😊 I don't have a verified amount to quote. Are you comparing two treatments or two concerns within one treatment?"
+        : "I understand you'd like the price 😊 I don't have a verified amount to quote, so I don't want to give you the wrong figure. Which treatment would you like me to check?")
+      : (comparingTwo
+        ? "明白，你想先了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你说的两项，是想比较两种疗程，还是同一疗程针对两个部位呢？"
+        : "明白，你想了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你想查询哪项疗程的价格呢？");
   return { reply: safe, changed: true };
 }
 
