@@ -47,7 +47,15 @@ function hasUnsafeClinicalPromotionCopy(text) {
 // Pause switch is the only promotion-content pause; customer intent, consent,
 // pricing verification, duplicate checks and Meta rules are enforced separately.
 function isPromotionManuallyPaused(value) {
-  return value?.automaticMediaHold === true;
+  if (!value || typeof value !== "object") return false;
+  return value.automaticMediaHold === true ||
+    (Array.isArray(value.packages) && value.packages.some(isPromotionManuallyPaused));
+}
+// Clinic-scoped opt-in: for other tenants retain the existing automatic copy
+// safety behavior. Explicitly paused campaigns always remain paused.
+function configuredPromotionCopyBlocked(value, trustAdminConfiguredContent = false) {
+  return isPromotionManuallyPaused(value) ||
+    (!trustAdminConfiguredContent && promotionHasUnsafeClinicalCopy(value));
 }
 
 // Use a common check for reactive pricing graphics, follow-up promotion copy
@@ -76,4 +84,5 @@ module.exports = {
   hasUnsafeClinicalPromotionCopy,
   promotionHasUnsafeClinicalCopy,
   isPromotionManuallyPaused,
+  configuredPromotionCopyBlocked,
 };
