@@ -2126,7 +2126,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                       <span>
                         <span className="block font-semibold">Pause automatic promotion graphics and promotion-based follow-ups</span>
                         <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
-                          Blocks this promotion's pricing graphics, pricing reminders, and promotion-specific automated follow-up text and attachments until the artwork and copy are approved. Ordinary general follow-ups and verified customer-requested price replies are not blocked. Review the words inside the image before clearing this hold.
+                          This switch is controlled by clinic staff. While checked, automatic pricing graphics, reminders and promotion-based follow-ups are paused. When unchecked, the chatbot uses your configured captions and artwork without applying an AI clinical-copy censor; you are responsible for reviewing their accuracy and compliance. Customer eligibility, duplicate protection and provider rules still apply.
                         </span>
                       </span>
                     </label>
