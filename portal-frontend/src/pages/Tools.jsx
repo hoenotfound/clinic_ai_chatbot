@@ -2176,10 +2176,17 @@ function followUpOperationalReadiness({
   const overall =
     normal.level === "paused" && extended.level === "paused"
       ? { level: "paused", label: "Paused", detail: "Both follow-up paths are off." }
-      : normal.level === "blocked" && extended.level !== "active"
-        ? { level: "blocked", label: "Sending blocked", detail: "The global automation switch prevents follow-up sends." }
+      : (normal.level === "paused" || normal.level === "blocked") &&
+        (extended.level === "paused" || extended.level === "blocked")
+        ? { level: "blocked", label: "Sending blocked",
+            detail: normal.level === "blocked"
+              ? "The global automation switch prevents follow-up sends."
+              : "Extended WhatsApp cannot send while the saved 24-hour follow-up switch is off. Enable and save normal follow-ups first." }
         : normal.level === "attention" || extended.level === "blocked" || extended.level === "attention"
-          ? { level: "attention", label: "Needs attention", detail: savedEnabled ? "Normal follow-ups may still run. Extended WhatsApp needs review." : "Review the details below before expecting messages." }
+          ? { level: "attention", label: "Needs attention",
+              detail: normal.level === "active"
+                ? "Normal follow-ups may still run. Extended WhatsApp needs review."
+                : "Review the details below before expecting messages." }
           : { level: "active", label: "Active", detail: "At least one path is enabled; actual customer sends always depend on eligibility." };
   return { overall, normal, extended };
 }
@@ -2744,7 +2751,7 @@ function FollowUpTool({
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
           <p>Template server: {freeEntryStatusError ? "Verification failed" : !freeEntryStatus ? "Checking or unavailable" : freeEntryStatus.enabledOnServer ? "On" : "Off"}
             {" · "}Tools: {savedFreeEntryEnabled ? "On" : "Off"}</p>
-          <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(); }}
+          <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(true); }}
             disabled={freeEntryStatusLoading || templateCatalogLoading}
             className="min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 font-semibold text-[var(--color-primary)] disabled:opacity-50">
             {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck readiness"}
