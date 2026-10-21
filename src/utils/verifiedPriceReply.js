@@ -521,11 +521,18 @@ const DIRECT_EMPTY_PRICE_HEADING =
 const UNFULFILLED_MULTIPLE_PRICES =
   /(?:两|兩|2)\s*(?:项|項|个|個|种|種)|\b(?:both|two\s+(?:treatments?|packages?|prices?))\b/iu;
 
+// hasTreatmentPriceContent() also detects price-HEADING words such as
+// "价格是" without any number. This guard must instead require a visible
+// numeric monetary amount to mark the heading fulfilled.
+const VISIBLE_MONETARY_AMOUNT =
+  /\b(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?\b|(?:[价價](?:格|钱|錢)|收费|收費|费用|費用|harga|prices?|cost|fee)\s*(?:是|为|為|is|are)?\s*[:：]?\s*[1-9]\d{2,5}(?!\d)/iu;
+
+
 function guardUnfulfilledPriceQuote(reply, language = "zh") {
   const original = String(reply || "").trim();
   if (!(UNFULFILLED_PRICE_HEADING.test(original) ||
         DIRECT_EMPTY_PRICE_HEADING.test(original)) ||
-      hasTreatmentPriceContent(original)) return { reply: original, changed: false };
+      VISIBLE_MONETARY_AMOUNT.test(original)) return { reply: original, changed: false };
   const locale = String(language || "").toLowerCase();
   const comparingTwo = UNFULFILLED_MULTIPLE_PRICES.test(original);
   // Never fabricate an amount. Ambiguity about "both" is a separate case:
