@@ -331,5 +331,5 @@ test("compound price and downtime question has an immediate, cautious answer", a
   // not claim zero downtime or fabricate an individual healing period.
   assert.match(quote.reply, /RM488/u);
   assert.match(quote.reply, /修复期|恢复时间/u);
-  assert.doesNotMatch(quote.reply, /没有恢复期|完全没有恢复期/u);
+  assert.match(quote.reply, /不能保证完全没有恢复期/u);
 });
