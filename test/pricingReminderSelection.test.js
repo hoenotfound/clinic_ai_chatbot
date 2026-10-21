@@ -368,6 +368,10 @@ test("Campaign-wide hold prevents automatic pricing reminders even with safe cap
 
 
 test("administrator-configured 9D captions are not automatically censored in reminder selection", () => {
+  const clinicConfig=require("../src/config/clinicConfig");
+  const prior=clinicConfig.trustAdminConfiguredContent;
+  clinicConfig.trustAdminConfiguredContent=true;
+  try {
   const campaign = [{
     name:"9D 逆龄抗衰 First Trial",linkedService:"9D 逆龄抗衰",
     sendOnPriceQuery:true,automaticMediaHold:false,
@@ -388,4 +392,5 @@ test("administrator-configured 9D captions are not automatically censored in rem
   assert.equal(result.reason,null);
   assert.equal(result.offer?.caption,campaign[0].caption);
   assert.equal(result.offer?.imageUrl,campaign[0].imageUrl);
+  } finally { clinicConfig.trustAdminConfiguredContent=prior; }
 });
