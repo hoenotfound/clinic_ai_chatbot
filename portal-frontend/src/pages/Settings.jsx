@@ -2897,17 +2897,17 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           ))}
           <div className="flex flex-wrap gap-2">
             <select aria-label="Treatment for fixed ad reply" className={`${inputClass} min-w-0 flex-1`}
-              value={availableAdServices.includes(newAdService) ? newAdService : ""}
+              value={form.adFirstReply.replies.length < 30 && availableAdServices.includes(newAdService) ? newAdService : ""}
               onChange={(event) => setNewAdService(event.target.value)}>
               <option value="">Select a treatment</option>
               {availableAdServices.map(service => <option key={service} value={service}>{service}</option>)}
             </select>
-            <button type="button" disabled={!availableAdServices.includes(newAdService)}
+            <button type="button" disabled={form.adFirstReply.replies.length >= 30 || !availableAdServices.includes(newAdService)}
               className="min-h-11 rounded-xl border border-[var(--color-border)] px-4 text-sm font-semibold disabled:opacity-50"
               onClick={() => {
                 updateAdFirstReply(current => ({
                   ...current,
-                  replies: [...current.replies, {
+                  replies: current.replies.length >= 30 ? current.replies : [...current.replies, {
                     service: newAdService, translations: suggestedAdReply(newAdService, config.businessName || config.clinicName),
                   }],
                 }));
