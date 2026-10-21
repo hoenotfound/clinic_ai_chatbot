@@ -2128,9 +2128,17 @@ function followUpOperationalReadiness({
     const requiredLocales = savedFreeEntry?.language === "auto"
       ? ["zh_CN", "en_US", "ms"]
       : [savedFreeEntry?.language || "zh_CN"];
+    // Check the selections the worker can actually use at configured slots.
+    // The default text template is not selected if every slot has a wildcard
+    // override; counting it would hide an entirely blocked sequence.
+    const selectedSlots = savedFreeEntry.slotsHours || [];
+    const selectedRules = (savedFreeEntry.templateRules || []).filter(rule =>
+      selectedSlots.some(hours => Number(hours) === Number(rule.slotHours)));
     const names = [
-      { name: savedFreeEntry.templateName, defaultText: true },
-      ...(savedFreeEntry.templateRules || []).map(rule => ({ name: rule.templateName, rule })),
+      ...selectedSlots.filter(hours => !selectedRules.some(rule =>
+        Number(rule.slotHours) === Number(hours) && rule.serviceName === "*"))
+        .map(() => ({ name: savedFreeEntry.templateName, defaultText: true })),
+      ...selectedRules.map(rule => ({ name: rule.templateName, rule })),
     ];
     const problems = [];
     let usableVersions = 0;
@@ -2147,6 +2155,10 @@ function followUpOperationalReadiness({
         const automaticImage = format === "IMAGE" && AUTOMATIC_FOLLOW_UP_IMAGE_TEMPLATES.has(name);
         if (automaticImage && assessmentFirstPricingEnabled) {
           problems.push(locale + ": " + name + " unavailable with assessment-first pricing");
+          continue;
+        }
+        if (automaticImage && (rule?.mediaKey || rule?.mediaUrl)) {
+          problems.push(locale + ": " + name + " cannot override automatic promotion media");
           continue;
         }
         if (automaticImage) {
