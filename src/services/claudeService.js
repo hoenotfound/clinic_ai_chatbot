@@ -14,12 +14,30 @@ function buildClaudeMessages(messages) {
   return messages.map((m) => {
     if (!Array.isArray(m.content)) return m;
 
-    const content = m.content.map((part) =>
-      part.type === "image"
-        ? { type: "image", source: { type: "base64", media_type: part.mimeType, data: part.data } }
-        : { type: "text", text: part.text }
-    );
-    return { role: m.role, content };
+    const content = m.content.flatMap((part) => {
+      if (part?.type === "image") {
+        // Claude's Messages API permits image blocks in USER messages only.
+        // Old persisted conversations may still contain assistant media
+        // (e.g. a price graphic sent by the bot or staff), so guard even
+        // when the upstream history loader is fixed. Do not describe or
+        // interpret the image contents based on a prior attachment.
+        if (m.role !== "user") {
+          return [{ type: "text", text: "[Previously sent image attachment; image contents not available in this conversation history.]" }];
+        }
+        return [{
+          type: "image",
+          source: { type: "base64", media_type: part.mimeType, data: part.data },
+        }];
+      }
+      return part?.type === "text" && String(part.text || "").trim()
+        ? [{ type: "text", text: part.text }]
+        : [];
+    });
+    // Never submit an empty list of blocks to the API.
+    return {
+      role: m.role,
+      content: content.length ? content : [{ type: "text", text: "[Previous message had no readable text.]" }],
+    };
   });
 }
 
