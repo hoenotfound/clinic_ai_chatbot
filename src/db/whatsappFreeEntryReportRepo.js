@@ -51,7 +51,7 @@ async function summarize(database = pool) {
      GROUP BY status ORDER BY status`
   );
   const recent = await database.query(
-    `SELECT contact_id, slot_hours, status, created_at,
+    `SELECT id AS attempt_id, contact_id, slot_hours, status, created_at,
             CASE WHEN error IS NULL THEN NULL ELSE left(error, 160) END AS error,
             EXISTS (
               SELECT 1 FROM whatsapp_free_entry_pricing_evidence p
