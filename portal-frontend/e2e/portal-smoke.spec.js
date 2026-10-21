@@ -2355,7 +2355,7 @@ test("Unified follow-up journey edits regular and extended steps without sending
   await expect(journey).toContainText("Customer follow-up journey");
   await expect(journey).toContainText("After 24 hours · WhatsApp templates");
   await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
-    .getByText("Enabled", { exact: true })).toBeVisible();
+    .getByText("Saved setup: Enabled in Tools", { exact: true })).toBeVisible();
   await expect(journey).not.toContainText("Enabled in draft setup");
   await expect(journey).toContainText("Default template: clinic_text");
   await expect(journey).toContainText("May be skipped — this marketing template was selected earlier");
@@ -2363,7 +2363,8 @@ test("Unified follow-up journey edits regular and extended steps without sending
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
   await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
-    .getByText("Sending blocked", { exact: true })).toBeVisible();
+    .getByText("Saved setup: Enabled in Tools", { exact: true })).toBeVisible();
+  await expect(journey).toContainText("Draft preview: Sending blocked (not live)");
   await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
   await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
   await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
@@ -2388,7 +2389,7 @@ test("Unified follow-up journey shows extended pause and missing template withou
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Extended follow-ups paused");
   await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
-    .getByText("Paused", { exact: true })).toBeVisible();
+    .getByText("Saved setup: Paused", { exact: true })).toBeVisible();
   await expect(journey).not.toContainText("Paused in draft setup");
   await expect(journey).toContainText("No default template selected");
   await expect(journey).toContainText("possible attempt, not a scheduled guarantee");
@@ -2410,13 +2411,14 @@ test("Unified timeline shows sending blocked when saved or draft regular follow-
   await page.goto("/tools");
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
-  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  await expect(extended.getByText("Saved setup: Sending blocked", { exact: true })).toBeVisible();
   await expect(extended).not.toContainText("Enabled in draft setup");
 
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
-  // The unsaved parent switch has not enabled extended sending on the server.
-  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  // Unsaved enabling does not change the live status.
+  await expect(extended.getByText("Saved setup: Sending blocked", { exact: true })).toBeVisible();
+  await expect(extended).toContainText("Draft preview: Enabled if saved (not live)");
   expect(writes).toHaveLength(0);
   await expectNoHorizontalPageOverflow(page);
 });
@@ -2436,10 +2438,36 @@ test("Unified timeline does not show Enabled when the parent switch is disabled 
   await page.goto("/tools");
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
-  await expect(extended.getByText("Enabled", { exact: true })).toBeVisible();
+  await expect(extended.getByText("Saved setup: Enabled in Tools", { exact: true })).toBeVisible();
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
-  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  await expect(extended.getByText("Saved setup: Enabled in Tools", { exact: true })).toBeVisible();
+  await expect(extended).toContainText("Draft preview: Sending blocked (not live)");
+  expect(writes).toHaveLength(0);
+});
+
+test("Unified timeline shows unsaved extended enablement as draft only", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: false, templateName: "", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: payload => writes.push(payload),
+  });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
+  await expect(extended.getByText("Saved setup: Paused", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("switch", { name: "Enable extended WhatsApp free-entry follow-ups" }).click();
+  await page.getByRole("tab", { name: "Sequence" }).click();
+  await expect(journey).toContainText("Previewing unsaved configuration");
+  await expect(extended.getByText("Saved setup: Paused", { exact: true })).toBeVisible();
+  await expect(extended).toContainText("Draft preview: Enabled if saved (not live)");
   expect(writes).toHaveLength(0);
 });
 
