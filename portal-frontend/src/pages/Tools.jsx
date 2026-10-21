@@ -2699,6 +2699,11 @@ function FollowUpTool({
                   {allSteps.length} regular · {(form.freeEntry?.slotsHours || []).length} extended times
                 </span>
               </div>
+              {hasUnsavedChanges && (
+                <p role="status" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                  Previewing unsaved configuration — the live automation still uses last-saved settings.
+                </p>
+              )}
               <ol aria-label="Follow-up sequence timeline" className="mt-4 space-y-2">
                 {allSteps.map((step, index) => {
                   const selected = editingStepIndex === index;
@@ -2777,6 +2782,11 @@ function FollowUpTool({
                   const fallback = rules.find(rule => rule.serviceName === "*")?.templateName || form.freeEntry?.templateName || "";
                   const treatmentRules = rules.filter(rule => rule.serviceName && rule.serviceName !== "*");
                   const hasMedia = treatmentRules.some(rule => Boolean(rule.mediaKey || rule.mediaUrl));
+                  const earlierNames = (form.freeEntry?.slotsHours || []).slice(0, slotIndex).map(previousHour =>
+                    (form.freeEntry?.templateRules || []).find(rule =>
+                      Number(rule.slotHours) === Number(previousHour) && rule.serviceName === "*")?.templateName ||
+                    form.freeEntry?.templateName || "");
+                  const isRepeated = Boolean(fallback) && earlierNames.includes(fallback);
                   return (
                     <li key={`extended-timeline-${hours}-${slotIndex}`} className="relative pl-9">
                       <span aria-hidden="true" className="absolute left-0 top-3 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-xs font-bold text-[var(--color-text-muted)]">
@@ -2799,6 +2809,11 @@ function FollowUpTool({
                         {treatmentRules.length > 0 && (
                           <span className="mt-1 block text-xs text-[var(--color-text-muted)]">
                             {treatmentRules.length} treatment-specific rule{treatmentRules.length === 1 ? "" : "s"}{hasMedia ? " · media configured" : ""}
+                          </span>
+                        )}
+                        {isRepeated && (
+                          <span className="mt-2 block text-xs font-semibold text-amber-800">
+                            May be skipped — this marketing template was selected earlier and cannot be resent within the verified period.
                           </span>
                         )}
                         {!form.freeEntry?.enabled && <span className="mt-1 block text-xs font-semibold text-amber-800">Extended follow-ups paused</span>}
