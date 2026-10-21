@@ -2733,7 +2733,7 @@ test("Readiness distinguishes approved all-language coverage from missing post-7
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Partially available");
-  await expect(extended).toContainText("Days 4–7 are restricted");
+  await expect(extended).toContainText("Times at +72h or later are restricted");
   // The worker never guarantees multiple sends with the same template.
   await expect(extended).not.toContainText("Actual sending still requires");
 });
