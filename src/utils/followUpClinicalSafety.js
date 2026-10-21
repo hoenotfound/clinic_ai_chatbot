@@ -16,7 +16,7 @@ const UNSAFE_IMMEDIATE_ACTIVITY =
 // Strip only bounded, genuinely interrogative risk phrases; a promise in
 // another clause must still be checked independently.
 const CLINICAL_RISK_QUESTION =
-  /(?:(?:你想(?:知道|了解)|想问|想問|请问|請問)\s*)?(?:有没有|有沒有|会不会有|會不會有|是否有|是否会有|是否會有|有无|有無|会有|會有)\s*(?:恢复期|恢復期|修复期|修復期|副作用|后遗症|後遺症|风险|風險|疼痛|痛(?:感)?)(?:吗|嗎|呢|呀)?\s*[?？]?|(?:没有|沒有|无|無|不会有|不會有)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛(?:感)?)(?:吗|嗎|呢|呀)\s*[?？]?/giu;
+  /(?:(?:你想(?:知道|了解)|想问|想問|请问|請問)\s*)?(?:有没有|有沒有|会不会有|會不會有|是否有|是否会有|是否會有|有无|有無)\s*(?:恢复期|恢復期|修复期|修復期|副作用|后遗症|後遺症|风险|風險|疼痛|痛(?:感)?)(?:吗|嗎|呢|呀)?\s*[?？]?|(?:没有|沒有|无|無|不会有|不會有)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛(?:感)?)(?:吗|嗎|呢|呀)\s*[?？]?/giu;
 function hasUnsafeClinicalFollowUpClaim(message) {
   const copy = String(message || "").trim().replace(CLINICAL_RISK_QUESTION, "");
   // "Cannot guarantee zero downtime" is a safety disclaimer, NOT a
