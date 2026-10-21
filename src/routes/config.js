@@ -195,6 +195,18 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   aiPricingIntentMode: (v) => ["off", "shadow", "enabled"].includes(v),
   aiPricingOfferEnquiriesEnabled: (v) => typeof v === "boolean",
+  adFirstReply: (v) => isPlainObject(v) && typeof v.enabled === "boolean" &&
+    Array.isArray(v.replies) && v.replies.length <= 30 &&
+    new Set(v.replies.map(item => item?.service)).size === v.replies.length &&
+    v.replies.every(item =>
+      isPlainObject(item) && isNonEmptyString(item.service) &&
+      item.service.length <= 180 &&
+      isPlainObject(item.translations) &&
+      ["zh", "en", "ms"].every(language =>
+        typeof item.translations[language] === "string" &&
+        item.translations[language].length <= 1200
+      )
+    ),
   promotions: (v) =>
     Array.isArray(v) &&
     v.every(
