@@ -995,7 +995,9 @@ async function processIncomingMessage(
       fixedAdFirstReply = !keywordReason && !marketingStopQuestion
         ? resolveFixedAdFirstReply({
             config: clinicConfig.adFirstReply,
-            isFirstMessage,
+            // Use the durable all-message first-turn evidence. The AI context
+            // filters failed/sticker rows and is not a reliable uniqueness test.
+            isFirstMessage: wasFirstMessage === true,
             conversationHistory: history,
             customerText: text,
             language: mediaLanguage,
@@ -1008,6 +1010,12 @@ async function processIncomingMessage(
               /^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))),
             services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
+            onSkip: (reason) => {
+              if (metaAdContext) console.info(
+                "[Fixed ad first reply] decision=ai_fallback contact=" + contact.id +
+                " inbound=" + savedInbound.id + " reason=" + reason
+              );
+            },
           }) : null;
       if (numberedPricingSelection) {
         // This is an independently verified customer choice, not an inferred
@@ -1494,7 +1502,10 @@ async function processIncomingMessage(
     // treatment enquiry omits an assessment invitation, append just one
     // invitation without replacing the answer or altering result-media intent.
     if (!flagged && !marketingStopQuestion &&
-        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) {
+        clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+        !fixedAdFirstReply) {
+      // A fixed reply is a staff-authored complete message; do not append a
+      // second sales question. Price/safety/billing guards still run normally.
       const invited = ensureFirstAssessmentInvitation({
         isFirstMessage, customerText: text, reply, flagged, language: mediaLanguage,
         serviceQuery, treatment: details?.treatment,
