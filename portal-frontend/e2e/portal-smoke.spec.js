@@ -2394,6 +2394,55 @@ test("Unified follow-up journey shows extended pause and missing template withou
   await expect(journey).toContainText("possible attempt, not a scheduled guarantee");
 });
 
+test("Unified timeline shows sending blocked when saved or draft regular follow-ups are off", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: false, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: value => writes.push(value),
+  });
+  await page.setViewportSize({ width: 375, height: 740 });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
+  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  await expect(extended).not.toContainText("Enabled in draft setup");
+
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await expect(journey).toContainText("Previewing unsaved configuration");
+  // The unsaved parent switch has not enabled extended sending on the server.
+  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(0);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Unified timeline does not show Enabled when the parent switch is disabled in a draft", async ({ page }) => {
+  const writes = [];
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: { automatedFollowUp: {
+      enabled: true, delayMinutes: 120, message: "Hello",
+      freeEntry: { enabled: true, templateName: "clinic_text", language: "zh_CN",
+        slotsHours: [26], templateRules: [] },
+    } },
+    templateCatalog: { templates: [], reusableMedia: [] },
+    onConfigUpdate: value => writes.push(value),
+  });
+  await page.goto("/tools");
+  const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
+  const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
+  await expect(extended.getByText("Enabled", { exact: true })).toBeVisible();
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await expect(journey).toContainText("Previewing unsaved configuration");
+  await expect(extended.getByText("Sending blocked", { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(0);
+});
+
 test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
