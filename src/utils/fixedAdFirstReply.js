@@ -31,6 +31,10 @@ function isStandardAdPrefill(value) {
   const body = text.replace(/^(?:(?:hi|hello|hey)\b|你好|嗨|哈咯)[\s~～,，.!！。]*/iu, "")
     .replace(/[\s。.!！～]+$/u, "").trim();
   if (/[?？\n\r]/u.test(body) || SUBSTANTIVE_OR_BOOKING_INTENT.test(body)) return false;
+  // A negated Chinese interest phrase still ENDS with "有兴趣"/"感兴趣".
+  // Never treat a polite rejection as consent to a sales introduction.
+  if (/(?:不|没|沒|没有|沒有|无|無|并不|並不).{0,8}(?:感兴趣|感興趣|有兴趣|有興趣|兴趣|興趣)/u.test(body) ||
+      /\b(?:not\s+(?:really\s+)?interested|no\s+longer\s+interested|changed\s+my\s+mind|tak\s+jadi|tak\s+nak|tidak\s+mahu|batal)\b/iu.test(body)) return false;
   const chineseInterest = /^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*.{2,90}?(?:有兴趣|有興趣|感兴趣|感興趣)(?:[，,、\s]*(?:可以|请|請)(?:跟[进進]我|联[系繫]我)(?:[，,、\s]*有(?:优惠|優惠)也(?:发|發)我看看)?)?$/u;
   const english = body.match(/^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+(.{2,100})$/iu);
   const malay = body.match(/^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+(.{2,100})$/iu);
