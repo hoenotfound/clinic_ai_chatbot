@@ -7,7 +7,7 @@ const { safeServiceFromCustomer, guardAssessmentFirstPricingReply } =
   require("../src/utils/initialOfferReplyGuard");
 const { resolveVerifiedPriceFollowUpService, isContextualPriceReference } =
   require("../src/utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, guardUnfulfilledPriceQuote } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 
 const services = [
@@ -298,4 +298,38 @@ test("mixed booking/price context fails closed on staff, wrong service, new topi
     ["user","我想了解骨盆调理"],["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],
     ["user",unrelated],
   ))),null);
+});
+
+
+test("incomplete model price list is replaced without inventing RM amounts", () => {
+  const incomplete = "好的呀～给你参考一下这两项的 Regular Price 哦：\n\n目前我们也有 First Trial 限时优惠";
+  const guarded = guardUnfulfilledPriceQuote(incomplete, "zh");
+  assert.equal(guarded.changed, true);
+  assert.doesNotMatch(guarded.reply, /Regular Price|RM\d+/iu);
+  assert.match(guarded.reply, /两项|兩項/u);
+  assert.deepEqual(guardUnfulfilledPriceQuote("9D 的价格是 RM488 😊", "zh"), {
+    reply: "9D 的价格是 RM488 😊", changed: false,
+  });
+  assert.equal(guardUnfulfilledPriceQuote("欢迎了解我们的 9D 护理", "zh").changed, false);
+});
+
+test("compound price and downtime question has an immediate, cautious answer", async () => {
+  const question = "价格？需修复期？";
+  const quote = await withAssessmentFirst(async () => ensureVerifiedPriceReply({
+    customerText: question,
+    reply: "先来中医师评估哦",
+    treatment: "3D 小颜术",
+    services, serviceAliases, promotions,
+    conversationHistory: history(
+      ["user", "Hi～想了解 3D 小颜术"],
+      ["assistant", "3D 小颜术是徒手护理"],
+      ["user", question],
+    ),
+    language: "zh",
+  }));
+  // Configured pricing must remain authoritative; the recovery answer must
+  // not claim zero downtime or fabricate an individual healing period.
+  assert.match(quote.reply, /RM488/u);
+  assert.match(quote.reply, /修复期|恢复时间/u);
+  assert.doesNotMatch(quote.reply, /没有恢复期|完全没有恢复期/u);
 });
