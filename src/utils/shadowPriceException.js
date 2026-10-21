@@ -6,6 +6,7 @@ const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessm
 const {
   resolveRecentFirstTreatmentPriceService,
   resolveContinuedTreatmentPriceService,
+  resolveAnsweredConcernPriceService,
   isVerifiedStaffTurn, isRecentPricingThread, pricingMessageText,
 } = require("./priceFollowUpContext");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -267,6 +268,18 @@ function resolveShadowPriceException({
   });
   if (quotedPriceConfirmation) return quotedPriceConfirmation;
   if (!hasExplicitPriceRequest(text)) return null;
+
+  const concernContinuation = resolveAnsweredConcernPriceService({
+    customerText: text, conversationHistory: session,
+    services, serviceAliases, now,
+  });
+  if (concernContinuation) {
+    const result = shadowVerifiedPrice({
+      source: "customer_concern_continuation", treatment: concernContinuation.name,
+      customerText: text, conversationHistory: session, promotions,
+    });
+    if (result) return result;
+  }
 
   const first = resolveRecentFirstTreatmentPriceService({
     customerText: text, conversationHistory: session,
