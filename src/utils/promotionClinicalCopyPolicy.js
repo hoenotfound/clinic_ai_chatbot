@@ -41,6 +41,15 @@ function hasUnsafeClinicalPromotionCopy(text) {
   return false;
 }
 
+// Admin-authored captions/artwork are explicit clinic content choices. Keep
+// optional clinical-copy detection available for audits or UI advisories, but
+// DO NOT use it as an automatic send-time veto. The independently configured
+// Pause switch is the only promotion-content pause; customer intent, consent,
+// pricing verification, duplicate checks and Meta rules are enforced separately.
+function isPromotionManuallyPaused(value) {
+  return value?.automaticMediaHold === true;
+}
+
 // Use a common check for reactive pricing graphics, follow-up promotion copy
 // and delayed price reminders so another path cannot silently bypass a hold.
 function promotionHasUnsafeClinicalCopy(value) {
@@ -50,7 +59,7 @@ function promotionHasUnsafeClinicalCopy(value) {
   // and promotion-specific automated follow-up *text* while the hold is set.
   // Independently verified prices in direct customer replies remain available.
   // General, non-promotion follow-ups are governed by their own settings.
-  if (value.automaticMediaHold === true) return true;
+  if (isPromotionManuallyPaused(value)) return true;
   const translations = Object.values(value.mediaTranslations || {});
   const followUpTranslations = Object.values(value.followUpTranslations || {});
   const copy = [
@@ -66,4 +75,5 @@ function promotionHasUnsafeClinicalCopy(value) {
 module.exports = {
   hasUnsafeClinicalPromotionCopy,
   promotionHasUnsafeClinicalCopy,
+  isPromotionManuallyPaused,
 };
