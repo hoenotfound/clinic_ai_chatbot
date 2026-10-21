@@ -2776,7 +2776,7 @@ function FollowUpTool({
                       Repeated templates, new replies, appointments or billing safeguards may skip a message.
                     </p>
                     <p className="mt-2 text-xs font-semibold">
-                      {form.freeEntry?.enabled ? "Enabled" : "Paused"}
+                      {!form.freeEntry?.enabled ? "Paused" : !form.enabled || !savedEnabled ? "Sending blocked" : "Enabled"}
                     </p>
                   </div>
                 </li>
