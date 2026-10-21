@@ -1504,9 +1504,7 @@ async function sendCandidate(candidate) {
   let copyViolation = followUpAiService.hasUnsafeClinicalFollowUpClaim(followUpMessage)
     ? "unsafe_clinical_promise" : null;
   if (!copyViolation) {
-    const potentiallyRepeated = followUpAiService.repeatsSchedulingNudge(
-      followUpMessage, ["平日还是周末方便？"]
-    ) || followUpMessageMode === "fixed" || followUpMessageMode === "ai_fallback";
+    const potentiallyRepeated = followUpAiService.isSchedulingNudge(followUpMessage);
     if (potentiallyRepeated) {
       try {
         const safetyContext = await followUpRepo.getAiFollowUpContext({
@@ -1518,9 +1516,8 @@ async function sendCandidate(candidate) {
       } catch (err) {
         // Only suppress questionable reminders when recent conversation
         // evidence cannot be loaded; never block essential non-reminder text.
-        if (followUpAiService.repeatsSchedulingNudge(
-          followUpMessage, ["平日还是周末方便？"]
-        )) copyViolation = "recent_conversation_unavailable";
+        if (followUpAiService.isSchedulingNudge(followUpMessage))
+          copyViolation = "recent_conversation_unavailable";
         console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
       }
     }
