@@ -33,10 +33,20 @@ function isStandardAdPrefill(value) {
     .replace(/[\s。.!！～]+$/u, "").trim();
   if (/[?？\n\r]/u.test(body) || SUBSTANTIVE_OR_BOOKING_INTENT.test(body)) return false;
   const chineseInterest = /^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*.{2,90}?(?:有兴趣|有興趣|感兴趣|感興趣)(?:[，,、\s]*(?:可以|请|請)(?:跟[进進]我|联[系繫]我)(?:[，,、\s]*有(?:优惠|優惠)也(?:发|發)我看看)?)?$/u;
-  const english = /^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+.{2,100}?(?:[,.]?\s*(?:please|thanks))?$/iu;
-  const malay = /^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+.{2,100}$/iu;
-  return chineseInterest.test(body) ||
-    english.test(body) || malay.test(body);
+  const english = body.match(/^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+(.{2,100})$/iu);
+  const malay = body.match(/^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+(.{2,100})$/iu);
+  // A subject containing a second request is not a simple interest prefill.
+  // In particular, the loose English/Malay prefixes above are not permission
+  // to ignore the customer's substantive free-text continuation.
+  const englishSubject = english?.[1] || "";
+  const malaySubject = malay?.[1] || "";
+  const englishIsSimple = Boolean(english) &&
+    !/[;,]/u.test(englishSubject) &&
+    !/\b(?:and|but|because|also|would|could|can|want|need|tell|explain|please|whether|if|for\s+next|next\s+(?:week|month)|this\s+(?:week|month)|after\s+work)\b/iu.test(englishSubject);
+  const malayIsSimple = Boolean(malay) &&
+    !/[;,]/u.test(malaySubject) &&
+    !/\b(?:dan|juga|tapi|tetapi|sebab|kerana|nak|mahu|boleh|berapa|ada|macam|kalau|ingin|minta|bolehkah|untuk\s+esok)\b/iu.test(malaySubject);
+  return chineseInterest.test(body) || englishIsSimple || malayIsSimple;
 }
 
 function resolveFixedAdFirstReply({
