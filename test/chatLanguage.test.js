@@ -83,3 +83,20 @@ test("a language request with a real treatment enquiry still permits enquiry log
   assert.equal(isGreetingOrLanguageOnly("你好"), true);
   assert.equal(detectExplicitLanguagePreference("English price list"), null);
 });
+
+
+test("short price/location questions keep an established Chinese or Malay reply language", () => {
+  assert.equal(detectConversationLanguage([
+    "price ?", "location ?", "Hi～想了解 3D 小颜术",
+  ]), "zh");
+  assert.equal(detectConversationLanguage([
+    "price ?", "Saya nak tahu pasal rawatan ini",
+  ]), "ms");
+  assert.equal(detectConversationLanguage(["price ?"]), "en");
+  assert.equal(detectConversationLanguage([
+    "Please reply in English", "想了解 9D 护理",
+  ]), "en");
+  assert.equal(detectConversationLanguage([
+    "How much is the current price?", "想了解 9D 护理",
+  ]), "en");
+});
