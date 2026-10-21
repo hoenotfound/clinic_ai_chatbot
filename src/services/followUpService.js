@@ -22,7 +22,7 @@ const { randomUUID, createHash } = require("node:crypto");
 const { promotionHasUnsafeClinicalCopy } = require("../utils/promotionClinicalCopyPolicy");
 const {
   normalizeVoiceNotes, voiceNotesPresent, selectedVoiceNote,
-  isVoiceAssetMetadataValid, validVoiceAssetKey,
+  isVoiceAssetMetadataValid, validVoiceAssetKey, unsafeVoiceTranscript,
 } = require("../utils/followUpVoicePolicy");
 const channelMessaging = require("./channelMessagingService");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
@@ -1131,7 +1131,8 @@ function enforceAssessmentFirstFollowUpCopy({
 // Policy denials without a Meta provider request are not delivery failures.
 // Ambiguous one-shot reservations and programming/context errors require staff review.
 async function verifiedVoiceMedia(key, note, language) {
-  if (!validVoiceAssetKey(key, "ogg", mediaStorage) ||
+  if (unsafeVoiceTranscript(note?.transcript) ||
+      !validVoiceAssetKey(key, "ogg", mediaStorage) ||
       !mediaStorage.isSharedFollowUpConfigKey(key)) return false;
   const info = await mediaStorage.getSharedFollowUpMediaInfo(key);
   return isVoiceAssetMetadataValid(info, note, language);
@@ -1608,6 +1609,71 @@ async function sendCandidate(candidate) {
   let durableVoiceKey = effectiveVoice
     ? isSocial ? effectiveVoice.previewKey : effectiveVoice.key
     : null;
+  // Every payload that can reach Meta must pass AFTER the last rewrite.
+  // A social voice note may fall back to its caption only on a confirmed
+  // pre-delivery audio rejection. Validate BOTH variants now so that path
+  // cannot bypass the safety or unanswered-booking check.
+  const outboundVariants = effectiveVoice
+    ? [effectiveVoice.transcript, followUpMessage]
+    : [followUpMessage];
+  let copyViolation = outboundVariants.some(copy =>
+    followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
+    ? "unsafe_clinical_promise" : null;
+  if (!copyViolation && outboundVariants.some(copy =>
+      followUpAiService.isSchedulingNudge(copy))) {
+    try {
+      const safetyContext = await followUpRepo.getAiFollowUpContext({
+        contactId: candidate.contact_id,
+      });
+      for (const copy of outboundVariants) {
+        copyViolation = followUpAiService.followUpCopyViolation(
+          copy, safetyContext?.messages || []
+        );
+        if (copyViolation) break;
+      }
+    } catch (err) {
+      // Fail closed only for potential duplicate reminders if context cannot
+      // be loaded. Do not block unrelated useful informational follow-ups.
+      copyViolation = "recent_conversation_unavailable";
+      console.warn("[Follow-up] Duplicate safety context unavailable:", err?.message);
+    }
+  }
+  if (copyViolation) {
+    // Skipping one repetitive or unsafe outbound COPY is not an opt-out:
+    // persist a step-level skip so FU2/FU3 may still proceed if eligible.
+    const copyDecision = normalizeFollowUpDecision({
+      action: "skip", reason: copyViolation,
+    });
+    try {
+      await followUpRepo.recordAiDecisionIfStillEligible({
+        contactId: candidate.contact_id,
+        triggerMessageId: candidate.trigger_message_id,
+        stepIndex, action: copyDecision.action, reason: copyDecision.reason,
+        topic: "outbound_copy_guard",
+        delayMinutes: step.delayMinutes,
+        previousDelayMinutes: stepIndex > 1
+          ? settings.steps[stepIndex - 2].delayMinutes : 0,
+        timingMode: step.timingMode,
+        beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+        quietHours: settings.quietHours,
+        triggerMode: settings.triggerMode,
+        activatedAt: settings.activatedAt,
+      });
+    } finally {
+      if (aiLeaseToken) {
+        await releaseAiGenerationLease({
+          contactId: candidate.contact_id,
+          triggerMessageId: candidate.trigger_message_id,
+          stepIndex, leaseToken: aiLeaseToken,
+        });
+        aiLeaseToken = null;
+      }
+    }
+    console.info("[Follow-up] Skipped unsafe/repeated copy: " + copyViolation +
+      " contact=" + candidate.contact_id + " step=" + stepIndex);
+    return;
+  }
+
   // Only the transcript of the actual selected recording belongs to a voice
   // message. Never store an AI-generated text reply as if it was delivered.
   const storedContent = effectiveVoice

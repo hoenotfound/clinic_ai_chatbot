@@ -5,6 +5,11 @@ const config = require("../src/config/clinicConfig");
 const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  repeatsSchedulingNudge,
+  isSchedulingNudge,
+  unansweredAssistantMessages,
+  followUpCopyViolation,
+  hasUnsafeClinicalFollowUpClaim,
   needsSchedulingContext,
   previousFollowUps,
   recentConfiguredServiceNames,
@@ -568,4 +573,157 @@ test("single branch allows a normal English address question without regeneratio
   });
   assert.equal(result.action,"send");
   assert.equal(calls,1);
+});
+
+
+test("repeat availability question after unanswered follow-up is regenerated or skipped", async () => {
+  const previousQuestion = "如果你想来做脸部评估，这几天平日还是周末比较方便？";
+  const repeated = "Hi～这周哪一天方便过来 PJ 看看呢？";
+  assert.equal(repeatsSchedulingNudge(repeated, [previousQuestion]), true);
+  assert.equal(repeatsSchedulingNudge("护理后有任何疑问都可以问我 😊", [previousQuestion]), false);
+  assert.equal(repeatsSchedulingNudge(repeated, ["这是3D的护理过程说明"]), false);
+
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls++;
+    return JSON.stringify({ action: "send", message: repeated, topic: "3D 小颜术" });
+  };
+  const convo = [
+    { id: 11, role: "user", content: "Hi～想了解 3D 小颜术" },
+    { id: 12, role: "assistant", content: previousQuestion,
+      is_automated_follow_up: true, automated_follow_up_for_message_id: 11 },
+  ];
+  const skipped = await generatePersonalizedFollowUp({
+    conversation: convo, triggerMessageId: 11, stepNumber: 3,
+  });
+  assert.equal(calls, 2);
+  assert.equal(skipped.action, "skip");
+  assert.equal(skipped.reason, "repeated_scheduling_nudge");
+
+  calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls++;
+    return JSON.stringify({ action: "send",
+      message: calls === 1 ? repeated :
+        "3D 是徒手护理，主要从面部肌肉放松入手。对护理过程有疑问随时可以问哦 😊",
+      topic: "3D 小颜术" });
+  };
+  const useful = await generatePersonalizedFollowUp({
+    conversation: convo, triggerMessageId: 11, stepNumber: 3,
+  });
+  assert.equal(useful.action, "send");
+  assert.equal(calls, 2);
+});
+
+test("follow-up clinical guarantees are rejected, cautious explanation is allowed", async () => {
+  const unsafe = "做完基本上是没有恢复期的，做完就可以直接正常上班或出门了哦";
+  const cautious = "每个人的反应不同，不能保证没有恢复期。";
+  assert.equal(hasUnsafeClinicalFollowUpClaim(unsafe), true);
+  assert.equal(hasUnsafeClinicalFollowUpClaim(cautious), false);
+  assert.equal(hasUnsafeClinicalFollowUpClaim("We cannot guarantee no downtime."), false);
+  assert.equal(hasUnsafeClinicalFollowUpClaim("There is no downtime for everyone."), true);
+  assert.equal(followUpCopyViolation(unsafe, []), "unsafe_clinical_promise");
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => JSON.stringify({
+    action:"send", topic:"3D", message: ++calls === 1 ? unsafe : cautious,
+  });
+  const args = {conversation:[{id:99,role:"user",content:"想了解3D"}],
+    triggerMessageId:99,stepNumber:1};
+  const result = await generatePersonalizedFollowUp(args);
+  assert.equal(calls,2);
+  assert.equal(result.action,"send");
+  assert.equal(result.message,cautious);
+  aiService.getReplyWithEnv = async () =>
+    JSON.stringify({action:"send",topic:"3D",message:unsafe});
+  const blocked = await generatePersonalizedFollowUp(args);
+  assert.equal(blocked.action,"skip");
+  assert.equal(blocked.reason,"unsafe_clinical_promise");
+});
+
+test("fixed and automated reminders respect the latest unanswered turn", () => {
+  const original = "这几天平日还是周末比较方便？";
+  const repeated = "这周哪一天方便过来 PJ 看看呢？";
+  const conversation = [
+    {id:1,role:"user",content:"想了解3D"},
+    {id:2,role:"assistant",content:original,is_automated_follow_up:false},
+    {id:3,role:"assistant",content:"现在可以先安排评估",
+      is_automated_follow_up:true,automated_follow_up_for_message_id:1},
+  ];
+  assert.equal(unansweredAssistantMessages(conversation).length,2);
+  assert.equal(followUpCopyViolation(repeated,conversation),"repeated_scheduling_nudge");
+  assert.equal(followUpCopyViolation(repeated,[...conversation,
+    {id:4,role:"user",content:"周末可以"}]),null);
+});
+
+
+test("Malaysian Chinese scheduling nudges are recognised without question marks", () => {
+  const requests = [
+    "你平日还是周末比较方便呢",
+    "你哪一天比较方便过来呀",
+    "你平时比较方便 weekdays 还是 weekend 呢～",
+    "这周哪一天方便过来 PJ 看看呢？",
+    "Can you visit next week?",
+    "Would you be available this weekend",
+  ];
+  for (const text of requests) {
+    assert.equal(isSchedulingNudge(text), true, text);
+    assert.equal(repeatsSchedulingNudge(text,
+      ["你平日还是周末比较方便呢"]), true, text);
+  }
+  const informational = [
+    "平日的护理项目可以到店询问",
+    "平日如何保养呢",
+    "你可以选择周末的护理时间",
+    "我们的营业时间包括周末",
+    "护理结束后您可以随时提问 😊",
+  ];
+  for (const text of informational) {
+    assert.equal(isSchedulingNudge(text), false, text);
+  }
+  assert.equal(repeatsSchedulingNudge(
+    "你哪一天比较方便过来呀", ["平日如何保养呢"]), false);
+  const conversation = [
+    {role:"user",content:"想了解 3D 小颜术"},
+    {role:"assistant",content:"你平日还是周末比较方便呢"},
+  ];
+  assert.equal(followUpCopyViolation("你哪一天比较方便过来呀",
+    conversation),"repeated_scheduling_nudge");
+});
+
+test("unsupported simple Chinese guarantees are blocked but cautious negatives are allowed", () => {
+  for (const message of [
+    "没有恢复期哦",
+    "做完没有恢复期",
+    "不会有副作用",
+    "完全没有风险",
+    "一般无需休息，可照常工作",
+    "护理后直接上班",
+    "No side effects",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(message),true,message);
+  for (const message of [
+    "不能保证没有恢复期",
+    "不能保证完全没有恢复期",
+    "并不是没有恢复期，具体感受因人而异",
+    "We cannot guarantee no downtime.",
+    "护理后可能会有不适，因人而异",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(message),false,message);
+  assert.equal(followUpCopyViolation("做完没有恢复期",
+    []),"unsafe_clinical_promise");
+});
+
+
+test("clinical-safety guard distinguishes recovery questions from absolute promises", () => {
+  for (const question of [
+    "你想知道有没有恢复期吗？",
+    "会不会有副作用呢？",
+    "没有恢复期吗？",
+    "請問是否有修復期？",
+    "有没有副作用？",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(question), false, question);
+  for (const promise of [
+    "做完没有恢复期哦",
+    "不会有副作用哦",
+    "你想知道有没有恢复期吗？做完没有恢复期哦",
+    "不能保证没有恢复期，但做完不会有副作用哦",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(promise), true, promise);
 });

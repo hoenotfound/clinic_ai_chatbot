@@ -497,8 +497,94 @@ function ensureVerifiedPriceReply({
       ((priceOnlyResponse === true ||
         (aiLed && pricingDecision.source === "meta_ad")) && !independentServiceQuestion)
       ? "" : safeNonPriceExplanation(customerText, original, language));
+  const bothQuestion = aiLed && pricingDecision.source === "customer_concern_both"
+    ? (locale.startsWith("ms")
+      ? "Saya boleh sahkan harga rawatan ini dahulu. Bila sebut kedua-dua, adakah anda maksudkan dua rawatan berbeza atau dua bahagian yang ingin diperbaiki?"
+      : locale.startsWith("en")
+        ? "I can confirm this treatment's price first. By both, did you mean two different treatments or two concerns within this treatment?"
+        : "先给你这项疗程的核实价格 😊 你说的两项是指两种不同疗程，还是想改善的两个部位呢？")
+    : "";
   const acknowledgement = clinicalPricingAcknowledgement(customerText, language);
-  return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
+  return { reply: [explanation, quote, bothQuestion, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }
 
-module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply };
+// A model draft can claim "Here are the regular prices:" yet contain no
+// actual price. A rejected pricing decision must not leak an unfinished quote
+// to a customer. This guard never supplies unverified numeric amounts.
+const UNFULFILLED_PRICE_HEADING =
+  /(?:给你|給你|供你|参考|參考|提供|以下|如下|here\s+are|these\s+are|current|regular|standard|normal).{0,65}(?:价钱|價錢|价格|價格|收费|收費|regular\s+price|prices?|harga).{0,24}[:：]/iu;
+// The model may output a bare service-specific heading ("9D 的价格是：")
+// with no number. It must not escape the guard merely because it omitted
+// "here are" / "给你参考". Restrict to a real heading ending in a colon.
+const DIRECT_EMPTY_PRICE_HEADING =
+  /(?:^|[\n。；;!?！？])\s*[^\n:：]{0,75}?(?:价钱|價錢|价格|價格|收费|收費|费用|費用|(?:the\s+)?prices?(?:\s+(?:for|of)\s+[^\n:：]{1,45})?|(?:regular|normal|first[\s-]?trial)\s+price|harga(?:\s+[^\n:：]{0,35})?)\s*(?:是|为|為|如下|is|are)?\s*[:：]/iu;
+const UNFULFILLED_MULTIPLE_PRICES =
+  /(?:两|兩|2)\s*(?:项|項|个|個|种|種)|\b(?:both|two\s+(?:treatments?|packages?|prices?))\b/iu;
+
+// A price heading is not fulfilled by a voucher face value or the price of
+// an unrelated treatment later in the draft. Evaluate EACH heading and its
+// adjacent price section instead of accepting any RM amount anywhere.
+const VISIBLE_MONETARY_AMOUNT =
+  /\b(?:RM|MYR)\s*[1-9]\d{1,5}(?:\.\d{2})?\b|(?:[价價](?:格|钱|錢)|收费|收費|费用|費用|harga|prices?|cost|fee)\s*(?:是|为|為|is|are)?\s*[:：]?\s*[1-9]\d{2,5}(?!\d)/giu;
+const VOUCHER_PREFIX = /(?:优惠券|優惠券|折扣券|抵用券|voucher|coupon|baucar)\s*(?:面额|面額|价值|價值|worth|of)?\s*[:：]?\s*$/iu;
+const VOUCHER_SUFFIX = /^\s*(?:的)?\s*(?:优惠券|優惠券|折扣券|抵用券|voucher|coupon|baucar|off\b)/iu;
+const NAMED_PRICE_TREATMENT = /(?:3D|9D|骨盆(?:调理|調理)?)/giu;
+const PRICE_HEADING_PATTERN = new RegExp(
+  "(?:" + UNFULFILLED_PRICE_HEADING.source + ")|(?:" +
+  DIRECT_EMPTY_PRICE_HEADING.source + ")", "giu"
+);
+function hasVerifiedAmountForHeading(section, heading) {
+  const matches = [...section.matchAll(VISIBLE_MONETARY_AMOUNT)];
+  const headedServices = [...new Set([...heading.matchAll(NAMED_PRICE_TREATMENT)]
+    .map(m => m[0].toLowerCase()))];
+  return matches.some(match => {
+    const before = section.slice(Math.max(0, match.index - 30), match.index);
+    const after = section.slice(match.index + match[0].length,
+      match.index + match[0].length + 30);
+    // The label immediately before/after a voucher amount disqualifies it,
+    // including "RM100 优惠券" and "voucher RM100".
+    const localBefore = before.split(/\n/u).at(-1);
+    const localAfter = after.split(/\n/u)[0];
+    if (VOUCHER_PREFIX.test(localBefore) || VOUCHER_SUFFIX.test(localAfter)) return false;
+    if (headedServices.length === 1) {
+      // "9D price: 3D RM488" does NOT answer the 9D enquiry.
+      const line = section.slice(section.lastIndexOf("\n", match.index - 1) + 1,
+        section.indexOf("\n", match.index) < 0 ? section.length : section.indexOf("\n", match.index));
+      const quotedServices = [...new Set([...line.matchAll(NAMED_PRICE_TREATMENT)]
+        .map(m => m[0].toLowerCase()))];
+      if (quotedServices.some(name => name !== headedServices[0])) return false;
+    }
+    return true;
+  });
+}
+function guardUnfulfilledPriceQuote(reply, language = "zh") {
+  const original = String(reply || "").trim();
+  const headings = [...original.matchAll(PRICE_HEADING_PATTERN)];
+  if (!headings.length) return { reply: original, changed: false };
+  const isUnfulfilled = headings.some((heading, index) => {
+    const sectionStart = heading.index + heading[0].length;
+    const nextHeading = headings[index + 1]?.index ?? original.length;
+    // A remote quote or a footnote does not fulfill an earlier empty heading.
+    const section = original.slice(sectionStart, Math.min(nextHeading, sectionStart + 280));
+    return !hasVerifiedAmountForHeading(section, heading[0]);
+  });
+  if (!isUnfulfilled) return { reply: original, changed: false };
+  const locale = String(language || "").toLowerCase();
+  const comparingTwo = UNFULFILLED_MULTIPLE_PRICES.test(original);
+  // Never fabricate an amount. Ambiguity about "both" is a separate case:
+  // do not ask about two treatments when the customer never mentioned two.
+  const safe = locale.startsWith("ms")
+    ? (comparingTwo
+      ? "Saya faham anda mahu tahu kedua-dua harga 😊 Jumlah yang sah belum dapat disahkan. Adakah anda maksudkan dua rawatan atau dua masalah dalam satu rawatan?"
+      : "Saya faham anda mahu tahu harga 😊 Jumlah yang sah belum dapat disahkan, jadi saya tak mahu beri angka yang salah. Rawatan yang mana satu anda ingin semak?")
+    : locale.startsWith("en")
+      ? (comparingTwo
+        ? "I understand you'd like both prices 😊 I don't have a verified amount to quote. Are you comparing two treatments or two concerns within one treatment?"
+        : "I understand you'd like the price 😊 I don't have a verified amount to quote, so I don't want to give you the wrong figure. Which treatment would you like me to check?")
+      : (comparingTwo
+        ? "明白，你想先了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你说的两项，是想比较两种疗程，还是同一疗程针对两个部位呢？"
+        : "明白，你想了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你想查询哪项疗程的价格呢？");
+  return { reply: safe, changed: true };
+}
+
+module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };

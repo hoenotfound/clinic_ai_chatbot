@@ -4243,3 +4243,132 @@ test("unconfirmed audio never starts a text fallback even if no provider ID was 
     else process.env.CLIENT_SLUG = priorSlug;
   }
 });
+
+
+test("final fixed follow-up copy guard persists a continuable step skip instead of ending the sequence", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.message = "这周哪一天方便过来呀";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "Which day can you visit?",
+    ms: "Hari mana anda boleh datang?",
+    zh: "这周哪一天方便过来呀",
+  };
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 963, channel: "whatsapp", whatsapp_number: "60120000963",
+    trigger_message_id: 962, next_follow_up_step: 1,
+    trigger_message_content: "你平日还是周末比较方便呢",
+    recent_inbound_messages: ["想了解3D"],
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {id: 961, role:"user", content:"想了解3D"},
+      {id: 962, role:"assistant", content:"你平日还是周末比较方便呢"},
+    ], lead: null,
+  });
+  let decision=null, saved=0;
+  followUpRepo.recordAiDecisionIfStillEligible = async input => {
+    decision=input;
+    return {id:964,...input};
+  };
+  followUpRepo.saveIfStillEligible = async () => {
+    saved++;return null;
+  };
+  await runAutomatedFollowUps();
+  assert.equal(saved,0,"repetitive text must not be reserved or sent");
+  assert.equal(decision?.action,"skip");
+  assert.match(decision?.reason || "", /^step_skip: repeated_scheduling_nudge$/u);
+  assert.equal(decision?.topic,"outbound_copy_guard");
+  const { continuableFollowUpSkipSql, terminalFollowUpDecisionSql } =
+    require("../src/utils/followUpDecisionSql");
+  assert.match(continuableFollowUpSkipSql("d"), /reason LIKE 'step_skip:%'/u);
+  assert.match(terminalFollowUpDecisionSql("d"), /reason NOT LIKE 'step_skip:%'/u);
+});
+
+test("final fixed recovery-safety guard skips only one step without sending the promise", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.message = "做完没有恢复期哦";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "No downtime",
+    ms: "Tiada masa pemulihan",
+    zh: "做完没有恢复期哦",
+  };
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 973, channel:"whatsapp", whatsapp_number:"60120000973",
+    trigger_message_id:972, next_follow_up_step:1,
+    trigger_message_content:"欢迎了解3D",
+    recent_inbound_messages:["想了解3D"],
+  }];
+  let decision=null, saved=0;
+  followUpRepo.recordAiDecisionIfStillEligible = async input => {
+    decision=input;return {id:974,...input};
+  };
+  followUpRepo.saveIfStillEligible = async () => {
+    saved++;return null;
+  };
+  await runAutomatedFollowUps();
+  assert.equal(saved,0);
+  assert.equal(decision?.action,"skip");
+  assert.equal(decision?.reason,"step_skip: unsafe_clinical_promise");
+});
+
+
+test("assessment-first rewrite is checked against unanswered scheduling before sending", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.assessmentFirstPricingEnabled = true;
+  clinicConfig.automatedFollowUp.message = "3D 护理价格 RM488";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "3D treatment price RM488",
+    ms: "Harga 3D RM488",
+    zh: "3D 护理价格 RM488",
+  };
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 983, channel: "whatsapp", whatsapp_number: "60120000983",
+    trigger_message_id: 982, next_follow_up_step: 1,
+    trigger_message_content: "你平日还是周末比较方便呢？",
+    recent_inbound_messages: ["想了解3D 小颜术"],
+    treatment_interest: "3D 小颜术",
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {id: 981, role: "user", content: "想了解3D 小颜术"},
+      {id: 982, role: "assistant", content: "你平日还是周末比较方便呢？"},
+    ], lead: null,
+  });
+  let decision = null, saves = 0;
+  followUpRepo.recordAiDecisionIfStillEligible = async input => {
+    decision = input; return {id: 984, ...input};
+  };
+  followUpRepo.saveIfStillEligible = async () => { saves++; return null; };
+  await runAutomatedFollowUps();
+  assert.equal(saves, 0, "rewritten repeat should not be reserved");
+  assert.equal(decision?.reason, "step_skip: repeated_scheduling_nudge");
+  assert.equal(decision?.topic, "outbound_copy_guard");
+});
+
+test("missing-video fallback is judged by the final safe copy rather than an unsafe original caption", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.videoAiCaptionsEnabled = true;
+  clinicConfig.automatedFollowUp.message = "这段影片说明做完没有恢复期";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "This video says no downtime.",
+    ms: "Video ini menjamin tiada masa pemulihan",
+    zh: "这段影片说明做完没有恢复期",
+  };
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 993, channel: "whatsapp", whatsapp_number: "60120000993",
+    trigger_message_id: 992, next_follow_up_step: 1,
+    trigger_message_content: "3D 小颜术的护理介绍",
+    recent_inbound_messages: ["想了解3D 小颜术"],
+    treatment_interest: "3D 小颜术",
+  }];
+  let claimed = null, decision = null;
+  followUpRepo.saveIfStillEligible = async input => {claimed = input; return null;};
+  followUpRepo.recordAiDecisionIfStillEligible = async input => {
+    decision = input; return null;
+  };
+  await runAutomatedFollowUps();
+  assert.equal(decision, null);
+  assert.ok(claimed, "safe fallback should remain eligible");
+  assert.match(claimed.content, /轮廓|臉型|脸型/u);
+  assert.doesNotMatch(claimed.content, /没有恢复期|沒有恢復期/u);
+});

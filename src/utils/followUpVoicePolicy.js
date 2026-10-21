@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const { hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
 const { hasUnsafeClinicalPromotionCopy } = require("./promotionClinicalCopyPolicy");
+const { hasUnsafeClinicalFollowUpClaim } = require("./followUpClinicalSafety");
 
 const VOICE_LANGUAGES = ["zh", "en", "ms"];
 const MAX_TRANSCRIPT_LENGTH = 1000;
@@ -17,7 +18,8 @@ function voiceTranscriptDigest(transcript, language, previewKey) {
 function unsafeVoiceTranscript(transcript) {
   const text = String(transcript || "").trim();
   return !text || text.length > MAX_TRANSCRIPT_LENGTH ||
-    hasTreatmentPriceContent(text) || hasUnsafeClinicalPromotionCopy(text);
+    hasTreatmentPriceContent(text) || hasUnsafeClinicalPromotionCopy(text) ||
+    hasUnsafeClinicalFollowUpClaim(text);
 }
 
 function validVoiceAssetKey(key, extension, mediaStorage) {

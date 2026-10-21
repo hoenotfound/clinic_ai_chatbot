@@ -7,7 +7,7 @@ const { safeServiceFromCustomer, guardAssessmentFirstPricingReply } =
   require("../src/utils/initialOfferReplyGuard");
 const { resolveVerifiedPriceFollowUpService, isContextualPriceReference } =
   require("../src/utils/priceFollowUpContext");
-const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
+const { ensureVerifiedPriceReply, guardUnfulfilledPriceQuote } = require("../src/utils/verifiedPriceReply");
 const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 
 const services = [
@@ -298,4 +298,90 @@ test("mixed booking/price context fails closed on staff, wrong service, new topi
     ["user","我想了解骨盆调理"],["assistant","骨盆调理 weekday 还是 weekend 比较方便？"],
     ["user",unrelated],
   ))),null);
+});
+
+
+test("incomplete model price list is replaced without inventing RM amounts", () => {
+  const incomplete = "好的呀～给你参考一下这两项的 Regular Price 哦：\n\n目前我们也有 First Trial 限时优惠";
+  const guarded = guardUnfulfilledPriceQuote(incomplete, "zh");
+  assert.equal(guarded.changed, true);
+  assert.doesNotMatch(guarded.reply, /Regular Price|RM\d+/iu);
+  assert.match(guarded.reply, /两项|兩項/u);
+  assert.deepEqual(guardUnfulfilledPriceQuote("9D 的价格是 RM488 😊", "zh"), {
+    reply: "9D 的价格是 RM488 😊", changed: false,
+  });
+  assert.equal(guardUnfulfilledPriceQuote("欢迎了解我们的 9D 护理", "zh").changed, false);
+});
+
+test("compound price and downtime question has an immediate, cautious answer", async () => {
+  const question = "价格？需修复期？";
+  const quote = await withAssessmentFirst(async () => ensureVerifiedPriceReply({
+    customerText: question,
+    reply: "先来中医师评估哦",
+    treatment: "3D 小颜术",
+    services, serviceAliases, promotions,
+    conversationHistory: history(
+      ["user", "Hi～想了解 3D 小颜术"],
+      ["assistant", "3D 小颜术是徒手护理"],
+      ["user", question],
+    ),
+    language: "zh",
+  }));
+  // Configured pricing must remain authoritative; the recovery answer must
+  // not claim zero downtime or fabricate an individual healing period.
+  assert.match(quote.reply, /RM488/u);
+  assert.match(quote.reply, /修复期|恢复时间/u);
+  assert.match(quote.reply, /不能保证完全没有恢复期/u);
+});
+
+
+test("empty single-service price headings are suppressed in Chinese and English", () => {
+  const unpriced = [
+    ["9D 逆龄抗衰的价格是：\n\n目前有优惠", "zh"],
+    ["3D 小颜术价钱：\n\n可以预约", "zh"],
+    ["The price for 9D is:\n\nWe have a first trial", "en"],
+    ["3D regular price:\n\nCurrently on promotion", "en"],
+  ];
+  for (const [reply, language] of unpriced) {
+    const checked = guardUnfulfilledPriceQuote(reply, language);
+    assert.equal(checked.changed, true, reply);
+    assert.doesNotMatch(checked.reply, /\b(?:RM|MYR)\s*\d+/iu);
+    assert.doesNotMatch(checked.reply, /Regular Price|价格是：|价钱：/iu);
+    assert.doesNotMatch(checked.reply, /两项|兩項|both prices/iu,
+      "a one-service question should not claim the customer asked for two");
+  }
+  for (const quoted of [
+    "9D 逆龄抗衰的价格是：RM488",
+    "The price for 9D is: RM488",
+    "3D 小颜术的价格是 RM488",
+  ]) assert.equal(guardUnfulfilledPriceQuote(quoted,"zh").changed,false,quoted);
+  assert.equal(guardUnfulfilledPriceQuote(
+    "好的呀～给你参考一下这两项的 Regular Price 哦：\n\n暂未找到核实的价格","zh"
+  ).changed,true);
+  assert.equal(guardUnfulfilledPriceQuote(
+    "你好，欢迎了解 9D 逆龄抗衰，我们提供中医师评估 😊","zh"
+  ).changed,false);
+});
+
+
+test("empty treatment-price headings cannot borrow voucher face value or another treatment's price", () => {
+  for (const reply of [
+    "9D 逆龄抗衰的价格是：\nRM100 优惠券",
+    "9D 逆龄抗衰的价格是：\nvoucher RM100",
+    "9D 逆龄抗衰的价格是：\n3D 小颜术 RM488",
+    "9D 价格：\n目前有 RM100 优惠券\n3D 小颜术 RM488",
+    "9D 价格：\n暂未确认\n\n3D 的价格：RM488",
+    "9D 的价格是：\nRM488 优惠券\n欢迎预约",
+  ]) {
+    const result = guardUnfulfilledPriceQuote(reply,"zh");
+    assert.equal(result.changed,true,reply);
+    assert.doesNotMatch(result.reply,/\bRM\s*\d+/iu);
+  }
+  for (const legitimate of [
+    "9D 的价格是：RM488",
+    "9D 的价格是：\n9D First Trial RM488",
+    "9D 的价格是：\nRM488（赠送全身通十二经络）",
+    "9D 的价格是：RM488，另送 RM100 优惠券",
+    "3D 的价格是：RM488\n9D 的价格：RM488",
+  ]) assert.equal(guardUnfulfilledPriceQuote(legitimate,"zh").changed,false,legitimate);
 });

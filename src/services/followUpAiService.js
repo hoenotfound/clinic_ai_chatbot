@@ -3,6 +3,7 @@ const clinicConfig = require("../config/clinicConfig");
 const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const { hasTreatmentPriceContent } = require("../utils/initialOfferReplyGuard");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
+const { hasUnsafeClinicalFollowUpClaim } = require("../utils/followUpClinicalSafety");
 
 const MAX_CONTEXT_MESSAGES = 10;
 const MAX_CONTEXT_CHARS = 6_000;
@@ -277,6 +278,64 @@ function isSubstantiallySimilar(message, previousMessages) {
   );
 }
 
+// Asking for a convenient day again is not new information. A reply after
+// another unanswered scheduling follow-up should instead help with an actual
+// concern or be skipped, without consuming a customer's attention.
+// Detect actual scheduling QUESTIONS, not informational weekday mentions.
+// Malaysian Chinese questions often end with 呢/呀/咯 rather than ? or ？.
+const SCHEDULING_NUDGE =
+  /(?:平日|平时|平時|周末|週末|周[一二三四五六日]|星期[一二三四五六日天几幾]|礼拜[一二三四五六日天]|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|这周|這週|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|what\s+time|next\s+week|this\s+week)\b)/iu;
+const SCHEDULING_VISIT_CONTEXT =
+  /(?:方便|有空|得空|过来|過來|来店|來店|到店|来看看|來看看|来看|來看|预约|預約|安排|时段|時段|约时间|約時間|\b(?:available|availability|free|visit|come|drop\s+by|appointment|book|schedule|convenient|suit|prefer|make\s+it)\b)/iu;
+const SCHEDULING_QUESTION_END =
+  /(?:吗|嗎|呢|呀|啊|咯|啦|么|麼)[\s～~!！。.…😊🙂☺️]*$/u;
+const SCHEDULING_ENGLISH_REQUEST =
+  /\b(?:can|could|would)\s+you\b.{0,70}\b(?:come|visit|make\s+it|available|free|drop\s+by)\b|\b(?:please\s+(?:tell|share|let)|let\s+me\s+know)\b.{0,70}\b(?:available|free|visit|come|day|time)\b/iu;
+function isSchedulingNudge(message) {
+  const current = cleanContent(message);
+  if (!current || current.length > 240) return false;
+  const schedulingTopic = SCHEDULING_NUDGE.test(current) ||
+    SCHEDULING_ENGLISH_REQUEST.test(current);
+  const actuallyBooking = SCHEDULING_VISIT_CONTEXT.test(current) ||
+    SCHEDULING_ENGLISH_REQUEST.test(current);
+  const asksForAnswer = /[?？]/u.test(current) ||
+    SCHEDULING_QUESTION_END.test(current) ||
+    SCHEDULING_ENGLISH_REQUEST.test(current);
+  return schedulingTopic && actuallyBooking && asksForAnswer;
+}
+function repeatsSchedulingNudge(message, previousMessages = []) {
+  return isSchedulingNudge(message) &&
+    (previousMessages || []).some(previous => isSchedulingNudge(previous));
+}
+
+// Only prompts after the latest customer message are truly unanswered.
+// An intervening customer reply restarts the conversation; earlier nudges
+// must never block a new, customer-requested appointment discussion.
+function unansweredAssistantMessages(conversation = []) {
+  const turns = (Array.isArray(conversation) ? conversation : [])
+    .filter(message => message?.role === "assistant" || message?.role === "user");
+  let lastUser = -1;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "user") { lastUser = i; break; }
+  }
+  return turns.slice(lastUser + 1)
+    .filter(item => item.role === "assistant" &&
+      item.delivery_status !== "failed" &&
+      item.delivery_status !== "cancelled" &&
+      cleanContent(item.content))
+    .slice(-8).map(item => cleanContent(item.content));
+}
+
+function followUpCopyViolation(message, conversation = []) {
+  if (hasUnsafeClinicalFollowUpClaim(message)) return "unsafe_clinical_promise";
+  const unanswered = unansweredAssistantMessages(conversation);
+  if (repeatsSchedulingNudge(message, unanswered)) return "repeated_scheduling_nudge";
+  // A slightly reworded fixed reminder must not bypass the model's semantic
+  // duplication gate; restrict this to genuinely unanswered recent messages.
+  if (isSubstantiallySimilar(message, unanswered.slice(-3))) return "repeated_unanswered_message";
+  return null;
+}
+
 function shouldSuppressStaffPromotionHumanReview({
   conversation,
   triggerMessageId,
@@ -480,6 +539,7 @@ async function generatePersonalizedFollowUp({
 
   const priorFollowUps = previousFollowUps(conversation, triggerMessageId);
   const recentNormalAssistant = recentNormalAssistantMessages(trimmed);
+  const unansweredReplies = unansweredAssistantMessages(conversation);
   const includeSchedulingContext = needsSchedulingContext(conversation, {
     branchName,
     appointmentStatus,
@@ -535,7 +595,22 @@ async function generatePersonalizedFollowUp({
     const comparisonMessages = [
       ...priorFollowUps,
       ...recentNormalAssistant.slice(-1),
+      ...unansweredReplies,
     ];
+    if (hasUnsafeClinicalFollowUpClaim(result.message)) {
+      if (attempt === 0) {
+        avoidMessage = "Prior draft asserted an unsafe medical/recovery guarantee. Remove claims of zero downtime, no side effects, no pain, or guaranteed return to normal activities. Use cautious individualized wording or skip. Rejected draft: " + result.message.slice(0, 300);
+        continue;
+      }
+      return { action: "skip", message: "", reason: "unsafe_clinical_promise", topic: result.topic || "" };
+    }
+    if (repeatsSchedulingNudge(result.message, unansweredReplies)) {
+      if (attempt === 0) {
+        avoidMessage = "Earlier follow-up already asked when the customer can visit. Do NOT ask for a weekday, weekend, day or appointment time again. Offer genuinely new useful information or skip. Rejected draft: " + result.message.slice(0, 300);
+        continue;
+      }
+      return { action: "skip", message: "", reason: "repeated_scheduling_nudge", topic: result.topic || "" };
+    }
     if (!isSubstantiallySimilar(result.message, comparisonMessages)) {
       return result;
     }
@@ -553,6 +628,11 @@ module.exports = {
   MAX_CONTEXT_MESSAGES,
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  repeatsSchedulingNudge,
+  isSchedulingNudge,
+  unansweredAssistantMessages,
+  hasUnsafeClinicalFollowUpClaim,
+  followUpCopyViolation,
   needsSchedulingContext,
   previousFollowUps,
   asksForNonexistentBranchChoice,

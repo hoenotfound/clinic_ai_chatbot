@@ -97,6 +97,9 @@ async function resolvePricePromotionForReply({
     !["price", "package_options"].includes(pricingDecision.type)
   )) return skip("no_approved_pricing_decision");
   // A confirmed old quote should not generate a second marketing graphic.
+  if (aiPricingEnabled && pricingDecision?.source === "customer_concern_both") {
+    return skip("ambiguous_both_concerns_text_only");
+  }
   if (aiPricingEnabled && pricingDecision?.source === "confirmed_prior_quote") {
     return skip("price_confirmation_no_new_graphic");
   }
