@@ -710,3 +710,20 @@ test("unsupported simple Chinese guarantees are blocked but cautious negatives a
   assert.equal(followUpCopyViolation("做完没有恢复期",
     []),"unsafe_clinical_promise");
 });
+
+
+test("clinical-safety guard distinguishes recovery questions from absolute promises", () => {
+  for (const question of [
+    "你想知道有没有恢复期吗？",
+    "会不会有副作用呢？",
+    "没有恢复期吗？",
+    "請問是否有修復期？",
+    "有没有副作用？",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(question), false, question);
+  for (const promise of [
+    "做完没有恢复期哦",
+    "不会有副作用哦",
+    "你想知道有没有恢复期吗？做完没有恢复期哦",
+    "不能保证没有恢复期，但做完不会有副作用哦",
+  ]) assert.equal(hasUnsafeClinicalFollowUpClaim(promise), true, promise);
+});
