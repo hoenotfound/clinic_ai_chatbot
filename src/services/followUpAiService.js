@@ -282,6 +282,12 @@ function isSubstantiallySimilar(message, previousMessages) {
 // concern or be skipped, without consuming a customer's attention.
 const SCHEDULING_NUDGE =
   /(?:平日|周末|週末|哪天|哪一天|几时|幾時|什么时候|什麼時候|哪(?:个|個)?时段|方便.{0,15}(?:过来|過來|来|來)|这周.{0,15}方便|這週.{0,15}方便|\b(?:weekdays?|weekends?|which\s+day|what\s+day|when\s+(?:would|can|could)|would\s+.{0,25}\bsuit\s+you)\b)/iu;
+function isSchedulingNudge(message) {
+  const current = cleanContent(message);
+  return current.length <= 240 && /[?？]/u.test(current) &&
+    SCHEDULING_NUDGE.test(current);
+}
+
 function repeatsSchedulingNudge(message, previousMessages = []) {
   const current = cleanContent(message);
   return current.length <= 240 && /[?？]/u.test(current) &&
@@ -315,7 +321,15 @@ function unansweredAssistantMessages(conversation = []) {
 const UNSAFE_CLINICAL_PROMISE =
   /(?:基本(?:上)?|完全|绝对|絕對|保证|保證|肯定|几乎|幾乎|100%)\s*(?:是|都|可以|不用|不需要|没有|沒有|无|無)?\s*(?:没有|沒有|无|無|不需要|不用)\s*(?:任何|什么|什麼)?\s*(?:恢复期|恢復期|修复期|修復期|风险|風險|副作用|痛|疼痛)|(?:做完|护理后|護理後|疗程后|療程後).{0,18}(?:马上|立刻|立即|直接|一定).{0,22}(?:正常上班|正常工作|正常活动|正常活動|恢复日常|恢復日常)|(?:guaranteed|always|100%\s*guaranteed|zero|no)\s+(?:downtime|recovery(?:\s+time)?|pain|side\s+effects?|risks?)|(?:no|zero)\s+(?:recovery|downtime|side\s+effects?)\s+(?:at\s+all|for\s+everyone)/iu;
 function hasUnsafeClinicalFollowUpClaim(message) {
-  return UNSAFE_CLINICAL_PROMISE.test(cleanContent(message));
+  const copy = cleanContent(message);
+  // "Cannot guarantee zero downtime" is a safety disclaimer, NOT a
+  // guarantee. Remove only this bounded negated phrase before looking for
+  // a separate unsafe promise elsewhere in the same message.
+  const withoutDisclaimer = copy.replace(
+    /(?:不能|无法|無法|不會|不会|不)\s*(?:保证|保證|承诺|承諾)\s*(?:(?:完全|绝对|絕對|基本(?:上)?)\s*)?(?:没有|沒有|无|無|零)\s*(?:恢复期|恢復期|修复期|修復期|副作用|风险|風險|疼痛|痛)/giu,
+    ""
+  );
+  return UNSAFE_CLINICAL_PROMISE.test(withoutDisclaimer);
 }
 
 function followUpCopyViolation(message, conversation = []) {
@@ -621,6 +635,7 @@ module.exports = {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
   repeatsSchedulingNudge,
+  isSchedulingNudge,
   unansweredAssistantMessages,
   hasUnsafeClinicalFollowUpClaim,
   followUpCopyViolation,
