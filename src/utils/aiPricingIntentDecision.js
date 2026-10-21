@@ -9,7 +9,8 @@ const { isFirstTrialAmountQuestion, stripFutureFollowUpPermission, hasExplicitPr
 const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessmentExperience");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
-const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService   resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
+const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService,
+  resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
 } = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
