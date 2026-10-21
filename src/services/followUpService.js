@@ -1616,8 +1616,13 @@ async function sendCandidate(candidate) {
   const outboundVariants = effectiveVoice
     ? [effectiveVoice.transcript, followUpMessage]
     : [followUpMessage];
-  let copyViolation = outboundVariants.some(copy =>
-    followUpAiService.hasUnsafeClinicalFollowUpClaim(copy))
+  // The medical-copy heuristic applies to AI-written replies only. Fixed
+  // steps, selected promotional copy and recorded voice are explicitly
+  // configured by clinic staff; do not silently veto their exact wording.
+  // Appointment repetition, consent, pricing, provider and delivery gates
+  // still apply to every mode.
+  let copyViolation = followUpMessageMode === "ai_personalized" &&
+    followUpAiService.hasUnsafeClinicalFollowUpClaim(followUpMessage)
     ? "unsafe_clinical_promise" : null;
   if (!copyViolation && outboundVariants.some(copy =>
       followUpAiService.isSchedulingNudge(copy))) {
