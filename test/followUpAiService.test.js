@@ -6,6 +6,9 @@ const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
   repeatsSchedulingNudge,
+  unansweredAssistantMessages,
+  followUpCopyViolation,
+  hasUnsafeClinicalFollowUpClaim,
   needsSchedulingContext,
   previousFollowUps,
   recentConfiguredServiceNames,
@@ -609,4 +612,42 @@ test("repeat availability question after unanswered follow-up is regenerated or 
   });
   assert.equal(useful.action, "send");
   assert.equal(calls, 2);
+});
+
+test("follow-up clinical guarantees are rejected, cautious explanation is allowed", async () => {
+  const unsafe = "做完基本上是没有恢复期的，做完就可以直接正常上班或出门了哦";
+  const cautious = "每个人的反应不同，不能保证没有恢复期。";
+  assert.equal(hasUnsafeClinicalFollowUpClaim(unsafe), true);
+  assert.equal(hasUnsafeClinicalFollowUpClaim(cautious), false);
+  assert.equal(followUpCopyViolation(unsafe, []), "unsafe_clinical_promise");
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => JSON.stringify({
+    action:"send", topic:"3D", message: ++calls === 1 ? unsafe : cautious,
+  });
+  const args = {conversation:[{id:99,role:"user",content:"想了解3D"}],
+    triggerMessageId:99,stepNumber:1};
+  const result = await generatePersonalizedFollowUp(args);
+  assert.equal(calls,2);
+  assert.equal(result.action,"send");
+  assert.equal(result.message,cautious);
+  aiService.getReplyWithEnv = async () =>
+    JSON.stringify({action:"send",topic:"3D",message:unsafe});
+  const blocked = await generatePersonalizedFollowUp(args);
+  assert.equal(blocked.action,"skip");
+  assert.equal(blocked.reason,"unsafe_clinical_promise");
+});
+
+test("fixed and automated reminders respect the latest unanswered turn", () => {
+  const original = "这几天平日还是周末比较方便？";
+  const repeated = "这周哪一天方便过来 PJ 看看呢？";
+  const conversation = [
+    {id:1,role:"user",content:"想了解3D"},
+    {id:2,role:"assistant",content:original,is_automated_follow_up:false},
+    {id:3,role:"assistant",content:"现在可以先安排评估",
+      is_automated_follow_up:true,automated_follow_up_for_message_id:1},
+  ];
+  assert.equal(unansweredAssistantMessages(conversation).length,2);
+  assert.equal(followUpCopyViolation(repeated,conversation),"repeated_scheduling_nudge");
+  assert.equal(followUpCopyViolation(repeated,[...conversation,
+    {id:4,role:"user",content:"周末可以"}]),null);
 });
