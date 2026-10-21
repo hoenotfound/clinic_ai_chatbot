@@ -1561,6 +1561,7 @@ router.get("/automated-follow-up/free-entry-status", async (_req, res) => {
         sevenDayEvidence.rows[0]?.verified !== true,
       enabledInTools: clinic?.enabled === true,
       enabledOnServer: freeEntryEnabled(),
+      automaticRepliesEnabled: require("../services/automaticReplyControl").automatedRepliesEnabled(),
       periodMaxHours: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true" ? 168 : 72,
       sevenDayVerified: process.env.WHATSAPP_FEP_7DAY_VERIFIED === "true",
       note: "Ad referral does not establish marketing opt-in or guarantee that later Meta sends are free.",
