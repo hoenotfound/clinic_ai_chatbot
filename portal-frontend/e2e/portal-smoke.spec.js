@@ -2354,11 +2354,16 @@ test("Unified follow-up journey edits regular and extended steps without sending
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Customer follow-up journey");
   await expect(journey).toContainText("After 24 hours · WhatsApp templates");
+  await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
+    .getByText("Enabled", { exact: true })).toBeVisible();
+  await expect(journey).not.toContainText("Enabled in draft setup");
   await expect(journey).toContainText("Default template: clinic_text");
   await expect(journey).toContainText("May be skipped — this marketing template was selected earlier");
   await expect(journey).toContainText("media configured");
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
+  await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
+    .getByText("Enabled", { exact: true })).toBeVisible();
   await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
   await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
   await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
@@ -2382,6 +2387,9 @@ test("Unified follow-up journey shows extended pause and missing template withou
   await page.goto("/tools");
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Extended follow-ups paused");
+  await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
+    .getByText("Paused", { exact: true })).toBeVisible();
+  await expect(journey).not.toContainText("Paused in draft setup");
   await expect(journey).toContainText("No default template selected");
   await expect(journey).toContainText("possible attempt, not a scheduled guarantee");
 });
