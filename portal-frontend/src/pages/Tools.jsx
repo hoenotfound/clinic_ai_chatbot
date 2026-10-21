@@ -1132,6 +1132,7 @@ export default function Tools() {
             savedEnabled={savedEnabled}
             savedFreeEntryEnabled={config?.automatedFollowUp?.freeEntry?.enabled === true}
             savedFreeEntry={config?.automatedFollowUp?.freeEntry || savedSettings.freeEntry}
+            savedQuietHours={config?.automatedFollowUp?.quietHours || savedSettings.quietHours}
             validationIssue={followUpSaveIssue}
             onDismissValidationIssue={() => setFollowUpSaveIssue(null)}
             hasUnsavedChanges={hasUnsavedChanges}
@@ -2072,7 +2073,7 @@ function followUpReadinessTone(level) {
 // Read-only presentation of SAVED config and observed server checks.
 // It never asserts that a specific customer is eligible or that Meta will bill RM0.
 function followUpOperationalReadiness({
-  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, assessmentFirstPricingEnabled, status,
+  savedEnabled, savedFreeEntryEnabled, savedFreeEntry, savedQuietHours, assessmentFirstPricingEnabled, status,
   statusError, statusLoading, catalog, catalogLoading, catalogError,
 }) {
   const normal = !savedEnabled
@@ -2136,14 +2137,34 @@ function followUpOperationalReadiness({
     // The default text template is not selected if every slot has a wildcard
     // override; counting it would hide an entirely blocked sequence.
     const selectedSlots = savedFreeEntry.slotsHours || [];
-    // The worker requires hour < 72 unless this account has qualified seven-day
-    // rollout and billing evidence. A configured +72h slot is also restricted.
+    // Match both constraints in whatsappFreeEntryWindow: slot < ceiling, and
+    // send time strictly before ceiling minus its one-hour expiry buffer.
+    // At ceiling-1h a slot cannot run at its nominal due time. The final
+    // eligible slot MAY shift earlier if configured quiet hours overlap the
+    // safety deadline, but that depends on each customer's first reply time.
     const sevenDayAuthorized = status.sevenDayVerified === true &&
       Number(status.periodMaxHours || 72) >= 168 &&
       status.verifiedPost72h === true &&
       (status.freeOnlyEnabled !== true || Number(status.strictCeilingHours || 72) >= 168);
-    const restrictedSlots = selectedSlots.filter(hours => Number(hours) >= 72 && !sevenDayAuthorized);
-    const eligibleSlots = selectedSlots.filter(hours => Number(hours) < 72 || sevenDayAuthorized);
+    const ceilingHours = sevenDayAuthorized ? 168 : 72;
+    const boundaryHour = ceilingHours - 1;
+    const restrictedSlots = selectedSlots.filter(hours => Number(hours) >= ceilingHours);
+    const bufferBoundarySlots = selectedSlots.filter(hours => Number(hours) === boundaryHour);
+    const conditionalBoundarySlots = savedQuietHours?.enabled === true ? bufferBoundarySlots : [];
+    const blockedBoundarySlots = savedQuietHours?.enabled === true ? [] : bufferBoundarySlots;
+    const regularlyEligibleSlots = selectedSlots.filter(hours => Number(hours) < boundaryHour);
+    const eligibleSlots = [...regularlyEligibleSlots, ...conditionalBoundarySlots];
+    const timingWarnings = [
+      ...(restrictedSlots.length ? [
+        "Times at +72h or later require verified seven-day Meta eligibility and rollout authorization."
+      ] : []),
+      ...(blockedBoundarySlots.length ? [
+        "A +71h slot cannot send at its normal due time: the 72-hour window has a one-hour safety buffer, and quiet-hours early sending is disabled."
+      ] : []),
+      ...(conditionalBoundarySlots.length ? [
+        "A +71h slot is only conditionally possible if quiet hours move the final attempt earlier; eligibility depends on the customer's first reply and cannot be verified in advance."
+      ] : []),
+    ].join(" ");
     const selectedRules = (savedFreeEntry.templateRules || []).filter(rule =>
       eligibleSlots.some(hours => Number(hours) === Number(rule.slotHours)));
     const names = [
@@ -2187,26 +2208,28 @@ function followUpOperationalReadiness({
         usableVersions++;
       }
     }
-    const post72hUnverified = restrictedSlots.length > 0;
     const selectedNames = (savedFreeEntry?.slotsHours || []).map(hours =>
       (savedFreeEntry.templateRules || []).find(rule =>
         rule.slotHours === hours && rule.serviceName === "*")?.templateName || savedFreeEntry.templateName);
     const duplicates = selectedNames.length > new Set(selectedNames.filter(Boolean)).size;
     if (eligibleSlots.length === 0) {
       extended = asExtended("blocked", "Sending blocked",
-        "No configured extended follow-up times are eligible under the current 72-hour ceiling. Times at +72h or later require verified seven-day Meta eligibility; add a 25–71h time or verify the extended rollout.");
+        `No configured extended follow-up time can be sent at its nominal due time under the current ${ceilingHours}-hour eligibility ceiling. ${timingWarnings} Configure a time before +${boundaryHour}h or verify eligibility for the seven-day window.`);
     } else if (problems.length > 0) {
       const hasPotentialPath = usableVersions > 0 || conditionalImages > 0;
       extended = asExtended("attention", hasPotentialPath ? "Partially available" : "Needs setup",
         `${problems.length} language/template combination(s) cannot be used (${problems.slice(0, 3).join(", ")}). ${hasPotentialPath
           ? "Some combinations may still work, subject to customer eligibility and media checks."
-          : "No configured language/template combination is currently usable. Review approved templates and media."}`);
+          : "No configured language/template combination is currently usable. Review approved templates and media."} ${timingWarnings}`);
     } else if (conditionalImages > 0) {
       extended = asExtended("attention", usableVersions > 0 ? "Partially available" : "Needs verification",
-        "Automatically selected promotion images need an unambiguous, eligible image for each customer's treatment. Meta approval alone cannot verify these sends.");
-    } else if (post72hUnverified) {
-      extended = asExtended("attention", "Partially available",
-        "Times at +72h or later are restricted without verified seven-day Meta evidence and rollout authorization. Configured 25–71h slots may still work.");
+        `Automatically selected promotion images need an unambiguous, eligible image for each customer's treatment. Meta approval alone cannot verify these sends. ${timingWarnings}`);
+    } else if (timingWarnings) {
+      extended = asExtended("attention",
+        regularlyEligibleSlots.length > 0 ? "Partially available" : "Needs verification",
+        `${timingWarnings} ${regularlyEligibleSlots.length > 0
+          ? "Earlier configured slots may still work if the customer remains eligible."
+          : "No configured slot has an independently confirmed normal send time."}`);
     } else if (duplicates) {
       extended = asExtended("attention", "Partially available",
         "Later slots may be skipped because the same marketing template cannot be resent in one verified period.");
@@ -2297,6 +2320,7 @@ function FollowUpTool({
   savedEnabled,
   savedFreeEntryEnabled,
   savedFreeEntry,
+  savedQuietHours,
   validationIssue,
   onDismissValidationIssue,
   hasUnsavedChanges,
@@ -2659,7 +2683,7 @@ function FollowUpTool({
   ).filter(Boolean);
   const hasDuplicateExtendedNames = new Set(simpleConfiguredNames).size < simpleConfiguredNames.length;
   const operationalReadiness = followUpOperationalReadiness({
-    savedEnabled, savedFreeEntryEnabled, savedFreeEntry, assessmentFirstPricingEnabled,
+    savedEnabled, savedFreeEntryEnabled, savedFreeEntry, savedQuietHours, assessmentFirstPricingEnabled,
     status: freeEntryStatus, statusError: freeEntryStatusError,
     statusLoading: freeEntryStatusLoading, catalog: templateCatalog,
     catalogLoading: templateCatalogLoading, catalogError: templateCatalogError,
