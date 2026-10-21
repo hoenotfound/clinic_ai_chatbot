@@ -71,7 +71,6 @@ test("cannot revive stale or mixed-intent price context",()=>{
   stale[0]=turn("user","Hi～我想了解 9D 逆龄抗衰",3600);
   assert.equal(resolve(stale),null);
   const missing=example();
-  delete missing[0].pricingCreatedAtMs;
   missing[0]={role:"user",content:"Hi～我想了解 9D 逆龄抗衰"};
   assert.equal(resolve(missing),null);
   const unrelated=example();
