@@ -501,4 +501,22 @@ function ensureVerifiedPriceReply({
   return { reply: [explanation, quote, acknowledgement].filter(Boolean).join("\n\n"), restored: true };
 }
 
-module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply };
+// A model draft can claim "Here are the regular prices:" yet contain no
+// actual price. A rejected pricing decision must not leak an unfinished quote
+// to a customer. This guard never supplies unverified numeric amounts.
+const UNFULFILLED_PRICE_HEADING =
+  /(?:给你|給你|供你|参考|參考|提供|以下|如下|here\s+are|these\s+are|current|regular|standard|normal).{0,65}(?:价钱|價錢|价格|價格|收费|收費|regular\s+price|prices?|harga).{0,24}[:：]/iu;
+function guardUnfulfilledPriceQuote(reply, language = "zh") {
+  const original = String(reply || "").trim();
+  if (!UNFULFILLED_PRICE_HEADING.test(original) ||
+      hasTreatmentPriceContent(original)) return { reply: original, changed: false };
+  const locale = String(language || "").toLowerCase();
+  const safe = locale.startsWith("ms")
+    ? "Saya faham anda mahu tahu harganya 😊 Jumlah yang sah belum dapat disahkan, jadi saya tak mahu memberi angka yang salah. Anda nak bandingkan dua rawatan atau dua bahagian untuk rawatan yang sama?"
+    : locale.startsWith("en")
+      ? "I understand you'd like the prices 😊 I don't have a verified amount to quote yet, so I don't want to give you the wrong figure. Are you comparing two treatments, or two concerns within one treatment?"
+      : "明白，你想先了解价钱 😊 目前还没有核对好的金额，我不想给错报价。你说的两项，是想比较两种疗程，还是同一疗程针对两个部位呢？";
+  return { reply: safe, changed: true };
+}
+
+module.exports = { configuredOfferPrice, requestedPricePackages, verifiedPricesForService, nonPriceExplanation, clinicalPricingAcknowledgement, ensureVerifiedPriceReply, guardUnfulfilledPriceQuote };
