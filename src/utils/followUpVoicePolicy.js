@@ -2,6 +2,9 @@
 
 const crypto = require("node:crypto");
 const { hasTreatmentPriceContent } = require("./initialOfferReplyGuard");
+const { hasUnsafeClinicalPromotionCopy } = require("./promotionClinicalCopyPolicy");
+const { hasUnsafeClinicalFollowUpClaim } = require("./followUpClinicalSafety");
+const clinicConfig = require("../config/clinicConfig");
 
 const VOICE_LANGUAGES = ["zh", "en", "ms"];
 const MAX_TRANSCRIPT_LENGTH = 1000;
@@ -15,11 +18,13 @@ function voiceTranscriptDigest(transcript, language, previewKey) {
 
 function unsafeVoiceTranscript(transcript) {
   const text = String(transcript || "").trim();
-  // Clinical wording in a recording deliberately uploaded and approved by
-  // clinic staff is not model-generated. Preserve exact speech; only enforce
-  // transcript shape/length and pricing rules for automated follow-ups.
+  // Administrator-approved speech is trusted only when THIS clinic has
+  // explicitly enabled that policy. Preserve legacy safety for other clinics.
+  const clinicTrustsStaffCopy = clinicConfig.trustAdminConfiguredContent === true;
   return !text || text.length > MAX_TRANSCRIPT_LENGTH ||
-    hasTreatmentPriceContent(text);
+    hasTreatmentPriceContent(text) ||
+    (!clinicTrustsStaffCopy &&
+      (hasUnsafeClinicalPromotionCopy(text) || hasUnsafeClinicalFollowUpClaim(text)));
 }
 
 function validVoiceAssetKey(key, extension, mediaStorage) {
