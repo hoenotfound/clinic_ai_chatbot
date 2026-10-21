@@ -6,7 +6,7 @@ const { isComplimentaryAssessmentFeeQuestion } = require("./complimentaryAssessm
 const {
   resolveRecentFirstTreatmentPriceService,
   resolveContinuedTreatmentPriceService,
-  resolveAnsweredConcernPriceService,
+  resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
   isVerifiedStaffTurn, isRecentPricingThread, pricingMessageText,
 } = require("./priceFollowUpContext");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
@@ -267,6 +267,21 @@ function resolveShadowPriceException({
     promotions,
   });
   if (quotedPriceConfirmation) return quotedPriceConfirmation;
+  // After a wrongly repeated "which treatment price?" question, "both"
+  // refers to the previously verified service and one unknown second item.
+  // Answer the known service only. Do not let an unrelated acquisition ad
+  // invent what the second service is.
+  const bothContinuation = resolveAnsweredConcernBothContinuation({
+    customerText: text, conversationHistory: session,
+    services, serviceAliases, now,
+  });
+  if (bothContinuation) {
+    const result = shadowVerifiedPrice({
+      source: "customer_concern_both", treatment: bothContinuation.name,
+      customerText: text, conversationHistory: session, promotions,
+    });
+    if (result) return result;
+  }
   if (!hasExplicitPriceRequest(text)) return null;
 
   const concernContinuation = resolveAnsweredConcernPriceService({
