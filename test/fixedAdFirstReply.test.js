@@ -61,7 +61,7 @@ test("requires enabled, recent and unambiguous configured Meta-ad treatment", ()
   assert.equal(attempt({ metaAdCreativeService: null, customerText: "Hi, I'm interested in this" }), null,
     "a generic enquiry must not use treatment guessed from ad name");
   const adNameOnly = { ...ad, serviceHintSource: "ad_name" };
-  assert.equal(attempt({ metaAdContext: adNameOnly, metaAdCreativeService: null }), config.replies[0].translations.zh,
+  assert.equal(attempt({ metaAdContext: adNameOnly, metaAdCreativeService: null })?.reply, config.replies[0].translations.zh,
     "explicit named treatment may safely match an ad-name-only service when no creative conflicts");
   assert.equal(attempt({ config: { enabled: true, replies: [] } }), null);
   assert.equal(attempt({ config: { enabled: true, replies: [config.replies[0], config.replies[0]] } }), null);
