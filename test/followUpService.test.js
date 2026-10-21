@@ -4310,3 +4310,65 @@ test("final fixed recovery-safety guard skips only one step without sending the 
   assert.equal(decision?.action,"skip");
   assert.equal(decision?.reason,"step_skip: unsafe_clinical_promise");
 });
+
+
+test("assessment-first rewrite is checked against unanswered scheduling before sending", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.assessmentFirstPricingEnabled = true;
+  clinicConfig.automatedFollowUp.message = "3D 护理价格 RM488";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "3D treatment price RM488",
+    ms: "Harga 3D RM488",
+    zh: "3D 护理价格 RM488",
+  };
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 983, channel: "whatsapp", whatsapp_number: "60120000983",
+    trigger_message_id: 982, next_follow_up_step: 1,
+    trigger_message_content: "你平日还是周末比较方便呢？",
+    recent_inbound_messages: ["想了解3D 小颜术"],
+    treatment_interest: "3D 小颜术",
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {id: 981, role: "user", content: "想了解3D 小颜术"},
+      {id: 982, role: "assistant", content: "你平日还是周末比较方便呢？"},
+    ], lead: null,
+  });
+  let decision = null, saves = 0;
+  followUpRepo.recordAiDecisionIfStillEligible = async input => {
+    decision = input; return {id: 984, ...input};
+  };
+  followUpRepo.saveIfStillEligible = async () => { saves++; return null; };
+  await runAutomatedFollowUps();
+  assert.equal(saves, 0, "rewritten repeat should not be reserved");
+  assert.equal(decision?.reason, "step_skip: repeated_scheduling_nudge");
+  assert.equal(decision?.topic, "outbound_copy_guard");
+});
+
+test("missing-video fallback is judged by the final safe copy rather than an unsafe original caption", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.videoAiCaptionsEnabled = true;
+  clinicConfig.automatedFollowUp.message = "这段影片说明做完没有恢复期";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "This video says no downtime.",
+    ms: "Video ini menjamin tiada masa pemulihan",
+    zh: "这段影片说明做完没有恢复期",
+  };
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 993, channel: "whatsapp", whatsapp_number: "60120000993",
+    trigger_message_id: 992, next_follow_up_step: 1,
+    trigger_message_content: "3D 小颜术的护理介绍",
+    recent_inbound_messages: ["想了解3D 小颜术"],
+    treatment_interest: "3D 小颜术",
+  }];
+  let claimed = null, decision = null;
+  followUpRepo.saveIfStillEligible = async input => {claimed = input; return null;};
+  followUpRepo.recordAiDecisionIfStillEligible = async input => {
+    decision = input; return null;
+  };
+  await runAutomatedFollowUps();
+  assert.equal(decision, null);
+  assert.ok(claimed, "safe fallback should remain eligible");
+  assert.match(claimed.content, /轮廓|臉型|脸型/u);
+  assert.doesNotMatch(claimed.content, /没有恢复期|沒有恢復期/u);
+});
