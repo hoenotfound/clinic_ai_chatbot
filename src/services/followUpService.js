@@ -1523,11 +1523,16 @@ async function sendCandidate(candidate) {
     }
   }
   if (copyViolation) {
+    // Skipping one repetitive or unsafe outbound COPY is not an opt-out:
+    // persist a step-level skip so FU2/FU3 may still proceed if eligible.
+    const copyDecision = normalizeFollowUpDecision({
+      action: "skip", reason: copyViolation,
+    });
     try {
       await followUpRepo.recordAiDecisionIfStillEligible({
         contactId: candidate.contact_id,
         triggerMessageId: candidate.trigger_message_id,
-        stepIndex, action: "skip", reason: copyViolation,
+        stepIndex, action: copyDecision.action, reason: copyDecision.reason,
         topic: "outbound_copy_guard",
         delayMinutes: step.delayMinutes,
         previousDelayMinutes: stepIndex > 1
