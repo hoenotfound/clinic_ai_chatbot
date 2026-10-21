@@ -2859,8 +2859,9 @@ function AiBehaviorTab({ config, onSaved, onError }) {
         </label>
         <p className="mt-2 text-xs text-[var(--color-text-muted)]">
           Only for a first message linked to a recent Meta ad with a verified treatment.
-          Questions about prices, clinical concerns, edited or unclear messages still use AI.
-          If the customer's language has no saved reply, AI handles it.
+          Simple interest messages can use the fixed reply even when customers type them manually.
+          Price, booking, clinical and multi-part questions go to AI. Missing language replies also use AI.
+          Your saved opening is not automatically extended with another assessment question.
           Existing Before / After, pricing, delivery and follow-up rules remain in place.
         </p>
         <div className="mt-4 space-y-4">
