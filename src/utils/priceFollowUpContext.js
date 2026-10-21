@@ -278,7 +278,7 @@ const PRICE_CUSTOMER_INTEREST =
   /(?:有兴趣|有興趣|感兴趣|感興趣|想了解|想知道|想问|想問|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu;
 const PRICE_BOT_CONCERN_INVITATION =
   /(?:在意|想改善|主要|哪一|哪个|哪個|哪块|哪塊|部位|方面|concern|which\s+(?:part|area)|what\s+(?:area|concern))/iu;
-const PRICE_CONCERN_CONTINUATION_MAX_MS = 2 * 60 * 60 * 1000;
+const PRICE_CONCERN_CONTINUATION_MAX_MS = 3 * 60 * 60 * 1000;
 
 function resolveAnsweredConcernPriceService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
