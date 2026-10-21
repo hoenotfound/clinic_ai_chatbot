@@ -17,6 +17,8 @@ const QUESTION_RESET =
   /(?:其他|其它|另外|换个|換個|全部|所有|都想|比较|比較|不要|不想|没兴趣|沒興趣|改聊|换话题|換話題|stop|unsubscribe|opt\\s*out|another\\s+treatment|other\\s+treatment|different\\s+treatment|instead|all\\s+(?:treatments?|prices?))/iu;
 const CONCERN_CONTINUATION =
   /(?:紧致|緊緻|松弛|鬆弛|下颚线|下顎線|下巴|轮廓|輪廓|法令纹|法令紋|脸型|臉型|脸部|臉部|面颊|面頰|皮肤|皮膚|小腹|腰臀|体态|體態|肩颈|肩頸|骨盆|盆骨|下垂|jawline|firmness|contour|facial|pelvis|posture)/iu;
+const OTHER_FEE_TOPIC =
+  /(?:评估|評估|体验|體驗|免费|免費|押金|订金|訂金|voucher|coupon|baucar|优惠券|優惠券|assessment\\b|deposit\\b)/iu;
 const ENQUIRY =
   /(?:想了解|想知道|想问|想問|有兴趣|有興趣|感兴趣|感興趣|interested|enquir|inquir|nak\\s+tahu|mahu\\s+tahu|berminat)/iu;
 
@@ -31,6 +33,7 @@ function resolveStaffInterruptedPriceContext({
   const current = String(customerText || "").trim();
   if (!current || current.length > 90 || !hasExplicitPriceRequest(current) ||
       hasClinicalMediaRisk(current) || QUESTION_RESET.test(current) ||
+      OTHER_FEE_TOPIC.test(current) ||
       !Number.isFinite(now)) return null;
   const candidates = serviceCandidates(services, serviceAliases);
   if (uniqueServiceMentions(current, candidates).length) return null;
@@ -75,7 +78,8 @@ function resolveStaffInterruptedPriceContext({
       now - turns[selectedAt].pricingCreatedAtMs > MAX_RECENT_MS) return null;
   for (const turn of turns.slice(selectedAt + 1, -1)) {
     const message = pricingMessageText(turn).trim();
-    if (QUESTION_RESET.test(message)) return null;
+    if ((turn.role === "user" || isVerifiedStaffTurn(turn)) &&
+        QUESTION_RESET.test(message)) return null;
     const names = uniqueServiceMentions(message, candidates);
     if (names.some(name => name !== serviceName) || names.length > 1) return null;
     if (turn.role === "user" && hasClinicalMediaRisk(message)) return null;
