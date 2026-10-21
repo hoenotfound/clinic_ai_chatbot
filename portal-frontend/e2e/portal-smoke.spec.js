@@ -2451,6 +2451,24 @@ test("Follow-up readiness shows strict billing block without claiming guaranteed
   await expect(overview).toContainText("not a promise");
 });
 
+test("Tools mobile navigation displays visual saved On and Off states", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      automatedFollowUp: { enabled: true, delayMinutes: 120, message: "Hello",
+        freeEntry: { enabled: false, templateName: "", slotsHours: [26] } },
+      leadScoring: { enabled: false, inactivityMinutes: 10, maxConversationMinutes: 60, maxMessages: 40 },
+    },
+  });
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.goto("/tools");
+  await expect(page.getByRole("button", { name: "Automated follow-up" })
+    .locator('span[aria-hidden="true"]').filter({ hasText: "On" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Lead temperature" })
+    .locator('span[aria-hidden="true"]').filter({ hasText: "Off" })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Critical WhatsApp billing alarms remain visible outside collapsed diagnostics", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
