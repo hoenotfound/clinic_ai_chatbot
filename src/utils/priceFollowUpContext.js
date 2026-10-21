@@ -267,11 +267,19 @@ function resolveBookingResponsePriceService({
   return null;
 }
 
-// A customer can name ONE treatment, answer the bot's question about their
-// concerns, and then ask "what's the price?". The symptom answer is not a new
-// service choice. Carry the customer-authored choice across only this tightly
-// bounded, timestamped exchange. In particular, an ad/CRM label or a bot's
-// independent suggestion must never create the price authorization.
+// Carry a customer-selected treatment across a few bot-invited concern,
+// scheduling or location answers. Never rely on the ad/CRM or the model's guess.
+// A trusted, staff-free continuous session is mandatory for any price quote.
+const PRICE_CONCERN_BRIDGE =
+  /(?:紧致|緊緻|下颚线|下顎線|轮廓|輪廓|法令纹|法令紋|咬肌|双下巴|雙下巴|脸型|臉型|小腹|腰臀|体态|體態|firmness|jawline|contour|nasolabial|pelvis|松弛|鬆弛|下垂|面颊|面頰)/iu;
+const PRICE_ADMIN_BRIDGE =
+  /^(?:(?:请问|請問)\s*)?(?:location|address|hours|where|地址|地点|地點|位置|在哪里|在哪裡|平日|周末|週末|weekdays?|weekends?|周[一二三四五六日]|星期[一二三四五六日]|ok|好的)[\s?!？。!！]*$/iu;
+const PRICE_CUSTOMER_INTEREST =
+  /(?:有兴趣|有興趣|感兴趣|感興趣|想了解|想知道|想问|想問|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu;
+const PRICE_BOT_CONCERN_INVITATION =
+  /(?:在意|想改善|主要|哪一|哪个|哪個|哪块|哪塊|部位|方面|concern|which\s+(?:part|area)|what\s+(?:area|concern))/iu;
+const PRICE_CONCERN_CONTINUATION_MAX_MS = 2 * 60 * 60 * 1000;
+
 function resolveAnsweredConcernPriceService({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
   now = Date.now(),
@@ -284,37 +292,80 @@ function resolveAnsweredConcernPriceService({
   if (findServicesInText(current, candidates).length) return null;
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
     .filter(turn => turn?.role === "user" || turn?.role === "assistant");
-  const userIndexes = turns.flatMap((turn, index) => turn.role === "user" ? [index] : []);
-  // Exactly one customer choice, one answer to an invited concern question
-  // and the CURRENT price question. Do not scan across older customer topics.
-  if (userIndexes.length !== 3 || userIndexes[2] !== turns.length - 1 ||
+  if (turns.length < 5 || turns.at(-1)?.role !== "user" ||
       pricingMessageText(turns.at(-1)).trim() !== current) return null;
-  const [choiceIndex, concernIndex, priceIndex] = userIndexes;
-  if (!isRecentPricingThread(turns, choiceIndex, now) ||
-      turns.slice(choiceIndex).some(isVerifiedStaffTurn)) return null;
-  const choiceText = pricingMessageText(turns[choiceIndex]).trim();
-  const choice = safeServiceFromCustomer(choiceText, services, serviceAliases);
-  if (!choice || findServicesInText(choiceText, candidates).length !== 1 ||
-      !/(?:有兴趣|有興趣|感兴趣|感興趣|想了解|想知道|想问|想問|interested|enquir|inquir|berminat|nak\s+tahu|mahu\s+tahu)/iu.test(choiceText) ||
-      hasClinicalMediaRisk(choiceText)) return null;
-  const concern = pricingMessageText(turns[concernIndex]).trim();
-  if (!concern || concern.length > 75 || hasExplicitPriceRequest(concern) ||
-      hasClinicalMediaRisk(concern) || TOPIC_CHANGE.test(concern) ||
-      TOPIC_RESET.test(concern) || findServicesInText(concern, candidates).length ||
-      !/(?:紧致|緊緻|下颚线|下顎線|轮廓|輪廓|法令纹|法令紋|咬肌|双下巴|雙下巴|脸型|臉型|小腹|腰臀|体态|體態|firmness|jawline|contour|nasolabial|pelvis)/iu.test(concern)) return null;
-  const beforeConcern = turns.slice(choiceIndex + 1, concernIndex);
-  const invitation = beforeConcern.at(-1);
-  if (!invitation || invitation.role !== "assistant" ||
-      !/(?:在意|想改善|主要|哪一|哪个|哪個|哪块|哪塊|部位|方面|concern|which\s+(?:part|area)|what\s+(?:area|concern))/iu.test(pricingMessageText(invitation)) ||
-      !beforeConcern.some(turn => turn.role === "assistant" &&
-        findServicesInText(pricingMessageText(turn), candidates).includes(choice.name))) return null;
-  const afterConcern = turns.slice(concernIndex + 1, priceIndex);
-  if (afterConcern.length !== 1 || afterConcern[0].role !== "assistant") return null;
-  const acknowledgedServices = [...new Set(findServicesInText(
-    pricingMessageText(afterConcern[0]), candidates
-  ))];
-  return acknowledgedServices.length === 1 && acknowledgedServices[0] === choice.name
-    ? choice : null;
+  const selectedCustomerIndexes = turns.flatMap((turn, i) =>
+    turn.role === "user" && i < turns.length - 1 ? [i] : []);
+  // An active service selection may be several turns old, but cannot be
+  // carried through arbitrary chats, missing timestamps or an intervening staff.
+  for (const i of selectedCustomerIndexes.slice(-4).reverse()) {
+    const choiceText = pricingMessageText(turns[i]).trim();
+    const selected = safeServiceFromCustomer(choiceText, services, serviceAliases);
+    if (!selected) {
+      if (TOPIC_CHANGE.test(choiceText) || TOPIC_RESET.test(choiceText) ||
+          hasClinicalMediaRisk(choiceText)) return null;
+      continue;
+    }
+    if (findServicesInText(choiceText, candidates).length !== 1 ||
+        !PRICE_CUSTOMER_INTEREST.test(choiceText) ||
+        hasClinicalMediaRisk(choiceText) ||
+        !isRecentPricingThread(turns, i, now) ||
+        now - turns[i].pricingCreatedAtMs > PRICE_CONCERN_CONTINUATION_MAX_MS ||
+        turns.slice(i).some(isVerifiedStaffTurn)) return null;
+    const next = turns.slice(i + 1, -1);
+    const customerBridges = next.filter(turn => turn.role === "user");
+    if (!customerBridges.length || customerBridges.length > 3) return null;
+    let confirmedByBot = false, invitedConcern = false, bridgedConcern = false;
+    for (const turn of next) {
+      const message = pricingMessageText(turn).trim();
+      if (!message) return null;
+      const mentions = [...new Set(findServicesInText(message, candidates))];
+      if (mentions.some(name => name !== selected.name)) return null;
+      if (turn.role === "assistant") {
+        if (mentions.includes(selected.name)) confirmedByBot = true;
+        if (PRICE_BOT_CONCERN_INVITATION.test(message)) invitedConcern = true;
+      } else {
+        if (hasClinicalMediaRisk(message) ||
+            hasExplicitPriceRequest(message) ||
+            TOPIC_CHANGE.test(message) || TOPIC_RESET.test(message) ||
+            mentions.length) return null;
+        if (PRICE_CONCERN_BRIDGE.test(message)) {
+          if (!invitedConcern) return null;
+          bridgedConcern = true;
+        } else if (!PRICE_ADMIN_BRIDGE.test(message)) return null;
+      }
+    }
+    // Last assistant must acknowledge the customer's latest exchange without
+    // switching service; it need not repeat the full treatment name.
+    if (next.at(-1)?.role !== "assistant" ||
+        !confirmedByBot || !bridgedConcern) return null;
+    return selected;
+  }
+  return null;
+}
+
+// "Both" can mean the two body concerns, NOT two treatments. If the bot just
+// asked which treatment price, recover only the already independently verified
+// treatment amount; ask which other service the customer means.
+function resolveAnsweredConcernBothContinuation({
+  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  now = Date.now(),
+} = {}) {
+  const current = String(customerText || "").trim();
+  if (!/^(?:(?:两|兩|2)\s*(?:项|項|个|個|种|種)?\s*(?:都想要?了解|都想知道|都要了解)|both\s+(?:please|of them)?)[\s!！。?？😆]*$/iu.test(current)) return null;
+  const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
+    .filter(turn => turn?.role === "user" || turn?.role === "assistant");
+  const question = turns.at(-2), priorPrice = turns.at(-3);
+  if (question?.role !== "assistant" || priorPrice?.role !== "user" ||
+      isVerifiedStaffTurn(question) ||
+      !/(?:哪.{0,12}(?:疗程|療程|价钱|價錢|价格|價格)|(?:which|what).{0,45}(?:treatment|price|cost))/iu.test(pricingMessageText(question)) ||
+      !hasExplicitPriceRequest(pricingMessageText(priorPrice)) ||
+      !isRecentPricingThread(turns, turns.length - 3, now) ||
+      hasClinicalMediaRisk(pricingMessageText(priorPrice))) return null;
+  return resolveAnsweredConcernPriceService({
+    customerText: pricingMessageText(priorPrice),
+    conversationHistory: turns.slice(0, -2), services, serviceAliases, now,
+  });
 }
 
 // Narrow legacy-safe case: the current amount question immediately follows
@@ -426,5 +477,5 @@ module.exports = {
   pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread,
   resolveContinuedTreatmentPriceService, resolveVerifiedPriceFollowUpService,
   resolveRecentFirstTreatmentPriceService, resolveBookingResponsePriceService,
-  resolveAnsweredConcernPriceService,
+  resolveAnsweredConcernPriceService, resolveAnsweredConcernBothContinuation,
 };
