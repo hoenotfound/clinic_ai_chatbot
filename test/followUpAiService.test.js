@@ -5,6 +5,7 @@ const config = require("../src/config/clinicConfig");
 const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  repeatsSchedulingNudge,
   needsSchedulingContext,
   previousFollowUps,
   recentConfiguredServiceNames,
@@ -568,4 +569,44 @@ test("single branch allows a normal English address question without regeneratio
   });
   assert.equal(result.action,"send");
   assert.equal(calls,1);
+});
+
+
+test("repeat availability question after unanswered follow-up is regenerated or skipped", async () => {
+  const previousQuestion = "如果你想来做脸部评估，这几天平日还是周末比较方便？";
+  const repeated = "Hi～这周哪一天方便过来 PJ 看看呢？";
+  assert.equal(repeatsSchedulingNudge(repeated, [previousQuestion]), true);
+  assert.equal(repeatsSchedulingNudge("护理后有任何疑问都可以问我 😊", [previousQuestion]), false);
+  assert.equal(repeatsSchedulingNudge(repeated, ["这是3D的护理过程说明"]), false);
+
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls++;
+    return JSON.stringify({ action: "send", message: repeated, topic: "3D 小颜术" });
+  };
+  const convo = [
+    { id: 11, role: "user", content: "Hi～想了解 3D 小颜术" },
+    { id: 12, role: "assistant", content: previousQuestion,
+      is_automated_follow_up: true, automated_follow_up_for_message_id: 11 },
+  ];
+  const skipped = await generatePersonalizedFollowUp({
+    conversation: convo, triggerMessageId: 11, stepNumber: 3,
+  });
+  assert.equal(calls, 2);
+  assert.equal(skipped.action, "skip");
+  assert.equal(skipped.reason, "repeated_scheduling_nudge");
+
+  calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls++;
+    return JSON.stringify({ action: "send",
+      message: calls === 1 ? repeated :
+        "3D 是徒手护理，主要从面部肌肉放松入手。对护理过程有疑问随时可以问哦 😊",
+      topic: "3D 小颜术" });
+  };
+  const useful = await generatePersonalizedFollowUp({
+    conversation: convo, triggerMessageId: 11, stepNumber: 3,
+  });
+  assert.equal(useful.action, "send");
+  assert.equal(calls, 2);
 });
