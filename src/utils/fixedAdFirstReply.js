@@ -10,8 +10,7 @@ const {
   hasCustomerServiceEnquiry,
 } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
-const { safeServiceFromCustomer, hasCommercialReplyContent } =
-  require("./initialOfferReplyGuard");
+const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 
 const MAX_AD_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PREFILL_MAX_LENGTH = 240;
@@ -24,12 +23,12 @@ function isStandardAdPrefill(value) {
   // trailing text do not qualify just because a prefill starts the message.
   const body = text.replace(/^(?:(?:hi|hello|hey)\b|你好|嗨|哈咯)[\s~～,，.!！。]*/iu, "")
     .replace(/[\s。.!！～]+$/u, "").trim();
-  if (/[?？\n\r]/u.test(body)) return false;
+  if (/[?？\n\r]/u.test(body) ||
+      /(?:可是|不过|不過|但是|因为|因為|怎么办|怎麼辦|怎么|怎麼|如何|多久|几次|幾次|多少|是否|怀孕|懷孕|产后|產後|副作用|安全吗|安全嗎|疼痛|\b(?:but|however|how|why|what|when|where|whether|pain|pregnan(?:t|cy)|book|appointment|refund)\b)/iu.test(body)) return false;
   const chineseInterest = /^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*.{2,90}?(?:有兴趣|有興趣|感兴趣|感興趣)(?:[，,、\s]*(?:可以|请|請)(?:跟[进進]我|联[系繫]我)(?:[，,、\s]*有(?:优惠|優惠)也(?:发|發)我看看)?)?$/u;
-  const chineseInfo = /^(?:我)?(?:想了解|想知道|想咨询|想諮詢)\s*.{2,90}(?:的?(?:详情|詳情|资料|資料|疗程|療程))?$/u;
   const english = /^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+.{2,100}?(?:[,.]?\s*(?:please|thanks))?$/iu;
   const malay = /^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+.{2,100}$/iu;
-  return chineseInterest.test(body) || chineseInfo.test(body) ||
+  return chineseInterest.test(body) ||
     english.test(body) || malay.test(body);
 }
 
@@ -43,13 +42,16 @@ function resolveFixedAdFirstReply({
   metaAdCreativeService,
   keywordReason,
   hasStaffHandoff = false,
+  hasExistingBooking = false,
+  isTextMessage = true,
   services = [],
   serviceAliases = [],
   now = Date.now(),
 } = {}) {
   if (config?.enabled !== true || isFirstMessage !== true ||
       !Array.isArray(conversationHistory) || conversationHistory.length !== 1 ||
-      conversationHistory[0]?.role !== "user" || keywordReason || hasStaffHandoff) {
+      conversationHistory[0]?.role !== "user" || keywordReason || hasStaffHandoff ||
+      hasExistingBooking || !isTextMessage) {
     return null;
   }
   const replies = Array.isArray(config.replies) ? config.replies : [];
@@ -78,8 +80,7 @@ function resolveFixedAdFirstReply({
     String(language || "").toLowerCase().startsWith("ms") ? "ms" : "en";
   // No cross-language fallback: using AI is better than an unintended language.
   const reply = matching[0]?.translations?.[locale];
-  if (typeof reply !== "string" || !reply.trim() || reply.length > 1200 ||
-      hasCommercialReplyContent(reply)) return null;
+  if (typeof reply !== "string" || !reply.trim() || reply.length > 1200) return null;
   return {
     reply: reply.trim(),
     treatment,
