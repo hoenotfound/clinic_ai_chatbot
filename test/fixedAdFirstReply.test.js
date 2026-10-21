@@ -165,6 +165,7 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     const metaAdCreativeService = options.metaAdCreativeService;
     const mediaType = options.mediaType || null;
     const bookingContext = options.bookingContext || null;
+    const acceptedStaffOffer = options.acceptedStaffOffer || null;
     const channel = "whatsapp";
     const contact = { id: 7 };
     const savedInbound = { id: 100 };
