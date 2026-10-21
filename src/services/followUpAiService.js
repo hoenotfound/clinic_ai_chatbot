@@ -326,8 +326,8 @@ function unansweredAssistantMessages(conversation = []) {
     .slice(-8).map(item => cleanContent(item.content));
 }
 
-function followUpCopyViolation(message, conversation = []) {
-  if (hasUnsafeClinicalFollowUpClaim(message)) return "unsafe_clinical_promise";
+function followUpCopyViolation(message, conversation = [], { checkClinicalCopy = true } = {}) {
+  if (checkClinicalCopy && hasUnsafeClinicalFollowUpClaim(message)) return "unsafe_clinical_promise";
   const unanswered = unansweredAssistantMessages(conversation);
   if (repeatsSchedulingNudge(message, unanswered)) return "repeated_scheduling_nudge";
   // A slightly reworded fixed reminder must not bypass the model's semantic
