@@ -3,6 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const { isStandardAdPrefill, resolveFixedAdFirstReply } =
   require("../src/utils/fixedAdFirstReply");
 
@@ -136,4 +137,66 @@ test("handler selects fixed reply before model and skips configured introductory
   assert.match(source, /serviceQuerySource = fixedAdFirstReply.serviceQuerySource/);
   assert.match(source, /isFirstMessage: wasFirstMessage === true/);
   assert.match(source, /assessmentFirstPricingEnabled === true &&\s*!fixedAdFirstReply/);
+});
+
+test("actual server decision branch skips Gemini for valid first ad message and falls back for custom questions", async () => {
+  const server = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+  const begin = server.indexOf("      fixedAdFirstReply = !keywordReason");
+  const end = server.indexOf("      // A model can miss a clear complaint", begin);
+  assert.ok(begin > 0 && end > begin, "actual decision branch must be found");
+  const source = server.slice(begin, end);
+  let aiCalls = 0;
+  const logs = [];
+  const runtime = vm.runInNewContext(`(async function runCase(options) {
+    const text = options.text;
+    const wasFirstMessage = options.wasFirstMessage;
+    const history = [{ role: "user", content: text }];
+    const replyHistory = history;
+    const isFirstMessage = history.length === 1;
+    const generateFirstIntro = false;
+    const mediaLanguage = options.language || "zh";
+    const metaAdContext = options.metaAdContext;
+    const metaAdCreativeService = options.metaAdCreativeService;
+    const mediaType = options.mediaType || null;
+    const bookingContext = options.bookingContext || null;
+    const channel = "whatsapp";
+    const contact = { id: 7 };
+    const savedInbound = { id: 100 };
+    const keywordReason = null;
+    const marketingStopQuestion = null;
+    const numberedPricingSelection = null;
+    let fixedAdFirstReply = null;
+    let aiReply = null;
+    let serviceQuery = false, serviceQuerySource = null;
+    let details = null, flagged = false, reviewRequired = false, reviewType = null;
+    let bookingReady = false, priceQuery = false, packageQuery = false;
+    ${source}
+    return { aiReply, details, serviceQuery, serviceQuerySource, fixedAdFirstReply };
+  })`, {
+    resolveFixedAdFirstReply,
+    clinicConfig: { adFirstReply: config, services, serviceAliases: aliases },
+    ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
+    parseAiReplyResult: raw => raw,
+    console: { info: (...parts) => logs.push(parts.join(" ")) },
+  });
+  const optIn = "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看";
+  const fixed = await runtime({ text: optIn, wasFirstMessage: true, metaAdContext: ad, metaAdCreativeService: "骨盆调理" });
+  assert.equal(fixed.aiReply, translations.zh);
+  assert.equal(fixed.details.treatment, "骨盆调理");
+  assert.equal(fixed.serviceQuery, true);
+  assert.equal(aiCalls, 0, "Gemini not called for recognised fresh ad enquiry");
+  assert.ok(logs.some(item => item.includes("treatment=骨盆调理")));
+
+  const custom = await runtime({ text: "Hi, I'm interested in 骨盆调理 tomorrow at 3pm", wasFirstMessage: true, metaAdContext: ad, metaAdCreativeService: "骨盆调理" });
+  assert.equal(custom.aiReply, "MODEL ANSWER");
+  assert.equal(aiCalls, 1, "custom timing request uses AI");
+  const historical = await runtime({ text: optIn, wasFirstMessage: false, metaAdContext: ad, metaAdCreativeService: "骨盆调理" });
+  assert.equal(historical.aiReply, "MODEL ANSWER");
+  assert.equal(aiCalls, 2, "a one-item filtered model history cannot bypass durable first-message evidence");
+  const genericNameOnly = await runtime({ text: "Hi, I'd like to know more about this", language: "en", wasFirstMessage: true, metaAdContext: { ...ad, serviceHintSource: "ad_name" }, metaAdCreativeService: null });
+  assert.equal(genericNameOnly.aiReply, "MODEL ANSWER");
+  assert.equal(aiCalls, 3, "generic enquiry with ad-name-only hint requires AI");
+  const genericCreative = await runtime({ text: "Hi, I'd like to know more about this", language: "en", wasFirstMessage: true, metaAdContext: ad, metaAdCreativeService: "骨盆调理" });
+  assert.equal(genericCreative.aiReply, translations.en);
+  assert.equal(aiCalls, 3, "verified generic creative saves a model call");
 });
