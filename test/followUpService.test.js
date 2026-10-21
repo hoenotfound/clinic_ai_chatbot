@@ -44,6 +44,7 @@ test.beforeEach(() => {
   followUpRepo.getNextStaleClaimDueAt = async () => null;
   followUpRepo.isClaimStillEligible = async () => true;
   followUpRepo.discardUnsentClaim = async () => null;
+  followUpRepo.replaceUnsentSocialVoiceWithText = async () => null;
   followUpRepo.discardUnsentSocialImageCompanion = async () => null;
   followUpRepo.saveSocialVideoCompanion = async () => null;
   followUpRepo.discardUnsentSocialVideoCompanion = async () => null;
@@ -3698,5 +3699,547 @@ test("voice automation falls back to text for missing language, mismatched trans
     channelMessaging.sendText = originals.text;
     if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
     else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
+
+
+test("Messenger and Instagram send approved follow-up recordings as one tracked audio message", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { createHash } = require("node:crypto");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "social-voice-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}approved.ogg`;
+  const previewKey = `${prefix}approved.mp3`;
+  const transcript = "Hello, would you like a consultation?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "approved.m4a", approved: true },
+  };
+  const originals = {
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia,
+    query: pool.query,
+    audio: channelMessaging.sendAudioBuffer,
+    text: channelMessaging.sendText,
+    alias: messagesRepo.socialProviderAliasRecorder,
+    setSocial: messagesRepo.setSocialProviderMessageId,
+  };
+  const sent = [];
+  const claimed = [];
+  const aliases = [];
+  let channel = "facebook";
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async target => {
+      if (target === key) return {
+        mimeType: "audio/ogg", bytes: 1000, metadata: {
+          voicelanguage: "en", voicepreviewkey: previewKey,
+          voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update("MP3 preview bytes").digest("hex"),
+        },
+      };
+      assert.equal(target, previewKey);
+      return { mimeType: "audio/mpeg", bytes: 800, metadata: {} };
+    };
+    mediaStorage.downloadMedia = async target => {
+      assert.equal(target, previewKey, "social platforms must use the approved MP3 copy");
+      return Buffer.from("MP3 preview bytes");
+    };
+    pool.query = async (_sql, params) => {
+      assert.equal(params[1], previewKey, "duplicate protection must use the persisted MP3 key");
+      return { rows: [] };
+    };
+    channelMessaging.sendText = async () => {
+      assert.fail("When approved audio is selected, do not also send follow-up text");
+    };
+    messagesRepo.socialProviderAliasRecorder = (_messageId, provider) => async providerId => {
+      aliases.push(`${provider}:${providerId}`);
+    };
+    messagesRepo.setSocialProviderMessageId = async (id, providerId) =>
+      ({ id, contact_id: 981, whatsapp_message_id: providerId, delivery_status: "sent" });
+    channelMessaging.sendAudioBuffer = async (...args) => {
+      const [contact, bytes, mime, filename, options] = args;
+      assert.equal(contact.channel, channel);
+      assert.equal(bytes.toString(), "MP3 preview bytes");
+      assert.equal(mime, "audio/mpeg");
+      assert.equal(filename, "voice.mp3");
+      assert.equal(options.purpose, "marketing");
+      assert.equal(options.autoFollowUp, true);
+      assert.equal(options.requireStaffMode, false);
+      assert.equal(await options.preSendCheck(), true);
+      await options.onProviderMessageId(`mid-${channel}`);
+      sent.push(channel);
+      return { success: true, externalMessageId: `mid-${channel}` };
+    };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 981, channel, channel_user_id: `${channel}-981`,
+      whatsapp_number: `${channel}:981`, trigger_message_id: 980,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I am interested in a consultation"],
+      treatment_interest: "Pelvic Care", trigger_message_content: "Thank you",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      claimed.push(input);
+      return { id: 982 + claimed.length, contact_id: 981, delivery_status: null };
+    };
+    realtimeEvents.publish = () => {};
+    for (channel of ["facebook", "instagram"]) await runAutomatedFollowUps();
+    assert.deepEqual(sent, ["facebook", "instagram"]);
+    assert.deepEqual(aliases, ["facebook:mid-facebook", "instagram:mid-instagram"]);
+    assert.equal(claimed.length, 2);
+    for (const claim of claimed) {
+      assert.equal(claim.mediaKey, previewKey);
+      assert.equal(claim.mediaMimeType, "audio/mpeg");
+      assert.equal(claim.messageMode, "fixed");
+      assert.match(claim.content, /Automated voice note, en; transcript/);
+      assert.ok(claim.content.includes(transcript));
+      assert.ok(!claim.content.includes("Checking in"));
+    }
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = originals.head;
+    mediaStorage.downloadMedia = originals.download;
+    pool.query = originals.query;
+    channelMessaging.sendAudioBuffer = originals.audio;
+    channelMessaging.sendText = originals.text;
+    messagesRepo.socialProviderAliasRecorder = originals.alias;
+    messagesRepo.setSocialProviderMessageId = originals.setSocial;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
+
+test("social follow-up rejects unverified MP3 preview and falls back to text without audio upload", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { createHash } = require("node:crypto");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "social-voice-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}approved.ogg`;
+  const previewKey = `${prefix}approved.mp3`;
+  const transcript = "Can we book your consultation?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "approved.mp3", approved: true },
+  };
+  const originals = {
+    head: mediaStorage.getSharedFollowUpMediaInfo, query: pool.query,
+    audio: channelMessaging.sendAudioBuffer, text: channelMessaging.sendText,
+    alias: messagesRepo.socialProviderAliasRecorder,
+    setSocial: messagesRepo.setSocialProviderMessageId,
+  };
+  let claim;
+  let textSends = 0;
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async target => target === key
+      ? { mimeType: "audio/ogg", bytes: 100, metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update("unused preview").digest("hex"),
+      } }
+      : { mimeType: "application/octet-stream", bytes: 400 };
+    pool.query = async () => ({ rows: [] });
+    channelMessaging.sendAudioBuffer = async () => assert.fail("Unverified preview must not be sent");
+    channelMessaging.sendText = async (_contact, body, options) => {
+      textSends += 1;
+      assert.equal(body, "Checking in");
+      assert.equal(await options.preSendCheck(), true);
+      return { success: true, externalMessageId: "mid-fallback" };
+    };
+    messagesRepo.socialProviderAliasRecorder = () => async () => {};
+    messagesRepo.setSocialProviderMessageId = async id =>
+      ({ id, contact_id: 984, delivery_status: "sent" });
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 984, channel: "instagram", channel_user_id: "igsid-984",
+      trigger_message_id: 983, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I am interested"], trigger_message_content: "Thanks",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      claim = input;
+      return { id: 985, contact_id: 984, delivery_status: null };
+    };
+    realtimeEvents.publish = () => {};
+    await runAutomatedFollowUps();
+    assert.equal(textSends, 1);
+    assert.equal(claim.mediaKey, null);
+    assert.equal(claim.mediaMimeType, null);
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = originals.head;
+    pool.query = originals.query;
+    channelMessaging.sendAudioBuffer = originals.audio;
+    channelMessaging.sendText = originals.text;
+    messagesRepo.socialProviderAliasRecorder = originals.alias;
+    messagesRepo.setSocialProviderMessageId = originals.setSocial;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
+
+
+test("uncertain automated Messenger and Instagram audio stays unknown, never falsely failed", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { createHash } = require("node:crypto");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const slug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "social-uncertain-voice-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}approved.ogg`;
+  const previewKey = `${prefix}approved.mp3`;
+  const bytes = Buffer.from("known MP3 bytes");
+  const transcript = "Can we arrange your consultation?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "recording.mp3", approved: true },
+  };
+  const previous = {
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia,
+    query: pool.query,
+    audio: channelMessaging.sendAudioBuffer,
+    setStatus: messagesRepo.setDeliveryStatusById,
+    attention: contactsRepo.setDeliveryAttention,
+  };
+  const statuses = [];
+  const attentions = [];
+  let channel = "facebook";
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async storedKey =>
+      storedKey === key ? { mimeType: "audio/ogg", bytes: 400, metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update(bytes).digest("hex"),
+      } } : { mimeType: "audio/mpeg", bytes: bytes.length };
+    mediaStorage.downloadMedia = async storedKey => {
+      assert.equal(storedKey, previewKey);
+      return bytes;
+    };
+    pool.query = async () => ({ rows: [] });
+    channelMessaging.sendAudioBuffer = async () =>
+      ({ success: false, unknown: true, ambiguous: true,
+        error: "Meta voice-note delivery is unconfirmed" });
+    messagesRepo.setDeliveryStatusById = async (id, status, error) => {
+      statuses.push({ id, status, error });
+      return { id, contact_id: 951, delivery_status: status, delivery_error: error };
+    };
+    contactsRepo.setDeliveryAttention = async (contactId, message, messageId) => {
+      attentions.push({ contactId, message, messageId });
+    };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 951, channel, channel_user_id: `${channel}-951`,
+      whatsapp_number: `${channel}:951`, trigger_message_id: 950,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I am interested in treatment"],
+      trigger_message_content: "Thanks",
+    }];
+    let saved = 952;
+    followUpRepo.saveIfStillEligible = async () => ({
+      id: saved++, contact_id: 951, delivery_status: null,
+    });
+    realtimeEvents.publish = () => {};
+    for (channel of ["facebook", "instagram"]) await runAutomatedFollowUps();
+    assert.equal(statuses.length, 2);
+    assert.equal(attentions.length, 2);
+    for (const row of statuses) {
+      assert.equal(row.status, "unknown");
+      assert.match(row.error, /unconfirmed/);
+    }
+    for (const entry of attentions) assert.match(entry.message, /^Delivery unconfirmed:/);
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = previous.head;
+    mediaStorage.downloadMedia = previous.download;
+    pool.query = previous.query;
+    channelMessaging.sendAudioBuffer = previous.audio;
+    messagesRepo.setDeliveryStatusById = previous.setStatus;
+    contactsRepo.setDeliveryAttention = previous.attention;
+    if (slug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = slug;
+  }
+});
+
+test("tampered social MP3 bytes fail closed after claim without calling Meta", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { createHash } = require("node:crypto");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const slug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "social-tamper-voice-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}approved.ogg`;
+  const previewKey = `${prefix}approved.mp3`;
+  const transcript = "Do you want to book an appointment?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "approved.mp3", approved: true },
+  };
+  const previous = {
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia,
+    query: pool.query,
+    audio: channelMessaging.sendAudioBuffer,
+    status: messagesRepo.setDeliveryStatusById,
+    attention: contactsRepo.setDeliveryAttention,
+  };
+  let savedContent = null;
+  let status = null;
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async storedKey =>
+      storedKey === key ? { mimeType: "audio/ogg", bytes: 250, metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update("approved original bytes").digest("hex"),
+      } } : { mimeType: "audio/mpeg", bytes: 40 };
+    mediaStorage.downloadMedia = async () => Buffer.from("REPLACED BY DIFFERENT AUDIO");
+    pool.query = async () => ({ rows: [] });
+    channelMessaging.sendAudioBuffer = async () => {
+      assert.fail("Never send media whose downloaded SHA-256 mismatches its original approval");
+    };
+    messagesRepo.setDeliveryStatusById = async (id, deliveryStatus, err) => {
+      status = { id, deliveryStatus, err };
+      return { id, contact_id: 961, delivery_status: deliveryStatus };
+    };
+    contactsRepo.setDeliveryAttention = async () => {};
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 961, channel: "facebook", channel_user_id: "psid-961",
+      trigger_message_id: 960, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I am interested"], trigger_message_content: "Thanks",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      savedContent = input;
+      return { id: 962, contact_id: 961, delivery_status: null };
+    };
+    realtimeEvents.publish = () => {};
+    await runAutomatedFollowUps();
+    assert.equal(savedContent.mediaKey, previewKey, "the digest must be checked after the claimed download");
+    assert.equal(status.deliveryStatus, "failed", "pre-provider integrity failures are definitive failures");
+    assert.match(status.err, /SHA-256 integrity/);
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = previous.head;
+    mediaStorage.downloadMedia = previous.download;
+    pool.query = previous.query;
+    channelMessaging.sendAudioBuffer = previous.audio;
+    messagesRepo.setDeliveryStatusById = previous.status;
+    contactsRepo.setDeliveryAttention = previous.attention;
+    if (slug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = slug;
+  }
+});
+
+test("legacy social recordings without immutable MP3 digest fall back to text", async () => {
+  enableTool();
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const slug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "legacy-social-voice-test";
+  const prefix = mediaStorage.followUpConfigVideoPrefix();
+  const key = `${prefix}old.ogg`;
+  const previewKey = `${prefix}old.mp3`;
+  const transcript = "Can we speak today?";
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "old.mp3", approved: true },
+  };
+  const previous = {
+    head: mediaStorage.getSharedFollowUpMediaInfo, query: pool.query,
+    text: channelMessaging.sendText, audio: channelMessaging.sendAudioBuffer,
+    setSocial: messagesRepo.setSocialProviderMessageId,
+  };
+  let claim = null;
+  let sent = 0;
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async storedKey =>
+      storedKey === key ? { mimeType: "audio/ogg", bytes: 200, metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+      } } : { mimeType: "audio/mpeg", bytes: 100 };
+    pool.query = async () => ({ rows: [] });
+    channelMessaging.sendAudioBuffer = async () => assert.fail("Legacy unsealed audio must not be sent via Meta");
+    channelMessaging.sendText = async () => { sent++; return { success: true, externalMessageId: "mid-legacy-text" }; };
+    messagesRepo.setSocialProviderMessageId = async id => ({ id, contact_id: 971, delivery_status: "sent" });
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 971, channel: "facebook", channel_user_id: "psid-971",
+      trigger_message_id: 970, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I am interested"], trigger_message_content: "Thanks",
+    }];
+    followUpRepo.saveIfStillEligible = async input => { claim=input; return {id:972,contact_id:971}; };
+    realtimeEvents.publish = () => {};
+    await runAutomatedFollowUps();
+    assert.equal(sent, 1);
+    assert.equal(claim.mediaKey, null);
+    assert.equal(claim.content, "Checking in");
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = previous.head;
+    pool.query = previous.query;
+    channelMessaging.sendText = previous.text;
+    channelMessaging.sendAudioBuffer = previous.audio;
+    messagesRepo.setSocialProviderMessageId = previous.setSocial;
+    if (slug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = slug;
+  }
+});
+
+
+test("confirmed Messenger audio 4xx converts the same follow-up row to text without duplicate sends", async () => {
+  enableTool();
+  const { createHash } = require("node:crypto");
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "social-definite-reject-test";
+  const key = mediaStorage.followUpConfigVideoPrefix() + "original.ogg";
+  const previewKey = mediaStorage.followUpConfigVideoPrefix() + "preview.mp3";
+  const transcript = "Hi, can we arrange a consultation?";
+  const bytes = Buffer.from("approved MP3 bytes");
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "voice.mp3", approved: true },
+  };
+  const before = {
+    info: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia,
+    query: pool.query,
+    audio: channelMessaging.sendAudioBuffer,
+    text: channelMessaging.sendText,
+    social: messagesRepo.setSocialProviderMessageId,
+    attention: contactsRepo.setDeliveryAttention,
+    recorder: messagesRepo.socialProviderAliasRecorder,
+  };
+  let audioAttempts = 0;
+  let textAttempts = 0;
+  let claims = 0;
+  let replacement = 0;
+  let persisted = null;
+  let attention = 0;
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async storedKey =>
+      storedKey === key ? { mimeType: "audio/ogg", bytes: 400, metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update(bytes).digest("hex"),
+      } } : { mimeType: "audio/mpeg", bytes: bytes.length };
+    mediaStorage.downloadMedia = async () => bytes;
+    pool.query = async () => ({ rows: [] });
+    channelMessaging.sendAudioBuffer = async () => {
+      audioAttempts++;
+      return { success: false, audioNotDelivered: true, error: "Unsupported audio" };
+    };
+    channelMessaging.sendText = async (contact, message, options) => {
+      textAttempts++;
+      assert.equal(contact.channel, "facebook");
+      assert.equal(message, "Checking in");
+      assert.equal(options.currentMessageId, 722);
+      assert.equal(options.autoFollowUp, true);
+      assert.equal(options.voiceFollowUpTextFallback, true,
+        "the converted voice claim must select the bounded text transport");
+      assert.equal(await options.preSendCheck(), true);
+      return { success: true, externalMessageId: "mid-text-fallback" };
+    };
+    messagesRepo.socialProviderAliasRecorder = () => async () => {};
+    messagesRepo.setSocialProviderMessageId = async (id, provider, status) => {
+      assert.equal(id, 722);
+      assert.equal(provider, "facebook:mid-text-fallback");
+      assert.equal(status, "sent");
+      return { id, contact_id: 721, delivery_status: "sent" };
+    };
+    contactsRepo.setDeliveryAttention = async () => { attention++; };
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 721, channel: "facebook", channel_user_id: "psid-721",
+      trigger_message_id: 720, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello, I want to book"],
+      trigger_message_content: "Thanks",
+    }];
+    followUpRepo.saveIfStillEligible = async input => {
+      claims++;
+      assert.equal(input.mediaKey, previewKey);
+      return { id: 722, contact_id: 721, delivery_status: null };
+    };
+    followUpRepo.replaceUnsentSocialVoiceWithText = async input => {
+      replacement++;
+      assert.deepEqual(input, {
+        contactId: 721, messageId: 722, content: "Checking in", messageMode: "fixed",
+      });
+      persisted = { id: 722, contact_id: 721, delivery_status: null,
+        content: input.content, media_mime_type: null, has_media_attachment: false };
+      return persisted;
+    };
+    realtimeEvents.publish = () => {};
+    await runAutomatedFollowUps();
+    assert.equal(audioAttempts, 1);
+    assert.equal(textAttempts, 1);
+    assert.equal(claims, 1, "the original follow-up claim must be reused");
+    assert.equal(replacement, 1);
+    assert.equal(persisted.media_mime_type, null);
+    assert.equal(attention, 0);
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = before.info;
+    mediaStorage.downloadMedia = before.download;
+    pool.query = before.query;
+    channelMessaging.sendAudioBuffer = before.audio;
+    channelMessaging.sendText = before.text;
+    messagesRepo.setSocialProviderMessageId = before.social;
+    contactsRepo.setDeliveryAttention = before.attention;
+    messagesRepo.socialProviderAliasRecorder = before.recorder;
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  }
+});
+
+test("unconfirmed audio never starts a text fallback even if no provider ID was returned", async () => {
+  enableTool();
+  const { createHash } = require("node:crypto");
+  const { pool } = require("../src/db/db");
+  const { voiceTranscriptDigest } = require("../src/utils/followUpVoicePolicy");
+  const priorSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "social-no-duplicate-test";
+  const key = mediaStorage.followUpConfigVideoPrefix() + "original.ogg";
+  const previewKey = mediaStorage.followUpConfigVideoPrefix() + "preview.mp3";
+  const transcript = "Shall we arrange an appointment?";
+  const buffer = Buffer.from("real approved audio");
+  clinicConfig.automatedFollowUp.voiceNotes = {
+    en: { key, previewKey, transcript, filename: "voice.mp3", approved: true },
+  };
+  const old = {
+    head: mediaStorage.getSharedFollowUpMediaInfo,
+    download: mediaStorage.downloadMedia, query: pool.query,
+    audio: channelMessaging.sendAudioBuffer, text: channelMessaging.sendText,
+    status: messagesRepo.setDeliveryStatusById,
+    attention: contactsRepo.setDeliveryAttention,
+  };
+  let status;
+  try {
+    mediaStorage.getSharedFollowUpMediaInfo = async savedKey => savedKey === key
+      ? { mimeType: "audio/ogg", bytes: 300, metadata: {
+        voicelanguage: "en", voicepreviewkey: previewKey,
+        voicetranscripthash: voiceTranscriptDigest(transcript, "en", previewKey),
+        voicepreviewsha256: createHash("sha256").update(buffer).digest("hex"),
+      } } : { mimeType: "audio/mpeg", bytes: buffer.length };
+    mediaStorage.downloadMedia = async () => buffer;
+    pool.query = async () => ({ rows: [] });
+    channelMessaging.sendAudioBuffer = async () => ({
+      success: false, unknown: true, ambiguous: true,
+      error: "Meta audio delivery unconfirmed",
+    });
+    channelMessaging.sendText = async () => assert.fail("Might duplicate a delivered voice");
+    followUpRepo.replaceUnsentSocialVoiceWithText = async () => assert.fail("Must not convert unknown audio to text");
+    followUpRepo.findCandidates = async () => [{
+      contact_id: 731, channel: "instagram", channel_user_id: "igsid-731",
+      trigger_message_id: 730, next_follow_up_step: 1,
+      recent_inbound_messages: ["Hello"], trigger_message_content: "Thanks",
+    }];
+    followUpRepo.saveIfStillEligible = async () => ({ id: 732, contact_id: 731 });
+    messagesRepo.setDeliveryStatusById = async (id, state) => {
+      status = state; return { id, contact_id: 731, delivery_status: state };
+    };
+    contactsRepo.setDeliveryAttention = async () => {};
+    realtimeEvents.publish = () => {};
+    await runAutomatedFollowUps();
+    assert.equal(status, "unknown");
+  } finally {
+    mediaStorage.getSharedFollowUpMediaInfo = old.head;
+    mediaStorage.downloadMedia = old.download;
+    pool.query = old.query;
+    channelMessaging.sendAudioBuffer = old.audio;
+    channelMessaging.sendText = old.text;
+    messagesRepo.setDeliveryStatusById = old.status;
+    contactsRepo.setDeliveryAttention = old.attention;
+    if (priorSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = priorSlug;
   }
 });

@@ -1167,3 +1167,19 @@ test("automated OGG follow-up Retry lookup preserves the R2 key without download
   assert.equal(row.media_key, "clients/neutro/messages/follow-up-config/voice.ogg");
   assert.equal(row.media_base64, null);
 });
+
+test("automated social MP3 follow-up Retry keeps R2 key without downloading audio", async (t) => {
+  const originalQuery = pool.query;
+  const originalDownload = mediaStorage.downloadMedia;
+  t.after(() => { pool.query = originalQuery; mediaStorage.downloadMedia = originalDownload; });
+  mediaStorage.downloadMedia = async () => { throw Error("Do not download MP3 for blocked automated voice Retry"); };
+  pool.query = async () => ({ rows: [{
+    id: 126, contact_id: 7, role: "assistant",
+    is_automated_follow_up: true,
+    media_key: "clients/bb-demo/messages/follow-up-config/voice.mp3",
+    media_mime_type: "audio/mpeg", delivery_status: "unknown",
+  }] });
+  const row = await messagesRepo.getMessageForRetry(7, 126);
+  assert.equal(row.media_mime_type, "audio/mpeg");
+  assert.equal(row.media_base64, null);
+});

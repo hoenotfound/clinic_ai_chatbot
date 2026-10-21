@@ -1,5 +1,8 @@
 const crypto = require("crypto");
 const GRAPH_API_VERSION = "v26.0";
+// Only the one-shot automated audio-to-text fallback has a bounded send
+// deadline. A timed-out customer-facing Meta POST is never proof of failure.
+const VOICE_FALLBACK_TEXT_SEND_TIMEOUT_MS = 12_000;
 const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
 const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -203,6 +206,8 @@ async function postMessage(channel, recipientId, message, options = {}) {
     };
   }
 
+  const uncertainFallbackText = options.autoFollowUp === true &&
+    options.voiceFollowUpTextFallback === true && typeof message?.text === "string";
   const url = `${config.baseUrl}/${GRAPH_API_VERSION}/${config.senderId}/messages`;
   const body = {
     recipient: { id: String(recipientId) },
@@ -221,6 +226,9 @@ async function postMessage(channel, recipientId, message, options = {}) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      ...(uncertainFallbackText
+        ? { signal: AbortSignal.timeout(VOICE_FALLBACK_TEXT_SEND_TIMEOUT_MS) }
+        : {}),
     });
     const raw = await res.text();
     let data = null;
@@ -233,18 +241,34 @@ async function postMessage(channel, recipientId, message, options = {}) {
     if (!res.ok) {
       const error = extractErrorText(data, raw || `${label} returned HTTP ${res.status}.`);
       console.error(`${label} send failed:`, res.status, error);
+      if (uncertainFallbackText && res.status >= 500) {
+        return { success: false, unknown: true, ambiguous: true,
+          wamid: null, externalMessageId: null,
+          error: `${label} text fallback delivery is unconfirmed after Meta HTTP ${res.status}. Check the conversation before sending anything again.` };
+      }
       return { success: false, wamid: null, externalMessageId: null, error };
     }
 
+    const externalMessageId = data?.message_id || data?.id || null;
+    if (uncertainFallbackText && !externalMessageId) {
+      return { success: false, unknown: true, ambiguous: true,
+        wamid: null, externalMessageId: null,
+        error: `${label} accepted the text fallback request without a message ID. Delivery is unconfirmed; check Meta before sending again.` };
+    }
     return {
       success: true,
       // Only WhatsApp WAMIDs should enter the WhatsApp delivery-status path.
       wamid: null,
-      externalMessageId: data?.message_id || data?.id || null,
+      externalMessageId,
       error: null,
     };
   } catch (err) {
     console.error(`${label} send threw an error:`, err);
+    if (uncertainFallbackText) {
+      return { success: false, unknown: true, ambiguous: true,
+        wamid: null, externalMessageId: null,
+        error: `${label} text fallback delivery is unconfirmed after a network error. Check Meta before sending again.` };
+    }
     return {
       success: false,
       wamid: null,

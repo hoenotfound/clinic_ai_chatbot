@@ -1808,6 +1808,10 @@ router.post("/automated-follow-up/voice", handleFollowUpVoiceUpload, async (req,
         voicelanguage: language,
         voicepreviewkey: previewKey,
         voicetranscripthash: voiceTranscriptDigest(transcript, language, previewKey),
+        // Anchored in the original OGG object's upload-time metadata. The
+        // social MP3 must match this byte digest before Meta ever receives it.
+        voicepreviewsha256: crypto.createHash("sha256")
+          .update(converted.playback.buffer).digest("hex"),
       },
     });
     return res.status(201).json({
