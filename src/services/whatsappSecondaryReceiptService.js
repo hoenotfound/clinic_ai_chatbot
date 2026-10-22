@@ -252,7 +252,26 @@ async function recordSignedSecondaryStatusBatch({
         replayed++;
         continue;
       }
-      if (!attempt) { unmatched++; continue; }
+      if (!attempt) {
+        unmatched++;
+        // This HMAC-verified callback belongs to Ariel's receiving number,
+        // but its WAMID may be unknown after a provider timeout. Flag a
+        // sender-wide *unattributed* billing incident; never associate it
+        // with another customer's reservation.
+        if (event.pricingBillable === true) {
+          await client.query(
+            `INSERT INTO whatsapp_sender_billing_alarms
+              (sender_id,reservation_id,reason,latest_wamid_hash)
+             VALUES($1,NULL,'unmatched_provider_billable',$2)
+             ON CONFLICT(sender_id) DO UPDATE SET
+               observed_count=whatsapp_sender_billing_alarms.observed_count+1,
+               last_seen_at=NOW(),latest_wamid_hash=EXCLUDED.latest_wamid_hash`,
+            [senderId,event.wamidHash]
+          );
+          held++;
+        }
+        continue;
+      }
       matched++;
 
       // Update only the message belonging to the verified Ariel reservation.
@@ -328,17 +347,19 @@ async function recordSignedSecondaryStatusBatch({
            !paidEligible && !consistentHistoricalPaid)) {
         // Latch even when this callback relates to an ALREADY settled send.
         // Subsequent new reservations must not ignore late contradictions.
-        await client.query(
-          `INSERT INTO whatsapp_sender_billing_alarms
-             (sender_id,reservation_id,reason,latest_wamid_hash)
-           VALUES($1,$2,$3,$4)
-           ON CONFLICT(sender_id) DO UPDATE SET
-             observed_count=whatsapp_sender_billing_alarms.observed_count+1,
-             last_seen_at=NOW(),latest_wamid_hash=EXCLUDED.latest_wamid_hash`,
-          [attempt.sender_id,attempt.reservation_id,
-            event.pricingBillable === true ? "provider_billable" : "provider_delivery_failed",
-            event.wamidHash]
-        );
+        // A bounced message must not disable unrelated customers. Only
+        // unexpected charges or identity incidents suspend the sender.
+        if (event.pricingBillable === true) {
+          await client.query(
+            `INSERT INTO whatsapp_sender_billing_alarms
+               (sender_id,reservation_id,reason,latest_wamid_hash)
+             VALUES($1,$2,'provider_billable',$3)
+             ON CONFLICT(sender_id) DO UPDATE SET
+               observed_count=whatsapp_sender_billing_alarms.observed_count+1,
+               last_seen_at=NOW(),latest_wamid_hash=EXCLUDED.latest_wamid_hash`,
+            [attempt.sender_id,attempt.reservation_id,event.wamidHash]
+          );
+        }
         if (attempt.live_reservation_id) {
           await client.query(
             "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW() " +
