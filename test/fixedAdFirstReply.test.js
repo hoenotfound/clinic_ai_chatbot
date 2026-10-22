@@ -322,6 +322,8 @@ test("real Neutro Sense Meta first-message prefills select advertised services, 
   const expandedServices = [...services, { name: "徒手体态调理" }, { name: "产后调理" }];
   const expandedAliases = [
     ...aliases,
+    { alias: "骨盆", officialService: "骨盆调理" },
+    { alias: "骨盆调整", officialService: "骨盆调理" },
     { alias: "整骨", officialService: "徒手体态调理" },
     { alias: "徒手整骨", officialService: "徒手体态调理" },
     { alias: "小颜术", officialService: "3D 小颜术" },
