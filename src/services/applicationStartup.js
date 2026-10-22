@@ -5,6 +5,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
 const { start: startWhatsAppFreeEntryFollowUps } = require("./whatsappFreeEntryFollowUpService");
+const { start: startSecondaryFollowUps } = require("./whatsappSecondaryFollowUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
@@ -168,6 +169,9 @@ async function startApplication({
     startCustomerDataLifecycle({ setIntervalFn });
     startAutomatedFollowUps();
     startWhatsAppFreeEntryFollowUps();
+    // No Ariel followup scheduler starts unless explicitly enabled, and
+    // sender-specific rules have no default enabled entries.
+    startSecondaryFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
