@@ -123,11 +123,13 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_APP_SECRET:"synthetic-meta-hmac",
   };
   assert.doesNotThrow(()=>assertSenderIngressSafety(dual));
+  assert.doesNotThrow(()=>assertSenderIngressSafety({
+    ...dual, WHATSAPP_SECONDARY_WABA_ID: dual.WHATSAPP_WABA_ID,
+  }), "Two sender phone IDs may share a single verified WABA.");
   for(const change of [
     {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
     {WHATSAPP_SECONDARY_TOKEN:""},
     {WHATSAPP_APP_SECRET:""},
-    {WHATSAPP_SECONDARY_WABA_ID:dual.WHATSAPP_WABA_ID},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:dual.WHATSAPP_PHONE_NUMBER_ID},
     {WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"false"},
   ]) {
