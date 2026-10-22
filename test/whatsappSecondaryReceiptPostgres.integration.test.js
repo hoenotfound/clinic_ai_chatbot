@@ -327,3 +327,47 @@ test("unmatched recipient or contradictory receipts prevent sender settlement",
       )).rows[0].state,"awaiting_pricing");
     });
   });
+
+
+test("late billable receipt after gate is idle prohibits a fresh Ariel reservation",
+  {skip:!connectionString},async()=>{
+    await withSchema(async({db,database})=>{
+      const {contacts,reservation}=await seededSend(db,database);
+      assert.equal((await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one")),{database,env})).matched,1);
+      const fp=(await db.query(
+        "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+      )).rows[0].fingerprint;
+      assert.equal((await settlement.reconcileVerifiedSecondaryNonbillable(
+        review(reservation.reservationId,fp),{database,env}
+      )).reconciled,true);
+      const late=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+        "wamid.ariel-one",{
+          status:"read",pricing:{type:"regular",billable:true,category:"service"},
+        }
+      )),{database,env});
+      assert.equal(late.held,1);
+      const message=(await db.query(
+        "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','fresh draft') RETURNING id",
+        [contacts[1].id]
+      )).rows[0].id;
+      const conversation=(await db.query(
+        "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",
+        [contacts[1].id]
+      )).rows[0].id;
+      await db.query(
+        "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+        [message,conversation]
+      );
+      const result=await billing.reserveSecondaryBillingAttempt(
+        {contactId:contacts[1].id,messageId:message},{database,env});
+      assert.equal(result.code,"secondary_billing_sender_alarm");
+      assert.equal(result.reserved,false);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_reconciliations"
+      )).rows[0].n,1);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+      )).rows[0].n,0);
+    });
+  });
