@@ -28,7 +28,11 @@ function gateEnabled(env) {
 }
 
 const OWNED_SECONDARY_OUTBOUND_SQL = `
- SELECT sa.id AS sender_id
+ SELECT sa.id AS sender_id,
+   (m.whatsapp_template->>'billingAcknowledged'='true'
+    AND NULLIF(m.whatsapp_template->>'billingReviewClaimHash','') IS NOT NULL)
+     AS has_staff_template_billing_review,
+   m.whatsapp_template->>'templateSignature' AS template_signature
  FROM messages m
  JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'
  JOIN whatsapp_sender_conversations sc ON sc.contact_id=c.id
@@ -43,7 +47,10 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
    AND sc.customer_wa_id=c.whatsapp_number
 `;
 
-async function reserveSecondaryBillingAttempt({ contactId, messageId }, {
+async function reserveSecondaryBillingAttempt({
+  contactId, messageId,
+  billableAuthorized = false, expectedTemplateSignature = null,
+}, {
   database = pool, env = process.env,
 } = {}) {
   if (!gateEnabled(env)) return deny("secondary_billing_disabled");
@@ -67,6 +74,16 @@ async function reserveSecondaryBillingAttempt({ contactId, messageId }, {
       return deny("secondary_billing_sender_mismatch");
     }
     const senderId = owner.rows[0].sender_id;
+    // A caller boolean is not proof of staff approval. The exact saved
+    // outbound message must carry a claimed one-time review, and the
+    // canonical Meta template signature must match the approved request.
+    if (billableAuthorized === true &&
+        (owner.rows[0].has_staff_template_billing_review !== true ||
+         !/^[a-f0-9]{64}$/.test(clean(expectedTemplateSignature)) ||
+         owner.rows[0].template_signature !== expectedTemplateSignature)) {
+      await client.query("ROLLBACK"); inTransaction = false;
+      return deny("secondary_billing_template_review_unverified");
+    }
     // Primary and secondary billing gates have independent storage. One
     // secondary sender can have only one unresolved attempt at a time.
     await client.query(
@@ -94,8 +111,11 @@ async function reserveSecondaryBillingAttempt({ contactId, messageId }, {
     const reservationId = crypto.randomUUID();
     await client.query(
       "INSERT INTO whatsapp_sender_billing_attempts " +
-      "(reservation_id,sender_id,contact_id,message_id) VALUES($1,$2,$3,$4)",
-      [reservationId,senderId,cid,mid]
+      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source) " +
+      "VALUES($1,$2,$3,$4,$5,$6)",
+      [reservationId,senderId,cid,mid,
+        billableAuthorized === true,
+        billableAuthorized === true ? "staff_template_billing_review" : null]
     );
     await client.query(
       "UPDATE whatsapp_sender_billing_gates SET " +
