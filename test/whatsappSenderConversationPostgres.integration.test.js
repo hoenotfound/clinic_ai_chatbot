@@ -55,10 +55,16 @@ test("migration 080 allows two contact identities for the same customer while re
         customerPhone: "60123001234",
       }, db);
       assert.equal(mismatch, null);
-      assert.equal((await repo.bindExistingContact(first.id, oldContact, db)).contact_id, oldContact);
-      await assert.rejects(
-        repo.bindExistingContact(second.id, oldContact, db), /duplicate key|unique constraint/
-      );
+      const primaryEnv = {
+        WHATSAPP_PHONE_NUMBER_ID: "100000000000001",
+        WHATSAPP_WABA_ID: "200000000000001",
+      };
+      assert.equal(await repo.bindExistingContact(first.id, oldContact, db),
+        null, "Legacy contacts cannot bind without verified primary identity");
+      assert.equal((await repo.bindExistingContact(first.id, oldContact, db, primaryEnv)).contact_id,
+        oldContact);
+      assert.equal(await repo.bindExistingContact(second.id, oldContact, db, primaryEnv),
+        null, "A second sender cannot claim the primary's legacy contact");
       // Foreign conversation is not permitted to claim a legacy message.
       const historicalId = (await db.query(
         "SELECT id FROM messages WHERE contact_id = $1", [oldContact]
