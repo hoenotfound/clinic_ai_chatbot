@@ -58,6 +58,8 @@ function createInboundMessageClaimService({
   policy = whatsappPolicy,
   reengagement = leadReengagementAlertService,
   config = clinicConfig,
+  senderIdentity = senderConversations,
+  database = pool,
 } = {}) {
   function customerOptOutScope(incoming) {
     if (
@@ -390,7 +392,7 @@ function createInboundMessageClaimService({
     const senderScopedIngress = channel === "whatsapp" &&
       process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
     const contact = senderScopedIngress
-      ? await senderConversations.claimSenderContact({
+      ? await senderIdentity.claimSenderContact({
           accountId: incoming.businessAccountId,
           phoneNumberId: incoming.businessPhoneNumberId,
           customerPhone: incoming.from,
@@ -416,7 +418,7 @@ function createInboundMessageClaimService({
     // Keep the durable inbound and sender-message association in one
     // PostgreSQL transaction. A transient context failure must roll back
     // the message/job, so Meta can safely redeliver it.
-    const senderClient = senderScopedIngress ? await pool.connect() : null;
+    const senderClient = senderScopedIngress ? await database.connect() : null;
     let durableClaim;
     try {
       if (senderClient) await senderClient.query("BEGIN");
@@ -443,7 +445,7 @@ function createInboundMessageClaimService({
             throw new Error("WhatsApp replay cannot be matched to its sender contact.");
           }
         }
-        const context = await senderConversations.attachMessageContext({
+        const context = await senderIdentity.attachMessageContext({
           messageId: contextMessageId,
           contactId: contact.id,
           conversationId: contact.whatsapp_sender_conversation_id,

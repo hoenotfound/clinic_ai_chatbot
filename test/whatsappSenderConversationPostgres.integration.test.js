@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const repo = require("../src/db/whatsappSenderConversationRepo");
+const echoRepo = require("../src/db/whatsappCoexistenceRepo");
 
 test("migration 080 allows two contact identities for the same customer while retaining history",
   { skip: !process.env.TEST_DATABASE_URL }, async () => {
@@ -128,11 +129,32 @@ test("migration 080 allows two contact identities for the same customer while re
       await assert.rejects(db.query(
         "UPDATE contacts SET whatsapp_sender_id = NULL WHERE id=$1", [oldContact]
       ), /foreign key constraint/);
+      const arielMapping = await repo.senderForContact(ariel.id, db);
+      const savedEcho = await echoRepo.persistStaffEchoIfNew(
+        ariel.id, "staff note", "wamid-ariel-echo", "Business App", null,
+        db, arielMapping.conversation_id
+      );
+      assert.equal(savedEcho.isNew,true);
+      assert.equal((await db.query(
+        "SELECT conversation_id FROM whatsapp_sender_message_context WHERE message_id=$1",
+        [savedEcho.message.id]
+      )).rows[0].conversation_id,arielMapping.conversation_id);
+      const replay = await echoRepo.persistStaffEchoIfNew(
+        ariel.id, "staff note", "wamid-ariel-echo", "Business App", null,
+        db, arielMapping.conversation_id
+      );
+      assert.equal(replay.isNew,false);
+      await assert.rejects(echoRepo.persistStaffEchoIfNew(
+        ariel.id, "wrong sender", "wamid-ariel-wrong-sender", "Business App", null,
+        db, first.id
+      ), /sender context mismatch/);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM messages WHERE whatsapp_message_id='wamid-ariel-wrong-sender'"
+      )).rows[0].n,0);
       const arielMessage = (await db.query(
         "INSERT INTO messages(contact_id,role,content) VALUES($1,'user','erasable') RETURNING id",
         [ariel.id]
       )).rows[0];
-      const arielMapping = await repo.senderForContact(ariel.id, db);
       assert.ok(await repo.attachMessageContext({
         messageId: arielMessage.id, contactId: ariel.id,
         conversationId: arielMapping.conversation_id,
