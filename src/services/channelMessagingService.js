@@ -1042,7 +1042,7 @@ async function sendVideoByStoredKey(
 async function downloadIncomingMedia(incoming) {
   const channel = channelOf(incoming);
   if (channel === "whatsapp") {
-    return incoming.mediaId ? whatsapp.downloadMedia(incoming.mediaId) : null;
+    return incoming.mediaId ? whatsapp.downloadMedia(incoming.mediaId, incoming) : null;
   }
   return incoming.mediaUrl ? meta.downloadMedia(incoming.mediaUrl) : null;
 }
