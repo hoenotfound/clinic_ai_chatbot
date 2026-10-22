@@ -4,6 +4,7 @@
 // for primary Neutro, AI, follow-ups, media or templates. Every flag defaults
 // OFF; a saved draft is never itself authorization to send.
 const { pool } = require("../db/db");
+const templateTools = require("./whatsappTemplateService");
 const senderRepo = require("../db/whatsappSenderConversationRepo");
 const policy = require("./whatsappSecondaryPolicyService");
 const billing = require("../db/whatsappSenderBillingGateRepo");
@@ -34,6 +35,7 @@ const ALLOWED_RESERVATION_SQL = `
 async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
   origin = "staff", preSendCheck = null, dispatchTransport = null,
+  templateRequest = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -46,6 +48,10 @@ async function sendSecondaryStaffText({
     ["ai_reply","system_fallback"].includes(origin) &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
   if (!authorizedOrigin ||
+      (templateRequest && (origin !== "staff" ||
+        env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
+        typeof dispatchTransport !== "function" ||
+        templateRequest.billingConfirmed !== true)) ||
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED !== "true" ||
@@ -68,9 +74,28 @@ async function sendSecondaryStaffText({
   if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
     return { ...block("secondary_send_cancelled"), cancelled: true };
   }
-  const before = await policyService.previewSecondaryFreeformPolicy(contact, {
-    database, env, now: now(), purpose: "service",
-  });
+  const preview = async () => {
+    const result = templateRequest
+      ? await policyService.previewSecondaryTemplatePolicy(contact, {
+          name: templateRequest.name,
+          languageCode: templateRequest.languageCode,
+          treatmentInterest: templateRequest.treatmentInterest || null,
+          database, env, now: now(), fetchImpl,
+        })
+      : await policyService.previewSecondaryFreeformPolicy(contact, {
+          database, env, now: now(), purpose: "service",
+        });
+    if (templateRequest && result.policyAllowed === true) {
+      const verified = result.template?.definition;
+      if (!verified ||
+          templateTools.templateSignature(templateTools.normalizeTemplate(verified))
+            !== templateRequest.expectedSignature) {
+        return { policyAllowed: false, code: "secondary_template_definition_changed" };
+      }
+    }
+    return result;
+  };
+  const before = await preview();
   if (before.policyAllowed !== true) return block(before.code || "secondary_staff_policy_blocked");
 
   let conversation, transport;
@@ -106,9 +131,7 @@ async function sendSecondaryStaffText({
     return block("secondary_staff_sender_verification_failed");
   }
 
-  const justBefore = await policyService.previewSecondaryFreeformPolicy(contact, {
-    database, env, now: now(), purpose: "service",
-  });
+  const justBefore = await preview();
   if (justBefore.policyAllowed !== true) return block(justBefore.code || "secondary_staff_policy_blocked");
 
   const reserved = await billingRepo.reserveSecondaryBillingAttempt({
@@ -125,9 +148,7 @@ async function sendSecondaryStaffText({
     }, { database, env }).catch(() => {});
   };
   try {
-    const fresh = await policyService.previewSecondaryFreeformPolicy(contact, {
-      database, env, now: now(), purpose: "service",
-    });
+    const fresh = await preview();
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
       await markUnknown();
       return { ...block("secondary_send_cancelled_after_reservation"),
