@@ -12,6 +12,12 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const templateMedia = env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED === "true";
   const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
+  // The current AI request path uses the global Neutro clinic configuration.
+  // Do not allow Ariel AI/follow-up activation until a sender-owned prompt,
+  // pricing and clinic-knowledge boundary is implemented and tested.
+  if (ai || followups) {
+    throw new Error("Secondary WhatsApp AI and automated follow-ups are not safe to activate: sender-specific clinic configuration is not yet implemented.");
+  }
   if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !followups) return;
 
   const common = [
