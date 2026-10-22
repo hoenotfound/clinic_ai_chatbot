@@ -17,6 +17,7 @@ const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
+const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService");
@@ -2456,14 +2457,27 @@ router.post("/:contactId/messages", async (req, res) => {
     );
 
     const { preparedContact, saved } = prepared;
-    const sendResult = await channelMessaging.sendText(
-      preparedContact,
-      text.trim(),
-      socialProviderSendOptions(saved, preparedContact, {
-        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
-      })
-    );
+    // Sender-qualified staff text sends can never fall through to the
+    // primary Neutro WhatsApp Cloud API client. Unknown scoped senders are
+    // rejected by the separately gated secondary dispatcher.
+    const secondaryConversation = preparedContact.channel === "whatsapp" &&
+      preparedContact.whatsapp_sender_id != null &&
+      preparedContact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
+    const sendResult = secondaryConversation
+      ? await sendSecondaryStaffText({
+          contact: preparedContact,
+          messageId: saved.id,
+          text: text.trim(),
+          replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+        })
+      : await channelMessaging.sendText(
+          preparedContact,
+          text.trim(),
+          socialProviderSendOptions(saved, preparedContact, {
+            purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          })
+        );
     const errorText = deliveryErrorForSend(
       sendResult,
       sendResult.error || rejectedErrorFor(preparedContact)
