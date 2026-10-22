@@ -124,7 +124,7 @@ test("migration 084 is repeatable and keeps both customer senders separate",
 test("signed Ariel callbacks are durable, idempotent, receiver-specific and do not release billing",
   {skip:!connectionString},async()=>{
     await withSchema(async({db,database})=>{
-      const {ids,reservation}=await seededSend(db,database);
+      const {ids,contacts,messages,reservation}=await seededSend(db,database);
       const event=st("wamid.ariel-one");
       const first=await receipts.recordSignedSecondaryStatusBatch(signed(event),{database,env});
       assert.deepEqual(first,{
@@ -146,7 +146,7 @@ test("signed Ariel callbacks are durable, idempotent, receiver-specific and do n
         [ids.ariel]
       )).rows[0].state,"awaiting_pricing");
       assert.equal((await billing.reserveSecondaryBillingAttempt({
-        contactId:reservation.contactId,messageId:reservation.messageId,
+        contactId:contacts[1].id,messageId:messages[1].id,
       },{database,env})).reserved,false);
       const retry=await receipts.inspectSecondaryRetryHold(reservation.reservationId,{database,env});
       assert.equal(retry.canAutoRetry,false);
