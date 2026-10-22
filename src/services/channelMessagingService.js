@@ -10,6 +10,7 @@ const whatsappVideoMediaCache = require("./whatsappVideoMediaCache");
 const audioConvert = require("./audioConvertService");
 const messagingPolicy = require("./whatsappPolicyService");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
+const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -1046,16 +1047,30 @@ async function downloadIncomingMedia(incoming) {
   return incoming.mediaUrl ? meta.downloadMedia(incoming.mediaUrl) : null;
 }
 
+// All public outbound entrypoints share the same sender guard. Running it
+// before the policy lookup or media upload avoids cross-number billing, retry
+// or wrong-number delivery while additional numbers are not activated.
+function senderSafe(operation) {
+  return async (contact, ...args) => {
+    const options = args.length && typeof args[args.length - 1] === "object"
+      && !Buffer.isBuffer(args[args.length - 1])
+      ? args[args.length - 1] : {};
+    const denied = blockUnverifiedOutgoingSender(contact, options);
+    if (denied) return denied;
+    return operation(contact, ...args);
+  };
+}
+
 module.exports = {
   labelForChannel,
   rejectedError,
-  sendText,
-  sendConsentButtons,
-  sendImageByUrl,
-  sendImageBuffer,
-  sendStickerBuffer,
-  sendAudioBuffer,
-  sendDocumentBuffer,
-  sendVideoByStoredKey,
+  sendText: senderSafe(sendText),
+  sendConsentButtons: senderSafe(sendConsentButtons),
+  sendImageByUrl: senderSafe(sendImageByUrl),
+  sendImageBuffer: senderSafe(sendImageBuffer),
+  sendStickerBuffer: senderSafe(sendStickerBuffer),
+  sendAudioBuffer: senderSafe(sendAudioBuffer),
+  sendDocumentBuffer: senderSafe(sendDocumentBuffer),
+  sendVideoByStoredKey: senderSafe(sendVideoByStoredKey),
   downloadIncomingMedia,
 };
