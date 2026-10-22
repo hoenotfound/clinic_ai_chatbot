@@ -182,6 +182,21 @@ test("transport returns unknown outcome on interrupted send and never auto-retri
   assert.equal(count, 1);
 });
 
+test("revoked or reassigned sender is blocked again before any Meta request", async () => {
+  let state = "active";
+  const calls = [];
+  const client = await createVerifiedSecondaryOutboundTransport(contact, {
+    env, fetchImpl: mockedFetch(calls),
+    database: {
+      query: async () => ({ rows: [{ ...boundRow(), sender_state: state }] }),
+    },
+  });
+  state = "disabled";
+  await denied(client.sendText("This must not send"));
+  await denied(client.uploadMedia(Buffer.from("bytes"), "image/png", "test.png"));
+  assert.equal(calls.length, 0);
+});
+
 test("invalid payloads do not reach Graph API", async () => {
   const calls = [];
   const client = await transport(calls);
