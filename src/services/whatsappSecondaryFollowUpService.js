@@ -26,7 +26,8 @@ const CANDIDATES_SQL=`
    sc.id AS conversation_id,
    inbound.id AS inbound_id,inbound.created_at AS inbound_at,
    rule.sender_id,rule.slot_hours,rule.message_text,rule.media_key,
-   rule.media_type,rule.media_mime_type,rule.media_filename
+   rule.media_type,rule.media_mime_type,rule.media_filename,
+   rule.updated_at AS rule_updated_at
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
@@ -125,6 +126,7 @@ const RECHECK_SQL=`
    AND attempt.anchor_message_id=inbound.id
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
+   AND rule.updated_at=$7::timestamptz
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -188,6 +190,7 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_SENDER_KEY,
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID,
+        candidate.rule_updated_at,
       ]);
       return result.rows?.[0]?.allowed===true;
     };
@@ -248,6 +251,9 @@ async function runOnce({
       },{env,database});
       if(result?.success===true && /^wamid\./.test(String(result.wamid||""))) {
         await store.setWhatsappMessageId(messageId,result.wamid);
+      }
+      if(result?.success===true && result?.unknown!==true &&
+         /^wamid\./.test(String(result.wamid||""))) {
         await database.query(
           "UPDATE whatsapp_sender_followup_attempts SET status='accepted',wamid=$2,completed_at=NOW() WHERE id=$1",
           [id,result.wamid]
