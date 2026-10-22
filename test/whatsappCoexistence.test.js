@@ -41,6 +41,7 @@ test("Business App text echo is parsed as outbound staff work, not customer inbo
     id: "wamid.echo-1",
     from: "60122972817",
     to: "60135550000",
+    businessPhoneNumberId: "110552088553929",
     timestamp: "1790320000",
     type: "text",
     mediaId: null,
