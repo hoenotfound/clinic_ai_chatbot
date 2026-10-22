@@ -3,6 +3,8 @@ const express = require("express");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
+const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
@@ -123,11 +125,35 @@ function createApp({
   });
 
   app.post("/webhook", webhookJsonParser, async (req, res) => {
-    const incomingMessages = whatsapp.parseIncomingMessages(req.body);
-    const reactionEvents = whatsapp.parseReactionEvents(req.body);
-    const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
-    const statusUpdates = whatsapp.parseStatusUpdates(req.body);
-    const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
+    // Keep the existing production sender isolated even when Meta unexpectedly
+    // delivers another business phone to the shared callback. Store an opaque
+    // audit fingerprint BEFORE accepting valid work, so unknown events cannot
+    // become legacy contacts or trigger the wrong sender's AI.
+    let isolated;
+    try {
+      isolated = partitionLegacyWhatsAppWebhook(req.body, {
+        expectedPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+        // Opt in only once production callback metadata is verified. Legacy
+        // payloads with absent metadata retain their original behavior.
+        strictMissingMetadata: process.env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA === "true",
+      });
+      if (isolated.quarantined.length) {
+        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
+        console.warn(
+          `Quarantined ${isolated.quarantined.length} foreign/unsupported WhatsApp webhook change(s); existing sender preserved.`
+        );
+      }
+    } catch (err) {
+      console.error("Could not durably isolate foreign WhatsApp webhook events:", err);
+      return res.sendStatus(503);
+    }
+
+    const webhookBody = isolated.acceptedBody;
+    const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
+    const reactionEvents = whatsapp.parseReactionEvents(webhookBody);
+    const businessAppEchoes = whatsapp.parseBusinessAppEchoes(webhookBody);
+    const statusUpdates = whatsapp.parseStatusUpdates(webhookBody);
+    const passiveSync = whatsappCoexistence.summarizePassiveSync(webhookBody);
     for (const echo of businessAppEchoes) {
       whatsappCoexistence.beginPendingAiForEcho(echo);
     }
