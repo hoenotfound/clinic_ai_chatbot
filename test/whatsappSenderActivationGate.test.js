@@ -125,8 +125,8 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true",
     WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true",
     WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true",
-    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
-    WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",
+    WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"false",
     WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
     WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
     WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
@@ -134,6 +134,14 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_APP_SECRET:"synthetic-meta-hmac",
   };
   assert.doesNotThrow(()=>assertSenderIngressSafety(dual));
+  assert.throws(
+    ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}),
+    /sender-specific clinic configuration is not yet implemented/
+  );
+  assert.throws(
+    ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"}),
+    /sender-specific clinic configuration is not yet implemented/
+  );
   assert.doesNotThrow(()=>assertSenderIngressSafety({
     ...dual, WHATSAPP_SECONDARY_WABA_ID: dual.WHATSAPP_WABA_ID,
   }), "Two sender phone IDs may share a single verified WABA.");
