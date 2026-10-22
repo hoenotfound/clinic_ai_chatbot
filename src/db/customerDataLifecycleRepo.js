@@ -260,7 +260,12 @@ async function purgeContactData({
       const whatsappNumber = String(contact.whatsapp_number || "").trim();
       const pendingReactionDelete = await client.query(
         `DELETE FROM pending_whatsapp_reactions pending
-         WHERE ($2 <> '' AND pending.reactor_whatsapp_id = $2)
+         WHERE ($2 <> '' AND pending.reactor_whatsapp_id = $2
+                AND NOT EXISTS(
+                  SELECT 1 FROM contacts other
+                  WHERE other.id<>$1 AND other.channel='whatsapp'
+                    AND other.whatsapp_number=$2
+                ))
             OR EXISTS (
               SELECT 1
               FROM messages target
@@ -371,6 +376,77 @@ async function purgeContactData({
         JSON.stringify(deletedCounts),
       ]
     );
+
+    // Sender-owned ledgers use restrictive FKs: preserve minimal accounting
+    // facts without the deleted customer's identity, then erase child rows
+    // and unlink any global alarm. Never silently unblock a sender whose
+    // deleted contact has an unresolved or potentially charged attempt.
+    if (contact.channel === "whatsapp") {
+      await client.query(
+        `INSERT INTO whatsapp_sender_erased_billing_audit
+          (reservation_sha256,sender_id,previous_state,staff_charge_approved,billable_receipt_seen)
+         SELECT encode(sha256(convert_to(a.reservation_id::text,'UTF8')),'hex'),
+           a.sender_id,a.state,a.billable_authorized,
+           EXISTS (SELECT 1 FROM whatsapp_sender_status_receipts evidence
+             WHERE evidence.reservation_id=a.reservation_id
+               AND evidence.pricing_billable=TRUE)
+         FROM whatsapp_sender_billing_attempts a
+         WHERE a.contact_id=$1
+         ON CONFLICT(reservation_sha256) DO NOTHING`,[id]
+      );
+      await client.query(
+        `INSERT INTO whatsapp_sender_billing_alarms
+          (sender_id,reservation_id,reason,latest_wamid_hash)
+         SELECT a.sender_id,NULL,'purged_unresolved_reservation',
+           encode(sha256(convert_to(a.reservation_id::text,'UTF8')),'hex')
+         FROM whatsapp_sender_billing_attempts a
+         WHERE a.contact_id=$1 AND a.state NOT IN('reconciled','rejected')
+         ON CONFLICT(sender_id) DO UPDATE SET
+           last_seen_at=NOW(),
+           observed_count=whatsapp_sender_billing_alarms.observed_count+1`,[id]
+      );
+      await client.query(
+        `UPDATE whatsapp_sender_billing_alarms SET reservation_id=NULL
+         WHERE reservation_id IN(
+           SELECT reservation_id FROM whatsapp_sender_billing_attempts
+           WHERE contact_id=$1)`,[id]
+      );
+      await client.query(
+        `DELETE FROM whatsapp_sender_auto_reconciliations
+         WHERE reservation_id IN(
+           SELECT reservation_id FROM whatsapp_sender_billing_attempts
+           WHERE contact_id=$1)`,[id]
+      );
+      await client.query(
+        `DELETE FROM whatsapp_sender_billing_reconciliations
+         WHERE reservation_id IN(
+           SELECT reservation_id FROM whatsapp_sender_billing_attempts
+           WHERE contact_id=$1)`,[id]
+      );
+      await client.query(
+        `DELETE FROM whatsapp_sender_status_receipts
+         WHERE reservation_id IN(
+           SELECT reservation_id FROM whatsapp_sender_billing_attempts
+           WHERE contact_id=$1)`,[id]
+      );
+      await client.query(
+        "DELETE FROM whatsapp_sender_billing_gates WHERE owner_contact_id=$1",[id]
+      );
+      await client.query(
+        "DELETE FROM whatsapp_sender_followup_attempts WHERE contact_id=$1",[id]
+      );
+      await client.query(
+        "DELETE FROM whatsapp_sender_billing_attempts WHERE contact_id=$1",[id]
+      );
+      await client.query(
+        `DELETE FROM whatsapp_sender_message_context
+         WHERE conversation_id IN(
+           SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1)`,[id]
+      );
+      await client.query(
+        "DELETE FROM whatsapp_sender_conversations WHERE contact_id=$1",[id]
+      );
+    }
 
     const deletedContact = await client.query(
       "DELETE FROM contacts WHERE id = $1 RETURNING id",
