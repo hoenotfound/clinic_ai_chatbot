@@ -1,4 +1,5 @@
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
+const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
 const GRAPH_API_VERSION = "v26.0";
 const DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS = 15 * 1000;
@@ -252,6 +253,8 @@ async function sendInteractiveButtonsUnchecked(to, body, buttons) {
 }
 
 async function sendInteractiveButtons(to,body,buttons,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
   return whatsappZeroCostGuard.perform(to,
     ()=>sendInteractiveButtonsUnchecked(to,body,buttons), {
       currentMessageId:options.currentMessageId,
@@ -315,6 +318,7 @@ async function sendImageUnchecked(to, imageUrl, caption, options = {}) {
  * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
  */
 async function uploadMedia(buffer, mimeType, filename = "upload", options = {}) {
+  if (blockUnverifiedOutgoingSender(null, options)) return null;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
@@ -955,6 +959,8 @@ function parseStatusUpdates(body) {
  // The reservation lives across all Meta requests; a different worker cannot
  // send until a confirmed nonbillable pricing callback releases the account.
  async function sendMessage(to,text,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), {
     currentMessageId: options.currentMessageId,
     messageKind: options.autoFollowUp === true ? "auto_followup_text" : "first_reply_text",
@@ -965,21 +971,33 @@ function parseStatusUpdates(body) {
      messageKind: options.autoFollowUp === true ? "auto_followup_media" : options.staffMedia === true ? "staff_media" : "media" };
  }
  async function sendImage(to,url,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), mediaGuardContext(options));
  }
  async function sendImageById(to,id,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options), mediaGuardContext(options));
  }
  async function sendVideoById(to,id,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options), mediaGuardContext(options));
  }
  async function sendDocumentById(to,id,filename,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options), mediaGuardContext(options));
  }
  async function sendStickerById(to,id,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options), mediaGuardContext(options));
  }
  async function sendVoiceById(to,id,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options), mediaGuardContext(options));
  }
 
