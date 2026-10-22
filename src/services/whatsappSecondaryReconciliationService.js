@@ -153,19 +153,22 @@ async function reconcileVerifiedSecondaryNonbillable({
        VALUES($1,$2,$3,$4,$5,TRUE)`,
       [reservationId,senderId,receiptFingerprint,actor,explanation]
     );
-    await client.query(
+    const settledAttempt = await client.query(
       "UPDATE whatsapp_sender_billing_attempts " +
       "SET state='reconciled',updated_at=NOW() " +
       "WHERE reservation_id=$1::uuid AND sender_id=$2 AND state='awaiting_pricing'",
       [reservationId,senderId]
     );
-    await client.query(
+    const settledGate = await client.query(
       "UPDATE whatsapp_sender_billing_gates " +
       "SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL," +
       "wamid=NULL,updated_at=NOW() " +
       "WHERE sender_id=$1 AND reservation_id=$2::uuid AND state='awaiting_pricing'",
       [senderId,reservationId]
     );
+    if (settledAttempt.rowCount !== 1 || settledGate.rowCount !== 1) {
+      throw new Error("Secondary billing settlement lost its verified reservation");
+    }
     await client.query("COMMIT"); tx = false;
     return { reconciled:true, sendAuthorized:false, autoRetryAllowed:false };
   } catch {
