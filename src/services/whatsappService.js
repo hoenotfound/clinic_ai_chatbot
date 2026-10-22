@@ -610,15 +610,16 @@ function tokenForInboundMedia(incoming = {}, env = process.env) {
   const account=String(incoming?.businessAccountId||"").trim();
   const primary=String(env.WHATSAPP_PHONE_NUMBER_ID||"").trim();
   const primaryAccount=String(env.WHATSAPP_WABA_ID||"").trim();
-  if(phone && phone===primary && (!account || account===primaryAccount))
+  if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true" &&
+     (!phone || phone===primary))
+    return String(env.WHATSAPP_TOKEN||"").trim()||null;
+  if(phone && phone===primary && account===primaryAccount)
     return String(env.WHATSAPP_TOKEN||"").trim()||null;
   if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED==="true" &&
      phone && phone===String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim() &&
      account && account===String(env.WHATSAPP_SECONDARY_WABA_ID||"").trim()) {
     return String(env.WHATSAPP_SECONDARY_TOKEN||"").trim()||null;
   }
-  if(!phone && env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true")
-    return String(env.WHATSAPP_TOKEN||"").trim()||null;
   return null;
 }
 
