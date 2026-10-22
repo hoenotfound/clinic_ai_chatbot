@@ -101,6 +101,43 @@ function normalizedSignedEvents(rawBody, env) {
   return statuses.length ? statuses : null;
 }
 
+// The real /webhook body can contain primary and secondary entries in one
+// HMAC-authenticated POST. Select only secondary statuses AFTER validating
+// the HMAC over the entire original byte stream. Never reinterpret primary
+// statuses as secondary, and reject mismatched account/phone combinations.
+function normalizedSecondarySubsetEvents(rawBody, env) {
+  let body;
+  try { body = JSON.parse(rawBody.toString("utf8")); } catch { return null; }
+  if (body?.object !== "whatsapp_business_account" ||
+      !Array.isArray(body.entry) || body.entry.length > MAX_EVENTS) return null;
+  const entry = [];
+  for (const item of body.entry) {
+    if (!item || !Array.isArray(item.changes)) return null;
+    const changes = [];
+    for (const change of item.changes) {
+      const statuses = change?.value?.statuses;
+      if (statuses === undefined) continue;
+      const actualAccount = clean(item.id);
+      const actualPhone = clean(change.value?.metadata?.phone_number_id);
+      const secondaryAccount = clean(env.WHATSAPP_SECONDARY_WABA_ID);
+      const secondaryPhone = clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+      if (actualAccount !== secondaryAccount && actualPhone !== secondaryPhone) continue;
+      if (actualAccount !== secondaryAccount || actualPhone !== secondaryPhone ||
+          change.field !== "messages" || !Array.isArray(statuses) ||
+          !statuses.length) return null;
+      changes.push({
+        field: "messages",
+        value: { metadata: { phone_number_id: actualPhone }, statuses },
+      });
+    }
+    if (changes.length) entry.push({ id: item.id, changes });
+  }
+  if (!entry.length) return [];
+  return normalizedSignedEvents(
+    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env
+  );
+}
+
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.state AS attempt_state,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
@@ -129,14 +166,19 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
 // unresolved gate or authorize a retry. Failed/billable callbacks move an
 // accepted attempt to 'unknown' for manual billing review.
 async function recordSignedSecondaryStatusBatch({
-  rawBody, signatureHeader,
+  rawBody, signatureHeader, subsetFromVerifiedWebhook = false,
 }, { database = pool, env = process.env } = {}) {
   if (!receiptEnabled(env)) return blocked("secondary_receipts_disabled");
   if (!validateMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET)) {
     return blocked("secondary_receipt_signature_invalid");
   }
-  const events = normalizedSignedEvents(rawBody, env);
+  const events = subsetFromVerifiedWebhook ?
+    normalizedSecondarySubsetEvents(rawBody, env) : normalizedSignedEvents(rawBody, env);
   if (!events) return blocked("secondary_receipt_batch_invalid");
+  if (events.length === 0) return {
+    accepted: true, matched: 0, unmatched: 0, replayed: 0, held: 0,
+    sendAuthorized: false, autoRetryAllowed: false,
+  };
   if (typeof database?.connect !== "function") return blocked("secondary_receipt_database_unavailable");
 
   let client;
@@ -275,6 +317,7 @@ async function inspectSecondaryRetryHold(reservationId, {
 module.exports = {
   validateMetaSignature,
   normalizedSignedEvents,
+  normalizedSecondarySubsetEvents,
   MATCH_SECONDARY_ATTEMPT_SQL,
   recordSignedSecondaryStatusBatch,
   inspectSecondaryRetryHold,
