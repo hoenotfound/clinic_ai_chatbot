@@ -1,3 +1,5 @@
+const { conversationKeyForSender } = require("./whatsappSenderRouting");
+
 const epochs = new Map();
 const epochTouchedAt = new Map();
 const pendingEchoes = new Map();
@@ -43,7 +45,12 @@ function enabled() {
   return String(process.env.WHATSAPP_COEXISTENCE_ENABLED || "").trim().toLowerCase() === "true";
 }
 
-function keyForWhatsAppNumber(number) {
+function keyForWhatsAppNumber(number, senderKey = null) {
+  // Explicit sender identity must never be collapsed into the legacy
+  // number-only key. The old key remains unchanged for untagged contacts.
+  if (senderKey !== null && senderKey !== undefined) {
+    return conversationKeyForSender(senderKey, number);
+  }
   const value = String(number || "").replace(/\D/g, "");
   return value ? `whatsapp:${value}` : null;
 }
@@ -58,7 +65,7 @@ function keyForChannelContact(channel, externalId) {
 function keyForContact(contact) {
   const channel = String(contact?.channel || "whatsapp").trim().toLowerCase();
   return channel === "whatsapp"
-    ? keyForWhatsAppNumber(contact?.whatsapp_number)
+    ? keyForWhatsAppNumber(contact?.whatsapp_number, contact?.whatsapp_sender_key)
     : keyForChannelContact(channel, contact?.channel_user_id);
 }
 
