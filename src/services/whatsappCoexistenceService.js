@@ -24,7 +24,7 @@ function renderEchoContent(echo) {
 }
 
 function senderAwareEchoesEnabled() {
-  return process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
+  return process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
 }
 
 function verifiedPrimaryEchoIdentity(echo) {
