@@ -27,8 +27,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_accounts (
 -- The only key is a SHA-256 hash of the event, so Meta retries are idempotent.
 CREATE TABLE IF NOT EXISTS whatsapp_sender_quarantined_events (
   fingerprint TEXT PRIMARY KEY
-    CHECK (fingerprint ~ '^[a-f0-9]{64}
-),
+    CHECK (fingerprint ~ '^[a-f0-9]{64}$'),
   reason TEXT NOT NULL
     CHECK (reason IN (
       'different_business_phone',
