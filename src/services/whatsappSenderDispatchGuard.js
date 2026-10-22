@@ -15,12 +15,13 @@ async function checkWhatsAppDispatchContact(contact, options = {}, {
   database = pool,
   env = process.env,
 } = {}) {
+  const senderReads = String(env.WHATSAPP_MULTI_NUMBER_READ_ENABLED || "") === "true";
   const explicit = blockUnverifiedOutgoingSender(contact, options, env);
-  if (explicit) return explicit;
   if (contact?.channel && contact.channel !== "whatsapp") return null;
-  if (String(env.WHATSAPP_MULTI_NUMBER_READ_ENABLED || "") !== "true") {
-    return null;
-  }
+  if (!senderReads) return explicit;
+  // For sender-aware reads, the DB is authoritative. The primary sender key
+  // can be inferred ONLY after matching its persisted phone/account record,
+  // rather than blocking real Neutro replies if an optional key is absent.
   const id = Number(contact?.id);
   if (!Number.isSafeInteger(id) || id <= 0) return senderMismatchResult();
   let result;
@@ -48,7 +49,7 @@ async function checkWhatsAppDispatchContact(contact, options = {}, {
   if (!scoped) {
     // Legacy contact must NOT have a stray sender binding and must not accept
     // caller-provided sender fields on a normally untagged legacy contact.
-    if (row.sender_conversation_id || contact.whatsapp_sender_key ||
+    if (explicit || row.sender_conversation_id || contact.whatsapp_sender_key ||
         contact.whatsapp_sender_phone_number_id || contact.whatsapp_sender_account_id) {
       return senderMismatchResult();
     }
@@ -59,12 +60,22 @@ async function checkWhatsAppDispatchContact(contact, options = {}, {
       row.sender_state !== "active") {
     return senderMismatchResult();
   }
+  if ((contact.whatsapp_sender_key &&
+        contact.whatsapp_sender_key !== row.sender_key) ||
+      (contact.whatsapp_sender_phone_number_id &&
+        contact.whatsapp_sender_phone_number_id !== row.meta_phone_number_id) ||
+      (contact.whatsapp_sender_account_id &&
+        contact.whatsapp_sender_account_id !== row.meta_account_id)) {
+    return senderMismatchResult();
+  }
+  const verifiedEnv = env.WHATSAPP_PRIMARY_SENDER_KEY ? env :
+    { ...env, WHATSAPP_PRIMARY_SENDER_KEY: row.sender_key };
   return blockUnverifiedOutgoingSender({
     ...contact,
     whatsapp_sender_key: row.sender_key,
     whatsapp_sender_phone_number_id: row.meta_phone_number_id,
     whatsapp_sender_account_id: row.meta_account_id,
-  }, options, env);
+  }, options, verifiedEnv);
 }
 
 module.exports = { checkWhatsAppDispatchContact };
