@@ -1061,6 +1061,7 @@ function senderSafe(operation, method = null) {
     // upload, sender billing and Cloud API transport, never primary Neutro.
     if (method && contact?.channel === "whatsapp" &&
         contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key &&
         contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
       return sendSecondaryStaffMedia(contact, method, args);
     }
