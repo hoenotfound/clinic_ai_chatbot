@@ -158,3 +158,38 @@ test("accepted provider WAMID is preserved even when billing evidence save fails
   assert.equal(result.unknown,true);
   assert.equal(result.retryable,false);
 });
+
+test("AI text requires its own activation and does not inherit staff send permission",async()=>{
+  const {opts,calls}=setup();
+  const denied=await sendSecondaryStaffText({...data,origin:"ai_reply"},opts);
+  assert.equal(denied.code,"secondary_staff_send_disabled");
+  assert.equal(calls.send.length,0);
+  const activated={...opts,env:{
+    ...env,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+  }};
+  const accepted=await sendSecondaryStaffText({...data,origin:"ai_reply"},activated);
+  assert.equal(accepted.success,true);
+  assert.equal(calls.send.length,1);
+});
+
+test("AI staff-takeover cancellation before reservation never calls Meta",async()=>{
+  const {opts,calls}=setup();
+  const result=await sendSecondaryStaffText({
+    ...data,origin:"system_fallback",preSendCheck:()=>false,
+  },{...opts,env:{...env,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}});
+  assert.equal(result.cancelled,true);
+  assert.equal(calls.reserved,0);
+  assert.equal(calls.send.length,0);
+});
+
+test("AI cancellation after billing reservation never reuses or frees ambiguous attempt",async()=>{
+  const {opts,calls}=setup();
+  let count=0;
+  const result=await sendSecondaryStaffText({
+    ...data,origin:"ai_reply",preSendCheck:()=>++count<2,
+  },{...opts,env:{...env,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}});
+  assert.equal(result.ambiguous,true);
+  assert.equal(calls.send.length,0);
+  assert.deepEqual(calls.mark,[{reservationId}]);
+});
