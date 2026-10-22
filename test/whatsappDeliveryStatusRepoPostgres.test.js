@@ -93,6 +93,10 @@ test(
         business_phone_number_id:"1408739622311791",
         business_account_id:"200000000000001"
       });
+      // Do not let this independent provenance fixture enter the retry queue
+      // used by the existing stale-lease assertions below.
+      const taggedClaim = await repo.claimByIds([tagged[0].id], query);
+      await repo.markCompleted(taggedClaim[0].id, taggedClaim[0].lease_token, query);
       const duplicate = await repo.storeBatch([update], query);
       assert.deepEqual(duplicate, []);
       const count = await client.query(
