@@ -86,7 +86,7 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
   }
   if (exclude !== "channel" && filters.channel !== "all" &&
       (conversation.channel || "whatsapp") !== filters.channel) return false;
-  if (exclude !== "sender" && filters.sender !== "all" &&
+  if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
       conversation.whatsapp_sender_key !== filters.sender) return false;
   if (exclude !== "control" && filters.control !== "all" &&
       conversation.mode !== filters.control) return false;
