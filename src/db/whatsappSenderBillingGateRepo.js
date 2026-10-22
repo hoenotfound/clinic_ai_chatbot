@@ -91,15 +91,21 @@ async function reserveSecondaryBillingAttempt({
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_template_review_unverified");
     }
-    // Primary and secondary billing gates have independent storage. One
-    // secondary sender can have only one unresolved attempt at a time.
+    // Serialize global sender billing alarms with per-contact reservations.
+    // Never keep the sender row lock across the Meta provider request.
     await client.query(
-      "INSERT INTO whatsapp_sender_billing_gates(sender_id) VALUES($1) " +
-      "ON CONFLICT(sender_id) DO NOTHING", [senderId]
+      "SELECT id FROM whatsapp_sender_accounts WHERE id=$1 FOR UPDATE",
+      [senderId]
+    );
+    // Different Ariel contacts now have independent unresolved attempts.
+    await client.query(
+      "INSERT INTO whatsapp_sender_billing_gates(sender_id,owner_contact_id) " +
+      "VALUES($1,$2) ON CONFLICT(sender_id,owner_contact_id) DO NOTHING",
+      [senderId,cid]
     );
     const gate = await client.query(
       "SELECT state FROM whatsapp_sender_billing_gates " +
-      "WHERE sender_id=$1 FOR UPDATE", [senderId]
+      "WHERE sender_id=$1 AND owner_contact_id=$2 FOR UPDATE", [senderId,cid]
     );
     if (gate.rows?.length !== 1 || gate.rows[0].state !== "idle") {
       await client.query("ROLLBACK"); inTransaction = false;
@@ -128,7 +134,7 @@ async function reserveSecondaryBillingAttempt({
     await client.query(
       "UPDATE whatsapp_sender_billing_gates SET " +
       "state='reserved',reservation_id=$2,contact_id=$3,message_id=$4,wamid=NULL," +
-      "updated_at=NOW() WHERE sender_id=$1 AND state='idle'",
+      "updated_at=NOW() WHERE sender_id=$1 AND owner_contact_id=$3 AND state='idle'",
       [senderId,reservationId,cid,mid]
     );
     await client.query("COMMIT"); inTransaction = false;
@@ -147,6 +153,7 @@ const OWNED_SECONDARY_RESERVATION_SQL = `
   JOIN whatsapp_sender_accounts sa ON sa.id=g.sender_id
   JOIN whatsapp_sender_billing_attempts a ON a.reservation_id=g.reservation_id
     AND a.sender_id=g.sender_id AND a.contact_id=g.contact_id
+    AND a.contact_id=g.owner_contact_id
   WHERE g.reservation_id=$1::uuid
     AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3
     AND sa.meta_account_id=$4 AND sa.state='active'
