@@ -230,5 +230,17 @@ test("foreign-only and mixed events return correct audit classification", () => 
     change(ARIEL, "wamid.ariel"), change(NEUTRO, "wamid.neutro"),
   ]), { expectedPhoneNumberId: NEUTRO });
   assert.equal(mixed.acceptedChanges, 1);
+  assert.equal(mixed.acceptedActionable, 1);
   assert.equal(mixed.quarantined.length, 1);
+});
+
+test("passive history plus foreign messages cannot downgrade durable quarantine to best effort", () => {
+  const history = { field: "history", value: { history: [] } };
+  const r = partitionLegacyWhatsAppWebhook(
+    callback([history, change(ARIEL, "wamid.ariel")]),
+    { expectedPhoneNumberId: NEUTRO }
+  );
+  assert.equal(r.acceptedChanges, 1);
+  assert.equal(r.acceptedActionable, 0);
+  assert.equal(r.quarantined.length, 1);
 });
