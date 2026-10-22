@@ -121,6 +121,10 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
       const actualPhone = clean(change.value?.metadata?.phone_number_id);
       const secondaryAccount = clean(env.WHATSAPP_SECONDARY_WABA_ID);
       const secondaryPhone = clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+      // A single WABA can own multiple different business phone IDs. Never
+      // confuse a primary-phone callback for an Ariel status in that case.
+      if (actualAccount === clean(env.WHATSAPP_WABA_ID) &&
+          actualPhone === clean(env.WHATSAPP_PHONE_NUMBER_ID)) continue;
       if (actualAccount !== secondaryAccount && actualPhone !== secondaryPhone) continue;
       if (actualAccount !== secondaryAccount || actualPhone !== secondaryPhone ||
           change.field !== "messages" || !Array.isArray(statuses) ||
