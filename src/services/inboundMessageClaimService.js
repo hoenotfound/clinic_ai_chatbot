@@ -1,4 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
+const senderConversations = require("../db/whatsappSenderConversationRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
@@ -385,9 +386,18 @@ function createInboundMessageClaimService({
       return null;
     }
 
-    const contact = channel === "whatsapp"
-      ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
-      : await contacts.getOrCreateChannelContact(
+    const senderScopedIngress = channel === "whatsapp" &&
+      process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
+    const contact = senderScopedIngress
+      ? await senderConversations.claimSenderContact({
+          accountId: incoming.businessAccountId,
+          phoneNumberId: incoming.businessPhoneNumberId,
+          customerPhone: incoming.from,
+          profileName: incoming.profileName,
+        })
+      : channel === "whatsapp"
+        ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
+        : await contacts.getOrCreateChannelContact(
           channel,
           incoming.from,
           incoming.profileName,
@@ -431,6 +441,17 @@ function createInboundMessageClaimService({
     }
 
     if (!durableClaim) return null;
+    if (senderScopedIngress) {
+      const context = await senderConversations.attachMessageContext({
+        messageId: durableClaim.savedInbound.id,
+        contactId: contact.id,
+        conversationId: contact.whatsapp_sender_conversation_id,
+      });
+      if (!context) {
+        // Do not ACK an inbound turn that has lost its business identity.
+        throw new Error("Inbound WhatsApp sender association could not be verified.");
+      }
+    }
 
     publishInboundMessage(events, durableClaim.savedInbound);
     return {
