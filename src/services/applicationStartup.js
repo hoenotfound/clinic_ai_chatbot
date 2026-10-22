@@ -25,6 +25,7 @@ const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
+const { assertStoredSenderSafety } = require("./whatsappSenderActivationGate");
 const mediaStorage = require("./mediaStorageService");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const {
@@ -119,6 +120,10 @@ async function startApplication({
     console.log("[Startup] Initializing database schema and migrations...");
     await initSchema();
     console.log("[Startup] Database schema and migrations ready.");
+
+    // Before readiness or recovery workers, reject unverified primary identity
+    // and unsafe feature-flag rollback with persisted secondary contacts.
+    await assertStoredSenderSafety();
 
     console.log("[Startup] Loading client configuration...");
     await configRepo.loadConfig();
