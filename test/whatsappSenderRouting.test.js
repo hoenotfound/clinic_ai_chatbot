@@ -141,6 +141,7 @@ test("missing receiving phone metadata never defaults to old sender", () => {
 
 test("status callbacks are sender-aware and passive sync does not become an inbound customer turn", () => {
   const payload = {
+    object: "whatsapp_business_account",
     entry: [{
       id: ariel.accountId,
       changes: [{
