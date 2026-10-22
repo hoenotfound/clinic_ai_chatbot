@@ -746,3 +746,51 @@ test("an ordinary nonbillable failed Ariel delivery does not freeze every other 
     )).rows[0].n,0);
   });
 });
+
+
+test("customer deletion purges Ariel sender ledgers, retains anonymous billing alarm and leaves sibling Neutro chat intact",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,contacts,reservation,messages}=await seededSend(db,database);
+    const lifecycle=require("../src/db/customerDataLifecycleRepo");
+    const result=await lifecycle.purgeContactData({
+      contactId:contacts[1].id,reason:"manual",requestedBy:"privacy-test",
+    },db);
+    assert.equal(result.status,"purged");
+    const people=(await db.query(
+      "SELECT id FROM contacts ORDER BY id"
+    )).rows.map(x=>x.id);
+    assert.deepEqual(people,[contacts[0].id],
+      "Only Ariel contact may be purged for a shared WhatsApp customer.");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_attempts WHERE contact_id=$1",
+      [contacts[1].id]
+    )).rows[0].n,0);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_followup_attempts WHERE contact_id=$1",
+      [contacts[1].id]
+    )).rows[0].n,0);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_conversations WHERE contact_id=$1",
+      [contacts[1].id]
+    )).rows[0].n,0);
+    const audit=(await db.query(
+      "SELECT sender_id,previous_state FROM whatsapp_sender_erased_billing_audit"
+    )).rows;
+    assert.equal(audit.length,1);
+    assert.equal(String(audit[0].sender_id),String(ids.ariel));
+    assert.equal(audit[0].previous_state,"awaiting_pricing");
+    const alarm=(await db.query(
+      "SELECT reason,reservation_id FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0];
+    assert.equal(alarm.reason,"purged_unresolved_reservation");
+    assert.equal(alarm.reservation_id,null);
+    assert.equal((await db.query(
+      "SELECT content FROM messages WHERE id=$1",[messages[0].id]
+    )).rows[0].content,"Neutro message");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0);
+  });
+});
