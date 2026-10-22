@@ -4,6 +4,7 @@ const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
+const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
 const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
@@ -133,7 +134,14 @@ function createApp({
     // legacy customer lookups, AI cancellation, or receipt writes.
     let isolated;
     try {
-      isolated = partitionLegacyWhatsAppWebhook(req.body, {
+      isolated = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true"
+        ? partitionSecondaryInboxWebhook(req.body, {
+            primaryPhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+            primaryAccountId: process.env.WHATSAPP_WABA_ID,
+            secondaryPhoneId: process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+            secondaryAccountId: process.env.WHATSAPP_SECONDARY_WABA_ID,
+          })
+        : partitionLegacyWhatsAppWebhook(req.body, {
         expectedPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
         // Account validation must be enabled only after the real callback
         // account ID has been checked against the client's WABA setting.
@@ -180,7 +188,8 @@ function createApp({
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
           incomingMessages.map(async (incoming) => ({
-            queueKey: incoming.from,
+            queueKey: incoming.businessPhoneNumberId
+              ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from,
             durableClaim: await durablyClaimIncoming(incoming.from, incoming),
           }))
         ),

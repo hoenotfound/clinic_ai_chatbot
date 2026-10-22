@@ -63,3 +63,28 @@ test("sender verification database outage prevents readiness",async()=>{
     env:safe,database:{query:async()=>{throw new Error("Neon offline");}}
   }),/Neon offline/);
 });
+
+test("secondary inbox only requires active exact Meta registry identity",async()=>{
+ const env={...safe,
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+   WHATSAPP_SECONDARY_SENDER_KEY:"ariel"
+ };
+ const good={query:async(sql)=>{
+   if(sql.includes("COUNT(*)"))return{rows:[{total:1,nonprimary:1}]};
+   if(sql.includes("WHATSAPP"))throw new Error("invalid");
+   if(sql.includes("SELECT sender_key,state"))return{rows:[{sender_key:"ariel",state:"active"}]};
+   return{rows:[{id:1,sender_key:"neutro",state:"active"}]};
+ }};
+ assert.equal((await assertStoredSenderSafety({env,database:good})).verified,true);
+ for(const bad of [
+   {...env,WHATSAPP_SECONDARY_PHONE_NUMBER_ID:env.WHATSAPP_PHONE_NUMBER_ID},
+   {...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
+   {...env,WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"false"}
+ ]) await assert.rejects(assertStoredSenderSafety({env:bad,database:good}),
+   /unsafe|requires|incomplete/i);
+ const badDb={query:async(sql)=>sql.includes("COUNT(*)")?
+   {rows:[{total:0,nonprimary:0}]}:{rows:[]}};
+ await assert.rejects(assertStoredSenderSafety({env,database:badDb}),/active sender registration/);
+});

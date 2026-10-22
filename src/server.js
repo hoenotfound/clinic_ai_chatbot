@@ -565,6 +565,16 @@ async function processIncomingMessage(
     if (senderScoped && !contact?.whatsapp_sender_key) {
       throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
     }
+    // Secondary Inbox-only means RECEIVE and store, never reply using the
+    // primary number or trigger AI-driven promotion/follow-up messages.
+    if (senderScoped && process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+        contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY) {
+      await contactsRepo.setAiReviewAttention(contact.id, savedInbound.id,
+        "New message on the secondary WhatsApp Inbox. Staff reply via the " +
+          "linked WhatsApp Business App; portal API sending is disabled until sender activation.",
+        "information");
+      return { wasFirstMessage, keywordReason };
+    }
     aiCancellationKey = channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(
           from, senderScoped ? contact.whatsapp_sender_key : null

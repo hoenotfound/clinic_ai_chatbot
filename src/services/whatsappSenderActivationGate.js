@@ -47,6 +47,26 @@ async function assertStoredSenderSafety({
     throw new Error("Unsafe WhatsApp rollback: secondary-number contacts remain " +
       "bound; sender-aware reads must stay enabled.");
   }
+  if (env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true") {
+    if (!ingressEnabled || !readEnabled ||
+        !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"")) ||
+        !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID||"")) ||
+        !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY||"")) ||
+        env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID===phone ||
+        env.WHATSAPP_SECONDARY_SENDER_KEY===key) {
+      throw new Error("Secondary WhatsApp Inbox configuration is incomplete or unsafe.");
+    }
+    const secondary = await database.query(
+      "SELECT sender_key,state FROM whatsapp_sender_accounts " +
+      "WHERE meta_phone_number_id=$1 AND meta_account_id=$2",
+      [env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+    );
+    if(secondary.rows?.length!==1 ||
+       secondary.rows[0].sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
+       secondary.rows[0].state!=="active") {
+      throw new Error("Secondary WhatsApp Inbox needs a matching active sender registration.");
+    }
+  }
   if (ingressEnabled) {
     const registered = await database.query(
       "SELECT id, sender_key, state FROM whatsapp_sender_accounts " +

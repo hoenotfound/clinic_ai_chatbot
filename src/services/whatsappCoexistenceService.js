@@ -38,14 +38,30 @@ function verifiedPrimaryEchoIdentity(echo) {
   return { accountId: account, phoneNumberId: phone, customerPhone: echo.to };
 }
 
+function verifiedEchoIdentity(echo) {
+  try { return {...verifiedPrimaryEchoIdentity(echo),
+    senderKey:String(process.env.WHATSAPP_PRIMARY_SENDER_KEY||"").trim()}; }
+  catch(primaryError) {
+    const phone=String(echo?.businessPhoneNumberId||"").trim();
+    const account=String(echo?.businessAccountId||"").trim();
+    if(process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true" ||
+       !/^[0-9]+$/.test(phone) || !/^[0-9]+$/.test(account) ||
+       phone!==String(process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim() ||
+       account!==String(process.env.WHATSAPP_SECONDARY_WABA_ID||"").trim()) {
+      throw primaryError;
+    }
+    return {accountId:account,phoneNumberId:phone,customerPhone:echo.to,
+      senderKey:String(process.env.WHATSAPP_SECONDARY_SENDER_KEY||"").trim()};
+  }
+}
+
 function cancellationKeyForEcho(echo) {
   if (!senderAwareEchoesEnabled()) {
     return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
   }
   // An unverified foreign echo must NEVER cancel the primary AI turn.
   try {
-    verifiedPrimaryEchoIdentity(echo);
-    const key = String(process.env.WHATSAPP_PRIMARY_SENDER_KEY || "").trim();
+    const key = verifiedEchoIdentity(echo).senderKey;
     return key ? aiReplyCancellation.keyForWhatsAppNumber(echo?.to, key) : null;
   } catch {
     return null;
@@ -87,7 +103,7 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
     }
 
     const contact = senderAwareEchoesEnabled()
-      ? await senderConversations.claimSenderContact(verifiedPrimaryEchoIdentity(echo))
+      ? await senderConversations.claimSenderContact(verifiedEchoIdentity(echo))
       : await contactsRepo.getOrCreateContact(echo.to);
 
     // Insert the provider message and apply Staff Assist ownership rules in one
