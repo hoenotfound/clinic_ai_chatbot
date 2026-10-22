@@ -1,18 +1,25 @@
 "use strict";
 
-// Safety boundary for a deployment that still has ONE WhatsApp outbound sender.
-// This never routes Ariel to the legacy contact/send path. Sender-aware routing
-// requires a separately reviewed activation; a second phone cannot be made
-// safe by simply adding it to the Meta callback subscription.
+// Compatibility boundary only. Never interprets a second business number as a
+// legacy Neutro contact. Full multi-number routing is NOT enabled here.
 const crypto = require("node:crypto");
 const ROUTABLE_FIELDS = new Set(["messages", "smb_message_echoes"]);
 const PASSIVE_FIELDS = new Set(["history", "smb_app_state_sync"]);
 const MAX_QUARANTINE_EVENTS = 200;
+const MAX_META_ENTRIES = 200;
+const MAX_CHANGE_ITEMS = 1000;
+
+class LegacySenderBoundaryError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "LegacySenderBoundaryError";
+    this.code = code;
+  }
+}
 
 function digits(value) {
   return typeof value === "string" && /^\d+$/.test(value.trim())
-    ? value.trim()
-    : null;
+    ? value.trim() : null;
 }
 
 function senderEvidence(entry, change) {
@@ -22,99 +29,133 @@ function senderEvidence(entry, change) {
   };
 }
 
-function isActionable(change) {
-  const field = change?.field;
-  if (field === "smb_message_echoes") {
-    return Array.isArray(change?.value?.message_echoes)
-      && change.value.message_echoes.length > 0;
-  }
-  return field === "messages"
-    && ((Array.isArray(change?.value?.messages) && change.value.messages.length > 0)
-      || (Array.isArray(change?.value?.statuses) && change.value.statuses.length > 0));
+function hasEvents(value, field) {
+  const names = field === "messages" ? ["messages", "statuses"] : ["message_echoes"];
+  return names.some((name) => Array.isArray(value?.[name]) && value[name].length > 0);
 }
 
-function quarantinedChange(entry, change, reason) {
+function quarantine(entry, change, reason) {
   const evidence = senderEvidence(entry, change);
   const field = typeof change?.field === "string" ? change.field.slice(0, 100) : "invalid";
-  const digest = crypto.createHash("sha256")
-    .update(JSON.stringify({ account: entry?.id || null, change }))
+  const fingerprint = crypto.createHash("sha256")
+    .update(JSON.stringify({ account: entry?.id ?? null, change }))
     .digest("hex");
   return Object.freeze({
-    fingerprint: digest,
-    reason,
-    field,
+    fingerprint, reason, field,
     accountId: evidence.accountId,
     phoneNumberId: evidence.phoneNumberId,
   });
 }
 
+function validateChange(entry, change, expectedPhone, expectedAccount, strictMissingMetadata) {
+  if (!change || typeof change !== "object" || Array.isArray(change)
+      || typeof change.field !== "string"
+      || !change.value || typeof change.value !== "object"
+      || Array.isArray(change.value)) return "malformed_whatsapp_change";
+
+  const field = change.field;
+  if (!ROUTABLE_FIELDS.has(field) && !PASSIVE_FIELDS.has(field)) {
+    return "unsupported_whatsapp_event";
+  }
+  const value = change.value;
+  const allowed = field === "messages"
+    ? ["messages", "statuses"]
+    : field === "smb_message_echoes" ? ["message_echoes"] : [];
+  const unexpected = ["messages", "statuses", "message_echoes"]
+    .some(name => !allowed.includes(name) && value[name] !== undefined);
+  if (unexpected) return "malformed_whatsapp_change";
+  for (const name of allowed) {
+    if (value[name] !== undefined
+        && (!Array.isArray(value[name])
+          || value[name].some(item => !item || typeof item !== "object"
+              || Array.isArray(item)))) {
+      return "malformed_whatsapp_change";
+    }
+  }
+  if (field === "history" && value.history !== undefined
+      && !Array.isArray(value.history)) return "malformed_whatsapp_change";
+  if (field === "smb_app_state_sync" && value.state_sync !== undefined
+      && !Array.isArray(value.state_sync)) return "malformed_whatsapp_change";
+  // Passive events must not contain a disguised top-level messaging array.
+  if (PASSIVE_FIELDS.has(field)) return null;
+
+  if (!hasEvents(value, field)) return null;
+  const phone = digits(value.metadata?.phone_number_id);
+  const rawPhone = value.metadata?.phone_number_id;
+  if (rawPhone != null && !phone) return "invalid_business_phone";
+  if (phone && phone !== expectedPhone) return "different_business_phone";
+  if (!phone && strictMissingMetadata) return "missing_business_phone";
+
+  if (expectedAccount) {
+    const account = digits(entry?.id);
+    if (!account || account !== expectedAccount) return "different_business_account";
+  }
+  return null;
+}
+
 function partitionLegacyWhatsAppWebhook(body, {
   expectedPhoneNumberId,
+  expectedAccountId = null,
+  strictAccount = false,
   strictMissingMetadata = false,
 } = {}) {
   const expected = digits(expectedPhoneNumberId);
   if (!expected) {
-    // Failing here rather than defaulting to another number would interrupt
-    // an existing deployment if its credentials were misconfigured. Instead,
-    // startup/deployment readiness must ensure this ID exists. Never activate
-    // multi-number mode when expectedPhoneNumberId is absent.
-    return { acceptedBody: body, quarantined: [], configured: false };
+    throw new LegacySenderBoundaryError(
+      "LEGACY_SENDER_CONFIG_MISSING",
+      "WHATSAPP_PHONE_NUMBER_ID must be configured before accepting customer webhooks."
+    );
   }
-  if (!body || typeof body !== "object" || Array.isArray(body)
-      || body.object !== "whatsapp_business_account" || !Array.isArray(body.entry)) {
-    return {
-      acceptedBody: { object: "whatsapp_business_account", entry: [] },
-      quarantined: [quarantinedChange(null, { field: "invalid", value: body || null },
-        "invalid_whatsapp_webhook")],
-      configured: true,
-    };
+  const expectedAccount = strictAccount ? digits(expectedAccountId) : null;
+  if (strictAccount && !expectedAccount) {
+    throw new LegacySenderBoundaryError(
+      "LEGACY_SENDER_ACCOUNT_CONFIG_MISSING",
+      "Account-ID validation is enabled but WHATSAPP_WABA_ID is not configured."
+    );
   }
   const quarantined = [];
   const entries = [];
-  for (const entry of body.entry) {
-    if (!entry || !Array.isArray(entry.changes)) {
-      quarantined.push(quarantinedChange(entry, { field: "invalid_entry" }, "invalid_whatsapp_entry"));
-      continue;
+  function add(entry, change, reason) {
+    if (quarantined.length >= MAX_QUARANTINE_EVENTS) {
+      throw new LegacySenderBoundaryError(
+        "WHATSAPP_WEBHOOK_QUARANTINE_LIMIT",
+        "Too many invalid webhook events in one payload."
+      );
     }
-    const accepted = [];
-    for (const change of entry.changes) {
-      const field = change?.field;
-      const action = isActionable(change);
-      const { phoneNumberId } = senderEvidence(entry, change);
-      const rawPhoneNumberId = change?.value?.metadata?.phone_number_id;
-      const suppliedInvalidPhoneId = rawPhoneNumberId !== null
-        && rawPhoneNumberId !== undefined && !phoneNumberId;
-      let reason = null;
-      if (field && !ROUTABLE_FIELDS.has(field) && !PASSIVE_FIELDS.has(field)) {
-        reason = "unsupported_whatsapp_event";
-      } else if (ROUTABLE_FIELDS.has(field) && action && suppliedInvalidPhoneId) {
-        reason = "invalid_business_phone";
-      } else if (ROUTABLE_FIELDS.has(field) && action && phoneNumberId && phoneNumberId !== expected) {
-        reason = "different_business_phone";
-      } else if (ROUTABLE_FIELDS.has(field) && action && strictMissingMetadata && !phoneNumberId) {
-        reason = "missing_business_phone";
-      } else if (!change || typeof change !== "object" || !change.value
-                 || typeof change.value !== "object" || Array.isArray(change.value)) {
-        reason = "malformed_whatsapp_change";
-      }
-      if (reason) {
-        quarantined.push(quarantinedChange(entry, change, reason));
-        if (quarantined.length > MAX_QUARANTINE_EVENTS) {
-          throw new Error("WhatsApp webhook has too many quarantined events.");
-        }
+    quarantined.push(quarantine(entry, change, reason));
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)
+      || body.object !== "whatsapp_business_account" || !Array.isArray(body.entry)) {
+    add(null, { field: "invalid", value: null }, "invalid_whatsapp_webhook");
+  } else if (body.entry.length > MAX_META_ENTRIES) {
+    throw new LegacySenderBoundaryError("WHATSAPP_WEBHOOK_ENTRY_LIMIT", "Too many Meta entries.");
+  } else {
+    for (const entry of body.entry) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)
+          || !Array.isArray(entry.changes)) {
+        add(entry, { field: "invalid_entry" }, "invalid_whatsapp_entry");
         continue;
       }
-      accepted.push(change);
+      if (entry.changes.length > MAX_CHANGE_ITEMS) {
+        throw new LegacySenderBoundaryError("WHATSAPP_WEBHOOK_CHANGE_LIMIT", "Too many Meta changes.");
+      }
+      const accepted = [];
+      for (const change of entry.changes) {
+        const reason = validateChange(
+          entry, change, expected, expectedAccount, strictMissingMetadata
+        );
+        if (reason) add(entry, change, reason);
+        else accepted.push(change);
+      }
+      if (accepted.length) entries.push({ ...entry, changes: accepted });
     }
-    if (accepted.length) entries.push({ ...entry, changes: accepted });
   }
   return {
-    acceptedBody: { ...body, entry: entries },
+    acceptedBody: { object: "whatsapp_business_account", entry: entries },
     quarantined,
     configured: true,
+    acceptedChanges: entries.reduce((n, entry) => n + entry.changes.length, 0),
   };
 }
 
-module.exports = {
-  partitionLegacyWhatsAppWebhook,
-};
+module.exports = { LegacySenderBoundaryError, partitionLegacyWhatsAppWebhook };
