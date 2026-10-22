@@ -212,6 +212,7 @@ async function recordSignedSecondaryStatusBatch({
     let unmatched = 0;
     let replayed = 0;
     let held = 0;
+    let autoReconciled = 0;
     for (const event of events) {
       const owner = await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
         event.wamid,event.recipient,env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -265,12 +266,79 @@ async function recordSignedSecondaryStatusBatch({
           );
         }
         held++;
+      } else if (
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+        attempt.attempt_state === "awaiting_pricing" &&
+        attempt.gate_state === "awaiting_pricing" &&
+        attempt.live_reservation_id &&
+        event.pricingBillable === false &&
+        event.pricingType === "free_entry_point" &&
+        ["sent","delivered","read"].includes(event.deliveryStatus)
+      ) {
+        // One signed nonbillable receipt cannot overrule a previous adverse
+        // callback, wrong-recipient webhook or sender-level charge alarm.
+        // Sender gate is locked above, serializing this with a new reservation
+        // and any late provider callback.
+        const evidence = await client.query(
+          `SELECT
+             NOT EXISTS(
+               SELECT 1 FROM whatsapp_sender_billing_alarms a
+               WHERE a.sender_id=$1
+             ) AS no_alarm,
+             NOT EXISTS(
+               SELECT 1 FROM whatsapp_sender_status_receipts r
+               WHERE r.reservation_id=$2::uuid AND r.sender_id=$1
+                 AND (r.delivery_status='failed' OR
+                      r.pricing_billable=true OR
+                      (r.pricing_type IS NOT NULL AND
+                       r.pricing_type<>'free_entry_point'))
+             ) AS no_conflict,
+             NOT EXISTS(
+               SELECT 1 FROM whatsapp_sender_status_receipts r
+               WHERE r.sender_id=$1 AND r.wamid_hash=$3
+                 AND r.matched=false
+             ) AS no_wrong_recipient`,
+          [attempt.sender_id,attempt.reservation_id,event.wamidHash]
+        );
+        const ok = evidence.rows?.[0];
+        if (evidence.rows?.length === 1 && ok.no_alarm === true &&
+            ok.no_conflict === true && ok.no_wrong_recipient === true) {
+          const added = await client.query(
+            `INSERT INTO whatsapp_sender_auto_reconciliations
+               (reservation_id,sender_id,provider_receipt_fingerprint)
+             VALUES($1::uuid,$2,$3)
+             ON CONFLICT(reservation_id) DO NOTHING RETURNING reservation_id`,
+            [attempt.reservation_id,attempt.sender_id,event.fingerprint]
+          );
+          if (added.rowCount !== 1) throw new Error("Auto-reconciliation replay");
+          const finishedAttempt = await client.query(
+            `UPDATE whatsapp_sender_billing_attempts
+             SET state='reconciled',updated_at=NOW()
+             WHERE reservation_id=$1::uuid AND sender_id=$2 AND
+                   state='awaiting_pricing'`,
+            [attempt.reservation_id,attempt.sender_id]
+          );
+          const finishedGate = await client.query(
+            `UPDATE whatsapp_sender_billing_gates
+             SET state='idle',reservation_id=NULL,contact_id=NULL,
+                 message_id=NULL,wamid=NULL,updated_at=NOW()
+             WHERE reservation_id=$1::uuid AND sender_id=$2 AND
+                   state='awaiting_pricing'`,
+            [attempt.reservation_id,attempt.sender_id]
+          );
+          if (finishedAttempt.rowCount !== 1 || finishedGate.rowCount !== 1) {
+            throw new Error("Auto-reconciliation lost exact sender ownership");
+          }
+          autoReconciled++;
+        }
       }
     }
     await client.query("COMMIT"); transaction = false;
     return {
       accepted: true, sendAuthorized: false, autoRetryAllowed: false,
       matched, unmatched, replayed, held,
+      ...(env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true"
+        ? { autoReconciled } : {}),
     };
   } catch {
     if (transaction && client) await client.query("ROLLBACK").catch(() => {});
