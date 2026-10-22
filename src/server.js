@@ -1011,6 +1011,7 @@ async function processIncomingMessage(
               /^(?:booked|confirmed|scheduled)$/iu.test(String(bookingContext?.status || ""))),
             services: clinicConfig.services,
             serviceAliases: clinicConfig.serviceAliases,
+            businessName: clinicConfig.businessName,
             onSkip: (reason) => {
               if (metaAdContext) console.info(
                 "[Fixed ad first reply] decision=ai_fallback contact=" + contact.id +

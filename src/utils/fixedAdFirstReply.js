@@ -36,7 +36,47 @@ function standardPrefillInterestText(value) {
   return text.replace(FUTURE_CONTACT_SUFFIX, "").trim();
 }
 
-function isStandardAdPrefill(value) {
+// A fixed reply may replace Gemini only if the ENTIRE Chinese subject is a
+// configured treatment name or alias. A substring match ("骨盆调理" inside
+// "骨盆调理需要准备什么") would silently ignore a real customer question.
+function isExactConfiguredTreatmentSubject(value, {
+  services = [], serviceAliases = [], businessName = "",
+} = {}) {
+  let subject = String(value || "").normalize("NFKC").trim();
+  const name = String(businessName || "").normalize("NFKC").trim();
+  const brandOptions = [...new Set([
+    name,
+    name.replace(/\s+(?:centre|center|clinic)$/iu, "").trim(),
+  ].filter(Boolean))].sort((a, b) => b.length - a.length);
+  for (const brand of brandOptions) {
+    if (subject.toLowerCase().startsWith(brand.toLowerCase() + " ")) {
+      subject = subject.slice(brand.length).trim();
+      break;
+    }
+  }
+  // Meta's suggested enquiry sometimes puts brackets around the service:
+  // "我想了解【3D小颜术】疗程！".
+  subject = subject.replace(/^【([^【】]+)】(?=(?:的)?(?:疗程|療程|护理|護理|项目|項目|服务|服務)?$)/u, "$1");
+  const withoutType = subject.replace(/(?:的)?(?:疗程|療程|护理|護理|项目|項目|服务|服務)$/u, "").trim();
+  const compact = (text) => String(text || "").normalize("NFKC")
+    .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const candidateKeys = new Set([compact(subject), compact(withoutType)].filter(Boolean));
+  const namedService = safeServiceFromCustomer(subject, services, serviceAliases);
+  if (!namedService) return false;
+  const labels = [
+    namedService.name,
+    ...(Array.isArray(serviceAliases) ? serviceAliases : [])
+      .filter(item => item?.officialService === namedService.name)
+      .flatMap(item => String(item.alias || "").split(/[,|;，、]/u)),
+    ...(namedService.name === "骨盆调理"
+      ? ["盆骨", "盆骨调整", "盆骨矫正", "盆骨调理"] : []),
+  ];
+  return labels.some(label => compact(label).length >= 2 &&
+    candidateKeys.has(compact(label)));
+
+}
+
+function isStandardAdPrefill(value, serviceContext = {}) {
   const raw = String(value || "").normalize("NFKC").trim();
   if (!raw || raw.length > PREFILL_MAX_LENGTH) return false;
   if (isContextualAdServiceEnquiry(raw)) return true;
@@ -48,12 +88,11 @@ function isStandardAdPrefill(value) {
       SUBSTANTIVE_OR_BOOKING_INTENT.test(body) || EXTRA_QUESTION.test(body)) return false;
   if (/(?:不|没|沒|没有|沒有|无|無|并不|並不).{0,8}(?:感兴趣|感興趣|有兴趣|有興趣|兴趣|興趣)/u.test(body) ||
       /\b(?:not\s+(?:really\s+)?interested|not\s+really|not\s+anymore|no\s+longer\s+interested|actually\s+no|changed\s+my\s+mind|tak\s+jadi|tak\s+nak|tidak\s+mahu|batal)\b/iu.test(body)) return false;
-  const chineseInterest = /^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*.{2,90}?(?:有兴趣|有興趣|感兴趣|感興趣)$/u;
-  // Real Neutro Sense Meta prefills include "想了解你们骨盆的疗程" and
-  // "想了解 Neutro Sense TCM 3D 小颜术", not just "我对...有兴趣".
-  // The separate current-customer service matcher MUST still verify the
-  // exact configured treatment before this can bypass Gemini.
-  const chineseKnow = /^(?:我)?(?:想|要|希望)(?:了解|知道|咨询|諮詢)(?:一下)?\s*(?:你们|你們|贵店|貴店)?\s*[^,，、?？\n\r]{2,110}$/u;
+  // Match the entire named subject, not arbitrary appended customer text.
+  // Keep the grammar broad enough for genuine configured names and prefills,
+  // but let Gemini handle any unrecognized wording or extra requirements.
+  const chineseInterest = body.match(/^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*(.{2,90}?)(?:有兴趣|有興趣|感兴趣|感興趣)$/u);
+  const chineseKnow = body.match(/^(?:我)?(?:想|要|希望)(?:了解|知道|咨询|諮詢)(?:一下)?\s*(?:你们|你們|贵店|貴店)?\s*([^,，、?？\n\r]{2,110})$/u);
   const english = body.match(/^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+(.{2,100})$/iu);
   const malay = body.match(/^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+(.{2,100})$/iu);
   const englishSubject = english?.[1] || "";
@@ -64,7 +103,11 @@ function isStandardAdPrefill(value) {
   const malayIsSimple = Boolean(malay) &&
     !/[;,]/u.test(malaySubject) &&
     !/\b(?:dan|juga|tapi|tetapi|sebab|kerana|nak|mahu|boleh|berapa|bagaimana|kenapa|mengapa|pernah|sudah|dah|ada|macam|kalau|ingin|minta|bolehkah|untuk\s+esok)\b/iu.test(malaySubject);
-  return chineseInterest.test(body) || chineseKnow.test(body) || englishIsSimple || malayIsSimple;
+  return (Boolean(chineseInterest) &&
+      isExactConfiguredTreatmentSubject(chineseInterest[1], serviceContext)) ||
+    (Boolean(chineseKnow) &&
+      isExactConfiguredTreatmentSubject(chineseKnow[1], serviceContext)) ||
+    englishIsSimple || malayIsSimple;
 }
 
 function resolveFixedAdFirstReply({
@@ -81,6 +124,7 @@ function resolveFixedAdFirstReply({
   isTextMessage = true,
   services = [],
   serviceAliases = [],
+  businessName = "",
   now = Date.now(),
   onSkip = null,
 } = {}) {
@@ -98,7 +142,7 @@ function resolveFixedAdFirstReply({
   const adTimestamp = Date.parse(metaAdContext?.attributedAt || "");
   if (!Number.isFinite(adTimestamp) || adTimestamp > now + 60_000 ||
       now - adTimestamp > MAX_AD_CONTEXT_AGE_MS) return skip("missing_or_stale_attribution");
-  if (!isStandardAdPrefill(customerText) ||
+  if (!isStandardAdPrefill(customerText, { services, serviceAliases, businessName }) ||
       hasCustomerPriceEnquiry(standardPrefillInterestText(customerText)) ||
       hasExplicitPackageOptionsRequest(standardPrefillInterestText(customerText)) ||
       hasClinicalMediaRisk(customerText)) return skip("substantive_or_unsafe_message");
