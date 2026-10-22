@@ -18,7 +18,12 @@ const aliases = [
   { alias: "骨盆,盆骨,pelvic", officialService: "骨盆调理" },
   { alias: "3D,小颜", officialService: "3D 小颜术" },
   { alias: "9D,逆龄", officialService: "9D 逆龄抗衰" },
+  { alias: "3D小颜术", officialService: "3D 小颜术" },
+  { alias: "9D护理,9D脸部提升", officialService: "9D 逆龄抗衰" },
 ];
+const configuredPrefill = (value) => isStandardAdPrefill(value, {
+  services, serviceAliases: aliases, businessName: "Neutro Sense TCM Centre",
+});
 const translations = { zh: "Hi～欢迎了解骨盆调理 😊 你最想改善哪方面呢？", en: "Hi! How can we help with pelvic care?", ms: "Hai! Apa yang anda ingin tahu?" };
 const config = { enabled: true, replies: [{ service: "骨盆调理", translations }] };
 const now = Date.parse("2026-10-21T08:00:00Z");
@@ -31,7 +36,8 @@ function attempt(overrides = {}) {
     customerText: "Hi～我对骨盆调理有兴趣，可以跟进我，有优惠也发我看看",
     language: "zh", metaAdContext: ad,
     metaAdCreativeService: "骨盆调理",
-    services, serviceAliases: aliases, now, ...overrides,
+    services, serviceAliases: aliases, businessName: "Neutro Sense TCM Centre",
+    now, ...overrides,
   });
 }
 
@@ -113,48 +119,73 @@ test("uses exactly the customer's language and respects staff-configured copy", 
 });
 
 test("prefill recogniser does not absorb edited or compound customer questions", () => {
-  assert.equal(isStandardAdPrefill("我对9D逆龄抗衰有兴趣，可以跟进我，有优惠也发我看看"), true);
-  assert.equal(isStandardAdPrefill("Hi, I'm interested in this"), true);
-  assert.equal(isStandardAdPrefill("I am interested in 3D 小颜术"), true);
-  assert.equal(isStandardAdPrefill("你好！我想了解你们骨盆的疗程"), true);
-  assert.equal(isStandardAdPrefill("Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"), true);
-  assert.equal(isStandardAdPrefill("Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～"), true);
-  assert.equal(isStandardAdPrefill("Hi～想了解 Neutro Sense TCM 9D 护理，有后续配套和优惠可以 WhatsApp 发我 😊"), true);
-  assert.equal(isStandardAdPrefill("我想了解【3D小颜术】疗程！"), true);
-  assert.equal(isStandardAdPrefill("我想了解【9D脸部提升】疗程！"), true);
-  assert.equal(isStandardAdPrefill("I'm interested in 9D and want to know the process"), false);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D dan nak tahu cara rawatan"), false);
-  assert.equal(isStandardAdPrefill("Saya nak tahu tentang 9D"), true);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D"), true);
-  assert.equal(isStandardAdPrefill("I am interested in 9D"), true);
-  assert.equal(isStandardAdPrefill("I am interested in 9D does it work"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 9D is it effective"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 9D do you have pictures"), false);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D bagaimana prosesnya"), false);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D saya dah cuba sebelum ni"), false);
-  assert.equal(isStandardAdPrefill("我对9D不感兴趣"), false);
-  assert.equal(isStandardAdPrefill("我对9D没有兴趣"), false);
-  assert.equal(isStandardAdPrefill("我对9D不是很有兴趣"), false);
-  assert.equal(isStandardAdPrefill("我对9D没什么兴趣"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 9D not really"), false);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D tak jadi"), false);
-  assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，不过要多少钱？"), false);
-  assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣\n我要退款"), false);
-  assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
-  assert.equal(isStandardAdPrefill("我想了解骨盆调理大概几次能见效"), false);
-  assert.equal(isStandardAdPrefill("I am interested in pelvic treatment but how long does it take"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 9D tomorrow at 3pm"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 9D at 3"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 9D next weekend"), false);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D esok petang"), false);
-  assert.equal(isStandardAdPrefill("Saya berminat dengan 9D pukul 3"), false);
-  assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，明天可以预约吗"), false);
-  assert.equal(isStandardAdPrefill("我对9D有兴趣，下午3点有位吗"), false);
-  assert.equal(isStandardAdPrefill("想了解骨盆调理，可以现在发我优惠吗"), false);
-  assert.equal(isStandardAdPrefill("Hi～想了解 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠，多少钱"), false);
-  assert.equal(isStandardAdPrefill("我想了解骨盆疗程是不是适合怀孕的人"), false);
-  assert.equal(isStandardAdPrefill("你好！我想了解骨盆疗程，但是我已经预约明天了"), false);
-  assert.equal(isStandardAdPrefill("I am interested in 3D 小颜术"), true);
+  assert.equal(configuredPrefill("我对9D逆龄抗衰有兴趣，可以跟进我，有优惠也发我看看"), true);
+  assert.equal(configuredPrefill("Hi, I'm interested in this"), true);
+  assert.equal(configuredPrefill("I am interested in 3D 小颜术"), true);
+  assert.equal(configuredPrefill("你好！我想了解你们骨盆的疗程"), true);
+  assert.equal(configuredPrefill("Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"), true);
+  assert.equal(configuredPrefill("Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～"), true);
+  assert.equal(configuredPrefill("Hi～想了解 Neutro Sense TCM 9D 护理，有后续配套和优惠可以 WhatsApp 发我 😊"), true);
+  assert.equal(configuredPrefill("我想了解【3D小颜术】疗程！"), true);
+  assert.equal(configuredPrefill("我想了解【9D脸部提升】疗程！"), true);
+  assert.equal(configuredPrefill("我想了解骨盆的疗程"), true);
+  assert.equal(configuredPrefill("我想了解3D 小颜术护理"), true);
+  assert.equal(configuredPrefill("我对骨盆调理有兴趣"), true);
+  assert.equal(configuredPrefill("你好！我想了解你们骨盆的疗程"), true);
+  assert.equal(configuredPrefill("I'm interested in 9D and want to know the process"), false);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D dan nak tahu cara rawatan"), false);
+  assert.equal(configuredPrefill("Saya nak tahu tentang 9D"), true);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D"), true);
+  assert.equal(configuredPrefill("I am interested in 9D"), true);
+  assert.equal(configuredPrefill("I am interested in 9D does it work"), false);
+  assert.equal(configuredPrefill("I am interested in 9D is it effective"), false);
+  assert.equal(configuredPrefill("I am interested in 9D do you have pictures"), false);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D bagaimana prosesnya"), false);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D saya dah cuba sebelum ni"), false);
+  assert.equal(configuredPrefill("我对9D不感兴趣"), false);
+  assert.equal(configuredPrefill("我对9D没有兴趣"), false);
+  assert.equal(configuredPrefill("我对9D不是很有兴趣"), false);
+  assert.equal(configuredPrefill("我对9D没什么兴趣"), false);
+  assert.equal(configuredPrefill("I am interested in 9D not really"), false);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D tak jadi"), false);
+  assert.equal(configuredPrefill("我对骨盆调理有兴趣，不过要多少钱？"), false);
+  for (const edited of [
+    "想了解骨盆调理需要准备什么",
+    "想了解骨盆调理需要带什么",
+    "想了解骨盆调理怎么预约",
+    "想了解骨盆调理的地址",
+    "想了解骨盆调理有没有效果",
+    "想了解骨盆调理的注意事项",
+    "想了解骨盆调理适合谁",
+    "想了解骨盆调理多久做一次",
+    "想了解骨盆调理后的恢复时间",
+    "想了解骨盆调理的副作用",
+    "想了解骨盆调理需要准备什么，可以跟进我，有优惠也发我看看",
+    "Hi～想了解 Neutro Sense TCM 3D 小颜术需要准备什么，可以 WhatsApp 跟进我和发相关优惠～",
+    "我对骨盆调理怎么做有兴趣",
+    "我对骨盆调理收费有兴趣",
+    "我对骨盆调理和9D逆龄抗衰有兴趣",
+    "我想了解【3D小颜术】疗程能不能改善大小脸",
+    "我想了解没有配置的陌生疗程",
+  ]) {
+    assert.equal(configuredPrefill(edited), false, edited);
+  }
+  assert.equal(configuredPrefill("我对骨盆调理有兴趣\n我要退款"), false);
+  assert.equal(configuredPrefill("我对骨盆调理有兴趣，医生讲我有问题"), false);
+  assert.equal(configuredPrefill("我想了解骨盆调理大概几次能见效"), false);
+  assert.equal(configuredPrefill("I am interested in pelvic treatment but how long does it take"), false);
+  assert.equal(configuredPrefill("I am interested in 9D tomorrow at 3pm"), false);
+  assert.equal(configuredPrefill("I am interested in 9D at 3"), false);
+  assert.equal(configuredPrefill("I am interested in 9D next weekend"), false);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D esok petang"), false);
+  assert.equal(configuredPrefill("Saya berminat dengan 9D pukul 3"), false);
+  assert.equal(configuredPrefill("我对骨盆调理有兴趣，明天可以预约吗"), false);
+  assert.equal(configuredPrefill("我对9D有兴趣，下午3点有位吗"), false);
+  assert.equal(configuredPrefill("想了解骨盆调理，可以现在发我优惠吗"), false);
+  assert.equal(configuredPrefill("Hi～想了解 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠，多少钱"), false);
+  assert.equal(configuredPrefill("我想了解骨盆疗程是不是适合怀孕的人"), false);
+  assert.equal(configuredPrefill("你好！我想了解骨盆疗程，但是我已经预约明天了"), false);
+  assert.equal(configuredPrefill("I am interested in 3D 小颜术"), true);
 });
 
 test("handler selects fixed reply before model and skips configured introductory duplication", () => {
@@ -396,6 +427,30 @@ test("real Neutro Sense Meta first-message prefills select advertised services, 
     serviceAliases: expandedAliases,
   });
   assert.equal(generic, null, "a multi-treatment ad cannot unlock generic prefills");
+});
+
+test("edited first-message questions reach Gemini even when ad creative verifies the treatment", () => {
+  const edited = [
+    "想了解骨盆调理需要准备什么",
+    "你好！我想了解你们骨盆的疗程需要带什么",
+    "我对骨盆调理收费有兴趣",
+    "我想了解骨盆调理的注意事项",
+    "我对骨盆调理怎么做有兴趣，可以跟进我，有优惠也发我看看",
+  ];
+  for (const customerText of edited) {
+    const reasons = [];
+    assert.equal(attempt({
+      customerText,
+      conversationHistory: [{ role: "user", content: customerText }],
+      onSkip: reason => reasons.push(reason),
+    }), null, customerText);
+    assert.deepEqual(reasons, ["substantive_or_unsafe_message"], customerText);
+  }
+  assert.equal(configuredPrefill("Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～"), true);
+  assert.equal(configuredPrefill("Hi～想了解 Neutro Sense TCM 9D 护理，有后续配套和优惠可以 WhatsApp 发我 😊"), true);
+  assert.equal(configuredPrefill("你好！我想了解你们骨盆的疗程"), true);
+  assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣"), false,
+    "No configured services means no unverifiable Chinese named-treatment fast path");
 });
 
 test("historical non-prefill questions, staff or spam text remain on Gemini", () => {
