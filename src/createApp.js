@@ -148,7 +148,7 @@ function createApp({
     // its privacy-safe audit before ACK; a transient DB failure asks Meta
     // to retry instead of silently dropping an unknown callback.
     const quarantineOnly = isolated.quarantined.length > 0
-      && isolated.acceptedChanges === 0;
+      && isolated.acceptedActionable === 0;
     if (quarantineOnly) {
       try {
         await recordQuarantinedWhatsAppChanges(isolated.quarantined);
