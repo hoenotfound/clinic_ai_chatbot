@@ -5,7 +5,7 @@ const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const repo = require("../src/db/whatsappSenderConversationRepo");
 
-test("migration 079 keeps two sender conversations separate without rewriting historical contacts",
+test("migration 080 allows two contact identities for the same customer while retaining history",
   { skip: !process.env.TEST_DATABASE_URL }, async () => {
     const connectionString = process.env.TEST_DATABASE_URL;
     const db = new Client({ connectionString });
@@ -22,7 +22,7 @@ test("migration 079 keeps two sender conversations separate without rewriting hi
           return { query: (...args) => client.query(...args), release: () => client.end() };
         },
       };
-      assert.equal(loadMigrations().at(-1).version, 79);
+      assert.equal(loadMigrations().at(-1).version, 80);
       await runMigrations(scoped, { quiet: true });
       await db.query(
         "INSERT INTO whatsapp_sender_accounts (sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
@@ -86,6 +86,39 @@ test("migration 079 keeps two sender conversations separate without rewriting hi
       assert.equal((await db.query(
         "SELECT content FROM messages WHERE contact_id = $1", [oldContact]
       )).rows[0].content, "historical");
+      // The original Neutro contact ID must survive primary sender activation.
+      const primary = await repo.claimSenderContact(input("60123001234"), scoped, {
+        WHATSAPP_PHONE_NUMBER_ID: "100000000000001",
+        WHATSAPP_WABA_ID: "200000000000001",
+      });
+      assert.equal(primary.id, oldContact);
+      const ariel = await repo.claimSenderContact({
+        accountId: "200000000000002",
+        phoneNumberId: "100000000000002",
+        customerPhone: "60123001234",
+      }, scoped);
+      assert.notEqual(ariel.id, oldContact);
+      assert.equal(ariel.whatsapp_number, primary.whatsapp_number);
+      assert.equal(ariel.whatsapp_sender_key, "ariel");
+      assert.equal(primary.whatsapp_sender_key, "neutro");
+      assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n, 2);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM messages WHERE contact_id=$1",
+        [oldContact]
+      )).rows[0].n, 1);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM messages WHERE contact_id=$1",
+        [ariel.id]
+      )).rows[0].n, 0);
+      const repeated = await repo.claimSenderContact({
+        accountId: "200000000000002", phoneNumberId: "100000000000002",
+        customerPhone: "0123001234",
+      }, scoped);
+      assert.equal(repeated.id, ariel.id);
+      await assert.rejects(repo.claimSenderContact(input("60123001234"), scoped, {
+        WHATSAPP_PHONE_NUMBER_ID: "100000000000001",
+        WHATSAPP_WABA_ID: "999999999999999",
+      }), /not verified/);
       await db.query("UPDATE whatsapp_sender_accounts SET state='disabled' WHERE sender_key='ariel'");
       const disabled = await repo.reservePendingConversation({
         accountId: "200000000000002", phoneNumberId: "100000000000002",
