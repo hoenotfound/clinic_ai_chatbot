@@ -35,7 +35,7 @@ function validateMetaSignature(rawBody, signatureHeader, secret) {
       !clean(secret) || !SIGNATURE_PATTERN.test(clean(signatureHeader))) return false;
   const expected = "sha256=" + crypto.createHmac("sha256", secret)
     .update(rawBody).digest("hex");
-  return crypto.timingSafeEqual(Buffer.from(signatureHeader), Buffer.from(expected));
+  return crypto.timingSafeEqual(Buffer.from(clean(signatureHeader)), Buffer.from(expected));
 }
 
 function digest(input) { return crypto.createHash("sha256").update(input).digest("hex"); }
@@ -106,12 +106,13 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
  FROM whatsapp_sender_billing_attempts a
  JOIN whatsapp_sender_billing_gates g
    ON g.sender_id=a.sender_id AND g.reservation_id=a.reservation_id
+   AND g.contact_id=a.contact_id AND g.message_id=a.message_id
  JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
  JOIN contacts c ON c.id=a.contact_id AND c.whatsapp_sender_id=sa.id
  JOIN whatsapp_sender_conversations sc
    ON sc.contact_id=c.id AND sc.sender_id=sa.id AND sc.state='bound'
  JOIN messages m ON m.id=a.message_id AND m.contact_id=c.id
-   AND m.role='assistant'
+   AND m.role='assistant' AND (m.whatsapp_message_id IS NULL OR m.whatsapp_message_id=$1)
  JOIN whatsapp_sender_message_context mc
    ON mc.message_id=m.id AND mc.conversation_id=sc.id
  WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown')
