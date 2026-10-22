@@ -58,6 +58,16 @@ function validateChange(entry, change, expectedPhone, expectedAccount, strictMis
     return "unsupported_whatsapp_event";
   }
   const value = change.value;
+  if (value.metadata !== undefined && (value.metadata === null
+      || typeof value.metadata !== "object" || Array.isArray(value.metadata))) {
+    return "malformed_whatsapp_change";
+  }
+  if (field === "messages" && value.contacts !== undefined
+      && (!Array.isArray(value.contacts)
+        || value.contacts.some(contact => !contact
+          || typeof contact !== "object" || Array.isArray(contact)))) {
+    return "malformed_whatsapp_change";
+  }
   const allowed = field === "messages"
     ? ["messages", "statuses"]
     : field === "smb_message_echoes" ? ["message_echoes"] : [];
