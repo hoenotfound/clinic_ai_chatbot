@@ -163,11 +163,12 @@ const OWNED_SECONDARY_RESERVATION_SQL = `
 // This records Meta HTTP acceptance, NOT verified delivery/billing. No
 // customer-send permission and no gate reset are granted by this function.
 async function recordSecondaryProviderOutcome({
-  reservationId, acceptedWamid = null,
+  reservationId, acceptedWamid = null, definitivelyRejected = false,
 }, { database = pool, env = process.env } = {}) {
   if (!gateEnabled(env)) return deny("secondary_billing_disabled");
   if (!/^[a-f0-9-]{36}$/i.test(clean(reservationId)) ||
-      (acceptedWamid !== null && !/^wamid\./.test(clean(acceptedWamid)))) {
+      (acceptedWamid !== null && !/^wamid\./.test(clean(acceptedWamid))) ||
+      (definitivelyRejected === true && acceptedWamid !== null)) {
     return deny("secondary_billing_invalid_outcome");
   }
   let client;
@@ -191,13 +192,20 @@ async function recordSecondaryProviderOutcome({
       await client.query("COMMIT"); transaction = false;
       return { recorded: true, sendAuthorized: false, state: "awaiting_pricing" };
     }
-    const state = acceptedWamid ? "awaiting_pricing" : "unknown";
+    const state = definitivelyRejected === true ? "rejected" :
+      acceptedWamid ? "awaiting_pricing" : "unknown";
     // A sender may have many simultaneous customer gates. Never mutate
     // another contact's reservation when this provider request completes.
     const gateUpdated = await client.query(
-      "UPDATE whatsapp_sender_billing_gates SET state=$2,wamid=$3,updated_at=NOW() " +
-      "WHERE sender_id=$1 AND owner_contact_id=$4 " +
-      "AND reservation_id=$5::uuid AND state='reserved'",
+      definitivelyRejected === true
+        ? "UPDATE whatsapp_sender_billing_gates " +
+          "SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL," +
+          "wamid=NULL,updated_at=NOW() " +
+          "WHERE sender_id=$1 AND owner_contact_id=$4 " +
+          "AND reservation_id=$5::uuid AND state='reserved'"
+        : "UPDATE whatsapp_sender_billing_gates SET state=$2,wamid=$3,updated_at=NOW() " +
+          "WHERE sender_id=$1 AND owner_contact_id=$4 " +
+          "AND reservation_id=$5::uuid AND state='reserved'",
       [row.sender_id,state,acceptedWamid,row.owner_contact_id,reservationId]
     );
     const attemptUpdated = await client.query(
