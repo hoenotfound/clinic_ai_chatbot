@@ -72,6 +72,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       "../src/db/migrations/072_whatsapp_24h_staff_media.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/056_whatsapp_free_entry_skips.sql"), "utf8"));
+    await client.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/082_whatsapp_delivery_sender_provenance.sql"), "utf8"));
     await client.query(`
       INSERT INTO contacts(id, channel, whatsapp_number, mode, needs_attention,
         whatsapp_opt_in_at, whatsapp_opt_in_source)

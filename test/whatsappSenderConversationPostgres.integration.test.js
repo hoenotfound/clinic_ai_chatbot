@@ -23,7 +23,7 @@ test("migration 080 allows two contact identities for the same customer while re
           return { query: (...args) => client.query(...args), release: () => client.end() };
         },
       };
-      assert.equal(loadMigrations().at(-1).version, 81);
+      assert.equal(loadMigrations().at(-1).version, 82);
       await runMigrations(scoped, { quiet: true });
       await db.query(
         "INSERT INTO whatsapp_sender_accounts (sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
