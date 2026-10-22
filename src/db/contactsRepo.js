@@ -311,7 +311,25 @@ async function getContactById(id) {
     "LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id " +
     "WHERE c.id = $1" : "SELECT * FROM contacts WHERE id = $1", [id]
   );
-  return result.rows[0] || null;
+  const contact = result.rows[0] || null;
+  // After primary sender adoption, a feature-flag rollback must still
+  // return the VERIFIED sender identity. A bare sender ID with no key is
+  // indistinguishable from Ariel to outbound routing.
+  if (contact?.whatsapp_sender_id != null && !contact.whatsapp_sender_key) {
+    const owner = await pool.query(
+      "SELECT sender_key,display_name,meta_phone_number_id,meta_account_id,state " +
+      "FROM whatsapp_sender_accounts WHERE id=$1",
+      [contact.whatsapp_sender_id]
+    );
+    if (owner.rows?.length !== 1 || owner.rows[0].state !== "active") {
+      throw new Error("Cannot verify persisted WhatsApp contact sender identity.");
+    }
+    contact.whatsapp_sender_key = owner.rows[0].sender_key;
+    contact.whatsapp_sender_display_name = owner.rows[0].display_name;
+    contact.whatsapp_sender_phone_number_id = owner.rows[0].meta_phone_number_id;
+    contact.whatsapp_sender_account_id = owner.rows[0].meta_account_id;
+  }
+  return contact;
 }
 
 // Fail closed for optional automatic images. An unresolved clinical question
