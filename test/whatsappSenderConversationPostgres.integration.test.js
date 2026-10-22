@@ -5,6 +5,8 @@ const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const repo = require("../src/db/whatsappSenderConversationRepo");
 const echoRepo = require("../src/db/whatsappCoexistenceRepo");
+const { primaryBillingContactId } = require("../src/services/whatsappZeroCostGuard");
+const { assertStoredSenderSafety } = require("../src/services/whatsappSenderActivationGate");
 
 test("migration 080 allows two contact identities for the same customer while retaining history",
   { skip: !process.env.TEST_DATABASE_URL }, async () => {
@@ -109,6 +111,31 @@ test("migration 080 allows two contact identities for the same customer while re
       assert.equal(ariel.whatsapp_sender_key, "ariel");
       assert.equal(primary.whatsapp_sender_key, "neutro");
       assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n, 2);
+      // The SAME WA customer has independent business-contact records.
+      // Every strict billing proof must identify the primary Neutro contact,
+      // never infer the business sender from the recipient phone alone.
+      assert.equal(await primaryBillingContactId("60123001234", {
+        database: db, env: {...primaryEnv,
+          WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true"},
+        expectedContactId:oldContact,
+      }), oldContact);
+      assert.equal(await primaryBillingContactId("60123001234", {
+        database: db, env:primaryEnv, expectedContactId:ariel.id,
+      }), null);
+      const scopedProof = await assertStoredSenderSafety({
+        database:db,env:{
+          ...primaryEnv,WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+          WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+          WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+          WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+          WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+        },
+      });
+      assert.equal(scopedProof.nonprimaryContacts,1);
+      await assert.rejects(assertStoredSenderSafety({
+        database:db,env:primaryEnv,
+      }), /Unsafe WhatsApp rollback/);
+
       assert.equal((await db.query(
         "SELECT COUNT(*)::int AS n FROM messages WHERE contact_id=$1",
         [oldContact]
