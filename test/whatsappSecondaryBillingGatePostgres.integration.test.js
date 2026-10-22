@@ -183,3 +183,62 @@ test("sender policy reads one verified sender's inbound history even for duplica
     });
   }
 );
+
+
+test("two different Ariel customers reserve concurrently without sharing an unresolved billing gate",
+ {skip:!connectionString},async()=>{
+  await isolatedSchema(async({db,database})=>{
+    const sender=(await db.query(
+      "INSERT INTO whatsapp_sender_accounts " +
+      "(sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
+      "VALUES('ariel','100000000000002','200000000000002','Ariel','active') RETURNING id"
+    )).rows[0].id;
+    const pair=(await db.query(
+      "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) " +
+      "VALUES('whatsapp','60125551111',$1),('whatsapp','60125552222',$1) RETURNING id,whatsapp_number",
+      [sender]
+    )).rows;
+    const conversations=(await db.query(
+      "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) " +
+      "VALUES($1,'60125551111',$2,'bound'),($1,'60125552222',$3,'bound') RETURNING id",
+      [sender,pair[0].id,pair[1].id]
+    )).rows;
+    const messages=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) " +
+      "VALUES($1,'assistant','First customer reply'),($2,'assistant','Second customer reply') RETURNING id",
+      [pair[0].id,pair[1].id]
+    )).rows;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) " +
+      "VALUES($1,$3),($2,$4)",
+      [messages[0].id,messages[1].id,conversations[0].id,conversations[1].id]
+    );
+    const [first,second]=await Promise.all([
+      billing.reserveSecondaryBillingAttempt({
+        contactId:pair[0].id,messageId:messages[0].id,
+      },{database,env}),
+      billing.reserveSecondaryBillingAttempt({
+        contactId:pair[1].id,messageId:messages[1].id,
+      },{database,env}),
+    ]);
+    assert.equal(first.reserved,true);
+    assert.equal(second.reserved,true);
+    assert.notEqual(first.reservationId,second.reservationId);
+    const gates=(await db.query(
+      "SELECT owner_contact_id,contact_id,state FROM whatsapp_sender_billing_gates " +
+      "WHERE sender_id=$1 ORDER BY owner_contact_id",
+      [sender]
+    )).rows;
+    assert.equal(gates.length,2);
+    assert.deepEqual(gates.map(g=>g.state),["reserved","reserved"]);
+    assert.equal(gates[0].owner_contact_id,pair[0].id);
+    assert.equal(gates[1].owner_contact_id,pair[1].id);
+    const duplicate=await billing.reserveSecondaryBillingAttempt({
+      contactId:pair[0].id,messageId:messages[0].id,
+    },{database,env});
+    assert.equal(duplicate.code,"secondary_billing_previous_send_unresolved");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0);
+  });
+});
