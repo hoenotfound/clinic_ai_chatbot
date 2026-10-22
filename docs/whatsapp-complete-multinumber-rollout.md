@@ -67,7 +67,7 @@ Neutro Neon project `steep-forest-44509907`:
 
 - Production branch `main`: schema v077, unchanged (read-only verification)
 - Isolated QA branch `qa-pr395-final-multinumber-20261022`
-  (`br-steep-flower-b3qayk0r`): migrations v078–089 applied
+  (`br-steep-flower-b3qayk0r`): migrations v078–092 applied
   successfully and atomically
 - Existing contacts retained: **183**
 - Existing primary billing-gate rows retained: **1**
@@ -122,3 +122,57 @@ Never point the live Render service at this branch.
 
 **NEVER merge an unreviewed migration or switch the production Neon
 DATABASE_URL to the QA branch.**
+
+
+## Review remediation and release constraints (updated after six-area review)
+
+PR #395 remains **Draft** and unmerged; Neutro's production branch remains
+unmodified by this remediation. Code changes require **fresh exact-head CI**.
+
+- Corrected Ariel reservation outcome updates to match one sender+contact+
+  reservation and require atomic row counts. Tested reversed two-customer
+  Meta acceptance order.
+- Fixed Ariel media callback invocation, which previously risked sending
+  the literal `[staff media]` text, and fixed the unit mock that missed it.
+- Primary sender lookup now recovers stored Neutro identity during a read-flag
+  rollback. Turning off scoped ingress after Ariel has customers is forbidden;
+  leave permanent sender identity enabled and disable Ariel operations.
+- Existing Neutro pre-registration delivery jobs can be verified by unique
+  primary WAMID ownership and registration time; new untagged jobs fail closed.
+- Preserved clinic-wide seven-day CTWA proof **only for Neutro's verified
+  primary Meta identity**, while keeping the primary strict-billing gate.
+- Meta `free_customer_service` signed nonbillable statuses can settle the
+  exact Ariel reservation. Unknown Meta pricing is not treated as free.
+- Definite provider HTTP client rejection and network/5xx ambiguity have
+  different audit outcomes. Unmatched signed billable receipts hold Ariel;
+  nonbillable bounced messages hold only the affected conversation.
+- Sender-owned customer deletion now includes sender-specific contact records
+  and privacy-minimized billing audit; foreign key cleanup must be regression
+  tested against active and settled sends.
+- Contact-access authorization and reply permission apply server-side to
+  contact-scoped conversation routes; cross-business forwarding is blocked.
+- Tools has an Ariel-specific text-only 2h/6h/20h rule editor, backed by its
+  own staff-authorized endpoints. No Neutro media/rules are shared.
+- Inbox displays separate sender capability and blocks Ariel's legacy retry
+  control; Meta billing previews never inherit Neutro's evidence.
+
+**Known external and operational release blockers:**
+
+1. Real Meta coexistence, token identity and signed two-number webhooks
+   have not been exercised on staging. Do not infer reliability from CI.
+2. The old pre-PR Render application **cannot safely be redeployed** against
+   migration 092: the migration runner rejects unknown future versions.
+   Only perform a compatible forward fix / disable Ariel feature flags while
+   maintaining permanent sender-scoped contact identity.
+3. The application's migrations normally commit **per migration**, not as
+   one all-or-nothing transaction in production. QA's explicit transaction
+   does not change this runtime behavior.
+4. Verify real provider pricing and explicitly approve any possible charges
+   to Ariel's account. The 24-hour reply window alone **does not prove RM0**.
+5. Ariel's AI-specific prompt/pricing/service settings require separate
+   clinic approval; do not enable Ariel AI against Neutro's treatment content.
+6. Autonomous 48h/72h marketing-template sending is **not implemented** for
+   Ariel pending template, consent and billing approval.
+7. Validate production Render's auto-deploy state before merge. Merging into
+   `main` may immediately deploy while Neon has only migration 077.
+
