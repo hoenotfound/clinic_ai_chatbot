@@ -154,10 +154,12 @@ async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
            whatsapp_profile_name = COALESCE($3, legacy.whatsapp_profile_name),
            updated_at = now()
        WHERE legacy.whatsapp_number = $2
+         AND legacy.whatsapp_sender_id IS NULL
          AND NOT EXISTS (
            SELECT 1
            FROM contacts AS canonical
            WHERE canonical.whatsapp_number = $1
+             AND canonical.whatsapp_sender_id IS NULL
          )
        RETURNING legacy.*`,
       [normalizedNumber, legacyNumber, profileName]
@@ -187,7 +189,7 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const inserted = await pool.query(
     `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
      VALUES ($1, $2)
-     ON CONFLICT (whatsapp_number) DO NOTHING
+     ON CONFLICT DO NOTHING
      RETURNING *`,
     [normalizedNumber, profileName]
   );
@@ -197,7 +199,7 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
     const updated = await pool.query(
       `UPDATE contacts
        SET whatsapp_profile_name = $2, updated_at = now()
-       WHERE whatsapp_number = $1
+       WHERE whatsapp_number = $1 AND whatsapp_sender_id IS NULL
          AND whatsapp_profile_name IS DISTINCT FROM $2
        RETURNING *`,
       [normalizedNumber, profileName]
@@ -206,7 +208,7 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   }
 
   const existing = await pool.query(
-    "SELECT * FROM contacts WHERE whatsapp_number = $1",
+    "SELECT * FROM contacts WHERE whatsapp_number = $1 AND whatsapp_sender_id IS NULL",
     [normalizedNumber]
   );
   return existing.rows[0];
@@ -240,7 +242,7 @@ async function getOrCreateChannelContact(
        whatsapp_number, whatsapp_profile_name, channel, channel_user_id, photo_url
      )
      VALUES ($1, $4, $2, $3, $5)
-     ON CONFLICT (whatsapp_number) DO UPDATE
+     ON CONFLICT (channel, channel_user_id) WHERE channel_user_id IS NOT NULL DO UPDATE
      SET channel = EXCLUDED.channel,
          channel_user_id = EXCLUDED.channel_user_id,
          whatsapp_profile_name = COALESCE(EXCLUDED.whatsapp_profile_name, contacts.whatsapp_profile_name),
