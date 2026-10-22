@@ -213,6 +213,7 @@ module.exports = {
   cleanContextText,
   normalizeMetaAdReplyContext,
   resolveMetaAdCreativeService,
+  matchingMetaAdCreativeServices,
   serviceTermAppearsInCreative,
   loadMetaAdReplyContext,
 };
