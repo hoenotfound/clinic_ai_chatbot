@@ -195,6 +195,22 @@ test("malformed arrays, incorrect field types, and disguised passive messages ar
   assert.ok(result.quarantined.every(item => item.reason === "malformed_whatsapp_change"));
 });
 
+test("invalid contacts or metadata cannot make a valid message disappear inside parser error handling", () => {
+  const malformedContacts = change(NEUTRO, "wamid.bad-contacts");
+  malformedContacts.value.contacts = "incorrect-type";
+  const malformedMeta = change(NEUTRO, "wamid.bad-metadata");
+  malformedMeta.value.metadata = ["not-an-object"];
+  const good = change(NEUTRO, "wamid.good");
+  const r = partitionLegacyWhatsAppWebhook(
+    callback([malformedContacts, malformedMeta, good]),
+    { expectedPhoneNumberId: NEUTRO }
+  );
+  assert.deepEqual(r.acceptedBody.entry[0].changes, [good]);
+  assert.deepEqual(r.quarantined.map(x => x.reason), [
+    "malformed_whatsapp_change", "malformed_whatsapp_change",
+  ]);
+});
+
 test("unknown field with a top-level messages list is quarantined", () => {
   const unknown = change(NEUTRO, "wamid.hijack");
   unknown.field = "experimental";
