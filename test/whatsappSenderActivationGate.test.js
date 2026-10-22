@@ -52,11 +52,10 @@ test("rollback never turns off sender lookups with live secondary contacts",asyn
     env:{WHATSAPP_PHONE_NUMBER_ID:safe.WHATSAPP_PHONE_NUMBER_ID,
          WHATSAPP_WABA_ID:safe.WHATSAPP_WABA_ID},database:db
   }),/Unsafe WhatsApp rollback/);
-  const allowed=await assertStoredSenderSafety({
+  await assert.rejects(assertStoredSenderSafety({
     env:{...safe,WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"false"},
     database:db
-  });
-  assert.equal(allowed.nonprimaryContacts,2);
+  }), /Unsafe WhatsApp rollback/);
 });
 test("sender verification database outage prevents readiness",async()=>{
   await assert.rejects(assertStoredSenderSafety({
