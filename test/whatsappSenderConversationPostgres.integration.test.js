@@ -258,3 +258,63 @@ test("migration 080 allows two contact identities for the same customer while re
     }
   }
 );
+
+test("upgrade from migration 077 retains existing Neutro conversations and migration ledger",
+  { skip: !process.env.TEST_DATABASE_URL }, async () => {
+    const connectionString=process.env.TEST_DATABASE_URL;
+    const db=new Client({connectionString});
+    const schema="phase2_upgrade_"+process.pid+"_"+Date.now();
+    await db.connect();
+    try {
+      await db.query("CREATE SCHEMA "+schema);
+      await db.query("SET search_path TO "+schema);
+      const scoped={
+        async connect() {
+          const client=new Client({connectionString});
+          await client.connect();
+          await client.query("SET search_path TO "+schema);
+          return {query:(...args)=>client.query(...args),release:()=>client.end()};
+        },
+      };
+      const all=loadMigrations();
+      assert.equal(all.at(-1).version,82);
+      const first=await runMigrations(scoped,{
+        quiet:true,migrations:all.filter(m=>m.version<=77)
+      });
+      assert.equal(first.currentVersion,77);
+      const old=(await db.query(
+        "INSERT INTO contacts(whatsapp_number,whatsapp_profile_name) " +
+        "VALUES('60123335555','Historic Neutro') RETURNING id"
+      )).rows[0].id;
+      const message=(await db.query(
+        "INSERT INTO messages(contact_id,role,content) " +
+        "VALUES($1,'user','existing customer enquiry') RETURNING id",[old]
+      )).rows[0].id;
+      const upgraded=await runMigrations(scoped,{quiet:true});
+      assert.equal(upgraded.appliedCount,5);
+      assert.equal(upgraded.currentVersion,82);
+      const proof=(await db.query(
+        "SELECT c.id,c.whatsapp_number,c.whatsapp_sender_id,m.id AS message_id, " +
+        "m.content FROM contacts c JOIN messages m ON m.contact_id=c.id " +
+        "WHERE c.id=$1",[old]
+      )).rows;
+      assert.equal(proof.length,1);
+      assert.equal(proof[0].id,old);
+      assert.equal(proof[0].message_id,message);
+      assert.equal(proof[0].content,"existing customer enquiry");
+      assert.equal(proof[0].whatsapp_sender_id,null);
+      assert.equal((await db.query("SELECT MAX(version)::int AS latest, " +
+        "COUNT(*)::int AS total FROM schema_migrations")).rows[0].latest,82);
+      assert.equal((await db.query("SELECT COUNT(*)::int AS total " +
+        "FROM whatsapp_sender_accounts")).rows[0].total,0);
+      await assert.rejects(db.query(
+        "INSERT INTO contacts(whatsapp_number) VALUES('60123335555')"
+      ),/duplicate key/);
+      assert.equal((await runMigrations(scoped,{quiet:true})).appliedCount,0);
+    } finally {
+      await db.query("SET search_path TO public").catch(()=>{});
+      await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+      await db.end();
+    }
+  }
+);
