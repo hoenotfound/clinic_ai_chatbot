@@ -371,3 +371,78 @@ test("late billable receipt after gate is idle prohibits a fresh Ariel reservati
       )).rows[0].n,0);
     });
   });
+
+
+test("signed nonbillable Ariel receipt auto-reconciles only when explicitly enabled",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,reservation,contacts}=await seededSend(db,database);
+    const autoEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+    const recorded=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one")),{database,env:autoEnv});
+    assert.equal(recorded.matched,1);
+    assert.equal(recorded.autoReconciled,1);
+    const settled=(await db.query(
+      "SELECT state,reservation_id FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0];
+    assert.equal(settled.state,"idle");
+    assert.equal(settled.reservation_id,null);
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+      [reservation.reservationId]
+    )).rows[0].state,"reconciled");
+    const audit=(await db.query(
+      "SELECT method FROM whatsapp_sender_auto_reconciliations WHERE reservation_id=$1",
+      [reservation.reservationId]
+    )).rows[0];
+    assert.equal(audit.method,"signed_meta_nonbillable_free_entry");
+    const oldReceipt=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one")),{database,env:autoEnv});
+    assert.equal(oldReceipt.replayed,1);
+    assert.equal(oldReceipt.autoReconciled,0);
+    const late=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-one",{
+        status:"read",pricing:{type:"regular",billable:true,category:"service"},
+      }
+    )),{database,env:autoEnv});
+    assert.equal(late.matched,1);
+    assert.equal(late.held,1);
+    const msg=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','new text') RETURNING id",
+      [contacts[1].id]
+    )).rows[0].id;
+    const conv=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",
+      [contacts[1].id]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [msg,conv]
+    );
+    const next=await billing.reserveSecondaryBillingAttempt(
+      {contactId:contacts[1].id,messageId:msg},{database,env:autoEnv});
+    assert.equal(next.code,"secondary_billing_sender_alarm");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0);
+  });
+});
+
+test("explicit nonbillable receipt never overrides prior wrong recipient evidence",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids}=await seededSend(db,database);
+    const autoEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+    assert.equal((await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one",{recipient_id:"60124440000"})),
+      {database,env:autoEnv})).unmatched,1);
+    const actual=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one")),{database,env:autoEnv});
+    assert.equal(actual.autoReconciled,0);
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0].state,"awaiting_pricing");
+  });
+});
