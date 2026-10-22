@@ -30,6 +30,8 @@ test("foreign phone, sender key and account mismatch are blocked", () => {
       whatsapp_sender_phone_number_id: "1408739622311791" },
     { channel: "whatsapp", businessAccountId: "200000000000002",
       businessPhoneNumberId: "1408739622311791" },
+    { channel: "whatsapp", whatsapp_sender_account_id: "200000000000002",
+      whatsapp_sender_phone_number_id: "1408739622311791" },
     { channel: "whatsapp", whatsapp_sender_key: "neutro" },
   ]) {
     const blocked = blockUnverifiedOutgoingSender(contact, {}, env);
