@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const { partitionLegacyWhatsAppWebhook } = require("../src/services/whatsappLegacySenderBoundary");
+const { partitionSecondaryInboxWebhook } = require("../src/services/whatsappSecondaryInboxBoundary");
 const whatsapp = require("../src/services/whatsappService");
 
 const NEUTRO = "100000000000001";
@@ -30,7 +31,7 @@ function payload(...changes) {
   };
 }
 
-function webhookHarness({ failAudit = false } = {}) {
+function webhookHarness({ failAudit = false, dualInbox = false } = {}) {
   let handler = null;
   const claims = [];
   const scheduled = [];
@@ -51,7 +52,12 @@ function webhookHarness({ failAudit = false } = {}) {
     webhookJsonParser: () => {},
     whatsapp,
     partitionLegacyWhatsAppWebhook,
+    partitionSecondaryInboxWebhook,
     process: { env: {
+      WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED: dualInbox ? "true" : "false",
+      WHATSAPP_WABA_ID: "200000000000001",
+      WHATSAPP_SECONDARY_PHONE_NUMBER_ID: ARIEL,
+      WHATSAPP_SECONDARY_WABA_ID: "200000000000002",
       WHATSAPP_PHONE_NUMBER_ID: NEUTRO,
       WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED: "false",
       WHATSAPP_SINGLE_SENDER_STRICT_METADATA: "false",
@@ -145,4 +151,31 @@ test("normal mixed callback persists the rejected-event audit and delivers only 
   assert.equal(h.claims.length, 1);
   assert.equal(h.audits.length, 1);
   assert.equal(h.audits[0][0].reason, "different_business_phone");
+});
+
+test("gated secondary Inbox-only route accepts two senders with independent queue keys",async()=>{
+ const h=webhookHarness({dualInbox:true});
+ const status=await h.send({object:"whatsapp_business_account",entry:[
+   {id:"200000000000001",changes:[event(NEUTRO,"wamid-primary")]},
+   {id:"200000000000002",changes:[event(ARIEL,"wamid-ariel")]},
+ ]});
+ assert.equal(status,200);
+ assert.equal(h.claims.length,2);
+ assert.equal(h.scheduled.length,2);
+ assert.notEqual(h.scheduled[0].key,h.scheduled[1].key);
+ assert.equal(h.audits.length,0);
+ assert.deepEqual(h.claims.map(c=>c.inbound.businessPhoneNumberId),
+  [NEUTRO,ARIEL]);
+});
+test("with secondary receiver disabled, Ariel remains quarantined and primary is unchanged",async()=>{
+ const h=webhookHarness({dualInbox:false});
+ const status=await h.send({object:"whatsapp_business_account",entry:[
+   {id:"200000000000001",changes:[event(NEUTRO,"wamid-primary")]},
+   {id:"200000000000002",changes:[event(ARIEL,"wamid-ariel")]},
+ ]});
+ assert.equal(status,200);
+ assert.equal(h.claims.length,1);
+ assert.equal(h.claims[0].inbound.id,"wamid-primary");
+ assert.equal(h.scheduled[0].key,"60135550000");
+ assert.equal(h.audits.length,1);
 });
