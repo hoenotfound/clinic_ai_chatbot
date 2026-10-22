@@ -567,3 +567,60 @@ test("fabricated or re-used staff billing claim never authorizes another sender 
     assert.equal(result.code,"secondary_billing_template_review_unverified");
   });
 });
+
+
+test("signed Ariel receipts update only their own Inbox ticks, preserve read ordering and survive late WAMID persistence",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {contacts,messages}=await seededSend(db,database);
+    const received=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one",{status:"delivered"})),{database,env});
+    assert.equal(received.matched,1);
+    let owned=(await db.query(
+      "SELECT whatsapp_message_id,delivery_status FROM messages WHERE id=$1",
+      [messages[1].id]
+    )).rows[0];
+    assert.equal(owned.whatsapp_message_id,"wamid.ariel-one");
+    assert.equal(owned.delivery_status,"delivered");
+    const primary=(await db.query(
+      "SELECT whatsapp_message_id,delivery_status FROM messages WHERE id=$1",
+      [messages[0].id]
+    )).rows[0];
+    assert.equal(primary.whatsapp_message_id,null);
+    assert.notEqual(primary.delivery_status,"delivered");
+
+    // Existing accepted-send persistence may complete after webhook.
+    const repo=require("../src/db/messagesRepo");
+    const confirmed=await repo.setWhatsappMessageId(
+      messages[1].id,"wamid.ariel-one",{
+        database,preserveVerifiedSecondaryReceipt:true,
+        events:{publishInternal:()=>{},publish:()=>{}},
+      }
+    );
+    assert.equal(confirmed.delivery_status,"delivered");
+
+    const lateSent=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one",{status:"sent"})),{database,env});
+    assert.equal(lateSent.matched,1);
+    assert.equal((await db.query(
+      "SELECT delivery_status FROM messages WHERE id=$1",
+      [messages[1].id]
+    )).rows[0].delivery_status,"delivered");
+    const read=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one",{status:"read"})),{database,env});
+    assert.equal(read.matched,1);
+    const failed=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one",{
+        status:"failed",pricing:{type:"regular",billable:true,category:"service"},
+      })),{database,env});
+    assert.equal(failed.held,1);
+    assert.equal((await db.query(
+      "SELECT delivery_status FROM messages WHERE id=$1",
+      [messages[1].id]
+    )).rows[0].delivery_status,"read",
+      "A late failure must not replace confirmed read status.");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_outbound_retries"
+    )).rows[0].n,0,"Ariel Meta failure may not queue Neutro retries");
+  });
+});
