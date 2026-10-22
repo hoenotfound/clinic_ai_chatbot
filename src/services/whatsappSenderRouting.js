@@ -4,7 +4,6 @@
 // subscribes an account, sends messages, or reads/stores provider credentials.
 // The existing production runtime remains single-sender until all outbound,
 // policy, and contact-identity paths have been migrated and activated.
-const MESSAGE_FIELDS = new Set(["messages", "smb_message_echoes"]);
 
 class WhatsAppSenderRoutingError extends Error {
   constructor(code, message) {
