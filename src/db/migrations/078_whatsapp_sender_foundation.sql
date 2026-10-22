@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_quarantined_events (
   reason TEXT NOT NULL
     CHECK (reason IN (
       'different_business_phone',
+      'invalid_business_phone',
       'missing_business_phone',
       'unsupported_whatsapp_event',
       'invalid_whatsapp_entry',
