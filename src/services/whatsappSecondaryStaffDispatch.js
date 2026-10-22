@@ -183,6 +183,7 @@ async function sendSecondaryStaffText({
     const evidence = await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId,
       acceptedWamid: accepted ? send.wamid : null,
+      definitivelyRejected: !accepted && send?.definitivelyRejected === true,
     }, { database, env });
     if (!evidence?.recorded) {
       // A provider may have accepted the message even though Neon could not
@@ -194,11 +195,17 @@ async function sendSecondaryStaffText({
         error: "Provider outcome requires staff review; do not resend.",
       };
     }
-    return accepted ? { ...send, retryable: false, secondarySender: true } :
-      { ...send, success: false, wamid: null,
-        unknown: true, ambiguous: true, retryable: false,
-        code: "secondary_staff_provider_outcome_unverified",
-        error: "Delivery needs staff review; do not resend." };
+    if (accepted) return { ...send, retryable:false, secondarySender:true };
+    if (evidence.state === "rejected") return {
+      ...send, success:false, wamid:null,
+      unknown:false, ambiguous:false, retryable:false,
+      code:"secondary_provider_definitively_rejected",
+      error:"Meta rejected this message. Review the error before composing a new send.",
+    };
+    return { ...send, success: false, wamid: null,
+      unknown: true, ambiguous: true, retryable: false,
+      code: "secondary_staff_provider_outcome_unverified",
+      error: "Delivery needs staff review; do not resend." };
   } catch {
     await markUnknown();
     return {
