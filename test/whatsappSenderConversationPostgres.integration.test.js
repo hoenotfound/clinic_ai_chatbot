@@ -59,6 +59,27 @@ test("migration 079 keeps two sender conversations separate without rewriting hi
       await assert.rejects(
         repo.bindExistingContact(second.id, oldContact, db), /duplicate key|unique constraint/
       );
+      // Foreign conversation is not permitted to claim a legacy message.
+      const historicalId = (await db.query(
+        "SELECT id FROM messages WHERE contact_id = $1", [oldContact]
+      )).rows[0].id;
+      assert.equal(await repo.attachMessageContext({
+        messageId: historicalId, contactId: oldContact, conversationId: second.id,
+      }, db), null);
+      const tagged = await repo.attachMessageContext({
+        messageId: historicalId, contactId: oldContact, conversationId: first.id,
+      }, db);
+      assert.equal(tagged.conversation_id, first.id);
+      const replayed = await repo.attachMessageContext({
+        messageId: historicalId, contactId: oldContact, conversationId: first.id,
+      }, db);
+      assert.equal(replayed.conversation_id, first.id);
+      assert.equal(await repo.attachMessageContext({
+        messageId: historicalId, contactId: oldContact + 9999, conversationId: first.id,
+      }, db), null);
+      assert.equal(await repo.attachMessageContext({
+        messageId: historicalId, contactId: oldContact, conversationId: second.id,
+      }, db), null);
       const mapped = await repo.senderForContact(oldContact, db);
       assert.equal(mapped.sender_key, "neutro");
       assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n, 1);
