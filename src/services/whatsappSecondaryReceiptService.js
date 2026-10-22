@@ -4,6 +4,7 @@
 // webhook or any send/retry worker. Primary Neutro handler remains unchanged.
 const crypto = require("node:crypto");
 const { pool } = require("../db/db");
+const realtimeEvents = require("../utils/realtimeEvents");
 
 const DELIVERY_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
 const MAX_EVENTS = 100;
@@ -143,7 +144,8 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
 }
 
 const MATCH_SECONDARY_ATTEMPT_SQL = `
- SELECT a.reservation_id,a.sender_id,a.state AS attempt_state,
+ SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
+        a.state AS attempt_state,
         a.billable_authorized,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
@@ -215,6 +217,7 @@ async function recordSignedSecondaryStatusBatch({
     let replayed = 0;
     let held = 0;
     let autoReconciled = 0;
+    const changedMessages = [];
     for (const event of events) {
       const owner = await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
         event.wamid,event.recipient,env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -239,6 +242,42 @@ async function recordSignedSecondaryStatusBatch({
       }
       if (!attempt) { unmatched++; continue; }
       matched++;
+
+      // Update only the message belonging to the verified Ariel reservation.
+      // Monotonic receipt ordering prevents delayed 'sent' from replacing
+      // delivered/read; failures never turn an already read message into
+      // 'failed'. Do not touch Neutro status/retry/billing tables.
+      const delivery = await client.query(
+        `UPDATE messages SET
+           whatsapp_message_id=COALESCE(whatsapp_message_id,$3),
+           whatsapp_accepted_at=COALESCE(whatsapp_accepted_at,clock_timestamp()),
+           delivery_status=CASE
+             WHEN $4='read' THEN 'read'
+             WHEN $4='delivered' AND delivery_status IS DISTINCT FROM 'read'
+               THEN 'delivered'
+             WHEN $4='sent' AND COALESCE(delivery_status,'')
+                  NOT IN('read','delivered','failed') THEN 'sent'
+             WHEN $4='failed' AND COALESCE(delivery_status,'')
+                  NOT IN('read','delivered') THEN 'failed'
+             ELSE delivery_status
+           END,
+           delivery_error=CASE
+             WHEN $4='failed' AND COALESCE(delivery_status,'')
+                  NOT IN('read','delivered')
+               THEN 'Verified Meta delivery failure; staff review required.'
+             WHEN $4 IN('read','delivered','sent')
+               THEN NULL
+             ELSE delivery_error
+           END
+         WHERE id=$1 AND contact_id=$2 AND role='assistant'
+           AND (whatsapp_message_id IS NULL OR whatsapp_message_id=$3)
+         RETURNING id,contact_id,delivery_status`,
+        [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus]
+      );
+      if (delivery.rowCount !== 1) {
+        throw new Error("Secondary status had no verified, saved message.");
+      }
+      changedMessages.push(delivery.rows[0]);
       const paidEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billable_authorized === true &&
@@ -375,6 +414,16 @@ async function recordSignedSecondaryStatusBatch({
       }
     }
     await client.query("COMMIT"); transaction = false;
+    for (const message of changedMessages) {
+      try {
+        realtimeEvents.publish("conversation_changed", {
+          contactId: message.contact_id,
+          messageId: message.id,
+          deliveryStatus: message.delivery_status,
+          reason: "delivery_status",
+        });
+      } catch { /* Realtime is best effort after durable Meta receipt. */ }
+    }
     return {
       accepted: true, sendAuthorized: false, autoRetryAllowed: false,
       matched, unmatched, replayed, held,
