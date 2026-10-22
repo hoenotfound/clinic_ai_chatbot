@@ -28,7 +28,8 @@ async function checkWhatsAppDispatchContact(contact, options = {}, {
   try {
     result = await database.query(
       "SELECT c.whatsapp_sender_id, c.whatsapp_number, " +
-      "sc.id AS sender_conversation_id, sa.sender_key, " +
+      "sc.id AS sender_conversation_id, sc.sender_id AS bound_sender_id, " +
+      "sc.customer_wa_id, sa.sender_key, " +
       "sa.meta_phone_number_id, sa.meta_account_id, sa.state AS sender_state " +
       "FROM contacts c LEFT JOIN whatsapp_sender_conversations sc " +
       "ON sc.contact_id=c.id AND sc.state='bound' " +
@@ -56,7 +57,8 @@ async function checkWhatsAppDispatchContact(contact, options = {}, {
     return null;
   }
   if (!row.sender_conversation_id ||
-      String(row.whatsapp_sender_id) === "" ||
+      String(row.whatsapp_sender_id) !== String(row.bound_sender_id) ||
+      row.customer_wa_id !== row.whatsapp_number ||
       row.sender_state !== "active") {
     return senderMismatchResult();
   }

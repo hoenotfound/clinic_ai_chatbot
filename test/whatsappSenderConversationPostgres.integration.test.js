@@ -22,7 +22,7 @@ test("migration 080 allows two contact identities for the same customer while re
           return { query: (...args) => client.query(...args), release: () => client.end() };
         },
       };
-      assert.equal(loadMigrations().at(-1).version, 80);
+      assert.equal(loadMigrations().at(-1).version, 81);
       await runMigrations(scoped, { quiet: true });
       await db.query(
         "INSERT INTO whatsapp_sender_accounts (sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
@@ -125,6 +125,33 @@ test("migration 080 allows two contact identities for the same customer while re
         WHATSAPP_PHONE_NUMBER_ID: "100000000000001",
         WHATSAPP_WABA_ID: "999999999999999",
       }), /not verified/);
+      await assert.rejects(db.query(
+        "UPDATE contacts SET whatsapp_sender_id = NULL WHERE id=$1", [oldContact]
+      ), /foreign key constraint/);
+      const arielMessage = (await db.query(
+        "INSERT INTO messages(contact_id,role,content) VALUES($1,'user','erasable') RETURNING id",
+        [ariel.id]
+      )).rows[0];
+      const arielMapping = await repo.senderForContact(ariel.id, db);
+      assert.ok(await repo.attachMessageContext({
+        messageId: arielMessage.id, contactId: ariel.id,
+        conversationId: arielMapping.conversation_id,
+      }, db));
+      await db.query("DELETE FROM contacts WHERE id=$1", [ariel.id]);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_sender_conversations WHERE contact_id=$1",
+        [ariel.id]
+      )).rows[0].n, 0);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_sender_message_context WHERE message_id=$1",
+        [arielMessage.id]
+      )).rows[0].n, 0);
+      const localId = (await db.query(
+        "INSERT INTO contacts(whatsapp_number) VALUES('01233332222') RETURNING id"
+      )).rows[0].id;
+      const adopted = await repo.claimSenderContact(input("601233332222"), scoped, primaryEnv);
+      assert.equal(adopted.id, localId);
+      assert.equal(adopted.whatsapp_number, "601233332222");
       await db.query("UPDATE whatsapp_sender_accounts SET state='disabled' WHERE sender_key='ariel'");
       const disabled = await repo.reservePendingConversation({
         accountId: "200000000000002", phoneNumberId: "100000000000002",

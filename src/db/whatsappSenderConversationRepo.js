@@ -61,17 +61,32 @@ async function findConversationBySender({ accountId, phoneNumberId, customerPhon
 // Explicitly bind only a matching WhatsApp contact, after the verified
 // legacy backfill. UNIQUE(contact_id) refuses cross-sender contact reuse.
 async function bindExistingContact(conversationId, existingContactId, database = pool, env = process.env) {
+  // Both the contact's sender identity and the conversation binding must
+  // change in the SAME database statement, including primary legacy adoption.
   const result = await database.query(
-    "UPDATE whatsapp_sender_conversations AS sc " +
-    "SET contact_id = $2, state = 'bound', updated_at = NOW() " +
-    "FROM contacts AS c, whatsapp_sender_accounts AS sa " +
-    "WHERE sc.id = $1 AND c.id = $2 AND c.channel = 'whatsapp' " +
-    "AND sa.id = sc.sender_id AND sa.state = 'active' " +
-    "AND regexp_replace(c.whatsapp_number, '[^0-9]', '', 'g') = sc.customer_wa_id " +
-    "AND (c.whatsapp_sender_id = sc.sender_id OR " +
+    "WITH eligible AS MATERIALIZED (" +
+    "SELECT sc.id AS conversation_id, sc.sender_id, sc.customer_wa_id, c.id AS contact_id " +
+    "FROM whatsapp_sender_conversations sc " +
+    "JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id AND sa.state='active' " +
+    "JOIN contacts c ON c.id=$2 AND c.channel='whatsapp' " +
+    "WHERE sc.id=$1 AND (sc.contact_id IS NULL OR sc.contact_id=c.id) " +
+    "AND (c.whatsapp_number=sc.customer_wa_id OR " +
+    "(c.whatsapp_number LIKE '0%' AND '60' || substring(c.whatsapp_number FROM 2)=sc.customer_wa_id)) " +
+    "AND (c.whatsapp_sender_id=sc.sender_id OR " +
     "(c.whatsapp_sender_id IS NULL AND sa.meta_phone_number_id=$3 " +
-    "AND sa.meta_account_id=$4)) " +
-    "AND (sc.contact_id IS NULL OR sc.contact_id = c.id) RETURNING sc.*",
+    "AND sa.meta_account_id=$4)) FOR UPDATE OF sc,c" +
+    "), adopted AS (" +
+    "UPDATE contacts c SET whatsapp_sender_id=e.sender_id, " +
+    "whatsapp_number=e.customer_wa_id, updated_at=NOW() FROM eligible e " +
+    "WHERE c.id=e.contact_id AND (c.whatsapp_sender_id=e.sender_id " +
+    "OR c.whatsapp_sender_id IS NULL) " +
+    "RETURNING c.id, c.whatsapp_sender_id" +
+    ") UPDATE whatsapp_sender_conversations sc " +
+    "SET contact_id=$2,state='bound',updated_at=NOW() " +
+    "FROM eligible e JOIN adopted a ON a.id=e.contact_id " +
+    "AND a.whatsapp_sender_id=e.sender_id " +
+    "WHERE sc.id=e.conversation_id AND sc.sender_id=e.sender_id " +
+    "AND (sc.contact_id IS NULL OR sc.contact_id=a.id) RETURNING sc.*",
     [positiveId(conversationId), positiveId(existingContactId),
       String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim(),
       String(env.WHATSAPP_WABA_ID || "").trim()]
@@ -124,7 +139,7 @@ async function claimSenderContact({
       // Preserve the original Neutro contact ID and historical data,
       // including Malaysian local 01x storage from older portal versions.
       // Never adopt a legacy contact for another business sender.
-      const localNumber = /^60(1\\d{8,9})$/.test(customer)
+      const localNumber = /^60(1\d{8,9})$/.test(customer)
         ? "0" + customer.slice(2) : null;
       contact = (await client.query(
         "UPDATE contacts SET whatsapp_sender_id=$3, " +

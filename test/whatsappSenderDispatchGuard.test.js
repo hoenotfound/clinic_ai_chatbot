@@ -25,7 +25,7 @@ test("persisted Neutro sender may send with verified phone and account", async (
   assert.equal(await checkWhatsAppDispatchContact(contact, {}, {
     env, database: database({
       whatsapp_sender_id: 1, whatsapp_number: contact.whatsapp_number,
-      sender_conversation_id: 20, sender_key: "neutro",
+      sender_conversation_id: 20, bound_sender_id: 1, customer_wa_id: contact.whatsapp_number, sender_key: "neutro",
       meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
       meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "active",
     }),
@@ -41,7 +41,7 @@ test("primary sender remains authorized when optional sender key is unset but DB
   }, {}, {
     env: noKey, database: database({
       whatsapp_sender_id: 1, whatsapp_number: contact.whatsapp_number,
-      sender_conversation_id: 20, sender_key: "neutro",
+      sender_conversation_id: 20, bound_sender_id: 1, customer_wa_id: contact.whatsapp_number, sender_key: "neutro",
       meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
       meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "active",
     }),
@@ -53,7 +53,7 @@ test("caller-supplied sender labels must agree with authoritative DB identity", 
   }, {}, {
     env, database: database({
       whatsapp_sender_id: 1, whatsapp_number: contact.whatsapp_number,
-      sender_conversation_id: 20, sender_key: "neutro",
+      sender_conversation_id: 20, bound_sender_id: 1, customer_wa_id: contact.whatsapp_number, sender_key: "neutro",
       meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
       meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "active",
     }),
@@ -64,7 +64,7 @@ test("background retry missing sender fields still blocks Ariel by DB sender", a
   const answer = await checkWhatsAppDispatchContact(contact, {}, {
     env, database: database({
       whatsapp_sender_id: 2, whatsapp_number: contact.whatsapp_number,
-      sender_conversation_id: 21, sender_key: "ariel",
+      sender_conversation_id: 21, bound_sender_id: 2, customer_wa_id: contact.whatsapp_number, sender_key: "ariel",
       meta_phone_number_id: "110552088553929",
       meta_account_id: "200000000000002", sender_state: "active",
     }),
@@ -76,12 +76,17 @@ test("unknown, unbound, disabled or mismatched identities fail closed", async ()
     null,
     { whatsapp_sender_id: 2, whatsapp_number: contact.whatsapp_number },
     { whatsapp_sender_id: 2, whatsapp_number: contact.whatsapp_number,
-      sender_conversation_id: 21, sender_key: "neutro",
+      sender_conversation_id: 21, bound_sender_id: 2, customer_wa_id: contact.whatsapp_number, sender_key: "neutro",
       meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
       meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "disabled" },
     { whatsapp_sender_id: null, whatsapp_number: contact.whatsapp_number,
       sender_conversation_id: 22 },
     { whatsapp_sender_id: null, whatsapp_number: "60122229999" },
+    { whatsapp_sender_id: 2, whatsapp_number: contact.whatsapp_number,
+      sender_conversation_id: 21, bound_sender_id: 1,
+      customer_wa_id: contact.whatsapp_number, sender_key: "neutro",
+      meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+      meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "active" },
   ]) {
     const answer = await checkWhatsAppDispatchContact(contact, {}, {
       env, database: database(row),

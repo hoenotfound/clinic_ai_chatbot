@@ -30,7 +30,7 @@ function senderAwareEchoesEnabled() {
 function verifiedPrimaryEchoIdentity(echo) {
   const phone = String(echo?.businessPhoneNumberId || "").trim();
   const account = String(echo?.businessAccountId || "").trim();
-  if (!/^\\d+$/.test(phone) || !/^\\d+$/.test(account) ||
+  if (!/^\d+$/.test(phone) || !/^\d+$/.test(account) ||
       phone !== String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
       account !== String(process.env.WHATSAPP_WABA_ID || "").trim()) {
     throw new Error("Business App echo does not identify the verified primary sender.");
@@ -245,4 +245,5 @@ module.exports = {
   persistBusinessAppEcho,
   finalizeBusinessAppEcho,
   summarizePassiveSync,
+  verifiedPrimaryEchoIdentity,
 };
