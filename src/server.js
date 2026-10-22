@@ -239,12 +239,21 @@ async function sendTrackedText(
 
   let sendResult;
   try {
-    const secondaryAi = contact.channel === "whatsapp" &&
-      contact.whatsapp_sender_id != null &&
-      contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
+    const verifiedContact = contact.channel === "whatsapp" &&
+      contact.whatsapp_sender_id != null && !contact.whatsapp_sender_key
+      ? await contactsRepo.getContactById(contact.id) : contact;
+    if (verifiedContact?.whatsapp_sender_id != null &&
+        (!verifiedContact.whatsapp_sender_key ||
+         !verifiedContact.whatsapp_sender_phone_number_id ||
+         !verifiedContact.whatsapp_sender_account_id)) {
+      throw new Error("Cannot verify persisted WhatsApp sender before AI dispatch.");
+    }
+    const secondaryAi = verifiedContact.channel === "whatsapp" &&
+      verifiedContact.whatsapp_sender_id != null &&
+      verifiedContact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
     sendResult = secondaryAi
       ? await sendSecondaryStaffText({
-          contact, messageId: saved.id, text, origin,
+          contact: verifiedContact, messageId: saved.id, text, origin,
           preSendCheck: guarded ? canSend : null,
         })
       : await channelMessaging.sendText(
