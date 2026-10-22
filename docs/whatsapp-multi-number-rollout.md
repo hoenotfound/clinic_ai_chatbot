@@ -24,8 +24,22 @@ before activation; never assume that display names identify the active sender.
   `entry.id` (WhatsApp account) and
   `value.metadata.phone_number_id` (receiving business phone).
 - It rejects unknown, disabled, and mismatched senders instead of guessing.
+- Testing-state senders can be inspected but NEVER authorize live routing; there
+  is no caller-controlled `allowTesting` bypass. Explicit activation is a
+  separate, reviewed workflow, not a webhook option.
+- Registry lookup Maps are private; callers see immutable sender snapshots.
+- Customer identities use the same side-effect-free Malaysian phone
+  normalizer as the existing contact database, with strict key validation.
 - All existing WhatsApp inbound, status, reaction and Business App echo parsers
-  now carry optional `businessPhoneNumberId` from provider metadata.
+  now carry optional `businessPhoneNumberId` AND `businessAccountId` from
+  provider metadata and the corresponding entry (only when receiving-phone
+  metadata is available).
+- The new **standalone** batch inspector validates the top-level webhook type,
+  recognizes message/status/Business App echo events, classifies passive
+  `history` and `smb_app_state_sync`, and rejects new/unrecognized event fields.
+  A future ingress integration must quarantine unsupported event batches with
+  operational alerts rather than redelivering them endlessly.
+- Passive sync is not a customer conversation and must never trigger AI replies.
 - Existing single-sender transport and all live webhooks are unchanged.
 - The new registry validator is **not connected to live processing yet**.
   Future routing must validate an entire batch before persisting any part.
