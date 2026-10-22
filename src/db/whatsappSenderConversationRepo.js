@@ -73,6 +73,104 @@ async function bindExistingContact(conversationId, existingContactId, database =
   return result.rows[0] || null;
 }
 
+// Atomic, sender-qualified contact claim. A customer contacting two business
+// numbers owns two contacts and two independent AI/pipeline/opt-out histories.
+// Nothing calls this on the legacy webhook until sender routing is verified.
+async function claimSenderContact({
+  accountId, phoneNumberId, customerPhone, profileName = null,
+}, database = pool, env = process.env) {
+  const account = digits(accountId, "Meta WhatsApp account ID");
+  const phone = digits(phoneNumberId, "Meta receiving phone ID");
+  const customer = customerId(customerPhone);
+  const primaryPhone = String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+  const primaryAccount = String(env.WHATSAPP_WABA_ID || "").trim();
+  const isVerifiedPrimary = primaryPhone === phone && primaryAccount === account;
+  if (phone === primaryPhone && !isVerifiedPrimary) {
+    throw new Error("Primary WhatsApp sender account is not verified.");
+  }
+  if (typeof database.connect !== "function") {
+    throw new Error("Sender-scoped claims require a transaction-capable database.");
+  }
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const s = await client.query(
+      "SELECT id, sender_key, display_name, meta_phone_number_id, meta_account_id " +
+      "FROM whatsapp_sender_accounts WHERE meta_phone_number_id=$1 " +
+      "AND meta_account_id=$2 AND state='active' FOR SHARE",
+      [phone, account]
+    );
+    const sender = s.rows[0];
+    if (!sender) throw new Error("WhatsApp sender is not authorized or enabled.");
+
+    // Serialize claims for one sender/customer across workers and webhook retries.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+      [phone, customer]
+    );
+    let contact = (await client.query(
+      "SELECT * FROM contacts WHERE channel='whatsapp' " +
+      "AND whatsapp_sender_id=$1 AND whatsapp_number=$2 FOR UPDATE",
+      [sender.id, customer]
+    )).rows[0];
+
+    if (!contact && isVerifiedPrimary) {
+      // Preserve the original Neutro contact ID and its historical data.
+      // Only the independently verified production Meta pair may adopt it.
+      contact = (await client.query(
+        "UPDATE contacts SET whatsapp_sender_id=$2, updated_at=NOW() " +
+        "WHERE id = (SELECT id FROM contacts WHERE channel='whatsapp' " +
+        "AND whatsapp_sender_id IS NULL AND whatsapp_number=$1 FOR UPDATE) " +
+        "RETURNING *",
+        [customer, sender.id]
+      )).rows[0];
+    }
+
+    if (!contact) {
+      contact = (await client.query(
+        "INSERT INTO contacts (whatsapp_number, whatsapp_profile_name, whatsapp_sender_id) " +
+        "VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING *",
+        [customer, typeof profileName === "string" ? profileName.trim() || null : null, sender.id]
+      )).rows[0];
+      if (!contact) {
+        contact = (await client.query(
+          "SELECT * FROM contacts WHERE channel='whatsapp' " +
+          "AND whatsapp_sender_id=$1 AND whatsapp_number=$2",
+          [sender.id, customer]
+        )).rows[0];
+      }
+    }
+    if (!contact) throw new Error("Could not claim sender-scoped contact.");
+
+    const bound = (await client.query(
+      "INSERT INTO whatsapp_sender_conversations " +
+      "(sender_id,customer_wa_id,contact_id,state) VALUES ($1,$2,$3,'bound') " +
+      "ON CONFLICT (sender_id,customer_wa_id) DO UPDATE SET " +
+      "contact_id=EXCLUDED.contact_id, state='bound', updated_at=NOW() " +
+      "WHERE whatsapp_sender_conversations.contact_id IS NULL " +
+      "OR whatsapp_sender_conversations.contact_id=EXCLUDED.contact_id " +
+      "RETURNING id",
+      [sender.id, customer, contact.id]
+    )).rows[0];
+    if (!bound) throw new Error("Sender conversation belongs to a different contact.");
+
+    await client.query("COMMIT");
+    return {
+      ...contact,
+      whatsapp_sender_key: sender.sender_key,
+      whatsapp_sender_display_name: sender.display_name,
+      whatsapp_sender_phone_number_id: sender.meta_phone_number_id,
+      whatsapp_sender_account_id: sender.meta_account_id,
+      whatsapp_sender_conversation_id: bound.id,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // A message may belong to exactly one sender conversation. This operation
 // never changes a historic message or reassigns an existing sender context.
 async function attachMessageContext({ messageId, contactId, conversationId }, database = pool) {
@@ -113,6 +211,7 @@ async function senderForContact(existingContactId, database = pool) {
 
 module.exports = {
   reservePendingConversation,
+  claimSenderContact,
   findConversationBySender,
   bindExistingContact,
   senderForContact,
