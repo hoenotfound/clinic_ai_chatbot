@@ -81,9 +81,14 @@ function partitionLegacyWhatsAppWebhook(body, {
       const field = change?.field;
       const action = isActionable(change);
       const { phoneNumberId } = senderEvidence(entry, change);
+      const rawPhoneNumberId = change?.value?.metadata?.phone_number_id;
+      const suppliedInvalidPhoneId = rawPhoneNumberId !== null
+        && rawPhoneNumberId !== undefined && !phoneNumberId;
       let reason = null;
       if (field && !ROUTABLE_FIELDS.has(field) && !PASSIVE_FIELDS.has(field)) {
         reason = "unsupported_whatsapp_event";
+      } else if (ROUTABLE_FIELDS.has(field) && action && suppliedInvalidPhoneId) {
+        reason = "invalid_business_phone";
       } else if (ROUTABLE_FIELDS.has(field) && action && phoneNumberId && phoneNumberId !== expected) {
         reason = "different_business_phone";
       } else if (ROUTABLE_FIELDS.has(field) && action && strictMissingMetadata && !phoneNumberId) {
