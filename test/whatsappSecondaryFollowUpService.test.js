@@ -90,7 +90,9 @@ test("one eligible Ariel followup is durably claimed before sender-specific send
   assert.equal(send.send.contact.whatsapp_sender_key,"ariel");
   assert.equal(save.save[8].isAutomatedFollowUp,true);
   assert.equal(save.save[8].whatsappTemplate.automatedSecondaryFollowup,true);
-  assert.deepEqual(provider.persist,[912,"wamid.ariel-followup"]);
+  assert.deepEqual(provider.persist,[912,"wamid.ariel-followup",{
+    preserveVerifiedSecondaryReceipt:true,
+  }]);
   const audit=f.calls.find(x=>x.sql?.includes("status='accepted'"));
   assert.ok(audit);
 });
