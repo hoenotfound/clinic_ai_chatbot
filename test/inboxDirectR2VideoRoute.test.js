@@ -84,21 +84,24 @@ test("Inbox media HTTP route enforces staff access and ownership before signing,
 
   let r = await get("/101/messages/81/media");
   assert.equal(r.status, 403);
-  assert.equal(lookups, 1);
+  assert.equal(lookups, 0, "Unauthorized staff must not look up media metadata.");
   assert.equal(signCalls, 0);
 
   r = await get("/101/messages/81/media?delivery=proxy");
   assert.equal(r.status, 403);
   assert.equal(streams, 0);
 
-  // Audio remains on the original path with the same access behavior.
+  // Audio is now protected by the same contact-level authorization, even
+  // though it does not use the optional direct-R2 video path.
+  r = await get("/101/messages/83/media");
+  assert.equal(r.status,403);
+  allowed = true;
   r = await get("/101/messages/83/media");
   assert.equal(r.status, 200);
   assert.equal(await r.text(), "abcdefghij");
   assert.equal(signCalls, 0);
   assert.equal(headCalls, 0);
 
-  allowed = true;
   r = await get("/101/messages/82/media");
   assert.equal(r.status, 404);
   assert.equal(signCalls, 0);
@@ -124,10 +127,9 @@ test("Inbox media HTTP route enforces staff access and ownership before signing,
   assert.equal(streams, 2);
 
   process.env.INBOX_DIRECT_R2_VIDEO_ENABLED = "false";
-  allowed = false; // No new permission gate for deployments without direct video.
+  allowed = false; // Staff access remains mandatory without direct video.
   r = await get("/101/messages/81/media");
-  assert.equal(r.status, 200);
-  assert.equal(await r.text(), "abcdefghij");
+  assert.equal(r.status, 403);
   assert.equal(signCalls, 1);
-  assert.equal(streams, 3);
+  assert.equal(streams, 2);
 });
