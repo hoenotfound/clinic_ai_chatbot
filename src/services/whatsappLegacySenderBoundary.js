@@ -165,6 +165,11 @@ function partitionLegacyWhatsAppWebhook(body, {
     quarantined,
     configured: true,
     acceptedChanges: entries.reduce((n, entry) => n + entry.changes.length, 0),
+    // Passive sync has no patient turn and must not relax durable quarantine.
+    acceptedActionable: entries.reduce((n, entry) => n + entry.changes.reduce(
+      (count, change) => count + (ROUTABLE_FIELDS.has(change.field)
+        && hasEvents(change.value, change.field) ? 1 : 0), 0
+    ), 0),
   };
 }
 
