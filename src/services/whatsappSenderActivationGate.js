@@ -8,8 +8,9 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const staff = env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true";
   const media = env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED === "true";
   const template = env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true";
+  const templateMedia = env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED === "true";
   const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
-  if (!receiptIngress && !autoReconcile && !staff && !media && !template && !ai) return;
+  if (!receiptIngress && !autoReconcile && !staff && !media && !template && !templateMedia && !ai) return;
 
   const common = [
     "WHATSAPP_MULTI_NUMBER_READ_ENABLED",
@@ -25,6 +26,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
     "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
   ];
   if ((media && !staff) || (template && !staff) ||
+      (templateMedia && !template) ||
       (autoReconcile && !receiptIngress) ||
       [...common,...((staff || ai || media) ? sending : [])]
       .some(key => env[key] !== "true") ||
