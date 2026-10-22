@@ -5,6 +5,7 @@ const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const repo = require("../src/db/whatsappSenderConversationRepo");
 const echoRepo = require("../src/db/whatsappCoexistenceRepo");
+const statusRepo = require("../src/db/whatsappDeliveryStatusRepo");
 const { primaryBillingContactId } = require("../src/services/whatsappZeroCostGuard");
 const { assertStoredSenderSafety } = require("../src/services/whatsappSenderActivationGate");
 
@@ -186,6 +187,47 @@ test("migration 080 allows two contact identities for the same customer while re
         messageId: arielMessage.id, contactId: ariel.id,
         conversationId: arielMapping.conversation_id,
       }, db));
+      const primaryStatus = (await db.query(
+        "INSERT INTO messages (contact_id,role,content,whatsapp_message_id) " +
+        "VALUES($1,'assistant','test','wamid-scope-primary') RETURNING id",
+        [oldContact]
+      )).rows[0];
+      const secondaryStatus = (await db.query(
+        "INSERT INTO messages (contact_id,role,content,whatsapp_message_id) " +
+        "VALUES($1,'assistant','test','wamid-scope-ariel') RETURNING id",
+        [ariel.id]
+      )).rows[0];
+      const mode={WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+        WHATSAPP_PHONE_NUMBER_ID:primaryEnv.WHATSAPP_PHONE_NUMBER_ID,
+        WHATSAPP_WABA_ID:primaryEnv.WHATSAPP_WABA_ID};
+      assert.equal((await statusRepo.verifyJobSender({
+        wamid:"wamid-scope-primary",
+        business_phone_number_id:primaryEnv.WHATSAPP_PHONE_NUMBER_ID,
+        business_account_id:primaryEnv.WHATSAPP_WABA_ID,
+      },{query:db.query.bind(db),env:mode})).matched,true);
+      assert.equal((await statusRepo.verifyJobSender({
+        wamid:"wamid-scope-primary",
+        business_phone_number_id:"100000000000002",
+        business_account_id:"200000000000002",
+      },{query:db.query.bind(db),env:mode})).matched,false);
+      assert.equal((await statusRepo.verifyJobSender({
+        wamid:"wamid-scope-ariel",
+        business_phone_number_id:"100000000000002",
+        business_account_id:"200000000000002",
+      },{query:db.query.bind(db),env:mode})).matched,true);
+      assert.equal((await statusRepo.verifyJobSender({
+        wamid:"wamid-scope-ariel",
+        business_phone_number_id:primaryEnv.WHATSAPP_PHONE_NUMBER_ID,
+        business_account_id:primaryEnv.WHATSAPP_WABA_ID,
+      },{query:db.query.bind(db),env:mode})).matched,false);
+      assert.equal((await statusRepo.verifyJobSender({
+        wamid:"wamid-scope-ariel",
+      },{query:db.query.bind(db),env:mode})).matched,false);
+      assert.equal((await statusRepo.verifyJobSender({
+        wamid:"wamid-unknown",
+        business_phone_number_id:"100000000000002",
+        business_account_id:"200000000000002",
+      },{query:db.query.bind(db),env:mode})).matched,null);
       await db.query("DELETE FROM contacts WHERE id=$1", [ariel.id]);
       assert.equal((await db.query(
         "SELECT COUNT(*)::int AS n FROM whatsapp_sender_conversations WHERE contact_id=$1",

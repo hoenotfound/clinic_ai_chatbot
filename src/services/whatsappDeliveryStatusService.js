@@ -224,6 +224,15 @@ function createWhatsAppDeliveryStatusService({
   }
 
   async function processClaimedJob(job) {
+    if (typeof repo.verifyJobSender === "function") {
+      const checked = await repo.verifyJobSender(job);
+      if (checked?.matched === false) {
+        const err = new Error("WhatsApp provider status cannot be applied to " +
+          "a message from another or unverified Meta receiving number.");
+        err.code = "DELIVERY_STATUS_SENDER_MISMATCH";
+        throw err;
+      }
+    }
     const errorText = job.error_message || job.error_title || null;
     let statusAppliedNow = false;
     let updatedMessage = await messages.updateDeliveryStatusByWamid(

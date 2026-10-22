@@ -314,6 +314,37 @@ async function markTerminal(id, query = pool.query.bind(pool)) {
   return result.rows[0] || null;
 }
 
+// A durable status callback may update ONLY the message belonging to its
+// verified receiving-business account. This is checked before any UPDATE by
+// WAMID or provider retry. Legacy deployments keep their original behavior.
+async function verifyJobSender(job, {
+  query = pool.query.bind(pool), env = process.env,
+} = {}) {
+  if(env.WHATSAPP_MULTI_NUMBER_READ_ENABLED!=="true") return {matched:true};
+  const phone=String(job?.business_phone_number_id||"").trim();
+  const account=String(job?.business_account_id||"").trim();
+  if(!/^[0-9]+$/.test(phone)||!/^[0-9]+$/.test(account))
+    return {matched:false,reason:"missing_verified_meta_sender"};
+  const result=await query(
+    "SELECT c.whatsapp_sender_id, sa.meta_phone_number_id,sa.meta_account_id " +
+    "FROM messages m JOIN contacts c ON c.id=m.contact_id " +
+    "LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
+    "WHERE m.whatsapp_message_id=$1 LIMIT 2",
+    [job.wamid]
+  );
+  if(!result.rows?.length)return {matched:null,reason:"message_not_linked"};
+  if(result.rows.length!==1)return {matched:false,reason:"ambiguous_provider_message"};
+  const row=result.rows[0];
+  const expectedPhone=row.whatsapp_sender_id == null
+    ? String(env.WHATSAPP_PHONE_NUMBER_ID||"").trim()
+    : row.meta_phone_number_id;
+  const expectedAccount=row.whatsapp_sender_id == null
+    ? String(env.WHATSAPP_WABA_ID||"").trim()
+    : row.meta_account_id;
+  return {matched:phone===expectedPhone && account===expectedAccount,
+    reason:"verified_sender_mismatch"};
+}
+
 async function findMessageByWamid(wamid, query = pool.query.bind(pool)) {
   const result = await query(
     `SELECT id, contact_id, whatsapp_message_id, delivery_status, delivery_error
@@ -468,6 +499,7 @@ module.exports = {
   markFailed,
   markTerminal,
   findMessageByWamid,
+  verifyJobSender,
   setDeliveryAttentionState,
   pruneCompleted,
   flagUnmatchedCompletedFailures,
