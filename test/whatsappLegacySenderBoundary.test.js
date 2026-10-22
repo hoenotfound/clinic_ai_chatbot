@@ -130,8 +130,12 @@ test("legacy safety checks are positioned before the durable webhook claims", ()
   const durableAudit = code.indexOf("await recordQuarantinedWhatsAppChanges", start);
   const parse = code.indexOf("whatsapp.parseIncomingMessages(webhookBody)", start);
   const durableClaim = code.indexOf("await durablyClaimIncoming(", start);
+  const ack = code.indexOf("res.sendStatus(200)", start);
+  const mixedAudit = code.indexOf("void recordQuarantinedWhatsAppChanges", ack);
   assert.ok(start >= 0 && start < boundary && boundary < durableAudit
-    && durableAudit < parse && parse < durableClaim);
+    && durableAudit < parse && parse < durableClaim && durableClaim < ack
+    && ack < mixedAudit);
+  assert.match(code.slice(start, ack), /if \(quarantineOnly\)/);
 });
 
 test("replays produce the same durable fingerprint without retaining message content", () => {
@@ -141,12 +145,74 @@ test("replays produce the same durable fingerprint without retaining message con
   assert.equal(a.quarantined[0].fingerprint, b.quarantined[0].fingerprint);
 });
 
-test("does not silently route unknown numbers when no configured legacy sender ID is provided", () => {
-  const payload = callback([change(ARIEL, "wamid.ariel")]);
-  const result = partitionLegacyWhatsAppWebhook(payload);
-  assert.equal(result.configured, false);
-  assert.deepEqual(result.acceptedBody, payload);
-  assert.deepEqual(result.quarantined, []);
-  // Deployment readiness still must require WHATSAPP_PHONE_NUMBER_ID before
-  // enabling sender-aware routing; this method preserves historical behavior.
+test("missing legacy phone configuration fails closed instead of accepting an unknown sender", () => {
+  assert.throws(
+    () => partitionLegacyWhatsAppWebhook(callback([change(ARIEL, "wamid.ariel")])),
+    err => err.code === "LEGACY_SENDER_CONFIG_MISSING"
+  );
+});
+
+test("strict account ownership rejects a different Meta account even on the same phone ID", () => {
+  const payload = callback([change(NEUTRO, "wamid.account-mismatch")]);
+  const result = partitionLegacyWhatsAppWebhook(payload, {
+    expectedPhoneNumberId: NEUTRO,
+    expectedAccountId: "200000000000002",
+    strictAccount: true,
+  });
+  assert.equal(result.acceptedBody.entry.length, 0);
+  assert.equal(result.quarantined[0].reason, "different_business_account");
+  assert.throws(
+    () => partitionLegacyWhatsAppWebhook(payload, {
+      expectedPhoneNumberId: NEUTRO, strictAccount: true,
+    }),
+    err => err.code === "LEGACY_SENDER_ACCOUNT_CONFIG_MISSING"
+  );
+});
+
+test("malformed arrays, incorrect field types, and disguised passive messages are isolated", () => {
+  const good = change(NEUTRO, "wamid.good");
+  const mixed = callback([
+    { field: "messages", value: {
+      metadata: { phone_number_id: NEUTRO },
+      messages: "not-an-array",
+    } },
+    { field: "history", value: {
+      history: [], messages: [{ id: "wamid.injected", from: "60135550000" }],
+    } },
+    { field: "smb_app_state_sync", value: {
+      state_sync: [], statuses: [{ id: "wamid.fake", status: "read" }],
+    } },
+    { field: "smb_message_echoes", value: {
+      metadata: { phone_number_id: NEUTRO },
+      message_echoes: "wrong-type",
+    } },
+    { field: "messages", value: { messages: [null] } },
+    good,
+  ]);
+  const result = partitionLegacyWhatsAppWebhook(mixed, { expectedPhoneNumberId: NEUTRO });
+  assert.deepEqual(result.acceptedBody.entry[0].changes, [good]);
+  assert.equal(result.quarantined.length, 5);
+  assert.ok(result.quarantined.every(item => item.reason === "malformed_whatsapp_change"));
+});
+
+test("unknown field with a top-level messages list is quarantined", () => {
+  const unknown = change(NEUTRO, "wamid.hijack");
+  unknown.field = "experimental";
+  const result = partitionLegacyWhatsAppWebhook(callback([unknown]), {
+    expectedPhoneNumberId: NEUTRO,
+  });
+  assert.deepEqual(result.acceptedBody.entry, []);
+  assert.equal(result.quarantined[0].reason, "unsupported_whatsapp_event");
+});
+
+test("foreign-only and mixed events return correct audit classification", () => {
+  const foreign = partitionLegacyWhatsAppWebhook(callback([change(ARIEL, "wamid.ariel")]), {
+    expectedPhoneNumberId: NEUTRO,
+  });
+  assert.equal(foreign.acceptedChanges, 0);
+  const mixed = partitionLegacyWhatsAppWebhook(callback([
+    change(ARIEL, "wamid.ariel"), change(NEUTRO, "wamid.neutro"),
+  ]), { expectedPhoneNumberId: NEUTRO });
+  assert.equal(mixed.acceptedChanges, 1);
+  assert.equal(mixed.quarantined.length, 1);
 });
