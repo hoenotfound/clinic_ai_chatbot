@@ -112,6 +112,28 @@ test("invalid webhook is quarantined before customer processing", () => {
   assert.equal(result.quarantined[0].reason, "invalid_whatsapp_webhook");
 });
 
+test("explicitly malformed business sender metadata never falls back to Neutro", () => {
+  const payload = callback([change(ARIEL, "wamid.bad")]);
+  payload.entry[0].changes[0].value.metadata.phone_number_id = "not-a-valid-phone-id";
+  const result = partitionLegacyWhatsAppWebhook(payload, {
+    expectedPhoneNumberId: NEUTRO,
+  });
+  assert.deepEqual(result.acceptedBody.entry, []);
+  assert.equal(result.quarantined[0].reason, "invalid_business_phone");
+});
+
+test("legacy safety checks are positioned before the durable webhook claims", () => {
+  const fs = require("node:fs");
+  const code = fs.readFileSync(require.resolve("../src/createApp"), "utf8");
+  const start = code.indexOf('app.post("/webhook", webhookJsonParser');
+  const boundary = code.indexOf("partitionLegacyWhatsAppWebhook(req.body", start);
+  const durableAudit = code.indexOf("await recordQuarantinedWhatsAppChanges", start);
+  const parse = code.indexOf("whatsapp.parseIncomingMessages(webhookBody)", start);
+  const durableClaim = code.indexOf("await durablyClaimIncoming(", start);
+  assert.ok(start >= 0 && start < boundary && boundary < durableAudit
+    && durableAudit < parse && parse < durableClaim);
+});
+
 test("replays produce the same durable fingerprint without retaining message content", () => {
   const payload = callback([change(ARIEL, "wamid.ariel")]);
   const a = partitionLegacyWhatsAppWebhook(payload, { expectedPhoneNumberId: NEUTRO });
