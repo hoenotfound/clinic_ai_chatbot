@@ -323,8 +323,11 @@ async function verifyJobSender(job, {
   if(env.WHATSAPP_MULTI_NUMBER_READ_ENABLED!=="true") return {matched:true};
   const phone=String(job?.business_phone_number_id||"").trim();
   const account=String(job?.business_account_id||"").trim();
-  if(!/^[0-9]+$/.test(phone)||!/^[0-9]+$/.test(account))
-    return {matched:false,reason:"missing_verified_meta_sender"};
+  const missingSender=!/^[0-9]+$/.test(phone)||!/^[0-9]+$/.test(account);
+  // Jobs committed before sender registration cannot contain the new Meta
+  // business identifiers. They remain recoverable ONLY when the saved WAMID
+  // has one verified primary business owner and the job predates the persisted
+  // registration. Never make this exception for a new untagged webhook.
   const result=await query(
     "SELECT c.whatsapp_sender_id, sa.meta_phone_number_id,sa.meta_account_id " +
     "FROM messages m JOIN contacts c ON c.id=m.contact_id " +
@@ -341,6 +344,26 @@ async function verifyJobSender(job, {
   const expectedAccount=row.whatsapp_sender_id == null
     ? String(env.WHATSAPP_WABA_ID||"").trim()
     : row.meta_account_id;
+  if (missingSender) {
+    const created=Date.parse(String(job?.created_at||""));
+    if (!Number.isFinite(created) ||
+        expectedPhone!==String(env.WHATSAPP_PHONE_NUMBER_ID||"").trim() ||
+        expectedAccount!==String(env.WHATSAPP_WABA_ID||"").trim()) {
+      return {matched:false,reason:"missing_verified_meta_sender"};
+    }
+    const registered=await query(
+      "SELECT created_at FROM whatsapp_sender_accounts " +
+      "WHERE meta_phone_number_id=$1 AND meta_account_id=$2 " +
+      "AND state='active' LIMIT 2",
+      [expectedPhone,expectedAccount]
+    );
+    const activation=registered.rows?.length===1
+      ? Date.parse(String(registered.rows[0].created_at||"")) : NaN;
+    if (!Number.isFinite(activation) || created >= activation) {
+      return {matched:false,reason:"sender_missing_after_activation"};
+    }
+    return {matched:true,reason:"verified_primary_legacy_before_sender_registration"};
+  }
   return {matched:phone===expectedPhone && account===expectedAccount,
     reason:"verified_sender_mismatch"};
 }
