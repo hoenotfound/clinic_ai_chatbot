@@ -73,6 +73,29 @@ async function bindExistingContact(conversationId, existingContactId, database =
   return result.rows[0] || null;
 }
 
+// A message may belong to exactly one sender conversation. This operation
+// never changes a historic message or reassigns an existing sender context.
+async function attachMessageContext({ messageId, contactId, conversationId }, database = pool) {
+  const result = await database.query(
+    "INSERT INTO whatsapp_sender_message_context (message_id, conversation_id) " +
+    "SELECT m.id, sc.id FROM messages m " +
+    "JOIN whatsapp_sender_conversations sc ON sc.contact_id = m.contact_id " +
+    "JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id " +
+    "WHERE m.id = $1 AND m.contact_id = $2 AND sc.id = $3 " +
+    "AND sc.state = 'bound' AND sa.state = 'active' " +
+    "ON CONFLICT (message_id) DO NOTHING RETURNING message_id, conversation_id",
+    [positiveId(messageId), positiveId(contactId), positiveId(conversationId)]
+  );
+  if (result.rows[0]) return result.rows[0];
+  // Only an identical previous association is safe to treat as a replay.
+  const previous = await database.query(
+    "SELECT message_id, conversation_id FROM whatsapp_sender_message_context " +
+    "WHERE message_id = $1 AND conversation_id = $2",
+    [positiveId(messageId), positiveId(conversationId)]
+  );
+  return previous.rows[0] || null;
+}
+
 async function senderForContact(existingContactId, database = pool) {
   const result = await database.query(
     "SELECT sc.id AS conversation_id, sc.customer_wa_id, sa.sender_key, " +
@@ -90,4 +113,5 @@ module.exports = {
   findConversationBySender,
   bindExistingContact,
   senderForContact,
+  attachMessageContext,
 };
