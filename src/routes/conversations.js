@@ -55,8 +55,15 @@ router.param("contactId", async (req,res,next,value) => {
     if (!await canAccessContact(req.user,id)) {
       return res.status(403).json({ error:"You cannot access this conversation." });
     }
-    const sending = req.method === "POST" &&
-      (/^\\/[^/]+\\/(?:messages(?:\\/[^/]+\\/(?:retry|forward))?|media|video|document|voice|whatsapp-templates\\/send)$/.test(req.path));
+    const routeParts = String(req.path || "").split("/").filter(Boolean).slice(1);
+    const sending = req.method === "POST" && (
+      (routeParts.length === 1 &&
+        ["messages","media","video","document","voice"].includes(routeParts[0])) ||
+      (routeParts.length === 2 && routeParts[0] === "whatsapp-templates" &&
+        routeParts[1] === "send") ||
+      (routeParts.length === 3 && routeParts[0] === "messages" &&
+        ["retry","forward"].includes(routeParts[2]))
+    );
     if (sending && !hasCapability(req.user,"reply_to_assigned_leads")) {
       return res.status(403).json({ error:"You cannot reply to this conversation." });
     }
