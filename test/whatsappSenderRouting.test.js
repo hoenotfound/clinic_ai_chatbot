@@ -10,16 +10,16 @@ const {
 
 const existing = {
   key: "neutro",
-  phoneNumberId: "1408739622311791",
-  accountId: "2096503054342118",
+  phoneNumberId: "100000000000001",
+  accountId: "200000000000001",
   displayName: "Neutro Sense TCM",
   state: "active",
   coexistenceEnabled: false,
 };
 const ariel = {
   key: "ariel",
-  phoneNumberId: "110552088553929",
-  accountId: "758291387233325",
+  phoneNumberId: "100000000000002",
+  accountId: "200000000000002",
   displayName: "Ariel Lee",
   state: "testing",
   coexistenceEnabled: true,
