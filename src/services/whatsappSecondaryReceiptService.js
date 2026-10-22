@@ -148,7 +148,8 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
-   ON g.sender_id=a.sender_id AND g.reservation_id=a.reservation_id
+   ON g.sender_id=a.sender_id AND g.owner_contact_id=a.contact_id
+   AND g.reservation_id=a.reservation_id
    AND g.contact_id=a.contact_id AND g.message_id=a.message_id
  JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
  JOIN contacts c ON c.id=a.contact_id AND c.whatsapp_sender_id=sa.id
@@ -194,7 +195,7 @@ async function recordSignedSecondaryStatusBatch({
     transaction = true;
     const sender = await client.query(
       "SELECT id FROM whatsapp_sender_accounts WHERE sender_key=$1 " +
-      "AND meta_phone_number_id=$2 AND meta_account_id=$3 AND state='active'",
+      "AND meta_phone_number_id=$2 AND meta_account_id=$3 AND state='active' FOR UPDATE",
       [env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID]
     );
