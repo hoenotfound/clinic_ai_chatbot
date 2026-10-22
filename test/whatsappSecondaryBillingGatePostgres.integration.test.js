@@ -313,3 +313,56 @@ test("provider outcomes of two Ariel customers remain isolated in reversed Meta 
     )).rows[0].n,0);
   });
 });
+
+
+test("definitive Meta 400 response releases only that customer's gate and retains rejected audit",
+ {skip:!connectionString},async()=>{
+  await isolatedSchema(async({db,database})=>{
+    const sender=(await db.query(
+      "INSERT INTO whatsapp_sender_accounts " +
+      "(sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
+      "VALUES('ariel','100000000000002','200000000000002','Ariel','active') RETURNING id"
+    )).rows[0].id;
+    const c=(await db.query(
+      "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) " +
+      "VALUES('whatsapp','60125550123',$1) RETURNING id",[sender]
+    )).rows[0].id;
+    const sc=(await db.query(
+      "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) " +
+      "VALUES($1,'60125550123',$2,'bound') RETURNING id",[sender,c]
+    )).rows[0].id;
+    const m=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','failed') RETURNING id",
+      [c]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [m,sc]
+    );
+    const reserved=await billing.reserveSecondaryBillingAttempt({
+      contactId:c,messageId:m,
+    },{database,env});
+    assert.equal(reserved.reserved,true);
+    const result=await billing.recordSecondaryProviderOutcome({
+      reservationId:reserved.reservationId,definitivelyRejected:true,
+    },{database,env});
+    assert.equal(result.recorded,true);
+    assert.equal(result.state,"rejected");
+    const gate=(await db.query(
+      "SELECT state,reservation_id,wamid FROM whatsapp_sender_billing_gates " +
+      "WHERE sender_id=$1 AND owner_contact_id=$2",[sender,c]
+    )).rows[0];
+    assert.equal(gate.state,"idle");
+    assert.equal(gate.reservation_id,null);
+    assert.equal(gate.wamid,null);
+    const attempt=(await db.query(
+      "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+      [reserved.reservationId]
+    )).rows[0];
+    assert.equal(attempt.state,"rejected");
+    assert.equal((await billing.reserveSecondaryBillingAttempt({
+      contactId:c,messageId:m,
+    },{database,env})).reserved,false,
+      "Original saved message cannot be resent after Meta rejects it");
+  });
+});
