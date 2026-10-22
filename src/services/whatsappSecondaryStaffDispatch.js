@@ -33,6 +33,7 @@ const ALLOWED_RESERVATION_SQL = `
 
 async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
+  origin = "staff", preSendCheck = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -40,7 +41,11 @@ async function sendSecondaryStaffText({
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
 } = {}) {
-  if (env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" ||
+  const authorizedOrigin = origin === "staff" ?
+    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" :
+    ["ai_reply","system_fallback"].includes(origin) &&
+    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
+  if (!authorizedOrigin ||
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED !== "true" ||
       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED !== "true" ||
@@ -60,6 +65,9 @@ async function sendSecondaryStaffText({
     return block("secondary_staff_send_invalid_input");
   }
 
+  if (typeof preSendCheck === "function" && preSendCheck() !== true) {
+    return { ...block("secondary_send_cancelled"), cancelled: true };
+  }
   const before = await policyService.previewSecondaryFreeformPolicy(contact, {
     database, env, now: now(), purpose: "service",
   });
@@ -120,6 +128,11 @@ async function sendSecondaryStaffText({
     const fresh = await policyService.previewSecondaryFreeformPolicy(contact, {
       database, env, now: now(), purpose: "service",
     });
+    if (typeof preSendCheck === "function" && preSendCheck() !== true) {
+      await markUnknown();
+      return { ...block("secondary_send_cancelled_after_reservation"),
+        unknown: true, ambiguous: true };
+    }
     if (fresh.policyAllowed !== true) {
       await markUnknown();
       return block(fresh.code || "secondary_staff_policy_changed");
