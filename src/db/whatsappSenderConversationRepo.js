@@ -115,14 +115,19 @@ async function claimSenderContact({
     )).rows[0];
 
     if (!contact && isVerifiedPrimary) {
-      // Preserve the original Neutro contact ID and its historical data.
-      // Only the independently verified production Meta pair may adopt it.
+      // Preserve the original Neutro contact ID and historical data,
+      // including Malaysian local 01x storage from older portal versions.
+      // Never adopt a legacy contact for another business sender.
+      const localNumber = /^60(1\\d{8,9})$/.test(customer)
+        ? "0" + customer.slice(2) : null;
       contact = (await client.query(
-        "UPDATE contacts SET whatsapp_sender_id=$2, updated_at=NOW() " +
+        "UPDATE contacts SET whatsapp_sender_id=$3, " +
+        "whatsapp_number=$1, updated_at=NOW() " +
         "WHERE id = (SELECT id FROM contacts WHERE channel='whatsapp' " +
-        "AND whatsapp_sender_id IS NULL AND whatsapp_number=$1 FOR UPDATE) " +
-        "RETURNING *",
-        [customer, sender.id]
+        "AND whatsapp_sender_id IS NULL AND whatsapp_number IN ($1,$2) " +
+        "ORDER BY CASE WHEN whatsapp_number=$1 THEN 0 ELSE 1 END " +
+        "LIMIT 1 FOR UPDATE) RETURNING *",
+        [customer, localNumber, sender.id]
       )).rows[0];
     }
 
