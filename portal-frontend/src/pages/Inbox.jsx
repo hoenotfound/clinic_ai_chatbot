@@ -3421,6 +3421,7 @@ function ThreadView({
               <MessageBubble
                 contactId={contact.contact_id}
                 channel={contact.channel}
+                isSecondaryWhatsApp={contact.whatsapp_is_secondary === true}
                 message={message}
                 onImageClick={setLightboxSrc}
                 onRetry={onRetryMessage}
@@ -4067,6 +4068,7 @@ function OnDemandInboxVideo({ src, uploading = false }) {
 function MessageBubble({
   contactId,
   channel,
+  isSecondaryWhatsApp = false,
   message,
   onImageClick,
   onRetry,
@@ -4384,7 +4386,7 @@ function MessageBubble({
               <span className="text-[10px] font-semibold">
                 {deliveryUnconfirmed ? "Delivery unconfirmed" : "Not delivered"}
               </span>
-              {!policyFailureExplanationText && (
+              {!policyFailureExplanationText && !isSecondaryWhatsApp && (
                 <button
                   type="button"
                   onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.(message) : onRetry?.(message.id)}
@@ -4396,6 +4398,11 @@ function MessageBubble({
                 </button>
               )}
             </div>
+            {isSecondaryWhatsApp && (
+              <p className="mt-1 text-[10px] leading-snug opacity-80">
+                Ariel retry is disabled to prevent duplicate Meta sends and charges. Verify delivery and billing before composing a new message.
+              </p>
+            )}
             {message.whatsapp_template && !policyFailureExplanationText && (
               <p className="mt-1 text-[10px] leading-snug opacity-80">
                 A previous send may have reached the customer or incurred a charge. Check delivery before reviewing another template.
