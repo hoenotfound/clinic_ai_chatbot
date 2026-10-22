@@ -29,12 +29,32 @@ ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS whatsapp_sender_id BIGINT
     REFERENCES whatsapp_sender_accounts(id);
 
-CREATE INDEX IF NOT EXISTS idx_contacts_whatsapp_sender
-  ON contacts(whatsapp_sender_id, whatsapp_number)
-  WHERE channel = 'whatsapp';
-CREATE INDEX IF NOT EXISTS idx_messages_whatsapp_sender
-  ON messages(whatsapp_sender_id, contact_id, created_at DESC, id DESC)
-  WHERE whatsapp_sender_id IS NOT NULL;
-
+-- Changes to existing hot tables are kept minimal. Sender-scoped indexes
+-- should be created in a later online migration when sender-aware contact and
+-- message writes are complete, rather than during this foundation deployment.
 -- Keep contacts_whatsapp_number_key and idx_contacts_channel_user_id intact.
--- Old single-sender production behavior must not change in this foundation PR.
+
+-- Record unexpected Meta callbacks without storing their raw customer content.
+-- The only key is a SHA-256 hash of the event, so Meta retries are idempotent.
+CREATE TABLE IF NOT EXISTS whatsapp_sender_quarantined_events (
+  fingerprint TEXT PRIMARY KEY
+    CHECK (fingerprint ~ '^[a-f0-9]{64}
+),
+  reason TEXT NOT NULL
+    CHECK (reason IN (
+      'different_business_phone',
+      'missing_business_phone',
+      'unsupported_whatsapp_event',
+      'invalid_whatsapp_entry',
+      'invalid_whatsapp_webhook',
+      'malformed_whatsapp_change'
+    )),
+  event_field TEXT NOT NULL,
+  meta_account_id TEXT,
+  meta_phone_number_id TEXT,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  seen_count BIGINT NOT NULL DEFAULT 1
+);
+-- No backfill, customer record rewrite, existing unique constraint change,
+-- new index on a live table, or sender activation in this migration.
