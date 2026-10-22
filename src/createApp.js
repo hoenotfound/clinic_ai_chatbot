@@ -5,6 +5,7 @@ const cookieSession = require("cookie-session");
 const whatsapp = require("./services/whatsappService");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
+const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
@@ -125,27 +126,38 @@ function createApp({
   });
 
   app.post("/webhook", webhookJsonParser, async (req, res) => {
-    // Keep the existing production sender isolated even when Meta unexpectedly
-    // delivers another business phone to the shared callback. Store an opaque
-    // audit fingerprint BEFORE accepting valid work, so unknown events cannot
-    // become legacy contacts or trigger the wrong sender's AI.
+    // The single-sender compatibility boundary runs only AFTER Meta signature
+    // verification. It rejects explicitly foreign sender events before any
+    // legacy customer lookups, AI cancellation, or receipt writes.
     let isolated;
     try {
       isolated = partitionLegacyWhatsAppWebhook(req.body, {
         expectedPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
-        // Opt in only once production callback metadata is verified. Legacy
-        // payloads with absent metadata retain their original behavior.
+        // Account validation must be enabled only after the real callback
+        // account ID has been checked against the client's WABA setting.
+        expectedAccountId: process.env.WHATSAPP_WABA_ID,
+        strictAccount: process.env.WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED === "true",
         strictMissingMetadata: process.env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA === "true",
       });
-      if (isolated.quarantined.length) {
-        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
-        console.warn(
-          `Quarantined ${isolated.quarantined.length} foreign/unsupported WhatsApp webhook change(s); existing sender preserved.`
-        );
-      }
     } catch (err) {
-      console.error("Could not durably isolate foreign WhatsApp webhook events:", err);
+      console.error("Rejected WhatsApp webhook due to sender config or payload limit:", err);
       return res.sendStatus(503);
+    }
+
+    // A foreign-only callback has no valid Neutro work to delay. Persist
+    // its privacy-safe audit before ACK; a transient DB failure asks Meta
+    // to retry instead of silently dropping an unknown callback.
+    const quarantineOnly = isolated.quarantined.length > 0
+      && isolated.acceptedChanges === 0;
+    if (quarantineOnly) {
+      try {
+        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
+      } catch (err) {
+        console.error("Could not durably quarantine WhatsApp callback:", err);
+        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        return res.sendStatus(503);
+      }
+      void notifyWhatsAppSenderQuarantine(isolated.quarantined);
     }
 
     const webhookBody = isolated.acceptedBody;
@@ -215,6 +227,20 @@ function createApp({
     }
 
     res.sendStatus(200);
+
+    // A mixed batch must never delay/deny the existing customer's accepted
+    // message because a foreign-number quarantine insert is slow or failing.
+    // Existing events are already durable when we ACK; the rejected-event
+    // audit is best effort in mixed batches, with an operator notification.
+    if (isolated.quarantined.length && !quarantineOnly) {
+      void recordQuarantinedWhatsAppChanges(isolated.quarantined)
+        .catch((err) => {
+          console.error("WhatsApp quarantine audit failed after valid work was accepted:", err);
+        })
+        .finally(() => {
+          void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        });
+    }
 
     if (passiveSync.historyChunks || passiveSync.appStateItems) {
       console.log(
