@@ -54,9 +54,11 @@ async function listSecondaryApprovedTemplates(contact,{
       /^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(clean(t?.language)))
       .map(helpers.normalizeTemplate).map(t=>({
         ...t,sendable:t.sendable &&
-          !["IMAGE","VIDEO"].includes(t.header?.format),
-        unsupportedReason:["IMAGE","VIDEO"].includes(t.header?.format)
-          ? "Secondary template media headers require a separate verified upload path."
+          (env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED === "true" ||
+           !["IMAGE","VIDEO"].includes(t.header?.format)),
+        unsupportedReason:["IMAGE","VIDEO"].includes(t.header?.format) &&
+          env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED !== "true"
+          ? "Secondary template media header sending is disabled."
           : t.unsupportedReason,
       }));
     const opted=Boolean(owner.row.whatsapp_opt_in_at && owner.row.whatsapp_opt_in_source &&
@@ -95,7 +97,7 @@ async function listSecondaryApprovedTemplates(contact,{
 }
 
 async function prepareSecondaryStaffTemplate(contact,{
-  name,languageCode,values,billingAcknowledged=false,
+  name,languageCode,values,billingAcknowledged=false,mediaAttachment=null,
   marketingConsentConfirmed=false,
 },{
   env=process.env,database=pool,fetchImpl=global.fetch,
@@ -115,15 +117,34 @@ async function prepareSecondaryStaffTemplate(contact,{
     return denied("secondary_marketing_confirmation_required");
   }
   const template=helpers.normalizeTemplate(approved.template.definition);
-  if(!template.sendable || ["IMAGE","VIDEO"].includes(template.header?.format)) {
+  const mediaFormat=template.header?.format;
+  const needsMedia=["IMAGE","VIDEO"].includes(mediaFormat);
+  if (!template.sendable || (needsMedia &&
+      env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED!=="true")) {
     return denied("secondary_template_media_not_enabled");
   }
-  const built=helpers.buildTemplateComponents(template,values);
+  if (needsMedia) {
+    const expected=mediaFormat==="IMAGE" ?
+      new Set(["image/jpeg","image/png"]) : new Set(["video/mp4"]);
+    if(!mediaAttachment || !Buffer.isBuffer(mediaAttachment.buffer) ||
+        mediaAttachment.buffer.length<1 ||
+        mediaAttachment.buffer.length>(mediaFormat==="IMAGE"?5:16)*1024*1024 ||
+        !expected.has(mediaAttachment.mimeType) ||
+        typeof mediaAttachment.filename!=="string" ||
+        !/^[A-Za-z0-9._ -]{1,180}$/.test(mediaAttachment.filename)) {
+      return denied("secondary_template_media_invalid");
+    }
+  } else if(mediaAttachment) {
+    return denied("secondary_template_media_not_allowed");
+  }
+  const built=helpers.buildTemplateComponents(template,values,
+    {allowMissingMedia:needsMedia});
   if(!built.valid) return denied("secondary_template_invalid_values");
   const preview=helpers.renderTemplatePreview(template,built.values);
   if(!preview)return denied("secondary_template_preview_unavailable");
   return {
     success:true,preview,components:built.components,template,
+    values:built.values,mediaAttachment,
     signature:helpers.templateSignature(template),
   };
 }
@@ -141,8 +162,36 @@ async function deliverSecondaryStaffTemplate(contact,messageId,prepared,{
       name:template.name,languageCode:template.language,
       expectedSignature:prepared.signature,billingConfirmed:true,
     },
-    dispatchTransport:transport=>
-      transport.sendTemplatePayload(template.name,template.language,prepared.components),
+    dispatchTransport:async transport=>{
+      let components=prepared.components;
+      if(prepared.mediaAttachment) {
+        const item=prepared.mediaAttachment;
+        const uploaded=await transport.uploadMedia(
+          item.buffer,item.mimeType,item.filename
+        );
+        if(!uploaded?.success || !/^[0-9]+$/.test(String(uploaded.mediaId||""))) {
+          return {success:false,unknown:true,ambiguous:true,retryable:false};
+        }
+        // A template can be paused, revoked or newly opted-out while uploading
+        // media. Recheck the exact signed sender + approval and consent.
+        const verified=await policy.previewSecondaryTemplatePolicy(contact,{
+          name:template.name,languageCode:template.language,
+          env,database,fetchImpl,now:new Date(),
+        });
+        if(verified.policyAllowed!==true ||
+            !verified.template?.definition ||
+            helpers.templateSignature(helpers.normalizeTemplate(verified.template.definition))
+              !==prepared.signature) {
+          return {success:false,unknown:true,ambiguous:true,retryable:false};
+        }
+        const built=helpers.buildTemplateComponents(template,prepared.values,{
+          media:{id:uploaded.mediaId},
+        });
+        if(!built.valid)return {success:false,unknown:true,ambiguous:true,retryable:false};
+        components=built.components;
+      }
+      return transport.sendTemplatePayload(template.name,template.language,components);
+    },
   },{env,database,fetchImpl});
 }
 module.exports={
