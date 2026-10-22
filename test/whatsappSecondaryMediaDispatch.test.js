@@ -23,9 +23,11 @@ function fake(overrides={}) {
     contacts:{getContactById:async()=>contact},
     storage:{downloadMedia:async()=>Buffer.from("video bytes")},
     policyService:{previewSecondaryFreeformPolicy:async()=>({policyAllowed:true})},
-    textDispatcher:async ({messageId,preSendCheck,origin},{dispatchTransport})=>{
+    textDispatcher:async ({messageId,preSendCheck,origin,dispatchTransport})=>{
       events.push(["billing",messageId,origin]);
       if (!await preSendCheck())return{success:false,retryable:false};
+      assert.equal(typeof dispatchTransport,"function",
+        "real dispatcher must receive media callback in its FIRST argument");
       return dispatchTransport(provider);
     },
     ...overrides,
