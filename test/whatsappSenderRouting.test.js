@@ -338,3 +338,17 @@ test("passive Business App sync cannot create routable conversations", () => {
     { accountId: ariel.accountId, field: "smb_app_state_sync" },
   ]);
 });
+
+test("passive sync also requires verified Meta account provenance", () => {
+  const registry = createSenderRegistry([existing]);
+  const invalid = {
+    object: "whatsapp_business_account",
+    entry: [{ id: "not-a-meta-account", changes: [
+      { field: "history", value: { history: [{ progress: 100 }] } },
+    ] }],
+  };
+  assert.throws(
+    () => validateWhatsAppWebhookSenders(invalid, registry),
+    (err) => err.code === "WHATSAPP_SENDER_ACCOUNT_ID_INVALID"
+  );
+});
