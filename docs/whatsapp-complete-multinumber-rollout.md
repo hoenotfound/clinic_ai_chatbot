@@ -1,84 +1,124 @@
-# Consolidated WhatsApp multi-number integration — Neutro + Ariel
+# DA CHATBOT multi-number WhatsApp — Phase 2 consolidated PR #395
 
-This branch is the **only Phase 2 development PR**, replacing old draft
-PRs #384, #387, #389, #391 and #393. It is **NOT approved for production
-merge, deployment or Meta activation**.
+**Status: implementation and isolated database rehearsal completed; LIVE activation not approved.**
 
-## Implemented on this branch
+All Phase 2 implementation is kept in a single Draft PR #395. Older work
+from #384, #387, #389, #391, and #393 is included. No Phase 2 feature
+has been merged to `main`, deployed, or enabled in Render.
 
-1. Sender-qualified contact, conversation, inbound message and media identity
-   for two business numbers. Existing Neutro contact/message history remains
-   preserved and the original primary token/phone stay untouched.
-2. Standalone Ariel Cloud API transport with database-verified business
-   ownership, read-only sender-specific 24-hour policy, opt-in/opt-out,
-   template catalog and CTWA evidence previews.
-3. Independent Ariel billing reservation, signed status receipts, manual
-   nonbillable reconciliation and persistent late/billable alarm. Unknown
-   outcomes are **not auto retried**.
-4. Signed webhook receipt ingress (disabled): captures the original raw
-   HMAC-verified bytes, independently verifies the signature for Ariel's
-   receipt recorder, selects only exact Ariel WABA/phone statuses from a
-   mixed sender callback, and durably saves them before HTTP 200.
-   Primary Neutro status handling remains the existing pipeline.
-5. Staff **text** dispatch (disabled) now uses Ariel's independently verified
-   sender, 24-hour window, original outbound message identity, per-sender
-   billing reservation, alarm and final pre-send checks. A saved outbound
-   message can have only one secondary sender billing attempt (migration 086).
-6. AI **text** dispatch (disabled) reuses the same sender-specific send
-   safeguards and existing durable AI attempt/staff cancellation guards.
-   Secondary optional promo media/result-media sends are suppressed.
-7. Unit and PostgreSQL regression tests for cross-number isolation,
-   signed mixed webhook parsing/acknowledgement, sender ownership, closed
-   service windows, duplicate sends, provider timeout and late billing
-   alarms.
+## Built and sender-isolated
 
-## Environment switches — ALL default OFF
+- Existing Neutro WhatsApp number remains the primary, with its current
+  Meta token, legacy delivery/billing tables and unchanged content.
+- Ariel has a distinct phone-ID-qualified contact identity, Inbox sender
+  label/filter, bounded inbound conversation, and sender-specific Graph
+  transport. One customer's Neutro and Ariel chats never share a contact.
+- Signed webhook partition stages Ariel's delivery/pricing receipts to
+  separate tables and rejects mixed/mismatched phone/account evidence.
+  Neutro statuses continue through the existing handlers.
+- Ariel staff and AI text replies use the verified sender, fresh 24-hour
+  window, one-shot saved-message reservation, audited receipt settlement
+  and no legacy fallback or automatic retry.
+- Ariel staff media uses separate uploads for image, video, audio, document
+  and sticker; no Neutro media IDs/cache are reused.
+- Ariel templates have their own WABA-approved live catalog, explicit
+  opt-in/marketing-consent checks, one-time staff billing-review claim,
+  text/image/video components and per-message audited authorized paid
+  receipts. Unapproved charges and failed callbacks latch an alarm.
+- Each Ariel contact has a separate unresolved billing gate. The global
+  sender alarm still halts every Ariel contact after an adverse receipt.
+  Nonbillable `free_entry_point` receipts can release the gate when
+  explicitly enabled; confirmed staff-approved billable template receipts
+  have a separate explicit approval gate. Unknown deliveries cannot be
+  retried or cleared automatically.
+- Ariel 2h/6h/20h follow-ups use independent **clinic-authored**, sender-
+  owned rules with one-shot claims, sender-specific media, opted-in and
+  marketing-consent checks, appointment/staff takeover avoidance, 00:00–07:00
+  quiet hours, fresh service-window and config revision rechecks.
+  **No rules or schedule are seeded by the migration.** A crashed/unknown
+  send is never retried automatically. The legacy Neutro worker remains
+  separate.
+- Generic Inbox retry for Ariel is denied before the primary retry policy.
+
+## Default-off controls
+
+All WhatsApp multi-number flags and Ariel sender-specific switches remain
+false in `.env.example`. In particular:
 
 ```
-WHATSAPP_MULTI_NUMBER_READ_ENABLED=false
-WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED=false
-WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED=false
-WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED=false
-WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED=false
-WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED=false
-WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED=false
 WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED=false
-WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED=false
+WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED=false
+WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED=false
 WHATSAPP_SECONDARY_STAFF_SEND_ENABLED=false
+WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED=false
 WHATSAPP_SECONDARY_AI_SEND_ENABLED=false
+WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED=false
+WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED=false
+WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED=false
 ```
 
-Do **not** enable these together to test on live Neutro. Production
-database schema/Meta subscriptions/credentials and callback content must
-be independently verified first.
+Enabling one switch is not sufficient. The startup activation gate checks
+its dependencies and sender identity. **Do not enable these all at once
+against production.**
 
-## Not ready yet
+## Migration rehearsal — 2026-10-22
 
-- Ariel media (image/video/audio/document/sticker), templates and extended
-  follow-up senders still need **end-to-end sender-bound dispatch**.
-  The secondary transport primitive alone is not an authorization gate.
-- Sender-specific billing operation currently reserves at most one unresolved
-  outbound per Ariel sender; a human Billing Hub settlement is required
-  before another reservation. That is intentionally too restrictive for
-  normal automated production use. Full pricing/settlement behavior must
-  be designed and tested before turning on the AI switch.
-- Need autonomous authenticated sender-specific delivery-status recovery,
-  operational billing alerts, controlled unblocking and reconciliation
-  for legitimate billable conversations. Never automatically clear an
-  ambiguous state or an adverse receipt.
-- Media/template send paths in existing Inbox remain **blocked** for Ariel.
-  Reactivating them without isolation would risk using Neutro's token.
-- Need full database migration rehearsal on a production-shaped **isolated**
-  Neon branch, callback replay/ordering tests, consent audit, front-end sender
-  indication, staff workflows, and real Meta coexistence testing with
-  both phone IDs and a verified rollback plan.
-- Existing primary sender must keep working under an optional-flag
-  rollback. Do not automatically revert sender-aware reads after creating
-  durable Ariel contacts.
+Neutro Neon project `steep-forest-44509907`:
 
-## Merge policy
+- Production branch `main`: schema v077, unchanged (read-only verification)
+- Isolated QA branch `qa-pr395-final-multinumber-20261022`
+  (`br-steep-flower-b3qayk0r`): migrations v078–089 applied
+  successfully and atomically
+- Existing contacts retained: **183**
+- Existing primary billing-gate rows retained: **1**
+- New sender accounts/follow-up rules/attempts: **0** automatically seeded
+- Both sender-only follow-up SQL queries passed PostgreSQL `EXPLAIN`
+  on the isolated production-shaped QA branch
+- Real PostgreSQL regression tests in CI also validate schema and
+  sender isolation. Check the current exact-head GitHub Actions result
+  before calling CI green.
 
-Do not merge until CI is fully green, end-to-end tests pass under both
-sender configurations, WhatsApp media/template/follow-up paths are
-isolated, and an operator approves controlled rollout.
-Closing earlier draft PRs does not authorize deployment.
+The QA branch is intentionally kept for controlled Meta tests and
+rollback rehearsal. It has its own compute and may consume Neon quota.
+Never point the live Render service at this branch.
+
+## Go-live blockers and tests outside GitHub CI
+
+1. Obtain/verify Ariel's real WhatsApp phone number ID, WABA ID, Meta token,
+   exact Meta application secret, business portfolio ownership and
+   coexistence onboarding. Do not assume the numbers share WABA.
+2. Test actual signed inbound/status callbacks for both numbers in a
+   **separate staging deployment**; check Meta permission/subscription
+   scope and never use production token as an Ariel fallback.
+3. Test a staff reply, AI reply, media, template (free and billable), opt-out,
+   recipient mismatch, late billable callback, status ordering and concurrent
+   contact sends with **real provider receipts** before activation.
+4. Configure/approve Ariel's content and follow-up rules explicitly.
+   2/6/20-hour service-window follow-ups are implemented; **48h/72h
+   proactive marketing-template automation is NOT enabled by this branch**.
+   A separate provider-compliant marketing opt-in, sender-specific template
+   and spend authorization is required before those are turned on.
+5. Confirm actual billing costs and a controlled alarm-resolution process
+   with Meta Billing Hub. An unexplained charge must never be auto cleared.
+6. Ensure the secondary worker can be disabled independently, verify
+   archival/retention impacts and run two-number rollback drill.
+
+## Safe rollout order
+
+1. Review and merge only after backend/frontend/browser tests pass and
+   migration checksums match the isolated branch.
+2. Deploy with every new sender **send flag OFF** and verify the primary
+   Neutro message, media and follow-up flows still function.
+3. Enable sender-aware Inbox and signed ingress only after confirming
+   exact Meta identities. Check Ariel's inbound while keeping sending OFF.
+4. Test staff text, then media, then AI text, then approved templates and
+   receipts. Enable only one class of outbound behavior at a time.
+5. Do not enable Ariel follow-ups until its own consent and content rules
+   have been reviewed. No silent reuse of Neutro scripts or media.
+6. Rollback: turn OFF only the new Ariel send/worker flags, maintain
+   sender-aware reads once Ariel contacts exist, and preserve the receipt
+   and attempt ledgers for reconciliation. Do not force clear ambiguous
+   billing reservations.
+
+**NEVER merge an unreviewed migration or switch the production Neon
+DATABASE_URL to the QA branch.**
