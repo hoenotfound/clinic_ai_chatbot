@@ -624,3 +624,48 @@ test("signed Ariel receipts update only their own Inbox ticks, preserve read ord
     )).rows[0].n,0,"Ariel Meta failure may not queue Neutro retries");
   });
 });
+
+
+test("a signed status received before provider acceptance can be safely promoted only after exact Ariel matching on replay",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {reservation,messages}=await seededSend(db,database);
+    // Emulate Meta status arriving before the provider acceptance/WAMID
+    // commit without changing any production or primary-sender record.
+    await db.query(
+      "UPDATE whatsapp_sender_billing_attempts SET state='reserved',wamid=NULL WHERE reservation_id=$1",
+      [reservation.reservationId]
+    );
+    await db.query(
+      "UPDATE whatsapp_sender_billing_gates SET state='reserved',wamid=NULL WHERE reservation_id=$1",
+      [reservation.reservationId]
+    );
+    const packet=signed(st("wamid.ariel-one"));
+    const premature=await receipts.recordSignedSecondaryStatusBatch(packet,{database,env});
+    assert.equal(premature.unmatched,1);
+    assert.equal((await db.query(
+      "SELECT matched FROM whatsapp_sender_status_receipts"
+    )).rows[0].matched,false);
+    await billing.recordSecondaryProviderOutcome({
+      reservationId:reservation.reservationId,acceptedWamid:"wamid.ariel-one",
+    },{database,env});
+    const recovered=await receipts.recordSignedSecondaryStatusBatch(packet,{database,env});
+    assert.equal(recovered.matched,1);
+    assert.equal(recovered.replayed,0);
+    const rows=(await db.query(
+      "SELECT matched,reservation_id,wamid FROM whatsapp_sender_status_receipts"
+    )).rows;
+    assert.equal(rows.length,1);
+    assert.equal(rows[0].matched,true);
+    assert.equal(rows[0].reservation_id,reservation.reservationId);
+    assert.equal((await db.query(
+      "SELECT delivery_status FROM messages WHERE id=$1",
+      [messages[1].id]
+    )).rows[0].delivery_status,"delivered");
+    const replay=await receipts.recordSignedSecondaryStatusBatch(packet,{database,env});
+    assert.equal(replay.replayed,1);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_outbound_retries"
+    )).rows[0].n,0);
+  });
+});
