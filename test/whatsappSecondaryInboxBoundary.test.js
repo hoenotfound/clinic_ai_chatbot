@@ -45,3 +45,58 @@ test("inbox-only routing rejects missing or same Meta business phone IDs",()=>{
  assert.throws(()=>partitionSecondaryInboxWebhook({object:"whatsapp_business_account",entry:[]},
    {...opts,secondaryPhoneId:PRIMARY}),/distinct/);
 });
+
+test("secondary status-only callbacks cannot enter primary delivery or billing workers",()=>{
+  const body={object:"whatsapp_business_account",entry:[
+    {id:S_ACC,changes:[{field:"messages",value:{
+      metadata:{phone_number_id:SECONDARY},
+      statuses:[{id:"wamid.ariel",status:"failed",pricing:{billable:true}}],
+    }}]},
+  ]};
+  const result=partitionSecondaryInboxWebhook(body,opts);
+  assert.equal(result.acceptedActionable,0);
+  assert.deepEqual(result.acceptedBody.entry,[]);
+  assert.equal(result.quarantined.length,1);
+  assert.equal(result.quarantined[0].reason,"secondary_status_deferred");
+});
+test("mixed Ariel message and status preserves customer text without billing receipt",()=>{
+  const result=partitionSecondaryInboxWebhook({
+    object:"whatsapp_business_account",
+    entry:[{id:S_ACC,changes:[{field:"messages",value:{
+      metadata:{phone_number_id:SECONDARY},
+      messages:[{id:"incoming",from:"60127777777",text:{body:"Hi"}}],
+      statuses:[{id:"send",status:"sent"}],
+    }}]}],
+  },opts);
+  assert.equal(result.acceptedActionable,1);
+  assert.equal(result.quarantined.length,1);
+  assert.equal(result.quarantined[0].reason,"secondary_status_deferred");
+  const safe=result.acceptedBody.entry[0].changes[0].value;
+  assert.equal(safe.messages[0].id,"incoming");
+  assert.equal("statuses" in safe,false);
+});
+test("primary delivery statuses still flow through the existing verified sender",()=>{
+  const result=partitionSecondaryInboxWebhook({
+    object:"whatsapp_business_account",
+    entry:[{id:P_ACC,changes:[{field:"messages",value:{
+      metadata:{phone_number_id:PRIMARY},
+      statuses:[{id:"neutro",status:"delivered"}],
+    }}]}],
+  },opts);
+  assert.equal(result.quarantined.length,0);
+  assert.equal(result.acceptedActionable,1);
+  assert.equal(result.acceptedBody.entry[0].changes[0].value.statuses.length,1);
+});
+test("unknown account passive sync is quarantined instead of being accepted",()=>{
+  const result=partitionSecondaryInboxWebhook({
+    object:"whatsapp_business_account",
+    entry:[
+      {id:"299999999999999",changes:[{field:"history",value:{history:[]}}]},
+      {id:S_ACC,changes:[{field:"smb_app_state_sync",value:{state_sync:[]}}]},
+    ],
+  },opts);
+  assert.equal(result.quarantined.length,1);
+  assert.equal(result.quarantined[0].reason,"foreign_passive_sync");
+  assert.equal(result.acceptedBody.entry.length,1);
+  assert.equal(result.acceptedBody.entry[0].id,S_ACC);
+});
