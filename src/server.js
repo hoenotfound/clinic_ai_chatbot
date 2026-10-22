@@ -124,7 +124,9 @@ async function persistSendOutcome(
 ) {
   let updated = null;
   if (sendResult.wamid) {
-    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid, {
+      preserveVerifiedSecondaryReceipt: sendResult.secondarySender === true,
+    });
   } else if (sendResult.externalMessageId && channel !== "whatsapp") {
     updated = await messagesRepo.setSocialProviderMessageId(
       savedMessage.id,
