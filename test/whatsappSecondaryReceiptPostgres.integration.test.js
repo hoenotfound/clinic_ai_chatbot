@@ -669,3 +669,80 @@ test("a signed status received before provider acceptance can be safely promoted
     )).rows[0].n,0);
   });
 });
+
+
+test("signed free_customer_service receipt permits another Ariel reply without inventing a charge",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,reservation}=await seededSend(db,database);
+    const enabledEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+    const item=st("wamid.ariel-one",{
+      pricing:{type:"free_customer_service",billable:false,category:"service"},
+    });
+    const out=await receipts.recordSignedSecondaryStatusBatch(signed(item),{
+      database,env:enabledEnv,
+    });
+    assert.equal(out.autoReconciled,1);
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0].state,"idle");
+    const audit=(await db.query(
+      "SELECT method,pricing_billable FROM whatsapp_sender_auto_reconciliations " +
+      "WHERE reservation_id=$1",[reservation.reservationId]
+    )).rows[0];
+    assert.equal(audit.method,"signed_meta_nonbillable_customer_service");
+    assert.equal(audit.pricing_billable,false);
+    const replay=await receipts.recordSignedSecondaryStatusBatch(signed(item),{
+      database,env:enabledEnv,
+    });
+    assert.equal(replay.replayed,1);
+  });
+});
+
+test("unmatched signed billable Ariel receipt raises unassigned sender alarm",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids}=await seededSend(db,database);
+    const item=st("wamid.unexpected-ariel-charge",{
+      recipient_id:"60128889999",
+      pricing:{type:"regular",billable:true,category:"service"},
+    });
+    const out=await receipts.recordSignedSecondaryStatusBatch(signed(item),{
+      database,env,
+    });
+    assert.equal(out.unmatched,1);
+    assert.equal(out.held,1);
+    const alarm=(await db.query(
+      "SELECT reason,reservation_id FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0];
+    assert.equal(alarm.reason,"unmatched_provider_billable");
+    assert.equal(alarm.reservation_id,null);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0);
+  });
+});
+
+test("an ordinary nonbillable failed Ariel delivery does not freeze every other customer",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,reservation}=await seededSend(db,database);
+    const out=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-one",{
+        status:"failed",
+        pricing:{type:"free_customer_service",billable:false,category:"service"},
+      }
+    )),{database,env});
+    assert.equal(out.held,1);
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+      [reservation.reservationId]
+    )).rows[0].state,"unknown");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0].n,0);
+  });
+});
