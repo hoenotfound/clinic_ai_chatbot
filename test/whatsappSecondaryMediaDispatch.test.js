@@ -80,9 +80,9 @@ test("sender media refuses AI, marketing followups, missing saved message, or wr
     assert.equal(events.length,0);
   }
 });
-test("staff mode changed during upload: do not send the uploaded media",async()=>{
+test("sender changed during upload: do not send media under the previous business number",async()=>{
   const {deps,events}=fake({
-    contacts:{getContactById:async()=>({...contact,mode:"ai"})},
+    contacts:{getContactById:async()=>({...contact,whatsapp_sender_key:"neutro"})},
   });
   const result=await sendSecondaryStaffMedia(contact,"sendImageBuffer",[
     Buffer.from("image"),"image/jpeg","Hi","image.jpg",options,
