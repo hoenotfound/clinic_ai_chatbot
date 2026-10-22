@@ -57,7 +57,7 @@ test("secondary status-only callbacks cannot enter primary delivery or billing w
   assert.equal(result.acceptedActionable,0);
   assert.deepEqual(result.acceptedBody.entry,[]);
   assert.equal(result.quarantined.length,1);
-  assert.equal(result.quarantined[0].reason,"secondary_status_deferred");
+  assert.equal(result.quarantined[0].reason,"unsupported_whatsapp_event");
 });
 test("mixed Ariel message and status preserves customer text without billing receipt",()=>{
   const result=partitionSecondaryInboxWebhook({
@@ -70,7 +70,7 @@ test("mixed Ariel message and status preserves customer text without billing rec
   },opts);
   assert.equal(result.acceptedActionable,1);
   assert.equal(result.quarantined.length,1);
-  assert.equal(result.quarantined[0].reason,"secondary_status_deferred");
+  assert.equal(result.quarantined[0].reason,"unsupported_whatsapp_event");
   const safe=result.acceptedBody.entry[0].changes[0].value;
   assert.equal(safe.messages[0].id,"incoming");
   assert.equal("statuses" in safe,false);
@@ -96,7 +96,7 @@ test("unknown account passive sync is quarantined instead of being accepted",()=
     ],
   },opts);
   assert.equal(result.quarantined.length,1);
-  assert.equal(result.quarantined[0].reason,"foreign_passive_sync");
+  assert.equal(result.quarantined[0].reason,"different_business_account");
   assert.equal(result.acceptedBody.entry.length,1);
   assert.equal(result.acceptedBody.entry[0].id,S_ACC);
 });
