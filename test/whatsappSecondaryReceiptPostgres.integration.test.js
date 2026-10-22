@@ -6,6 +6,7 @@ const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const billing = require("../src/db/whatsappSenderBillingGateRepo");
 const receipts = require("../src/services/whatsappSecondaryReceiptService");
+const settlement = require("../src/services/whatsappSecondaryReconciliationService");
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const env = {
@@ -16,6 +17,7 @@ const env = {
   WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED: "true",
   WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED: "true",
   WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED: "true",
+  WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED: "true",
   WHATSAPP_PHONE_NUMBER_ID: "100000000000001",
   WHATSAPP_WABA_ID: "200000000000001",
   WHATSAPP_PRIMARY_SENDER_KEY: "neutro",
@@ -112,7 +114,7 @@ async function seededSend(db,database) {
 test("migration 084 is repeatable and keeps both customer senders separate",
   {skip:!connectionString},async()=>{
     await withSchema(async({db,database})=>{
-      assert.equal(loadMigrations().at(-1).version,84);
+      assert.equal(loadMigrations().at(-1).version,85);
       assert.equal((await runMigrations(database,{quiet:true})).appliedCount,0);
       const inserted=await db.query("SELECT COUNT(*)::int AS n FROM whatsapp_sender_status_receipts");
       assert.equal(inserted.rows[0].n,0);
@@ -206,5 +208,122 @@ test("billable or failed Ariel statuses force a durable, non-retryable hold",
       const retry=await receipts.inspectSecondaryRetryHold(reservation.reservationId,{database,env});
       assert.equal(retry.canAutoRetry,false);
       assert.equal(retry.code,"secondary_retry_adverse_receipt");
+    });
+  });
+
+
+const review = (reservationId, receiptFingerprint) => ({
+  reservationId, receiptFingerprint,
+  reviewer: "verified-test-operator",
+  reason: "Verified this exact Ariel message and charge status in Meta Billing Hub.",
+  billingHubConfirmed: true,
+});
+
+test("manual settlement only clears a verified Ariel receipt and never authorizes retry",
+  {skip:!connectionString},async()=>{
+    await withSchema(async({db,database})=>{
+      const {ids,reservation,contacts}=await seededSend(db,database);
+      const packet=signed(st("wamid.ariel-one"));
+      const receiptResult=await receipts.recordSignedSecondaryStatusBatch(packet,{database,env});
+      assert.equal(receiptResult.matched,1);
+      const fingerprint=(await db.query(
+        "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+      )).rows[0].fingerprint;
+      const disabled=await settlement.reconcileVerifiedSecondaryNonbillable(
+        review(reservation.reservationId,fingerprint),
+        {database,env:{...env,WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"false"}}
+      );
+      assert.equal(disabled.code,"secondary_reconciliation_disabled");
+      const wrong=await settlement.reconcileVerifiedSecondaryNonbillable(
+        review(reservation.reservationId,"a".repeat(64)),{database,env});
+      assert.equal(wrong.code,"secondary_reconciliation_evidence_unverified");
+      const invalid=await settlement.reconcileVerifiedSecondaryNonbillable(
+        {...review(reservation.reservationId,fingerprint),billingHubConfirmed:false},{database,env});
+      assert.equal(invalid.code,"secondary_reconciliation_review_required");
+      const success=await settlement.reconcileVerifiedSecondaryNonbillable(
+        review(reservation.reservationId,fingerprint),{database,env});
+      assert.deepEqual(success,{reconciled:true,sendAuthorized:false,autoRetryAllowed:false});
+      const gate=(await db.query(
+        "SELECT state,reservation_id,wamid FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+        [ids.ariel]
+      )).rows[0];
+      assert.equal(gate.state,"idle");
+      assert.equal(gate.reservation_id,null);
+      assert.equal(gate.wamid,null);
+      assert.equal((await db.query(
+        "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+        [reservation.reservationId]
+      )).rows[0].state,"reconciled");
+      assert.equal((await db.query(
+        "SELECT reviewer,billing_hub_confirmed FROM whatsapp_sender_billing_reconciliations"
+      )).rows[0].billing_hub_confirmed,true);
+      const replay=await settlement.reconcileVerifiedSecondaryNonbillable(
+        review(reservation.reservationId,fingerprint),{database,env});
+      assert.equal(replay.reconciled,false);
+      const msg=(await db.query(
+        "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','new draft') RETURNING id",
+        [contacts[1].id]
+      )).rows[0].id;
+      const conversation=(await db.query(
+        "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",
+        [contacts[1].id]
+      )).rows[0].id;
+      await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+        [msg,conversation]);
+      const next=await billing.reserveSecondaryBillingAttempt(
+        {contactId:contacts[1].id,messageId:msg},{database,env});
+      assert.equal(next.reserved,true);
+      // Crucial: the old WAMID remains identifiable AFTER settlement and
+      // after a new pending reservation exists. It must latch the sender alarm.
+      const late=await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one",{
+          status:"read",pricing:{type:"regular",billable:true,category:"marketing"},
+        })),{database,env});
+      assert.equal(late.matched,1);
+      assert.equal(late.held,1);
+      const alarm=(await db.query(
+        "SELECT reason,reservation_id FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+        [ids.ariel]
+      )).rows[0];
+      assert.equal(alarm.reason,"provider_billable");
+      assert.equal(alarm.reservation_id,reservation.reservationId);
+      // New reservation remains unresolved, and a later idle state cannot
+      // bypass the latched sender alarm even if someone clears the gate.
+      const newMsg=(await db.query(
+        "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','third draft') RETURNING id",
+        [contacts[1].id]
+      )).rows[0].id;
+      await db.query(
+        "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+        [newMsg,conversation]
+      );
+      const blocked=await billing.reserveSecondaryBillingAttempt(
+        {contactId:contacts[1].id,messageId:newMsg},{database,env});
+      assert.equal(blocked.reserved,false);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+      )).rows[0].n,0,"Neutro billing records stay unchanged");
+    });
+  });
+
+test("unmatched recipient or contradictory receipts prevent sender settlement",
+  {skip:!connectionString},async()=>{
+    await withSchema(async({db,database})=>{
+      const {reservation}=await seededSend(db,database);
+      const bad=await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one",{recipient_id:"60124440000"})),{database,env});
+      assert.equal(bad.unmatched,1);
+      const good=await receipts.recordSignedSecondaryStatusBatch(
+        signed(st("wamid.ariel-one",{status:"read"})),{database,env});
+      assert.equal(good.matched,1);
+      const fingerprint=(await db.query(
+        "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+      )).rows[0].fingerprint;
+      const blocked=await settlement.reconcileVerifiedSecondaryNonbillable(
+        review(reservation.reservationId,fingerprint),{database,env});
+      assert.equal(blocked.code,"secondary_reconciliation_evidence_unverified");
+      assert.equal((await db.query(
+        "SELECT state FROM whatsapp_sender_billing_gates"
+      )).rows[0].state,"awaiting_pricing");
     });
   });
