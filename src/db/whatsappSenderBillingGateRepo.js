@@ -81,6 +81,16 @@ async function reserveSecondaryBillingAttempt({ contactId, messageId }, {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_previous_send_unresolved");
     }
+    // A late billable/failed receipt may arrive after an earlier reservation
+    // was manually reconciled. A latched sender alarm overrides idle state.
+    const alarm = await client.query(
+      "SELECT 1 FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [senderId]
+    );
+    if (alarm.rows?.length) {
+      await client.query("ROLLBACK"); inTransaction = false;
+      return deny("secondary_billing_sender_alarm");
+    }
     const reservationId = crypto.randomUUID();
     await client.query(
       "INSERT INTO whatsapp_sender_billing_attempts " +
