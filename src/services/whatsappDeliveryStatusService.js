@@ -370,6 +370,21 @@ function createWhatsAppDeliveryStatusService({
     });
 
     for (const job of exhausted) {
+      // A mismatched Meta business cannot create an Inbox attention task even
+      // on the final retry. Keep the evidence but never mutate that contact.
+      if (typeof repo.verifyJobSender === "function") {
+        let verified;
+        try { verified = await repo.verifyJobSender(job); }
+        catch(err) {
+          logger.error("Cannot verify exhausted provider status sender:",err);
+          continue;
+        }
+        if (verified?.matched === false) {
+          await repo.markTerminal(job.id);
+          logger.error("Quarantined exhausted cross-sender WhatsApp status:",job.id);
+          continue;
+        }
+      }
       // For a failed provider callback, restore the durable Inbox attention
       // state before terminalizing the job. If this DB step fails, leave the
       // row non-terminal so a later recovery sweep can try again. This removes
