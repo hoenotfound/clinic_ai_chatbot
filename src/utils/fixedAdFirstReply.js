@@ -10,6 +10,7 @@ const {
 } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const { matchingMetaAdCreativeServices } = require("../services/metaAdReplyContextService");
 
 const MAX_AD_CONTEXT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const PREFILL_MAX_LENGTH = 240;
@@ -22,25 +23,39 @@ const PREFILL_MAX_LENGTH = 240;
 const SUBSTANTIVE_OR_BOOKING_INTENT =
   /(?:可是|不过|不過|但是|因为|因為|怎么办|怎麼辦|怎么|怎麼|如何|多久|几次|幾次|多少|是否|怀孕|懷孕|产后|產後|副作用|安全吗|安全嗎|疼痛|预约|預約|约时间|約時間|几点|幾點|明天|后天|後天|今天|今晚|早上|下午|晚上|周末|週末|星期[一二三四五六日天]|礼拜[一二三四五六日天]|禮拜[一二三四五六日天]|\b(?:but|however|how|why|what|when|where|whether|pain|pregnan(?:t|cy)|book(?:ing)?|appt|appointment|reserve|available|availability|slot|today|tomorrow|tonight|morning|afternoon|evening|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|refund|schedule|reschedul(?:e|ing)|esok|lusa|pagi|petang|malam|minggu|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|janji\s*temu|temujanji|pukul|jam\s*\d{1,2})\b|\b(?:at|around)\s*\d{1,2}(?::\d{2})?\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/iu;
 
+// Remove only recognised FUTURE-contact permission, not a request for
+// prices, packages or a promotion now. Meta prefills sometimes end in emoji.
+const FUTURE_CONTACT_SUFFIX = /[，,、]\s*(?:可以\s*(?:WhatsApp\s*)?跟[进進]我(?:和(?:发|發)(?:相关|相關)?(?:优惠|優惠))?(?:[，,]\s*有(?:优惠|優惠)也(?:发|發)我看看)?|(?:请|請)\s*(?:联[系繫]我|跟[进進]我)(?:[，,]\s*有(?:优惠|優惠)也(?:发|發)我看看)?|有(?:后续|後續)配套和(?:优惠|優惠)可以\s*WhatsApp\s*(?:发|發)我)$/iu;
+const EXTRA_QUESTION = /(?:是不是|会不会|會不會|能不能|可不可以|能否|适合|適合|有没有|有沒有|有效|有用|能治|治好|漏尿|怎[样樣]|请问|請問|多少钱|多少錢|价[格錢钱]|几钱|幾錢|配套(?:有什么|有什麼|哪些)|(?:价格|價錢|费用|費用)|[?？]|\b(?:please\s+(?:tell|explain|send)|can\s+i|could\s+i|is\s+it|does\s+it|how\s+long|how\s+much|any\s+(?:offers?|promos?|packages?))\b)/iu;
+
+function standardPrefillInterestText(value) {
+  const raw = String(value || "").normalize("NFKC").trim();
+  // Strip *trailing* emoji only. Interior emoji, arbitrary edits or extra
+  // customer requests do not become allowed just by resembling a prefill.
+  const text = raw.replace(/[\s\uFE0F\u200D\u2600-\u27BF\u{1F300}-\u{1FAFF}]+$/gu, "").trim();
+  return text.replace(FUTURE_CONTACT_SUFFIX, "").trim();
+}
+
 function isStandardAdPrefill(value) {
-  const text = String(value || "").normalize("NFKC").trim();
-  if (!text || text.length > PREFILL_MAX_LENGTH) return false;
-  if (isContextualAdServiceEnquiry(text)) return true;
-  // Remove ONLY the common leading greeting. Real questions and arbitrary
-  // trailing text do not qualify just because a prefill starts the message.
-  const body = text.replace(/^(?:(?:hi|hello|hey)\b|你好|嗨|哈咯)[\s~～,，.!！。]*/iu, "")
+  const raw = String(value || "").normalize("NFKC").trim();
+  if (!raw || raw.length > PREFILL_MAX_LENGTH) return false;
+  if (isContextualAdServiceEnquiry(raw)) return true;
+  const interest = standardPrefillInterestText(raw);
+  const body = interest
+    .replace(/^(?:(?:hi|hello|hey|hai)\b|你好|您好|嗨|哈咯)[\s~～,，.!！。]*/iu, "")
     .replace(/[\s。.!！～]+$/u, "").trim();
-  if (/[?？\n\r]/u.test(body) || SUBSTANTIVE_OR_BOOKING_INTENT.test(body)) return false;
-  // A negated Chinese interest phrase still ENDS with "有兴趣"/"感兴趣".
-  // Never treat a polite rejection as consent to a sales introduction.
+  if (!body || /[?？\n\r;,；]/u.test(body) ||
+      SUBSTANTIVE_OR_BOOKING_INTENT.test(body) || EXTRA_QUESTION.test(body)) return false;
   if (/(?:不|没|沒|没有|沒有|无|無|并不|並不).{0,8}(?:感兴趣|感興趣|有兴趣|有興趣|兴趣|興趣)/u.test(body) ||
       /\b(?:not\s+(?:really\s+)?interested|not\s+really|not\s+anymore|no\s+longer\s+interested|actually\s+no|changed\s+my\s+mind|tak\s+jadi|tak\s+nak|tidak\s+mahu|batal)\b/iu.test(body)) return false;
-  const chineseInterest = /^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*.{2,90}?(?:有兴趣|有興趣|感兴趣|感興趣)(?:[，,、\s]*(?:可以|请|請)(?:跟[进進]我|联[系繫]我)(?:[，,、\s]*有(?:优惠|優惠)也(?:发|發)我看看)?)?$/u;
+  const chineseInterest = /^(?:我)?(?:对|對)(?:你们|你們|贵店|貴店)?\s*.{2,90}?(?:有兴趣|有興趣|感兴趣|感興趣)$/u;
+  // Real Neutro Sense Meta prefills include "想了解你们骨盆的疗程" and
+  // "想了解 Neutro Sense TCM 3D 小颜术", not just "我对...有兴趣".
+  // The separate current-customer service matcher MUST still verify the
+  // exact configured treatment before this can bypass Gemini.
+  const chineseKnow = /^(?:我)?(?:想|要|希望)(?:了解|知道|咨询|諮詢)(?:一下)?\s*(?:你们|你們|贵店|貴店)?\s*[^,，、?？\n\r]{2,110}$/u;
   const english = body.match(/^(?:i(?:'m| am) interested in|i(?:'d| would) like to (?:know|learn) more about)\s+(.{2,100})$/iu);
   const malay = body.match(/^(?:saya|sy)\s+(?:berminat(?:\s+dengan)?|nak\s+tahu\s+tentang|mahu\s+tahu\s+tentang)\s+(.{2,100})$/iu);
-  // A subject containing a second request is not a simple interest prefill.
-  // In particular, the loose English/Malay prefixes above are not permission
-  // to ignore the customer's substantive free-text continuation.
   const englishSubject = english?.[1] || "";
   const malaySubject = malay?.[1] || "";
   const englishIsSimple = Boolean(english) &&
@@ -49,7 +64,7 @@ function isStandardAdPrefill(value) {
   const malayIsSimple = Boolean(malay) &&
     !/[;,]/u.test(malaySubject) &&
     !/\b(?:dan|juga|tapi|tetapi|sebab|kerana|nak|mahu|boleh|berapa|bagaimana|kenapa|mengapa|pernah|sudah|dah|ada|macam|kalau|ingin|minta|bolehkah|untuk\s+esok)\b/iu.test(malaySubject);
-  return chineseInterest.test(body) || englishIsSimple || malayIsSimple;
+  return chineseInterest.test(body) || chineseKnow.test(body) || englishIsSimple || malayIsSimple;
 }
 
 function resolveFixedAdFirstReply({
@@ -83,26 +98,45 @@ function resolveFixedAdFirstReply({
   const adTimestamp = Date.parse(metaAdContext?.attributedAt || "");
   if (!Number.isFinite(adTimestamp) || adTimestamp > now + 60_000 ||
       now - adTimestamp > MAX_AD_CONTEXT_AGE_MS) return skip("missing_or_stale_attribution");
-  const treatment = String(metaAdContext?.serviceHint || "").trim();
-  if (!treatment || !services.some((item) => item?.name === treatment))
-    return skip("no_unique_configured_ad_service");
-  if (metaAdCreativeService && metaAdCreativeService !== treatment)
-    return skip("creative_service_mismatch");
   if (!isStandardAdPrefill(customerText) ||
-      hasCustomerPriceEnquiry(customerText) ||
-      hasExplicitPackageOptionsRequest(customerText) ||
+      hasCustomerPriceEnquiry(standardPrefillInterestText(customerText)) ||
+      hasExplicitPackageOptionsRequest(standardPrefillInterestText(customerText)) ||
       hasClinicalMediaRisk(customerText)) return skip("substantive_or_unsafe_message");
 
-  const messageTreatment = safeServiceFromCustomer(customerText, services, serviceAliases)?.name;
-  if (messageTreatment && messageTreatment !== treatment) return skip("customer_service_mismatch");
-  // The message must either be the narrowly recognised generic ad enquiry,
-  // or it must itself name the advertised service. Do not interpret a specific
-  // unknown treatment as permission to send the ad's scripted answer.
+  const messageTreatment = safeServiceFromCustomer(customerText, services, serviceAliases)?.name || null;
   const contextual = isContextualAdServiceEnquiry(customerText);
-  if (contextual && metaAdCreativeService !== treatment)
-    return skip("generic_enquiry_without_verified_creative");
-  if (!contextual && messageTreatment !== treatment)
-    return skip("unverified_customer_treatment");
+  const creativeMatches = matchingMetaAdCreativeServices(
+    metaAdContext, services, serviceAliases
+  );
+
+  let treatment = null;
+  if (contextual) {
+    // Generic "tell me more" MUST still have one independently verified
+    // treatment from the actual creative, never a guessed ad name or CRM tag.
+    if (!metaAdCreativeService || !creativeMatches.includes(metaAdCreativeService))
+      return skip("generic_enquiry_without_verified_creative");
+    treatment = metaAdCreativeService;
+  } else {
+    if (!messageTreatment) return skip("unverified_customer_treatment");
+    // A customer can clearly ask about pelvis even when the creative also
+    // mentions postpartum care and general body alignment. Only accept the
+    // service if that SAME creative explicitly references it. Never override
+    // a conflicting creative with a CRM guess.
+    if (creativeMatches.length > 0) {
+      if (!creativeMatches.includes(messageTreatment))
+        return skip("customer_service_mismatch");
+      treatment = messageTreatment;
+    } else if (metaAdContext?.serviceHint === messageTreatment &&
+               !metaAdCreativeService) {
+      // Retain the existing narrow ad-name-only fallback when creative names
+      // no configured treatment. The customer still explicitly names it.
+      treatment = messageTreatment;
+    } else {
+      return skip("no_unique_configured_ad_service");
+    }
+  }
+  if (!services.some(item => item?.name === treatment))
+    return skip("no_unique_configured_ad_service");
 
   const matching = replies.filter((item) => item?.service === treatment);
   if (matching.length !== 1) return skip("missing_or_duplicate_reply");
