@@ -96,6 +96,13 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       VALUES('wamid.first','free_entry_point',false,'delivered');
     `);
 
+    // Sender-scoped proof reads the sender registry. This deliberately minimal
+    // historical fixture needs the two columns read by that optional lookup.
+    await client.query(
+      "CREATE TABLE whatsapp_sender_accounts(id BIGINT PRIMARY KEY, " +
+      "meta_phone_number_id TEXT,meta_account_id TEXT,state TEXT)"
+    );
+    await client.query("ALTER TABLE contacts ADD COLUMN whatsapp_sender_id BIGINT");
     // Explicit per-contact variants must be executable PostgreSQL statements,
     // not merely regex-checked strings. A second business number must never
     // inherit a first-number customer's free-entry proof.
@@ -110,7 +117,7 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         params:[new Date().toISOString(),"60121234567",11,1],
         key:"eligible_first_reply" },
       { sql:zeroCostGuard.SCOPED_SEVEN_DAY_PROOF_SQL,
-        params:[1],key:"verified" },
+        params:["1408739622311791","200000000000001"],key:"verified" },
     ];
     for(const check of scopedSqlChecks) {
       const outcome=await client.query(check.sql,check.params);
