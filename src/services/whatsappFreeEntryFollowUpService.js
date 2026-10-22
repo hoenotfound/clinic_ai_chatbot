@@ -431,7 +431,7 @@ async function processCandidate(candidate, requested, template, now = new Date()
       whatsapp_number: candidate.whatsapp_number,
     });
   if (senderGate) return "sender_not_ready";
-  const preflight = await zeroCostGuard.preflightTemplate(candidate.whatsapp_number, { now });
+  const preflight = await zeroCostGuard.preflightTemplate(candidate.whatsapp_number, { now, contactId: candidate.contact_id });
   if (!preflight.allowed) {
     console.warn("[WhatsApp FEP] deferred before claim:", preflight.code);
     return "billing_preflight_deferred";

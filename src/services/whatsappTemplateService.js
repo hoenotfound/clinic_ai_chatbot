@@ -602,6 +602,7 @@ async function sendApprovedTemplate(contact,opts={}) {
   if (blocked) return blocked;
   return whatsappZeroCostGuard.perform(contact?.whatsapp_number,
     () => sendApprovedTemplateUnchecked(contact,opts), {
+      contactId: contact?.id,
       currentMessageId: opts.currentMessageId,
       currentFollowUpAttemptId: opts.currentFollowUpAttemptId,
       messageKind: "template",

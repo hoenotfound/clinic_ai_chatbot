@@ -1248,7 +1248,7 @@ async function sendCandidate(candidate) {
   // the ordinary service window instead.
   if (candidate.channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
       !whatsappZeroCostGuard.allow24hAutoFollowUps()) {
-    const eligible = await whatsappZeroCostGuard.preflightFreeform(candidate.whatsapp_number);
+    const eligible = await whatsappZeroCostGuard.preflightFreeform(candidate.whatsapp_number, { contactId: candidate.contact_id });
     if (!eligible.allowed) {
       await deferPolicyCandidate(candidate, stepIndex,
         POSTPONABLE_POLICY_CODES.has(eligible.code)
