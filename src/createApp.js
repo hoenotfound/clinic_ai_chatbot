@@ -420,6 +420,8 @@ function createApp({
   app.use("/api/config", requireAuth, configRoutes);
   app.use("/api/follow-up-activity", requireAuth, followUpActivityRoutes);
   app.use("/api/follow-up-health", requireAuth, followUpHealthRoutes);
+  app.use("/api/whatsapp-secondary-followups", requireAuth,
+    require("./routes/whatsappSecondaryFollowUpRules"));
   app.use("/api/follow-up-performance", requireAuth, followUpPerformanceRoutes);
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);
