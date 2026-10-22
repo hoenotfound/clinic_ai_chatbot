@@ -10,6 +10,7 @@ import PricingPromotionReadiness from "../components/PricingPromotionReadiness";
 import FollowUpActivity from "../components/FollowUpActivity";
 import FollowUpHealth from "../components/FollowUpHealth";
 import FollowUpPerformance from "../components/FollowUpPerformance";
+import ArielFollowUpRules from "../components/ArielFollowUpRules";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -2828,6 +2829,7 @@ function FollowUpTool({
       toasts={toasts}
       dismissToast={dismissToast}
     >
+      <ArielFollowUpRules />
       {uploadingVideo && (
         <div
           role="status"
