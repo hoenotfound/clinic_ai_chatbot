@@ -136,6 +136,8 @@ async function sendSecondaryStaffText({
 
   const reserved = await billingRepo.reserveSecondaryBillingAttempt({
     contactId: cid, messageId: mid,
+    billableAuthorized: Boolean(templateRequest),
+    expectedTemplateSignature: templateRequest?.expectedSignature || null,
   }, { database, env });
   if (!reserved.reserved || !reserved.reservationId) {
     return block(reserved.code || "secondary_staff_billing_blocked");
