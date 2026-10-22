@@ -157,11 +157,14 @@ function createSecondaryOutboundTransport(binding, {
       return send({ type: "interactive", interactive: { type: "button", body: { text: body },
         action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) } } });
     },
-    async sendImageByUrl(url, caption = "") {
+    async sendImageByUrl(url, caption = "", { replyToProviderMessageId = null } = {}) {
       if (!/^https:\/\//.test(clean(url))) return { success: false, error: "HTTPS image URL required." };
-      return send({ type: "image", image: { link: url, ...(caption ? { caption } : {}) } });
+      return send({ type: "image", image: { link: url, ...(caption ? { caption } : {}) },
+        ...(clean(replyToProviderMessageId) ? { context: { message_id: clean(replyToProviderMessageId) } } : {}) });
     },
-    async sendMediaById(type, mediaId, { caption = "", filename = "", voice = false } = {}) {
+    async sendMediaById(type, mediaId, {
+      caption = "", filename = "", voice = false, replyToProviderMessageId = null,
+    } = {}) {
       if (!MEDIA_TYPES.has(type) || !clean(mediaId) || (voice && type !== "audio")) {
         return { success: false, error: "Invalid WhatsApp media payload." };
       }
@@ -169,13 +172,14 @@ function createSecondaryOutboundTransport(binding, {
         ...(caption && ["image", "video", "document"].includes(type) ? { caption } : {}),
         ...(filename && type === "document" ? { filename } : {}),
         ...(voice && type === "audio" ? { voice: true } : {}) };
-      return send({ type, [type]: media });
+      return send({ type, [type]: media,
+        ...(clean(replyToProviderMessageId) ? { context: { message_id: clean(replyToProviderMessageId) } } : {}) });
     },
     async sendTemplatePayload(name, languageCode, components = []) {
       // This is transport ONLY: caller must check the approved sender-specific
       // template catalog, marketing consent, policy window and billing first.
       if (!/^[a-z0-9_]+$/.test(clean(name)) ||
-          !/^[a-z]{2,3}_[A-Z]{2}$/.test(clean(languageCode)) ||
+          !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(clean(languageCode)) ||
           !Array.isArray(components)) return { success: false, error: "Invalid template payload." };
       return send({ type: "template", template: {
         name, language: { code: languageCode }, components } });
