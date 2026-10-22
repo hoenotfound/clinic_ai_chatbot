@@ -640,11 +640,16 @@ async function downloadMedia(mediaId) {
 // Preserve Meta's receiving-business identity on normalized events. This is
 // provenance only: the live single-number sender remains unchanged until the
 // sender-aware contact, send, policy, and retry migration is complete.
-function senderMetadataForChange(change) {
+function senderMetadataForChange(entry, change) {
   const phoneId = change?.value?.metadata?.phone_number_id;
-  return typeof phoneId === "string" && phoneId.trim()
-    ? { businessPhoneNumberId: phoneId.trim() }
-    : {};
+  if (typeof phoneId !== "string" || !phoneId.trim()) return {};
+  const accountId = entry?.id;
+  return {
+    businessPhoneNumberId: phoneId.trim(),
+    ...(typeof accountId === "string" && accountId.trim()
+      ? { businessAccountId: accountId.trim() }
+      : {}),
+  };
 }
 
 function parseIncomingMessages(body) {
@@ -683,7 +688,7 @@ function parseIncomingMessages(body) {
             id: message.id,
             from: message.from,
             profileName,
-            ...senderMetadataForChange(change),
+            ...senderMetadataForChange(entry, change),
             ...(sourceTimestamp ? { timestamp: sourceTimestamp } : {}),
             ...(attribution ? { attribution } : {}),
             ...(replyToProviderMessageId ? { replyToProviderMessageId } : {}),
@@ -806,7 +811,7 @@ function parseBusinessAppEchoes(body) {
             id: message.id,
             from: message.from || null,
             to: message.to,
-            ...senderMetadataForChange(change),
+            ...senderMetadataForChange(entry, change),
             timestamp: message.timestamp || null,
             type: message.type || "unknown",
             mediaId: null,
@@ -874,7 +879,7 @@ function parseReactionEvents(body) {
             from: message.from,
             targetMessageId: message.reaction.message_id,
             emoji,
-            ...senderMetadataForChange(change),
+            ...senderMetadataForChange(entry, change),
             timestamp: message.timestamp || null,
           });
         }
@@ -913,7 +918,7 @@ function parseStatusUpdates(body) {
             errorCode: firstError?.code ?? null,
             errorTitle: firstError?.title || null,
             errorMessage: firstError?.error_data?.details || firstError?.message || null,
-            ...senderMetadataForChange(change),
+            ...senderMetadataForChange(entry, change),
             ...(status.pricing?.type || status.pricing?.billable === true ? {
               // Meta may send billable=true without a type/category. Keep
               // it as unknown pricing, never as a verified free response.
