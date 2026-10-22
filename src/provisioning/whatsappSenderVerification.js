@@ -33,10 +33,10 @@ async function listAccountPhoneIds({
     for (const phone of payload?.data || []) {
       if (phone?.id) found.add(String(phone.id));
     }
+    const more = Boolean(payload?.paging?.next);
     cursor = payload?.paging?.cursors?.after || null;
-    if (!payload?.paging?.next || !cursor) {
-      return { phoneIds: [...found], complete: true };
-    }
+    if (!more) return { phoneIds: [...found], complete: true };
+    if (!cursor) return { phoneIds: [...found], complete: false };
   }
   return { phoneIds: [...found], complete: false };
 }
