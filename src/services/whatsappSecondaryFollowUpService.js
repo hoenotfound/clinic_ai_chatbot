@@ -250,7 +250,9 @@ async function runOnce({
         }}:{}),
       },{env,database});
       if(result?.success===true && /^wamid\./.test(String(result.wamid||""))) {
-        await store.setWhatsappMessageId(messageId,result.wamid);
+        await store.setWhatsappMessageId(messageId,result.wamid,{
+          preserveVerifiedSecondaryReceipt:true,
+        });
       }
       if(result?.success===true && result?.unknown!==true &&
          /^wamid\./.test(String(result.wamid||""))) {
