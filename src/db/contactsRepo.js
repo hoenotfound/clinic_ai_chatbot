@@ -262,8 +262,15 @@ async function getOrCreateChannelContact(
   return result.rows[0];
 }
 
+// Read new sender tables only after an explicit staged activation.
+// Legacy installations and narrow test schemas retain the original SQL.
+// This switch must stay OFF until the full multi-number send paths are ready.
+function senderAwareInboxReadsEnabled() {
+  return process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
+}
+
 async function getContactById(id) {
-  const result = await pool.query(
+  const result = await pool.query(senderAwareInboxReadsEnabled() ?
     "SELECT c.*, sa.sender_key AS whatsapp_sender_key, " +
     "sa.display_name AS whatsapp_sender_display_name, " +
     "sa.meta_phone_number_id AS whatsapp_sender_phone_number_id, " +
@@ -271,7 +278,7 @@ async function getContactById(id) {
     "FROM contacts c " +
     "LEFT JOIN whatsapp_sender_conversations sc ON sc.contact_id = c.id AND sc.state = 'bound' " +
     "LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id " +
-    "WHERE c.id = $1", [id]
+    "WHERE c.id = $1" : "SELECT * FROM contacts WHERE id = $1", [id]
   );
   return result.rows[0] || null;
 }
@@ -458,10 +465,12 @@ async function listConversations() {
       c.channel,
       c.channel_user_id,
       c.photo_url,
+${senderAwareInboxReadsEnabled() ? `
       sa.sender_key AS whatsapp_sender_key,
       sa.display_name AS whatsapp_sender_display_name,
       sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
       sa.meta_account_id AS whatsapp_sender_account_id,
+      ` : ""}
       c.mode,
       c.takeover_by,
       c.takeover_at,
@@ -523,9 +532,11 @@ async function listConversations() {
           )
       ) AS has_unreplied
     FROM contacts c
+${senderAwareInboxReadsEnabled() ? `
     LEFT JOIN whatsapp_sender_conversations sc
       ON sc.contact_id = c.id AND sc.state = 'bound'
     LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id
+    ` : ""}
     LEFT JOIN LATERAL (
       SELECT l.id, l.owner_username, l.temperature, l.is_closed
       FROM leads l
