@@ -194,7 +194,7 @@ async function sendSecondaryStaffText({
         error: "Provider outcome requires staff review; do not resend.",
       };
     }
-    return accepted ? { ...send, retryable: false } :
+    return accepted ? { ...send, retryable: false, secondarySender: true } :
       { ...send, success: false, wamid: null,
         unknown: true, ambiguous: true, retryable: false,
         code: "secondary_staff_provider_outcome_unverified",
