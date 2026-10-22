@@ -85,6 +85,7 @@ function normalizedSignedEvents(rawBody, env) {
           accountId: env.WHATSAPP_SECONDARY_WABA_ID,
         };
         const signatureMaterial = [
+          event.accountId, event.phoneId,
           event.wamid, event.recipient, event.deliveryStatus,
           event.pricingType, String(event.pricingBillable),
           event.pricingCategory, clean(item.timestamp),
