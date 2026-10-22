@@ -94,6 +94,7 @@ test("secondary inbox only requires active exact Meta registry identity",async()
 test("new secondary operational flags fail startup when only one feature is enabled",()=>{
   for(const flag of [
     "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
+    "WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED",
     "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
     "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
     "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
@@ -114,6 +115,7 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
     WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
     WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+    WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
     WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
     WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
     WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true",
