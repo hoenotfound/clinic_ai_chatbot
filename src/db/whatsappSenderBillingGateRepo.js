@@ -6,6 +6,7 @@
 // separately reviewed pricing callback / Billing Hub reconciliation path.
 const crypto = require("node:crypto");
 const { pool } = require("./db");
+const { applyStagedSecondaryReceipts } = require("./whatsappSenderEarlyReceiptRepo");
 
 function deny(code) { return { reserved: false, sendAuthorized: false, code }; }
 function id(value) {
@@ -148,7 +149,7 @@ async function reserveSecondaryBillingAttempt({
 }
 
 const OWNED_SECONDARY_RESERVATION_SQL = `
-  SELECT g.sender_id,g.owner_contact_id,g.state,g.reservation_id,g.wamid
+  SELECT g.sender_id,g.owner_contact_id,g.state,g.reservation_id,g.wamid,a.message_id
   FROM whatsapp_sender_billing_gates g
   JOIN whatsapp_sender_accounts sa ON sa.id=g.sender_id
   JOIN whatsapp_sender_billing_attempts a ON a.reservation_id=g.reservation_id
@@ -177,6 +178,18 @@ async function recordSecondaryProviderOutcome({
     client = await database.connect();
     await client.query("BEGIN");
     transaction = true;
+    // Signed status ingress takes this sender lock before the customer gate.
+    // Preserve that lock order so a racing callback cannot be lost or deadlock.
+    const senderLock = await client.query(
+      "SELECT id FROM whatsapp_sender_accounts WHERE sender_key=$1 " +
+      "AND meta_phone_number_id=$2 AND meta_account_id=$3 AND state='active' FOR UPDATE",
+      [env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+        env.WHATSAPP_SECONDARY_WABA_ID]
+    );
+    if (senderLock.rowCount !== 1) {
+      await client.query("ROLLBACK"); transaction = false;
+      return deny("secondary_billing_sender_mismatch");
+    }
     const result = await client.query(OWNED_SECONDARY_RESERVATION_SQL, [
       reservationId,env.WHATSAPP_SECONDARY_SENDER_KEY,
       env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
@@ -216,8 +229,22 @@ async function recordSecondaryProviderOutcome({
       await client.query("ROLLBACK"); transaction = false;
       return deny("secondary_billing_outcome_ownership_changed");
     }
+    // Status may have arrived just before the HTTP response/WAMID was
+    // persisted. Promote the original HMAC-verified receipt atomically,
+    // requiring exact sender + WAMID + recipient proof. No second webhook
+    // callback or automatic retry is needed.
+    const staged = acceptedWamid ? await applyStagedSecondaryReceipts({
+      client, senderId: row.sender_id, contactId: row.owner_contact_id,
+      messageId: row.message_id, reservationId, acceptedWamid, env,
+    }) : null;
     await client.query("COMMIT"); transaction = false;
-    return { recorded: true, sendAuthorized: false, state };
+    return {
+      recorded:true,sendAuthorized:false,
+      state: staged?.autoReconciled ? "reconciled" :
+        staged?.held ? "unknown" : state,
+      ...(staged ? { stagedReceiptsMatched:staged.matched,
+        stagedAutoReconciled:staged.autoReconciled } : {}),
+    };
   } catch {
     if (transaction && client) await client.query("ROLLBACK").catch(() => {});
     return deny("secondary_billing_database_unavailable");
