@@ -60,20 +60,20 @@ function isExactConfiguredTreatmentSubject(value, {
   const withoutType = subject.replace(/(?:的)?(?:疗程|療程|护理|護理|项目|項目|服务|服務)$/u, "").trim();
   const compact = (text) => String(text || "").normalize("NFKC")
     .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-  const candidateKeys = new Set([compact(subject), compact(withoutType)]);
+  const candidateKeys = new Set([compact(subject), compact(withoutType)].filter(Boolean));
   const namedService = safeServiceFromCustomer(subject, services, serviceAliases);
-  if (!namedService || !candidateKeys.has(compact(namedService.name)) &&
-      !(Array.isArray(serviceAliases) && serviceAliases.some(item =>
-        item?.officialService === namedService.name &&
-        String(item.alias || "").split(/[,|;，、]/u).some(alias =>
-          candidateKeys.has(compact(alias)) && compact(alias).length >= 2
-        )
-      )) &&
-      !(namedService.name === "骨盆调理" &&
-        ["盆骨", "盆骨调整", "盆骨矫正", "盆骨调理"].some(alias =>
-          candidateKeys.has(compact(alias))
-        ))) return false;
-  return true;
+  if (!namedService) return false;
+  const labels = [
+    namedService.name,
+    ...(Array.isArray(serviceAliases) ? serviceAliases : [])
+      .filter(item => item?.officialService === namedService.name)
+      .flatMap(item => String(item.alias || "").split(/[,|;，、]/u)),
+    ...(namedService.name === "骨盆调理"
+      ? ["盆骨", "盆骨调整", "盆骨矫正", "盆骨调理"] : []),
+  ];
+  return labels.some(label => compact(label).length >= 2 &&
+    candidateKeys.has(compact(label)));
+
 }
 
 function isStandardAdPrefill(value, serviceContext = {}) {
