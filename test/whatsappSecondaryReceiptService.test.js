@@ -110,3 +110,37 @@ test("a valid signed status has business identity and no implicit send permissio
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sa\.meta_account_id=\$5/);
   assert.match(receipt.MATCH_SECONDARY_ATTEMPT_SQL,/sc\.customer_wa_id=\$2/);
 });
+
+test("mixed signed webhook selects only Ariel statuses without exposing Neutro callbacks", () => {
+  const mixed=body();
+  mixed.entry.unshift({
+    id: env.WHATSAPP_WABA_ID,
+    changes: [{field:"messages",value:{
+      metadata:{phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID},
+      statuses:[status({id:"wamid.neutro-one",recipient_id:"60123333333"})],
+    }}],
+  });
+  const event=receipt.normalizedSecondarySubsetEvents(signed(mixed).rawBody,env);
+  assert.equal(event.length,1);
+  assert.equal(event[0].wamid,"wamid.ariel-one");
+  assert.equal(event[0].accountId,env.WHATSAPP_SECONDARY_WABA_ID);
+  assert.equal(event[0].phoneId,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+});
+
+test("mixed webhook rejects any Ariel status with a mismatched Meta phone or account", () => {
+  const one=body();one.entry[0].changes[0].value.metadata.phone_number_id=env.WHATSAPP_PHONE_NUMBER_ID;
+  assert.equal(receipt.normalizedSecondarySubsetEvents(signed(one).rawBody,env),null);
+  const two=body();two.entry[0].id=env.WHATSAPP_WABA_ID;
+  assert.equal(receipt.normalizedSecondarySubsetEvents(signed(two).rawBody,env),null);
+  const noStatus=body();delete noStatus.entry[0].changes[0].value.statuses;
+  assert.deepEqual(receipt.normalizedSecondarySubsetEvents(signed(noStatus).rawBody,env),[]);
+});
+
+test("the signed mixed webhook cannot bypass the original raw-body signature check",async()=>{
+  const packet=signed(body());
+  packet.rawBody=Buffer.from(packet.rawBody.toString("utf8").replace("delivered","failed"));
+  const result=await receipt.recordSignedSecondaryStatusBatch({
+    ...packet,subsetFromVerifiedWebhook:true,
+  },{env,database:{connect:async()=>{throw Error("not allowed to connect");}}});
+  assert.equal(result.code,"secondary_receipt_signature_invalid");
+});
