@@ -358,7 +358,9 @@ async function recordSignedSecondaryStatusBatch({
         attempt.gate_state === "awaiting_pricing" &&
         attempt.live_reservation_id &&
         event.pricingBillable === false &&
-        event.pricingType === "free_entry_point" &&
+        (event.pricingType === "free_entry_point" ||
+          (event.pricingType === "free_customer_service" &&
+           event.pricingCategory === "service")) &&
         ["sent","delivered","read"].includes(event.deliveryStatus)
       )) {
         // One signed nonbillable receipt cannot overrule a previous adverse
@@ -399,7 +401,9 @@ async function recordSignedSecondaryStatusBatch({
              ON CONFLICT(reservation_id) DO NOTHING RETURNING reservation_id`,
             [attempt.reservation_id,attempt.sender_id,event.fingerprint,
               paidEligible ? "signed_meta_staff_authorized_charge"
-                : "signed_meta_nonbillable_free_entry",
+                : event.pricingType === "free_customer_service"
+                  ? "signed_meta_nonbillable_customer_service"
+                  : "signed_meta_nonbillable_free_entry",
               paidEligible]
           );
           if (added.rowCount !== 1) throw new Error("Auto-reconciliation replay");
