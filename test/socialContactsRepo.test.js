@@ -14,7 +14,7 @@ test("creates a Facebook contact with a separate channel recipient id", async (t
   pool.query = async (sql, params) => {
     assert.match(sql, /INSERT INTO contacts/);
     assert.match(sql, /channel_user_id/);
-    assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO UPDATE/);
+    assert.match(sql, /ON CONFLICT \(channel, channel_user_id\) WHERE channel_user_id IS NOT NULL DO UPDATE/);
     assert.deepEqual(params, [
       "facebook:psid-123",
       "facebook",
