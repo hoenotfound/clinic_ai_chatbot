@@ -87,9 +87,10 @@ async function assertStoredSenderSafety({
   if (!Number.isSafeInteger(total) || !Number.isSafeInteger(nonprimary)) {
     throw new Error("Cannot verify durable WhatsApp sender bindings at startup.");
   }
-  if (!readEnabled && nonprimary > 0) {
-    throw new Error("Unsafe WhatsApp rollback: secondary-number contacts remain " +
-      "bound; sender-aware reads must stay enabled.");
+  if (nonprimary > 0 && (!readEnabled || !ingressEnabled)) {
+    throw new Error("Unsafe WhatsApp rollback: secondary-number contacts are " +
+      "bound; sender-aware reads AND sender-scoped ingress must remain enabled. " +
+      "Disable Ariel sends/workers instead, not the permanent identity boundary.");
   }
   if (env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true") {
     if (!ingressEnabled || !readEnabled ||
