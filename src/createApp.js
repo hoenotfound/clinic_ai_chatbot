@@ -188,7 +188,7 @@ function createApp({
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
           incomingMessages.map(async (incoming) => ({
-            queueKey: incoming.businessPhoneNumberId
+            queueKey: process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
               ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from,
             durableClaim: await durablyClaimIncoming(incoming.from, incoming),
           }))
