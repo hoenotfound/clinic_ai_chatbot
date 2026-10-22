@@ -446,3 +446,124 @@ test("explicit nonbillable receipt never overrides prior wrong recipient evidenc
     )).rows[0].state,"awaiting_pricing");
   });
 });
+
+
+test("a one-time staff-reviewed template may settle a signed legitimate Meta charge without clearing unexpected charges",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,contacts,reservation}=await seededSend(db,database);
+    const paidEnv={
+      ...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+      WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
+    };
+    const first=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one")),{database,env:paidEnv});
+    assert.equal(first.autoReconciled,1);
+
+    const hash="a".repeat(64), signature="b".repeat(64);
+    const name="ariel_followup",lang="en_US";
+    await db.query(
+      `INSERT INTO whatsapp_manual_template_billing_claims
+         (token_hash,contact_id,staff_username,template_name,language_code)
+       VALUES($1,$2,$3,$4,$5)`,
+      [hash,contacts[1].id,"test-staff",name,lang]
+    );
+    const metadata={name,language:lang,category:"UTILITY",
+      billingAcknowledged:true,billingReviewClaimHash:hash,
+      templateSignature:signature};
+    const next=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_template) " +
+      "VALUES($1,'assistant','Approved template',$2::jsonb) RETURNING id",
+      [contacts[1].id,JSON.stringify(metadata)]
+    )).rows[0].id;
+    const conversation=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",
+      [contacts[1].id]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [next,conversation]
+    );
+    const wrongSig=await billing.reserveSecondaryBillingAttempt({
+      contactId:contacts[1].id,messageId:next,
+      billableAuthorized:true,expectedTemplateSignature:"c".repeat(64),
+    },{database,env:paidEnv});
+    assert.equal(wrongSig.code,"secondary_billing_template_review_unverified");
+    const review=await billing.reserveSecondaryBillingAttempt({
+      contactId:contacts[1].id,messageId:next,
+      billableAuthorized:true,expectedTemplateSignature:signature,
+    },{database,env:paidEnv});
+    assert.equal(review.reserved,true);
+    assert.equal((await billing.recordSecondaryProviderOutcome({
+      reservationId:review.reservationId,acceptedWamid:"wamid.ariel-paid",
+    },{database,env:paidEnv})).state,"awaiting_pricing");
+    const accepted=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-paid",{
+        status:"sent",
+        pricing:{type:"regular",billable:true,category:"utility"},
+      }
+    )),{database,env:paidEnv});
+    assert.equal(accepted.autoReconciled,1);
+    assert.equal(accepted.held,0);
+    const recorded=(await db.query(
+      "SELECT method,pricing_billable FROM whatsapp_sender_auto_reconciliations " +
+      "WHERE reservation_id=$1",
+      [review.reservationId]
+    )).rows[0];
+    assert.equal(recorded.method,"signed_meta_staff_authorized_charge");
+    assert.equal(recorded.pricing_billable,true);
+    const later=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-paid",{
+        status:"read",
+        pricing:{type:"regular",billable:true,category:"utility"},
+      }
+    )),{database,env:paidEnv});
+    assert.equal(later.held,0);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0].n,0);
+    const failure=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-paid",{
+        status:"failed",
+        pricing:{type:"regular",billable:true,category:"utility"},
+      }
+    )),{database,env:paidEnv});
+    assert.equal(failure.held,1);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel]
+    )).rows[0].n,1);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0);
+  });
+});
+
+test("fabricated or re-used staff billing claim never authorizes another sender attempt",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {contacts}=await seededSend(db,database);
+    const sig="b".repeat(64),claim="c".repeat(64);
+    const conversation=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",
+      [contacts[1].id]
+    )).rows[0].id;
+    const meta={name:"ariel_template",language:"en_US",category:"UTILITY",
+      billingAcknowledged:true,billingReviewClaimHash:claim,templateSignature:sig};
+    const m=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_template) " +
+      "VALUES($1,'assistant','Forged billing claim',$2::jsonb) RETURNING id",
+      [contacts[1].id,JSON.stringify(meta)]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [m,conversation]
+    );
+    const result=await billing.reserveSecondaryBillingAttempt({
+      contactId:contacts[1].id,messageId:m,billableAuthorized:true,
+      expectedTemplateSignature:sig,
+    },{database,env});
+    assert.equal(result.code,"secondary_billing_template_review_unverified");
+  });
+});
