@@ -7,6 +7,7 @@ const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact } = require("../utils/accessControl");
+const { hasCapability } = require("../utils/permissions");
 const contactsRepo = require("../db/contactsRepo");
 const { pool } = require("../db/db");
 const messagesRepo = require("../db/messagesRepo");
@@ -43,6 +44,25 @@ const {
 } = require("../utils/socialDeliveryError");
 
 const router = express.Router();
+// All contact-specific routes share one server-side authorization boundary,
+// including message history, attachments, template sends, retries and forward.
+router.param("contactId", async (req,res,next,value) => {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ error:"Invalid contact id." });
+  }
+  try {
+    if (!await canAccessContact(req.user,id)) {
+      return res.status(403).json({ error:"You cannot access this conversation." });
+    }
+    const sending = req.method === "POST" &&
+      (/^\\/[^/]+\\/(?:messages(?:\\/[^/]+\\/(?:retry|forward))?|media|video|document|voice|whatsapp-templates\\/send)$/.test(req.path));
+    if (sending && !hasCapability(req.user,"reply_to_assigned_leads")) {
+      return res.status(403).json({ error:"You cannot reply to this conversation." });
+    }
+    next();
+  } catch (err) { next(err); }
+});
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_PAGE_SIZE = 100;
@@ -2501,6 +2521,8 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
       return res.status(400).json({ error: "This message cannot be forwarded." });
     }
 
+    const sourceContact = await contactsRepo.getContactById(sourceContactId);
+    if (!sourceContact) return res.status(404).json({ error:"Source conversation not found." });
     const targetChecks = await Promise.all(
       targetContactIds.map(async (contactId) => {
         const allowed = await canAccessContact(req.user, contactId);
@@ -2525,6 +2547,16 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
 
     const targets = targetChecks.map((item) => item.target);
+    const sourceOwner = String(sourceContact.whatsapp_sender_id || "");
+    if (targets.some(target =>
+      (target.channel || "whatsapp") !== (sourceContact.channel || "whatsapp") ||
+      (sourceContact.channel === "whatsapp" &&
+        String(target.whatsapp_sender_id || "") !== sourceOwner))) {
+      return res.status(409).json({
+        code:"cross_business_forward_disallowed",
+        error:"Forwarding between business WhatsApp numbers is disabled to protect customer privacy.",
+      });
+    }
     if (
       sourceMessage.media_key &&
       isInboxDocumentMimeType(sourceMessage.media_mime_type)
