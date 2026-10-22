@@ -44,6 +44,7 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
       !digits(env.WHATSAPP_SECONDARY_WABA_ID) ||
       !/^[a-z][a-z0-9_-]{0,63}$/.test(clean(env.WHATSAPP_SECONDARY_SENDER_KEY)) ||
       !clean(env.WHATSAPP_SECONDARY_TOKEN) ||
+      clean(env.WHATSAPP_SECONDARY_SENDER_KEY) === clean(env.WHATSAPP_PRIMARY_SENDER_KEY) ||
       clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) === clean(env.WHATSAPP_PHONE_NUMBER_ID) ||
       clean(env.WHATSAPP_SECONDARY_WABA_ID) === clean(env.WHATSAPP_WABA_ID) &&
         clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) === clean(env.WHATSAPP_PHONE_NUMBER_ID)) reject();
@@ -188,7 +189,28 @@ const boundSenders = new WeakSet();
 async function createVerifiedSecondaryOutboundTransport(contact, options = {}) {
   const binding = await resolveSecondaryOutboundBinding(contact, options);
   boundSenders.add(binding);
-  return createSecondaryOutboundTransport(binding, options);
+  const transport = createSecondaryOutboundTransport(binding, options);
+  // A transport kept in memory must NOT survive a sender deactivation,
+  // contact reassignment or credential rotation unnoticed. Re-verify on
+  // every request, including media uploads and template payloads.
+  async function revalidate() {
+    const current = await resolveSecondaryOutboundBinding(contact, options);
+    if (current.senderKey !== binding.senderKey ||
+        current.phoneNumberId !== binding.phoneNumberId ||
+        current.accountId !== binding.accountId ||
+        current.recipient !== binding.recipient ||
+        current.token !== binding.token) reject();
+  }
+  const methods = ["sendText", "sendInteractiveButtons", "sendImageByUrl",
+    "sendMediaById", "sendTemplatePayload", "uploadMedia"];
+  const wrapped = { senderKey: transport.senderKey };
+  for (const method of methods) {
+    wrapped[method] = async (...args) => {
+      await revalidate();
+      return transport[method](...args);
+    };
+  }
+  return Object.freeze(wrapped);
 }
 
 module.exports = {
