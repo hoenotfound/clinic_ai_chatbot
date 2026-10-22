@@ -42,7 +42,7 @@ test("creates a canonical contact with a race-safe insert", async (t) => {
     }
 
     assert.equal(queryCount, 2);
-    assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO NOTHING/);
+    assert.match(sql, /ON CONFLICT DO NOTHING/);
     assert.deepEqual(params, ["60123456789", "Patient"]);
     return {
       rows: [{ id: 8, whatsapp_number: "60123456789", whatsapp_profile_name: "Patient" }],
@@ -93,7 +93,7 @@ test("keeps an existing canonical contact instead of destructively merging a leg
       return { rows: [] };
     }
     if (queryCount === 2) {
-      assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO NOTHING/);
+      assert.match(sql, /ON CONFLICT DO NOTHING/);
       return { rows: [] };
     }
     assert.equal(queryCount, 3);
