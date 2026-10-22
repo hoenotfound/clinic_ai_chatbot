@@ -36,7 +36,7 @@ async function reservePendingConversation({ accountId, phoneNumberId, customerPh
     "INSERT INTO whatsapp_sender_conversations (sender_id, customer_wa_id) " +
     "SELECT id, $3 FROM whatsapp_sender_accounts " +
     "WHERE meta_account_id = $1 AND meta_phone_number_id = $2 " +
-    "AND state IN ('testing', 'active') " +
+    "AND state = 'active' " +
     "ON CONFLICT (sender_id, customer_wa_id) DO UPDATE " +
     "SET updated_at = whatsapp_sender_conversations.updated_at RETURNING *",
     [account, phone, customer]
@@ -51,7 +51,7 @@ async function findConversationBySender({ accountId, phoneNumberId, customerPhon
     "FROM whatsapp_sender_conversations sc " +
     "JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id " +
     "WHERE sa.meta_account_id = $1 AND sa.meta_phone_number_id = $2 " +
-    "AND sc.customer_wa_id = $3",
+    "AND sc.customer_wa_id = $3 AND sa.state = 'active'",
     [digits(accountId, "Meta WhatsApp account ID"),
       digits(phoneNumberId, "Meta receiving phone ID"), customerId(customerPhone)]
   );
