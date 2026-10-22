@@ -125,3 +125,37 @@ before activation; never assume that display names identify the active sender.
 - Human review of both WhatsApp account subscriptions and callback overrides.
 
 **Do not enable multi-number routing just because migration 078 exists.**
+
+## Hardened legacy webhook boundary — production rollout gate
+
+- The boundary runs **after Meta signature verification** and **before** any
+  contact creation, AI, WhatsApp Business App staff echo, delivery status,
+  or reaction processing. `WHATSAPP_PHONE_NUMBER_ID` is required to identify
+  the existing sender; a missing ID returns a retryable error instead of
+  mixing an unknown account into the Neutro Sense Inbox.
+- Ordinary customer messages, status receipts and reactions are accepted only
+  from `messages` field changes; Business App echoes only from
+  `smb_message_echoes`. Malformed event arrays and passive sync events
+  containing disguised top-level messages are quarantined. This is **not**
+  historical-message import or replay.
+- `WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED=true` additionally checks
+  `entry.id` against `WHATSAPP_WABA_ID`. Keep this flag disabled **until**
+  live callback evidence verifies that the configured WhatsApp account ID
+  really owns the production number. Never guess ownership using a dashboard
+  name. Likewise, opt into `WHATSAPP_SINGLE_SENDER_STRICT_METADATA=true`
+  only after observing genuine incoming callback metadata.
+- Quarantine writes are one bounded database statement. For **foreign-only**
+  batches, a failed audit returns 503 so Meta can retry. For **mixed**
+  batches, the valid Neutro work is saved and acknowledged independently;
+  quarantine is a post-ACK best-effort audit with an operational warning.
+  An audit failure must not delay a valid Neutro patient message.
+- Quarantine only stores opaque SHA-256 digests and Meta business-side IDs,
+  not customer phone numbers or message content. If Telegram alerts are
+  configured, a throttled operational alert is sent; without Telegram, the
+  application error/warning log and quarantine ledger must be monitored.
+  A misrouted message is **not recoverable from the privacy-safe audit**.
+  Operators must correct the Meta override and ask affected customers to
+  resend if necessary. Do not claim this is a second-number Inbox.
+- Never subscribe Ariel Lee to the production Neutro Sense webhook or enable
+  sender-aware routing until per-number contacts, credentials, follow-ups,
+  receipts, staff takeover, and privacy rules are implemented and tested.
