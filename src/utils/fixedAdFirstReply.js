@@ -32,7 +32,7 @@ function standardPrefillInterestText(value) {
   const raw = String(value || "").normalize("NFKC").trim();
   // Strip *trailing* emoji only. Interior emoji, arbitrary edits or extra
   // customer requests do not become allowed just by resembling a prefill.
-  const text = raw.replace(/[\s\uFE0F\u200D\u2600-\u27BF\u{1F300}-\u{1FAFF}]+$/gu, "").trim();
+  const text = raw.replace(/[\s~～.!！。\uFE0F\u200D\u2600-\u27BF\u{1F300}-\u{1FAFF}]+$/gu, "").trim();
   return text.replace(FUTURE_CONTACT_SUFFIX, "").trim();
 }
 
