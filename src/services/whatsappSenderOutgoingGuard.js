@@ -31,6 +31,13 @@ function blockUnverifiedOutgoingSender(contact, options = {}, env = process.env)
   const accounts = [contact?.whatsapp_sender_account_id, contact?.businessAccountId, options?.businessAccountId]
     .map(clean).filter(Boolean);
 
+  // A persisted sender tag with no verified sender details is NEVER proof
+  // that the message belongs to the primary number. Under legacy rollback
+  // flags, falling through here would send an Ariel contact via Neutro.
+  if (contact?.whatsapp_sender_id != null &&
+      (!senderKeys.length || !phones.length || !accounts.length)) {
+    return senderMismatchResult();
+  }
   if (!senderKeys.length && !phones.length && !accounts.length) return null;
   const primaryPhone = clean(env.WHATSAPP_PHONE_NUMBER_ID);
   const primaryKey = clean(env.WHATSAPP_PRIMARY_SENDER_KEY);
