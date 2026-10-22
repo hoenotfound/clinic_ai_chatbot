@@ -114,7 +114,7 @@ async function seededSend(db,database) {
 test("migration 084 is repeatable and keeps both customer senders separate",
   {skip:!connectionString},async()=>{
     await withSchema(async({db,database})=>{
-      assert.equal(loadMigrations().at(-1).version,92);
+      assert.equal(loadMigrations().at(-1).version,93);
       assert.equal((await runMigrations(database,{quiet:true})).appliedCount,0);
       const inserted=await db.query("SELECT COUNT(*)::int AS n FROM whatsapp_sender_status_receipts");
       assert.equal(inserted.rows[0].n,0);
@@ -650,8 +650,8 @@ test("a signed status received before provider acceptance can be safely promoted
       reservationId:reservation.reservationId,acceptedWamid:"wamid.ariel-one",
     },{database,env});
     const recovered=await receipts.recordSignedSecondaryStatusBatch(packet,{database,env});
-    assert.equal(recovered.matched,1);
-    assert.equal(recovered.replayed,0);
+    assert.equal(recovered.matched,0,"Original signed status was promoted on acceptance");
+    assert.equal(recovered.replayed,1,"A duplicate webhook must be idempotent");
     const rows=(await db.query(
       "SELECT matched,reservation_id,wamid FROM whatsapp_sender_status_receipts"
     )).rows;
@@ -670,6 +670,78 @@ test("a signed status received before provider acceptance can be safely promoted
   });
 });
 
+
+
+test("one early signed free Ariel receipt settles on acceptance without another callback",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,reservation,messages}=await seededSend(db,database);
+    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reserved',wamid=NULL WHERE reservation_id=$1",
+      [reservation.reservationId]);
+    await db.query("UPDATE whatsapp_sender_billing_gates SET state='reserved',wamid=NULL WHERE reservation_id=$1",
+      [reservation.reservationId]);
+    const autoEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+    const first=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one")),{database,env:autoEnv});
+    assert.equal(first.unmatched,1);
+    const accepted=await billing.recordSecondaryProviderOutcome({
+      reservationId:reservation.reservationId,acceptedWamid:"wamid.ariel-one",
+    },{database,env:autoEnv});
+    assert.equal(accepted.recorded,true);
+    assert.equal(accepted.stagedReceiptsMatched,1);
+    assert.equal(accepted.stagedAutoReconciled,true);
+    assert.equal(accepted.state,"reconciled");
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+      [ids.ariel])).rows[0].state,"idle");
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+      [reservation.reservationId])).rows[0].state,"reconciled");
+    const receipt=(await db.query(
+      "SELECT matched,recipient_hash FROM whatsapp_sender_status_receipts"
+    )).rows[0];
+    assert.equal(receipt.matched,true);
+    assert.match(receipt.recipient_hash,/^[0-9a-f]{64}$/);
+    assert.equal((await db.query("SELECT delivery_status FROM messages WHERE id=$1",
+      [messages[1].id])).rows[0].delivery_status,"delivered");
+    assert.equal((await db.query(
+      "SELECT method FROM whatsapp_sender_auto_reconciliations WHERE reservation_id=$1",
+      [reservation.reservationId])).rows[0].method,"signed_meta_nonbillable_free_entry");
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0,"Primary Neutro billing remains untouched");
+  });
+});
+
+test("one early signed receipt with wrong recipient must not settle Ariel",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,reservation}=await seededSend(db,database);
+    await db.query("UPDATE whatsapp_sender_billing_attempts SET state='reserved',wamid=NULL WHERE reservation_id=$1",
+      [reservation.reservationId]);
+    await db.query("UPDATE whatsapp_sender_billing_gates SET state='reserved',wamid=NULL WHERE reservation_id=$1",
+      [reservation.reservationId]);
+    const autoEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+    const prior=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one",{recipient_id:"60124440000"})),
+      {database,env:autoEnv});
+    assert.equal(prior.unmatched,1);
+    const result=await billing.recordSecondaryProviderOutcome({
+      reservationId:reservation.reservationId,acceptedWamid:"wamid.ariel-one",
+    },{database,env:autoEnv});
+    assert.equal(result.stagedReceiptsMatched,0);
+    assert.equal(result.stagedAutoReconciled,false);
+    assert.equal((await db.query(
+      "SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+      [ids.ariel])).rows[0].state,"awaiting_pricing");
+    assert.equal((await db.query(
+      "SELECT matched,reservation_id FROM whatsapp_sender_status_receipts"
+    )).rows[0].matched,false);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_auto_reconciliations"
+    )).rows[0].n,0);
+  });
+});
 
 test("signed free_customer_service receipt permits another Ariel reply without inventing a charge",
  {skip:!connectionString},async()=>{
