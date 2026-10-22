@@ -38,7 +38,7 @@ test("sender-qualified billing proof filters every eligibility query by contact 
   [billing.SCOPED_SESSION_WINDOW_SQL,4],
   [billing.SCOPED_CTWA_FIRST_REPLY_SQL,4],
   [billing.SCOPED_SEVEN_DAY_PROOF_SQL,1]
- ]) assert.match(sql,new RegExp("\\$"+bind+"::integer"));
+ ]) assert.match(sql,new RegExp("\\$"+bind+"::"+(sql===billing.SCOPED_SEVEN_DAY_PROOF_SQL?"text":"integer")));
 });
 
 test("billing alarm is scoped to the owning business; unknown legacy metadata remains conservative",()=>{
