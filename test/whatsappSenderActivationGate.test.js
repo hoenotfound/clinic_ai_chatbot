@@ -69,7 +69,8 @@ test("secondary inbox only requires active exact Meta registry identity",async()
    WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
    WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
-   WHATSAPP_SECONDARY_SENDER_KEY:"ariel"
+   WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
+   WHATSAPP_SECONDARY_TOKEN:"synthetic-fixture"
  };
  const good={query:async(sql)=>{
    if(sql.includes("COUNT(*)"))return{rows:[{total:1,nonprimary:1}]};
