@@ -22,7 +22,7 @@ const aliases = [
 const translations = { zh: "Hi～欢迎了解骨盆调理 😊 你最想改善哪方面呢？", en: "Hi! How can we help with pelvic care?", ms: "Hai! Apa yang anda ingin tahu?" };
 const config = { enabled: true, replies: [{ service: "骨盆调理", translations }] };
 const now = Date.parse("2026-10-21T08:00:00Z");
-const ad = { serviceHint: "骨盆调理", serviceHintSource: "creative", attributedAt: new Date(now - 60_000).toISOString() };
+const ad = { serviceHint: "骨盆调理", serviceHintSource: "creative", headline: "骨盆调理", attributedAt: new Date(now - 60_000).toISOString() };
 
 function attempt(overrides = {}) {
   return resolveFixedAdFirstReply({
@@ -59,11 +59,12 @@ test("requires enabled, recent and unambiguous configured Meta-ad treatment", ()
   assert.equal(attempt({ metaAdContext: null }), null);
   assert.equal(attempt({ metaAdContext: { ...ad, attributedAt: null } }), null);
   assert.equal(attempt({ metaAdContext: { ...ad, attributedAt: new Date(now - 8 * 86400_000).toISOString() } }), null);
-  assert.equal(attempt({ metaAdContext: { ...ad, serviceHint: "3D 小颜术" } }), null);
+  assert.equal(attempt({ metaAdContext: { ...ad, serviceHint: "3D 小颜术" } })?.treatment, "骨盆调理",
+    "independently matched creative and explicit customer treatment override a stale service hint");
   assert.equal(attempt({ metaAdCreativeService: "3D 小颜术" }), null);
   assert.equal(attempt({ metaAdCreativeService: null, customerText: "Hi, I'm interested in this" }), null,
     "a generic enquiry must not use treatment guessed from ad name");
-  const adNameOnly = { ...ad, serviceHintSource: "ad_name" };
+  const adNameOnly = { ...ad, headline: null, serviceHintSource: "ad_name" };
   assert.equal(attempt({ metaAdContext: adNameOnly, metaAdCreativeService: null })?.reply, config.replies[0].translations.zh,
     "explicit named treatment may safely match an ad-name-only service when no creative conflicts");
   assert.equal(attempt({ config: { enabled: true, replies: [] } }), null);
@@ -115,6 +116,12 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("我对9D逆龄抗衰有兴趣，可以跟进我，有优惠也发我看看"), true);
   assert.equal(isStandardAdPrefill("Hi, I'm interested in this"), true);
   assert.equal(isStandardAdPrefill("I am interested in 3D 小颜术"), true);
+  assert.equal(isStandardAdPrefill("你好！我想了解你们骨盆的疗程"), true);
+  assert.equal(isStandardAdPrefill("Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊"), true);
+  assert.equal(isStandardAdPrefill("Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～"), true);
+  assert.equal(isStandardAdPrefill("Hi～想了解 Neutro Sense TCM 9D 护理，有后续配套和优惠可以 WhatsApp 发我 😊"), true);
+  assert.equal(isStandardAdPrefill("我想了解【3D小颜术】疗程！"), true);
+  assert.equal(isStandardAdPrefill("我想了解【9D脸部提升】疗程！"), true);
   assert.equal(isStandardAdPrefill("I'm interested in 9D and want to know the process"), false);
   assert.equal(isStandardAdPrefill("Saya berminat dengan 9D dan nak tahu cara rawatan"), false);
   assert.equal(isStandardAdPrefill("Saya nak tahu tentang 9D"), true);
@@ -143,6 +150,10 @@ test("prefill recogniser does not absorb edited or compound customer questions",
   assert.equal(isStandardAdPrefill("Saya berminat dengan 9D pukul 3"), false);
   assert.equal(isStandardAdPrefill("我对骨盆调理有兴趣，明天可以预约吗"), false);
   assert.equal(isStandardAdPrefill("我对9D有兴趣，下午3点有位吗"), false);
+  assert.equal(isStandardAdPrefill("想了解骨盆调理，可以现在发我优惠吗"), false);
+  assert.equal(isStandardAdPrefill("Hi～想了解 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠，多少钱"), false);
+  assert.equal(isStandardAdPrefill("我想了解骨盆疗程是不是适合怀孕的人"), false);
+  assert.equal(isStandardAdPrefill("你好！我想了解骨盆疗程，但是我已经预约明天了"), false);
   assert.equal(isStandardAdPrefill("I am interested in 3D 小颜术"), true);
 });
 
@@ -304,4 +315,111 @@ test("saving ad-first-reply settings rejects stale treatment links while preserv
   }, current);
   assert.equal(removed.ok, false, "cannot silently orphan an enabled first reply");
   assert.deepEqual(removed.invalidKeys, ["adFirstReply"]);
+});
+
+
+test("real Neutro Sense Meta first-message prefills select advertised services, not ambiguous ad-name guesses", () => {
+  const expandedServices = [...services, { name: "徒手体态调理" }, { name: "产后调理" }];
+  const expandedAliases = [
+    ...aliases,
+    { alias: "整骨", officialService: "徒手体态调理" },
+    { alias: "徒手整骨", officialService: "徒手体态调理" },
+    { alias: "小颜术", officialService: "3D 小颜术" },
+    { alias: "3D小颜术", officialService: "3D 小颜术" },
+    { alias: "9D护理", officialService: "9D 逆龄抗衰" },
+    { alias: "9D脸部提升", officialService: "9D 逆龄抗衰" },
+  ];
+  const fullConfig = {
+    enabled: true,
+    replies: [
+      { service: "骨盆调理", translations },
+      { service: "3D 小颜术", translations: { ...translations, zh: "3D 固定回复" } },
+      { service: "9D 逆龄抗衰", translations: { ...translations, zh: "9D 固定回复" } },
+    ],
+  };
+  const pelvicAd = {
+    attributedAt: ad.attributedAt,
+    headline: "徒手整骨｜从头到脚",
+    body: "针对骨盆调整、产后调理和全身整骨的一系列项目",
+  };
+  const facialAd = {
+    attributedAt: ad.attributedAt,
+    headline: "1次就能看到明显效果",
+    body: "中医小颜术介绍：3D小颜术护理，帮助调整面部线条",
+  };
+  const targets = [
+    ["你好！我想了解你们骨盆的疗程", pelvicAd, "骨盆调理"],
+    ["Hi～我对 Neutro Sense TCM 骨盆调理有兴趣，可以跟进我，有优惠也发我看看 😊", pelvicAd, "骨盆调理"],
+    ["Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～", facialAd, "3D 小颜术"],
+    ["我想了解【3D小颜术】疗程！", facialAd, "3D 小颜术"],
+    ["我想了解【9D脸部提升】疗程！", {
+      attributedAt: ad.attributedAt, headline: "9D脸部提升", body: "9D逆龄抗衰护理",
+    }, "9D 逆龄抗衰"],
+    ["Hi～想了解 Neutro Sense TCM 9D 护理，有后续配套和优惠可以 WhatsApp 发我 😊", {
+      attributedAt: ad.attributedAt, headline: "9D脸部提升", body: "9D护理",
+    }, "9D 逆龄抗衰"],
+  ];
+  for (const [message, creative, expected] of targets) {
+    const result = attempt({
+      config: fullConfig,
+      customerText: message,
+      conversationHistory: [{ role: "user", content: message }],
+      metaAdContext: creative,
+      metaAdCreativeService: null,
+      services: expandedServices,
+      serviceAliases: expandedAliases,
+    });
+    assert.equal(result?.treatment, expected, message);
+    assert.equal(result?.serviceQuerySource, "customer_message", message);
+  }
+  // A 9D prefill must not be routed to a 3D fixed reply just because the
+  // ad name is "小颜术 5" and other customers send 3D prefills there.
+  const wrongCreative = attempt({
+    config: fullConfig,
+    customerText: targets[5][0],
+    conversationHistory: [{ role: "user", content: targets[5][0] }],
+    metaAdContext: facialAd,
+    metaAdCreativeService: "3D 小颜术",
+    services: expandedServices,
+    serviceAliases: expandedAliases,
+  });
+  assert.equal(wrongCreative, null, "different treatment requires Gemini");
+  const generic = attempt({
+    config: fullConfig,
+    customerText: "Hello! Can I get more info on this?",
+    conversationHistory: [{ role: "user", content: "Hello! Can I get more info on this?" }],
+    metaAdContext: pelvicAd,
+    metaAdCreativeService: null,
+    services: expandedServices,
+    serviceAliases: expandedAliases,
+  });
+  assert.equal(generic, null, "a multi-treatment ad cannot unlock generic prefills");
+});
+
+test("historical non-prefill questions, staff or spam text remain on Gemini", () => {
+  const notStandard = [
+    "你好！我长期坐着会导致我的骨盆问题吗？",
+    "你好！我想问看我刚刚身孕完，感觉骨盆有点前倾，可以来面诊吗？",
+    "我可以直接预约你们的Signature【9D Lifting疗程】吗",
+    "我想知道价格",
+    "Pm多少钱",
+    "请问推脸一次多少钱",
+    "地点？收费？",
+    "请问在哪里",
+    "Can I know where is your location?",
+    "Where is ur shop located?",
+    "Location",
+    "English",
+    "Yes",
+    "Hi",
+    "请问有筋膜放松吗？肩颈和腰部",
+    "你好！想了解骨盆的副作用和次数",
+    "Hi, I am interested in 3D can I book tomorrow",
+  ];
+  for (const message of notStandard) {
+    assert.equal(attempt({
+      customerText: message,
+      conversationHistory: [{ role: "user", content: message }],
+    }), null, message);
+  }
 });
