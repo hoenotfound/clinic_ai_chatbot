@@ -5,8 +5,13 @@
 SET LOCAL lock_timeout = '3s';
 
 CREATE TABLE IF NOT EXISTS whatsapp_sender_billing_gates (
-  sender_id BIGINT PRIMARY KEY
+  sender_id BIGINT NOT NULL
     REFERENCES whatsapp_sender_accounts(id) ON DELETE RESTRICT,
+  owner_contact_id INTEGER NOT NULL,
+  PRIMARY KEY (sender_id, owner_contact_id),
+  CONSTRAINT whatsapp_sender_gate_owner_fk
+    FOREIGN KEY (owner_contact_id, sender_id)
+    REFERENCES contacts(id,whatsapp_sender_id) ON DELETE RESTRICT,
   state TEXT NOT NULL DEFAULT 'idle'
     CHECK (state IN ('idle','reserved','awaiting_pricing','unknown')),
   reservation_id UUID,
@@ -54,4 +59,4 @@ CREATE INDEX IF NOT EXISTS idx_whatsapp_sender_billing_attempts_sender
   ON whatsapp_sender_billing_attempts(sender_id,created_at DESC);
 
 COMMENT ON TABLE whatsapp_sender_billing_gates IS
-  'Secondary sender-only reservation. Never substitute primary WhatsApp billing gate or release ambiguous requests without verified provider evidence.';
+  'Secondary sender AND contact reservation. Distinct customers may send concurrently; one contact cannot resend unresolved work, and sender-wide alarms still block all contacts.';
