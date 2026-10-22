@@ -381,7 +381,13 @@ async function purgeContactData({
     // facts without the deleted customer's identity, then erase child rows
     // and unlink any global alarm. Never silently unblock a sender whose
     // deleted contact has an unresolved or potentially charged attempt.
-    if (contact.channel === "whatsapp") {
+    const senderTables = contact.channel === "whatsapp"
+      ? await client.query(
+          "SELECT to_regclass(current_schema() || '.whatsapp_sender_billing_attempts') " +
+          "IS NOT NULL AS installed"
+        ) : null;
+    if (contact.channel === "whatsapp" &&
+        senderTables?.rows?.[0]?.installed === true) {
       await client.query(
         `INSERT INTO whatsapp_sender_erased_billing_audit
           (reservation_sha256,sender_id,previous_state,staff_charge_approved,billable_receipt_seen)
