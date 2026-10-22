@@ -159,3 +159,47 @@ before activation; never assume that display names identify the active sender.
 - Never subscribe Ariel Lee to the production Neutro Sense webhook or enable
   sender-aware routing until per-number contacts, credentials, follow-ups,
   receipts, staff takeover, and privacy rules are implemented and tested.
+
+
+## Read-only production sender mapping audit (before activation)
+
+On a trusted operator machine holding the **existing client runtime environment**
+and a management-scoped Graph token, run:
+
+```bash
+npm run whatsapp-sender:verify -- \
+  --runtime-env-file ./client-runtime.env \
+  --client-url https://da-chatbot-neutro-sense-tcm.onrender.com
+```
+
+The command reads the configured WhatsApp account, phone, shared developer app
+and callback through the Meta Graph API and verifies:
+1. The production phone ID appears on its configured WhatsApp account.
+2. That account has a subscription for the shared DA CHATBOT developer app.
+3. The app-specific callback override matches the client's `/webhook`.
+
+No subscription, token, phone registration, or runtime environment is changed.
+A false or unavailable result **blocks strict account-ID activation** and
+requires operator-level inspection of the shared app; never attach ownership
+of the shared developer app to the client to make the client-scoped connector
+status light green. The business-level connector is insufficient to inspect
+the shared operator app, and the production Render connector cannot reveal
+the existing environment values for this check.
+
+## Staging evidence — 22 Oct 2026
+
+- A separate Neon branch `qa-pr384-whatsapp-isolation-20261022` was created
+  from the production branch, without modifying live data.
+- Migration 078 applied successfully to a real branch snapshot of **183
+  contacts and 2,196 messages**. Historical row counts and fingerprint hashes
+  remained unchanged, and the sender registry stayed empty.
+- Synthetic rejected-event records were inserted twice with upsert, retaining
+  exactly one audit record with `seen_count=2`. Existing data remained intact.
+- A test using the actual Express webhook route with in-memory dependencies
+  simulates quarantine database failures. Genuine Neutro inbound events in a
+  mixed callback are durably accepted with HTTP 200 even if their unrelated
+  foreign-event audit fails; foreign-only and passive+foreign callbacks return
+  retryable HTTP 503 if no durable quarantine can be written.
+- **Production remains on migration 077**, and no shared Meta app subscriptions,
+  coexistence QR authorization, existing Render settings, or phone mappings
+  were modified.
