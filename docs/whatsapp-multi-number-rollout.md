@@ -18,8 +18,10 @@ before activation; never assume that display names identify the active sender.
 
 - Migration 078 adds `whatsapp_sender_accounts`, with **no tokens**, state
   default `disabled` and a per-sender coexistence flag.
-- Nullable `whatsapp_sender_id` provenance columns are added to contacts and
-  messages. No historical contact IDs or message rows are rewritten.
+- Migration 078 does NOT ALTER existing contacts/messages or create indexes on
+  those live tables. Sender provenance columns must be added later, after
+  full per-number routing and a separate database rollout plan are ready.
+  No historical contact IDs or message rows are rewritten.
 - `whatsappSenderRouting` can validate a webhook's real
   `entry.id` (WhatsApp account) and
   `value.metadata.phone_number_id` (receiving business phone).
@@ -41,8 +43,16 @@ before activation; never assume that display names identify the active sender.
   operational alerts rather than redelivering them endlessly.
 - Passive sync is not a customer conversation and must never trigger AI replies.
 - Existing single-sender transport and all live webhooks are unchanged.
-- The new registry validator is **not connected to live processing yet**.
+- The new registry validator is **not connected to live multi-number routing**.
   Future routing must validate an entire batch before persisting any part.
+- The existing single-number webhook now rejects **explicitly foreign phone IDs**
+  from inbound/status/staff-echo processing and durably records an opaque hash
+  in `whatsapp_sender_quarantined_events`. It preserves callbacks for the
+  configured existing number. Legacy callbacks missing receiving-phone
+  metadata are preserved by default; strict metadata mode remains opt-in
+  until verified safe using live provider samples.
+- Unknown webhook fields are quarantined independently of valid callbacks;
+  the sender registry is not an invitation to subscribe Ariel to this URL.
 
 ## Required before enabling a second phone
 
