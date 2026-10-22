@@ -30,9 +30,16 @@ function gateEnabled(env) {
 const OWNED_SECONDARY_OUTBOUND_SQL = `
  SELECT sa.id AS sender_id,
    (m.whatsapp_template->>'billingAcknowledged'='true'
-    AND NULLIF(m.whatsapp_template->>'billingReviewClaimHash','') IS NOT NULL)
-     AS has_staff_template_billing_review,
-   m.whatsapp_template->>'templateSignature' AS template_signature
+    AND EXISTS(
+      SELECT 1 FROM whatsapp_manual_template_billing_claims claim
+      WHERE claim.token_hash=m.whatsapp_template->>'billingReviewClaimHash'
+        AND claim.contact_id=m.contact_id
+        AND claim.template_name=m.whatsapp_template->>'name'
+        AND claim.language_code=m.whatsapp_template->>'language'
+        AND claim.claimed_at>=NOW()-INTERVAL '10 minutes'
+    )) AS has_staff_template_billing_review,
+   m.whatsapp_template->>'templateSignature' AS template_signature,
+   m.whatsapp_template->>'billingReviewClaimHash' AS billing_review_claim_hash
  FROM messages m
  JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'
  JOIN whatsapp_sender_conversations sc ON sc.contact_id=c.id
@@ -111,11 +118,12 @@ async function reserveSecondaryBillingAttempt({
     const reservationId = crypto.randomUUID();
     await client.query(
       "INSERT INTO whatsapp_sender_billing_attempts " +
-      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source) " +
-      "VALUES($1,$2,$3,$4,$5,$6)",
+      "(reservation_id,sender_id,contact_id,message_id,billable_authorized,billing_authorization_source,billing_review_claim_hash) " +
+      "VALUES($1,$2,$3,$4,$5,$6,$7)",
       [reservationId,senderId,cid,mid,
         billableAuthorized === true,
-        billableAuthorized === true ? "staff_template_billing_review" : null]
+        billableAuthorized === true ? "staff_template_billing_review" : null,
+        billableAuthorized === true ? owner.rows[0].billing_review_claim_hash : null]
     );
     await client.query(
       "UPDATE whatsapp_sender_billing_gates SET " +
