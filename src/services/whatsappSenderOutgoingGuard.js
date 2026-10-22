@@ -28,7 +28,7 @@ function blockUnverifiedOutgoingSender(contact, options = {}, env = process.env)
     options?.businessPhoneNumberId,
     options?.senderPhoneNumberId,
   ].map(clean).filter(Boolean);
-  const accounts = [contact?.businessAccountId, options?.businessAccountId]
+  const accounts = [contact?.whatsapp_sender_account_id, contact?.businessAccountId, options?.businessAccountId]
     .map(clean).filter(Boolean);
 
   if (!senderKeys.length && !phones.length && !accounts.length) return null;
