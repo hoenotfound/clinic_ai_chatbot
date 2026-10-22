@@ -83,10 +83,7 @@ test("migration 078 preserves a seeded production-sized legacy Inbox and is repe
         WHERE table_schema = current_schema()
           AND column_name = 'whatsapp_sender_id'
         ORDER BY table_name`);
-      assert.deepEqual(newColumns.rows, [
-        { table_name: "contacts", column_name: "whatsapp_sender_id" },
-        { table_name: "messages", column_name: "whatsapp_sender_id" },
-      ]);
+      assert.deepEqual(newColumns.rows, [], "legacy hot tables must remain unchanged");
       const unique = await db.query(`
         SELECT to_regclass('contacts_whatsapp_number_key')::text AS contact_unique,
                to_regclass('idx_contacts_channel_user_id')::text AS channel_unique,
