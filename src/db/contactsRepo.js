@@ -220,7 +220,10 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   // Rollback/read-only deployments must reuse the old Neutro contact after
   // sender adoption. Never silently create a new null-sender duplicate.
   const scoped = await pool.query(
-    "SELECT c.* FROM contacts c " +
+    "SELECT c.*,sa.sender_key AS whatsapp_sender_key, " +
+    "sa.meta_phone_number_id AS whatsapp_sender_phone_number_id, " +
+    "sa.meta_account_id AS whatsapp_sender_account_id " +
+    "FROM contacts c " +
     "JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
     "WHERE c.channel='whatsapp' AND c.whatsapp_number=$1 " +
     "AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3 " +
