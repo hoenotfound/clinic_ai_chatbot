@@ -24,7 +24,7 @@ function fake(overrides={}) {
     storage:{downloadMedia:async()=>Buffer.from("video bytes")},
     textDispatcher:async ({messageId,preSendCheck,origin},{dispatchTransport})=>{
       events.push(["billing",messageId,origin]);
-      assert.equal(await preSendCheck(),true);
+      if (!await preSendCheck())return{success:false,retryable:false};
       return dispatchTransport(provider);
     },
     ...overrides,
