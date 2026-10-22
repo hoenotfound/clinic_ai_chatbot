@@ -89,9 +89,12 @@ async function attachMessageContext({ messageId, contactId, conversationId }, da
   if (result.rows[0]) return result.rows[0];
   // Only an identical previous association is safe to treat as a replay.
   const previous = await database.query(
-    "SELECT message_id, conversation_id FROM whatsapp_sender_message_context " +
-    "WHERE message_id = $1 AND conversation_id = $2",
-    [positiveId(messageId), positiveId(conversationId)]
+    "SELECT x.message_id, x.conversation_id FROM whatsapp_sender_message_context x " +
+    "JOIN messages m ON m.id = x.message_id " +
+    "JOIN whatsapp_sender_conversations sc ON sc.id = x.conversation_id " +
+    "WHERE x.message_id = $1 AND x.conversation_id = $2 " +
+    "AND m.contact_id = $3 AND sc.contact_id = m.contact_id",
+    [positiveId(messageId), positiveId(conversationId), positiveId(contactId)]
   );
   return previous.rows[0] || null;
 }
