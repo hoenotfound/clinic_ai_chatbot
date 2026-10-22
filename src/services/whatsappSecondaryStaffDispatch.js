@@ -33,7 +33,7 @@ const ALLOWED_RESERVATION_SQL = `
 
 async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
-  origin = "staff", preSendCheck = null,
+  origin = "staff", preSendCheck = null, dispatchTransport = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -65,7 +65,7 @@ async function sendSecondaryStaffText({
     return block("secondary_staff_send_invalid_input");
   }
 
-  if (typeof preSendCheck === "function" && preSendCheck() !== true) {
+  if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
     return { ...block("secondary_send_cancelled"), cancelled: true };
   }
   const before = await policyService.previewSecondaryFreeformPolicy(contact, {
@@ -128,7 +128,7 @@ async function sendSecondaryStaffText({
     const fresh = await policyService.previewSecondaryFreeformPolicy(contact, {
       database, env, now: now(), purpose: "service",
     });
-    if (typeof preSendCheck === "function" && preSendCheck() !== true) {
+    if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
       await markUnknown();
       return { ...block("secondary_send_cancelled_after_reservation"),
         unknown: true, ambiguous: true };
@@ -148,7 +148,9 @@ async function sendSecondaryStaffText({
       return block("secondary_staff_reservation_unverified");
     }
 
-    const send = await transport.sendText(text.trim(), { replyToProviderMessageId });
+    const send = typeof dispatchTransport === "function"
+      ? await dispatchTransport(transport)
+      : await transport.sendText(text.trim(), { replyToProviderMessageId });
     const accepted = send?.success === true && /^wamid\./.test(String(send.wamid || ""));
     const evidence = await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId,
