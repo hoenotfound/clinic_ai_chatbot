@@ -105,7 +105,13 @@ function createSecondaryOutboundTransport(binding, {
     try {
       const response = await fetchImpl(endpoint + suffix, { ...options, signal: controller.signal });
       const body = await response.text();
-      if (!response.ok) return { ...classifyWhatsappSendFailure(response.status, body), success: false };
+      if (!response.ok) return {
+        ...classifyWhatsappSendFailure(response.status, body),
+        success: false,
+        // Only an unambiguous synchronous client rejection proves Meta did
+        // not accept this message. 408, 409, 425, 429 and 5xx are uncertain.
+        definitivelyRejected: [400,401,403,404,422].includes(response.status),
+      };
       let data;
       try { data = JSON.parse(body); } catch { return { success: false, wamid: null, ambiguous: true, retryable: false, error: "Unverifiable Meta response." }; }
       return { success: true, data };
