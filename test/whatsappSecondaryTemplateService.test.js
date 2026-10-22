@@ -147,3 +147,87 @@ test("secondary template catalog refuses account mismatch before Meta fetch",asy
  assert.equal(result.success,false);
  assert.equal(calls.filter(x=>x[0]==="meta").length,0);
 });
+
+
+test("Ariel media-header template uploads through its own token and rechecks approval before Graph send",async()=>{
+ const image={...example,components:[
+  {type:"HEADER",format:"IMAGE"},{type:"BODY",text:"Hi {{1}}"},
+ ]};
+ const metaMediaEnv={...env,WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true"};
+ const {opts}=fake({env:metaMediaEnv,fetchImpl:async()=>({
+  ok:true,json:async()=>({data:[image]}),
+ })});
+ const catalog=await svc.listSecondaryApprovedTemplates(contact,{
+  ...opts,staffUsername:"staff-verified",
+ });
+ assert.equal(catalog.templates[0].sendable,true);
+ const prepared=await svc.prepareSecondaryStaffTemplate(contact,{
+  name:"ariel_reply",languageCode:"en_US",
+  values:{body:["Customer"]},billingAcknowledged:true,
+  mediaAttachment:{
+    buffer:Buffer.from("image-bytes"),mimeType:"image/jpeg",
+    filename:"template-image.jpg",
+  },
+ },opts);
+ assert.equal(prepared.success,true);
+ let uploads=0, sends=0;
+ const delivered=await svc.deliverSecondaryStaffTemplate(contact,456,prepared,{
+  ...opts,sendText:async(args)=>{
+    return args.dispatchTransport({
+      uploadMedia:async(buf,mime,file)=>{
+        uploads++;
+        assert.equal(file,"template-image.jpg");
+        assert.equal(mime,"image/jpeg");
+        return {success:true,mediaId:"550010"};
+      },
+      sendTemplatePayload:async(name,lang,components)=>{
+        sends++;
+        assert.equal(components[0].type,"header");
+        assert.equal(components[0].parameters[0].image.id,"550010");
+        assert.equal(components[1].parameters[0].text,"Customer");
+        return{success:true,wamid:"wamid.ariel-media-template"};
+      },
+    });
+  },
+ });
+ assert.equal(delivered.success,true);
+ assert.equal(uploads,1);
+ assert.equal(sends,1);
+});
+
+test("wrong Ariel template media type or upload ID never reaches Graph message send",async()=>{
+ const image={...example,components:[
+  {type:"HEADER",format:"IMAGE"},{type:"BODY",text:"Hi {{1}}"},
+ ]};
+ const mediaEnv={...env,WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true"};
+ const {opts}=fake({env:mediaEnv,fetchImpl:async()=>({
+  ok:true,json:async()=>({data:[image]}),
+ })});
+ const invalid=await svc.prepareSecondaryStaffTemplate(contact,{
+  name:"ariel_reply",languageCode:"en_US",
+  values:{body:["Customer"]},billingAcknowledged:true,
+  mediaAttachment:{
+    buffer:Buffer.from("invalid"),mimeType:"video/mp4",
+    filename:"template-video.mp4",
+  },
+ },opts);
+ assert.equal(invalid.code,"secondary_template_media_invalid");
+ const prepared=await svc.prepareSecondaryStaffTemplate(contact,{
+  name:"ariel_reply",languageCode:"en_US",
+  values:{body:["Customer"]},billingAcknowledged:true,
+  mediaAttachment:{
+    buffer:Buffer.from("real image"),mimeType:"image/jpeg",
+    filename:"template-image.jpg",
+  },
+ },opts);
+ assert.equal(prepared.success,true);
+ let sends=0;
+ const result=await svc.deliverSecondaryStaffTemplate(contact,456,prepared,{
+  ...opts,sendText:async(args)=>args.dispatchTransport({
+    uploadMedia:async()=>({success:true,mediaId:"invalid-cross-account"}),
+    sendTemplatePayload:async()=>{sends++;return{success:true,wamid:"wamid.bad"};},
+  }),
+ });
+ assert.equal(result.success,false);
+ assert.equal(sends,0);
+});
