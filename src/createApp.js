@@ -172,7 +172,10 @@ function createApp({
 
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
-    const reactionEvents = whatsapp.parseReactionEvents(webhookBody);
+    const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
+      process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
+      event.businessPhoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
+    );
     const businessAppEchoes = whatsapp.parseBusinessAppEchoes(webhookBody);
     const statusUpdates = whatsapp.parseStatusUpdates(webhookBody);
     const passiveSync = whatsappCoexistence.summarizePassiveSync(webhookBody);
