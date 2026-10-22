@@ -26,8 +26,8 @@ test("migration 079 keeps two sender conversations separate without rewriting hi
       await runMigrations(scoped, { quiet: true });
       await db.query(
         "INSERT INTO whatsapp_sender_accounts (sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
-        "VALUES ('neutro','100000000000001','200000000000001','Neutro','testing')," +
-        "('ariel','100000000000002','200000000000002','Ariel','testing')"
+        "VALUES ('neutro','100000000000001','200000000000001','Neutro','active')," +
+        "('ariel','100000000000002','200000000000002','Ariel','active')"
       );
       const oldContact = (await db.query(
         "INSERT INTO contacts (whatsapp_number) VALUES ('60123001234') RETURNING id"
