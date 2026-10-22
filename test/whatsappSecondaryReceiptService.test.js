@@ -144,3 +144,19 @@ test("the signed mixed webhook cannot bypass the original raw-body signature che
   },{env,database:{connect:async()=>{throw Error("not allowed to connect");}}});
   assert.equal(result.code,"secondary_receipt_signature_invalid");
 });
+
+
+test("shared WABA callbacks still distinguish sender by verified phone ID",()=>{
+  const shared={...env,WHATSAPP_WABA_ID:env.WHATSAPP_SECONDARY_WABA_ID};
+  const data=body();
+  data.entry[0].changes.unshift({
+    field:"messages",value:{
+      metadata:{phone_number_id:shared.WHATSAPP_PHONE_NUMBER_ID},
+      statuses:[status({id:"wamid.primary-other"})],
+    },
+  });
+  const updates=receipt.normalizedSecondarySubsetEvents(signed(data).rawBody,shared);
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].wamid,"wamid.ariel-one");
+  assert.equal(updates[0].phoneId,shared.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+});
