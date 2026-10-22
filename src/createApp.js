@@ -5,6 +5,7 @@ const cookieSession = require("cookie-session");
 const whatsapp = require("./services/whatsappService");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
+const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
 const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
@@ -84,7 +85,14 @@ function createApp({
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
   // validated against the exact bytes received.
-  const webhookJsonParser = createWebhookJsonParser(verifyWebhookSignature);
+  const webhookJsonParser = createWebhookJsonParser((req, res, buf) => {
+    verifyWebhookSignature(req, res, buf);
+    // Copy only for the explicitly enabled sender-specific receipt ingress.
+    // The receipt service independently verifies HMAC against these bytes.
+    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
+      req.whatsappSignedRawBody = Buffer.from(buf);
+    }
+  });
   const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
   const portalJsonParser = createPortalJsonParser();
   const advancedConfigJsonParser = createAdvancedConfigJsonParser();
@@ -152,6 +160,32 @@ function createApp({
     } catch (err) {
       console.error("Rejected WhatsApp webhook due to sender config or payload limit:", err);
       return res.sendStatus(503);
+    }
+
+    // Stage Ariel statuses from the original HMAC-authenticated body BEFORE
+    // acknowledging or running any existing primary sender worker.
+    // Primary statuses remain in the original legacy partition; secondary
+    // statuses remain excluded from all Neutro billing and retry handlers.
+    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
+      if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
+          !Buffer.isBuffer(req.whatsappSignedRawBody)) return res.sendStatus(503);
+      const savedReceipts = await recordSignedSecondaryStatusBatch({
+        rawBody: req.whatsappSignedRawBody,
+        signatureHeader: req.headers["x-hub-signature-256"],
+        subsetFromVerifiedWebhook: true,
+      });
+      if (!savedReceipts.accepted) {
+        console.error("Could not durably stage verified Ariel status receipts:", savedReceipts.code);
+        return res.sendStatus(503);
+      }
+      // Previously these expected statuses were quarantined. Now they have
+      // been durably staged; retain every other foreign/malformed quarantine.
+      isolated.quarantined = isolated.quarantined.filter((event) =>
+        !(event.reason === "unsupported_whatsapp_event" &&
+          event.field === "messages" &&
+          event.accountId === process.env.WHATSAPP_SECONDARY_WABA_ID &&
+          event.phoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)
+      );
     }
 
     // A foreign-only callback has no valid Neutro work to delay. Persist
