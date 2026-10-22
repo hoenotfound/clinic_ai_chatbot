@@ -449,7 +449,7 @@ async function primaryBillingContactId(to, {
   database = pool, env = process.env, expectedContactId = null,
   currentMessageId = null,
 } = {}) {
-  const customer = String(to || "").replace(/\\D/g, "");
+  const customer = String(to || "").replace(/\D/g, "");
   const phone = String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
   const account = String(env.WHATSAPP_WABA_ID || "").trim();
   if (customer.length < 8 || !/^[0-9]+$/.test(phone) || !/^[0-9]+$/.test(account)) return null;
