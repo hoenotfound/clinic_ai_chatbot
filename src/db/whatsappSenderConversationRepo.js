@@ -123,6 +123,10 @@ async function claimSenderContact({
     );
     const sender = s.rows[0];
     if (!sender) throw new Error("WhatsApp sender is not authorized or enabled.");
+    if (isVerifiedPrimary && String(env.WHATSAPP_PRIMARY_SENDER_KEY || "").trim() &&
+        sender.sender_key !== String(env.WHATSAPP_PRIMARY_SENDER_KEY).trim()) {
+      throw new Error("Configured primary WhatsApp sender key does not match the registry.");
+    }
 
     // Serialize claims for one sender/customer across workers and webhook retries.
     await client.query(

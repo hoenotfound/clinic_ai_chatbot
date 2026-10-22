@@ -188,7 +188,12 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
 
   const inserted = await pool.query(
     `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
-     VALUES ($1, $2)
+     SELECT $1, $2
+     WHERE NOT EXISTS (
+       SELECT 1 FROM contacts tagged
+       WHERE tagged.whatsapp_number=$1 AND tagged.channel='whatsapp'
+         AND tagged.whatsapp_sender_id IS NOT NULL
+     )
      ON CONFLICT DO NOTHING
      RETURNING *`,
     [normalizedNumber, profileName]
@@ -211,7 +216,28 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
     "SELECT * FROM contacts WHERE whatsapp_number = $1 AND whatsapp_sender_id IS NULL",
     [normalizedNumber]
   );
-  return existing.rows[0];
+  if (existing.rows[0]) return existing.rows[0];
+  // Rollback/read-only deployments must reuse the old Neutro contact after
+  // sender adoption. Never silently create a new null-sender duplicate.
+  const scoped = await pool.query(
+    "SELECT c.* FROM contacts c " +
+    "JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
+    "WHERE c.channel='whatsapp' AND c.whatsapp_number=$1 " +
+    "AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3 " +
+    "LIMIT 1",
+    [normalizedNumber, String(process.env.WHATSAPP_PHONE_NUMBER_ID || ""),
+      String(process.env.WHATSAPP_WABA_ID || "")]
+  );
+  if (scoped.rows[0]) return scoped.rows[0];
+  const mismatched = await pool.query(
+    "SELECT 1 FROM contacts WHERE whatsapp_number=$1 " +
+    "AND channel='whatsapp' AND whatsapp_sender_id IS NOT NULL LIMIT 1",
+    [normalizedNumber]
+  );
+  if (mismatched.rows[0]) {
+    throw new Error("Legacy WhatsApp contact is already assigned to an unverified sender.");
+  }
+  return null;
 }
 
 /**
@@ -448,7 +474,11 @@ async function createContact({ name, whatsappNumber }) {
 
 async function updateContact(id, { name, whatsappNumber }) {
   const result = await pool.query(
-    "UPDATE contacts SET name = $1, whatsapp_number = $2, updated_at = now() WHERE id = $3 RETURNING *",
+    "UPDATE contacts SET name = $1, whatsapp_number = $2, updated_at = now() " +
+    "WHERE id = $3 AND NOT EXISTS (" +
+    "SELECT 1 FROM whatsapp_sender_conversations sc " +
+    "WHERE sc.contact_id = $3 AND sc.customer_wa_id <> $2" +
+    ") RETURNING *",
     [name || null, normalizeWhatsappNumber(whatsappNumber), id]
   );
   const updated = result.rows[0] || null;

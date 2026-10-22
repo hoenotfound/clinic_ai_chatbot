@@ -98,22 +98,14 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       renderEchoContent(echo),
       echo.id,
       BUSINESS_APP_ACTOR,
-      AI_HANDOFF_OWNER
+      AI_HANDOFF_OWNER,
+      null,
+      senderAwareEchoesEnabled() ? contact.whatsapp_sender_conversation_id : null
     );
 
     if (!persisted) {
       releasePendingAiForEcho(echo);
       return null;
-    }
-    if (senderAwareEchoesEnabled()) {
-      const messageAssociation = await senderConversations.attachMessageContext({
-        messageId: persisted.message.id,
-        contactId: contact.id,
-        conversationId: contact.whatsapp_sender_conversation_id,
-      });
-      if (!messageAssociation) {
-        throw new Error("Business App echo sender association could not be verified.");
-      }
     }
 
     if (persisted.isNew) {

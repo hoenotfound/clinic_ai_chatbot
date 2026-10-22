@@ -533,16 +533,9 @@ async function processIncomingMessage(
     unsupportedType,
   } = incoming;
   const channel = incoming.channel || "whatsapp";
-  const aiCancellationKey =
-    channel === "whatsapp"
-      ? aiReplyCancellation.keyForWhatsAppNumber(from)
-      : (channel === "facebook" || channel === "instagram")
-        ? aiReplyCancellation.keyForChannelContact(channel, from)
-        : null;
-  const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
-  const canSendAutomatedReply = aiCancellationKey
-    ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
-    : null;
+  let aiCancellationKey = null;
+  let aiCancellationToken = 0;
+  let canSendAutomatedReply = null;
 
   const { customerLabel, customerSingular } = getOperationalLabels(clinicConfig);
   let contact = preclaimed?.contact || null;
@@ -566,6 +559,23 @@ async function processIncomingMessage(
       processingJobId = claimed.processingJobId || null;
       wasFirstMessage = Boolean(claimed.wasFirstMessage);
     }
+
+    const senderScoped = channel === "whatsapp" &&
+      process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
+    if (senderScoped && !contact?.whatsapp_sender_key) {
+      throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
+    }
+    aiCancellationKey = channel === "whatsapp"
+      ? aiReplyCancellation.keyForWhatsAppNumber(
+          from, senderScoped ? contact.whatsapp_sender_key : null
+        )
+      : (channel === "facebook" || channel === "instagram")
+        ? aiReplyCancellation.keyForChannelContact(channel, from)
+        : null;
+    aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
+    canSendAutomatedReply = aiCancellationKey
+      ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+      : null;
 
     if (unsupportedType) {
       // Meta diagnostics are kept for staff. No misleading customer reply.

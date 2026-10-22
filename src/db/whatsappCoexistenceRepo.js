@@ -10,7 +10,8 @@ async function persistStaffEchoIfNew(
   whatsappMessageId,
   actor,
   syntheticHandoffOwner,
-  queryable = null
+  queryable = null,
+  senderConversationId = null
 ) {
   const ownsClient = queryable == null;
   const client = ownsClient ? await pool.connect() : queryable;
@@ -36,6 +37,26 @@ async function persistStaffEchoIfNew(
       [contactId, content, whatsappMessageId, actor]
     );
 
+    // The sender association is part of the SAME transaction as staff
+    // ownership changes. Duplicate webhooks must verify/repair it too.
+    async function attachEchoSender(messageId) {
+      if (senderConversationId == null) return;
+      const mapped = await client.query(
+        "INSERT INTO whatsapp_sender_message_context (message_id,conversation_id) " +
+        "SELECT m.id,sc.id FROM messages m " +
+        "JOIN whatsapp_sender_conversations sc ON sc.contact_id=m.contact_id " +
+        "JOIN contacts c ON c.id=m.contact_id AND c.whatsapp_sender_id=sc.sender_id " +
+        "JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id " +
+        "WHERE m.id=$1 AND m.contact_id=$2 AND sc.id=$3 " +
+        "AND sc.state='bound' AND sa.state='active' " +
+        "ON CONFLICT (message_id) DO UPDATE SET conversation_id=" +
+        "whatsapp_sender_message_context.conversation_id " +
+        "WHERE whatsapp_sender_message_context.conversation_id=EXCLUDED.conversation_id " +
+        "RETURNING message_id",
+        [messageId,contactId,senderConversationId]
+      );
+      if (!mapped.rows[0]) throw new Error("Business App sender context mismatch.");
+    }
     const message = inserted.rows[0] || null;
     if (!message) {
       // The webhook may be a Meta retry after this echo was already persisted.
@@ -57,11 +78,14 @@ async function persistStaffEchoIfNew(
         "SELECT * FROM contacts WHERE id = $1",
         [contactId]
       );
-      await client.query("COMMIT");
       const prior = existingMessage.rows[0] || null;
+      if (prior) await attachEchoSender(prior.id);
+      await client.query("COMMIT");
       const contact = existingContact.rows[0] || null;
       return prior && contact ? { contact, message: prior, isNew: false } : null;
     }
+
+    await attachEchoSender(message.id);
 
     // If this staff reply is claiming a synthetic AI handoff, cancel the old
     // AI-started follow-up anchor before this new staff row can become the

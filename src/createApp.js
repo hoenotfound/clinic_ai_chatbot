@@ -50,6 +50,7 @@ const goLiveRoutes = require("./routes/goLive");
 const pushNotificationsRoutes = require("./routes/pushNotifications");
 const opsReadinessRoutes = require("./routes/opsReadiness");
 const startupReadiness = require("./services/startupReadinessService");
+const { assertSenderIngressSafety } = require("./services/whatsappSenderActivationGate");
 
 function createApp({
   sessionSecret,
@@ -70,6 +71,7 @@ function createApp({
     throw new Error("createApp requires queueIncomingForReply.");
   }
 
+  assertSenderIngressSafety(process.env);
   const app = express();
   app.disable("x-powered-by");
 
