@@ -1374,11 +1374,41 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     // pricing, media-upload credentials or primary Meta send endpoint.
     if (contact.whatsapp_sender_id != null &&
         contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
-      if (req.file || req.body?.mediaSelectionId) {
+      // Media reuse is clinic-specific and not shared across senders. A fresh
+      // staff upload can go through Ariel's own verified media transport.
+      if (req.body?.mediaSelectionId) {
         return res.status(409).json({
-          code:"secondary_template_media_not_enabled",
-          error:"Ariel template media requires a verified sender-specific upload.",
+          code:"secondary_template_media_reuse_disabled",
+          error:"Choose a new Ariel-specific template media file.",
         });
+      }
+      let mediaAttachment=null;
+      if(req.file) {
+        const mime=String(req.file.mimetype||"").toLowerCase();
+        if(WHATSAPP_IMAGE_MIME_TYPES.has(mime) &&
+           req.file.size>0 && req.file.size<=WHATSAPP_IMAGE_MAX_BYTES){
+          mediaAttachment={
+            buffer:await fs.readFile(req.file.path),
+            mimeType:mime,
+            filename:mime==="image/png"?"template-image.png":"template-image.jpg",
+          };
+        } else if(isAllowedInboxVideo(req.file) && req.file.size>0){
+          const video=await followUpVideoPreparation.prepareFollowUpVideoFile(
+            req.file.path,{
+              originalBytes:req.file.size,
+              ensureWhatsAppCompatible:true,
+            }
+          );
+          mediaAttachment={
+            buffer:video.buffer,mimeType:"video/mp4",
+            filename:"template-video.mp4",
+          };
+        } else {
+          return res.status(400).json({
+            code:"secondary_template_media_invalid",
+            error:"Choose a valid JPEG/PNG image or WhatsApp-compatible MP4 video.",
+          });
+        }
       }
       let values=req.body?.values||{};
       if(typeof values==="string"){
@@ -1391,7 +1421,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       const name=String(req.body?.templateName||"").trim();
       const languageCode=String(req.body?.languageCode||"").trim();
       const prepared=await secondaryTemplate.prepareSecondaryStaffTemplate(contact,{
-        name,languageCode,values,
+        name,languageCode,values,mediaAttachment,
         billingAcknowledged:req.body?.billingAcknowledged===true ||
           req.body?.billingAcknowledged==="true",
         marketingConsentConfirmed:req.body?.marketingConsentConfirmed===true ||
@@ -1430,6 +1460,8 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
                 name:prepared.template.name,language:prepared.template.language,
                 category:prepared.template.category,
                 components:prepared.components,values,
+                ...(mediaAttachment ? {mediaFormat:prepared.template.header?.format,
+                  mediaFilename:mediaAttachment.filename} : {}),
                 billingAcknowledged:true,billingReviewClaimHash:claimed.tokenHash,
                 templateSignature:prepared.signature,
               },
