@@ -242,3 +242,74 @@ test("two different Ariel customers reserve concurrently without sharing an unre
     )).rows[0].n,0);
   });
 });
+
+
+test("provider outcomes of two Ariel customers remain isolated in reversed Meta response order",
+ {skip:!connectionString},async()=>{
+  await isolatedSchema(async({db,database})=>{
+    const sender=(await db.query(
+      "INSERT INTO whatsapp_sender_accounts " +
+      "(sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
+      "VALUES('ariel','100000000000002','200000000000002','Ariel','active') RETURNING id"
+    )).rows[0].id;
+    const people=(await db.query(
+      "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) " +
+      "VALUES('whatsapp','60125553331',$1),('whatsapp','60125553332',$1) RETURNING id",
+      [sender]
+    )).rows;
+    const conversations=(await db.query(
+      "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) " +
+      "VALUES($1,'60125553331',$2,'bound'),($1,'60125553332',$3,'bound') RETURNING id",
+      [sender,people[0].id,people[1].id]
+    )).rows;
+    const messages=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) " +
+      "VALUES($1,'assistant','A'),($2,'assistant','B') RETURNING id",
+      [people[0].id,people[1].id]
+    )).rows;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) " +
+      "VALUES($1,$3),($2,$4)",
+      [messages[0].id,messages[1].id,conversations[0].id,conversations[1].id]
+    );
+    const a=await billing.reserveSecondaryBillingAttempt({
+      contactId:people[0].id,messageId:messages[0].id,
+    },{database,env});
+    const b=await billing.reserveSecondaryBillingAttempt({
+      contactId:people[1].id,messageId:messages[1].id,
+    },{database,env});
+    assert.equal(a.reserved,true);assert.equal(b.reserved,true);
+    const bFirst=await billing.recordSecondaryProviderOutcome({
+      reservationId:b.reservationId,acceptedWamid:"wamid.ariel-B",
+    },{database,env});
+    assert.equal(bFirst.recorded,true);
+    let gates=(await db.query(
+      "SELECT owner_contact_id,reservation_id,state,wamid FROM whatsapp_sender_billing_gates " +
+      "WHERE sender_id=$1 ORDER BY owner_contact_id",[sender]
+    )).rows;
+    assert.equal(gates.length,2);
+    assert.equal(gates[0].reservation_id,a.reservationId);
+    assert.equal(gates[0].state,"reserved");
+    assert.equal(gates[0].wamid,null);
+    assert.equal(gates[1].reservation_id,b.reservationId);
+    assert.equal(gates[1].wamid,"wamid.ariel-B");
+    const aSecond=await billing.recordSecondaryProviderOutcome({
+      reservationId:a.reservationId,acceptedWamid:"wamid.ariel-A",
+    },{database,env});
+    assert.equal(aSecond.recorded,true);
+    gates=(await db.query(
+      "SELECT owner_contact_id,state,wamid FROM whatsapp_sender_billing_gates " +
+      "WHERE sender_id=$1 ORDER BY owner_contact_id",[sender]
+    )).rows;
+    assert.deepEqual(gates.map(g=>g.state),["awaiting_pricing","awaiting_pricing"]);
+    assert.deepEqual(gates.map(g=>g.wamid),["wamid.ariel-A","wamid.ariel-B"]);
+    const attempts=(await db.query(
+      "SELECT contact_id,state,wamid FROM whatsapp_sender_billing_attempts " +
+      "WHERE sender_id=$1 ORDER BY contact_id",[sender]
+    )).rows;
+    assert.deepEqual(attempts.map(x=>x.wamid),["wamid.ariel-A","wamid.ariel-B"]);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_free_only_send_gate"
+    )).rows[0].n,0);
+  });
+});
