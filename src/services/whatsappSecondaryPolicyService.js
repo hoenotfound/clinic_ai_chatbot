@@ -148,10 +148,11 @@ const SECONDARY_MARKETING_CONSENT_SQL = `
     LEFT JOIN whatsapp_sender_message_context mc
       ON mc.message_id=m.id AND mc.conversation_id=$2
     WHERE e.contact_id=$1
-      AND e.consented_at >= $3::timestamptz
-      AND e.consent_category='MARKETING'
+      AND e.created_at >= $3::timestamptz
       AND (
         (e.message_id IS NOT NULL AND mc.message_id IS NOT NULL
+          AND e.consent_category='MARKETING'
+          AND e.consented_at=$3::timestamptz
           AND e.consent_scope='treatment_followups_and_related_offers'
           AND NULLIF(BTRIM(e.consent_service),'') IS NOT NULL
           AND NULLIF(BTRIM(l.treatment_interest),'') IS NOT NULL
