@@ -5,6 +5,7 @@ const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const { recordQuarantinedWhatsAppChanges } = require("../src/db/whatsappSenderQuarantineRepo");
 const { partitionLegacyWhatsAppWebhook } = require("../src/services/whatsappLegacySenderBoundary");
+const { partitionSecondaryInboxWebhook } = require("../src/services/whatsappSecondaryInboxBoundary");
 
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -133,6 +134,47 @@ test("foreign WhatsApp events are durably quarantined without contact creation a
       );
       assert.equal(rawAudit.rows[0].data.includes("a private patient message"), false);
       assert.equal(rawAudit.rows[0].data.includes("60135550000"), false);
+    });
+  }
+);
+
+test("secondary status and foreign passive quarantines satisfy the DB reason constraint",
+  { skip: !connectionString }, async () => {
+    await isolatedSchema(async ({ db, pool }) => {
+      await runMigrations(pool, {
+        quiet: true,
+        migrations: loadMigrations().filter(m => m.version <= 78),
+      });
+      const payload = {
+        object: "whatsapp_business_account",
+        entry: [{
+          id: "200000000000002",
+          changes: [{ field: "messages", value: {
+            metadata: { phone_number_id: "100000000000002" },
+            statuses: [{ id: "ariel-msg", status: "delivered" }],
+          } }],
+        }, {
+          id: "200000000000009",
+          changes: [{ field: "history", value: { history: [] } }],
+        }],
+      };
+      const events = partitionSecondaryInboxWebhook(payload, {
+        primaryPhoneId: "100000000000001",
+        primaryAccountId: "200000000000001",
+        secondaryPhoneId: "100000000000002",
+        secondaryAccountId: "200000000000002",
+      });
+      assert.equal(events.acceptedActionable, 0);
+      assert.equal(events.quarantined.length, 2);
+      assert.ok(events.quarantined.some(e => e.reason === "unsupported_whatsapp_event"));
+      assert.ok(events.quarantined.some(e => e.reason === "different_business_account"));
+      await recordQuarantinedWhatsAppChanges(events.quarantined, db);
+      const audit = await db.query(
+        "SELECT reason FROM whatsapp_sender_quarantined_events ORDER BY reason"
+      );
+      assert.deepEqual(audit.rows.map(row => row.reason),
+        ["different_business_account", "unsupported_whatsapp_event"]);
+      assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n, 0);
     });
   }
 );
