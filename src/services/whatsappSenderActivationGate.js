@@ -52,6 +52,7 @@ async function assertStoredSenderSafety({
         !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"")) ||
         !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID||"")) ||
         !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY||"")) ||
+        !String(env.WHATSAPP_SECONDARY_TOKEN||'').trim() ||
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID===phone ||
         env.WHATSAPP_SECONDARY_SENDER_KEY===key) {
       throw new Error("Secondary WhatsApp Inbox configuration is incomplete or unsafe.");
