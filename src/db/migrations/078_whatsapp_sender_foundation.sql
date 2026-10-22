@@ -18,21 +18,10 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_accounts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Nullable shadow columns preserve every historical Neutro Sense contact,
--- message, lead, outbound job, and existing ID. A later guarded migration must
--- backfill the verified existing Meta sender *before* relaxing the unique
--- contacts(whatsapp_number) constraint.
-ALTER TABLE contacts
-  ADD COLUMN IF NOT EXISTS whatsapp_sender_id BIGINT
-    REFERENCES whatsapp_sender_accounts(id);
-ALTER TABLE messages
-  ADD COLUMN IF NOT EXISTS whatsapp_sender_id BIGINT
-    REFERENCES whatsapp_sender_accounts(id);
-
--- Changes to existing hot tables are kept minimal. Sender-scoped indexes
--- should be created in a later online migration when sender-aware contact and
--- message writes are complete, rather than during this foundation deployment.
--- Keep contacts_whatsapp_number_key and idx_contacts_channel_user_id intact.
+-- No ALTER TABLE on legacy contacts/messages at this stage. These tables
+-- remain fully unchanged until the two-number contact and outbound routing
+-- implementation is ready for an independently staged migration.
+-- Existing unique constraints and indexes are also kept intact.
 
 -- Record unexpected Meta callbacks without storing their raw customer content.
 -- The only key is a SHA-256 hash of the event, so Meta retries are idempotent.
@@ -56,5 +45,5 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_quarantined_events (
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   seen_count BIGINT NOT NULL DEFAULT 1
 );
--- No backfill, customer record rewrite, existing unique constraint change,
--- new index on a live table, or sender activation in this migration.
+-- No backfill, changes to hot customer tables, historical data rewrite,
+-- or sender activation in this migration.
