@@ -148,7 +148,7 @@ async function reserveSecondaryBillingAttempt({
 }
 
 const OWNED_SECONDARY_RESERVATION_SQL = `
-  SELECT g.sender_id,g.state,g.reservation_id,g.wamid
+  SELECT g.sender_id,g.owner_contact_id,g.state,g.reservation_id,g.wamid
   FROM whatsapp_sender_billing_gates g
   JOIN whatsapp_sender_accounts sa ON sa.id=g.sender_id
   JOIN whatsapp_sender_billing_attempts a ON a.reservation_id=g.reservation_id
@@ -192,16 +192,23 @@ async function recordSecondaryProviderOutcome({
       return { recorded: true, sendAuthorized: false, state: "awaiting_pricing" };
     }
     const state = acceptedWamid ? "awaiting_pricing" : "unknown";
-    await client.query(
+    // A sender may have many simultaneous customer gates. Never mutate
+    // another contact's reservation when this provider request completes.
+    const gateUpdated = await client.query(
       "UPDATE whatsapp_sender_billing_gates SET state=$2,wamid=$3,updated_at=NOW() " +
-      "WHERE sender_id=$1 AND state='reserved'",
-      [row.sender_id,state,acceptedWamid]
+      "WHERE sender_id=$1 AND owner_contact_id=$4 " +
+      "AND reservation_id=$5::uuid AND state='reserved'",
+      [row.sender_id,state,acceptedWamid,row.owner_contact_id,reservationId]
     );
-    await client.query(
+    const attemptUpdated = await client.query(
       "UPDATE whatsapp_sender_billing_attempts SET state=$2,wamid=$3,updated_at=NOW() " +
-      "WHERE reservation_id=$1 AND state='reserved'",
-      [reservationId,state,acceptedWamid]
+      "WHERE reservation_id=$1::uuid AND sender_id=$4 AND contact_id=$5 AND state='reserved'",
+      [reservationId,state,acceptedWamid,row.sender_id,row.owner_contact_id]
     );
+    if (gateUpdated.rowCount !== 1 || attemptUpdated.rowCount !== 1) {
+      await client.query("ROLLBACK"); transaction = false;
+      return deny("secondary_billing_outcome_ownership_changed");
+    }
     await client.query("COMMIT"); transaction = false;
     return { recorded: true, sendAuthorized: false, state };
   } catch {
