@@ -78,7 +78,7 @@ test("sender records do not include any token or authorization secret", () => {
   const registry = createSenderRegistry([
     { ...existing, token: "top-secret", appSecret: "secret" },
   ]);
-  const sender = registry.byPhone.get(existing.phoneNumberId);
+  const sender = registry.findByPhoneNumberId(existing.phoneNumberId);
   assert.equal(sender.token, undefined);
   assert.equal(sender.appSecret, undefined);
   assert.equal(sender.coexistenceEnabled, false);
@@ -99,7 +99,14 @@ test("disabled or testing sender cannot be used for live routing", () => {
     () => validateWhatsAppWebhookSenders(batch(), registry),
     (err) => err.code === "WHATSAPP_SENDER_DISABLED"
   );
-  const result = validateWhatsAppWebhookSenders(batch(), registry, { allowTesting: true });
+  assert.throws(
+    () => validateWhatsAppWebhookSenders(batch(), registry, { allowTesting: true }),
+    (err) => err.code === "WHATSAPP_SENDER_DISABLED"
+  );
+  const inspection = inspectWhatsAppWebhookSenders(batch());
+  assert.equal(inspection.length, 3); // Inspect-only; this never authorizes customer processing.
+  const activeRegistry = createSenderRegistry([existing, { ...ariel, state: "active" }]);
+  const result = validateWhatsAppWebhookSenders(batch(), activeRegistry);
   assert.deepEqual(result.resolved.map((sender) => sender.key), [
     "neutro", "ariel", "ariel",
   ]);
@@ -153,10 +160,18 @@ test("status callbacks are sender-aware and passive sync does not become an inbo
     phoneNumberId: ariel.phoneNumberId,
     eventCount: 1,
   }]);
+  const result = validateWhatsAppWebhookSenders(payload, createSenderRegistry([
+    { ...ariel, state: "active" },
+  ]));
+  assert.deepEqual(result.passive, [{
+    accountId: ariel.accountId, field: "history",
+  }]);
 });
 
 test("empty webhook does not manufacture a sender or start an AI conversation", () => {
-  const result = validateWhatsAppWebhookSenders({ entry: [] }, createSenderRegistry([]));
+  const result = validateWhatsAppWebhookSenders({
+    object: "whatsapp_business_account", entry: [],
+  }, createSenderRegistry([]));
   assert.deepEqual(result.evidence, []);
   assert.deepEqual(result.resolved, []);
 });
@@ -196,10 +211,16 @@ test("normalized WhatsApp events preserve the receiving number without changing 
       }],
     }],
   };
-  assert.equal(whatsapp.parseIncomingMessages(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
-  assert.equal(whatsapp.parseReactionEvents(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
-  assert.equal(whatsapp.parseStatusUpdates(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
-  assert.equal(whatsapp.parseBusinessAppEchoes(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
+  for (const parser of [
+    whatsapp.parseIncomingMessages,
+    whatsapp.parseReactionEvents,
+    whatsapp.parseStatusUpdates,
+    whatsapp.parseBusinessAppEchoes,
+  ]) {
+    const [event] = parser(payload);
+    assert.equal(event.businessPhoneNumberId, ariel.phoneNumberId);
+    assert.equal(event.businessAccountId, ariel.accountId);
+  }
 
   const legacy = {
     entry: [{ changes: [{ value: {
@@ -207,4 +228,112 @@ test("normalized WhatsApp events preserve the receiving number without changing 
     } }] }],
   };
   assert.equal("businessPhoneNumberId" in whatsapp.parseIncomingMessages(legacy)[0], false);
+});
+
+test("sender-scoped customer keys reuse canonical Malaysian phone normalization", () => {
+  const { normalizeWhatsappNumber } = require("../src/db/contactsRepo");
+  const variants = ["012-345 6789", "60123456789", "+60 12 345 6789",
+    "0060 12 345 6789", "+60 (012) 345-6789", "123456789"];
+  const values = variants.map((phone) => conversationKeyForSender("ariel", phone));
+  assert.equal(new Set(values).size, 1);
+  assert.equal(values[0], "whatsapp:ariel:60123456789");
+  assert.equal(normalizeWhatsappNumber("012-345 6789"), "60123456789");
+  assert.notEqual(conversationKeyForSender("neutro", variants[0]), values[0]);
+});
+
+test("sender and customer identity refuses invalid keys and phone data", () => {
+  for (const [key, phone] of [
+    ["ARIEL", "60123456789"], ["bad/key", "60123456789"],
+    ["ariel", "hello60123456789"], ["ariel", ""],
+    ["ariel", "0123"], ["ariel", "12345678901234567"],
+  ]) {
+    assert.throws(
+      () => conversationKeyForSender(key, phone),
+      (err) => ["WHATSAPP_CONVERSATION_IDENTITY_INVALID", "WHATSAPP_SENDER_KEY_INVALID"].includes(err.code)
+    );
+  }
+});
+
+test("sender registry lookup is immutable; Map mutation is not exposed", () => {
+  const registry = createSenderRegistry([existing, ariel]);
+  assert.equal(Object.isFrozen(registry), true);
+  assert.equal("byPhone" in registry, false);
+  assert.equal("byKey" in registry, false);
+  const original = registry.findByPhoneNumberId(existing.phoneNumberId);
+  assert.equal(Object.isFrozen(original), true);
+  assert.equal(registry.findByKey("neutro"), original);
+  assert.equal(registry.findByPhoneNumberId("9999"), null);
+  assert.throws(() => {
+    Object.defineProperty(registry, "findByPhoneNumberId", {
+      value: () => ariel,
+    });
+  }, TypeError);
+  assert.throws(
+    () => resolveWhatsAppSender({
+      accountId: existing.accountId, phoneNumberId: existing.phoneNumberId,
+    }, { ...registry }),
+    (err) => err.code === "WHATSAPP_SENDER_REGISTRY_UNAVAILABLE"
+  );
+  assert.equal(registry.findByPhoneNumberId(existing.phoneNumberId), original);
+});
+
+test("testing sender never authorizes live routing even with caller-provided bypass", () => {
+  const registry = createSenderRegistry([existing, ariel]);
+  const event = { accountId: ariel.accountId, phoneNumberId: ariel.phoneNumberId };
+  assert.equal(registry.findByPhoneNumberId(ariel.phoneNumberId).state, "testing");
+  for (const options of [{ allowTesting: true }, { deploymentMode: "test" }, undefined]) {
+    assert.throws(
+      () => resolveWhatsAppSender(event, registry, options),
+      (err) => err.code === "WHATSAPP_SENDER_DISABLED"
+    );
+  }
+});
+
+test("invalid webhook type, malformed changes, and unrecognized fields fail closed", () => {
+  const registry = createSenderRegistry([existing, { ...ariel, state: "active" }]);
+  const malformed = [
+    { entry: [] },
+    { object: "page", entry: [] },
+    { object: "whatsapp_business_account", entry: [{}] },
+    { object: "whatsapp_business_account", entry: [{
+      id: ariel.accountId, changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: ariel.phoneNumberId }, messages: "not an array",
+      } }],
+    }] },
+  ];
+  for (const payload of malformed) {
+    assert.throws(
+      () => validateWhatsAppWebhookSenders(payload, registry),
+      (err) => err.code === "WHATSAPP_WEBHOOK_INVALID"
+    );
+  }
+  const unsupported = batch();
+  unsupported.entry[1].changes.push({
+    field: "future_unknown_status",
+    value: { metadata: { phone_number_id: ariel.phoneNumberId }, messages: [
+      { id: "wamid.injected", from: "60135550000" },
+    ] },
+  });
+  assert.throws(
+    () => validateWhatsAppWebhookSenders(unsupported, registry),
+    (err) => err.code === "WHATSAPP_WEBHOOK_UNSUPPORTED_CHANGE"
+  );
+});
+
+test("passive Business App sync cannot create routable conversations", () => {
+  const registry = createSenderRegistry([existing]);
+  const payload = {
+    object: "whatsapp_business_account",
+    entry: [{ id: ariel.accountId, changes: [
+      { field: "history", value: { history: [{ progress: 100 }] } },
+      { field: "smb_app_state_sync", value: { state_sync: [{ type: "contact" }] } },
+    ] }],
+  };
+  const result = validateWhatsAppWebhookSenders(payload, registry);
+  assert.deepEqual(result.evidence, []);
+  assert.deepEqual(result.resolved, []);
+  assert.deepEqual(result.passive, [
+    { accountId: ariel.accountId, field: "history" },
+    { accountId: ariel.accountId, field: "smb_app_state_sync" },
+  ]);
 });
