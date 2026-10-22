@@ -565,16 +565,9 @@ async function processIncomingMessage(
     if (senderScoped && !contact?.whatsapp_sender_key) {
       throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
     }
-    // Secondary Inbox-only means RECEIVE and store, never reply using the
-    // primary number or trigger AI-driven promotion/follow-up messages.
-    if (senderScoped && process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
-        contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY) {
-      await contactsRepo.setAiReviewAttention(contact.id, savedInbound.id,
-        "New message on the secondary WhatsApp Inbox. Staff reply via the " +
-          "linked WhatsApp Business App; portal API sending is disabled until sender activation.",
-        "information");
-      return { wasFirstMessage, keywordReason };
-    }
+    const secondaryInboxOnly = senderScoped &&
+      process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
     aiCancellationKey = channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(
           from, senderScoped ? contact.whatsapp_sender_key : null
@@ -768,6 +761,16 @@ async function processIncomingMessage(
         );
         mediaAttachment = null;
       }
+    }
+
+    // Preserve incoming secondary media before handing the turn to staff.
+    // Do not enter any AI response, promotion, or auto-follow-up path.
+    if (secondaryInboxOnly) {
+      await contactsRepo.setAiReviewAttention(contact.id, savedInbound.id,
+        "Secondary WhatsApp Inbox: reply using the linked Business App. " +
+        "Cloud API sending for this number is not yet enabled.",
+        "information");
+      return { wasFirstMessage, keywordReason };
     }
 
     // Photos/videos without captions and stickers contain no textual intent
