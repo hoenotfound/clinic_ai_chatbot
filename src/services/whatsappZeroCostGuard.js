@@ -421,9 +421,19 @@ const SCOPED_CTWA_FIRST_REPLY_SQL = CTWA_FIRST_REPLY_SQL.replace(
   "WHERE entry.source_type='ad'",
   "WHERE entry.source_type='ad' AND c.id=$4::integer"
 );
+// The seven-day feature is proven by independent clinic-wide Meta evidence,
+// not by requiring each individual Neutro customer to bootstrap that proof.
+// Exclude all Ariel evidence by the persisted receiving business identity.
 const SCOPED_SEVEN_DAY_PROOF_SQL = SEVEN_DAY_PROOF_SQL.replace(
   "WHERE ad.source_type='ad'",
-  "WHERE ad.source_type='ad' AND ad.contact_id=$1::integer"
+  "WHERE ad.source_type='ad' AND EXISTS (" +
+    "SELECT 1 FROM contacts evidence_contact " +
+    "LEFT JOIN whatsapp_sender_accounts sender " +
+    "ON sender.id=evidence_contact.whatsapp_sender_id " +
+    "WHERE evidence_contact.id=ad.contact_id " +
+    "AND (evidence_contact.whatsapp_sender_id IS NULL OR " +
+    "(sender.meta_phone_number_id=$1::text AND sender.meta_account_id=$2::text " +
+    "AND sender.state='active')))"
 );
 
 function senderAwareBillingReads(env = process.env) {
@@ -502,7 +512,10 @@ async function authorizedCeilingHours({ database = pool, env = process.env, cont
   if (!query) throw new Error("WhatsApp free-only pricing database unavailable");
   if (senderAwareBillingReads(env) && !contactId) return 72;
   const result = senderAwareBillingReads(env)
-    ? await query(SCOPED_SEVEN_DAY_PROOF_SQL, [contactId])
+    ? await query(SCOPED_SEVEN_DAY_PROOF_SQL, [
+        String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim(),
+        String(env.WHATSAPP_WABA_ID || "").trim(),
+      ])
     : await query(SEVEN_DAY_PROOF_SQL);
   return result.rows?.[0]?.verified === true ? 168 : 72;
 }
