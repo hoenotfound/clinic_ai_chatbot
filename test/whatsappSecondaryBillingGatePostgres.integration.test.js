@@ -52,7 +52,7 @@ async function isolatedSchema(fn) {
 test("migration 083 is additive, repeatable, and prevents cross-sender reservations",
   { skip: !connectionString }, async () => {
     await isolatedSchema(async ({ db, database }) => {
-      assert.equal(loadMigrations().at(-1).version, 87);
+      assert.equal(loadMigrations().at(-1).version, 88);
       const repeat = await runMigrations(database, { quiet: true });
       assert.equal(repeat.appliedCount, 0);
       assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n, 0);
