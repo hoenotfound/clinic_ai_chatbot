@@ -110,3 +110,21 @@ test("unconfigured single-sender installations do not query sender tables", asyn
     database: { query: async () => { throw new Error("must not query"); } },
   }), null);
 });
+
+
+test("flag rollback never treats a bare Ariel sender ID as permission to use Neutro",async()=>{
+  const {blockUnverifiedOutgoingSender}=require("../src/services/whatsappSenderOutgoingGuard");
+  const bare={...contact,whatsapp_sender_id:2};
+  const options={WHATSAPP_PHONE_NUMBER_ID:env.WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_PRIMARY_SENDER_KEY:env.WHATSAPP_PRIMARY_SENDER_KEY,
+    WHATSAPP_WABA_ID:env.WHATSAPP_WABA_ID};
+  assert.equal(blockUnverifiedOutgoingSender(bare,{},options).code,"whatsapp_sender_not_ready");
+  assert.equal((await checkWhatsAppDispatchContact(bare,{},{
+    env:options,database:{query:async()=>{throw Error("no database read expected");}},
+  })).code,"whatsapp_sender_not_ready");
+  assert.equal(blockUnverifiedOutgoingSender({
+    ...bare,whatsapp_sender_key:"neutro",
+    whatsapp_sender_phone_number_id:options.WHATSAPP_PHONE_NUMBER_ID,
+    whatsapp_sender_account_id:options.WHATSAPP_WABA_ID,
+  },{},options),null);
+});
