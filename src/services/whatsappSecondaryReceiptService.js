@@ -230,7 +230,19 @@ async function recordSignedSecondaryStatusBatch({
            delivery_status,pricing_type,pricing_billable,pricing_category,
            meta_phone_number_id,meta_account_id,matched)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-         ON CONFLICT (fingerprint) DO NOTHING RETURNING fingerprint`,
+         ON CONFLICT (fingerprint) DO UPDATE
+         SET reservation_id=EXCLUDED.reservation_id,
+             wamid=EXCLUDED.wamid,
+             matched=TRUE
+         WHERE whatsapp_sender_status_receipts.matched=FALSE
+           AND EXCLUDED.matched=TRUE
+           AND whatsapp_sender_status_receipts.sender_id=EXCLUDED.sender_id
+           AND whatsapp_sender_status_receipts.wamid_hash=EXCLUDED.wamid_hash
+           AND whatsapp_sender_status_receipts.meta_phone_number_id=
+               EXCLUDED.meta_phone_number_id
+           AND whatsapp_sender_status_receipts.meta_account_id=
+               EXCLUDED.meta_account_id
+         RETURNING fingerprint`,
         [event.fingerprint,senderId,attempt?.reservation_id || null,
           attempt ? event.wamid : null,event.wamidHash,event.deliveryStatus,
           event.pricingType,event.pricingBillable,event.pricingCategory,
