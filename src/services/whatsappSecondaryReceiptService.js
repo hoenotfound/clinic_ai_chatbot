@@ -103,9 +103,9 @@ function normalizedSignedEvents(rawBody, env) {
 
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.state AS attempt_state,
-        g.state AS gate_state
+        g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
- JOIN whatsapp_sender_billing_gates g
+ LEFT JOIN whatsapp_sender_billing_gates g
    ON g.sender_id=a.sender_id AND g.reservation_id=a.reservation_id
    AND g.contact_id=a.contact_id AND g.message_id=a.message_id
  JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
@@ -116,13 +116,13 @@ const MATCH_SECONDARY_ATTEMPT_SQL = `
    AND m.role='assistant' AND (m.whatsapp_message_id IS NULL OR m.whatsapp_message_id=$1)
  JOIN whatsapp_sender_message_context mc
    ON mc.message_id=m.id AND mc.conversation_id=sc.id
- WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown')
-   AND g.state IN ('awaiting_pricing','unknown')
-   AND g.wamid=$1
+ WHERE a.wamid=$1 AND a.state IN ('awaiting_pricing','unknown','reconciled')
+   AND (g.reservation_id IS NULL OR
+       (g.state IN ('awaiting_pricing','unknown') AND g.wamid=$1))
    AND sc.customer_wa_id=$2 AND c.whatsapp_number=$2
    AND sa.sender_key=$3 AND sa.meta_phone_number_id=$4
    AND sa.meta_account_id=$5 AND sa.state='active'
- FOR UPDATE OF g,a
+ FOR UPDATE OF a
 `;
 
 // A signed callback only records provider facts. It cannot release an
@@ -156,6 +156,12 @@ async function recordSignedSecondaryStatusBatch({
       return blocked("secondary_receipt_sender_not_verified");
     }
     const senderId = sender.rows[0].id;
+    // Share the same sender gate row lock as reservation/reconciliation.
+    // This prevents a callback racing the release of an earlier reservation.
+    await client.query(
+      "SELECT sender_id FROM whatsapp_sender_billing_gates " +
+      "WHERE sender_id=$1 FOR UPDATE", [senderId]
+    );
     let matched = 0;
     let unmatched = 0;
     let replayed = 0;
@@ -187,16 +193,31 @@ async function recordSignedSecondaryStatusBatch({
       // Even an accepted nonbillable receipt is not enough to clear the gate.
       // Later/conflicting callbacks must be reviewed against Meta Billing Hub.
       if (event.deliveryStatus === "failed" || event.pricingBillable === true) {
+        // Latch even when this callback relates to an ALREADY settled send.
+        // Subsequent new reservations must not ignore late contradictions.
         await client.query(
-          "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW() " +
-          "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
-          [attempt.reservation_id,attempt.sender_id]
+          `INSERT INTO whatsapp_sender_billing_alarms
+             (sender_id,reservation_id,reason,latest_wamid_hash)
+           VALUES($1,$2,$3,$4)
+           ON CONFLICT(sender_id) DO UPDATE SET
+             observed_count=whatsapp_sender_billing_alarms.observed_count+1,
+             last_seen_at=NOW(),latest_wamid_hash=EXCLUDED.latest_wamid_hash`,
+          [attempt.sender_id,attempt.reservation_id,
+            event.pricingBillable === true ? "provider_billable" : "provider_delivery_failed",
+            event.wamidHash]
         );
-        await client.query(
-          "UPDATE whatsapp_sender_billing_attempts SET state='unknown',updated_at=NOW() " +
-          "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
-          [attempt.reservation_id,attempt.sender_id]
-        );
+        if (attempt.live_reservation_id) {
+          await client.query(
+            "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW() " +
+            "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
+            [attempt.reservation_id,attempt.sender_id]
+          );
+          await client.query(
+            "UPDATE whatsapp_sender_billing_attempts SET state='unknown',updated_at=NOW() " +
+            "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
+            [attempt.reservation_id,attempt.sender_id]
+          );
+        }
         held++;
       }
     }
