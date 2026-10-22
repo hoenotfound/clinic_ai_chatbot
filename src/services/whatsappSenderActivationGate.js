@@ -11,7 +11,8 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const template = env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true";
   const templateMedia = env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED === "true";
   const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
-  if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai) return;
+  const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
+  if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !followups) return;
 
   const common = [
     "WHATSAPP_MULTI_NUMBER_READ_ENABLED",
@@ -26,7 +27,8 @@ function assertSecondaryOperationalSafety(env = process.env) {
     "WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED",
     "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
   ];
-  if ((media && !staff) || (template && !staff) ||
+  if ((followups && (!ai || !autoReconcile || !receiptIngress)) ||
+      (media && !staff) || (template && !staff) ||
       (templateMedia && !template) ||
       (billedReview && (!template || !receiptIngress)) ||
       (autoReconcile && !receiptIngress) ||
