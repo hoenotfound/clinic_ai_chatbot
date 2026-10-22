@@ -60,15 +60,21 @@ async function findConversationBySender({ accountId, phoneNumberId, customerPhon
 
 // Explicitly bind only a matching WhatsApp contact, after the verified
 // legacy backfill. UNIQUE(contact_id) refuses cross-sender contact reuse.
-async function bindExistingContact(conversationId, existingContactId, database = pool) {
+async function bindExistingContact(conversationId, existingContactId, database = pool, env = process.env) {
   const result = await database.query(
     "UPDATE whatsapp_sender_conversations AS sc " +
     "SET contact_id = $2, state = 'bound', updated_at = NOW() " +
-    "FROM contacts AS c " +
+    "FROM contacts AS c, whatsapp_sender_accounts AS sa " +
     "WHERE sc.id = $1 AND c.id = $2 AND c.channel = 'whatsapp' " +
+    "AND sa.id = sc.sender_id AND sa.state = 'active' " +
     "AND regexp_replace(c.whatsapp_number, '[^0-9]', '', 'g') = sc.customer_wa_id " +
+    "AND (c.whatsapp_sender_id = sc.sender_id OR " +
+    "(c.whatsapp_sender_id IS NULL AND sa.meta_phone_number_id=$3 " +
+    "AND sa.meta_account_id=$4)) " +
     "AND (sc.contact_id IS NULL OR sc.contact_id = c.id) RETURNING sc.*",
-    [positiveId(conversationId), positiveId(existingContactId)]
+    [positiveId(conversationId), positiveId(existingContactId),
+      String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim(),
+      String(env.WHATSAPP_WABA_ID || "").trim()]
   );
   return result.rows[0] || null;
 }
