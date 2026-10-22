@@ -46,7 +46,7 @@ function partitionSecondaryInboxWebhook(body,{
         // gate, retry workers or delivery-attention updates.
         if(change.value.statuses?.length) {
           deferredStatuses.push(Object.freeze({
-            fingerprint:digest,reason:"secondary_status_deferred",
+            fingerprint:digest,reason:"unsupported_whatsapp_event",
             field:"messages",accountId:entry.id,
             phoneNumberId:actualPhone,
           }));
@@ -71,7 +71,7 @@ function partitionSecondaryInboxWebhook(body,{
          entry.id!==primaryAccountId && entry.id!==secondaryAccountId) {
         foreignPassive.push(Object.freeze({
           fingerprint:fingerprint(entry.id,change),
-          reason:"foreign_passive_sync",field:change.field,
+          reason:"different_business_account",field:change.field,
           accountId:entry.id||null,
           phoneNumberId:change.value?.metadata?.phone_number_id||null,
         }));
