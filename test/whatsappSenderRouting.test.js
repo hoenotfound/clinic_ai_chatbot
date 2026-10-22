@@ -160,3 +160,51 @@ test("empty webhook does not manufacture a sender or start an AI conversation", 
   assert.deepEqual(result.evidence, []);
   assert.deepEqual(result.resolved, []);
 });
+
+test("normalized WhatsApp events preserve the receiving number without changing old event shapes", () => {
+  const whatsapp = require("../src/services/whatsappService");
+  const payload = {
+    entry: [{
+      id: ariel.accountId,
+      changes: [{
+        field: "messages",
+        value: {
+          metadata: { phone_number_id: ariel.phoneNumberId },
+          contacts: [{ wa_id: "60135550000", profile: { name: "Customer" } }],
+          messages: [{
+            id: "wamid.inbound", from: "60135550000",
+            type: "text", text: { body: "Hi" },
+          }, {
+            id: "wamid.reaction", from: "60135550000",
+            type: "reaction", reaction: {
+              message_id: "wamid.previous", emoji: "👍",
+            },
+          }],
+          statuses: [{
+            id: "wamid.outbound", status: "delivered",
+          }],
+        },
+      }, {
+        field: "smb_message_echoes",
+        value: {
+          metadata: { phone_number_id: ariel.phoneNumberId },
+          message_echoes: [{
+            id: "wamid.staff", from: "60122972817",
+            to: "60135550000", type: "text", text: { body: "Hello" },
+          }],
+        },
+      }],
+    }],
+  };
+  assert.equal(whatsapp.parseIncomingMessages(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
+  assert.equal(whatsapp.parseReactionEvents(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
+  assert.equal(whatsapp.parseStatusUpdates(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
+  assert.equal(whatsapp.parseBusinessAppEchoes(payload)[0].businessPhoneNumberId, ariel.phoneNumberId);
+
+  const legacy = {
+    entry: [{ changes: [{ value: {
+      messages: [{ id: "wamid.legacy", from: "60135550000", type: "text", text: { body: "Hi" } }],
+    } }] }],
+  };
+  assert.equal("businessPhoneNumberId" in whatsapp.parseIncomingMessages(legacy)[0], false);
+});
