@@ -108,6 +108,8 @@ function resolveFixedAdFirstReply({
   const creativeMatches = matchingMetaAdCreativeServices(
     metaAdContext, services, serviceAliases
   );
+  if (metaAdCreativeService && !creativeMatches.includes(metaAdCreativeService))
+    return skip("creative_service_mismatch");
 
   let treatment = null;
   if (contextual) {
