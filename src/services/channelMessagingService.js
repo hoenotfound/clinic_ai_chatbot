@@ -10,7 +10,7 @@ const whatsappVideoMediaCache = require("./whatsappVideoMediaCache");
 const audioConvert = require("./audioConvertService");
 const messagingPolicy = require("./whatsappPolicyService");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
-const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
+const { checkWhatsAppDispatchContact } = require("./whatsappSenderDispatchGuard");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -1055,7 +1055,7 @@ function senderSafe(operation) {
     const options = args.length && typeof args[args.length - 1] === "object"
       && !Buffer.isBuffer(args[args.length - 1])
       ? args[args.length - 1] : {};
-    const denied = blockUnverifiedOutgoingSender(contact, options);
+    const denied = await checkWhatsAppDispatchContact(contact, options);
     if (denied) return denied;
     return operation(contact, ...args);
   };
