@@ -197,15 +197,14 @@ async function recordSecondaryProviderOutcome({
     // A sender may have many simultaneous customer gates. Never mutate
     // another contact's reservation when this provider request completes.
     const gateUpdated = await client.query(
-      definitivelyRejected === true
-        ? "UPDATE whatsapp_sender_billing_gates " +
-          "SET state='idle',reservation_id=NULL,contact_id=NULL,message_id=NULL," +
-          "wamid=NULL,updated_at=NOW() " +
-          "WHERE sender_id=$1 AND owner_contact_id=$4 " +
-          "AND reservation_id=$5::uuid AND state='reserved'"
-        : "UPDATE whatsapp_sender_billing_gates SET state=$2,wamid=$3,updated_at=NOW() " +
-          "WHERE sender_id=$1 AND owner_contact_id=$4 " +
-          "AND reservation_id=$5::uuid AND state='reserved'",
+      "UPDATE whatsapp_sender_billing_gates SET " +
+      "state=CASE WHEN $2='rejected' THEN 'idle' ELSE $2 END," +
+      "reservation_id=CASE WHEN $2='rejected' THEN NULL ELSE reservation_id END," +
+      "contact_id=CASE WHEN $2='rejected' THEN NULL ELSE contact_id END," +
+      "message_id=CASE WHEN $2='rejected' THEN NULL ELSE message_id END," +
+      "wamid=CASE WHEN $2='rejected' THEN NULL ELSE $3 END,updated_at=NOW() " +
+      "WHERE sender_id=$1 AND owner_contact_id=$4 " +
+      "AND reservation_id=$5::uuid AND state='reserved'",
       [row.sender_id,state,acceptedWamid,row.owner_contact_id,reservationId]
     );
     const attemptUpdated = await client.query(
