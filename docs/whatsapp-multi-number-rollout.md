@@ -16,7 +16,7 @@ before activation; never assume that display names identify the active sender.
 
 ## Foundation in this change
 
-- Migration 072 adds `whatsapp_sender_accounts`, with **no tokens**, state
+- Migration 073 adds `whatsapp_sender_accounts`, with **no tokens**, state
   default `disabled` and a per-sender coexistence flag.
 - Nullable `whatsapp_sender_id` provenance columns are added to contacts and
   messages. No historical contact IDs or message rows are rewritten.
@@ -100,4 +100,4 @@ before activation; never assume that display names identify the active sender.
 - Backward compatibility of the existing Neutro single-number deployment.
 - Human review of both WhatsApp account subscriptions and callback overrides.
 
-**Do not enable multi-number routing just because migration 072 exists.**
+**Do not enable multi-number routing just because migration 073 exists.**
