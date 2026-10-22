@@ -144,6 +144,7 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
 
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.state AS attempt_state,
+        a.billable_authorized,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
@@ -237,9 +238,42 @@ async function recordSignedSecondaryStatusBatch({
       }
       if (!attempt) { unmatched++; continue; }
       matched++;
-      // Even an accepted nonbillable receipt is not enough to clear the gate.
-      // Later/conflicting callbacks must be reviewed against Meta Billing Hub.
-      if (event.deliveryStatus === "failed" || event.pricingBillable === true) {
+      const paidEligible =
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+        attempt.billable_authorized === true &&
+        attempt.attempt_state === "awaiting_pricing" &&
+        attempt.gate_state === "awaiting_pricing" &&
+        Boolean(attempt.live_reservation_id) &&
+        event.pricingBillable === true &&
+        event.pricingType === "regular" &&
+        ["service","utility","marketing"].includes(event.pricingCategory) &&
+        ["sent","delivered","read"].includes(event.deliveryStatus);
+
+      // Already settled legitimately-priced attempts may receive additional
+      // out-of-order delivered/read receipts. Keep the evidence without
+      // treating consistent provider pricing as an unexpected new charge.
+      let consistentHistoricalPaid = false;
+      if (attempt.attempt_state === "reconciled" &&
+          event.pricingBillable === true &&
+          event.pricingType === "regular" &&
+          ["sent","delivered","read"].includes(event.deliveryStatus)) {
+        const confirmed = await client.query(
+          `SELECT 1 FROM whatsapp_sender_auto_reconciliations a
+            JOIN whatsapp_sender_status_receipts initial
+              ON initial.fingerprint=a.provider_receipt_fingerprint
+            WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
+              AND a.method='signed_meta_staff_authorized_charge'
+              AND a.pricing_billable=TRUE
+              AND initial.pricing_type=$3 AND initial.pricing_category=$4
+              AND initial.pricing_billable=TRUE`,
+          [attempt.reservation_id,attempt.sender_id,
+            event.pricingType,event.pricingCategory]
+        );
+        consistentHistoricalPaid=confirmed.rows?.length===1;
+      }
+      if (event.deliveryStatus === "failed" ||
+          (event.pricingBillable === true &&
+           !paidEligible && !consistentHistoricalPaid)) {
         // Latch even when this callback relates to an ALREADY settled send.
         // Subsequent new reservations must not ignore late contradictions.
         await client.query(
@@ -266,7 +300,7 @@ async function recordSignedSecondaryStatusBatch({
           );
         }
         held++;
-      } else if (
+      } else if (paidEligible || (
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
         attempt.attempt_state === "awaiting_pricing" &&
         attempt.gate_state === "awaiting_pricing" &&
@@ -274,7 +308,7 @@ async function recordSignedSecondaryStatusBatch({
         event.pricingBillable === false &&
         event.pricingType === "free_entry_point" &&
         ["sent","delivered","read"].includes(event.deliveryStatus)
-      ) {
+      )) {
         // One signed nonbillable receipt cannot overrule a previous adverse
         // callback, wrong-recipient webhook or sender-level charge alarm.
         // Sender gate is locked above, serializing this with a new reservation
@@ -289,26 +323,32 @@ async function recordSignedSecondaryStatusBatch({
                SELECT 1 FROM whatsapp_sender_status_receipts r
                WHERE r.reservation_id=$2::uuid AND r.sender_id=$1
                  AND (r.delivery_status='failed' OR
-                      r.pricing_billable=true OR
+                      (r.pricing_billable IS NOT NULL AND
+                       r.pricing_billable<>$4::boolean) OR
                       (r.pricing_type IS NOT NULL AND
-                       r.pricing_type<>'free_entry_point'))
+                       r.pricing_type<>$5::text))
              ) AS no_conflict,
              NOT EXISTS(
                SELECT 1 FROM whatsapp_sender_status_receipts r
                WHERE r.sender_id=$1 AND r.wamid_hash=$3
                  AND r.matched=false
              ) AS no_wrong_recipient`,
-          [attempt.sender_id,attempt.reservation_id,event.wamidHash]
+          [attempt.sender_id,attempt.reservation_id,event.wamidHash,
+            event.pricingBillable,event.pricingType]
         );
         const ok = evidence.rows?.[0];
         if (evidence.rows?.length === 1 && ok.no_alarm === true &&
             ok.no_conflict === true && ok.no_wrong_recipient === true) {
           const added = await client.query(
             `INSERT INTO whatsapp_sender_auto_reconciliations
-               (reservation_id,sender_id,provider_receipt_fingerprint)
-             VALUES($1::uuid,$2,$3)
+               (reservation_id,sender_id,provider_receipt_fingerprint,
+                method,pricing_billable)
+             VALUES($1::uuid,$2,$3,$4,$5)
              ON CONFLICT(reservation_id) DO NOTHING RETURNING reservation_id`,
-            [attempt.reservation_id,attempt.sender_id,event.fingerprint]
+            [attempt.reservation_id,attempt.sender_id,event.fingerprint,
+              paidEligible ? "signed_meta_staff_authorized_charge"
+                : "signed_meta_nonbillable_free_entry",
+              paidEligible]
           );
           if (added.rowCount !== 1) throw new Error("Auto-reconciliation replay");
           const finishedAttempt = await client.query(
