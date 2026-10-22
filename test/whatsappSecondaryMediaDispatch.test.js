@@ -22,6 +22,7 @@ function fake(overrides={}) {
     env,database:{},
     contacts:{getContactById:async()=>contact},
     storage:{downloadMedia:async()=>Buffer.from("video bytes")},
+    policyService:{previewSecondaryFreeformPolicy:async()=>({policyAllowed:true})},
     textDispatcher:async ({messageId,preSendCheck,origin},{dispatchTransport})=>{
       events.push(["billing",messageId,origin]);
       if (!await preSendCheck())return{success:false,retryable:false};
