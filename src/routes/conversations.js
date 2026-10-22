@@ -1967,6 +1967,18 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     const contact = await contactsRepo.getContactById(contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
+    // The primary Inbox retry endpoint predates sender-qualified billing.
+    // It must never reuse Ariel's saved message, primary billing gate, token
+    // or temporary media URL, including known failed and unknown deliveries.
+    if (contact.channel === "whatsapp" &&
+        contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      return res.status(409).json({
+        code: "secondary_sender_retry_requires_fresh_review",
+        error: "Ariel messages cannot use the legacy retry path. Check Meta delivery and billing, then compose a new approved message if appropriate.",
+      });
+    }
+
     const message = await messagesRepo.getMessageForRetry(contactId, messageId);
     if (!message) return res.status(404).json({ error: "Message not found." });
     if (message.role !== "assistant") {
