@@ -60,14 +60,15 @@ test("final coexistence guard runs after final ownership lookup and before track
 
 
 test("all WhatsApp AI turns carry a cancellation token for Inbox Staff Assist", () => {
-  const keyStart = serverSource.indexOf("const aiCancellationKey =");
+  const keyStart = serverSource.indexOf('aiCancellationKey = channel === "whatsapp"');
   const keyBlock = serverSource.slice(
     keyStart,
-    serverSource.indexOf("const aiCancellationToken =", keyStart)
+    serverSource.indexOf("aiCancellationToken = aiReplyCancellation.snapshot", keyStart)
   );
+  assert.ok(keyStart >= 0, "AI sender key must be assigned after contact resolution");
   assert.match(
     keyBlock,
-    /channel === "whatsapp"[\s\S]*aiReplyCancellation\.keyForWhatsAppNumber\(from\)/
+    /aiReplyCancellation\.keyForWhatsAppNumber\([\s\S]*from,[\s\S]*senderScoped[\s\S]*contact\.whatsapp_sender_key/
   );
   assert.doesNotMatch(keyBlock, /aiReplyCancellation\.enabled\(\)/);
   assert.match(serverSource, /hasStaffReplyAfter\([\s\S]*savedInbound\.id/);
