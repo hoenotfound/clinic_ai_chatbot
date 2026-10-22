@@ -101,6 +101,7 @@ test("new secondary operational flags fail startup when only one feature is enab
     "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
     "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
     "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+    "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
   ]) {
     assert.throws(
       ()=>assertSenderIngressSafety({...safe,[flag]:"true"}),
@@ -126,6 +127,7 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true",
     WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true",
     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
     WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
     WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
     WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
