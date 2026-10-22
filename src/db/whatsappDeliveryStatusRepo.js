@@ -70,7 +70,7 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
       item.businessPhoneNumberId,
       item.businessAccountId
     );
-    return '(' + Array.from({ length: 8 }, (_, i) => '
+    return '(' + Array.from({ length: 8 }, (_, i) => String.fromCharCode(36) + (offset + i + 1)).join(', ') + ')';
   });
 
   const result = await query(
