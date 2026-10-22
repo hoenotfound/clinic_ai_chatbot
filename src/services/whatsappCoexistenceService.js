@@ -1,4 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
+const senderConversations = require("../db/whatsappSenderConversationRepo");
 const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const messagesRepo = require("../db/messagesRepo");
@@ -22,8 +23,33 @@ function renderEchoContent(echo) {
   return `[${echo.type || "Message"} sent from WhatsApp Business App]`;
 }
 
+function senderAwareEchoesEnabled() {
+  return process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
+}
+
+function verifiedPrimaryEchoIdentity(echo) {
+  const phone = String(echo?.businessPhoneNumberId || "").trim();
+  const account = String(echo?.businessAccountId || "").trim();
+  if (!/^\\d+$/.test(phone) || !/^\\d+$/.test(account) ||
+      phone !== String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
+      account !== String(process.env.WHATSAPP_WABA_ID || "").trim()) {
+    throw new Error("Business App echo does not identify the verified primary sender.");
+  }
+  return { accountId: account, phoneNumberId: phone, customerPhone: echo.to };
+}
+
 function cancellationKeyForEcho(echo) {
-  return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
+  if (!senderAwareEchoesEnabled()) {
+    return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
+  }
+  // An unverified foreign echo must NEVER cancel the primary AI turn.
+  try {
+    verifiedPrimaryEchoIdentity(echo);
+    const key = String(process.env.WHATSAPP_PRIMARY_SENDER_KEY || "").trim();
+    return key ? aiReplyCancellation.keyForWhatsAppNumber(echo?.to, key) : null;
+  } catch {
+    return null;
+  }
 }
 
 function beginPendingAiForEcho(echo) {
@@ -60,7 +86,9 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       return null;
     }
 
-    const contact = await contactsRepo.getOrCreateContact(echo.to);
+    const contact = senderAwareEchoesEnabled()
+      ? await senderConversations.claimSenderContact(verifiedPrimaryEchoIdentity(echo))
+      : await contactsRepo.getOrCreateContact(echo.to);
 
     // Insert the provider message and apply Staff Assist ownership rules in one
     // DB transaction. Ordinary AI-owned chats remain AI-owned; a synthetic AI
@@ -76,6 +104,16 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
     if (!persisted) {
       releasePendingAiForEcho(echo);
       return null;
+    }
+    if (senderAwareEchoesEnabled()) {
+      const messageAssociation = await senderConversations.attachMessageContext({
+        messageId: persisted.message.id,
+        contactId: contact.id,
+        conversationId: contact.whatsapp_sender_conversation_id,
+      });
+      if (!messageAssociation) {
+        throw new Error("Business App echo sender association could not be verified.");
+      }
     }
 
     if (persisted.isNew) {
