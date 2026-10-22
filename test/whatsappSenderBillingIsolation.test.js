@@ -40,3 +40,15 @@ test("sender-qualified billing proof filters every eligibility query by contact 
   [billing.SCOPED_SEVEN_DAY_PROOF_SQL,1]
  ]) assert.match(sql,new RegExp("\\$"+bind+"::integer"));
 });
+
+test("billing alarm is scoped to the owning business; unknown legacy metadata remains conservative",()=>{
+ const q=billing.billingAlarmSenderSql(env);
+ assert.match(q,/business_phone_number_id IS NULL/);
+ assert.match(q,/business_account_id IS NULL/);
+ assert.ok(q.includes("business_phone_number_id=$2::text"));
+ assert.ok(q.includes("business_account_id=$3::text"));
+ assert.deepEqual(billing.billingAlarmSenderArgs(env),
+   ["1408739622311791","200000000000001"]);
+ assert.equal(billing.billingAlarmSenderSql({}),"");
+ assert.deepEqual(billing.billingAlarmSenderArgs({}),[]);
+});

@@ -430,6 +430,19 @@ function senderAwareBillingReads(env = process.env) {
   return env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
 }
 
+// Only billing callbacks for the primary account can trip its reservation.
+// Unknown legacy receipts remain a conservative blocker.
+function billingAlarmSenderSql(env = process.env) {
+  if (!senderAwareBillingReads(env)) return "";
+  return " AND (business_phone_number_id IS NULL OR business_phone_number_id=$2::text)" +
+    " AND (business_account_id IS NULL OR business_account_id=$3::text)";
+}
+function billingAlarmSenderArgs(env = process.env) {
+  return senderAwareBillingReads(env) ?
+    [String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim(),
+     String(env.WHATSAPP_WABA_ID || "").trim()] : [];
+}
+
 // Sender accounts share customer WA IDs; they do not share contact IDs,
 // service windows, billing receipts, or free-entry eligibility.
 async function primaryBillingContactId(to, {
@@ -555,12 +568,13 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
     const billed=await database.query(
       `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
         WHERE billable=true AND updated_at>=$1::timestamptz
+          ${billingAlarmSenderSql()}
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
                            AND ex.status='accepted'
                            AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
                            AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
-      [new Date(activation).toISOString()]);
+      [new Date(activation).toISOString(), ...billingAlarmSenderArgs()]);
     if (billed.rows?.[0]?.tripped!==false)
       return deny("zero_cost_billing_alarm","Meta reported a billable message after activation.");
     const ceiling=await authorizedCeilingHours({ database, contactId: scopedId });
@@ -751,12 +765,13 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
       const alarm=(await client.query(
         `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
           WHERE billable=true AND updated_at>=$1::timestamptz
+          ${billingAlarmSenderSql()}
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
                            AND ex.status='accepted'
                            AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
                            AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
-        [new Date(activation).toISOString()])).rows[0];
+        [new Date(activation).toISOString(), ...billingAlarmSenderArgs()])).rows[0];
       if (alarm?.tripped!==false) {
         rejected=deny("zero_cost_billing_alarm",
           "WhatsApp free-only stopped: Meta reported a billable message after activation.");
@@ -985,5 +1000,5 @@ async function perform(to, operation, context = {}) {
 module.exports = {
   blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,allow24hStaffMedia,allow24hAutoFollowUps,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
-  primaryBillingContactId, SCOPED_VERIFIED_WINDOW_SQL, SCOPED_SESSION_WINDOW_SQL, SCOPED_CTWA_FIRST_REPLY_SQL,SCOPED_SEVEN_DAY_PROOF_SQL,
+  primaryBillingContactId, billingAlarmSenderSql, billingAlarmSenderArgs, SCOPED_VERIFIED_WINDOW_SQL, SCOPED_SESSION_WINDOW_SQL, SCOPED_CTWA_FIRST_REPLY_SQL,SCOPED_SEVEN_DAY_PROOF_SQL,
 };
