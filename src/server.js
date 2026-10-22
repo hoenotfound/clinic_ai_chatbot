@@ -79,6 +79,7 @@ const {
 const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
+const { sendSecondaryStaffText } = require("./services/whatsappSecondaryStaffDispatch");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
 const pipelineRepo = require("./db/pipelineRepo");
@@ -236,17 +237,25 @@ async function sendTrackedText(
 
   let sendResult;
   try {
-    sendResult = await channelMessaging.sendText(
-      contact,
-      text,
-      {
-        ...(guarded ? { preSendCheck: canSend } : {}),
-        currentMessageId: saved.id,
-        ...(socialProviderRecorder
-          ? { onProviderMessageId: socialProviderRecorder }
-          : {}),
-      }
-    );
+    const secondaryAi = contact.channel === "whatsapp" &&
+      contact.whatsapp_sender_id != null &&
+      contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
+    sendResult = secondaryAi
+      ? await sendSecondaryStaffText({
+          contact, messageId: saved.id, text, origin,
+          preSendCheck: guarded ? canSend : null,
+        })
+      : await channelMessaging.sendText(
+          contact,
+          text,
+          {
+            ...(guarded ? { preSendCheck: canSend } : {}),
+            currentMessageId: saved.id,
+            ...(socialProviderRecorder
+              ? { onProviderMessageId: socialProviderRecorder }
+              : {}),
+          }
+        );
   } catch (err) {
     if (durableOutboundReserved) {
       const ambiguousReason =
@@ -565,9 +574,13 @@ async function processIncomingMessage(
     if (senderScoped && !contact?.whatsapp_sender_key) {
       throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
     }
+    const secondaryAiConversation = senderScoped &&
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
+      process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
     const secondaryInboxOnly = senderScoped &&
       process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
-      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
+      !secondaryAiConversation;
     aiCancellationKey = channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(
           from, senderScoped ? contact.whatsapp_sender_key : null
@@ -1742,6 +1755,14 @@ async function processIncomingMessage(
       } catch (auditError) {
         console.warn("[Result media] marketing opt-out audit failed:", auditError);
       }
+      return { wasFirstMessage, keywordReason };
+    }
+
+    // Ariel's independent media/template/extended-follow-up send paths are
+    // not active. Stop after the tracked AI text reply; never allow optional
+    // promotional media, result images or the primary sender's media cache
+    // to reach this secondary conversation via the primary Meta token.
+    if (secondaryAiConversation) {
       return { wasFirstMessage, keywordReason };
     }
 
