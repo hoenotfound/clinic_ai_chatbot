@@ -145,6 +145,8 @@ function inspectWebhookChanges(body) {
         || !Array.isArray(entry.changes)) {
       throw invalidWebhook("Webhook entry must contain a changes array.");
     }
+    // Even passive sync must retain a verifiable account for audit.
+    const accountId = entry.changes.length ? requireAccountId(entry.id) : null;
     for (const change of entry.changes) {
       if (!change || typeof change !== "object" || Array.isArray(change)
           || !clean(change.field) || !change.value
@@ -154,7 +156,7 @@ function inspectWebhookChanges(body) {
       const field = change.field;
       if (PASSIVE_FIELDS.has(field)) {
         // Keep an audit classification. No AI job, contact creation or send.
-        passive.push(Object.freeze({ accountId: clean(entry.id), field }));
+        passive.push(Object.freeze({ accountId, field }));
         continue;
       }
       if (!ROUTABLE_FIELDS.has(field)) {
@@ -173,7 +175,7 @@ function inspectWebhookChanges(body) {
       const count = names.reduce((sum, name) => sum + (value[name]?.length || 0), 0);
       if (!count) continue;
       evidence.push(Object.freeze({
-        accountId: clean(entry.id),
+        accountId,
         phoneNumberId: clean(value.metadata?.phone_number_id),
         eventCount: count,
       }));
