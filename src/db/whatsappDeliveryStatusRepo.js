@@ -25,6 +25,8 @@ function normalizeUpdate(update) {
     errorCode: cleanNullable(update?.errorCode),
     errorTitle: cleanNullable(update?.errorTitle),
     errorMessage: cleanNullable(update?.errorMessage),
+    businessPhoneNumberId: cleanNullable(update?.businessPhoneNumberId),
+    businessAccountId: cleanNullable(update?.businessAccountId),
     // An explicitly billable webhook without a type is still billing evidence.
     // Do not drop it just because the provider omitted classification fields.
     pricingType: cleanNullable(update?.pricingType) ||
@@ -43,6 +45,9 @@ function normalizeUpdate(update) {
       normalized.pricingType || "",
       String(normalized.pricingBillable ?? ""),
       normalized.pricingCategory || "",
+      ...(normalized.businessPhoneNumberId || normalized.businessAccountId
+        ? [normalized.businessPhoneNumberId || "", normalized.businessAccountId || ""]
+        : []),
     ].join("\0"))
     .digest("hex");
   return normalized;
@@ -54,21 +59,24 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
 
   const values = [];
   const placeholders = normalized.map((item, index) => {
-    const offset = index * 6;
+    const offset = index * 8;
     values.push(
       item.eventKey,
       item.wamid,
       item.deliveryStatus,
       item.errorCode,
       item.errorTitle,
-      item.errorMessage
+      item.errorMessage,
+      item.businessPhoneNumberId,
+      item.businessAccountId
     );
-    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`;
+    return `(${offset + 1}, ${offset + 2}, ${offset + 3}, ${offset + 4}, ${offset + 5}, ${offset + 6}, ${offset + 7}, ${offset + 8})`;
   });
 
   const result = await query(
     `INSERT INTO whatsapp_delivery_status_jobs (
-       event_key, wamid, delivery_status, error_code, error_title, error_message
+       event_key, wamid, delivery_status, error_code, error_title, error_message,
+       business_phone_number_id, business_account_id
      )
      VALUES ${placeholders.join(", ")}
      ON CONFLICT (event_key) DO NOTHING
@@ -80,8 +88,9 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
   const withPricing = normalized.filter((item) => item.pricingType);
   for (const item of withPricing) {
     await query(`INSERT INTO whatsapp_free_entry_pricing_evidence
-       (wamid, pricing_type, billable, delivery_status, pricing_category)
-       VALUES ($1, $2, $3, $4, $5)
+       (wamid, pricing_type, billable, delivery_status, pricing_category,
+        business_phone_number_id, business_account_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (wamid) DO UPDATE
        SET pricing_type = CASE
              WHEN whatsapp_free_entry_pricing_evidence.billable = true
@@ -110,7 +119,24 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
              ELSE COALESCE(whatsapp_free_entry_pricing_evidence.pricing_category,
                            EXCLUDED.pricing_category)
            END,
-           updated_at = now()`, [item.wamid, item.pricingType, item.pricingBillable, item.deliveryStatus, item.pricingCategory]);
+           business_phone_number_id = COALESCE(
+             whatsapp_free_entry_pricing_evidence.business_phone_number_id,
+             EXCLUDED.business_phone_number_id),
+           business_account_id = COALESCE(
+             whatsapp_free_entry_pricing_evidence.business_account_id,
+             EXCLUDED.business_account_id),
+           updated_at = now()
+       WHERE (whatsapp_free_entry_pricing_evidence.business_phone_number_id IS NULL
+              OR EXCLUDED.business_phone_number_id IS NULL
+              OR whatsapp_free_entry_pricing_evidence.business_phone_number_id =
+                 EXCLUDED.business_phone_number_id)
+         AND (whatsapp_free_entry_pricing_evidence.business_account_id IS NULL
+              OR EXCLUDED.business_account_id IS NULL
+              OR whatsapp_free_entry_pricing_evidence.business_account_id =
+                 EXCLUDED.business_account_id)`,
+       [item.wamid, item.pricingType, item.pricingBillable,
+        item.deliveryStatus, item.pricingCategory,
+        item.businessPhoneNumberId, item.businessAccountId]);
   }
   // Queue every unexpected billable callback (marketing, unclassified, and
   // conflicting categories included). Exempt ONLY an accepted 24h text
@@ -119,7 +145,8 @@ async function storeBatch(updates, query = pool.query.bind(pool)) {
   // category corrections. The UNIQUE wamid and ON CONFLICT make it idempotent.
   for (const item of withPricing) {
     if (item.pricingBillable !== true) continue;
-    const account = String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+    const account = item.businessPhoneNumberId ||
+      String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
     if (!account) continue;
     await query(
       `INSERT INTO whatsapp_free_only_billing_alerts (wamid,phone_number_id)
