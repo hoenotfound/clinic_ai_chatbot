@@ -103,6 +103,23 @@ async function sendSecondaryStaffMedia(contact, method, args, {
     payload={type,buffer,mimeType,filename,caption};
   }
 
+  const replyToProviderMessageId = String(options.replyToProviderMessageId || "").trim();
+  if (replyToProviderMessageId && !/^wamid\.[A-Za-z0-9._:-]{1,450}$/.test(replyToProviderMessageId)) {
+    return deny("secondary_media_reply_reference_invalid");
+  }
+  const verifyReplyOwnership = async () => {
+    if (!replyToProviderMessageId) return true;
+    const ref = await database.query(
+      "SELECT 1 FROM messages quoted " +
+      "JOIN whatsapp_sender_message_context mc ON mc.message_id=quoted.id " +
+      "JOIN whatsapp_sender_conversations sc ON sc.id=mc.conversation_id " +
+      "WHERE quoted.contact_id=$1 AND sc.contact_id=$1 " +
+      "AND sc.sender_id=$2 AND sc.state='bound' " +
+      "AND quoted.whatsapp_message_id=$3 LIMIT 1",
+      [contact.id, contact.whatsapp_sender_id, replyToProviderMessageId]
+    );
+    return ref.rows?.length === 1;
+  };
   const preSendCheck=async()=>{
     if (!contact.id) return false;
     // Staff takeover can change during an expensive video download/upload.
@@ -111,6 +128,7 @@ async function sendSecondaryStaffMedia(contact, method, args, {
         String(latest.whatsapp_sender_id)!==String(contact.whatsapp_sender_id) ||
         latest.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
         latest.whatsapp_number!==contact.whatsapp_number) return false;
+    if (!await verifyReplyOwnership()) return false;
     const fresh=await policyService.previewSecondaryFreeformPolicy(latest,{
       database,env,now:new Date(),purpose:"service",
     });
@@ -139,7 +157,7 @@ async function sendSecondaryStaffMedia(contact, method, args, {
         if (!(await preSendCheck())) {
           return {success:false,ambiguous:true,retryable:false};
         }
-        return transport.sendImageByUrl(item.url,item.caption);
+        return transport.sendImageByUrl(item.url,item.caption,{replyToProviderMessageId});
       }
       const uploaded=await transport.uploadMedia(item.buffer,item.mimeType,item.filename);
       // An unverified upload result can never create a new provider send.
@@ -151,7 +169,7 @@ async function sendSecondaryStaffMedia(contact, method, args, {
       }
       return transport.sendMediaById(item.type,item.mediaId||uploaded.mediaId,{
         caption:item.caption||"",filename:item.filename,
-        voice:item.type==="audio",
+        voice:item.type==="audio",replyToProviderMessageId,
       });
     },
   },{ env,database });
