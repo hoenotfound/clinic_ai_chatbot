@@ -203,3 +203,68 @@ the existing environment values for this check.
 - **Production remains on migration 077**, and no shared Meta app subscriptions,
   coexistence QR authorization, existing Render settings, or phone mappings
   were modified.
+
+
+## Additional sender-isolated Inbox-only stage (PR #384)
+
+This code is opt-in, is **not production activated**, and is deliberately
+receive-only for the second business number. The existing Neutro Cloud API
+outbound, follow-ups, billing, and default webhook path are untouched while
+all the new flags are off.
+
+Implemented:
+
+1. A signature-verified callback can be partitioned into two *independently
+   validated* Meta account/phone identities. An unknown third phone, mismatched
+   account, or missing receiving metadata is quarantined instead of becoming a
+   Neutro customer. The legacy handler remains the default.
+2. Incoming Ariel turns are durably assigned to a sender-scoped contact and
+   independently queued (not debounced together with the same person's Neutro
+   thread). Its Business App echoes are linked to that sender conversation.
+3. Secondary inbound media lookup selects only the secondary receiving
+   number's Meta token. Missing or mismatched identity fails closed instead
+   of downloading through Neutro's token.
+4. The original message/attachment may be inspected in the shared Inbox. The
+   secondary turn is handed to staff **before** any automated AI text,
+   promotion, or follow-up. Staff must use the linked **WhatsApp Business App**
+   to reply; the portal's secondary API send remains blocked.
+
+Do not treat this limited stage as a finished dual-Cloud-API deployment.
+The receiving token is required for media retrieval, and this stage does
+not authorize secondary outbound API messages, templates, or billing.
+
+### Preconditions for an isolated operator-controlled trial
+
+- Verify ownership of both exact Meta phone IDs and WABA IDs from authentic
+  signed callbacks and the shared developer app's subscription records.
+- Record separate sender keys for Neutro and Ariel with active statuses in a
+  **staging Neon branch**, using migrations 078–082 through the migration
+  runner (not by updating the migration ledger by hand). Preserve the original
+  Neutro contact IDs and message counts.
+- Configure staging-only primary sender flags, strict account/metadata guards
+  and `WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED=true` with secondary phone,
+  WABA, key and media token. Startup rejects mismatched registry data and
+  missing secondary media credentials.
+- Inject signed Meta callback fixtures with primary-only, secondary-only,
+  mixed, duplicate, out-of-order, reaction, echo, media, and unknown-sender
+  cases. Verify no outbound API request originates from Ariel and no Neutro
+  conversation is modified by Ariel activity.
+- Check operational contacts, pipeline, opt-outs, receiver receipts,
+  quarantine alerts and deletion/rollback. Keep sender-aware reads active
+  while any secondary contacts remain bound; a flag-only rollback to legacy
+  identity is explicitly rejected at startup.
+
+### Not yet ready / deployment blockers
+
+- Full secondary outbound credential authority and binding across staff,
+  AI, template catalogs, media upload and provider request retries.
+- Sender-specific CTWA pricing reservations, 24-hour enforcement, consent,
+  follow-up scheduling and provider-status reconciliation for Ariel.
+- A complete two-number UI send workflow, plus independent per-sender media
+  caching and duplicate/out-of-order receipt reconciliation.
+- End-to-end staging tests against both provisioned Meta numbers, then a
+  controlled production cutover and rollback rehearsal.
+
+**Do not merge/activate Ariel as complete Phase 2 on this basis alone.**
+The earlier "Never subscribe Ariel" production hold remains in force until
+the operator has completed the above release gates.
