@@ -89,3 +89,51 @@ test("secondary inbox only requires active exact Meta registry identity",async()
    {rows:[{total:0,nonprimary:0}]}:{rows:[]}};
  await assert.rejects(assertStoredSenderSafety({env,database:badDb}),/active sender registration/);
 });
+
+
+test("new secondary operational flags fail startup when only one feature is enabled",()=>{
+  for(const flag of [
+    "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
+    "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+    "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+  ]) {
+    assert.throws(
+      ()=>assertSenderIngressSafety({...safe,[flag]:"true"}),
+      /Unsafe WhatsApp secondary operational activation/
+    );
+  }
+});
+
+test("fully configured secondary operational flags still preserve strict Neutro receiver checks",()=>{
+  const dual={
+    ...safe,
+    WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+    WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
+    WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"true",
+    WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+    WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+    WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+    WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+    WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
+    WHATSAPP_SECONDARY_TOKEN:"private-test-token",
+    WHATSAPP_APP_SECRET:"synthetic-meta-hmac",
+  };
+  assert.doesNotThrow(()=>assertSenderIngressSafety(dual));
+  for(const change of [
+    {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_TOKEN:""},
+    {WHATSAPP_APP_SECRET:""},
+    {WHATSAPP_SECONDARY_WABA_ID:dual.WHATSAPP_WABA_ID},
+    {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:dual.WHATSAPP_PHONE_NUMBER_ID},
+    {WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"false"},
+  ]) {
+    assert.throws(
+      ()=>assertSenderIngressSafety({...dual,...change}),
+      /Unsafe WhatsApp secondary operational activation/
+    );
+  }
+});
