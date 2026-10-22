@@ -794,7 +794,19 @@ async function sendStoredMessage(contact, message, options = {}) {
 router.get("/", async (req, res) => {
   try {
     const conversations = await contactsRepo.listConversations();
-    res.json(conversations);
+    res.json(conversations.map(c => {
+      const secondary = c.channel === "whatsapp" &&
+        c.whatsapp_sender_id != null &&
+        Boolean(c.whatsapp_sender_phone_number_id) &&
+        String(c.whatsapp_sender_phone_number_id) !==
+          String(process.env.WHATSAPP_PHONE_NUMBER_ID || "");
+      return {
+        ...c,
+        whatsapp_is_secondary: secondary,
+        whatsapp_secondary_ai_enabled: secondary &&
+          process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
+      };
+    }));
   } catch (err) {
     console.error("Failed to list conversations:", err);
     res.status(500).json({ error: "Something went wrong loading conversations." });
@@ -1196,6 +1208,14 @@ router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
       return res.status(400).json({ error: "WhatsApp only." });
     }
 
+    if (contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_phone_number_id !== process.env.WHATSAPP_PHONE_NUMBER_ID) {
+      res.set("Cache-Control","no-store");
+      return res.json({
+        verified:false,sendReady:false,
+        blockedReason:"Ariel billing is sender-specific. Do not infer free Meta charges from Neutro's evidence.",
+      });
+    }
     // An ad label, ad click or opt-in alone is never sufficient proof.
     // The actual send still rechecks consent and billing restrictions.
     const advisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
