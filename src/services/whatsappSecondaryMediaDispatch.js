@@ -121,8 +121,6 @@ async function sendSecondaryStaffMedia(contact, method, args, {
     contact,messageId,origin:"staff",
     text:"[staff media]",
     preSendCheck,
-  },{
-    env,database,
     dispatchTransport: async(transport)=>{
       let item=payload;
       if (item.type==="video-key") {
@@ -156,7 +154,7 @@ async function sendSecondaryStaffMedia(contact, method, args, {
         voice:item.type==="audio",
       });
     },
-  });
+  },{ env,database });
 }
 
 module.exports={sendSecondaryStaffMedia,allowedMediaBuffer};
