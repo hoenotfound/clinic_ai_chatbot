@@ -107,7 +107,7 @@ async function sendSecondaryStaffMedia(contact, method, args, {
     if (!contact.id) return false;
     // Staff takeover can change during an expensive video download/upload.
     const latest=await contacts.getContactById(contact.id);
-    if (!latest || latest.mode!=="human" ||
+    if (!latest ||
         String(latest.whatsapp_sender_id)!==String(contact.whatsapp_sender_id) ||
         latest.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
         latest.whatsapp_number!==contact.whatsapp_number) return false;
