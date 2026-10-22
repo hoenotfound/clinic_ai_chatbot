@@ -603,8 +603,28 @@ async function sendVoiceByIdUnchecked(to, mediaId, options = {}) {
  * @param {string} mediaId
  * @returns {Promise<{buffer: Buffer, mimeType: string}|null>} null on any failure
  */
-async function downloadMedia(mediaId) {
-  const token = process.env.WHATSAPP_TOKEN;
+// Meta inbound media uses the token for the verified receiving business.
+// A secondary sender must never fall back to the existing Neutro token.
+function tokenForInboundMedia(incoming = {}, env = process.env) {
+  const phone=String(incoming?.businessPhoneNumberId||"").trim();
+  const account=String(incoming?.businessAccountId||"").trim();
+  const primary=String(env.WHATSAPP_PHONE_NUMBER_ID||"").trim();
+  const primaryAccount=String(env.WHATSAPP_WABA_ID||"").trim();
+  if(phone && phone===primary && (!account || account===primaryAccount))
+    return String(env.WHATSAPP_TOKEN||"").trim()||null;
+  if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED==="true" &&
+     phone && phone===String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim() &&
+     account && account===String(env.WHATSAPP_SECONDARY_WABA_ID||"").trim()) {
+    return String(env.WHATSAPP_SECONDARY_TOKEN||"").trim()||null;
+  }
+  if(!phone && env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true")
+    return String(env.WHATSAPP_TOKEN||"").trim()||null;
+  return null;
+}
+
+async function downloadMedia(mediaId,incoming={}) {
+  const token = tokenForInboundMedia(incoming);
+  if(!token) return null;
 
   try {
     const metaRes = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`, {
@@ -1021,6 +1041,7 @@ module.exports = {
   sendStickerById,
   sendVoiceById,
   downloadMedia,
+  tokenForInboundMedia,
   parseIncomingMessages,
   parseReactionEvents,
   parseBusinessAppEchoes,
