@@ -31,12 +31,14 @@ function payload(...changes) {
   };
 }
 
-function webhookHarness({ failAudit = false, dualInbox = false } = {}) {
+function webhookHarness({ failAudit = false, dualInbox = false,
+  receiptIngress = false, receiptFailure = false } = {}) {
   let handler = null;
   const claims = [];
   const scheduled = [];
   const audits = [];
   const replies = [];
+  const receiptWrites = [];
 
   // Execute the real route definition, with signed-body middleware and every
   // side effect replaced by deterministic in-memory test doubles. This tests
@@ -50,11 +52,13 @@ function webhookHarness({ failAudit = false, dualInbox = false } = {}) {
   const context = {
     app: { post(_path, _parser, cb) { handler = cb; } },
     webhookJsonParser: () => {},
+    Buffer,
     whatsapp,
     partitionLegacyWhatsAppWebhook,
     partitionSecondaryInboxWebhook,
     process: { env: {
       WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED: dualInbox ? "true" : "false",
+      WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED: receiptIngress ? "true" : "false",
       WHATSAPP_WABA_ID: "200000000000001",
       WHATSAPP_SECONDARY_PHONE_NUMBER_ID: ARIEL,
       WHATSAPP_SECONDARY_WABA_ID: "200000000000002",
@@ -62,6 +66,11 @@ function webhookHarness({ failAudit = false, dualInbox = false } = {}) {
       WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED: "false",
       WHATSAPP_SINGLE_SENDER_STRICT_METADATA: "false",
     } },
+    recordSignedSecondaryStatusBatch: async (args) => {
+      receiptWrites.push(args);
+      return receiptFailure ? {accepted:false,code:"test_receipt_storage_failed"} :
+        {accepted:true,matched:1};
+    },
     recordQuarantinedWhatsAppChanges: async (items) => {
       audits.push(items);
       if (failAudit) throw new Error("synthetic quarantine DB unavailable");
@@ -92,7 +101,7 @@ function webhookHarness({ failAudit = false, dualInbox = false } = {}) {
   vm.runInNewContext(route, context, { timeout: 2000 });
   assert.equal(typeof handler, "function");
   return {
-    claims, audits, scheduled, replies,
+    claims, audits, scheduled, replies, receiptWrites,
     async send(body) {
       const response = {
         statusCode: null,
@@ -102,7 +111,11 @@ function webhookHarness({ failAudit = false, dualInbox = false } = {}) {
           return this;
         },
       };
-      await handler({ body }, response);
+      await handler({
+        body,
+        whatsappSignedRawBody: Buffer.from(JSON.stringify(body)),
+        headers: { "x-hub-signature-256": "sha256=synthetic" },
+      }, response);
       await new Promise(resolve => setImmediate(resolve));
       return response.statusCode;
     },
@@ -178,4 +191,39 @@ test("with secondary receiver disabled, Ariel remains quarantined and primary is
  assert.equal(h.claims[0].inbound.id,"wamid-primary");
  assert.equal(h.scheduled[0].key,"60135550000");
  assert.equal(h.audits.length,1);
+});
+
+test("verified Ariel status staging precedes acknowledgement and does not reach Neutro status queue",async()=>{
+  const h=webhookHarness({dualInbox:true,receiptIngress:true});
+  const response=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary")]},
+    {id:"200000000000002",changes:[{
+      field:"messages",value:{
+        metadata:{phone_number_id:ARIEL},
+        statuses:[{id:"wamid.ariel-status",status:"delivered",recipient_id:"60135550000"}],
+      },
+    }]},
+  ]});
+  assert.equal(response,200);
+  assert.equal(h.receiptWrites.length,1);
+  assert.equal(h.receiptWrites[0].subsetFromVerifiedWebhook,true);
+  assert.equal(h.claims.length,1);
+  assert.equal(h.claims[0].inbound.id,"wamid.primary");
+  assert.equal(h.audits.length,0);
+});
+
+test("Ariel receipt storage failure returns 503 before accepting a mixed Neutro customer turn",async()=>{
+  const h=webhookHarness({dualInbox:true,receiptIngress:true,receiptFailure:true});
+  const response=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary")]},
+    {id:"200000000000002",changes:[{
+      field:"messages",value:{
+        metadata:{phone_number_id:ARIEL},
+        statuses:[{id:"wamid.ariel-status",status:"sent",recipient_id:"60135550000"}],
+      },
+    }]},
+  ]});
+  assert.equal(response,503);
+  assert.equal(h.claims.length,0);
+  assert.equal(h.receiptWrites.length,1);
 });
