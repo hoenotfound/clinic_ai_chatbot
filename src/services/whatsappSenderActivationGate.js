@@ -29,7 +29,6 @@ function assertSecondaryOperationalSafety(env = process.env) {
       !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
       !String(env.WHATSAPP_APP_SECRET || "").trim() ||
       env.WHATSAPP_PHONE_NUMBER_ID === env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
-      env.WHATSAPP_WABA_ID === env.WHATSAPP_SECONDARY_WABA_ID ||
       env.WHATSAPP_PRIMARY_SENDER_KEY === env.WHATSAPP_SECONDARY_SENDER_KEY) {
     throw new Error("Unsafe WhatsApp secondary operational activation: verify sender isolation, signed receipts, billing gates and account credentials before activation.");
   }
