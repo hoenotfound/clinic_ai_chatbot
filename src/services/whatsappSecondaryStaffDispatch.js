@@ -37,6 +37,7 @@ async function sendSecondaryStaffText({
   env = process.env, database = pool,
   fetchImpl = global.fetch,
   createTransport = createVerifiedSecondaryOutboundTransport,
+  policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
 } = {}) {
   if (env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" ||
@@ -59,20 +60,20 @@ async function sendSecondaryStaffText({
     return block("secondary_staff_send_invalid_input");
   }
 
-  const before = await policy.previewSecondaryFreeformPolicy(contact, {
+  const before = await policyService.previewSecondaryFreeformPolicy(contact, {
     database, env, now: now(), purpose: "service",
   });
   if (before.policyAllowed !== true) return block(before.code || "secondary_staff_policy_blocked");
 
   let conversation, transport;
   try {
-    conversation = await senderRepo.senderForContact(cid, database);
+    conversation = await conversationRepo.senderForContact(cid, database);
     if (!conversation || String(conversation.conversation_id) !==
         String(before.row?.sender_conversation_id)) {
       // Preview does not return raw row to external callers. An exact
       // sender-specific identity is separately checked below and again by
       // the transport before Graph API use.
-      const snapshot = await policy.secondaryPolicySnapshot(contact, { database, env });
+      const snapshot = await policyService.secondaryPolicySnapshot(contact, { database, env });
       if (!snapshot.row ||
           String(conversation?.conversation_id) !==
             String(snapshot.row.sender_conversation_id)) {
@@ -86,7 +87,7 @@ async function sendSecondaryStaffText({
         conversation?.customer_wa_id !== contact.whatsapp_number) {
       return block("secondary_staff_sender_mismatch");
     }
-    const attached = await senderRepo.attachMessageContext({
+    const attached = await conversationRepo.attachMessageContext({
       messageId: mid, contactId: cid, conversationId: conversation.conversation_id,
     }, database);
     if (!attached || String(attached.conversation_id) !== String(conversation.conversation_id)) {
@@ -97,12 +98,12 @@ async function sendSecondaryStaffText({
     return block("secondary_staff_sender_verification_failed");
   }
 
-  const justBefore = await policy.previewSecondaryFreeformPolicy(contact, {
+  const justBefore = await policyService.previewSecondaryFreeformPolicy(contact, {
     database, env, now: now(), purpose: "service",
   });
   if (justBefore.policyAllowed !== true) return block(justBefore.code || "secondary_staff_policy_blocked");
 
-  const reserved = await billing.reserveSecondaryBillingAttempt({
+  const reserved = await billingRepo.reserveSecondaryBillingAttempt({
     contactId: cid, messageId: mid,
   }, { database, env });
   if (!reserved.reserved || !reserved.reservationId) {
@@ -111,12 +112,12 @@ async function sendSecondaryStaffText({
   // Once reserved, fail/timeout/connection errors cannot silently unlock it.
   // This prevents accidental second sends after an ambiguous Meta response.
   const markUnknown = async () => {
-    await billing.recordSecondaryProviderOutcome({
+    await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId,
     }, { database, env }).catch(() => {});
   };
   try {
-    const fresh = await policy.previewSecondaryFreeformPolicy(contact, {
+    const fresh = await policyService.previewSecondaryFreeformPolicy(contact, {
       database, env, now: now(), purpose: "service",
     });
     if (fresh.policyAllowed !== true) {
@@ -136,7 +137,7 @@ async function sendSecondaryStaffText({
 
     const send = await transport.sendText(text.trim(), { replyToProviderMessageId });
     const accepted = send?.success === true && /^wamid\./.test(String(send.wamid || ""));
-    const evidence = await billing.recordSecondaryProviderOutcome({
+    const evidence = await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId,
       acceptedWamid: accepted ? send.wamid : null,
     }, { database, env });
