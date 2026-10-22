@@ -5,6 +5,7 @@
 const { pool } = require("../db/db");
 const mediaStorage = require("./mediaStorageService");
 const contactsRepo = require("../db/contactsRepo");
+const secondaryPolicy = require("./whatsappSecondaryPolicyService");
 const { sendSecondaryStaffText } = require("./whatsappSecondaryStaffDispatch");
 
 const LIMIT_BYTES = 16 * 1024 * 1024;
@@ -43,6 +44,7 @@ function allowedMediaBuffer(type,buffer,mime,filename) {
 async function sendSecondaryStaffMedia(contact, method, args, {
   env=process.env, database=pool,
   storage=mediaStorage, contacts=contactsRepo,
+  policyService=secondaryPolicy,
   textDispatcher=sendSecondaryStaffText,
 }={}) {
   if (env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED!=="true" ||
@@ -105,11 +107,14 @@ async function sendSecondaryStaffMedia(contact, method, args, {
     if (!contact.id) return false;
     // Staff takeover can change during an expensive video download/upload.
     const latest=await contacts.getContactById(contact.id);
-    return Boolean(latest &&
-      latest.mode==="human" &&
-      String(latest.whatsapp_sender_id)===String(contact.whatsapp_sender_id) &&
-      latest.whatsapp_sender_key===env.WHATSAPP_SECONDARY_SENDER_KEY &&
-      latest.whatsapp_number===contact.whatsapp_number);
+    if (!latest || latest.mode!=="human" ||
+        String(latest.whatsapp_sender_id)!==String(contact.whatsapp_sender_id) ||
+        latest.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
+        latest.whatsapp_number!==contact.whatsapp_number) return false;
+    const fresh=await policyService.previewSecondaryFreeformPolicy(latest,{
+      database,env,now:new Date(),purpose:"service",
+    });
+    return fresh?.policyAllowed===true;
   };
 
   return textDispatcher({
