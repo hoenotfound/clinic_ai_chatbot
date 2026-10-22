@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
@@ -10,38 +11,6 @@ const { acceptedDirectReplySql, failedMediaSql, unresolvedFailedOutboundSql } = 
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
-
-function normalizeWhatsappNumber(input) {
-  let digits = String(input || "").replace(/[^\d]/g, "");
-  if (!digits) return "";
-
-  // Accept the common international dialing prefix form (e.g. 0060...)
-  // without accidentally treating it as a Malaysian local number.
-  if (digits.startsWith("00")) {
-    digits = digits.slice(2);
-  }
-
-  // Staff sometimes paste "+60 012..." with both the country code and the
-  // Malaysian trunk zero. WhatsApp identifies the same number as 6012....
-  if (digits.startsWith("600")) {
-    digits = `60${digits.slice(3)}`;
-  }
-
-  // Malaysian local format: 012-345 6789 -> 60123456789.
-  if (digits.startsWith("0")) {
-    return `60${digits.slice(1)}`;
-  }
-
-  // Also accept a mobile number pasted without either the trunk zero or +60.
-  // Malaysian mobile subscriber numbers are 9 or 10 digits and start with 1.
-  if (/^1\d{8,9}$/.test(digits)) {
-    return `60${digits}`;
-  }
-
-  // Already-canonical Malaysian numbers and explicit international numbers
-  // are left untouched after punctuation/spacing is removed.
-  return digits;
-}
 
 function legacyMalaysianLocalNumber(normalizedNumber) {
   const match = /^60(1\d{8,9})$/.exec(normalizedNumber);
