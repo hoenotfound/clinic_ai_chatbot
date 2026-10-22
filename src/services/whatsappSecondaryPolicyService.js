@@ -186,7 +186,7 @@ async function verifySecondaryApprovedTemplate({
     const url = new URL("https://graph.facebook.com/" + GRAPH_API_VERSION +
       "/" + env.WHATSAPP_SECONDARY_WABA_ID + "/message_templates");
     url.searchParams.set("name", name);
-    url.searchParams.set("fields", "name,language,status,category");
+    url.searchParams.set("fields", "id,name,language,status,category,components");
     url.searchParams.set("limit", "100");
     const response = await fetchImpl(url.toString(), {
       headers: { Authorization: "Bearer " + env.WHATSAPP_SECONDARY_TOKEN },
@@ -204,6 +204,7 @@ async function verifySecondaryApprovedTemplate({
     if (matched.length !== 1) return deny("secondary_template_not_approved");
     return { policyAllowed: false, sendAuthorized: false, template: {
       name, languageCode, category: matched[0].category,
+      definition: matched[0],
     }};
   } catch {
     return deny("secondary_template_catalog_unavailable");
