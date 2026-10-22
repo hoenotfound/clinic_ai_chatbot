@@ -2,7 +2,41 @@
 
 // These switches may NOT be enabled piecemeal. The existing single-number
 // deployment remains unchanged when sender-scoped ingress is disabled.
+function assertSecondaryOperationalSafety(env = process.env) {
+  const receiptIngress = env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true";
+  const staff = env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true";
+  const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
+  if (!receiptIngress && !staff && !ai) return;
+
+  const common = [
+    "WHATSAPP_MULTI_NUMBER_READ_ENABLED",
+    "WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED",
+    "WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED",
+    "WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED",
+  ];
+  const sending = [
+    "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+    "WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED",
+    "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+    "WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED",
+    "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
+  ];
+  if ([...common,...((staff || ai) ? sending : [])]
+      .some(key => env[key] !== "true") ||
+      !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "")) ||
+      !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID || "")) ||
+      !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY || "")) ||
+      !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
+      !String(env.WHATSAPP_APP_SECRET || "").trim() ||
+      env.WHATSAPP_PHONE_NUMBER_ID === env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
+      env.WHATSAPP_WABA_ID === env.WHATSAPP_SECONDARY_WABA_ID ||
+      env.WHATSAPP_PRIMARY_SENDER_KEY === env.WHATSAPP_SECONDARY_SENDER_KEY) {
+    throw new Error("Unsafe WhatsApp secondary operational activation: verify sender isolation, signed receipts, billing gates and account credentials before activation.");
+  }
+}
+
 function assertSenderIngressSafety(env = process.env) {
+  assertSecondaryOperationalSafety(env);
   if (env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED !== "true") return;
   if (env.WHATSAPP_MULTI_NUMBER_READ_ENABLED !== "true" ||
       env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA !== "true" ||
@@ -83,4 +117,4 @@ async function assertStoredSenderSafety({
   return { verified: true, scopedContacts: total, nonprimaryContacts: nonprimary };
 }
 
-module.exports = { assertSenderIngressSafety, assertStoredSenderSafety };
+module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety };
