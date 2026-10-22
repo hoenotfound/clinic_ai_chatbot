@@ -28,6 +28,7 @@ const { resolveAutomatedVoicePlayback } = require("../services/followUpVoicePlay
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
+const secondaryTemplate = require("../services/whatsappSecondaryTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
 
@@ -1193,6 +1194,21 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
     }
 
+    // An Ariel Inbox must never query Neutro's template catalog or
+    // legacy billing advisory. All approval and billing warnings are
+    // sender-scoped and independently verified.
+    if (contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      const catalog = await secondaryTemplate.listSecondaryApprovedTemplates(contact, {
+        staffUsername: req.session?.username,
+      });
+      if (!catalog.success) return res.status(503).json({
+        code: catalog.code, error: catalog.error,
+      });
+      res.set("Cache-Control","no-store");
+      return res.json(catalog);
+    }
+
     let eligibility;
     try {
       eligibility = await whatsappPolicy.checkTemplateAllowed(contact);
@@ -1352,6 +1368,101 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     if ((contact.channel || "whatsapp") !== "whatsapp") {
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
+    }
+
+    // Secondary templates must never fall through to Neutro's catalog,
+    // pricing, media-upload credentials or primary Meta send endpoint.
+    if (contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      if (req.file || req.body?.mediaSelectionId) {
+        return res.status(409).json({
+          code:"secondary_template_media_not_enabled",
+          error:"Ariel template media requires a verified sender-specific upload.",
+        });
+      }
+      let values=req.body?.values||{};
+      if(typeof values==="string"){
+        try {values=JSON.parse(values);} catch {
+          return res.status(400).json({
+            code:"invalid_template_values",error:"Template variables must be valid JSON.",
+          });
+        }
+      }
+      const name=String(req.body?.templateName||"").trim();
+      const languageCode=String(req.body?.languageCode||"").trim();
+      const prepared=await secondaryTemplate.prepareSecondaryStaffTemplate(contact,{
+        name,languageCode,values,
+        billingAcknowledged:req.body?.billingAcknowledged===true ||
+          req.body?.billingAcknowledged==="true",
+        marketingConsentConfirmed:req.body?.marketingConsentConfirmed===true ||
+          req.body?.marketingConsentConfirmed==="true",
+      });
+      if(!prepared.success)return res.status(409).json({
+        code:prepared.code,error:prepared.error,
+      });
+      const review=whatsappTemplateBillingAdvisory.verifyReviewToken(
+        req.body?.billingReviewToken,contact.id,req.session?.username,{
+          templateName:name,languageCode,
+        }
+      );
+      if(!review || review.evidence!=="unknown" ||
+          (req.body?.billingAcknowledged!==true &&
+           req.body?.billingAcknowledged!=="true")){
+        return res.status(409).json({
+          code:"secondary_billing_review_expired",
+          error:"Review the possible Meta charge before sending this Ariel template.",
+        });
+      }
+      const claimed=await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
+        contact.id,req.session?.username,req.body
+      );
+      if(!claimed.claimed)return res.status(409).json({
+        code:claimed.code||"secondary_billing_review_already_used",
+        error:"This template billing confirmation was already used. Check delivery first.",
+      });
+      const current=await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,async()=>{
+          const ready=await prepareStaffSend(contact,req.session.username);
+          const saved=await conversationStore.appendMessageForContact(
+            ready.id,"assistant",prepared.preview,null,
+            req.session.username,null,null,{
+              whatsappTemplate:{
+                name:prepared.template.name,language:prepared.template.language,
+                category:prepared.template.category,
+                components:prepared.components,values,
+                billingAcknowledged:true,billingReviewClaimHash:claimed.tokenHash,
+                templateSignature:prepared.signature,
+              },
+              initialDeliveryStatus:"unknown",
+              initialDeliveryError:"Ariel template attempted; delivery is not yet verified.",
+              publish:false,
+            }
+          );
+          const final=await finalizeStaffSendState(ready.id,req.session.username);
+          return {ready:final||ready,saved};
+        }
+      );
+      const send=await secondaryTemplate.deliverSecondaryStaffTemplate(
+        current.ready,current.saved.id,prepared
+      );
+      const errorText=send.error||"Ariel template acceptance could not be confirmed.";
+      const result=await persistSendOutcome(current.saved,send,errorText,"whatsapp");
+      if(send.success){
+        await reconcileAcceptedStaffReplyAttention(current.ready.id);
+        await markLeadContacted(current.ready.id,req.session.username,send);
+      }else{
+        await contactsRepo.setDeliveryAttention(current.ready.id,
+          "Ariel template delivery unconfirmed: "+publicDeliveryError(errorText),
+          current.saved.id);
+      }
+      return res.status(201).json({
+        ...result,delivered:send.success===true,
+        delivery_error:publicDeliveryError(result.delivery_error),
+        whatsapp_template:current.saved.whatsapp_template||{
+          name,language:languageCode,category:prepared.template.category,
+        },
+        template:{name,language:languageCode,category:prepared.template.category},
+      });
     }
 
     let policy;
