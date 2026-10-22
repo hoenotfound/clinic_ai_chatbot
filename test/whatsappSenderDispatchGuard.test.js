@@ -31,6 +31,35 @@ test("persisted Neutro sender may send with verified phone and account", async (
     }),
   }), null);
 });
+test("primary sender remains authorized when optional sender key is unset but DB identity is verified", async () => {
+  const noKey = { ...env };
+  delete noKey.WHATSAPP_PRIMARY_SENDER_KEY;
+  assert.equal(await checkWhatsAppDispatchContact({
+    ...contact, whatsapp_sender_key: "neutro",
+    whatsapp_sender_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+    whatsapp_sender_account_id: env.WHATSAPP_WABA_ID,
+  }, {}, {
+    env: noKey, database: database({
+      whatsapp_sender_id: 1, whatsapp_number: contact.whatsapp_number,
+      sender_conversation_id: 20, sender_key: "neutro",
+      meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+      meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "active",
+    }),
+  }), null);
+});
+test("caller-supplied sender labels must agree with authoritative DB identity", async () => {
+  const result = await checkWhatsAppDispatchContact({
+    ...contact, whatsapp_sender_key: "ariel",
+  }, {}, {
+    env, database: database({
+      whatsapp_sender_id: 1, whatsapp_number: contact.whatsapp_number,
+      sender_conversation_id: 20, sender_key: "neutro",
+      meta_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+      meta_account_id: env.WHATSAPP_WABA_ID, sender_state: "active",
+    }),
+  });
+  assert.equal(result.code, "whatsapp_sender_not_ready");
+});
 test("background retry missing sender fields still blocks Ariel by DB sender", async () => {
   const answer = await checkWhatsAppDispatchContact(contact, {}, {
     env, database: database({
