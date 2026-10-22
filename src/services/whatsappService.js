@@ -658,6 +658,10 @@ function parseIncomingMessages(body) {
 
     for (const entry of body?.entry || []) {
       for (const change of entry?.changes || []) {
+        // A different Meta subscription must never be treated as a customer turn.
+        // Missing fields remain accepted by legacy direct-parser callers; the
+        // production webhook boundary rejects malformed actionable changes.
+        if (change?.field !== undefined && change.field !== "messages") continue;
         const value = change?.value;
         const contacts = value?.contacts || [];
 
@@ -859,6 +863,10 @@ function parseReactionEvents(body) {
 
     for (const entry of body?.entry || []) {
       for (const change of entry?.changes || []) {
+        // A different Meta subscription must never be treated as a customer turn.
+        // Missing fields remain accepted by legacy direct-parser callers; the
+        // production webhook boundary rejects malformed actionable changes.
+        if (change?.field !== undefined && change.field !== "messages") continue;
         for (const message of change?.value?.messages || []) {
           if (
             !message?.id ||
@@ -909,6 +917,10 @@ function parseStatusUpdates(body) {
 
     for (const entry of body?.entry || []) {
       for (const change of entry?.changes || []) {
+        // A different Meta subscription must never be treated as a customer turn.
+        // Missing fields remain accepted by legacy direct-parser callers; the
+        // production webhook boundary rejects malformed actionable changes.
+        if (change?.field !== undefined && change.field !== "messages") continue;
         for (const status of change?.value?.statuses || []) {
           if (!status?.id || !status?.status) continue;
           const firstError = status.errors?.[0] || null;
