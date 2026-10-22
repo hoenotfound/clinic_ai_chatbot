@@ -96,7 +96,9 @@ test("verified staff text uses one sender-owned reservation and records acceptan
   assert.equal(calls.reserved,1);
   assert.equal(calls.send.length,1);
   assert.deepEqual(calls.send[0],["Hello Ariel",{replyToProviderMessageId:"wamid.original"}]);
-  assert.deepEqual(calls.mark,[{reservationId,acceptedWamid:"wamid.ariel-ok"}]);
+  assert.deepEqual(calls.mark,[{
+    reservationId,acceptedWamid:"wamid.ariel-ok",definitivelyRejected:false,
+  }]);
   assert.match(ALLOWED_RESERVATION_SQL,/whatsapp_sender_billing_alarms/);
   assert.deepEqual(calls.db[0].args.slice(0,3),[
     "ariel","333333333","444444444",
