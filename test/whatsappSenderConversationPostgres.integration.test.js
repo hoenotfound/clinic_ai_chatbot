@@ -26,7 +26,7 @@ test("migration 080 allows two contact identities for the same customer while re
           return { query: (...args) => client.query(...args), release: () => client.end() };
         },
       };
-      assert.equal(loadMigrations().at(-1).version, 83);
+      assert.equal(loadMigrations().at(-1).version, 84);
       await runMigrations(scoped, { quiet: true });
       await db.query(
         "INSERT INTO whatsapp_sender_accounts (sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
@@ -277,7 +277,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
         },
       };
       const all=loadMigrations();
-      assert.equal(all.at(-1).version,83);
+      assert.equal(all.at(-1).version,84);
       const first=await runMigrations(scoped,{
         quiet:true,migrations:all.filter(m=>m.version<=77)
       });
@@ -291,8 +291,8 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
         "VALUES($1,'user','existing customer enquiry') RETURNING id",[old]
       )).rows[0].id;
       const upgraded=await runMigrations(scoped,{quiet:true});
-      assert.equal(upgraded.appliedCount,6);
-      assert.equal(upgraded.currentVersion,83);
+      assert.equal(upgraded.appliedCount,7);
+      assert.equal(upgraded.currentVersion,84);
       const proof=(await db.query(
         "SELECT c.id,c.whatsapp_number,c.whatsapp_sender_id,m.id AS message_id, " +
         "m.content FROM contacts c JOIN messages m ON m.contact_id=c.id " +
@@ -304,7 +304,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
       assert.equal(proof[0].content,"existing customer enquiry");
       assert.equal(proof[0].whatsapp_sender_id,null);
       assert.equal((await db.query("SELECT MAX(version)::int AS latest, " +
-        "COUNT(*)::int AS total FROM schema_migrations")).rows[0].latest,83);
+        "COUNT(*)::int AS total FROM schema_migrations")).rows[0].latest,84);
       assert.equal((await db.query("SELECT COUNT(*)::int AS total " +
         "FROM whatsapp_sender_accounts")).rows[0].total,0);
       await assert.rejects(db.query(
