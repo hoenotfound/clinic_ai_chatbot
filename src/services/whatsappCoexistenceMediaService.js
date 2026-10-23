@@ -80,7 +80,7 @@ async function runOnce({
 }={}){
  if(!enabled(env))return{disabled:true,processed:0,review:0};
  // A crashed GET/upload does not send a message. Reclaiming it is safe,
- // unlike the OUTBOUND Ariel AI media queue.
+ // unlike the OUTBOUND secondary WhatsApp AI media queue.
  await database.query(
    "UPDATE whatsapp_sender_coexistence_media_jobs SET status='pending',next_attempt_at=NOW() " +
    "WHERE status='claimed' AND updated_at<NOW()-INTERVAL '10 minutes'"
