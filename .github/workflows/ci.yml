@@ -82,7 +82,9 @@ jobs:
   portal-playwright:
     name: playwright-${{ matrix.label }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # WebKit's apt dependencies can take >15 minutes on hosted runners.
+    # Budget setup separately from the UI tests rather than cancelling green suites.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -100,10 +102,16 @@ jobs:
             project: ipad-landscape
             browser: webkit
             shard_args: "--shard=2/2"
-          - label: iphone-portrait
+          # Keep every iPhone test but avoid the monolithic 158-test run
+          # hitting the hosted-runner job timeout after slow WebKit apt setup.
+          - label: iphone-portrait-1-of-2
             project: iphone-portrait
             browser: webkit
-            shard_args: ""
+            shard_args: "--shard=1/2"
+          - label: iphone-portrait-2-of-2
+            project: iphone-portrait
+            browser: webkit
+            shard_args: "--shard=2/2"
     defaults:
       run:
         working-directory: portal-frontend
@@ -122,7 +130,8 @@ jobs:
       - name: Run Playwright smoke tests
         run: npx playwright test --project=${{ matrix.project }} ${{ matrix.shard_args }}
 
-  # Keep the existing required check name and enforce every browser result, including both iPad shards.
+  # Keep the existing required check name; every browser matrix result must
+  # pass, including both iPad shards and both iPhone shards.
   portal-checks:
     if: ${{ always() }}
     needs: [portal-static, portal-playwright]
