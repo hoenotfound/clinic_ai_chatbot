@@ -83,14 +83,14 @@ test("accepted Ariel graphics use own transport once and retain verified receipt
   assert.equal(args.calls.filter(x=>x.appended).length,1);
   assert.equal(args.calls.filter(x=>x.send).length,1);
   assert.equal(args.calls.filter(x=>x.wamid).length,1);
-  assert.ok(args.calls.some(x=>x.sql.includes("state='accepted'")));
-  assert.equal(args.calls.some(x=>x.sql.includes("whatsapp_result_media_queue")),false);
+  assert.ok(args.calls.some(x=>x.sql?.includes("state='accepted'")));
+  assert.equal(args.calls.some(x=>x.sql?.includes("whatsapp_result_media_queue")),false);
 });
 test("uncertain Ariel media never automatically resends",async()=>{
   const args=mocks({result:{success:false,unknown:true,code:"secondary_staff_unconfirmed"}});
   const r=await worker.runOnce({...args,env:approved});
   assert.equal(r.accepted,0);
-  assert.ok(args.calls.some(x=>x.sql.includes("state=$2")&&x.args?.[1]==="unknown"));
+  assert.ok(args.calls.some(x=>x.sql?.includes("state=$2")&&x.args?.[1]==="unknown"));
   assert.equal(args.calls.filter(x=>x.send).length,1);
 });
 test("unresolved prior billing defers safely without provider transmission",async()=>{
@@ -98,7 +98,7 @@ test("unresolved prior billing defers safely without provider transmission",asyn
   args.send=async()=>({success:false,unknown:false,code:"secondary_billing_previous_send_unresolved"});
   const r=await worker.runOnce({...args,env:approved});
   assert.equal(r.pending,1);
-  assert.ok(args.calls.some(x=>x.sql.includes("state='pending'")));
+  assert.ok(args.calls.some(x=>x.sql?.includes("state='pending'")));
 });
 test("worker rechecks that no newer inbound, staff takeover, opt-out or night-time send is allowed",()=>{
   assert.match(worker.READY_SQL,/newer\.contact_id=c\.id/);
