@@ -2367,6 +2367,15 @@ async function processIncomingMessage(
   }
 }
 
+// Staging also fails before Express is constructed if secrets, access
+// controls, QA database isolation or outbound guards are missing.
+try {
+  require("./services/pr395StagingSafety").assertPr395StagingSafety(process.env);
+} catch (error) {
+  console.error("[PR395 staging] Unsafe runtime configuration:", error.message);
+  process.exit(1);
+}
+
 // Runtime secret checks stay in the entry point so a misconfigured production
 // deployment still fails before the Express application is constructed.
 if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
