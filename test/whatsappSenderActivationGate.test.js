@@ -121,6 +121,7 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
     WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
     WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+    WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
     WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
     WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true",
     WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true",
@@ -133,6 +134,17 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_SECONDARY_TOKEN:"private-test-token",
     WHATSAPP_APP_SECRET:"synthetic-meta-hmac",
   };
+  assert.throws(
+    ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"false"}),
+    /possible Meta service-message charges require explicit sender-specific acknowledgment/
+  );
+  assert.throws(
+    ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:""}),
+    /possible Meta service-message charges require explicit sender-specific acknowledgment/
+  );
+  assert.doesNotThrow(()=>assertSenderIngressSafety({
+    ...safe,WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false",
+  }),"Ordinary Neutro startup needs no Ariel spend acknowledgement.");
   assert.doesNotThrow(()=>assertSenderIngressSafety(dual));
   assert.throws(
     ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}),
