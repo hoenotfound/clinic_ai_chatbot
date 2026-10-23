@@ -4400,7 +4400,7 @@ function MessageBubble({
             </div>
             {isSecondaryWhatsApp && (
               <p className="mt-1 text-[10px] leading-snug opacity-80">
-                Ariel retry is disabled to prevent duplicate Meta sends and charges. Verify delivery and billing before composing a new message.
+                secondary WhatsApp retry is disabled to prevent duplicate Meta sends and charges. Verify delivery and billing before composing a new message.
               </p>
             )}
             {message.whatsapp_template && !policyFailureExplanationText && (
