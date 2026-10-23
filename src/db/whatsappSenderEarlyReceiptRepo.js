@@ -73,17 +73,29 @@ async function applyStagedSecondaryReceipts({
   const failed = verified.some(r=>r.delivery_status==='failed');
   const priced = verified.filter(r=>r.pricing_billable !== null || r.pricing_type !== null);
   const paid = priced.some(r=>r.pricing_billable === true);
-  const unexpectedPaid = paid && !(
-    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === 'true' &&
-    (await client.query(
-      "SELECT billable_authorized FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1::uuid AND sender_id=$2",
-      [reservationId,senderId]
-    )).rows[0]?.billable_authorized === true &&
+  const billingInfo = (await client.query(
+    "SELECT billable_authorized,billing_authorization_source FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1::uuid AND sender_id=$2",
+    [reservationId,senderId]
+  )).rows[0];
+  const operatorServiceCharge = paid &&
+    billingInfo?.billable_authorized === true &&
+    billingInfo.billing_authorization_source === 'operator_acknowledged_service' &&
     priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
-      ['service','utility','marketing'].includes(r.pricing_category))
+      r.pricing_category==='service');
+  const paidPermitted = paid && billingInfo?.billable_authorized===true && (
+    (billingInfo.billing_authorization_source==='staff_template_billing_review' &&
+     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true' &&
+     priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
+       ['service','utility','marketing'].includes(r.pricing_category))) ||
+    (operatorServiceCharge &&
+     env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==='true' &&
+     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==='true')
   );
+  const unexpectedPaid = paid && !paidPermitted;
 
-  if (paid && unexpectedPaid) {
+  // An operator-approved service charge without auto-reconciliation requires
+  // manual review for this contact, not a false sender-wide billing incident.
+  if (paid && unexpectedPaid && !operatorServiceCharge) {
     await client.query(
       `INSERT INTO whatsapp_sender_billing_alarms
           (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -133,7 +145,8 @@ async function applyStagedSecondaryReceipts({
       ON CONFLICT(reservation_id) DO NOTHING RETURNING reservation_id`,
     [reservationId,senderId,
       verified.find(r=>r.pricing_type===evidence.pricing_type && r.pricing_billable===evidence.pricing_billable).fingerprint,
-      paid ? 'signed_meta_staff_authorized_charge' :
+      paid ? (operatorServiceCharge ? 'signed_meta_operator_authorized_service_charge'
+        : 'signed_meta_staff_authorized_charge') :
         evidence.pricing_type==='free_customer_service' ?
           'signed_meta_nonbillable_customer_service' : 'signed_meta_nonbillable_free_entry',
       paid]
