@@ -20,6 +20,9 @@ function safe(overrides={}) {
     DATABASE_URL:"postgresql://user:secret@ep-qa123.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
     PR395_STAGING_EXPECTED_DATABASE_HOST:"ep-qa123.ap-southeast-1.aws.neon.tech",
     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
     ...overrides
   };
 }
@@ -31,6 +34,9 @@ test("PR395 sandbox is inert until explicitly enabled with pinned DB and protect
 test("PR395 sandbox fails startup for missing locks, QA DB pin, insecure secrets and active outbound flags",()=>{
   const bad=[
     {PR395_STAGING_BASIC_AUTH_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"110552088553929"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:""},
+    {WHATSAPP_SECONDARY_WABA_ID:"1071636698738276"},
     {PR395_STAGING_BASIC_AUTH_PASSWORD:"123"},
     {SESSION_SECRET:""},
     {WHATSAPP_APP_SECRET:""},
@@ -50,7 +56,8 @@ test("PR395 sandbox fails startup for missing locks, QA DB pin, insecure secrets
   for (const item of bad) {
     assert.throws(()=>assertPr395StagingSafety(safe(item)),Error,JSON.stringify(item));
   }
-  assert.throws(()=>assertPr395StagingSafety({NODE_ENV:"staging"}), /PR395_STAGING_MODE/);
+  assert.throws(()=>assertPr395StagingSafety({NODE_ENV:"staging"}), /PR395 staging safeguards/);
+  assert.throws(()=>assertPr395StagingSafety({NODE_ENV:"production", PR395_STAGING_BASIC_AUTH_ENABLED:"true"}),/partially enabled/);
 });
 test("staging never accepts provider POST into business logic",()=>{
   const req={path:"/webhook",method:"POST"};
