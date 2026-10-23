@@ -155,6 +155,43 @@ const STILL_VALID_SQL=`
  ) AS allowed
 `;
 
+// A process can die after the one-shot claim but before a provider result.
+// Such a claim MUST NOT be replayed: Meta may already have accepted the send.
+// Quarantine stale claims for staff reconciliation, scoped to the verified sender.
+async function quarantineStaleClaims({
+ database=pool,env=process.env,messageRepo=messagesRepo,
+}={}){
+ if(!enabled(env))return{disabled:true,quarantined:0};
+ const stale=await database.query(
+   `UPDATE whatsapp_sender_ai_media_jobs AS job
+      SET state='unknown',updated_at=NOW()
+     FROM whatsapp_sender_accounts AS sender
+    WHERE job.sender_id=sender.id AND job.state='claimed'
+      AND job.updated_at<NOW()-INTERVAL '30 minutes'
+      AND sender.state='active'
+      AND sender.sender_key=$1 AND sender.meta_phone_number_id=$2
+      AND sender.meta_account_id=$3
+    RETURNING job.id,job.outbound_message_id`,
+   [env.WHATSAPP_SECONDARY_SENDER_KEY,
+     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+ );
+ for(const job of stale.rows||[]){
+   if(job.outbound_message_id){
+     // A signed receipt may have settled during a crash. Never overwrite
+     // confirmed delivery, only preserve an unresolved staff-visible state.
+     try{
+       await messageRepo.markDeliveryUnknownIfUnconfirmed(
+         job.outbound_message_id,
+         "Secondary image worker stopped before the provider outcome was recorded. Verify the actual WhatsApp delivery before any manual resend."
+       );
+     }catch(err){
+       console.error("[Secondary WhatsApp AI media] Could not mark stale image for review:",err?.message);
+     }
+   }
+ }
+ return{disabled:false,quarantined:(stale.rows||[]).length};
+}
+
 async function runOnce({
  database=pool,env=process.env,
  contacts=contactsRepo,store=conversationStore,
@@ -163,6 +200,7 @@ async function runOnce({
  limit=5,
 }={}){
  if(!enabled(env))return{disabled:true,accepted:0,pending:0};
+ await quarantineStaleClaims({database,env,messageRepo});
  await database.query(
    "UPDATE whatsapp_sender_ai_media_jobs SET state='expired',updated_at=NOW() WHERE state='pending' AND expires_at<=NOW()"
  );
@@ -274,4 +312,4 @@ function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
  return true;
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,runOnce,start,stop};
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,quarantineStaleClaims,runOnce,start,stop};
