@@ -333,7 +333,7 @@ async function getContactById(id) {
   const contact = result.rows[0] || null;
   // After primary sender adoption, a feature-flag rollback must still
   // return the VERIFIED sender identity. A bare sender ID with no key is
-  // indistinguishable from Ariel to outbound routing.
+  // indistinguishable from the secondary sender to outbound routing.
   if (contact?.whatsapp_sender_id != null && !contact.whatsapp_sender_key) {
     const owner = await pool.query(
       "SELECT sender_key,display_name,meta_phone_number_id,meta_account_id,state " +
