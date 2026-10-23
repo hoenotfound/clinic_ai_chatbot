@@ -863,6 +863,18 @@ function parseBusinessAppEchoes(body) {
               text: message.video?.caption || null,
               mediaId: message.video?.id || null,
             });
+          } else if (message.type === "document") {
+            parsed.push({ ...base, text: message.document?.caption || null,
+              mediaId: message.document?.id || null,
+              filename: message.document?.filename || null });
+          } else if (message.type === "sticker") {
+            parsed.push({ ...base, mediaId: message.sticker?.id || null });
+          } else if (message.type === "revoke" || message.type === "edit") {
+            parsed.push({ ...base,
+              originalMessageId: message[message.type]?.original_message_id ||
+                message.context?.id || null,
+              text: message.type === "edit" ? message.edit?.text?.body || null : null,
+            });
           } else {
             parsed.push(base);
           }
