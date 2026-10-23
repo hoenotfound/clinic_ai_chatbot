@@ -32,6 +32,7 @@ const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
 const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
 const coexistenceMutations = require("./whatsappCoexistenceMutationService");
+const coexistenceHistory = require("./whatsappCoexistenceHistoryService");
 const {
   startCustomerDataLifecycle,
 } = require("./customerDataLifecycleService");
@@ -169,6 +170,7 @@ async function startApplication({
     secondaryAiMediaQueue.start();
     coexistenceMediaQueue.start();
     coexistenceMutations.start();
+    coexistenceHistory.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
