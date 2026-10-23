@@ -2,6 +2,17 @@
 
 // These switches may NOT be enabled piecemeal. The existing single-number
 // deployment remains unchanged when sender-scoped ingress is disabled.
+// Ariel Lee is a second Neutro Sense business number. The owner approved
+// using the existing Neutro clinic content, but this is an explicit sender
+// binding, not permission to reuse Neutro's Meta token or billing evidence.
+// No separate Ariel clinic database record or invented pricing is needed.
+function secondaryUsesPrimaryClinicContent(env = process.env) {
+  return env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE === "primary" &&
+    env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED === "true" &&
+    /^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_PRIMARY_SENDER_KEY || "")) &&
+    /^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY || "")) &&
+    env.WHATSAPP_PRIMARY_SENDER_KEY !== env.WHATSAPP_SECONDARY_SENDER_KEY;
+}
 function assertSecondaryOperationalSafety(env = process.env) {
   const receiptIngress = env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true";
   const autoReconcile = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
@@ -12,11 +23,11 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const templateMedia = env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED === "true";
   const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
-  // The current AI request path uses the global Neutro clinic configuration.
-  // Do not allow Ariel AI/follow-up activation until a sender-owned prompt,
-  // pricing and clinic-knowledge boundary is implemented and tested.
-  if (ai || followups) {
-    throw new Error("Unsafe WhatsApp secondary operational activation: sender-specific clinic configuration is not yet implemented for Ariel AI and automated follow-ups.");
+  // The AI prompt, business facts, offers and pricing are intentionally
+  // shared with the primary Neutro clinic ONLY for its approved second number.
+  // Sending and billing still use the separately verified Ariel sender.
+  if ((ai || followups) && !secondaryUsesPrimaryClinicContent(env)) {
+    throw new Error("Unsafe WhatsApp secondary operational activation: Ariel AI requires the approved primary Neutro clinic-content binding.");
   }
   // From 1 Oct 2026, a 24-hour WhatsApp service window no longer guarantees
   // zero charge. Meta grants a shared 1,000-service-message monthly allowance
@@ -144,4 +155,4 @@ async function assertStoredSenderSafety({
   return { verified: true, scopedContacts: total, nonprimaryContacts: nonprimary };
 }
 
-module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety };
+module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent };
