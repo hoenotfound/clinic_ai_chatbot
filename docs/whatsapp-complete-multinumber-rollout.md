@@ -234,7 +234,7 @@ In a deployed failure, switch OFF all Ariel send and worker flags first,
 preserve the sender-scoped registry/read/ingress flags and the billing audit
 tables, and keep the running application at a version that **knows all
 installed migration versions**. Do **not** redeploy the previous 077
-binary against database schema 095, manually delete migration history,
+binary against database schema 099, manually delete migration history,
 reset unknown billing reservations, or point live Render at QA.
 
 ### Read-only Meta two-number preflight
@@ -341,4 +341,78 @@ on an isolated staging environment and explicitly approve possible
 service-message charges. Separate real provider receipts are required
 before approving the release. Production Neon remains v077 and live Render
 auto-deploy remains ON; QA previously rehearsed through v093. The new
-migrations v094–095 require a fresh isolated rehearsal and exact-head CI.
+migrations v094–099 require a fresh isolated rehearsal and exact-head CI.
+
+## Coexistence production review remediation — 2026-10-23
+
+This supersedes the earlier notes about text-only Business App echoes and
+discarded history. Code changes are committed to the **Draft PR**, not live.
+
+- **Migration 096:** `whatsapp_sender_coexistence_media_jobs` holds
+  verified Business App echo attachment IDs tied to the saved sender-qualified
+  staff message. The fetch-only `whatsappCoexistenceMediaService` worker
+  downloads image, video, audio, document and sticker bytes using Ariel's
+  receiver-specific Meta token and stores them in private R2. It neither sends
+  new Cloud API messages nor charges a separate recipient. Failures retain
+  the truthful original placeholder and are surfaced to staff for review.
+  Bounded GET/download retry is safe; uncertain **outbound** sends are not.
+- **Migration 097:** Import audit and per-message passive history provenance.
+  History imports may add contacts and historical messages only after
+  Meta/business consent and explicit
+  `WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED=true`.
+  Imported user messages are excluded by SQL from Ariel service-window
+  calculations and the 2h/6h/20h follow-up scheduler; history cannot
+  initiate AI replies or grant promotional consent.
+- **Migration 098:** Idempotent, sender-qualified Business App text-edit and
+  revoke records. These update the ORIGINAL verified staff message rather
+  than making a fake new staff reply. Out-of-order mutations wait for their
+  original echo and expire after seven days; they are never outbound sends.
+- **Migration 099:** Signed passive history/contact webhook changes are first
+  stored in an isolated sender-specific durable queue BEFORE HTTP ACK, then
+  imported by a bounded, restart-safe worker. This avoids long Meta callback
+  requests, and WAMID/idempotency checks handle replay. Unneeded raw history
+  payload is erased immediately on successful import, or after seven days for
+  abandoned jobs.
+- **Ariel AI delivery status:** Automatic result/promo images now initially
+  persist as *unknown/unconfirmed*, not as visible successfully sent media.
+  Verified WhatsApp WAMIDs and receipts remain the only delivery evidence.
+  On uncertain sends, never automatically retry.
+- **Review UI:** The Tools page contains an Ariel media/history incident
+  panel behind the existing Manage Tools permission. It shows unconfirmed
+  AI-image jobs, Business App attachment failures and failed/expired history
+  imports. There is intentionally **no automatic resend action**.
+- **Coexistence collision protection:** Ariel AI/follow-up activation now
+  requires `WHATSAPP_COEXISTENCE_ENABLED=true` as well as explicit
+  sender/content, receipt and billing guards. In-process Business App echoes
+  become pending before optional history processing.
+- **Read-only Meta preflight:** `whatsapp-sender:verify-dual` additionally
+  checks Ariel phone `is_on_biz_app=true` and `platform_type=CLOUD_API`.
+  It still cannot prove subscriptions to every coexistence webhook field or
+  actual delivery. Only signed staging callbacks establish those proofs.
+
+### Optional controls — keep OFF until the owner authorizes staging
+
+```dotenv
+WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED=false
+WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED=false
+WHATSAPP_SECONDARY_AI_MEDIA_ENABLED=false
+WHATSAPP_SECONDARY_AI_SEND_ENABLED=false
+WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED=false
+WHATSAPP_SECONDARY_STAFF_SEND_ENABLED=false
+WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED=false
+```
+
+Only after read-only Meta confirmation of Ariel's actual coexistence and a
+business-authorized privacy review, the sender registry's
+`coexistence_enabled` may be enabled for Ariel on **isolated staging**.
+Never copy secondary credentials into Neutro's token env key. Do not enable
+history imports when the WhatsApp Business App owner declined sharing.
+
+**No release guarantee from code alone:** complete two-number signed webhook
+and Business App echo testing (including sent media, edit, revoke, opt-in,
+replays, late receipts and simultaneous clients), provider billing checks,
+and isolated migration 094–099 rehearsal. Existing production Neon is still
+v077. The previous production-derived QA branch was last proven at v093.
+Render auto-deploy on `main` means a merge is a LIVE migration/deploy:
+**do not merge** until staging passes and a forward-only rollback plan is
+approved. Never run the older v077 app binary against a migrated v099 schema.
