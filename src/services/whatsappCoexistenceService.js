@@ -8,6 +8,7 @@ const { recordStaffConfirmedBooking } = require("./staffBookingConfirmationServi
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
+const echoMedia = require("./whatsappCoexistenceMediaService");
 
 const BUSINESS_APP_ACTOR = "WhatsApp Business App";
 
@@ -122,6 +123,20 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
     if (!persisted) {
       releasePendingAiForEcho(echo);
       return null;
+    }
+
+    // Provider-authenticated media echoes are durably queued for FETCH ONLY,
+    // never re-sent by the Cloud API. On failure Meta retries safely because
+    // the existing WAMID and queue job are both idempotent.
+    if (echo.mediaId && ["image","video","audio","document","sticker"].includes(echo.type) &&
+        echoMedia.enabled(process.env) &&
+        echo.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+        echo.businessAccountId === process.env.WHATSAPP_SECONDARY_WABA_ID) {
+      const queued=await echoMedia.enqueue({
+        contactId:contact.id,messageId:persisted.message.id,
+        wamid:echo.id,mediaId:echo.mediaId,type:echo.type,
+      });
+      if (!queued)throw new Error("Could not durably queue verified Business App echo media.");
     }
 
     if (persisted.isNew) {
