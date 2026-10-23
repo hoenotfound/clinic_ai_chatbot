@@ -48,6 +48,7 @@ const {
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
 const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
+const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
@@ -1773,14 +1774,9 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    // Ariel uses Neutro's APPROVED clinic knowledge and pricing for AI text,
-    // but optional promotion/result media are still held until independently
-    // sent via Ariel's sender-scoped transport and billing gate. Never allow
-    // promotional media, result images or the primary sender's media cache
-    // to reach this secondary conversation via the primary Meta token.
-    if (secondaryAiConversation) {
-      return { wasFirstMessage, keywordReason };
-    }
+    // Ariel shares approved clinic CONTENT, but its optional images must
+    // use only its separate durable media queue and billing/Graph transport.
+    // An inactive media flag must never reach the primary image-sending path.
 
     // Promotional media is reactive, not a first-message blast. Only follow a
     // successful normal AI reply when the customer explicitly asked about the
@@ -1894,17 +1890,22 @@ async function processIncomingMessage(
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
         promotionImagesTruncated = !!pacedPromotions.reason;
         const queuedPromotions = channel === "whatsapp" &&
-          whatsappZeroCostGuard.enabled() && pacedPromotions.items.length > 0 &&
-          sendOutcome.sendResult.success;
+          (secondaryAiConversation || whatsappZeroCostGuard.enabled()) &&
+          pacedPromotions.items.length > 0 && sendOutcome.sendResult.success;
         if (queuedPromotions) {
           try {
-            await whatsappResultMediaQueue.enqueue({
+            const queue = secondaryAiConversation ? secondaryAiMediaQueue : whatsappResultMediaQueue;
+            const enqueued = await queue.enqueue({
               contactId:contact.id,
               inboundMessageId:savedInbound.id,
               items:pacedPromotions.items,
               kind:"promotion",
               sequenceOffset:0,
             });
+            if (secondaryAiConversation && !enqueued) {
+              await auditResultMediaEarlyExit("secondary_media_not_enabled");
+              return { wasFirstMessage, keywordReason };
+            }
           } catch (queueError) {
             // Optional media failures must not invalidate the already accepted
             // AI text or cause a durable inbound job to replay that reply.
@@ -1920,7 +1921,7 @@ async function processIncomingMessage(
           // delivered. The audit separately counts actual Meta acceptance.
           automaticPromoMediaSent += queuedPromotionCount;
         }
-        for (const promoPackage of (queuedPromotions ? [] : pacedPromotions.items)) {
+        for (const promoPackage of (queuedPromotions || secondaryAiConversation ? [] : pacedPromotions.items)) {
           const promoContact = await getAiOwnedContact(contact, {
             channel,
             from,
@@ -2135,19 +2136,25 @@ async function processIncomingMessage(
           // The durable worker rechecks AI ownership, safety, billing and
           // duplicate protection before every actual provider send.
           let queuedForBilling = false;
-          if (channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
+          if (channel === "whatsapp" &&
+              (secondaryAiConversation || whatsappZeroCostGuard.enabled()) &&
               paced.items.length && sendOutcome.sendResult.success) {
-            queuedForBilling = await whatsappResultMediaQueue.enqueue({
+            queuedForBilling = await (secondaryAiConversation
+              ? secondaryAiMediaQueue : whatsappResultMediaQueue).enqueue({
               contactId: contact.id,
               inboundMessageId: savedInbound.id,
               items: paced.items,
               kind: "result",
               sequenceOffset: queuedPromotionCount,
             });
-            if (queuedForBilling) auditReason = "awaiting_meta_free_billing";
+            if (queuedForBilling) auditReason = "awaiting_sender_billing_receipt";
+            if (secondaryAiConversation && !queuedForBilling) {
+              auditReason = "secondary_media_not_enabled";
+              return { wasFirstMessage, keywordReason };
+            }
           }
           let resultImageIndex = 0;
-          for (const resultItem of (queuedForBilling ? [] : paced.items)) {
+          for (const resultItem of (queuedForBilling || secondaryAiConversation ? [] : paced.items)) {
             // Allow the customer to absorb a promotion before its optional
             // result example. We recheck ownership, safety and reply-window
             // conditions AFTER the gap, immediately before each provider send.
