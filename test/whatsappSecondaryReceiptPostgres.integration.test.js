@@ -866,3 +866,82 @@ test("customer deletion purges Ariel sender ledgers, retains anonymous billing a
     )).rows[0].n,0);
   });
 });
+
+
+test("operator-approved service charge is isolated, auto-settles, and late receipts cannot block Ariel globally",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+    const {ids,contacts}=await seededSend(db,database);
+    const paidEnv={...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+      WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"};
+    const free=await receipts.recordSignedSecondaryStatusBatch(
+      signed(st("wamid.ariel-one")),{database,env:paidEnv});
+    assert.equal(free.autoReconciled,1);
+    const m=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','Approved service reply') RETURNING id",
+      [contacts[1].id])).rows[0].id;
+    const sc=(await db.query(
+      "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",
+      [contacts[1].id])).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",[m,sc]);
+    const denied=await billing.reserveSecondaryBillingAttempt({
+      contactId:contacts[1].id,messageId:m,billableAuthorized:true,
+    },{database,env});
+    assert.equal(denied.code,"secondary_billing_template_review_unverified");
+    const accepted=await billing.reserveSecondaryBillingAttempt({
+      contactId:contacts[1].id,messageId:m,billableAuthorized:true,
+    },{database,env:paidEnv});
+    assert.equal(accepted.reserved,true);
+    const source=(await db.query(
+      "SELECT billing_authorization_source,billable_authorized FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+      [accepted.reservationId])).rows[0];
+    assert.equal(source.billing_authorization_source,"operator_acknowledged_service");
+    assert.equal(source.billable_authorized,true);
+    assert.equal((await billing.recordSecondaryProviderOutcome({
+      reservationId:accepted.reservationId,acceptedWamid:"wamid.ariel-service",
+    },{database,env:paidEnv})).state,"awaiting_pricing");
+    const priced=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-service",{
+        pricing:{type:"regular",billable:true,category:"service"},status:"delivered",
+      }
+    )),{database,env:paidEnv});
+    assert.equal(priced.autoReconciled,1);
+    assert.equal(priced.held,0);
+    assert.equal((await db.query(
+      "SELECT method FROM whatsapp_sender_auto_reconciliations WHERE reservation_id=$1",
+      [accepted.reservationId])).rows[0].method,
+      "signed_meta_operator_authorized_service_charge");
+    const later=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-service",{
+        pricing:{type:"regular",billable:true,category:"service"},status:"read",
+      }
+    )),{database,env:paidEnv});
+    assert.equal(later.held,0);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel])).rows[0].n,0);
+    const newMessage=(await db.query(
+      "INSERT INTO messages(contact_id,role,content) VALUES($1,'assistant','Next service') RETURNING id",
+      [contacts[1].id])).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [newMessage,sc]);
+    const next=await billing.reserveSecondaryBillingAttempt({
+      contactId:contacts[1].id,messageId:newMessage,billableAuthorized:true,
+    },{database,env:paidEnv});
+    assert.equal(next.reserved,true);
+    assert.equal((await billing.recordSecondaryProviderOutcome({
+      reservationId:next.reservationId,acceptedWamid:"wamid.ariel-unexpected",
+    },{database,env:paidEnv})).state,"awaiting_pricing");
+    const wrong=await receipts.recordSignedSecondaryStatusBatch(signed(st(
+      "wamid.ariel-unexpected",{
+        pricing:{type:"regular",billable:true,category:"marketing"},
+      }
+    )),{database,env:paidEnv});
+    assert.equal(wrong.held,1);
+    assert.equal((await db.query(
+      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      [ids.ariel])).rows[0].n,1);
+  });
+});
