@@ -9,8 +9,8 @@ Do not mistake this document or a passing CI job for production approval.
   autoDeploy on; it must not be edited, merged into, or have webhooks reassigned
   during staging.
 - Production Neon `steep-forest-44509907` `main` remains v077.
-- Isolated Neon QA branch `br-steep-flower-b3qayk0r` has a production-derived `neondb` snapshot at v099 containing 183 historical contacts. **Do not point staging at that database.**
-- Render staging uses a newly created **empty `pr395_staging` database** in that QA branch, owned by a dedicated `pr395_stage_owner` role. It was migrated through v099 and verified to contain **0 contacts, 1 staging admin and 0 active senders**.
+- An older Neutro QA branch `br-steep-flower-b3qayk0r` in the production Neon project still has 183 historical contacts. **Render staging is no longer connected to this Neon project.**
+- Render staging now uses **independent Neon project `wandering-dream-82267835`** (`da-chatbot-pr395-isolated-staging`), branch `br-late-sky-ao8xggam`, database `neondb`, role `pr395_staging_owner`. It was migrated through v099 and verified to contain **0 contacts, 1 staging admin and 0 active senders**. The old QA databases are not accessed by this new project.
 - Candidate second Business App number: 中医养生馆 / +60 17-483 1336.
   Previously noted phone ID `1318355951360575`; this is a pin requiring
   authoritative Meta token verification, not a permission grant.
@@ -34,11 +34,7 @@ Build: `npm ci && npm --prefix portal-frontend ci && npm --prefix portal-fronten
 Latest verified Render deployment status: **live**, commit `3044bbea`.
 Do not use any production service or main branch for this rehearsal.
 
-Use a dedicated, low-privilege connection to an isolated, access-controlled
-database. Prefer **synthetic/sanitized records** rather than attaching the
-production-derived QA snapshot to a publicly accessible staging URL. If using
-the existing QA branch, protect all portal pages with the PR staging Basic Auth
-gate and review access to copied staff accounts before letting anyone log in.
+Use only the new standalone Neon project for this staging service. The database and credentials are isolated at the project boundary (the project owner role is NOT a least-privilege SQL role within its own project). Keep staging Basic Auth enabled, expose no historical customer records, and restrict portal access. Do not reconnect this service to a database within Neutro's main Neon project.
 
 Minimal non-secret configuration:
 
@@ -64,8 +60,8 @@ WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED=false
 WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED=false
 PR395_STAGING_BASIC_AUTH_ENABLED=true
 PR395_STAGING_BASIC_AUTH_USERNAME=choose-staging-only-username
-# REQUIRED. Exact hostname of the isolated QA Neon DATABASE_URL (not production).
-PR395_STAGING_EXPECTED_DATABASE_HOST=ep-<QA-ENDPOINT>.<REGION>.aws.neon.tech
+# REQUIRED. Exact hostname of the new standalone Neon project's DATABASE_URL (not Neutro production or old QA).
+PR395_STAGING_EXPECTED_DATABASE_HOST=ep-sparkling-paper-aombwwlt.c-2.ap-southeast-1.aws.neon.tech
 # Never accept provider messages or run background jobs on this sandbox.
 PR395_STAGING_ALLOW_PROVIDER_PROCESSING=false
 # Generate a staging-only 32+-character random password on your machine.
@@ -74,7 +70,7 @@ PR395_STAGING_ALLOW_PROVIDER_PROCESSING=false
 
 Also configure a **unique 24+-character** staging `SESSION_SECRET`, a unique
 `WHATSAPP_VERIFY_TOKEN`, **both** `WHATSAPP_APP_SECRET` and
-`META_APP_SECRET` from the owning app (each 24+ characters), and a **QA-only**
+`META_APP_SECRET` from the owning app (each 24+ characters), and a **dedicated project-only**
 `DATABASE_URL` in Render's private environment. App secrets protect the
 signature check; do not print them or commit them to Git. The startup will
 **refuse to run** if the QA database endpoint does not match
@@ -90,11 +86,9 @@ jobs. POST callbacks are HMAC-checked and then deliberately rejected with HTTP
 not an operational two-number staging environment. Do not configure Meta to
 deliver genuine webhook traffic here: Meta would retry 503 callbacks.
 
-**Privacy:** The QA branch contains 183 real customer contacts and copied
-staff records. Basic Auth is not a substitute for a sanitized synthetic-data
-database; restrict operator access, limit deployment lifetime, and prefer a
-fresh empty Neon project for real interactive tests. Never grant staging
-access to an external reviewer using the copied user database.
+**Privacy:** The active staging database is a separate empty Neon project with no imported customer contacts; the old Neutro QA snapshot with 183 contacts remains in a different Neon project. Preserve Basic Auth and avoid sharing staging access with external testers until the full Meta provider acceptance environment is authorized.
+
+**Cost controls:** This is a Neon usage-based Build subscription. The new project is capped at 0.25 CU. The endpoint's `suspend_timeout_seconds=0` uses Neon's default auto-suspend timeout (usually 300 seconds); the API rejected explicitly changing the timeout. Monitor Neon compute usage and remove this staging project when it is no longer needed.
 
 Only for a controlled QR validation session, add the correct DA CHATBOT
 `META_APP_SECRET`, `META_EMBEDDED_SIGNUP_CONFIG_ID`, and validated Meta
