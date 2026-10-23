@@ -160,8 +160,13 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     ...dual,
     WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
     WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+    WHATSAPP_COEXISTENCE_ENABLED:"true",
   };
   assert.equal(secondaryUsesPrimaryClinicContent(sharedClinic),true);
+  assert.throws(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_COEXISTENCE_ENABLED:"false",
+  }),/coexistence echo collision protection/);
   assert.equal(secondaryUsesPrimaryClinicContent(dual),false);
   assert.doesNotThrow(()=>assertSenderIngressSafety({
     ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
