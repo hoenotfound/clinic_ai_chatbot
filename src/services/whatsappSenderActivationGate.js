@@ -22,11 +22,12 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const template = env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true";
   const templateMedia = env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED === "true";
   const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
+  const aiMedia = env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true";
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
   // The AI prompt, business facts, offers and pricing are intentionally
   // shared with the primary Neutro clinic ONLY for its approved second number.
   // Sending and billing still use the separately verified Ariel sender.
-  if ((ai || followups) && !secondaryUsesPrimaryClinicContent(env)) {
+  if ((ai || aiMedia || followups) && !secondaryUsesPrimaryClinicContent(env)) {
     throw new Error("Unsafe WhatsApp secondary operational activation: Ariel AI requires the approved primary Neutro clinic-content binding.");
   }
   // From 1 Oct 2026, a 24-hour WhatsApp service window no longer guarantees
@@ -34,12 +35,12 @@ function assertSecondaryOperationalSafety(env = process.env) {
   // per number but provides no atomic pre-send reservation in this code.
   // Receipt settlement happens AFTER delivery. Never let an operator enable
   // any Ariel outbound class without explicitly accepting possible charges.
-  const sendingEnabled = staff || media || template || templateMedia || ai || followups;
+  const sendingEnabled = staff || media || template || templateMedia || ai || aiMedia || followups;
   if (sendingEnabled &&
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true") {
     throw new Error("Unsafe WhatsApp secondary operational activation: possible Meta service-message charges require explicit sender-specific acknowledgment.");
   }
-  if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !followups) return;
+  if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !aiMedia && !followups) return;
 
   const common = [
     "WHATSAPP_MULTI_NUMBER_READ_ENABLED",
@@ -54,7 +55,9 @@ function assertSecondaryOperationalSafety(env = process.env) {
     "WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED",
     "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
   ];
-  if ((followups && (!ai || !autoReconcile || !receiptIngress)) ||
+  if ((aiMedia && (!ai || !autoReconcile || !receiptIngress ||
+                   env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED !== "true")) ||
+      (followups && (!ai || !autoReconcile || !receiptIngress)) ||
       (media && !staff) || (template && !staff) ||
       (templateMedia && !template) ||
       (billedReview && (!template || !receiptIngress)) ||
