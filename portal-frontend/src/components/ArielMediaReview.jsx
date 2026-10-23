@@ -16,11 +16,12 @@ export default function ArielMediaReview(){
  useEffect(()=>{void load();},[load]);
  if(data && !data.configured && !error)return null;
  const entries=data?.items||[];
- return <section aria-label="Ariel sender media review"
+ const senderName=data?.senderDisplayName||"Secondary WhatsApp";
+ return <section aria-label="Secondary WhatsApp media review"
    className="mb-5 rounded-xl border border-[var(--color-border)] p-4">
    <div className="flex flex-wrap justify-between items-center gap-2">
      <div>
-       <h3 className="text-sm font-semibold">Ariel — WhatsApp media review</h3>
+       <h3 className="text-sm font-semibold">{senderName} — media review</h3>
        <p className="text-xs text-[var(--color-text-muted)] mt-1">
          Sender-specific Business App attachments, passive history imports, and unconfirmed automated pictures.
          Provider acceptance must be confirmed before resending.
@@ -34,7 +35,7 @@ export default function ArielMediaReview(){
    {error?<p role="alert" className="text-xs text-red-600 mt-2">{error}</p>:null}
    {!error&&!loading&&entries.length===0?
      <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-       No unresolved Ariel media incidents.
+       No unresolved secondary-number media incidents.
      </p>:null}
    {entries.length>0?<div className="overflow-x-auto mt-3">
      <table className="min-w-full text-xs text-left">
