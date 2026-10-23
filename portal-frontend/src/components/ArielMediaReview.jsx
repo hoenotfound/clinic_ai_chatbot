@@ -22,7 +22,7 @@ export default function ArielMediaReview(){
      <div>
        <h3 className="text-sm font-semibold">Ariel — WhatsApp media review</h3>
        <p className="text-xs text-[var(--color-text-muted)] mt-1">
-         Sender-specific Business App attachments and unconfirmed automated pictures.
+         Sender-specific Business App attachments, passive history imports, and unconfirmed automated pictures.
          Provider acceptance must be confirmed before resending.
        </p>
      </div>
@@ -45,9 +45,10 @@ export default function ArielMediaReview(){
        </tr></thead>
        <tbody>{entries.map(item=><tr key={item.type+item.id}
          className="border-b border-[var(--color-border)]/40 align-top">
-         <td className="py-2 pr-3">{item.type==="outbound_ai_image"?
-           "Automated image":"WhatsApp Business App"}</td>
-         <td className="py-2 pr-3">#{item.contact_id}</td>
+         <td className="py-2 pr-3">{item.type==="outbound_ai_image"
+           ?"Automated image":item.type==="business_app_history"
+           ?"History sync":"WhatsApp Business App"}</td>
+         <td className="py-2 pr-3">{item.contact_id? "#"+item.contact_id:"—"}</td>
          <td className="py-2 pr-3">{item.status}</td>
          <td className="py-2 pr-3">{item.updated_at?
            new Date(item.updated_at).toLocaleString("en-MY"): "—"}</td>
