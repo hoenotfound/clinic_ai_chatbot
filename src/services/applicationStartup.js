@@ -149,6 +149,12 @@ async function startApplication({
     await bootstrapAdminUser();
     console.log("[Startup] Admin user bootstrap complete.");
 
+    if (process.env.PR395_STAGING_MODE === "true") {
+      // This public sandbox can be backed by a production-derived QA snapshot.
+      // Never run inherited reminder, AI, retry, media, pruning, outreach or
+      // customer-data lifecycle jobs against copied customer records.
+      console.log("[PR395 staging] All background workers disabled.");
+    } else {
     console.log("[Startup] Starting maintenance and recovery workers...");
     configRepo.pruneOrphanedPromoImages();
     setIntervalFn(
@@ -185,6 +191,7 @@ async function startApplication({
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
+    }
 
     startupReadiness.markReady();
     console.log(
