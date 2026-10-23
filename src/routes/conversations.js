@@ -1213,7 +1213,7 @@ router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
       res.set("Cache-Control","no-store");
       return res.json({
         verified:false,sendReady:false,
-        blockedReason:"Ariel billing is sender-specific. Do not infer free Meta charges from Neutro's evidence.",
+        blockedReason:"secondary WhatsApp billing is sender-specific. Do not infer free Meta charges from Neutro's evidence.",
       });
     }
     // An ad label, ad click or opt-in alone is never sufficient proof.
@@ -1243,7 +1243,7 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
     }
 
-    // An Ariel Inbox must never query Neutro's template catalog or
+    // An secondary WhatsApp Inbox must never query Neutro's template catalog or
     // legacy billing advisory. All approval and billing warnings are
     // sender-scoped and independently verified.
     if (contact.whatsapp_sender_id != null &&
@@ -1424,11 +1424,11 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (contact.whatsapp_sender_id != null &&
         contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
       // Media reuse is clinic-specific and not shared across senders. A fresh
-      // staff upload can go through Ariel's own verified media transport.
+      // staff upload can go through the secondary sender's own verified media transport.
       if (req.body?.mediaSelectionId) {
         return res.status(409).json({
           code:"secondary_template_media_reuse_disabled",
-          error:"Choose a new Ariel-specific template media file.",
+          error:"Choose a new secondary WhatsApp-specific template media file.",
         });
       }
       let mediaAttachment=null;
@@ -1489,7 +1489,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
            req.body?.billingAcknowledged!=="true")){
         return res.status(409).json({
           code:"secondary_billing_review_expired",
-          error:"Review the possible Meta charge before sending this Ariel template.",
+          error:"Review the possible Meta charge before sending this secondary WhatsApp template.",
         });
       }
       const claimed=await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
@@ -1515,7 +1515,7 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
                 templateSignature:prepared.signature,
               },
               initialDeliveryStatus:"unknown",
-              initialDeliveryError:"Ariel template attempted; delivery is not yet verified.",
+              initialDeliveryError:"secondary WhatsApp template attempted; delivery is not yet verified.",
               publish:false,
             }
           );
@@ -1526,14 +1526,14 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
       const send=await secondaryTemplate.deliverSecondaryStaffTemplate(
         current.ready,current.saved.id,prepared
       );
-      const errorText=send.error||"Ariel template acceptance could not be confirmed.";
+      const errorText=send.error||"secondary WhatsApp template acceptance could not be confirmed.";
       const result=await persistSendOutcome(current.saved,send,errorText,"whatsapp");
       if(send.success){
         await reconcileAcceptedStaffReplyAttention(current.ready.id);
         await markLeadContacted(current.ready.id,req.session.username,send);
       }else{
         await contactsRepo.setDeliveryAttention(current.ready.id,
-          "Ariel template delivery unconfirmed: "+publicDeliveryError(errorText),
+          "secondary WhatsApp template delivery unconfirmed: "+publicDeliveryError(errorText),
           current.saved.id);
       }
       return res.status(201).json({
@@ -2017,14 +2017,14 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
     // The primary Inbox retry endpoint predates sender-qualified billing.
-    // It must never reuse Ariel's saved message, primary billing gate, token
+    // It must never reuse the secondary sender's saved message, primary billing gate, token
     // or temporary media URL, including known failed and unknown deliveries.
     if (contact.channel === "whatsapp" &&
         contact.whatsapp_sender_id != null &&
         contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
       return res.status(409).json({
         code: "secondary_sender_retry_requires_fresh_review",
-        error: "Ariel messages cannot use the legacy retry path. Check Meta delivery and billing, then compose a new approved message if appropriate.",
+        error: "secondary WhatsApp messages cannot use the legacy retry path. Check Meta delivery and billing, then compose a new approved message if appropriate.",
       });
     }
 
