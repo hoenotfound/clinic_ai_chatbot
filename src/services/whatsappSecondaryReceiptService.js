@@ -123,7 +123,7 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
       const secondaryAccount = clean(env.WHATSAPP_SECONDARY_WABA_ID);
       const secondaryPhone = clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
       // A single WABA can own multiple different business phone IDs. Never
-      // confuse a primary-phone callback for an Ariel status in that case.
+      // confuse a primary-phone callback for an secondary WhatsApp status in that case.
       if (actualAccount === clean(env.WHATSAPP_WABA_ID) &&
           actualPhone === clean(env.WHATSAPP_PHONE_NUMBER_ID)) continue;
       if (actualAccount !== secondaryAccount && actualPhone !== secondaryPhone) continue;
@@ -255,7 +255,7 @@ async function recordSignedSecondaryStatusBatch({
       }
       if (!attempt) {
         unmatched++;
-        // This HMAC-verified callback belongs to Ariel's receiving number,
+        // This HMAC-verified callback belongs to the secondary sender's receiving number,
         // but its WAMID may be unknown after a provider timeout. Flag a
         // sender-wide *unattributed* billing incident; never associate it
         // with another customer's reservation.
@@ -277,7 +277,7 @@ async function recordSignedSecondaryStatusBatch({
       }
       matched++;
 
-      // Update only the message belonging to the verified Ariel reservation.
+      // Update only the message belonging to the verified secondary WhatsApp reservation.
       // Monotonic receipt ordering prevents delayed 'sent' from replacing
       // delivered/read; failures never turn an already read message into
       // 'failed'. Do not touch Neutro status/retry/billing tables.
@@ -367,7 +367,7 @@ async function recordSignedSecondaryStatusBatch({
         // A bounced message must not disable unrelated customers. Only
         // unexpected charges or identity incidents suspend the sender.
         // An operator-approved service charge awaiting manual reconciliation
-        // holds only this contact; other Ariel conversations may continue.
+        // holds only this contact; other secondary WhatsApp conversations may continue.
         if (event.pricingBillable === true && !authorizedServiceCharge) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
