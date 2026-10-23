@@ -35,6 +35,7 @@ const {
   enforcePortalRequestOrigin,
 } = require("./middleware/portalSecurity");
 const { requireAuth } = require("./middleware/requireAuth");
+const { stagingAccessGuard } = require("./middleware/pr395StagingBasicAuth");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
@@ -83,6 +84,7 @@ function createApp({
   // leftmost X-Forwarded-For values supplied by clients.
   app.set("trust proxy", resolveTrustProxy(process.env));
   app.use(applyPortalSecurityHeaders);
+  app.use(stagingAccessGuard);
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
   // validated against the exact bytes received.
