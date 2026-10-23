@@ -82,9 +82,13 @@ jobs:
   portal-playwright:
     name: playwright-${{ matrix.label }}
     runs-on: ubuntu-latest
-    # WebKit's apt dependencies can take >15 minutes on hosted runners.
-    # Budget setup separately from the UI tests rather than cancelling green suites.
-    timeout-minutes: 35
+    # Ubuntu package mirrors stalled for >30 minutes installing WebKit's 181
+    # system packages. Pin Playwright's official browser/dependency image and
+    # run the same full E2E suite without a network-dependent apt installation.
+    # Match the container tag to the @playwright/test version installed below.
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -125,8 +129,9 @@ jobs:
       - run: npm ci
       - name: Install Playwright test runner
         run: npm install --no-save @playwright/test@1.55.0
-      - name: Install required Playwright browser
-        run: npx playwright install --with-deps ${{ matrix.browser }}
+      # The pinned Playwright image already includes Chromium, WebKit and
+      # their Ubuntu runtime packages. Do not run playwright install --with-deps:
+      # apt mirror stalls caused the cancelled CI runs on GitHub-hosted VMs.
       - name: Run Playwright smoke tests
         run: npx playwright test --project=${{ matrix.project }} ${{ matrix.shard_args }}
 
