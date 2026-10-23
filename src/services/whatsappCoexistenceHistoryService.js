@@ -155,16 +155,122 @@ async function importPassiveChange({accountId,change},{
  );
  return{enabled:true,imported,contacts,threads,declined};
 }
-async function acceptPassiveSync(body,opts={}){
- if(!enabled(opts.env||process.env))return{enabled:false,imported:0};
- let imported=0,contacts=0;
+// Webhook stage: one small signed-event INSERT per change, no contact/message
+// imports before ACK. Later worker retries by WAMID and source-event digest.
+async function acceptPassiveSync(body,{database=pool,env=process.env}={}){
+ if(!enabled(env))return{enabled:false,staged:0};
+ let staged=0;
  for(const entry of body?.entry||[]){
    for(const change of entry?.changes||[]){
-     if(!FIELDS.has(change.field))continue;
-     const result=await importPassiveChange({accountId:entry.id,change},opts);
-     imported+=result.imported||0;contacts+=result.contacts||0;
+     if(!FIELDS.has(change.field) ||
+        String(entry.id)!==String(env.WHATSAPP_SECONDARY_WABA_ID) ||
+        change.value?.metadata?.phone_number_id!==
+          env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)continue;
+     const sender=await database.query(
+       "SELECT id FROM whatsapp_sender_accounts WHERE sender_key=$1 "+
+       "AND meta_phone_number_id=$2 AND meta_account_id=$3 "+
+       "AND state='active' AND coexistence_enabled=TRUE",
+       [env.WHATSAPP_SECONDARY_SENDER_KEY,
+        env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+        env.WHATSAPP_SECONDARY_WABA_ID]
+     );
+     if(sender.rows?.length!==1)throw Error("Coexistence importer sender not verified.");
+     const raw=JSON.stringify({accountId:entry.id,change});
+     if(raw.length>4*1024*1024)throw Error("Coexistence sync chunk exceeds verified staging limit.");
+     const saved=await database.query(
+       `INSERT INTO whatsapp_sender_coexistence_import_jobs
+         (fingerprint,sender_id,event_field,payload)
+        VALUES($1,$2,$3,$4::jsonb)
+        ON CONFLICT(fingerprint) DO NOTHING
+        RETURNING fingerprint`,
+       [fingerprint(entry.id,change),sender.rows[0].id,change.field,raw]
+     );
+     if(saved.rowCount===1)staged++;
    }
  }
- return{enabled:true,imported,contacts};
+ return{enabled:true,staged};
 }
-module.exports={enabled,cleanPhone,mediaPlaceholder,importPassiveChange,acceptPassiveSync};
+async function runOnce({
+ database=pool,env=process.env,maxJobs=2,
+}={}){
+ if(!enabled(env))return{disabled:true,processed:0,failed:0};
+ const sender=await database.query(
+   "SELECT id FROM whatsapp_sender_accounts WHERE sender_key=$1 "+
+   "AND meta_phone_number_id=$2 AND meta_account_id=$3 "+
+   "AND state='active' AND coexistence_enabled=TRUE",
+   [env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+    env.WHATSAPP_SECONDARY_WABA_ID]
+ );
+ if(sender.rows?.length!==1)return{disabled:true,processed:0,failed:0};
+ const id=sender.rows[0].id;
+ // A crashed importer can safely retry; message inserts are WAMID-idempotent.
+ await database.query(
+   "UPDATE whatsapp_sender_coexistence_import_jobs "+
+   "SET status='pending',next_attempt_at=NOW(),updated_at=NOW() "+
+   "WHERE sender_id=$1 AND status='processing' "+
+   "AND updated_at<NOW()-INTERVAL '10 minutes'",[id]
+ );
+ // Bound sensitive raw payload retention even if no worker can process it.
+ await database.query(
+   "UPDATE whatsapp_sender_coexistence_import_jobs "+
+   "SET status='expired',payload=NULL,updated_at=NOW() "+
+   "WHERE sender_id=$1 AND payload IS NOT NULL "+
+   "AND created_at<NOW()-INTERVAL '7 days' "+
+   "AND status IN('pending','processing','failed')",[id]
+ );
+ const list=await database.query(
+   "SELECT fingerprint FROM whatsapp_sender_coexistence_import_jobs "+
+   "WHERE sender_id=$1 AND status='pending' AND next_attempt_at<=NOW() "+
+   "ORDER BY created_at LIMIT $2",
+   [id,Math.max(1,Math.min(3,Number(maxJobs)||2))]
+ );
+ let processed=0,failed=0;
+ for(const job of list.rows||[]){
+   const claimed=await database.query(
+     `UPDATE whatsapp_sender_coexistence_import_jobs
+      SET status='processing',attempts=attempts+1,updated_at=NOW()
+      WHERE fingerprint=$1 AND sender_id=$2 AND status='pending'
+      RETURNING payload,attempts`,
+     [job.fingerprint,id]
+   );
+   if(claimed.rowCount!==1)continue;
+   try{
+     const payload=claimed.rows[0].payload;
+     if(!payload||String(payload.accountId)!==
+       String(env.WHATSAPP_SECONDARY_WABA_ID))
+       throw Error("Archived sync sender identity mismatch.");
+     await importPassiveChange(payload,{database,env});
+     await database.query(
+       `UPDATE whatsapp_sender_coexistence_import_jobs
+        SET status='completed',payload=NULL,last_error=NULL,updated_at=NOW()
+        WHERE fingerprint=$1 AND sender_id=$2 AND status='processing'`,
+       [job.fingerprint,id]
+     );
+     processed++;
+   }catch(err){
+     const error=String(err?.message||"unknown_sync_failure").slice(0,140);
+     const saved=await database.query(
+       `UPDATE whatsapp_sender_coexistence_import_jobs
+        SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,
+            last_error=$3,next_attempt_at=NOW()+INTERVAL '2 minutes',
+            updated_at=NOW()
+        WHERE fingerprint=$1 AND sender_id=$2 AND status='processing'
+        RETURNING status`,
+       [job.fingerprint,id,error]
+     );
+     if(saved.rows?.[0]?.status==='failed')failed++;
+     console.error("[WhatsApp Coexistence] history import requires review:",error);
+   }
+ }
+ return{disabled:false,processed,failed};
+}
+let timer=null;
+function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
+ if(!enabled(env)||timer)return false;
+ timer=setIntervalFn(()=>run({env}).catch(e=>
+   console.error("[WhatsApp Coexistence] import worker:",e?.message)),60000);
+ timer?.unref?.();return true;
+}
+function stop(){if(timer){clearInterval(timer);timer=null;}}
+module.exports={enabled,cleanPhone,mediaPlaceholder,importPassiveChange,
+ acceptPassiveSync,runOnce,start,stop};
