@@ -1,7 +1,7 @@
 "use strict";
 
 // The secondary template catalog has NO shared primary cache. All live
-// validation uses Ariel's exact WABA and token, with nonbillable/billable
+// validation uses the secondary sender's exact WABA and token, with nonbillable/billable
 // warnings sourced independently from legacy Neutro billing.
 const { pool } = require("../db/db");
 const policy = require("./whatsappSecondaryPolicyService");
