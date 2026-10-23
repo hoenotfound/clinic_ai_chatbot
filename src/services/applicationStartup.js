@@ -30,6 +30,7 @@ const { assertStoredSenderSafety } = require("./whatsappSenderActivationGate");
 const mediaStorage = require("./mediaStorageService");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
 const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
+const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
 const {
   startCustomerDataLifecycle,
 } = require("./customerDataLifecycleService");
@@ -165,6 +166,7 @@ async function startApplication({
     startWhatsAppDeliveryStatusRecovery();
     whatsappResultMediaQueue.start();
     secondaryAiMediaQueue.start();
+    coexistenceMediaQueue.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
