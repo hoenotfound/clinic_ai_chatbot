@@ -16,7 +16,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
   // Do not allow Ariel AI/follow-up activation until a sender-owned prompt,
   // pricing and clinic-knowledge boundary is implemented and tested.
   if (ai || followups) {
-    throw new Error("Secondary WhatsApp AI and automated follow-ups are not safe to activate: sender-specific clinic configuration is not yet implemented.");
+    throw new Error("Unsafe WhatsApp secondary operational activation: sender-specific clinic configuration is not yet implemented for Ariel AI and automated follow-ups.");
   }
   if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !followups) return;
 
