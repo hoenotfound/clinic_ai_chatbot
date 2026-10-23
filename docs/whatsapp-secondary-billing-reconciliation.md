@@ -1,5 +1,8 @@
 # Phase 2D: manual billing reconciliation and late adverse receipt protection
 
+> **Target updated 2026-10-23:** Secondary = 中医养生馆 (+60 17-483 1336), phone ID `1318355951360575`, account ID `1071636698738276`. The original secondary number's content approval does not transfer. Keep all sends and Meta coexistence activation OFF until independently verified and authorized.
+
+
 Status: **development-only, no live webhook, outbound dispatcher, or operator endpoint**.
 
 Depends on #391 → #389 → #387 → #384.
@@ -8,14 +11,14 @@ Depends on #391 → #389 → #387 → #384.
 
 - Migration 085 adds an immutable-per-reservation manual reconciliation audit and
   a sender-level **latched** billing alarm. Both are additive to Phase 2.
-- The signed Ariel receipt inspector can now associate a verified callback with
+- The signed the secondary WhatsApp sender receipt inspector can now associate a verified callback with
   a historical `reconciled` attempt, even after the sender gate has returned
   to idle or is processing a later reservation. A late billable or failed
   receipt latches a sender-wide alarm.
-- The separate Ariel billing reservation repository checks for this alarm
+- The separate the secondary WhatsApp sender billing reservation repository checks for this alarm
   under the same sender gate row lock before reserving any new message.
 - The disabled-by-default manual settlement service requires a currently
-  active Ariel sender, exact pending reservation + bound message, provider
+  active the secondary WhatsApp sender sender, exact pending reservation + bound message, provider
   WAMID, a signed matched Meta nonbillable free-entry receipt, no adverse
   receipts for that attempt, no unmatched same-WAMID receipts, and no sender
   alarm. The human operator must separately attest to verifying Meta Billing
@@ -50,7 +53,7 @@ Depends on #391 → #389 → #387 → #384.
   narrow billing reconciliation, not blanket approval for the next send.
   A later attempt must independently pass the sender's reply window,
   marketing consent, template approval, and billing checks.
-- Live webhooks continue quarantining Ariel status callbacks until signed
+- Live webhooks continue quarantining the secondary WhatsApp sender status callbacks until signed
   multi-sender ingress is reviewed and enabled in a later PR.
 - No Meta subscriptions, Render secrets, production Neon data, or live
   service configuration were changed.
@@ -62,6 +65,6 @@ with `TEST_DATABASE_URL` configured. Repository CI supplies PostgreSQL.
 Existing full `npm test` and Playwright checks are validated separately
 using a temporary Draft PR targeting `main`.
 
-**Do not merge the full PR chain or enable Ariel's sending flags until the
+**Do not merge the full PR chain or enable the secondary sender's sending flags until the
 signed ingress adapter, final send gating, media and follow-up isolation,
 Neon snapshot rehearsal and two-number Meta tests have been completed.**
