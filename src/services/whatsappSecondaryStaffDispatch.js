@@ -141,7 +141,11 @@ async function sendSecondaryStaffText({
 
   const reserved = await billingRepo.reserveSecondaryBillingAttempt({
     contactId: cid, messageId: mid,
-    billableAuthorized: Boolean(templateRequest),
+    // Freeform service messages may be charged after Meta's monthly free
+    // allowance. Operator acknowledgment is separate from a template's
+    // individual staff review and must be captured in the durable attempt.
+    billableAuthorized: Boolean(templateRequest) ||
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true",
     expectedTemplateSignature: templateRequest?.expectedSignature || null,
   }, { database, env });
   if (!reserved.reserved || !reserved.reservationId) {
