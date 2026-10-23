@@ -50,8 +50,11 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   const route = source.slice(start, end);
   const noop = () => Promise.resolve();
   const context = {
-    app: { post(_path, _parser, cb) { handler = cb; } },
+    app: { post(_path, ...middlewareAndHandler) {
+      handler = middlewareAndHandler[middlewareAndHandler.length - 1];
+    } },
     webhookJsonParser: () => {},
+    stagingWebhookGuard: (_req, _res, next) => next(),
     Buffer,
     whatsapp,
     partitionLegacyWhatsAppWebhook,
