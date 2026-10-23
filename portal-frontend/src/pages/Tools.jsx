@@ -11,6 +11,7 @@ import FollowUpActivity from "../components/FollowUpActivity";
 import FollowUpHealth from "../components/FollowUpHealth";
 import FollowUpPerformance from "../components/FollowUpPerformance";
 import ArielFollowUpRules from "../components/ArielFollowUpRules";
+import ArielMediaReview from "../components/ArielMediaReview";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -2830,6 +2831,7 @@ function FollowUpTool({
       dismissToast={dismissToast}
     >
       <ArielFollowUpRules />
+      <ArielMediaReview />
       {uploadingVideo && (
         <div
           role="status"
