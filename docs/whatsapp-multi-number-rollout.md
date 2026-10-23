@@ -1,12 +1,15 @@
 # WhatsApp multi-number rollout — Neutro Sense (development only)
 
+> **Target updated 2026-10-23:** Secondary = 中医养生馆 (+60 17-483 1336), phone ID `1318355951360575`, account ID `1071636698738276`. The original secondary number's content approval does not transfer. Keep all sends and Meta coexistence activation OFF until independently verified and authorized.
+
+
 Status: **foundation implemented; NOT ready to enable**. No Meta subscription,
 phone registration, Render secret, or production database changes are performed
 by the foundation code.
 
 ## Business goal
 
-Keep Neutro Sense TCM and Ariel Lee in one **Neutro Sense Render + Neon + Inbox**
+Keep Neutro Sense TCM and 中医养生馆 in one **Neutro Sense Render + Neon + Inbox**
 while allowing each WhatsApp number to retain its own Meta account, credentials,
 reply windows and coexistence policy. Use the same *shared* Meta Developer App.
 The client business does not need to own/administer that Developer App.
@@ -52,12 +55,12 @@ before activation; never assume that display names identify the active sender.
   metadata are preserved by default; strict metadata mode remains opt-in
   until verified safe using live provider samples.
 - Unknown webhook fields are quarantined independently of valid callbacks;
-  the sender registry is not an invitation to subscribe Ariel to this URL.
+  the sender registry is not an invitation to subscribe the secondary WhatsApp sender to this URL.
 
 ## Required before enabling a second phone
 
 1. Verify the *currently configured* Neutro Sense Meta phone ID against
-   Render's `WHATSAPP_PHONE_NUMBER_ID`, and separately verify Ariel's
+   Render's `WHATSAPP_PHONE_NUMBER_ID`, and separately verify the secondary sender's
    account and coexistence status. Do not infer from other dashboard listings.
 2. Backfill all historical WhatsApp contacts and messages to a verified
    default sender without rewriting existing IDs; guard the backfill against
@@ -80,13 +83,13 @@ before activation; never assume that display names identify the active sender.
    opt-out, follow-up slots, template catalog and content rules to a specific
    sender+contact thread. Choose deliberate policy for global opt-out handling.
 7. Key Business App staff echo handoff and AI-cancellation locks on
-   `(sender ID, customer)`, so staff on Ariel cannot cancel Neutro AI.
+   `(sender ID, customer)`, so staff on the secondary WhatsApp sender cannot cancel Neutro AI.
 8. Verify each webhook signature, account ID, business phone ID and sender
    state before accepting a batch. Unknown phone metadata must never route
    to the default sender. Ensure each Meta account has the intended
    `override_callback_uri` and fields; no modifications in this PR.
 9. Present sender names on every Inbox conversation and above the composer,
-   with All/Neutro/Ariel filters. Sender selection is derived from the
+   with All/Neutro/the secondary WhatsApp sender filters. Sender selection is derived from the
    conversation, not a free-form send dropdown.
 10. Release with a **separate activation approval**, real two-number Meta
     verification, database snapshot, and rollback. Never auto-register a
@@ -100,15 +103,15 @@ before activation; never assume that display names identify the active sender.
    temporary database branch, then stage compatible application changes.
 3. Verify existing Neutro ordinary AI/manual messages, status receipts,
    follow-ups, pricing rules, staff takeover and user-visible Inbox behavior.
-4. Authorize Ariel through the Business App QR path **only after approval**.
+4. Authorize the secondary WhatsApp sender through the Business App QR path **only after approval**.
    Require `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`,
    `is_on_biz_app=true` and `platform_type=CLOUD_API`.
-5. Configure Ariel-specific credentials and webhook subscription independently;
+5. Configure the secondary WhatsApp sender-specific credentials and webhook subscription independently;
    verify existing Neutro webhook override remains unchanged.
-6. Keep Ariel `testing` and automated replies paused; test each path and
+6. Keep the secondary WhatsApp sender `testing` and automated replies paused; test each path and
    negative cases before making the sender `active`.
-7. Roll back by disabling Ariel inbound/automations and restoring **only**
-   Ariel's prior callback after the owner confirms. Preserve legacy sender,
+7. Roll back by disabling the secondary WhatsApp sender inbound/automations and restoring **only**
+   the secondary sender's prior callback after the owner confirms. Preserve legacy sender,
    data, and audit records; do not replace production Meta credentials.
 
 ## Mandatory regression tests
@@ -156,7 +159,7 @@ before activation; never assume that display names identify the active sender.
   A misrouted message is **not recoverable from the privacy-safe audit**.
   Operators must correct the Meta override and ask affected customers to
   resend if necessary. Do not claim this is a second-number Inbox.
-- Never subscribe Ariel Lee to the production Neutro Sense webhook or enable
+- Never subscribe 中医养生馆 to the production Neutro Sense webhook or enable
   sender-aware routing until per-number contacts, credentials, follow-ups,
   receipts, staff takeover, and privacy rules are implemented and tested.
 
@@ -218,7 +221,7 @@ Implemented:
    validated* Meta account/phone identities. An unknown third phone, mismatched
    account, or missing receiving metadata is quarantined instead of becoming a
    Neutro customer. The legacy handler remains the default.
-2. Incoming Ariel turns are durably assigned to a sender-scoped contact and
+2. Incoming the secondary WhatsApp sender turns are durably assigned to a sender-scoped contact and
    independently queued (not debounced together with the same person's Neutro
    thread). Its Business App echoes are linked to that sender conversation.
 3. Secondary inbound media lookup selects only the secondary receiving
@@ -237,7 +240,7 @@ not authorize secondary outbound API messages, templates, or billing.
 
 - Verify ownership of both exact Meta phone IDs and WABA IDs from authentic
   signed callbacks and the shared developer app's subscription records.
-- Record separate sender keys for Neutro and Ariel with active statuses in a
+- Record separate sender keys for Neutro and the secondary WhatsApp sender with active statuses in a
   **staging Neon branch**, using migrations 078–082 through the migration
   runner (not by updating the migration ledger by hand). Preserve the original
   Neutro contact IDs and message counts.
@@ -247,8 +250,8 @@ not authorize secondary outbound API messages, templates, or billing.
   missing secondary media credentials.
 - Inject signed Meta callback fixtures with primary-only, secondary-only,
   mixed, duplicate, out-of-order, reaction, echo, media, and unknown-sender
-  cases. Verify no outbound API request originates from Ariel and no Neutro
-  conversation is modified by Ariel activity.
+  cases. Verify no outbound API request originates from the secondary WhatsApp sender and no Neutro
+  conversation is modified by the secondary WhatsApp sender activity.
 - Check operational contacts, pipeline, opt-outs, receiver receipts,
   quarantine alerts and deletion/rollback. Keep sender-aware reads active
   while any secondary contacts remain bound; a flag-only rollback to legacy
@@ -259,12 +262,12 @@ not authorize secondary outbound API messages, templates, or billing.
 - Full secondary outbound credential authority and binding across staff,
   AI, template catalogs, media upload and provider request retries.
 - Sender-specific CTWA pricing reservations, 24-hour enforcement, consent,
-  follow-up scheduling and provider-status reconciliation for Ariel.
+  follow-up scheduling and provider-status reconciliation for the secondary WhatsApp sender.
 - A complete two-number UI send workflow, plus independent per-sender media
   caching and duplicate/out-of-order receipt reconciliation.
 - End-to-end staging tests against both provisioned Meta numbers, then a
   controlled production cutover and rollback rehearsal.
 
-**Do not merge/activate Ariel as complete Phase 2 on this basis alone.**
-The earlier "Never subscribe Ariel" production hold remains in force until
+**Do not merge/activate the secondary WhatsApp sender as complete Phase 2 on this basis alone.**
+The earlier "Never subscribe the secondary WhatsApp sender" production hold remains in force until
 the operator has completed the above release gates.
