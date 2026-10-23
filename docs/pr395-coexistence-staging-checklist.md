@@ -42,7 +42,10 @@ gate and review access to copied staff accounts before letting anyone log in.
 Minimal non-secret configuration:
 
 ```dotenv
-NODE_ENV=staging
+# Use production-grade Node session and signature security on the QA service.
+NODE_ENV=production
+# Mandatory sandbox-only guard; does NOT run on main production.
+PR395_STAGING_MODE=true
 META_APP_ID=1029862536608134
 META_GRAPH_API_VERSION=v26.0
 WHATSAPP_SECONDARY_SENDER_KEY=tcm_wellness
@@ -60,15 +63,37 @@ WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED=false
 WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED=false
 PR395_STAGING_BASIC_AUTH_ENABLED=true
 PR395_STAGING_BASIC_AUTH_USERNAME=choose-staging-only-username
+# REQUIRED. Exact hostname of the isolated QA Neon DATABASE_URL (not production).
+PR395_STAGING_EXPECTED_DATABASE_HOST=ep-<QA-ENDPOINT>.<REGION>.aws.neon.tech
+# Never accept provider messages or run background jobs on this sandbox.
+PR395_STAGING_ALLOW_PROVIDER_PROCESSING=false
 # Generate a staging-only 32+-character random password on your machine.
 # PR395_STAGING_BASIC_AUTH_PASSWORD=<store privately in Render>
 ```
 
-Also configure distinct **staging-only** `SESSION_SECRET`, a staging-only
-`WHATSAPP_VERIFY_TOKEN`, and a **staging-only** database connection string in
-Render secret environment settings. Do not store secrets in Git. Do not reuse
-production WhatsApp tokens or any live Meta callback for the initial startup.
-Do not set primary sender credentials on staging merely to satisfy a diagnostic.
+Also configure a **unique 24+-character** staging `SESSION_SECRET`, a unique
+`WHATSAPP_VERIFY_TOKEN`, **both** `WHATSAPP_APP_SECRET` and
+`META_APP_SECRET` from the owning app (each 24+ characters), and a **QA-only**
+`DATABASE_URL` in Render's private environment. App secrets protect the
+signature check; do not print them or commit them to Git. The startup will
+**refuse to run** if the QA database endpoint does not match
+`PR395_STAGING_EXPECTED_DATABASE_HOST` exactly, if Basic Auth is missing,
+or if a secondary outbound, inbox, paid receipt, AI or follow-up flag is ON.
+Keep all provider subscriptions pointed away from staging until explicitly
+rehearsing authorized signed tests.
+
+The sandbox will **not** start existing Neutro workers, outbound retries,
+scheduled messages, follow-ups, AI recovery, media pruning, or other background
+jobs. POST callbacks are HMAC-checked and then deliberately rejected with HTTP
+503 **without processing**; this runbook prepares authorization diagnostics,
+not an operational two-number staging environment. Do not configure Meta to
+deliver genuine webhook traffic here: Meta would retry 503 callbacks.
+
+**Privacy:** The QA branch contains 183 real customer contacts and copied
+staff records. Basic Auth is not a substitute for a sanitized synthetic-data
+database; restrict operator access, limit deployment lifetime, and prefer a
+fresh empty Neon project for real interactive tests. Never grant staging
+access to an external reviewer using the copied user database.
 
 Only for a controlled QR validation session, add the correct DA CHATBOT
 `META_APP_SECRET`, `META_EMBEDDED_SIGNUP_CONFIG_ID`, and validated Meta
@@ -116,3 +141,7 @@ Meta webhooks yet.
 **Release:** Keep #395 Draft, no merge, no QR authorization, no callback
 subscription changes, and no live sends until staging is accessible, Meta
 permissions/account IDs are proven, and signed dual-number tests pass.
+The current sandbox mode is intentionally non-operational: a separate sanitized
+acceptance environment and controlled provider-routing permission are needed
+to perform live signed two-number E2E tests. Do not disable this guard merely
+to make an acceptance test pass.
