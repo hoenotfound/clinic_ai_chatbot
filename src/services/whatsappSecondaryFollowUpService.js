@@ -48,7 +48,7 @@ const CANDIDATES_SQL=`
    SELECT lead.marketing_consent,lead.is_closed,lead.appointment_status,
      stage.system_key AS stage_key
    FROM leads lead LEFT JOIN pipeline_stages stage ON stage.id=lead.stage_id
-   WHERE lead.contact_id=c.id ORDER BY lead.is_closed ASC,lead.created_at DESC,lead.id DESC
+   WHERE lead.contact_id=c.id ORDER BY lead.created_at DESC,lead.id DESC
    LIMIT 1
  ) lead ON true
  WHERE rule.enabled=TRUE
@@ -150,7 +150,7 @@ const RECHECK_SQL=`
               stage.system_key AS stage_key
        FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
        WHERE l.contact_id=c.id
-       ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1
+       ORDER BY l.created_at DESC,l.id DESC LIMIT 1
      ) latest_lead
      WHERE latest_lead.marketing_consent='opted_in'
        AND latest_lead.is_closed=FALSE
