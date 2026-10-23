@@ -28,7 +28,7 @@ async function verifyDualSenderMapping({
   if (!primaryToken || !secondaryToken) {
     throw new Error("Separate primary and secondary read-only verification tokens are required.");
   }
-  // Never use a primary token to look up Ariel or infer sender ownership.
+  // Never use a primary token to look up a secondary number or infer sender ownership.
   const [primary,secondary]=await Promise.all([
     verifyWhatsAppSenderMapping({
       wabaId:ids.primaryAccount,phoneNumberId:ids.primary,appId:ids.appId,
