@@ -59,6 +59,7 @@ async function enqueue({
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
           AND c.needs_attention=FALSE
           AND c.whatsapp_opt_out_at IS NULL
+          AND c.whatsapp_marketing_opt_out_at IS NULL
           AND sa.state='active' AND sa.sender_key=$3
           AND sa.meta_phone_number_id=$4 AND sa.meta_account_id=$5`,
       [contactId,inboundMessageId,env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -102,6 +103,8 @@ const READY_SQL=`
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
    AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
+   AND c.whatsapp_marketing_opt_out_at IS NULL
+   AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
    AND sa.sender_key=$1 AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
    AND NOT EXISTS(
      SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -136,6 +139,8 @@ const STILL_VALID_SQL=`
    WHERE job.id=$1 AND job.state='claimed'
      AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
      AND c.whatsapp_opt_out_at IS NULL
+     AND c.whatsapp_marketing_opt_out_at IS NULL
+     AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
      AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3 AND sa.meta_account_id=$4
      AND NOT EXISTS(
        SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
@@ -154,6 +159,7 @@ async function runOnce({
  database=pool,env=process.env,
  contacts=contactsRepo,store=conversationStore,
  send=sendSecondaryStaffText,policy=secondaryPolicy,
+ messageRepo=messagesRepo,
  limit=5,
 }={}){
  if(!enabled(env))return{disabled:true,accepted:0,pending:0};
@@ -192,7 +198,8 @@ async function runOnce({
        if(check.rows?.[0]?.allowed!==true)return false;
        const current=await contacts.getContactById(job.contact_id);
        if(current?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
-          current.mode!=="ai" || current.needs_attention===true)return false;
+          current.mode!=="ai" || current.needs_attention===true ||
+          !(await contacts.canSendAutomaticReviewMedia(current.id)))return false;
        const preview=await policy.previewSecondaryFreeformPolicy(current,{
          database,env,now:new Date(),purpose:"service",
        });
@@ -218,7 +225,7 @@ async function runOnce({
      },{env,database});
      if(result?.success===true && result?.unknown!==true &&
         /^wamid\./.test(String(result.wamid||""))){
-       await messagesRepo.setWhatsappMessageId(messageId,result.wamid,{
+       await messageRepo.setWhatsappMessageId(messageId,result.wamid,{
          preserveVerifiedSecondaryReceipt:true,
        });
        await database.query(
