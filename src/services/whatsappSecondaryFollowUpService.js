@@ -314,7 +314,7 @@ let timer=null;
 function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}) {
  if(!enabled(env)||timer)return false;
  timer=setIntervalFn(()=>run({env}).catch(e=>
-   console.error("[Ariel followups] Sender-scoped worker error:",e?.message)
+   console.error("[secondary WhatsApp followups] Sender-scoped worker error:",e?.message)
  ),INTERVAL);
  timer?.unref?.();
  return true;
