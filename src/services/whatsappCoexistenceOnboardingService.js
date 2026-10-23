@@ -65,7 +65,7 @@ function normalizedPhone(value) {
 function requireExpectedSecondaryPhone(env = process.env) {
   if (!secondaryTargetMode(env)) return null;
   const expected = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
-  if (!/^\\d+$/.test(expected)) {
+  if (!/^\d+$/.test(expected)) {
     throw new WhatsAppCoexistenceOnboardingError(
       "Pin the secondary phone number ID before authorizing a real WhatsApp Business App number.",
       { code: "WHATSAPP_COEXISTENCE_SECONDARY_TARGET_UNPINNED", status: 409, retrySafe: false }
@@ -111,7 +111,7 @@ function publicConfig(env = process.env) {
   if (!appSecret(env)) missing.push("META_APP_SECRET");
   if (!clean(env.WHATSAPP_VERIFY_TOKEN)) missing.push("WHATSAPP_VERIFY_TOKEN");
   const secondary = secondaryTargetMode(env);
-  if (secondary && !/^\\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID))) {
+  if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID))) {
     missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID");
   }
   if (secondary && clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) ===
