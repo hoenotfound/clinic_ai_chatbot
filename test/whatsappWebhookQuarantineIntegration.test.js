@@ -77,6 +77,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
       return items.length;
     },
     notifyWhatsAppSenderQuarantine: async () => true,
+    coexistenceSync: {acceptPassiveSync: async()=>({enabled:false,staged:0})},
     whatsappCoexistence: {
       summarizePassiveSync: () => ({ historyChunks: 0, appStateItems: 0 }),
       beginPendingAiForEcho() {},
