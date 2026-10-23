@@ -65,7 +65,19 @@ const CANDIDATES_SQL=`
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
        BETWEEN 7 AND 23
    AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour' <= $4::timestamptz
-   AND inbound.created_at + (rule.slot_hours + 1) * INTERVAL '1 hour' > $4::timestamptz
+   -- Catch up after quiet hours or a worker interruption, but never send
+   -- a stale follow-up more than eight hours after its original due time.
+   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour'
+       > $4::timestamptz - INTERVAL '8 hours'
+   -- Never send an old 2h slot if a newer configured 6h/20h slot is due.
+   AND NOT EXISTS (
+     SELECT 1 FROM whatsapp_sender_followup_rules newer_rule
+     WHERE newer_rule.sender_id=rule.sender_id AND newer_rule.enabled=TRUE
+       AND newer_rule.slot_hours IN(2,6,20)
+       AND newer_rule.slot_hours>rule.slot_hours
+       AND inbound.created_at + newer_rule.slot_hours * INTERVAL '1 hour'
+           <= $4::timestamptz
+   )
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
    AND EXISTS (
      SELECT 1 FROM messages reply JOIN whatsapp_sender_message_context mc
@@ -130,10 +142,20 @@ const RECHECK_SQL=`
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
-   AND EXISTS(
-     SELECT 1 FROM leads l WHERE l.contact_id=c.id
-       AND l.marketing_consent='opted_in' AND l.is_closed=FALSE
-       AND COALESCE(l.appointment_status,'none') NOT IN ('set','visited')
+   -- Match exactly the same authoritative latest lead as selection.
+   -- An old opted-in lead cannot override a new opted-out or booked lead.
+   AND EXISTS (
+     SELECT 1 FROM (
+       SELECT l.marketing_consent,l.is_closed,l.appointment_status,
+              stage.system_key AS stage_key
+       FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
+       WHERE l.contact_id=c.id
+       ORDER BY l.is_closed ASC,l.created_at DESC,l.id DESC LIMIT 1
+     ) latest_lead
+     WHERE latest_lead.marketing_consent='opted_in'
+       AND latest_lead.is_closed=FALSE
+       AND COALESCE(latest_lead.appointment_status,'none') NOT IN('set','visited')
+       AND COALESCE(latest_lead.stage_key,'') NOT IN('appointment_set','visited')
    )
    AND NOT EXISTS(
      SELECT 1 FROM messages newer
@@ -147,6 +169,17 @@ const RECHECK_SQL=`
        AND human.created_at>=inbound.created_at
    )
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
+   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour' <= NOW()
+   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour'
+       > NOW() - INTERVAL '8 hours'
+   AND NOT EXISTS (
+     SELECT 1 FROM whatsapp_sender_followup_rules newer_rule
+     WHERE newer_rule.sender_id=rule.sender_id AND newer_rule.enabled=TRUE
+       AND newer_rule.slot_hours IN(2,6,20)
+       AND newer_rule.slot_hours>rule.slot_hours
+       AND inbound.created_at + newer_rule.slot_hours * INTERVAL '1 hour' <= NOW()
+   )
+   AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
  ) AS allowed`;
 
