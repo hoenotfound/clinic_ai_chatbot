@@ -53,7 +53,7 @@ test("history is opt-in and never processes absent or foreign sender credentials
  const f=make();
  assert.equal(history.enabled({}),false);
  assert.deepEqual(await history.acceptPassiveSync({entry:[]},{...f,env:{}}),
-  {enabled:false,imported:0});
+  {enabled:false,staged:0});
  assert.deepEqual(await history.importPassiveChange({
    accountId:"wrong",change:{field:"history",value},
  },{...f,env}),{enabled:false,imported:0});
@@ -130,7 +130,7 @@ test("worker replays a staged sync only under the exact Ariel business identity"
    return {rowCount:1,rows:[{payload:staged,attempts:1}]};
   return original(sql,args);
  };
- const result=await history.runOnce({database:f.database,env,maxJobs:1});
+ const result=await history.runOnce({database:f.database,env,conversations:f.conversations,maxJobs:1});
  assert.equal(result.processed,1);
  assert.ok(f.calls.some(x=>x.sql?.includes("status='completed',payload=NULL")));
  assert.equal(f.calls.filter(x=>x.claim).length,1);
