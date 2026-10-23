@@ -10,6 +10,21 @@ const {
   whatsappCallbackUrl,
 } = require("./whatsappWebhookSubscription");
 
+async function checkCoexistencePhone({
+  phoneNumberId,accessToken,graphVersion,fetchImpl=global.fetch,
+}) {
+  const phoneId=requireNumeric(phoneNumberId,"WhatsApp phone ID");
+  const data=await graphRequest({
+    path:encodeURIComponent(phoneId)+"?fields=is_on_biz_app,platform_type",
+    accessToken,graphVersion,fetchImpl,
+  });
+  return {phoneNumberId:phoneId,
+    isOnBusinessApp:data?.is_on_biz_app===true,
+    platformType:typeof data?.platform_type==="string"?data.platform_type:null,
+    verified:data?.id===phoneId && data?.is_on_biz_app===true &&
+      data?.platform_type==="CLOUD_API"};
+}
+
 function requireNumeric(value, label) {
   const id = String(value || "").trim();
   if (!/^\d+$/.test(id)) throw new Error(`${label} must be a numeric Meta ID.`);
@@ -49,6 +64,7 @@ async function verifyWhatsAppSenderMapping({
   accessToken,
   graphVersion,
   fetchImpl = global.fetch,
+  requireCoexistence = false,
 }) {
   const accountId = requireNumeric(wabaId, "WhatsApp account ID");
   const phoneId = requireNumeric(phoneNumberId, "WhatsApp phone ID");
@@ -57,9 +73,12 @@ async function verifyWhatsAppSenderMapping({
     throw new Error("WhatsApp management token is required (not accepted as a CLI flag).");
   }
   const callbackUrl = whatsappCallbackUrl(clientBaseUrl);
-  const [phones, subscriptions] = await Promise.all([
+  const [phones, subscriptions, coexistence] = await Promise.all([
     listAccountPhoneIds({ wabaId: accountId, accessToken, graphVersion, fetchImpl }),
     getWabaSubscriptions({ wabaId: accountId, accessToken, graphVersion, fetchImpl }),
+    requireCoexistence
+      ? checkCoexistencePhone({phoneNumberId:phoneId,accessToken,graphVersion,fetchImpl})
+      : Promise.resolve(null),
   ]);
   const owned = phones.complete && phones.phoneIds.includes(phoneId);
   const matchingSubscription = subscriptions.find(row =>
@@ -73,9 +92,11 @@ async function verifyWhatsAppSenderMapping({
     phoneBelongsToAccount: owned,
     subscriptionToSharedAppConfirmed: Boolean(matchingSubscription),
     callbackOverrideMatches: Boolean(matchingSubscription),
-    verified: owned && Boolean(matchingSubscription),
+    coexistence:requireCoexistence?coexistence:null,
+    verified: owned && Boolean(matchingSubscription) &&
+      (!requireCoexistence || coexistence?.verified===true),
     // Never include access tokens or raw Graph API responses in the report.
   };
 }
 
-module.exports = { listAccountPhoneIds, verifyWhatsAppSenderMapping };
+module.exports = { listAccountPhoneIds, verifyWhatsAppSenderMapping, checkCoexistencePhone };
