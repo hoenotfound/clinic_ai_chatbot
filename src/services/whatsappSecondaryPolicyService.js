@@ -36,6 +36,10 @@ const SECONDARY_POLICY_SNAPSHOT_SQL = `
              AND mc.conversation_id=sc.id
            WHERE m.contact_id=c.id AND m.role='user'
              AND m.whatsapp_message_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
+               WHERE h.message_id=m.id AND h.sender_id=sa.id
+             )
          ) AS latest_inbound_at
   FROM contacts c
   JOIN whatsapp_sender_conversations sc
