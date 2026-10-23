@@ -1,4 +1,7 @@
-# Phase 2A: Ariel outbound transport (dependent on PR #384)
+# Phase 2A: the secondary WhatsApp sender outbound transport (dependent on PR #384)
+
+> **Target updated 2026-10-23:** Secondary = 中医养生馆 (+60 17-483 1336), phone ID `1318355951360575`, account ID `1071636698738276`. The original secondary number's content approval does not transfer. Keep all sends and Meta coexistence activation OFF until independently verified and authorized.
+
 
 Status: **developer-only transport, NOT an active second WhatsApp sender**.
 
@@ -11,7 +14,7 @@ composer, Meta subscriptions, Neon database, or Render environment.
 The module `src/services/whatsappSenderOutboundTransport.js` implements the
 Cloud API request transport for a **verified secondary conversation**:
 
-- Resolves Ariel's sender and customer identity from the authoritative
+- Resolves the secondary sender's sender and customer identity from the authoritative
   `contacts`, `whatsapp_sender_conversations`, and
   `whatsapp_sender_accounts` join. A caller cannot choose a sending number.
 - Requires all staged receiving/identity flags and the additional
@@ -27,11 +30,11 @@ Cloud API request transport for a **verified secondary conversation**:
 - Never exposes its token through its returned interface or its logs.
 
 **No existing production entrypoint imports this transport.** The staging
-flag must NOT be enabled and Ariel must remain Inbox-only until the work below
+flag must NOT be enabled and the secondary WhatsApp sender must remain Inbox-only until the work below
 is complete. The template payload method does not itself establish approval
 or consent, and must never be wired directly to a customer-facing endpoint.
 
-## Still required before any Ariel API sending
+## Still required before any the secondary WhatsApp sender API sending
 
 1. Sender-specific 24-hour policy and staff reply checks, including
    isolation from Neutro's contact history and current customer window.
@@ -64,4 +67,4 @@ No live Meta messages should be sent by this PR.
 - Later: connect staff/AI/media to this transport and perform live E2E checks.
 
 Do not merge to an auto-deploying main branch or treat a green CI run as
-permission to activate Ariel without the staging/rollback release gates.
+permission to activate the secondary WhatsApp sender without the staging/rollback release gates.
