@@ -71,6 +71,7 @@ const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence")
 const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = require("./utils/tcmServiceReviewReply");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
+const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
   deliveryErrorForSend,
@@ -587,7 +588,10 @@ async function processIncomingMessage(
     }
     const secondaryAiConversation = senderScoped &&
       contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
-      process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
+      process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+      // Recheck at dispatch as defense in depth. A runtime flag toggle must
+      // not make Ariel generate Neutro-branded replies without authorization.
+      secondaryUsesPrimaryClinicContent(process.env);
     const secondaryInboxOnly = senderScoped &&
       process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
       contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
@@ -1769,8 +1773,9 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    // Ariel's independent media/template/extended-follow-up send paths are
-    // not active. Stop after the tracked AI text reply; never allow optional
+    // Ariel uses Neutro's APPROVED clinic knowledge and pricing for AI text,
+    // but optional promotion/result media are still held until independently
+    // sent via Ariel's sender-scoped transport and billing gate. Never allow
     // promotional media, result images or the primary sender's media cache
     // to reach this secondary conversation via the primary Meta token.
     if (secondaryAiConversation) {
