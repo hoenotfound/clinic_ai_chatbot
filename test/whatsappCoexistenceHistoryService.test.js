@@ -105,3 +105,33 @@ test("declined Meta history sharing is respected",async()=>{
  assert.equal(r.imported,0);
  assert.equal(f.calls.some(x=>x.claim),false);
 });
+
+test("webhook acknowledgment stages history as one durable event without importing in request",async()=>{
+ const f=make();
+ const payload={object:"whatsapp_business_account",entry:[{
+  id:env.WHATSAPP_SECONDARY_WABA_ID,changes:[{field:"history",value}],
+ }]};
+ const result=await history.acceptPassiveSync(payload,{database:f.database,env});
+ assert.equal(result.staged,1);
+ assert.equal(f.calls.filter(x=>x.sql?.includes("INSERT INTO whatsapp_sender_coexistence_import_jobs")).length,1);
+ assert.equal(f.calls.filter(x=>x.claim).length,0);
+ assert.equal(f.calls.filter(x=>x.sql?.includes("INSERT INTO messages")).length,0);
+ assert.equal(f.calls.filter(x=>x.sql?.includes("UPDATE contacts")).length,0);
+});
+test("worker replays a staged sync only under the exact Ariel business identity",async()=>{
+ const f=make();
+ const staged={accountId:env.WHATSAPP_SECONDARY_WABA_ID,
+  change:{field:"history",value}};
+ const original=f.database.query;
+ f.database.query=async(sql,args)=>{
+  if(sql.startsWith("SELECT fingerprint FROM whatsapp_sender_coexistence_import_jobs"))
+   return {rows:[{fingerprint:"a".repeat(64)}]};
+  if(sql.includes("SET status='processing'")&&sql.includes("RETURNING payload,attempts"))
+   return {rowCount:1,rows:[{payload:staged,attempts:1}]};
+  return original(sql,args);
+ };
+ const result=await history.runOnce({database:f.database,env,maxJobs:1});
+ assert.equal(result.processed,1);
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='completed',payload=NULL")));
+ assert.equal(f.calls.filter(x=>x.claim).length,1);
+});
