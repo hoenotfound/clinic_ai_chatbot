@@ -9,6 +9,7 @@ const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSeconda
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
 const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
+const coexistenceSync = require("./services/whatsappCoexistenceHistoryService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
 const metaCommentAutomation = require("./services/metaCommentAutomationService");
@@ -213,6 +214,15 @@ function createApp({
     const businessAppEchoes = whatsapp.parseBusinessAppEchoes(webhookBody);
     const statusUpdates = whatsapp.parseStatusUpdates(webhookBody);
     const passiveSync = whatsappCoexistence.summarizePassiveSync(webhookBody);
+    // Persist opted-in, sender-authenticated Business App history BEFORE ACK,
+    // but never route imported messages to customer AI or follow-up workers.
+    // Feature defaults OFF; failure returns 503 so Meta may redeliver safely.
+    try {
+      await coexistenceSync.acceptPassiveSync(webhookBody);
+    } catch (err) {
+      console.error("Could not durably accept sender-scoped Business App sync:", err);
+      return res.sendStatus(503);
+    }
     for (const echo of businessAppEchoes) {
       whatsappCoexistence.beginPendingAiForEcho(echo);
     }
