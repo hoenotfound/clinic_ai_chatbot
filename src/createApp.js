@@ -36,6 +36,7 @@ const {
 } = require("./middleware/portalSecurity");
 const { requireAuth } = require("./middleware/requireAuth");
 const { stagingAccessGuard } = require("./middleware/pr395StagingBasicAuth");
+const { stagingWebhookGuard } = require("./services/pr395StagingSafety");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
@@ -139,7 +140,7 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/webhook", webhookJsonParser, async (req, res) => {
+  app.post("/webhook", stagingWebhookGuard, webhookJsonParser, async (req, res) => {
     // The single-sender compatibility boundary runs only AFTER Meta signature
     // verification. It rejects explicitly foreign sender events before any
     // legacy customer lookups, AI cancellation, or receipt writes.
@@ -340,7 +341,7 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
+  app.post("/meta-webhook", stagingWebhookGuard, metaWebhookJsonParser, async (req, res) => {
     const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
     const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
     for (const echo of staffEchoes) {
