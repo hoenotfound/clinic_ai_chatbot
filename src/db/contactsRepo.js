@@ -129,7 +129,26 @@ async function hydrateSocialContactRows(rows) {
 
 function presentPortalContact(row) {
   const isSocial = SOCIAL_CHANNELS.has(row?.channel);
-  if (!isSocial) return row;
+  if (!isSocial) {
+    // Legacy Neutro contacts deliberately remain unbound in migration 080.
+    // This is a PRESENTATION alias only, never an identity or send credential:
+    // the original contact and primary billing proof remain untouched.
+    const primaryKey = String(process.env.WHATSAPP_PRIMARY_SENDER_KEY || "");
+    if (row?.channel === "whatsapp" && row.whatsapp_sender_id == null &&
+        !row.whatsapp_sender_key &&
+        process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true" &&
+        process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true" &&
+        /^[a-z][a-z0-9_-]{0,63}$/.test(primaryKey) &&
+        /^[0-9]+$/.test(String(process.env.WHATSAPP_PHONE_NUMBER_ID || "")) &&
+        /^[0-9]+$/.test(String(process.env.WHATSAPP_WABA_ID || ""))) {
+      return { ...row, whatsapp_sender_key: primaryKey,
+        whatsapp_sender_display_name: "Neutro Sense",
+        whatsapp_sender_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID,
+        whatsapp_sender_account_id: process.env.WHATSAPP_WABA_ID,
+        whatsapp_is_secondary: false };
+    }
+    return row;
+  }
 
   return {
     ...row,
@@ -519,6 +538,7 @@ async function listConversations() {
       c.channel_user_id,
       c.photo_url,
 ${senderAwareInboxReadsEnabled() ? `
+      c.whatsapp_sender_id,
       sa.sender_key AS whatsapp_sender_key,
       sa.display_name AS whatsapp_sender_display_name,
       sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
