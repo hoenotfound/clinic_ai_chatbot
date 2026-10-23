@@ -172,7 +172,7 @@ const SECONDARY_MARKETING_CONSENT_SQL = `
   FROM active_lead l
 `;
 
-// Template lookup is always made against Ariel's own verified WABA and token.
+// Template lookup is always made against the secondary sender's own verified WABA and token.
 // No shared Neutro catalog, name-only cached result, or caller-asserted approval.
 async function verifySecondaryApprovedTemplate({
   name, languageCode, contact, database = pool, env = process.env,
