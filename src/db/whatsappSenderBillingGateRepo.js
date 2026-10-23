@@ -40,7 +40,8 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
         AND claim.claimed_at>=NOW()-INTERVAL '10 minutes'
     )) AS has_staff_template_billing_review,
    m.whatsapp_template->>'templateSignature' AS template_signature,
-   m.whatsapp_template->>'billingReviewClaimHash' AS billing_review_claim_hash
+   m.whatsapp_template->>'billingReviewClaimHash' AS billing_review_claim_hash,
+   m.whatsapp_template IS NULL AS is_freeform_service
  FROM messages m
  JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'
  JOIN whatsapp_sender_conversations sc ON sc.contact_id=c.id
@@ -82,13 +83,18 @@ async function reserveSecondaryBillingAttempt({
       return deny("secondary_billing_sender_mismatch");
     }
     const senderId = owner.rows[0].sender_id;
-    // A caller boolean is not proof of staff approval. The exact saved
-    // outbound message must carry a claimed one-time review, and the
-    // canonical Meta template signature must match the approved request.
-    if (billableAuthorized === true &&
-        (owner.rows[0].has_staff_template_billing_review !== true ||
-         !/^[a-f0-9]{64}$/.test(clean(expectedTemplateSignature)) ||
-         owner.rows[0].template_signature !== expectedTemplateSignature)) {
+    // Templates require their one-time staff review; freeform messages use
+    // the sender operator's explicit service-charge approval instead.
+    // Neither an arbitrary caller boolean nor a 24h window proves RM0.
+    const serviceApproved = billableAuthorized === true &&
+      expectedTemplateSignature == null &&
+      owner.rows[0].is_freeform_service === true &&
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true";
+    const templateApproved = billableAuthorized === true &&
+      owner.rows[0].has_staff_template_billing_review === true &&
+      /^[a-f0-9]{64}$/.test(clean(expectedTemplateSignature)) &&
+      owner.rows[0].template_signature === expectedTemplateSignature;
+    if (billableAuthorized === true && !serviceApproved && !templateApproved) {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_template_review_unverified");
     }
@@ -129,8 +135,9 @@ async function reserveSecondaryBillingAttempt({
       "VALUES($1,$2,$3,$4,$5,$6,$7)",
       [reservationId,senderId,cid,mid,
         billableAuthorized === true,
-        billableAuthorized === true ? "staff_template_billing_review" : null,
-        billableAuthorized === true ? owner.rows[0].billing_review_claim_hash : null]
+        serviceApproved ? "operator_acknowledged_service" :
+          templateApproved ? "staff_template_billing_review" : null,
+        templateApproved ? owner.rows[0].billing_review_claim_hash : null]
     );
     await client.query(
       "UPDATE whatsapp_sender_billing_gates SET " +
