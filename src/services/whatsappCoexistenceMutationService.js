@@ -61,7 +61,9 @@ async function record(echo,contact,{
    throw Error("Unsupported WhatsApp Business App edit/revoke payload.");
  }
  const owner=await conversations.senderForContact(contact.id,database);
- if(!owner||owner.sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
+ const senderId=Number(contact.whatsapp_sender_id);
+ if(!Number.isSafeInteger(senderId)||senderId<1||
+    !owner||owner.sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
     owner.meta_phone_number_id!==env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
     owner.meta_account_id!==env.WHATSAPP_SECONDARY_WABA_ID ||
     contact.whatsapp_number!==owner.customer_wa_id)
@@ -70,20 +72,29 @@ async function record(echo,contact,{
    `INSERT INTO whatsapp_sender_coexistence_mutations
       (sender_id,contact_id,event_wamid,target_wamid,action,replacement_text)
     VALUES($1,$2,$3,$4,$5,$6)
-    ON CONFLICT(sender_id,event_wamid) DO UPDATE
-      SET event_wamid=EXCLUDED.event_wamid
-    WHERE whatsapp_sender_coexistence_mutations.contact_id=EXCLUDED.contact_id
-      AND whatsapp_sender_coexistence_mutations.target_wamid=EXCLUDED.target_wamid
-      AND whatsapp_sender_coexistence_mutations.action=EXCLUDED.action
-      AND whatsapp_sender_coexistence_mutations.replacement_text
-          IS NOT DISTINCT FROM EXCLUDED.replacement_text
+    ON CONFLICT(sender_id,event_wamid) DO NOTHING
     RETURNING id,status`,
-   [owner.sender_id,contact.id,echo.id,echo.originalMessageId,
+   [senderId,contact.id,echo.id,echo.originalMessageId,
     echo.type,echo.type==="edit"?echo.text:null]
  );
- if(row.rows?.length!==1)throw Error("Business App mutation replay conflicts.");
- if(row.rows[0].status==="applied")return{alreadyApplied:true};
- return applyPending({id:row.rows[0].id,senderId:owner.sender_id},{database});
+ if(row.rows?.length!==1){
+   const prior=await database.query(
+     "SELECT id,contact_id,target_wamid,action,replacement_text,status "+
+     "FROM whatsapp_sender_coexistence_mutations WHERE sender_id=$1 AND event_wamid=$2",
+     [senderId,echo.id]
+   );
+   const previous=prior.rows?.[0];
+   if(!previous||previous.contact_id!==contact.id ||
+      previous.target_wamid!==echo.originalMessageId ||
+      previous.action!==echo.type ||
+      previous.replacement_text!==(echo.type==="edit"?echo.text:null))
+     throw Error("Business App mutation replay conflicts.");
+   if(previous.status==="pending")
+     await applyPending({id:previous.id,senderId},{database});
+   return{isNew:false,alreadySeen:true};
+ }
+ const applied=await applyPending({id:row.rows[0].id,senderId},{database});
+ return{isNew:true,...(applied||{pending:true})};
 }
 async function runOnce({database=pool,env=process.env,limit=20}={}){
  if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true")
