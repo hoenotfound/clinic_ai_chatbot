@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {assertSenderIngressSafety,assertStoredSenderSafety}=require("../src/services/whatsappSenderActivationGate");
+const {assertSenderIngressSafety,assertStoredSenderSafety,secondaryUsesPrimaryClinicContent}=require("../src/services/whatsappSenderActivationGate");
 const safe={
  WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -146,14 +146,51 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     ...safe,WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false",
   }),"Ordinary Neutro startup needs no Ariel spend acknowledgement.");
   assert.doesNotThrow(()=>assertSenderIngressSafety(dual));
+  // Without an explicit Neutro clinic-content binding, Ariel AI remains off
+  // even with every independent transport and billing dependency configured.
   assert.throws(
     ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}),
-    /sender-specific clinic configuration is not yet implemented/
+    /approved primary Neutro clinic-content binding/
   );
   assert.throws(
     ()=>assertSenderIngressSafety({...dual,WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"}),
-    /sender-specific clinic configuration is not yet implemented/
+    /approved primary Neutro clinic-content binding/
   );
+  const sharedClinic={
+    ...dual,
+    WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
+    WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+  };
+  assert.equal(secondaryUsesPrimaryClinicContent(sharedClinic),true);
+  assert.equal(secondaryUsesPrimaryClinicContent(dual),false);
+  assert.doesNotThrow(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+  }));
+  assert.doesNotThrow(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+  }));
+  for(const changes of [
+    {WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"ariel"},
+    {WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:""},
+    {WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"false"},
+    {WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:""},
+    {WHATSAPP_SECONDARY_SENDER_KEY:dual.WHATSAPP_PRIMARY_SENDER_KEY},
+  ]) {
+    assert.equal(secondaryUsesPrimaryClinicContent({...sharedClinic,...changes}),false);
+    assert.throws(()=>assertSenderIngressSafety({
+      ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",...changes,
+    }),/approved primary Neutro clinic-content binding/);
+  }
+  // Content approval does not approve billing or skip independent transport.
+  assert.throws(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"false",
+  }),/possible Meta service-message charges/);
+  assert.throws(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false",
+  }),/Unsafe WhatsApp secondary operational activation/);
   assert.doesNotThrow(()=>assertSenderIngressSafety({
     ...dual, WHATSAPP_SECONDARY_WABA_ID: dual.WHATSAPP_WABA_ID,
   }), "Two sender phone IDs may share a single verified WABA.");
