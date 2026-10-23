@@ -1,4 +1,7 @@
-# Phase 2C: verified Ariel receipt staging and retry holds
+# Phase 2C: verified the secondary WhatsApp sender receipt staging and retry holds
+
+> **Target updated 2026-10-23:** Secondary = 中医养生馆 (+60 17-483 1336), phone ID `1318355951360575`, account ID `1071636698738276`. The original secondary number's content approval does not transfer. Keep all sends and Meta coexistence activation OFF until independently verified and authorized.
+
 
 Status: **development-only, no live webhook or outbound integration**.
 
@@ -17,8 +20,8 @@ changed by this PR.
   the **original raw webhook bytes**, requiring `WHATSAPP_APP_SECRET`.
   Unlike the legacy development webhook middleware, there is no unsigned
   development-mode exception here.
-- Every event in a batch must be a status callback for **Ariel's exact
-  Meta account and receiving phone**; mixed Neutro/Ariel callbacks,
+- Every event in a batch must be a status callback for **the secondary sender's exact
+  Meta account and receiving phone**; mixed Neutro/the secondary WhatsApp sender callbacks,
   inbound message payloads, unknown fields, malformed statuses and
   unverifiable signatures are all refused before any database write.
 - The sender-specific saved outbound attempt is verified against its
@@ -27,9 +30,9 @@ changed by this PR.
   transaction. No bare phone or WAMID alone selects a send.
 - Matched statuses are journaled without changing Neutro's receipt,
   billing or retry records. Signed status replays are idempotent.
-  Callbacks with no matching Ariel outbound attempt are recorded as
+  Callbacks with no matching the secondary WhatsApp sender outbound attempt are recorded as
   unmatched privacy-minimized events.
-- Failed and billable receipts move an Ariel attempt to a durable
+- Failed and billable receipts move an the secondary WhatsApp sender attempt to a durable
   `unknown` billing state. Later delivered/read or nonbillable
   receipts do **not** automatically clear this hold.
 - `inspectSecondaryRetryHold` is **read-only**. It always returns
@@ -42,8 +45,8 @@ changed by this PR.
 ## Deliberate release boundaries
 
 - `WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED=false` by default.
-- All earlier Ariel flags must remain OFF. No route imports the new
-  receipt service. Production still quarantines Ariel status callbacks
+- All earlier the secondary WhatsApp sender flags must remain OFF. No route imports the new
+  receipt service. Production still quarantines the secondary WhatsApp sender status callbacks
   rather than passing them to this service.
 - Signed provider receipts prove only what Meta reported. Pricing
   `billable=false` is not a substitute for an approved overall
