@@ -195,13 +195,19 @@ unmodified by this remediation. Code changes require **fresh exact-head CI**.
   [official FAQ](https://whatsappbusiness.com/resources/faq/) confirms that
   from 1 October 2026 each phone number gets 1,000 free service messages per
   month, then service messages are charged individually.
-- Ariel AI and AI-dependent follow-ups are **deliberately hard-disabled at
-  startup** because the current `src/server.js` uses the global Neutro
-  clinic services, prices, intro and AI prompt. Ariel is a second number
-  under Neutro's business portfolio, not necessarily a different clinic.
-  Reusing Neutro's approved clinic content *may* be correct, but only after
-  staff explicitly approves that sender-to-content binding. Do not invent
-  separate Ariel services/prices or bypass the safety gate.
+- **The operator approved Ariel Lee using exactly the same Neutro Sense
+  clinic content**, including the existing AI prompt, business details,
+  service catalog, prices and current promotions. The app's existing global
+  Neutro clinic configuration is therefore the intentionally shared source.
+  To activate *only after staging*, set both
+  `WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE=primary` and
+  `WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED=true`. Startup and
+  runtime guards enforce this explicit binding for Ariel AI.
+  This is **content sharing only**: Meta token, business phone ID,
+  customer/conversation identities, consent, follow-up ledger and billing
+  reservations must remain independent. Pricing/result media are not
+  automatically sent by Ariel AI yet: the separate sender media/billing path
+  must be verified first. **Ariel AI and follow-ups remain OFF in Render.**
 - Live Render `da-chatbot-neutro-sense-tcm` follows `main` with
   **auto-deploy ON**. Do not merge this PR before staged signed Meta
   callbacks, exact credential/number verification, billing consent and a
@@ -260,9 +266,36 @@ approved test recipients. Then obtain *actual* signed provider receipts for
 Ariel/Neutro inbound, staff text, media, template variables, pricing, wrong
 recipient rejection and simultaneous messages. Check billing in Meta's
 account UI. These are **not** established by synthetic CI webhook tests and
-must not be marked complete without observable provider receipts. Staff must
-also supply/approve Ariel's real business information, services, price rules,
-clinical escalation copy and AI prompt before the secondary AI flag can ever
-be made available.
+must not be marked complete without observable provider receipts. The user has approved
+Neutro's existing business information, services, pricing, promotions and
+clinical escalation content for Ariel Lee's number. Do not invent a second
+clinic profile. Sender-specific outbound Meta credentials, billing/receipt
+proof, opt-out history and customer context remain separate, and a real Meta
+staging run is still mandatory before Ariel AI activation.
 
 **Release decision remains Draft / no live changes.**
+
+## Shared Neutro clinic content decision — 2026-10-23
+
+The business owner has confirmed that Ariel Lee is another WhatsApp number
+for the **same Neutro Sense clinic**. The primary clinic configuration,
+including services, current pricing, promotions, safety escalation guidance,
+and AI conversation prompt, is the authoritative source for both numbers.
+Do not maintain duplicate Ariel pricing that can drift from Neutro.
+
+`secondaryUsesPrimaryClinicContent()` now explicitly enforces the approved
+`primary` source and separate sender keys in the server's secondary AI
+dispatch path and the startup gate. Regression tests prove wrong/missing
+approval, missing billing acknowledgment, and missing receipt ingress still
+fail closed, while a correctly configured secondary sender can use shared
+clinic text without sharing its token or billing state.
+
+**Important:** This removes *only the AI content-isolation obstacle*.
+It does not complete real Meta authorization, independent media delivery,
+or billing approval. Keep
+`WHATSAPP_SECONDARY_AI_SEND_ENABLED=false` and
+`WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED=false` until an isolated staging
+deployment has observed correct signed callbacks for BOTH phone numbers.
+The existing Ariel follow-up worker still uses its own sender-owned,
+staff-authored 2h/6h/20h rules; it does **not** inherit Neutro's scheduling
+or send the 48h/72h marketing templates automatically.
