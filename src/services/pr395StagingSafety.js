@@ -50,7 +50,7 @@ function assertPr395StagingSafety(env = process.env) {
   let hostname;
   try { hostname = new URL(dbUrl).hostname.toLowerCase(); } catch (_) {}
   if (!hostname || !pin || hostname !== pin ||
-      !/\\.neon\\.tech$/.test(hostname)) {
+      !/\.neon\.tech$/.test(hostname)) {
     throw new Error("PR395 staging DATABASE_URL must match its explicitly pinned isolated Neon endpoint host.");
   }
   if (OUTBOUND_SWITCHES.some(key => env[key] === "true")) {
