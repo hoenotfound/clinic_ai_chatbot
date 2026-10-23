@@ -22,7 +22,7 @@ router.get("/",async(req,res)=>{
    );
    if(lookup.rows?.length!==1)return res.json({configured:false,items:[]});
    const senderId=lookup.rows[0].id;
-   const [outbound,inbound]=await Promise.all([
+   const [outbound,inbound,history]=await Promise.all([
      pool.query(
        `SELECT 'outbound_ai_image' AS type,j.id::text AS id,j.contact_id,
           j.outbound_message_id AS message_id,j.state AS status,
@@ -45,8 +45,17 @@ router.get("/",async(req,res)=>{
           OR (j.status='claimed' AND j.updated_at<NOW()-INTERVAL '10 minutes'))
         ORDER BY j.updated_at DESC LIMIT 50`,[senderId]
      ),
+     pool.query(
+       `SELECT 'business_app_history' AS type,fingerprint AS id,
+           NULL::integer AS contact_id,NULL::integer AS message_id,
+           status,created_at,updated_at,'passive_import' AS delivery_status,
+           COALESCE(last_error,'History import expired without processing') AS action
+        FROM whatsapp_sender_coexistence_import_jobs
+        WHERE sender_id=$1 AND status IN('failed','expired')
+        ORDER BY updated_at DESC LIMIT 50`,[senderId]
+     ),
    ]);
-   return res.json({configured:true,items:[...outbound.rows,...inbound.rows]
+   return res.json({configured:true,items:[...outbound.rows,...inbound.rows,...history.rows]
      .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
     outboundRetryAllowed:false});
  }catch(e){
