@@ -1,4 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
+const { pool } = require("../db/db");
+const senderConversations = require("../db/whatsappSenderConversationRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
@@ -56,6 +58,8 @@ function createInboundMessageClaimService({
   policy = whatsappPolicy,
   reengagement = leadReengagementAlertService,
   config = clinicConfig,
+  senderIdentity = senderConversations,
+  database = pool,
 } = {}) {
   function customerOptOutScope(incoming) {
     if (
@@ -385,9 +389,18 @@ function createInboundMessageClaimService({
       return null;
     }
 
-    const contact = channel === "whatsapp"
-      ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
-      : await contacts.getOrCreateChannelContact(
+    const senderScopedIngress = channel === "whatsapp" &&
+      process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
+    const contact = senderScopedIngress
+      ? await senderIdentity.claimSenderContact({
+          accountId: incoming.businessAccountId,
+          phoneNumberId: incoming.businessPhoneNumberId,
+          customerPhone: incoming.from,
+          profileName: incoming.profileName,
+        })
+      : channel === "whatsapp"
+        ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
+        : await contacts.getOrCreateChannelContact(
           channel,
           incoming.from,
           incoming.profileName,
@@ -402,14 +415,52 @@ function createInboundMessageClaimService({
     const storedIncoming = isSocialAtomicStop
       ? { ...incoming, _socialStopEnforcedAtomically: true }
       : { ...incoming, _socialStopEnforcedAtomically: false };
-    const durableClaim = await processing.storeInboundClaim({
-      contactId: contact.id,
-      content: initialInboundText(incoming, config),
-      storedMessageId: storedInboundId,
-      channel,
-      incoming: storedIncoming,
-      optOutScope: stopScope,
-    });
+    // Keep the durable inbound and sender-message association in one
+    // PostgreSQL transaction. A transient context failure must roll back
+    // the message/job, so Meta can safely redeliver it.
+    const senderClient = senderScopedIngress ? await database.connect() : null;
+    let durableClaim;
+    try {
+      if (senderClient) await senderClient.query("BEGIN");
+      durableClaim = await processing.storeInboundClaim({
+        contactId: contact.id,
+        content: initialInboundText(incoming, config),
+        storedMessageId: storedInboundId,
+        channel,
+        incoming: storedIncoming,
+        optOutScope: stopScope,
+      }, senderClient || undefined);
+      if (senderClient) {
+        let contextMessageId = durableClaim?.savedInbound?.id;
+        if (!contextMessageId) {
+          // A duplicate provider callback must repair a missing association,
+          // but may NEVER claim a message belonging to another sender.
+          const existing = await senderClient.query(
+            "SELECT id FROM messages WHERE whatsapp_message_id=$1 " +
+            "AND contact_id=$2 AND role='user'",
+            [storedInboundId, contact.id]
+          );
+          contextMessageId = existing.rows[0]?.id;
+          if (!contextMessageId) {
+            throw new Error("WhatsApp replay cannot be matched to its sender contact.");
+          }
+        }
+        const context = await senderIdentity.attachMessageContext({
+          messageId: contextMessageId,
+          contactId: contact.id,
+          conversationId: contact.whatsapp_sender_conversation_id,
+        }, senderClient);
+        if (!context) {
+          throw new Error("WhatsApp message sender association is inconsistent.");
+        }
+        await senderClient.query("COMMIT");
+      }
+    } catch (err) {
+      if (senderClient) await senderClient.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      if (senderClient) senderClient.release();
+    }
 
     // A resolved message_edit job is complete only after the normal customer
     // message + reply-processing job is durable. This is intentionally done

@@ -56,6 +56,12 @@ export const api = {
     }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
+  getSecondaryFollowUpRules: () => request("/whatsapp-secondary-followups"),
+  getSecondaryMediaReview: () => request("/whatsapp-secondary-media-review"),
+  saveSecondaryFollowUpRule: (slot,rule) =>
+    request(`/whatsapp-secondary-followups/${slot}`, {
+      method:"PUT",body:JSON.stringify(rule),
+    }),
   resolveAiReview: (contactId, reviewId) =>
     request(`/conversations/${contactId}/reviews/${reviewId}/resolve`, { method: "PATCH" }),
   getConversationAttribution: (contactId) =>

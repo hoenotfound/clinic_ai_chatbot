@@ -406,6 +406,89 @@ function blockedResult(check) {
     error: check.message, retryable: false,
   };
 }
+// Use one immutable WhatsApp contact as the billing authority in sender-aware mode.
+// The legacy queries and their parameters are left untouched until explicit
+// multi-number read activation, preserving Neutro's current free-entry logic.
+const SCOPED_VERIFIED_WINDOW_SQL = VERIFIED_WINDOW_SQL.replace(
+  "WHERE c.channel='whatsapp'",
+  "WHERE c.channel='whatsapp' AND c.id=$7::integer"
+);
+const SCOPED_SESSION_WINDOW_SQL = VERIFIED_SESSION_WINDOW_SQL.replace(
+  "WHERE c.channel='whatsapp'",
+  "WHERE c.channel='whatsapp' AND c.id=$4::integer"
+);
+const SCOPED_CTWA_FIRST_REPLY_SQL = CTWA_FIRST_REPLY_SQL.replace(
+  "WHERE entry.source_type='ad'",
+  "WHERE entry.source_type='ad' AND c.id=$4::integer"
+);
+// The seven-day feature is proven by independent clinic-wide Meta evidence,
+// not by requiring each individual Neutro customer to bootstrap that proof.
+// Exclude all Ariel evidence by the persisted receiving business identity.
+const SCOPED_SEVEN_DAY_PROOF_SQL = SEVEN_DAY_PROOF_SQL.replace(
+  "WHERE ad.source_type='ad'",
+  "WHERE ad.source_type='ad' AND EXISTS (" +
+    "SELECT 1 FROM contacts evidence_contact " +
+    "LEFT JOIN whatsapp_sender_accounts sender " +
+    "ON sender.id=evidence_contact.whatsapp_sender_id " +
+    "WHERE evidence_contact.id=ad.contact_id " +
+    "AND (evidence_contact.whatsapp_sender_id IS NULL OR " +
+    "(sender.meta_phone_number_id=$1::text AND sender.meta_account_id=$2::text " +
+    "AND sender.state='active')))"
+);
+
+function senderAwareBillingReads(env = process.env) {
+  return env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
+}
+
+// Only billing callbacks for the primary account can trip its reservation.
+// Unknown legacy receipts remain a conservative blocker.
+function billingAlarmSenderSql(env = process.env) {
+  if (!senderAwareBillingReads(env)) return "";
+  return " AND (business_phone_number_id IS NULL OR business_phone_number_id=$2::text)" +
+    " AND (business_account_id IS NULL OR business_account_id=$3::text)";
+}
+function billingAlarmSenderArgs(env = process.env) {
+  return senderAwareBillingReads(env) ?
+    [String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim(),
+     String(env.WHATSAPP_WABA_ID || "").trim()] : [];
+}
+
+// Sender accounts share customer WA IDs; they do not share contact IDs,
+// service windows, billing receipts, or free-entry eligibility.
+async function primaryBillingContactId(to, {
+  database = pool, env = process.env, expectedContactId = null,
+  currentMessageId = null,
+} = {}) {
+  const customer = String(to || "").replace(/\D/g, "");
+  const phone = String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+  const account = String(env.WHATSAPP_WABA_ID || "").trim();
+  if (customer.length < 8 || !/^[0-9]+$/.test(phone) || !/^[0-9]+$/.test(account)) return null;
+  const found = await database.query(
+    "SELECT c.id FROM contacts c " +
+    "LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
+    "WHERE c.channel='whatsapp' " +
+    "AND regexp_replace(c.whatsapp_number,'[^0-9]','','g')=$1 " +
+    "AND (c.whatsapp_sender_id IS NULL OR " +
+    "(sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3 AND sa.state='active')) " +
+    "LIMIT 2",
+    [customer, phone, account]
+  );
+  if (found.rows?.length !== 1) return null;
+  const id = Number(found.rows[0].id);
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  if (expectedContactId != null && Number(expectedContactId) !== id) return null;
+  if (currentMessageId != null) {
+    const msgId = Number(currentMessageId);
+    if (!Number.isSafeInteger(msgId) || msgId < 1) return null;
+    const msg = await database.query(
+      "SELECT contact_id FROM messages WHERE id=$1 AND role='assistant'",
+      [msgId]
+    );
+    if (Number(msg.rows?.[0]?.contact_id) !== id) return null;
+  }
+  return id;
+}
+
 function configuredAccount() {
   return String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
 }
@@ -418,7 +501,7 @@ function configuredAccount() {
 // Independent evidence can be recorded by a verified post-72h FEP callback
 // from a different preexisting, non-strict session. NEVER send a new message
 // under strict mode merely to bootstrap this evidence.
-async function authorizedCeilingHours({ database = pool, env = process.env } = {}) {
+async function authorizedCeilingHours({ database = pool, env = process.env, contactId = null } = {}) {
   if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() !== "true") {
     return 72;
   }
@@ -427,7 +510,13 @@ async function authorizedCeilingHours({ database = pool, env = process.env } = {
   const query = typeof database?.query === "function"
     ? database.query.bind(database) : null;
   if (!query) throw new Error("WhatsApp free-only pricing database unavailable");
-  const result = await query(SEVEN_DAY_PROOF_SQL);
+  if (senderAwareBillingReads(env) && !contactId) return 72;
+  const result = senderAwareBillingReads(env)
+    ? await query(SCOPED_SEVEN_DAY_PROOF_SQL, [
+        String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim(),
+        String(env.WHATSAPP_WABA_ID || "").trim(),
+      ])
+    : await query(SEVEN_DAY_PROOF_SQL);
   return result.rows?.[0]?.verified === true ? 168 : 72;
 }
 
@@ -451,7 +540,7 @@ async function logBlock(account, check, database = pool) {
 // Read-only scheduler preflight. Deliberately does not reserve or mark a slot
 // consumed. The final provider send must still call reserve() because a Meta
 // callback or another worker can change state immediately after this check.
-async function preflightTemplate(to, { database = pool, now = new Date(), kind = 'template' } = {}) {
+async function preflightTemplate(to, { database = pool, now = new Date(), kind = 'template', contactId = null } = {}) {
   if (!enabled()) return { allowed: true };
   const account=configuredAccount();
   const recipient=String(to || "").replace(/\D/g,"");
@@ -463,6 +552,11 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
     return deny("zero_cost_configuration_invalid","Strict WhatsApp billing preflight configuration is invalid.");
   }
   try {
+    const scopedId = senderAwareBillingReads()
+      ? await primaryBillingContactId(to, { database, expectedContactId: contactId }) : null;
+    if (senderAwareBillingReads() && !scopedId)
+      return deny("zero_cost_sender_unverified",
+        "Billing eligibility could not be tied to the verified primary WhatsApp contact.");
     const gate=await database.query(
       `SELECT status,wamid FROM whatsapp_free_only_send_gate WHERE phone_number_id=$1`,[account]);
     const previous=gate.rows?.[0];
@@ -487,17 +581,21 @@ async function preflightTemplate(to, { database = pool, now = new Date(), kind =
     const billed=await database.query(
       `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
         WHERE billable=true AND updated_at>=$1::timestamptz
+          ${billingAlarmSenderSql()}
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
                            AND ex.status='accepted'
                            AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
                            AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
-      [new Date(activation).toISOString()]);
+      [new Date(activation).toISOString(), ...billingAlarmSenderArgs()]);
     if (billed.rows?.[0]?.tripped!==false)
       return deny("zero_cost_billing_alarm","Meta reported a billable message after activation.");
-    const ceiling=await authorizedCeilingHours({ database });
-    const eligible=await database.query(VERIFIED_WINDOW_SQL,
-      [ceiling,stamp.toISOString(),recipient,null,null,kind === "freeform" ? "freeform" : "template"]);
+    const ceiling=await authorizedCeilingHours({ database, contactId: scopedId });
+    const windowArgs=[ceiling,stamp.toISOString(),recipient,null,null,
+      kind === "freeform" ? "freeform" : "template"];
+    if (scopedId) windowArgs.push(scopedId);
+    const eligible=await database.query(scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL,
+      windowArgs);
     if (eligible.rows?.[0]?.eligible!==true)
       return deny("zero_cost_unverified_free_entry",kind === "freeform"
         ? "No active, fully proven free-entry free-form window."
@@ -528,13 +626,14 @@ async function hasVerifiedFreeTemplateWindow(to, {
   const stamp = new Date(now);
   if (recipient.length < 8 || !Number.isFinite(stamp.getTime())) return false;
   try {
-    let ceiling = 72;
-    if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true") {
-      const proof = await database.query(SEVEN_DAY_PROOF_SQL);
-      if (proof.rows?.[0]?.verified === true) ceiling = 168;
-    }
-    const result = await database.query(VERIFIED_WINDOW_SQL,
-      [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
+    const scopedId=senderAwareBillingReads(env)
+      ? await primaryBillingContactId(to,{database,env}) : null;
+    if(senderAwareBillingReads(env) && !scopedId) return false;
+    const ceiling=await authorizedCeilingHours({database,env,contactId:scopedId});
+    const args=[ceiling,stamp.toISOString(),recipient,null,null,"template"];
+    if(scopedId) args.push(scopedId);
+    const result = await database.query(
+      scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL, args);
     return result.rows?.[0]?.eligible === true;
   } catch (error) {
     console.warn("[WhatsApp free-only] Inbox preview could not be verified:", error?.message);
@@ -552,21 +651,25 @@ async function inspectFreeTemplateWindow(to, {
   const stamp = new Date(now);
   if (recipient.length < 8 || !Number.isFinite(stamp.getTime())) return result;
   try {
-    let ceiling = 72;
-    if (String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true") {
-      const proof = await database.query(SEVEN_DAY_PROOF_SQL);
-      if (proof.rows?.[0]?.verified === true) ceiling = 168;
-    }
-    const verified = await database.query(VERIFIED_SESSION_WINDOW_SQL,
-      [ceiling, stamp.toISOString(), recipient]);
+    const scopedId=senderAwareBillingReads(env)
+      ? await primaryBillingContactId(to,{database,env}) : null;
+    if(senderAwareBillingReads(env) && !scopedId) return result;
+    const ceiling=await authorizedCeilingHours({database,env,contactId:scopedId});
+    const sessionArgs=[ceiling,stamp.toISOString(),recipient];
+    if(scopedId) sessionArgs.push(scopedId);
+    const verified = await database.query(
+      scopedId ? SCOPED_SESSION_WINDOW_SQL : VERIFIED_SESSION_WINDOW_SQL,
+      sessionArgs);
     if (verified.rows?.[0]?.verified !== true) return result;
 
     let ready;
     if (enabled()) {
-      ready = await preflightTemplate(to, { database, now });
+      ready = await preflightTemplate(to, { database, now, contactId: scopedId });
     } else {
-      const send = await database.query(VERIFIED_WINDOW_SQL,
-        [ceiling, stamp.toISOString(), recipient, null, null, "template"]);
+      const sendArgs=[ceiling,stamp.toISOString(),recipient,null,null,"template"];
+      if(scopedId) sendArgs.push(scopedId);
+      const send = await database.query(
+        scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL, sendArgs);
       ready = send.rows?.[0]?.eligible === true
         ? { allowed: true }
         : { allowed: false, code: "unresolved_pricing" };
@@ -584,6 +687,20 @@ async function inspectFreeTemplateWindow(to, {
 
 async function reserve(to, { database = pool, now = new Date(), context = {} } = {}) {
   if (!enabled()) return { allowed: true, reservationId: null };
+  let scopedId=null;
+  if(senderAwareBillingReads()) {
+    try {
+      scopedId=await primaryBillingContactId(to,{
+        database, expectedContactId:context.contactId,
+        currentMessageId:context.currentMessageId,
+      });
+    } catch(error) {
+      console.error("[WhatsApp billing] Could not verify sender identity:",error);
+      return deny("zero_cost_database_unavailable","Sender-qualified billing lookup failed.");
+    }
+    if(!scopedId) return deny("zero_cost_sender_unverified",
+      "Cannot authorize a send without the verified primary WhatsApp contact.");
+  }
   if ((allow24hServiceReplies() && context.messageKind === "first_reply_text") ||
       (allow24hStaffMedia() && context.messageKind === "staff_media") ||
       (allow24hAutoFollowUps() &&
@@ -661,12 +778,13 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
       const alarm=(await client.query(
         `SELECT EXISTS(SELECT 1 FROM whatsapp_free_entry_pricing_evidence
           WHERE billable=true AND updated_at>=$1::timestamptz
+          ${billingAlarmSenderSql()}
           AND NOT EXISTS(SELECT 1 FROM whatsapp_24h_service_reply_exceptions ex
                          WHERE ex.wamid=whatsapp_free_entry_pricing_evidence.wamid
                            AND ex.status='accepted'
                            AND whatsapp_free_entry_pricing_evidence.pricing_type='regular'
                            AND whatsapp_free_entry_pricing_evidence.pricing_category='service')) AS tripped`,
-        [new Date(activation).toISOString()])).rows[0];
+        [new Date(activation).toISOString(), ...billingAlarmSenderArgs()])).rows[0];
       if (alarm?.tripped!==false) {
         rejected=deny("zero_cost_billing_alarm",
           "WhatsApp free-only stopped: Meta reported a billable message after activation.");
@@ -674,7 +792,7 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     }
 
     let ceiling=72;
-    if (!rejected) ceiling=await authorizedCeilingHours({ database: client });
+    if (!rejected) ceiling=await authorizedCeilingHours({ database: client, contactId:scopedId });
 
     // Exclusions may refer ONLY to the exact saved outbound message and
     // claimed follow-up belonging to this recipient. Never trust unverified
@@ -712,9 +830,11 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
     }
 
     if (!rejected) {
-      const eligible=(await client.query(VERIFIED_WINDOW_SQL,
-        [ceiling,clock.toISOString(),recipient,currentMessageId,currentAttemptId,
-          context.messageKind === "template" ? "template" : "freeform"])).rows[0];
+      const windowArgs=[ceiling,clock.toISOString(),recipient,currentMessageId,currentAttemptId,
+          context.messageKind === "template" ? "template" : "freeform"];
+      if(scopedId) windowArgs.push(scopedId);
+      const eligible=(await client.query(
+        scopedId ? SCOPED_VERIFIED_WINDOW_SQL : VERIFIED_WINDOW_SQL, windowArgs)).rows[0];
       if (eligible?.eligible!==true) {
         // The ONLY exception to preexisting FEP pricing proof: one first
         // free-form text reply that opens the entry point for a verified ad.
@@ -723,8 +843,11 @@ async function reserve(to, { database = pool, now = new Date(), context = {} } =
         let initialEligible=false;
         if (context.messageKind === "first_reply_text" &&
             currentMessageId != null && currentAttemptId == null) {
-          const first=(await client.query(CTWA_FIRST_REPLY_SQL,
-            [clock.toISOString(),recipient,currentMessageId])).rows[0];
+          const firstArgs=[clock.toISOString(),recipient,currentMessageId];
+          if(scopedId) firstArgs.push(scopedId);
+          const first=(await client.query(
+            scopedId ? SCOPED_CTWA_FIRST_REPLY_SQL : CTWA_FIRST_REPLY_SQL,
+            firstArgs)).rows[0];
           initialEligible=first?.eligible_first_reply===true;
         }
         if (!initialEligible) {
@@ -890,4 +1013,5 @@ async function perform(to, operation, context = {}) {
 module.exports = {
   blockedResult,configuredAccount,enabled,settings,allow24hServiceReplies,allow24hStaffMedia,allow24hAutoFollowUps,reserve24hServiceReply,complete24hServiceReply,preflightTemplate,preflightFreeform,hasVerifiedFreeTemplateWindow,inspectFreeTemplateWindow,reserve,complete,reconcileConfirmedGate,perform,
   authorizedCeilingHours,VERIFIED_WINDOW_SQL,VERIFIED_SESSION_WINDOW_SQL,SEVEN_DAY_PROOF_SQL,CTWA_FIRST_REPLY_SQL,
+  primaryBillingContactId, billingAlarmSenderSql, billingAlarmSenderArgs, SCOPED_VERIFIED_WINDOW_SQL, SCOPED_SESSION_WINDOW_SQL, SCOPED_CTWA_FIRST_REPLY_SQL,SCOPED_SEVEN_DAY_PROOF_SQL,
 };

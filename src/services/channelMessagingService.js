@@ -10,6 +10,8 @@ const whatsappVideoMediaCache = require("./whatsappVideoMediaCache");
 const audioConvert = require("./audioConvertService");
 const messagingPolicy = require("./whatsappPolicyService");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
+const { checkWhatsAppDispatchContact } = require("./whatsappSenderDispatchGuard");
+const { sendSecondaryStaffMedia } = require("./whatsappSecondaryMediaDispatch");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -1041,21 +1043,44 @@ async function sendVideoByStoredKey(
 async function downloadIncomingMedia(incoming) {
   const channel = channelOf(incoming);
   if (channel === "whatsapp") {
-    return incoming.mediaId ? whatsapp.downloadMedia(incoming.mediaId) : null;
+    return incoming.mediaId ? whatsapp.downloadMedia(incoming.mediaId, incoming) : null;
   }
   return incoming.mediaUrl ? meta.downloadMedia(incoming.mediaUrl) : null;
+}
+
+// All public outbound entrypoints share the same sender guard. Running it
+// before the policy lookup or media upload avoids cross-number billing, retry
+// or wrong-number delivery while additional numbers are not activated.
+function senderSafe(operation, method = null) {
+  return async (contact, ...args) => {
+    const options = args.length && typeof args[args.length - 1] === "object"
+      && !Buffer.isBuffer(args[args.length - 1])
+      ? args[args.length - 1] : {};
+    // The sender-aware legacy guard intentionally rejects all secondary
+    // customers. Explicit secondary STAFF media only goes to its own verified
+    // upload, sender billing and Cloud API transport, never primary Neutro.
+    if (method && contact?.channel === "whatsapp" &&
+        contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      return sendSecondaryStaffMedia(contact, method, args);
+    }
+    const denied = await checkWhatsAppDispatchContact(contact, options);
+    if (denied) return denied;
+    return operation(contact, ...args);
+  };
 }
 
 module.exports = {
   labelForChannel,
   rejectedError,
-  sendText,
-  sendConsentButtons,
-  sendImageByUrl,
-  sendImageBuffer,
-  sendStickerBuffer,
-  sendAudioBuffer,
-  sendDocumentBuffer,
-  sendVideoByStoredKey,
+  sendText: senderSafe(sendText),
+  sendConsentButtons: senderSafe(sendConsentButtons),
+  sendImageByUrl: senderSafe(sendImageByUrl, "sendImageByUrl"),
+  sendImageBuffer: senderSafe(sendImageBuffer, "sendImageBuffer"),
+  sendStickerBuffer: senderSafe(sendStickerBuffer, "sendStickerBuffer"),
+  sendAudioBuffer: senderSafe(sendAudioBuffer, "sendAudioBuffer"),
+  sendDocumentBuffer: senderSafe(sendDocumentBuffer, "sendDocumentBuffer"),
+  sendVideoByStoredKey: senderSafe(sendVideoByStoredKey, "sendVideoByStoredKey"),
   downloadIncomingMedia,
 };

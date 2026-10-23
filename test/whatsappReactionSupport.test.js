@@ -35,11 +35,13 @@ test("WhatsApp reactions are durable before the webhook is acknowledged", () => 
   assert.ok(routeStart >= 0 && routeEnd > routeStart);
 
   const route = createAppSource.slice(routeStart, routeEnd);
-  const parseIndex = route.indexOf("whatsapp.parseReactionEvents(req.body)");
+  const boundaryIndex = route.indexOf("partitionLegacyWhatsAppWebhook(req.body");
+  const parseIndex = route.indexOf("whatsapp.parseReactionEvents(webhookBody)");
   const persistIndex = route.indexOf("messagesRepo.applyWhatsappReaction(reaction)");
   const ackIndex = route.indexOf("res.sendStatus(200)");
 
-  assert.ok(parseIndex >= 0);
+  assert.ok(boundaryIndex >= 0);
+  assert.ok(parseIndex > boundaryIndex);
   assert.ok(persistIndex > parseIndex);
   assert.ok(ackIndex > persistIndex);
 });

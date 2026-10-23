@@ -13,7 +13,10 @@ function verifyWebhookSignature(req, res, buf) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
 
   if (!appSecret) {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production" ||
+        process.env.NODE_ENV === "staging" ||
+        process.env.PR395_STAGING_MODE === "true" ||
+        process.env.PR395_STAGING_BASIC_AUTH_ENABLED === "true") {
       // Fail fast, same as SESSION_SECRET — an unset app secret means the
       // webhook accepts unsigned requests, so anyone who finds the URL
       // could inject fake "patient" messages that the bot processes and

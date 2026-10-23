@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const whatsappPolicy = require("./whatsappPolicyService");
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
+const { checkWhatsAppDispatchContact } = require("./whatsappSenderDispatchGuard");
 
 const GRAPH_API_VERSION = "v26.0";
 const TEMPLATE_CACHE_TTL_MS = 60 * 1000;
@@ -597,8 +598,11 @@ async function sendApprovedTemplateUnchecked(
 
 // An approved template uses exactly the same account-wide billing reservation.
 async function sendApprovedTemplate(contact,opts={}) {
+  const blocked = await checkWhatsAppDispatchContact(contact, opts);
+  if (blocked) return blocked;
   return whatsappZeroCostGuard.perform(contact?.whatsapp_number,
     () => sendApprovedTemplateUnchecked(contact,opts), {
+      contactId: contact?.id,
       currentMessageId: opts.currentMessageId,
       currentFollowUpAttemptId: opts.currentFollowUpAttemptId,
       messageKind: "template",

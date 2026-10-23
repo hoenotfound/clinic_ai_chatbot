@@ -22,6 +22,10 @@ test(
       path.join(__dirname, "../src/db/migrations/045_whatsapp_unmatched_delivery_monitoring.sql"),
       "utf8"
     );
+    const provenanceSql = fs.readFileSync(
+      path.join(__dirname, "../src/db/migrations/082_whatsapp_delivery_sender_provenance.sql"),
+      "utf8"
+    );
     const query = client.query.bind(client);
 
     await client.connect();
@@ -60,6 +64,7 @@ test(
       `);
       await client.query(migrationSql);
       await client.query(integrityMigrationSql);
+      await client.query(provenanceSql);
 
       const update = {
         wamid: "wamid-durable-status-1",
@@ -74,12 +79,30 @@ test(
       assert.equal(first[0].attempts, 0);
       assert.equal(first[0].lease_token, null);
 
+      const tagged = await repo.storeBatch([{
+        wamid: "wamid-tagged-sender", status: "sent",
+        businessPhoneNumberId: "1408739622311791",
+        businessAccountId: "200000000000001",
+      }], query);
+      assert.equal(tagged.length,1);
+      const storedIdentity = (await client.query(
+        "SELECT business_phone_number_id,business_account_id FROM whatsapp_delivery_status_jobs WHERE id=$1",
+        [tagged[0].id]
+      )).rows[0];
+      assert.deepEqual(storedIdentity,{
+        business_phone_number_id:"1408739622311791",
+        business_account_id:"200000000000001"
+      });
+      // Do not let this independent provenance fixture enter the retry queue
+      // used by the existing stale-lease assertions below.
+      const taggedClaim = await repo.claimByIds([tagged[0].id], query);
+      await repo.markCompleted(taggedClaim[0].id, taggedClaim[0].lease_token, query);
       const duplicate = await repo.storeBatch([update], query);
       assert.deepEqual(duplicate, []);
       const count = await client.query(
         "SELECT COUNT(*)::int AS count FROM whatsapp_delivery_status_jobs"
       );
-      assert.equal(count.rows[0].count, 1);
+      assert.equal(count.rows[0].count, 2);
 
       const claimed = await repo.claimByIds([first[0].id], query);
       assert.equal(claimed.length, 1);

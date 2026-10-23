@@ -72,6 +72,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       "../src/db/migrations/072_whatsapp_24h_staff_media.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/056_whatsapp_free_entry_skips.sql"), "utf8"));
+    await client.query(fs.readFileSync(path.join(__dirname,
+      "../src/db/migrations/082_whatsapp_delivery_sender_provenance.sql"), "utf8"));
     await client.query(`
       INSERT INTO contacts(id, channel, whatsapp_number, mode, needs_attention,
         whatsapp_opt_in_at, whatsapp_opt_in_source)
@@ -93,6 +95,34 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
       INSERT INTO whatsapp_free_entry_pricing_evidence(wamid,pricing_type,billable,delivery_status)
       VALUES('wamid.first','free_entry_point',false,'delivered');
     `);
+
+    // Sender-scoped proof reads the sender registry. This deliberately minimal
+    // historical fixture needs the two columns read by that optional lookup.
+    await client.query(
+      "CREATE TABLE whatsapp_sender_accounts(id BIGINT PRIMARY KEY, " +
+      "meta_phone_number_id TEXT,meta_account_id TEXT,state TEXT)"
+    );
+    await client.query("ALTER TABLE contacts ADD COLUMN whatsapp_sender_id BIGINT");
+    // Explicit per-contact variants must be executable PostgreSQL statements,
+    // not merely regex-checked strings. A second business number must never
+    // inherit a first-number customer's free-entry proof.
+    const scopedSqlChecks = [
+      { sql:zeroCostGuard.SCOPED_VERIFIED_WINDOW_SQL,
+        params:[72,new Date().toISOString(),"60121234567",null,null,"template",1],
+        key:"eligible" },
+      { sql:zeroCostGuard.SCOPED_SESSION_WINDOW_SQL,
+        params:[72,new Date().toISOString(),"60121234567",1],
+        key:"verified" },
+      { sql:zeroCostGuard.SCOPED_CTWA_FIRST_REPLY_SQL,
+        params:[new Date().toISOString(),"60121234567",11,1],
+        key:"eligible_first_reply" },
+      { sql:zeroCostGuard.SCOPED_SEVEN_DAY_PROOF_SQL,
+        params:["1408739622311791","200000000000001"],key:"verified" },
+    ];
+    for(const check of scopedSqlChecks) {
+      const outcome=await client.query(check.sql,check.params);
+      assert.equal(typeof outcome.rows[0][check.key],"boolean");
+    }
     // Strict-mode integration: the current claimed follow-up is not a
     // "previous" send. A second worker cannot pass the account reservation.
     const oldFollowUp = clinicConfig.automatedFollowUp;

@@ -3,7 +3,13 @@ const express = require("express");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
+const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
+const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
+const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
+const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
+const coexistenceSync = require("./services/whatsappCoexistenceHistoryService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
 const metaCommentAutomation = require("./services/metaCommentAutomationService");
@@ -29,6 +35,8 @@ const {
   enforcePortalRequestOrigin,
 } = require("./middleware/portalSecurity");
 const { requireAuth } = require("./middleware/requireAuth");
+const { stagingAccessGuard } = require("./middleware/pr395StagingBasicAuth");
+const { stagingWebhookGuard } = require("./services/pr395StagingSafety");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
@@ -47,6 +55,7 @@ const goLiveRoutes = require("./routes/goLive");
 const pushNotificationsRoutes = require("./routes/pushNotifications");
 const opsReadinessRoutes = require("./routes/opsReadiness");
 const startupReadiness = require("./services/startupReadinessService");
+const { assertSenderIngressSafety } = require("./services/whatsappSenderActivationGate");
 
 function createApp({
   sessionSecret,
@@ -67,6 +76,7 @@ function createApp({
     throw new Error("createApp requires queueIncomingForReply.");
   }
 
+  assertSenderIngressSafety(process.env);
   const app = express();
   app.disable("x-powered-by");
 
@@ -75,10 +85,18 @@ function createApp({
   // leftmost X-Forwarded-For values supplied by clients.
   app.set("trust proxy", resolveTrustProxy(process.env));
   app.use(applyPortalSecurityHeaders);
+  app.use(stagingAccessGuard);
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
   // validated against the exact bytes received.
-  const webhookJsonParser = createWebhookJsonParser(verifyWebhookSignature);
+  const webhookJsonParser = createWebhookJsonParser((req, res, buf) => {
+    verifyWebhookSignature(req, res, buf);
+    // Copy only for the explicitly enabled sender-specific receipt ingress.
+    // The receipt service independently verifies HMAC against these bytes.
+    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
+      req.whatsappSignedRawBody = Buffer.from(buf);
+    }
+  });
   const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
   const portalJsonParser = createPortalJsonParser();
   const advancedConfigJsonParser = createAdvancedConfigJsonParser();
@@ -122,14 +140,98 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/webhook", webhookJsonParser, async (req, res) => {
-    const incomingMessages = whatsapp.parseIncomingMessages(req.body);
-    const reactionEvents = whatsapp.parseReactionEvents(req.body);
-    const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
-    const statusUpdates = whatsapp.parseStatusUpdates(req.body);
-    const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
+  app.post("/webhook", webhookJsonParser, stagingWebhookGuard, async (req, res) => {
+    // The single-sender compatibility boundary runs only AFTER Meta signature
+    // verification. It rejects explicitly foreign sender events before any
+    // legacy customer lookups, AI cancellation, or receipt writes.
+    let isolated;
+    try {
+      isolated = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true"
+        ? partitionSecondaryInboxWebhook(req.body, {
+            primaryPhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+            primaryAccountId: process.env.WHATSAPP_WABA_ID,
+            secondaryPhoneId: process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+            secondaryAccountId: process.env.WHATSAPP_SECONDARY_WABA_ID,
+          })
+        : partitionLegacyWhatsAppWebhook(req.body, {
+        expectedPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+        // Account validation must be enabled only after the real callback
+        // account ID has been checked against the client's WABA setting.
+        expectedAccountId: process.env.WHATSAPP_WABA_ID,
+        strictAccount: process.env.WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED === "true",
+        strictMissingMetadata: process.env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA === "true",
+      });
+    } catch (err) {
+      console.error("Rejected WhatsApp webhook due to sender config or payload limit:", err);
+      return res.sendStatus(503);
+    }
+
+    // Stage secondary WhatsApp statuses from the original HMAC-authenticated body BEFORE
+    // acknowledging or running any existing primary sender worker.
+    // Primary statuses remain in the original legacy partition; secondary
+    // statuses remain excluded from all Neutro billing and retry handlers.
+    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
+      if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
+          !Buffer.isBuffer(req.whatsappSignedRawBody)) return res.sendStatus(503);
+      const savedReceipts = await recordSignedSecondaryStatusBatch({
+        rawBody: req.whatsappSignedRawBody,
+        signatureHeader: req.headers["x-hub-signature-256"],
+        subsetFromVerifiedWebhook: true,
+      });
+      if (!savedReceipts.accepted) {
+        console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
+        return res.sendStatus(503);
+      }
+      // Previously these expected statuses were quarantined. Now they have
+      // been durably staged; retain every other foreign/malformed quarantine.
+      isolated.quarantined = isolated.quarantined.filter((event) =>
+        !(event.reason === "unsupported_whatsapp_event" &&
+          event.field === "messages" &&
+          event.accountId === process.env.WHATSAPP_SECONDARY_WABA_ID &&
+          event.phoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)
+      );
+    }
+
+    // A foreign-only callback has no valid Neutro work to delay. Persist
+    // its privacy-safe audit before ACK; a transient DB failure asks Meta
+    // to retry instead of silently dropping an unknown callback.
+    const quarantineOnly = isolated.quarantined.length > 0
+      && isolated.acceptedActionable === 0;
+    if (quarantineOnly) {
+      try {
+        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
+      } catch (err) {
+        console.error("Could not durably quarantine WhatsApp callback:", err);
+        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        return res.sendStatus(503);
+      }
+      void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+    }
+
+    const webhookBody = isolated.acceptedBody;
+    const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
+    const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
+      process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
+      event.businessPhoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
+    );
+    const businessAppEchoes = whatsapp.parseBusinessAppEchoes(webhookBody);
+    const statusUpdates = whatsapp.parseStatusUpdates(webhookBody);
+    const passiveSync = whatsappCoexistence.summarizePassiveSync(webhookBody);
+    // Mark phone-side staff replies pending BEFORE slow optional history
+    // imports; otherwise an in-flight AI generation can race the echo.
     for (const echo of businessAppEchoes) {
       whatsappCoexistence.beginPendingAiForEcho(echo);
+    }
+    // Imported history is passive: no AI, lead stage, service window or
+    // follow-up. Errors return 503 so Meta can replay safely by WAMID.
+    try {
+      await coexistenceSync.acceptPassiveSync(webhookBody);
+    } catch (err) {
+      for (const echo of businessAppEchoes) {
+        whatsappCoexistence.releasePendingAiForEcho(echo);
+      }
+      console.error("Could not durably accept sender-scoped Business App sync:", err);
+      return res.sendStatus(503);
     }
 
     let durableClaims;
@@ -140,7 +242,8 @@ function createApp({
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
           incomingMessages.map(async (incoming) => ({
-            queueKey: incoming.from,
+            queueKey: process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
+              ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from,
             durableClaim: await durablyClaimIncoming(incoming.from, incoming),
           }))
         ),
@@ -190,6 +293,20 @@ function createApp({
 
     res.sendStatus(200);
 
+    // A mixed batch must never delay/deny the existing customer's accepted
+    // message because a foreign-number quarantine insert is slow or failing.
+    // Existing events are already durable when we ACK; the rejected-event
+    // audit is best effort in mixed batches, with an operator notification.
+    if (isolated.quarantined.length && !quarantineOnly) {
+      void recordQuarantinedWhatsAppChanges(isolated.quarantined)
+        .catch((err) => {
+          console.error("WhatsApp quarantine audit failed after valid work was accepted:", err);
+        })
+        .finally(() => {
+          void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        });
+    }
+
     if (passiveSync.historyChunks || passiveSync.appStateItems) {
       console.log(
         `Acknowledged WhatsApp coexistence sync event without operational import: history=${passiveSync.historyChunks}, app_state=${passiveSync.appStateItems}`
@@ -224,7 +341,7 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
+  app.post("/meta-webhook", metaWebhookJsonParser, stagingWebhookGuard, async (req, res) => {
     const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
     const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
     for (const echo of staffEchoes) {
@@ -320,6 +437,10 @@ function createApp({
   app.use("/api/config", requireAuth, configRoutes);
   app.use("/api/follow-up-activity", requireAuth, followUpActivityRoutes);
   app.use("/api/follow-up-health", requireAuth, followUpHealthRoutes);
+  app.use("/api/whatsapp-secondary-followups", requireAuth,
+    require("./routes/whatsappSecondaryFollowUpRules"));
+  app.use("/api/whatsapp-secondary-media-review", requireAuth,
+    require("./routes/whatsappSecondaryMediaReview"));
   app.use("/api/follow-up-performance", requireAuth, followUpPerformanceRoutes);
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);

@@ -321,6 +321,11 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
             <p className="mt-1 break-all text-[11px] text-[var(--color-text-muted)]">
               {result.waba?.id}
             </p>
+            {result.runtime?.accountIdentityRequiresReview && (
+              <p className="mt-2 text-xs font-semibold text-[var(--color-danger)]">
+                Account ID differs from the configured secondary account. Verify Meta's new account type and ID before enabling any senders.
+              </p>
+            )}
           </div>
           <div className="rounded-xl border border-[var(--color-border)] p-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -337,6 +342,11 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
             <p className="mt-1 break-all text-[11px] text-[var(--color-text-muted)]">
               {result.phone?.id}
             </p>
+            {result.runtime?.targetMode === "secondary" && (
+              <p className="mt-2 text-xs font-semibold">
+                Validated against the pinned second-number ID. Neutro's first number is not being changed.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -356,9 +366,9 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
             </MatchBadge>
           </div>
           <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-            Next, update the client runtime credentials deliberately, verify the selected number,
-            then enable coexistence and configure its WABA callback. Do not use the normal phone
-            registration step for this Business App number.
+            {result.runtime?.targetMode === "secondary"
+              ? "Secondary number only: review Meta's returned account identity against the pinned second number. Never overwrite Neutro's primary phone, access token or production webhook. Do not register the existing Business App number."
+              : "Review Meta's account and phone identities before deliberately changing credentials. Do not register an existing Business App number."}
           </p>
         </div>
       )}

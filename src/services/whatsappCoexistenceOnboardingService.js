@@ -52,6 +52,53 @@ function graphVersion(env = process.env) {
   );
 }
 
+function secondaryTargetMode(env = process.env) {
+  return Boolean(clean(env.WHATSAPP_SECONDARY_SENDER_KEY) ||
+    clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) ||
+    clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID));
+}
+
+function normalizedPhone(value) {
+  return clean(value).replace(/[^0-9]/g, "");
+}
+
+function requireExpectedSecondaryPhone(env = process.env) {
+  if (!secondaryTargetMode(env)) return null;
+  const expected = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
+  if (!/^\d+$/.test(expected)) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Pin the secondary phone number ID before authorizing a real WhatsApp Business App number.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_TARGET_UNPINNED", status: 409, retrySafe: false }
+    );
+  }
+  if (expected === clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "The selected secondary phone ID matches Neutro's primary phone ID. No authorization was accepted.",
+      { code: "WHATSAPP_COEXISTENCE_PRIMARY_PHONE_BLOCKED", status: 409, retrySafe: false }
+    );
+  }
+  return expected;
+}
+
+function assertExpectedSecondaryPhone(phone, env = process.env) {
+  const expectedId = requireExpectedSecondaryPhone(env);
+  if (!expectedId) return;
+  if (clean(phone?.id) !== expectedId) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Meta returned a different phone ID from the pinned secondary number. Verify the new phone ID manually before retrying.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH", status: 409, retrySafe: false }
+    );
+  }
+  const expectedE164 = normalizedPhone(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+  const actualE164 = normalizedPhone(phone?.displayPhoneNumber);
+  if (expectedE164 && (!actualE164 || expectedE164 !== actualE164)) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Meta returned a display phone number that does not match the pinned second number.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_DISPLAY_MISMATCH", status: 409, retrySafe: false }
+    );
+  }
+}
+
 function publicConfig(env = process.env) {
   const values = {
     appId: appId(env),
@@ -63,6 +110,14 @@ function publicConfig(env = process.env) {
   if (!values.configId) missing.push("META_EMBEDDED_SIGNUP_CONFIG_ID");
   if (!appSecret(env)) missing.push("META_APP_SECRET");
   if (!clean(env.WHATSAPP_VERIFY_TOKEN)) missing.push("WHATSAPP_VERIFY_TOKEN");
+  const secondary = secondaryTargetMode(env);
+  if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID))) {
+    missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID");
+  }
+  if (secondary && clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) ===
+      clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
+    missing.push("A distinct secondary phone number ID");
+  }
 
   return {
     configured: missing.length === 0,
@@ -71,10 +126,14 @@ function publicConfig(env = process.env) {
     featureType: "whatsapp_business_app_onboarding",
     sessionInfoVersion: "3",
     runtime: {
+      targetMode: secondary ? "secondary" : "single-number",
       coexistenceEnabled:
         clean(env.WHATSAPP_COEXISTENCE_ENABLED).toLowerCase() === "true",
-      wabaId: clean(env.WHATSAPP_WABA_ID) || null,
-      phoneNumberId: clean(env.WHATSAPP_PHONE_NUMBER_ID) || null,
+      // In the dual-number rollout never compare an onboarding result with
+      // Neutro's primary sender or suggest replacing its working credentials.
+      wabaId: clean(secondary ? env.WHATSAPP_SECONDARY_WABA_ID : env.WHATSAPP_WABA_ID) || null,
+      phoneNumberId: clean(secondary ? env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID : env.WHATSAPP_PHONE_NUMBER_ID) || null,
+      expectedPhoneNumberId: secondary ? clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) || null : null,
     },
   };
 }
@@ -270,14 +329,28 @@ async function fetchPhoneNumbers({
   env = process.env,
   fetchImpl = global.fetch,
 }) {
-  const payload = await graphRequest({
-    path:
-      `${encodeURIComponent(wabaId)}/phone_numbers` +
-      "?fields=id,display_phone_number,verified_name&limit=100",
-    accessToken,
-    graphVersion: graphVersion(env),
-    fetchImpl,
-  });
+  let payload;
+  try {
+    payload = await graphRequest({
+      path:
+        `${encodeURIComponent(wabaId)}/phone_numbers` +
+        "?fields=id,display_phone_number,verified_name&limit=100",
+      accessToken,
+      graphVersion: graphVersion(env),
+      fetchImpl,
+    });
+  } catch (error) {
+    // Meta's 2026 WAAC / messaging-account separation can make a formerly
+    // assumed WABA ID the wrong Graph node type. Never fall back to the first
+    // phone on another account or treat a direct phone lookup as ownership proof.
+    if (/phone_numbers|nonexisting field/i.test(String(error?.message || ""))) {
+      throw new WhatsAppCoexistenceOnboardingError(
+        "Meta did not expose the phone_numbers edge for the authorized account. Confirm the account type and ID returned by Embedded Signup; this authorization is not verified.",
+        { code: "WHATSAPP_COEXISTENCE_ACCOUNT_TYPE_UNVERIFIED", status: 409, retrySafe: false }
+      );
+    }
+    throw error;
+  }
   const rows = Array.isArray(payload?.data) ? payload.data : [];
 
   return Promise.all(
@@ -356,6 +429,14 @@ async function completeEmbeddedSignup({
   fetchImpl = global.fetch,
 }) {
   const finish = validateFinishSession(sessionInfo);
+  const expectedPhoneId = requireExpectedSecondaryPhone(env);
+  // Reject the wrong selection BEFORE exchanging Meta's authorization code
+  // when the completion event explicitly supplies the phone ID.
+  if (expectedPhoneId && finish.phoneNumberId && finish.phoneNumberId !== expectedPhoneId) {
+    assertExpectedSecondaryPhone({ id: finish.phoneNumberId }, {
+      ...env, WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: ""
+    });
+  }
   const exchanged = await exchangeCodeForToken({ code, env, fetchImpl });
   const token = await inspectToken({
     accessToken: exchanged.accessToken,
@@ -390,6 +471,7 @@ async function completeEmbeddedSignup({
   }
 
   const phone = choosePhoneNumber(phones, finish.phoneNumberId);
+  assertExpectedSecondaryPhone(phone, env);
   const runtime = publicConfig(env).runtime;
 
   return {
@@ -406,10 +488,13 @@ async function completeEmbeddedSignup({
       ...runtime,
       wabaMatches: runtime.wabaId === waba.id,
       phoneMatches: runtime.phoneNumberId === phone.id,
+      accountIdentityRequiresReview: runtime.targetMode === "secondary" &&
+        Boolean(runtime.wabaId) && runtime.wabaId !== waba.id,
     },
     activationRequired: true,
-    nextStep:
-      "Update the client runtime WABA/phone credentials, enable coexistence only after verification, then configure the coexistence webhook subscription.",
+    nextStep: runtime.targetMode === "secondary"
+      ? "Review and update only the isolated secondary sender account/phone credentials after independent Meta verification. Never replace Neutro's primary credentials, register the Business App phone, enable outbound sending or move the production webhook."
+      : "Verify account and phone ownership before changing any runtime credentials or webhook subscriptions.",
   };
 }
 
@@ -424,6 +509,10 @@ module.exports = {
   fetchWaba,
   inspectToken,
   publicConfig,
+  fetchPhoneNumbers,
+  secondaryTargetMode,
+  requireExpectedSecondaryPhone,
+  assertExpectedSecondaryPhone,
   safeSessionInfo,
   validateFinishSession,
 };

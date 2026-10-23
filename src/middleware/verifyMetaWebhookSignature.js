@@ -20,9 +20,12 @@ function verifyMetaWebhookSignature(req, res, buf) {
   const secret = process.env.META_APP_SECRET;
 
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NODE_ENV === "production" ||
+        process.env.NODE_ENV === "staging" ||
+        process.env.PR395_STAGING_MODE === "true" ||
+        process.env.PR395_STAGING_BASIC_AUTH_ENABLED === "true") {
       throw new Error(
-        "META_APP_SECRET is not set. Refusing to process Facebook/Instagram webhook requests in production."
+        "META_APP_SECRET is not set. Refusing to process Facebook/Instagram webhook requests in production or staging."
       );
     }
     console.warn(

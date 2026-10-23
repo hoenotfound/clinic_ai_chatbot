@@ -48,6 +48,7 @@ const {
 const resultMediaDecisionRepo = require("./db/resultMediaDecisionRepo");
 const pricingDecisionAuditRepo = require("./db/pricingDecisionAuditRepo");
 const whatsappResultMediaQueue = require("./services/whatsappResultMediaQueue");
+const secondaryAiMediaQueue = require("./services/whatsappSecondaryAiMediaQueue");
 const whatsappZeroCostGuard = require("./services/whatsappZeroCostGuard");
 const { resultMediaAuditOutcome } = require("./utils/resultMediaAudit");
 const { categorizeAiReview, hasClinicalMediaRisk } = require("./utils/aiReviewPolicy");
@@ -71,6 +72,7 @@ const { isStandalonePriceQuestion } = require("./utils/customerEnquiryEvidence")
 const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = require("./utils/tcmServiceReviewReply");
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
+const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
   deliveryErrorForSend,
@@ -79,6 +81,7 @@ const {
 const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
+const { sendSecondaryStaffText } = require("./services/whatsappSecondaryStaffDispatch");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
 const pipelineRepo = require("./db/pipelineRepo");
@@ -123,7 +126,9 @@ async function persistSendOutcome(
 ) {
   let updated = null;
   if (sendResult.wamid) {
-    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid, {
+      preserveVerifiedSecondaryReceipt: sendResult.secondarySender === true,
+    });
   } else if (sendResult.externalMessageId && channel !== "whatsapp") {
     updated = await messagesRepo.setSocialProviderMessageId(
       savedMessage.id,
@@ -236,17 +241,34 @@ async function sendTrackedText(
 
   let sendResult;
   try {
-    sendResult = await channelMessaging.sendText(
-      contact,
-      text,
-      {
-        ...(guarded ? { preSendCheck: canSend } : {}),
-        currentMessageId: saved.id,
-        ...(socialProviderRecorder
-          ? { onProviderMessageId: socialProviderRecorder }
-          : {}),
-      }
-    );
+    const verifiedContact = contact.channel === "whatsapp" &&
+      contact.whatsapp_sender_id != null && !contact.whatsapp_sender_key
+      ? await contactsRepo.getContactById(contact.id) : contact;
+    if (verifiedContact?.whatsapp_sender_id != null &&
+        (!verifiedContact.whatsapp_sender_key ||
+         !verifiedContact.whatsapp_sender_phone_number_id ||
+         !verifiedContact.whatsapp_sender_account_id)) {
+      throw new Error("Cannot verify persisted WhatsApp sender before AI dispatch.");
+    }
+    const secondaryAi = verifiedContact.channel === "whatsapp" &&
+      verifiedContact.whatsapp_sender_id != null &&
+      verifiedContact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
+    sendResult = secondaryAi
+      ? await sendSecondaryStaffText({
+          contact: verifiedContact, messageId: saved.id, text, origin,
+          preSendCheck: guarded ? canSend : null,
+        })
+      : await channelMessaging.sendText(
+          contact,
+          text,
+          {
+            ...(guarded ? { preSendCheck: canSend } : {}),
+            currentMessageId: saved.id,
+            ...(socialProviderRecorder
+              ? { onProviderMessageId: socialProviderRecorder }
+              : {}),
+          }
+        );
   } catch (err) {
     if (durableOutboundReserved) {
       const ambiguousReason =
@@ -533,16 +555,9 @@ async function processIncomingMessage(
     unsupportedType,
   } = incoming;
   const channel = incoming.channel || "whatsapp";
-  const aiCancellationKey =
-    channel === "whatsapp"
-      ? aiReplyCancellation.keyForWhatsAppNumber(from)
-      : (channel === "facebook" || channel === "instagram")
-        ? aiReplyCancellation.keyForChannelContact(channel, from)
-        : null;
-  const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
-  const canSendAutomatedReply = aiCancellationKey
-    ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
-    : null;
+  let aiCancellationKey = null;
+  let aiCancellationToken = 0;
+  let canSendAutomatedReply = null;
 
   const { customerLabel, customerSingular } = getOperationalLabels(clinicConfig);
   let contact = preclaimed?.contact || null;
@@ -566,6 +581,33 @@ async function processIncomingMessage(
       processingJobId = claimed.processingJobId || null;
       wasFirstMessage = Boolean(claimed.wasFirstMessage);
     }
+
+    const senderScoped = channel === "whatsapp" &&
+      process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
+    if (senderScoped && !contact?.whatsapp_sender_key) {
+      throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
+    }
+    const secondaryAiConversation = senderScoped &&
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
+      process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+      // Recheck at dispatch as defense in depth. A runtime flag toggle must
+      // not make secondary WhatsApp generate Neutro-branded replies without authorization.
+      secondaryUsesPrimaryClinicContent(process.env);
+    const secondaryInboxOnly = senderScoped &&
+      process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
+      !secondaryAiConversation;
+    aiCancellationKey = channel === "whatsapp"
+      ? aiReplyCancellation.keyForWhatsAppNumber(
+          from, senderScoped ? contact.whatsapp_sender_key : null
+        )
+      : (channel === "facebook" || channel === "instagram")
+        ? aiReplyCancellation.keyForChannelContact(channel, from)
+        : null;
+    aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
+    canSendAutomatedReply = aiCancellationKey
+      ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+      : null;
 
     if (unsupportedType) {
       // Meta diagnostics are kept for staff. No misleading customer reply.
@@ -748,6 +790,16 @@ async function processIncomingMessage(
         );
         mediaAttachment = null;
       }
+    }
+
+    // Preserve incoming secondary media before handing the turn to staff.
+    // Do not enter any AI response, promotion, or auto-follow-up path.
+    if (secondaryInboxOnly) {
+      await contactsRepo.setAiReviewAttention(contact.id, savedInbound.id,
+        "Secondary WhatsApp Inbox: reply using the linked Business App. " +
+        "Cloud API sending for this number is not yet enabled.",
+        "information");
+      return { wasFirstMessage, keywordReason };
     }
 
     // Photos/videos without captions and stickers contain no textual intent
@@ -1722,6 +1774,10 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // secondary WhatsApp shares approved clinic CONTENT, but its optional images must
+    // use only its separate durable media queue and billing/Graph transport.
+    // An inactive media flag must never reach the primary image-sending path.
+
     // Promotional media is reactive, not a first-message blast. Only follow a
     // successful normal AI reply when the customer explicitly asked about the
     // price or available packages for one known configured service. Existing
@@ -1834,17 +1890,22 @@ async function processIncomingMessage(
         const pacedPromotions = planPromotionMediaPacing(promoBundle.packages);
         promotionImagesTruncated = !!pacedPromotions.reason;
         const queuedPromotions = channel === "whatsapp" &&
-          whatsappZeroCostGuard.enabled() && pacedPromotions.items.length > 0 &&
-          sendOutcome.sendResult.success;
+          (secondaryAiConversation || whatsappZeroCostGuard.enabled()) &&
+          pacedPromotions.items.length > 0 && sendOutcome.sendResult.success;
         if (queuedPromotions) {
           try {
-            await whatsappResultMediaQueue.enqueue({
+            const queue = secondaryAiConversation ? secondaryAiMediaQueue : whatsappResultMediaQueue;
+            const enqueued = await queue.enqueue({
               contactId:contact.id,
               inboundMessageId:savedInbound.id,
               items:pacedPromotions.items,
               kind:"promotion",
               sequenceOffset:0,
             });
+            if (secondaryAiConversation && !enqueued) {
+              await auditResultMediaEarlyExit("secondary_media_not_enabled");
+              return { wasFirstMessage, keywordReason };
+            }
           } catch (queueError) {
             // Optional media failures must not invalidate the already accepted
             // AI text or cause a durable inbound job to replay that reply.
@@ -1860,7 +1921,7 @@ async function processIncomingMessage(
           // delivered. The audit separately counts actual Meta acceptance.
           automaticPromoMediaSent += queuedPromotionCount;
         }
-        for (const promoPackage of (queuedPromotions ? [] : pacedPromotions.items)) {
+        for (const promoPackage of (queuedPromotions || secondaryAiConversation ? [] : pacedPromotions.items)) {
           const promoContact = await getAiOwnedContact(contact, {
             channel,
             from,
@@ -2075,19 +2136,25 @@ async function processIncomingMessage(
           // The durable worker rechecks AI ownership, safety, billing and
           // duplicate protection before every actual provider send.
           let queuedForBilling = false;
-          if (channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
+          if (channel === "whatsapp" &&
+              (secondaryAiConversation || whatsappZeroCostGuard.enabled()) &&
               paced.items.length && sendOutcome.sendResult.success) {
-            queuedForBilling = await whatsappResultMediaQueue.enqueue({
+            queuedForBilling = await (secondaryAiConversation
+              ? secondaryAiMediaQueue : whatsappResultMediaQueue).enqueue({
               contactId: contact.id,
               inboundMessageId: savedInbound.id,
               items: paced.items,
               kind: "result",
               sequenceOffset: queuedPromotionCount,
             });
-            if (queuedForBilling) auditReason = "awaiting_meta_free_billing";
+            if (queuedForBilling) auditReason = "awaiting_sender_billing_receipt";
+            if (secondaryAiConversation && !queuedForBilling) {
+              auditReason = "secondary_media_not_enabled";
+              return { wasFirstMessage, keywordReason };
+            }
           }
           let resultImageIndex = 0;
-          for (const resultItem of (queuedForBilling ? [] : paced.items)) {
+          for (const resultItem of (queuedForBilling || secondaryAiConversation ? [] : paced.items)) {
             // Allow the customer to absorb a promotion before its optional
             // result example. We recheck ownership, safety and reply-window
             // conditions AFTER the gap, immediately before each provider send.
@@ -2302,6 +2369,16 @@ async function processIncomingMessage(
 
 // Runtime secret checks stay in the entry point so a misconfigured production
 // deployment still fails before the Express application is constructed.
+// Staging also fails before Express is constructed if secrets, access
+// controls, QA database isolation or outbound guards are missing.
+try {
+  require("./services/pr395StagingSafety").assertPr395StagingSafety(process.env);
+} catch (error) {
+  console.error("[PR395 staging] Unsafe runtime configuration:", error.message);
+  process.exit(1);
+}
+
+// Existing production runtime secret checks remain after the staging gate.
 if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
   console.error(
     "❌ WHATSAPP_APP_SECRET is not set. Refusing to start, since without it " +

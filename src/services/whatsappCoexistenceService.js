@@ -1,4 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
+const senderConversations = require("../db/whatsappSenderConversationRepo");
 const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const messagesRepo = require("../db/messagesRepo");
@@ -7,6 +8,8 @@ const { recordStaffConfirmedBooking } = require("./staffBookingConfirmationServi
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
+const echoMedia = require("./whatsappCoexistenceMediaService");
+const echoMutations = require("./whatsappCoexistenceMutationService");
 
 const BUSINESS_APP_ACTOR = "WhatsApp Business App";
 
@@ -22,8 +25,49 @@ function renderEchoContent(echo) {
   return `[${echo.type || "Message"} sent from WhatsApp Business App]`;
 }
 
+function senderAwareEchoesEnabled() {
+  return process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true";
+}
+
+function verifiedPrimaryEchoIdentity(echo) {
+  const phone = String(echo?.businessPhoneNumberId || "").trim();
+  const account = String(echo?.businessAccountId || "").trim();
+  if (!/^\d+$/.test(phone) || !/^\d+$/.test(account) ||
+      phone !== String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
+      account !== String(process.env.WHATSAPP_WABA_ID || "").trim()) {
+    throw new Error("Business App echo does not identify the verified primary sender.");
+  }
+  return { accountId: account, phoneNumberId: phone, customerPhone: echo.to };
+}
+
+function verifiedEchoIdentity(echo) {
+  try { return {...verifiedPrimaryEchoIdentity(echo),
+    senderKey:String(process.env.WHATSAPP_PRIMARY_SENDER_KEY||"").trim()}; }
+  catch(primaryError) {
+    const phone=String(echo?.businessPhoneNumberId||"").trim();
+    const account=String(echo?.businessAccountId||"").trim();
+    if(process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true" ||
+       !/^[0-9]+$/.test(phone) || !/^[0-9]+$/.test(account) ||
+       phone!==String(process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim() ||
+       account!==String(process.env.WHATSAPP_SECONDARY_WABA_ID||"").trim()) {
+      throw primaryError;
+    }
+    return {accountId:account,phoneNumberId:phone,customerPhone:echo.to,
+      senderKey:String(process.env.WHATSAPP_SECONDARY_SENDER_KEY||"").trim()};
+  }
+}
+
 function cancellationKeyForEcho(echo) {
-  return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
+  if (!senderAwareEchoesEnabled()) {
+    return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
+  }
+  // An unverified foreign echo must NEVER cancel the primary AI turn.
+  try {
+    const key = verifiedEchoIdentity(echo).senderKey;
+    return key ? aiReplyCancellation.keyForWhatsAppNumber(echo?.to, key) : null;
+  } catch {
+    return null;
+  }
 }
 
 function beginPendingAiForEcho(echo) {
@@ -60,7 +104,23 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       return null;
     }
 
-    const contact = await contactsRepo.getOrCreateContact(echo.to);
+    const contact = senderAwareEchoesEnabled()
+      ? await senderConversations.claimSenderContact(verifiedEchoIdentity(echo))
+      : await contactsRepo.getOrCreateContact(echo.to);
+
+    if (senderAwareEchoesEnabled() &&
+        echo.businessPhoneNumberId===process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+        echo.businessAccountId===process.env.WHATSAPP_SECONDARY_WABA_ID &&
+        ["edit","revoke"].includes(echo.type)) {
+      const changed=await echoMutations.record(echo,contact);
+      if (changed?.isNew) confirmPendingAiForEcho(echo);
+      else releasePendingAiForEcho(echo);
+      // An edit/revoke updates the ORIGINAL provider-authenticated staff
+      // message. It never creates another assistant message or booking event.
+      return changed?.messageId
+        ? {contact,message:{id:changed.messageId},isNew:false,isMutation:true}
+        : null;
+    }
 
     // Insert the provider message and apply Staff Assist ownership rules in one
     // DB transaction. Ordinary AI-owned chats remain AI-owned; a synthetic AI
@@ -70,12 +130,28 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       renderEchoContent(echo),
       echo.id,
       BUSINESS_APP_ACTOR,
-      AI_HANDOFF_OWNER
+      AI_HANDOFF_OWNER,
+      null,
+      senderAwareEchoesEnabled() ? contact.whatsapp_sender_conversation_id : null
     );
 
     if (!persisted) {
       releasePendingAiForEcho(echo);
       return null;
+    }
+
+    // Provider-authenticated media echoes are durably queued for FETCH ONLY,
+    // never re-sent by the Cloud API. On failure Meta retries safely because
+    // the existing WAMID and queue job are both idempotent.
+    if (echo.mediaId && ["image","video","audio","document","sticker"].includes(echo.type) &&
+        echoMedia.enabled(process.env) &&
+        echo.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+        echo.businessAccountId === process.env.WHATSAPP_SECONDARY_WABA_ID) {
+      const queued=await echoMedia.enqueue({
+        contactId:contact.id,messageId:persisted.message.id,
+        wamid:echo.id,mediaId:echo.mediaId,type:echo.type,
+      });
+      if (!queued)throw new Error("Could not durably queue verified Business App echo media.");
     }
 
     if (persisted.isNew) {
@@ -115,6 +191,13 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
 
 async function finalizeBusinessAppEcho(persisted) {
   if (!persisted?.contact?.id || !persisted?.message?.id) return;
+  if(persisted.isMutation){
+    realtimeEvents.publish("conversation_changed",{
+      contactId:persisted.contact.id,
+      messageId:persisted.message.id,reason:"message",
+    });
+    return;
+  }
 
   realtimeEvents.publish("conversation_changed", {
     contactId: persisted.contact.id,
@@ -207,4 +290,5 @@ module.exports = {
   persistBusinessAppEcho,
   finalizeBusinessAppEcho,
   summarizePassiveSync,
+  verifiedPrimaryEchoIdentity,
 };

@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
@@ -10,38 +11,6 @@ const { acceptedDirectReplySql, failedMediaSql, unresolvedFailedOutboundSql } = 
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
-
-function normalizeWhatsappNumber(input) {
-  let digits = String(input || "").replace(/[^\d]/g, "");
-  if (!digits) return "";
-
-  // Accept the common international dialing prefix form (e.g. 0060...)
-  // without accidentally treating it as a Malaysian local number.
-  if (digits.startsWith("00")) {
-    digits = digits.slice(2);
-  }
-
-  // Staff sometimes paste "+60 012..." with both the country code and the
-  // Malaysian trunk zero. WhatsApp identifies the same number as 6012....
-  if (digits.startsWith("600")) {
-    digits = `60${digits.slice(3)}`;
-  }
-
-  // Malaysian local format: 012-345 6789 -> 60123456789.
-  if (digits.startsWith("0")) {
-    return `60${digits.slice(1)}`;
-  }
-
-  // Also accept a mobile number pasted without either the trunk zero or +60.
-  // Malaysian mobile subscriber numbers are 9 or 10 digits and start with 1.
-  if (/^1\d{8,9}$/.test(digits)) {
-    return `60${digits}`;
-  }
-
-  // Already-canonical Malaysian numbers and explicit international numbers
-  // are left untouched after punctuation/spacing is removed.
-  return digits;
-}
 
 function legacyMalaysianLocalNumber(normalizedNumber) {
   const match = /^60(1\d{8,9})$/.exec(normalizedNumber);
@@ -160,7 +129,26 @@ async function hydrateSocialContactRows(rows) {
 
 function presentPortalContact(row) {
   const isSocial = SOCIAL_CHANNELS.has(row?.channel);
-  if (!isSocial) return row;
+  if (!isSocial) {
+    // Legacy Neutro contacts deliberately remain unbound in migration 080.
+    // This is a PRESENTATION alias only, never an identity or send credential:
+    // the original contact and primary billing proof remain untouched.
+    const primaryKey = String(process.env.WHATSAPP_PRIMARY_SENDER_KEY || "");
+    if (row?.channel === "whatsapp" && row.whatsapp_sender_id == null &&
+        !row.whatsapp_sender_key &&
+        process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true" &&
+        process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true" &&
+        /^[a-z][a-z0-9_-]{0,63}$/.test(primaryKey) &&
+        /^[0-9]+$/.test(String(process.env.WHATSAPP_PHONE_NUMBER_ID || "")) &&
+        /^[0-9]+$/.test(String(process.env.WHATSAPP_WABA_ID || ""))) {
+      return { ...row, whatsapp_sender_key: primaryKey,
+        whatsapp_sender_display_name: "Neutro Sense",
+        whatsapp_sender_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID,
+        whatsapp_sender_account_id: process.env.WHATSAPP_WABA_ID,
+        whatsapp_is_secondary: false };
+    }
+    return row;
+  }
 
   return {
     ...row,
@@ -185,10 +173,12 @@ async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
            whatsapp_profile_name = COALESCE($3, legacy.whatsapp_profile_name),
            updated_at = now()
        WHERE legacy.whatsapp_number = $2
+         AND legacy.whatsapp_sender_id IS NULL
          AND NOT EXISTS (
            SELECT 1
            FROM contacts AS canonical
            WHERE canonical.whatsapp_number = $1
+             AND canonical.whatsapp_sender_id IS NULL
          )
        RETURNING legacy.*`,
       [normalizedNumber, legacyNumber, profileName]
@@ -217,8 +207,13 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
 
   const inserted = await pool.query(
     `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
-     VALUES ($1, $2)
-     ON CONFLICT (whatsapp_number) DO NOTHING
+     SELECT $1, $2
+     WHERE NOT EXISTS (
+       SELECT 1 FROM contacts tagged
+       WHERE tagged.whatsapp_number=$1 AND tagged.channel='whatsapp'
+         AND tagged.whatsapp_sender_id IS NOT NULL
+     )
+     ON CONFLICT DO NOTHING
      RETURNING *`,
     [normalizedNumber, profileName]
   );
@@ -228,7 +223,7 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
     const updated = await pool.query(
       `UPDATE contacts
        SET whatsapp_profile_name = $2, updated_at = now()
-       WHERE whatsapp_number = $1
+       WHERE whatsapp_number = $1 AND whatsapp_sender_id IS NULL
          AND whatsapp_profile_name IS DISTINCT FROM $2
        RETURNING *`,
       [normalizedNumber, profileName]
@@ -237,10 +232,34 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   }
 
   const existing = await pool.query(
-    "SELECT * FROM contacts WHERE whatsapp_number = $1",
+    "SELECT * FROM contacts WHERE whatsapp_number = $1 AND whatsapp_sender_id IS NULL",
     [normalizedNumber]
   );
-  return existing.rows[0];
+  if (existing.rows[0]) return existing.rows[0];
+  // Rollback/read-only deployments must reuse the old Neutro contact after
+  // sender adoption. Never silently create a new null-sender duplicate.
+  const scoped = await pool.query(
+    "SELECT c.*,sa.sender_key AS whatsapp_sender_key, " +
+    "sa.meta_phone_number_id AS whatsapp_sender_phone_number_id, " +
+    "sa.meta_account_id AS whatsapp_sender_account_id " +
+    "FROM contacts c " +
+    "JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
+    "WHERE c.channel='whatsapp' AND c.whatsapp_number=$1 " +
+    "AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3 " +
+    "LIMIT 1",
+    [normalizedNumber, String(process.env.WHATSAPP_PHONE_NUMBER_ID || ""),
+      String(process.env.WHATSAPP_WABA_ID || "")]
+  );
+  if (scoped.rows[0]) return scoped.rows[0];
+  const mismatched = await pool.query(
+    "SELECT 1 FROM contacts WHERE whatsapp_number=$1 " +
+    "AND channel='whatsapp' AND whatsapp_sender_id IS NOT NULL LIMIT 1",
+    [normalizedNumber]
+  );
+  if (mismatched.rows[0]) {
+    throw new Error("Legacy WhatsApp contact is already assigned to an unverified sender.");
+  }
+  return null;
 }
 
 /**
@@ -271,7 +290,7 @@ async function getOrCreateChannelContact(
        whatsapp_number, whatsapp_profile_name, channel, channel_user_id, photo_url
      )
      VALUES ($1, $4, $2, $3, $5)
-     ON CONFLICT (whatsapp_number) DO UPDATE
+     ON CONFLICT (channel, channel_user_id) WHERE channel_user_id IS NOT NULL DO UPDATE
      SET channel = EXCLUDED.channel,
          channel_user_id = EXCLUDED.channel_user_id,
          whatsapp_profile_name = COALESCE(EXCLUDED.whatsapp_profile_name, contacts.whatsapp_profile_name),
@@ -293,9 +312,43 @@ async function getOrCreateChannelContact(
   return result.rows[0];
 }
 
+// Read new sender tables only after an explicit staged activation.
+// Legacy installations and narrow test schemas retain the original SQL.
+// This switch must stay OFF until the full multi-number send paths are ready.
+function senderAwareInboxReadsEnabled() {
+  return process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true";
+}
+
 async function getContactById(id) {
-  const result = await pool.query("SELECT * FROM contacts WHERE id = $1", [id]);
-  return result.rows[0] || null;
+  const result = await pool.query(senderAwareInboxReadsEnabled() ?
+    "SELECT c.*, sa.sender_key AS whatsapp_sender_key, " +
+    "sa.display_name AS whatsapp_sender_display_name, " +
+    "sa.meta_phone_number_id AS whatsapp_sender_phone_number_id, " +
+    "sa.meta_account_id AS whatsapp_sender_account_id " +
+    "FROM contacts c " +
+    "LEFT JOIN whatsapp_sender_conversations sc ON sc.contact_id = c.id AND sc.state = 'bound' " +
+    "LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id " +
+    "WHERE c.id = $1" : "SELECT * FROM contacts WHERE id = $1", [id]
+  );
+  const contact = result.rows[0] || null;
+  // After primary sender adoption, a feature-flag rollback must still
+  // return the VERIFIED sender identity. A bare sender ID with no key is
+  // indistinguishable from the secondary sender to outbound routing.
+  if (contact?.whatsapp_sender_id != null && !contact.whatsapp_sender_key) {
+    const owner = await pool.query(
+      "SELECT sender_key,display_name,meta_phone_number_id,meta_account_id,state " +
+      "FROM whatsapp_sender_accounts WHERE id=$1",
+      [contact.whatsapp_sender_id]
+    );
+    if (owner.rows?.length !== 1 || owner.rows[0].state !== "active") {
+      throw new Error("Cannot verify persisted WhatsApp contact sender identity.");
+    }
+    contact.whatsapp_sender_key = owner.rows[0].sender_key;
+    contact.whatsapp_sender_display_name = owner.rows[0].display_name;
+    contact.whatsapp_sender_phone_number_id = owner.rows[0].meta_phone_number_id;
+    contact.whatsapp_sender_account_id = owner.rows[0].meta_account_id;
+  }
+  return contact;
 }
 
 // Fail closed for optional automatic images. An unresolved clinical question
@@ -461,7 +514,11 @@ async function createContact({ name, whatsappNumber }) {
 
 async function updateContact(id, { name, whatsappNumber }) {
   const result = await pool.query(
-    "UPDATE contacts SET name = $1, whatsapp_number = $2, updated_at = now() WHERE id = $3 RETURNING *",
+    "UPDATE contacts SET name = $1, whatsapp_number = $2, updated_at = now() " +
+    "WHERE id = $3 AND NOT EXISTS (" +
+    "SELECT 1 FROM whatsapp_sender_conversations sc " +
+    "WHERE sc.contact_id = $3 AND sc.customer_wa_id <> $2" +
+    ") RETURNING *",
     [name || null, normalizeWhatsappNumber(whatsappNumber), id]
   );
   const updated = result.rows[0] || null;
@@ -480,6 +537,13 @@ async function listConversations() {
       c.channel,
       c.channel_user_id,
       c.photo_url,
+${senderAwareInboxReadsEnabled() ? `
+      c.whatsapp_sender_id,
+      sa.sender_key AS whatsapp_sender_key,
+      sa.display_name AS whatsapp_sender_display_name,
+      sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
+      sa.meta_account_id AS whatsapp_sender_account_id,
+      ` : ""}
       c.mode,
       c.takeover_by,
       c.takeover_at,
@@ -541,6 +605,11 @@ async function listConversations() {
           )
       ) AS has_unreplied
     FROM contacts c
+${senderAwareInboxReadsEnabled() ? `
+    LEFT JOIN whatsapp_sender_conversations sc
+      ON sc.contact_id = c.id AND sc.state = 'bound'
+    LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id
+    ` : ""}
     LEFT JOIN LATERAL (
       SELECT l.id, l.owner_username, l.temperature, l.is_closed
       FROM leads l

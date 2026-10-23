@@ -5,6 +5,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
 const { start: startWhatsAppFreeEntryFollowUps } = require("./whatsappFreeEntryFollowUpService");
+const { start: startSecondaryFollowUps } = require("./whatsappSecondaryFollowUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
@@ -25,8 +26,13 @@ const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
+const { assertStoredSenderSafety } = require("./whatsappSenderActivationGate");
 const mediaStorage = require("./mediaStorageService");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
+const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
+const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
+const coexistenceMutations = require("./whatsappCoexistenceMutationService");
+const coexistenceHistory = require("./whatsappCoexistenceHistoryService");
 const {
   startCustomerDataLifecycle,
 } = require("./customerDataLifecycleService");
@@ -120,6 +126,10 @@ async function startApplication({
     await initSchema();
     console.log("[Startup] Database schema and migrations ready.");
 
+    // Before readiness or recovery workers, reject unverified primary identity
+    // and unsafe feature-flag rollback with persisted secondary contacts.
+    await assertStoredSenderSafety();
+
     console.log("[Startup] Loading client configuration...");
     await configRepo.loadConfig();
     console.log("[Startup] Client configuration loaded.");
@@ -139,6 +149,12 @@ async function startApplication({
     await bootstrapAdminUser();
     console.log("[Startup] Admin user bootstrap complete.");
 
+    if (process.env.PR395_STAGING_MODE === "true") {
+      // This public sandbox can be backed by a production-derived QA snapshot.
+      // Never run inherited reminder, AI, retry, media, pruning, outreach or
+      // customer-data lifecycle jobs against copied customer records.
+      console.log("[PR395 staging] All background workers disabled.");
+    } else {
     console.log("[Startup] Starting maintenance and recovery workers...");
     configRepo.pruneOrphanedPromoImages();
     setIntervalFn(
@@ -157,17 +173,25 @@ async function startApplication({
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
     whatsappResultMediaQueue.start();
+    secondaryAiMediaQueue.start();
+    coexistenceMediaQueue.start();
+    coexistenceMutations.start();
+    coexistenceHistory.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
     startCustomerDataLifecycle({ setIntervalFn });
     startAutomatedFollowUps();
     startWhatsAppFreeEntryFollowUps();
+    // No Ariel followup scheduler starts unless explicitly enabled, and
+    // sender-specific rules have no default enabled entries.
+    startSecondaryFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
+    }
 
     startupReadiness.markReady();
     console.log(
