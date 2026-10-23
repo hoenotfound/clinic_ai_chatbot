@@ -146,7 +146,7 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
         a.state AS attempt_state,
-        a.billable_authorized,
+        a.billable_authorized,a.billing_authorization_source,
         g.state AS gate_state, g.reservation_id AS live_reservation_id
  FROM whatsapp_sender_billing_attempts a
  LEFT JOIN whatsapp_sender_billing_gates g
@@ -259,7 +259,12 @@ async function recordSignedSecondaryStatusBatch({
         // but its WAMID may be unknown after a provider timeout. Flag a
         // sender-wide *unattributed* billing incident; never associate it
         // with another customer's reservation.
-        if (event.pricingBillable === true) {
+        // A recognized operator-authorized SERVICE charge may need manual
+        // per-contact review when auto-reconcile is disabled. Do not suspend
+        // other Ariel customers merely because Meta exhausted the free quota.
+        // Unexpected categories, unapproved billing and identity errors still
+        // latch a sender-wide alarm.
+        if (event.pricingBillable === true && !authorizedServiceCharge) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
               (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -310,16 +315,29 @@ async function recordSignedSecondaryStatusBatch({
         throw new Error("Secondary status had no verified, saved message.");
       }
       changedMessages.push(delivery.rows[0]);
-      const paidEligible =
+      const paidTemplateEligible =
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+        attempt.billing_authorization_source === "staff_template_billing_review" &&
+        ["service","utility","marketing"].includes(event.pricingCategory);
+      const paidServiceEligible =
+        env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+        attempt.billing_authorization_source === "operator_acknowledged_service" &&
+        event.pricingCategory === "service";
+      const paidEligible =
         attempt.billable_authorized === true &&
         attempt.attempt_state === "awaiting_pricing" &&
         attempt.gate_state === "awaiting_pricing" &&
         Boolean(attempt.live_reservation_id) &&
         event.pricingBillable === true &&
         event.pricingType === "regular" &&
-        ["service","utility","marketing"].includes(event.pricingCategory) &&
+        (paidTemplateEligible || paidServiceEligible) &&
         ["sent","delivered","read"].includes(event.deliveryStatus);
+      const authorizedServiceCharge =
+        event.pricingBillable === true && event.pricingType === "regular" &&
+        event.pricingCategory === "service" &&
+        attempt.billable_authorized === true &&
+        attempt.billing_authorization_source === "operator_acknowledged_service";
 
       // Already settled legitimately-priced attempts may receive additional
       // out-of-order delivered/read receipts. Keep the evidence without
@@ -334,7 +352,8 @@ async function recordSignedSecondaryStatusBatch({
             JOIN whatsapp_sender_status_receipts initial
               ON initial.fingerprint=a.provider_receipt_fingerprint
             WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
-              AND a.method='signed_meta_staff_authorized_charge'
+              AND a.method IN ('signed_meta_staff_authorized_charge',
+                               'signed_meta_operator_authorized_service_charge')
               AND a.pricing_billable=TRUE
               AND initial.pricing_type=$3 AND initial.pricing_category=$4
               AND initial.pricing_billable=TRUE`,
@@ -422,7 +441,9 @@ async function recordSignedSecondaryStatusBatch({
              VALUES($1::uuid,$2,$3,$4,$5)
              ON CONFLICT(reservation_id) DO NOTHING RETURNING reservation_id`,
             [attempt.reservation_id,attempt.sender_id,event.fingerprint,
-              paidEligible ? "signed_meta_staff_authorized_charge"
+              paidEligible
+                ? (paidServiceEligible ? "signed_meta_operator_authorized_service_charge"
+                  : "signed_meta_staff_authorized_charge")
                 : event.pricingType === "free_customer_service"
                   ? "signed_meta_nonbillable_customer_service"
                   : "signed_meta_nonbillable_free_entry",
