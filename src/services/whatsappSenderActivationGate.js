@@ -30,6 +30,12 @@ function assertSecondaryOperationalSafety(env = process.env) {
   if ((ai || aiMedia || followups) && !secondaryUsesPrimaryClinicContent(env)) {
     throw new Error("Unsafe WhatsApp secondary operational activation: Ariel AI requires the approved primary Neutro clinic-content binding.");
   }
+  // Ariel is specifically a WhatsApp Business App coexistence number. AI must
+  // wait for sender-scoped Business App echoes to cancel competing replies.
+  if ((ai || aiMedia || followups) &&
+      env.WHATSAPP_COEXISTENCE_ENABLED !== "true") {
+    throw new Error("Unsafe WhatsApp secondary operational activation: Ariel AI needs Business App coexistence echo collision protection.");
+  }
   // From 1 Oct 2026, a 24-hour WhatsApp service window no longer guarantees
   // zero charge. Meta grants a shared 1,000-service-message monthly allowance
   // per number but provides no atomic pre-send reservation in this code.
