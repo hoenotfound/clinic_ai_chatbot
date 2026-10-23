@@ -24,7 +24,8 @@
     "ops:generate-token": "node scripts/generateOpsReadinessToken.js",
     "test": "node --test",
     "whatsapp-coexistence:status": "node scripts/checkWhatsAppCoexistenceStatus.js",
-    "whatsapp-sender:verify": "node scripts/verifyWhatsAppSenderMapping.js"
+    "whatsapp-sender:verify": "node scripts/verifyWhatsAppSenderMapping.js",
+    "whatsapp-sender:verify-dual": "node scripts/verifyWhatsAppDualSenderMapping.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
