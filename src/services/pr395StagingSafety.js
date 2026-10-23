@@ -27,8 +27,10 @@ const OUTBOUND_SWITCHES = [
 
 function assertPr395StagingSafety(env = process.env) {
   if (!isPr395Staging(env)) {
-    if (env.NODE_ENV === "staging") {
-      throw new Error("PR395 staging must explicitly set PR395_STAGING_MODE=true.");
+    if (env.NODE_ENV === "staging" ||
+        env.PR395_STAGING_BASIC_AUTH_ENABLED === "true" ||
+        String(env.PR395_STAGING_EXPECTED_DATABASE_HOST || "").trim()) {
+      throw new Error("PR395 staging safeguards must never be partially enabled or silently disabled.");
     }
     return { staging: false };
   }
@@ -39,6 +41,15 @@ function assertPr395StagingSafety(env = process.env) {
       !String(env.PR395_STAGING_BASIC_AUTH_USERNAME || "").trim() ||
       String(env.PR395_STAGING_BASIC_AUTH_PASSWORD || "").length < 32) {
     throw new Error("PR395 staging requires a dedicated Basic Auth username and 32+-character password.");
+  }
+  const secondaryId = String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim();
+  const expectedId = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID || "").trim();
+  const expectedNumber = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "").replace(/[^0-9]/g, "");
+  if (!/^\\d+$/.test(secondaryId) || secondaryId !== expectedId ||
+      expectedId === String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
+      !/^\\d{9,15}$/.test(expectedNumber) ||
+      String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim()) {
+    throw new Error("PR395 staging must pin a distinct second WhatsApp number; the unverified secondary account ID must remain unset.");
   }
   for (const key of ["SESSION_SECRET", "WHATSAPP_APP_SECRET", "META_APP_SECRET"]) {
     if (String(env[key] || "").length < 24) {
