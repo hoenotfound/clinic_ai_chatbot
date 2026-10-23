@@ -190,8 +190,8 @@ async function runOnce({
      if(id && state!=="accepted"){
        await messageRepo.markDeliveryUnknownIfUnconfirmed(id,
          state==="expired"
-           ? "Ariel image cancelled by a changed safety or customer policy."
-           : "Ariel image delivery is uncertain; manually verify before resending.");
+           ? "Secondary image cancelled by a changed safety or customer policy."
+           : "Secondary image delivery is uncertain; manually verify before resending.");
      }
      return saved;
    };
@@ -227,7 +227,7 @@ async function runOnce({
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             anchorMessageId:job.inbound_message_id},
           initialDeliveryStatus:"unknown",
-          initialDeliveryError:"Ariel image queued; Meta acceptance not confirmed."}
+          initialDeliveryError:"Secondary image queued; Meta acceptance not confirmed."}
        );
        messageId=saved.id;
        await database.query(
@@ -261,7 +261,7 @@ async function runOnce({
      }else await update("unknown");
    }catch(err){
      await update("unknown").catch(()=>{});
-     console.error("[Ariel AI media] Uncertain outcome requires manual review:",err?.message);
+     console.error("[Secondary WhatsApp AI media] Uncertain outcome requires manual review:",err?.message);
    }
  }
  return{disabled:false,accepted,pending};
@@ -269,7 +269,7 @@ async function runOnce({
 function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
  if(!enabled(env)||timer)return false;
  timer=setIntervalFn(()=>run({env}).catch(err=>
-   console.error("[Ariel AI media] Worker error:",err?.message)),INTERVAL_MS);
+   console.error("[Secondary WhatsApp AI media] Worker error:",err?.message)),INTERVAL_MS);
  timer?.unref?.();
  return true;
 }
