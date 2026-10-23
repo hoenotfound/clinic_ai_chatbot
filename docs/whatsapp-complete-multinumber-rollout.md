@@ -49,6 +49,7 @@ false in `.env.example`. In particular:
 WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED=false
 WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED=false
 WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED=false
+WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED=false
 WHATSAPP_SECONDARY_STAFF_SEND_ENABLED=false
 WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED=false
 WHATSAPP_SECONDARY_AI_SEND_ENABLED=false
@@ -67,7 +68,7 @@ Neutro Neon project `steep-forest-44509907`:
 
 - Production branch `main`: schema v077, unchanged (read-only verification)
 - Isolated QA branch `qa-pr395-final-multinumber-20261022`
-  (`br-steep-flower-b3qayk0r`): migrations v078–092 applied
+  (`br-steep-flower-b3qayk0r`): migrations v078–093 applied
   successfully and atomically
 - Existing contacts retained: **183**
 - Existing primary billing-gate rows retained: **1**
@@ -161,7 +162,7 @@ unmodified by this remediation. Code changes require **fresh exact-head CI**.
 1. Real Meta coexistence, token identity and signed two-number webhooks
    have not been exercised on staging. Do not infer reliability from CI.
 2. The old pre-PR Render application **cannot safely be redeployed** against
-   migration 092: the migration runner rejects unknown future versions.
+   migration 093: the migration runner rejects unknown future versions.
    Only perform a compatible forward fix / disable Ariel feature flags while
    maintaining permanent sender-scoped contact identity.
 3. The application's migrations normally commit **per migration**, not as
@@ -176,3 +177,67 @@ unmodified by this remediation. Code changes require **fresh exact-head CI**.
 7. Validate production Render's auto-deploy state before merge. Merging into
    `main` may immediately deploy while Neon has only migration 077.
 
+
+## Safety follow-through — 2026-10-23 (code and isolated DB only)
+
+- A CI regression that expected the previous safety-error string was corrected.
+  The backend suite passed **3061/3061** on commit `d2bbcbb`.
+- Migration `093_whatsapp_sender_early_receipt_recipient_proof.sql` was
+  applied with a transaction-scoped advisory lock to the **isolated** QA branch.
+  Ledger versions are 1–93, with a SHA-256 checksum of the exact migration.
+  QA retained 183 Neutro contacts, 2203 messages and the existing primary
+  billing gate. The production Neon branch remains at version 077.
+- An explicit `WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED=true` is
+  required at startup **before any Ariel outbound capability** can be enabled.
+  This is an acknowledgement of *potential* charges, not an atomic Meta
+  spending limit or proof the current free monthly allowance is unconsumed.
+  Keep it FALSE unless a responsible operator approves billing. Meta's
+  [official FAQ](https://whatsappbusiness.com/resources/faq/) confirms that
+  from 1 October 2026 each phone number gets 1,000 free service messages per
+  month, then service messages are charged individually.
+- Ariel AI and AI-dependent follow-ups are **deliberately hard-disabled at
+  startup** because the current `src/server.js` still uses global Neutro
+  clinic services, prices, intro and AI prompt. There is not yet an
+  independently verified Ariel clinic content profile. Never try to
+  bypass that safety gate by enabling the flag directly.
+- Live Render `da-chatbot-neutro-sense-tcm` follows `main` with
+  **auto-deploy ON**. Do not merge this PR before staged signed Meta
+  callbacks, exact credential/number verification, billing consent and a
+  separate go-live authorization.
+- The linked WhatsApp Business connector identifies Ariel Lee's business
+  number as registered but cannot establish that DA CHATBOT App
+  `1029862536608134` is administered by the connected Meta business.
+  Staging activation is therefore blocked until appropriate app access and
+  webhook subscription can be verified. Do not edit ownership/subscriptions
+  in order to make a passing test.
+
+### Forward-only rollback rehearsal
+
+The real PostgreSQL sender-binding regression now tests all three cases:
+(1) disabling Ariel send/AI/follow-up flags while retaining sender-aware
+reads and ingress is accepted, (2) disabling sender-aware reads is rejected
+when an Ariel contact exists, and (3) disabling scoped ingress is rejected.
+The test also checks that the original Neutro message and both contact
+records remain intact.
+
+In a deployed failure, switch OFF all Ariel send and worker flags first,
+preserve the sender-scoped registry/read/ingress flags and the billing audit
+tables, and keep the running application at a version that **knows all
+installed migration versions**. Do **not** redeploy the previous 077
+binary against database schema 093, manually delete migration history,
+reset unknown billing reservations, or point live Render at QA.
+
+### What still needs real-world testing
+
+A non-production Render deployment and authorized Meta app must be connected
+to an isolated database, a valid shared or separate Meta callback setup and
+approved test recipients. Then obtain *actual* signed provider receipts for
+Ariel/Neutro inbound, staff text, media, template variables, pricing, wrong
+recipient rejection and simultaneous messages. Check billing in Meta's
+account UI. These are **not** established by synthetic CI webhook tests and
+must not be marked complete without observable provider receipts. Staff must
+also supply/approve Ariel's real business information, services, price rules,
+clinical escalation copy and AI prompt before the secondary AI flag can ever
+be made available.
+
+**Release decision remains Draft / no live changes.**
