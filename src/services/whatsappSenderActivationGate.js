@@ -18,6 +18,16 @@ function assertSecondaryOperationalSafety(env = process.env) {
   if (ai || followups) {
     throw new Error("Unsafe WhatsApp secondary operational activation: sender-specific clinic configuration is not yet implemented for Ariel AI and automated follow-ups.");
   }
+  // From 1 Oct 2026, a 24-hour WhatsApp service window no longer guarantees
+  // zero charge. Meta grants a shared 1,000-service-message monthly allowance
+  // per number but provides no atomic pre-send reservation in this code.
+  // Receipt settlement happens AFTER delivery. Never let an operator enable
+  // any Ariel outbound class without explicitly accepting possible charges.
+  const sendingEnabled = staff || media || template || templateMedia || ai || followups;
+  if (sendingEnabled &&
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true") {
+    throw new Error("Unsafe WhatsApp secondary operational activation: possible Meta service-message charges require explicit sender-specific acknowledgment.");
+  }
   if (!receiptIngress && !autoReconcile && !billedReview && !staff && !media && !template && !templateMedia && !ai && !followups) return;
 
   const common = [
