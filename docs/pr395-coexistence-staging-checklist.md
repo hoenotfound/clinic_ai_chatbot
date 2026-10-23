@@ -1,6 +1,6 @@
 # PR #395: Isolated coexistence staging (2026-10-23)
 
-**State:** Prepared as a reproducible runbook; **not deployed and not Meta-onboarded**.
+**State:** Staging deployed on Render (23 Oct 2026); **not Meta-onboarded**, outbound processing intentionally disabled.
 Do not mistake this document or a passing CI job for production approval.
 
 ## Ground truth and scope
@@ -9,9 +9,8 @@ Do not mistake this document or a passing CI job for production approval.
   autoDeploy on; it must not be edited, merged into, or have webhooks reassigned
   during staging.
 - Production Neon `steep-forest-44509907` `main` remains v077.
-- Isolated production-derived Neon QA branch
-  `br-steep-flower-b3qayk0r` is v099 (183 historical contacts at last
-  check). **Contains real historical customer records.** Protect accordingly.
+- Isolated Neon QA branch `br-steep-flower-b3qayk0r` has a production-derived `neondb` snapshot at v099 containing 183 historical contacts. **Do not point staging at that database.**
+- Render staging uses a newly created **empty `pr395_staging` database** in that QA branch, owned by a dedicated `pr395_stage_owner` role. It was migrated through v099 and verified to contain **0 contacts, 1 staging admin and 0 active senders**.
 - Candidate second Business App number: 中医养生馆 / +60 17-483 1336.
   Previously noted phone ID `1318355951360575`; this is a pin requiring
   authoritative Meta token verification, not a permission grant.
@@ -24,13 +23,15 @@ Do not mistake this document or a passing CI job for production approval.
 
 ## Service provisioning (manual / separate Render service)
 
-Create a **free** Render web service (subject to plan availability),
-`da-chatbot-pr395-staging`, from
-`hoenotfound/clinic_ai_chatbot` branch
-`feature/whatsapp-complete-multinumber-integration-20261022`.
-Select Singapore, Node runtime, **Auto-Deploy OFF**,
-build `npm ci && npm --prefix portal-frontend ci && npm --prefix portal-frontend run build`,
-start `npm start`.
+**Already created**: [da-chatbot-pr395-staging](https://dashboard.render.com/web/srv-dbdgmnks728c73btahcg), free Singapore Node service, auto-deploy OFF, on branch `feature/whatsapp-complete-multinumber-integration-20261022`.
+
+URL: https://da-chatbot-pr395-staging.onrender.com
+
+Build: `npm ci && npm --prefix portal-frontend ci && npm --prefix portal-frontend run build`; start: `npm start`.
+
+**Required Render build override:** `NPM_CONFIG_PRODUCTION=false` to install Vite build dependencies while keeping `NODE_ENV=production` for runtime security.
+
+Latest verified Render deployment status: **live**, commit `3044bbea`.
 Do not use any production service or main branch for this rehearsal.
 
 Use a dedicated, low-privilege connection to an isolated, access-controlled
