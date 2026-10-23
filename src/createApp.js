@@ -140,7 +140,7 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/webhook", stagingWebhookGuard, webhookJsonParser, async (req, res) => {
+  app.post("/webhook", webhookJsonParser, stagingWebhookGuard, async (req, res) => {
     // The single-sender compatibility boundary runs only AFTER Meta signature
     // verification. It rejects explicitly foreign sender events before any
     // legacy customer lookups, AI cancellation, or receipt writes.
@@ -341,7 +341,7 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/meta-webhook", stagingWebhookGuard, metaWebhookJsonParser, async (req, res) => {
+  app.post("/meta-webhook", metaWebhookJsonParser, stagingWebhookGuard, async (req, res) => {
     const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
     const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
     for (const echo of staffEchoes) {
