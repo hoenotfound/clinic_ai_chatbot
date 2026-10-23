@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_ai_media_jobs (
  id BIGSERIAL PRIMARY KEY,
  sender_id BIGINT NOT NULL REFERENCES whatsapp_sender_accounts(id) ON DELETE RESTRICT,
  contact_id INTEGER NOT NULL,
- inbound_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE RESTRICT,
+ inbound_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
  sequence_no INTEGER NOT NULL CHECK(sequence_no BETWEEN 0 AND 4),
  media_kind TEXT NOT NULL CHECK(media_kind IN ('promotion','result')),
  image_url TEXT NOT NULL CHECK(length(image_url) BETWEEN 8 AND 2048),
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_ai_media_jobs (
  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  CONSTRAINT whatsapp_sender_ai_media_contact_fk
    FOREIGN KEY(contact_id,sender_id) REFERENCES contacts(id,whatsapp_sender_id)
-   ON DELETE RESTRICT,
+   ON DELETE CASCADE,
  CONSTRAINT whatsapp_sender_ai_media_one_slot
    UNIQUE(sender_id,inbound_message_id,sequence_no)
 );
