@@ -163,7 +163,7 @@ function createApp({
       return res.sendStatus(503);
     }
 
-    // Stage Ariel statuses from the original HMAC-authenticated body BEFORE
+    // Stage secondary WhatsApp statuses from the original HMAC-authenticated body BEFORE
     // acknowledging or running any existing primary sender worker.
     // Primary statuses remain in the original legacy partition; secondary
     // statuses remain excluded from all Neutro billing and retry handlers.
@@ -176,7 +176,7 @@ function createApp({
         subsetFromVerifiedWebhook: true,
       });
       if (!savedReceipts.accepted) {
-        console.error("Could not durably stage verified Ariel status receipts:", savedReceipts.code);
+        console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
         return res.sendStatus(503);
       }
       // Previously these expected statuses were quarantined. Now they have
