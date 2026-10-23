@@ -47,6 +47,11 @@ async function sendSecondaryStaffText({
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" :
     (["ai_reply","system_fallback"].includes(origin) &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true") ||
+    (origin === "ai_media" &&
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+      env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
+      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
     (origin === "followup" &&
       env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
