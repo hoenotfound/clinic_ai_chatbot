@@ -2,10 +2,9 @@
 
 // These switches may NOT be enabled piecemeal. The existing single-number
 // deployment remains unchanged when sender-scoped ingress is disabled.
-// Ariel Lee is a second Neutro Sense business number. The owner approved
-// using the existing Neutro clinic content, but this is an explicit sender
-// binding, not permission to reuse Neutro's Meta token or billing evidence.
-// No separate Ariel clinic database record or invented pricing is needed.
+// The secondary number must be independently verified and authorized.
+// Approvals for a previous secondary number never transfer automatically.
+// Sharing clinic content requires explicit approval, never token/ledger reuse.
 function secondaryUsesPrimaryClinicContent(env = process.env) {
   return env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE === "primary" &&
     env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED === "true" &&
@@ -13,7 +12,22 @@ function secondaryUsesPrimaryClinicContent(env = process.env) {
     /^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY || "")) &&
     env.WHATSAPP_PRIMARY_SENDER_KEY !== env.WHATSAPP_SECONDARY_SENDER_KEY;
 }
+// An optional operator-pinned target identity prevents a stale Ariel/previous
+// phone configuration from being accidentally enabled for the new number.
+function assertExpectedSecondaryTarget(env=process.env) {
+  const configuredPhone=String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim();
+  const configuredAccount=String(env.WHATSAPP_SECONDARY_WABA_ID||"").trim();
+  for (const [key,value] of [
+    ["WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID",configuredPhone],
+    ["WHATSAPP_SECONDARY_EXPECTED_WABA_ID",configuredAccount],
+  ]) {
+    const expected=String(env[key]||"").trim();
+    if (expected && (!/^[0-9]+$/.test(expected) || expected!==value))
+      throw new Error("Unsafe secondary target: "+key+" does not match verified receiving identity.");
+  }
+}
 function assertSecondaryOperationalSafety(env = process.env) {
+  assertExpectedSecondaryTarget(env);
   const receiptIngress = env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true";
   const autoReconcile = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
   const billedReview = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true";
@@ -26,21 +40,21 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
   // The AI prompt, business facts, offers and pricing are intentionally
   // shared with the primary Neutro clinic ONLY for its approved second number.
-  // Sending and billing still use the separately verified Ariel sender.
+  // Sending and billing still use separately verified secondary credentials.
   if ((ai || aiMedia || followups) && !secondaryUsesPrimaryClinicContent(env)) {
-    throw new Error("Unsafe WhatsApp secondary operational activation: Ariel AI requires the approved primary Neutro clinic-content binding.");
+    throw new Error("Unsafe WhatsApp secondary operational activation: secondary AI requires approved primary Neutro clinic-content binding.");
   }
-  // Ariel is specifically a WhatsApp Business App coexistence number. AI must
+  // The secondary sender is a WhatsApp Business App coexistence number. AI must
   // wait for sender-scoped Business App echoes to cancel competing replies.
   if ((ai || aiMedia || followups) &&
       env.WHATSAPP_COEXISTENCE_ENABLED !== "true") {
-    throw new Error("Unsafe WhatsApp secondary operational activation: Ariel AI needs Business App coexistence echo collision protection.");
+    throw new Error("Unsafe WhatsApp secondary operational activation: secondary AI needs Business App coexistence echo collision protection.");
   }
   // From 1 Oct 2026, a 24-hour WhatsApp service window no longer guarantees
   // zero charge. Meta grants a shared 1,000-service-message monthly allowance
   // per number but provides no atomic pre-send reservation in this code.
   // Receipt settlement happens AFTER delivery. Never let an operator enable
-  // any Ariel outbound class without explicitly accepting possible charges.
+  // any secondary outbound class without explicitly accepting possible charges.
   const sendingEnabled = staff || media || template || templateMedia || ai || aiMedia || followups;
   if (sendingEnabled &&
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true") {
@@ -126,7 +140,7 @@ async function assertStoredSenderSafety({
   if (nonprimary > 0 && (!readEnabled || !ingressEnabled)) {
     throw new Error("Unsafe WhatsApp rollback: secondary-number contacts are " +
       "bound; sender-aware reads AND sender-scoped ingress must remain enabled. " +
-      "Disable Ariel sends/workers instead, not the permanent identity boundary.");
+      "Disable secondary sends/workers instead, not the permanent identity boundary.");
   }
   if (env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true") {
     if (!ingressEnabled || !readEnabled ||
@@ -164,4 +178,4 @@ async function assertStoredSenderSafety({
   return { verified: true, scopedContacts: total, nonprimaryContacts: nonprimary };
 }
 
-module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent };
+module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent, assertExpectedSecondaryTarget };
