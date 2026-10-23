@@ -436,6 +436,8 @@ function createApp({
   app.use("/api/follow-up-health", requireAuth, followUpHealthRoutes);
   app.use("/api/whatsapp-secondary-followups", requireAuth,
     require("./routes/whatsappSecondaryFollowUpRules"));
+  app.use("/api/whatsapp-secondary-media-review", requireAuth,
+    require("./routes/whatsappSecondaryMediaReview"));
   app.use("/api/follow-up-performance", requireAuth, followUpPerformanceRoutes);
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);
