@@ -166,6 +166,18 @@ test("fully configured secondary operational flags still preserve strict Neutro 
   assert.doesNotThrow(()=>assertSenderIngressSafety({
     ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
   }));
+  assert.throws(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+  }),/Unsafe WhatsApp secondary operational activation/);
+  assert.doesNotThrow(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+  }));
+  assert.throws(()=>assertSenderIngressSafety({
+    ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+    WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false",
+  }),/Unsafe WhatsApp secondary operational activation/);
   assert.doesNotThrow(()=>assertSenderIngressSafety({
     ...sharedClinic,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
     WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
