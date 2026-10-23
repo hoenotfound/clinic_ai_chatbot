@@ -42,6 +42,10 @@ const CANDIDATES_SQL=`
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user'
      AND m.whatsapp_message_id IS NOT NULL
+     AND NOT EXISTS(
+       SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
+       WHERE h.message_id=m.id AND h.sender_id=sa.id
+     )
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON true
  LEFT JOIN LATERAL (
@@ -131,6 +135,10 @@ const RECHECK_SQL=`
    AND sc.customer_wa_id=c.whatsapp_number
  JOIN messages inbound ON inbound.id=$2 AND inbound.contact_id=c.id
    AND inbound.role='user' AND inbound.whatsapp_message_id IS NOT NULL
+   AND NOT EXISTS(
+     SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
+     WHERE h.message_id=inbound.id AND h.sender_id=sa.id
+   )
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
  JOIN whatsapp_sender_followup_attempts attempt ON
