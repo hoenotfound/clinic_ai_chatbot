@@ -509,6 +509,7 @@ module.exports = {
   fetchWaba,
   inspectToken,
   publicConfig,
+  fetchPhoneNumbers,
   secondaryTargetMode,
   requireExpectedSecondaryPhone,
   assertExpectedSecondaryPhone,
