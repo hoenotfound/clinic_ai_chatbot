@@ -37,6 +37,7 @@ async function verifyDualSenderMapping({
     verifyWhatsAppSenderMapping({
       wabaId:ids.secondaryAccount,phoneNumberId:ids.secondary,appId:ids.appId,
       clientBaseUrl,accessToken:secondaryToken,fetchImpl,
+      requireCoexistence:true,
     }),
   ]);
   return {
