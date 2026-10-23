@@ -68,7 +68,7 @@ Neutro Neon project `steep-forest-44509907`:
 
 - Production branch `main`: schema v077, unchanged (read-only verification)
 - Isolated QA branch `qa-pr395-final-multinumber-20261022`
-  (`br-steep-flower-b3qayk0r`): migrations v078–093 applied
+  (`br-steep-flower-b3qayk0r`): migrations v078–093 applied (v094–095 pending isolated QA rehearsal)
   successfully and atomically
 - Existing contacts retained: **183**
 - Existing primary billing-gate rows retained: **1**
@@ -162,7 +162,7 @@ unmodified by this remediation. Code changes require **fresh exact-head CI**.
 1. Real Meta coexistence, token identity and signed two-number webhooks
    have not been exercised on staging. Do not infer reliability from CI.
 2. The old pre-PR Render application **cannot safely be redeployed** against
-   migration 093: the migration runner rejects unknown future versions.
+   migration 095: the migration runner rejects unknown future versions.
    Only perform a compatible forward fix / disable Ariel feature flags while
    maintaining permanent sender-scoped contact identity.
 3. The application's migrations normally commit **per migration**, not as
@@ -234,7 +234,7 @@ In a deployed failure, switch OFF all Ariel send and worker flags first,
 preserve the sender-scoped registry/read/ingress flags and the billing audit
 tables, and keep the running application at a version that **knows all
 installed migration versions**. Do **not** redeploy the previous 077
-binary against database schema 093, manually delete migration history,
+binary against database schema 095, manually delete migration history,
 reset unknown billing reservations, or point live Render at QA.
 
 ### Read-only Meta two-number preflight
@@ -299,3 +299,46 @@ deployment has observed correct signed callbacks for BOTH phone numbers.
 The existing Ariel follow-up worker still uses its own sender-owned,
 staff-authored 2h/6h/20h rules; it does **not** inherit Neutro's scheduling
 or send the 48h/72h marketing templates automatically.
+
+## PR #395 follow-up remediation — 2026-10-23
+
+The full five-item review has code-level fixes on the Draft PR:
+
+1. **Service-message billing:** migration **094** adds a distinct
+   `operator_acknowledged_service` reservation and
+   `signed_meta_operator_authorized_service_charge` reconciliation method.
+   It does not automatically consent to charges. Meta service charges are
+   reconcilable only when a verified Ariel-specific operator acknowledgment,
+   policy, exact sender, contact, WAMID and signed category=service receipt
+   agree. Template charges still require a separate one-time staff review.
+   An acknowledged but unautomated service charge holds only its own contact
+   for manual reconciliation; an unexpected category still latches the
+   global Ariel alarm. No primary Neutro billing tables are changed.
+2. **Lead and follow-up safety:** the 2h/6h/20h worker now selects and
+   rechecks the **chronologically newest** lead, including consent, appointment
+   and pipeline stage. It allows limited (8-hour) catch-up after quiet hours
+   or a worker outage while the verified 24h window remains open. Older
+   due rules are skipped once a newer scheduled slot is due.
+3. **Legacy Neutro Inbox identity:** unbound historical WhatsApp contacts
+   receive a display-only virtual Neutro sender label after the primary
+   registry and sender-aware ingress are verified. Contact IDs, sender
+   billing ownership and historical messages are never backfilled.
+4. **Ariel promotional and Before & After graphics:** migration **095**
+   introduces a sender-specific durable picture queue. AI text still uses the
+   shared approved Neutro service/pricing/result decision logic. Optional
+   images are sent only by the Ariel worker through its own Graph identity
+   and billing gate, after previous receipts reconcile. Unknown sends are
+   never retried automatically. A new activation flag
+   `WHATSAPP_SECONDARY_AI_MEDIA_ENABLED=false` defaults OFF.
+5. **Quiet-hours and replay safety:** both media and follow-up workers
+   recheck sender ownership, clinical/staff review, opt-outs, service window,
+   and permitted Malaysia hours immediately before attempting Meta sends.
+   Media jobs are one-shot with a bounded expiry.
+
+**Do not activate Ariel AI media merely because the code exists.** The
+operator must first verify the Meta app/subscription, phone and WABA mapping
+on an isolated staging environment and explicitly approve possible
+service-message charges. Separate real provider receipts are required
+before approving the release. Production Neon remains v077 and live Render
+auto-deploy remains ON; QA previously rehearsed through v093. The new
+migrations v094–095 require a fresh isolated rehearsal and exact-head CI.
