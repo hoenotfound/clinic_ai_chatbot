@@ -2367,6 +2367,8 @@ async function processIncomingMessage(
   }
 }
 
+// Runtime secret checks stay in the entry point so a misconfigured production
+// deployment still fails before the Express application is constructed.
 // Staging also fails before Express is constructed if secrets, access
 // controls, QA database isolation or outbound guards are missing.
 try {
@@ -2376,8 +2378,7 @@ try {
   process.exit(1);
 }
 
-// Runtime secret checks stay in the entry point so a misconfigured production
-// deployment still fails before the Express application is constructed.
+// Existing production runtime secret checks remain after the staging gate.
 if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
   console.error(
     "❌ WHATSAPP_APP_SECRET is not set. Refusing to start, since without it " +
