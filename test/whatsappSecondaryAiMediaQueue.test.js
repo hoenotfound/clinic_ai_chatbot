@@ -108,3 +108,34 @@ test("worker rechecks that no newer inbound, staff takeover, opt-out or night-ti
   assert.match(worker.STILL_VALID_SQL,/BETWEEN 7 AND 23/);
   assert.match(worker.STILL_VALID_SQL,/job\.state='claimed'/);
 });
+
+test("stale claimed secondary images are quarantined once, never automatically resent",async()=>{
+  const calls=[];
+  const database={query:async(sql,args)=>{
+    calls.push({sql,args});
+    return{rows:[{id:13,outbound_message_id:89},
+      {id:14,outbound_message_id:null}]};
+  }};
+  const messageRepo={markDeliveryUnknownIfUnconfirmed:async(id,reason)=>{
+    calls.push({marked:id,reason});
+  }};
+  const report=await worker.quarantineStaleClaims({database,env:approved,messageRepo});
+  assert.deepEqual(report,{disabled:false,quarantined:2});
+  const query=calls[0];
+  assert.match(query.sql,/job.state='claimed'/);
+  assert.match(query.sql,/state='unknown'/);
+  assert.match(query.sql,/30 minutes/);
+  assert.match(query.sql,/sender.sender_key=\$1/);
+  assert.match(query.sql,/sender.meta_phone_number_id=\$2/);
+  assert.match(query.sql,/sender.meta_account_id=\$3/);
+  assert.deepEqual(query.args,["ariel","100000000000002","200000000000002"]);
+  assert.equal(calls.filter(c=>c.marked).length,1);
+  assert.equal(calls.find(c=>c.marked)?.marked,89);
+  assert.match(calls.find(c=>c.marked)?.reason,/Verify the actual WhatsApp delivery/);
+  assert.ok(!calls.some(c=>c.send));
+});
+test("no sender authorization means stale images cannot be touched",async()=>{
+  const database={query:async()=>assert.fail("disabled secondary worker queried the DB")};
+  const result=await worker.quarantineStaleClaims({database,env:{}});
+  assert.deepEqual(result,{disabled:true,quarantined:0});
+});
