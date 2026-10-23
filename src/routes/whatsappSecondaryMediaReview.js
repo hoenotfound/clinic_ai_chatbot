@@ -1,6 +1,6 @@
 "use strict";
 // Read-only staff evidence. DO NOT expose a "retry" button for Cloud API sends:
-// a claimed/unknown Ariel message may already have been accepted by Meta.
+// a claimed/unknown secondary message may already have been accepted by Meta.
 const express=require("express");
 const {pool}=require("../db/db");
 const {hasCapability}=require("../utils/permissions");
@@ -14,7 +14,7 @@ router.get("/",async(req,res)=>{
    return res.json({configured:false,items:[]});
  try{
    const lookup=await pool.query(
-     "SELECT id FROM whatsapp_sender_accounts WHERE sender_key=$1 AND meta_phone_number_id=$2 "+
+     "SELECT id,display_name FROM whatsapp_sender_accounts WHERE sender_key=$1 AND meta_phone_number_id=$2 "+
      "AND meta_account_id=$3 AND state='active'",
      [process.env.WHATSAPP_SECONDARY_SENDER_KEY,
       process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
@@ -55,12 +55,12 @@ router.get("/",async(req,res)=>{
         ORDER BY updated_at DESC LIMIT 50`,[senderId]
      ),
    ]);
-   return res.json({configured:true,items:[...outbound.rows,...inbound.rows,...history.rows]
+   return res.json({configured:true,senderDisplayName:lookup.rows[0].display_name,items:[...outbound.rows,...inbound.rows,...history.rows]
      .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at)),
     outboundRetryAllowed:false});
  }catch(e){
-   console.error("Ariel sender media review unavailable:",e?.message);
-   return res.status(503).json({error:"Ariel media review cannot be verified."});
+   console.error("secondary sender media review unavailable:",e?.message);
+   return res.status(503).json({error:"secondary media review cannot be verified."});
  }
 });
 module.exports=router;
