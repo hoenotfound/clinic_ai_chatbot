@@ -17,6 +17,7 @@ const config={
 const origin="https://staging.example.test";
 function graph({
  absentSecondary=false, wrongApp=false, wrongCallback=false,
+ notOnApp=false,wrongPlatform=false,
 }={}) {
  const calls=[];
  const fetchImpl=async(url,opts)=>{
@@ -28,6 +29,10 @@ function graph({
     data:absentSecondary&&secondary?[]:[{id}],
    })};
   }
+  if(url.includes("/100000000000002?fields=is_on_biz_app,platform_type"))
+   return{ok:true,status:200,json:async()=>({
+    id:"100000000000002",is_on_biz_app:!notOnApp,
+    platform_type:wrongPlatform?"NOT_APPLICABLE":"CLOUD_API"})};
   if(url.includes("/subscribed_apps?"))return{
    ok:true,status:200,json:async()=>({
     data:[{whatsapp_business_api_data:{id:wrongApp?"999999999999999":config.META_APP_ID},
@@ -45,12 +50,15 @@ test("read-only dual verification proves two independent sender owners and never
   secondaryToken:"secondary-private",fetchImpl,
  });
  assert.equal(report.verified,true);
+ assert.equal(report.secondary.coexistence.verified,true);
+ assert.equal(report.secondary.coexistence.isOnBusinessApp,true);
  assert.equal(report.sameMetaAccount,false);
  assert.equal(report.primary.phoneNumberId,config.WHATSAPP_PHONE_NUMBER_ID);
  assert.equal(report.secondary.phoneNumberId,config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
- assert.equal(calls.length,4);
+ assert.equal(calls.length,5);
  assert.ok(calls.every(c=>c.method==="GET"));
- assert.ok(calls.filter(c=>c.url.includes("/200000000000002/"))
+ assert.ok(calls.filter(c=>c.url.includes("/200000000000002/") ||
+  c.url.includes("/100000000000002?"))
   .every(c=>c.authorization==="Bearer secondary-private"));
  assert.ok(calls.filter(c=>c.url.includes("/200000000000001/"))
   .every(c=>c.authorization==="Bearer primary-private"));
@@ -62,9 +70,12 @@ test("same Meta account two phone IDs is valid and does not conflate identities"
  const fetchImpl=async(url,opts)=>{
   calls.push({url,token:opts.headers?.Authorization});
   const isPhones=url.includes("/phone_numbers?");
-  return {ok:true,json:async()=>isPhones?{
-   data:[{id:config.WHATSAPP_PHONE_NUMBER_ID},{id:config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID}],
-  }:{data:[{whatsapp_business_api_data:{id:config.META_APP_ID},
+  return {ok:true,json:async()=>url.includes("/100000000000002?")
+   ? {id:config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,is_on_biz_app:true,
+      platform_type:"CLOUD_API"}
+   : isPhones?{
+    data:[{id:config.WHATSAPP_PHONE_NUMBER_ID},{id:config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID}],
+   }:{data:[{whatsapp_business_api_data:{id:config.META_APP_ID},
     override_callback_uri:origin+"/webhook"}]}};
  };
  const report=await verifyDualSenderMapping({env:shared,clientBaseUrl:origin,
@@ -74,7 +85,7 @@ test("same Meta account two phone IDs is valid and does not conflate identities"
  assert.ok(calls.some(c=>c.token==="Bearer secondary-private"));
 });
 test("wrong phone owner, app or callback always blocks deployment proof",async()=>{
- for(const mode of [{absentSecondary:true},{wrongApp:true},{wrongCallback:true}]){
+ for(const mode of [{absentSecondary:true},{wrongApp:true},{wrongCallback:true},{notOnApp:true},{wrongPlatform:true}]){
   const {fetchImpl}=graph(mode);
   const report=await verifyDualSenderMapping({env:config,clientBaseUrl:origin,
    primaryToken:"p",secondaryToken:"s",fetchImpl});
