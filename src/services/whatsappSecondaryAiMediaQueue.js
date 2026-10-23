@@ -179,10 +179,22 @@ async function runOnce({
      [job.id]
    );
    if(claimed.rowCount!==1)continue;
-   const update=async(state)=>database.query(
-     "UPDATE whatsapp_sender_ai_media_jobs SET state=$2,updated_at=NOW() WHERE id=$1 AND state='claimed'",
-     [job.id,state]
-   );
+   const update=async(state)=>{
+     const saved=await database.query(
+       "UPDATE whatsapp_sender_ai_media_jobs SET state=$2,updated_at=NOW() WHERE id=$1 AND state='claimed' RETURNING outbound_message_id",
+       [job.id,state]
+     );
+     // Never imply a picture reached WhatsApp when Meta acceptance is unknown.
+     // Only modify an unconfirmed assistant row; signed receipts remain authoritative.
+     const id=saved.rows?.[0]?.outbound_message_id;
+     if(id && state!=="accepted"){
+       await messageRepo.markDeliveryUnknownIfUnconfirmed(id,
+         state==="expired"
+           ? "Ariel image cancelled by a changed safety or customer policy."
+           : "Ariel image delivery is uncertain; manually verify before resending.");
+     }
+     return saved;
+   };
    try{
      const contact=await contacts.getContactById(job.contact_id);
      if(contact?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
@@ -210,7 +222,12 @@ async function runOnce({
      if(!messageId){
        const saved=await store.appendMessageForContact(
          contact.id,"assistant",job.caption,null,null,job.image_url,null,
-         {publish:false}
+         {publish:false,
+          whatsappTemplate:{automatedSecondaryAiMedia:true,
+            senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
+            anchorMessageId:job.inbound_message_id},
+          initialDeliveryStatus:"unknown",
+          initialDeliveryError:"Ariel image queued; Meta acceptance not confirmed."}
        );
        messageId=saved.id;
        await database.query(
