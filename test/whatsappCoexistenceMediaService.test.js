@@ -54,8 +54,8 @@ test("verified Ariel echo media is fetched by Ariel's receiver identity, stored 
  assert.equal(f.calls.find(x=>x.download).download.businessPhoneNumberId,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
  assert.equal(f.calls.find(x=>x.download).download.businessAccountId,env.WHATSAPP_SECONDARY_WABA_ID);
  assert.equal(f.calls.find(x=>x.stored).stored[2].contactId,12);
- assert.ok(f.calls.some(x=>x.sql.includes("status='complete'")));
- assert.ok(f.calls.every(x=>!x.sql.includes("INSERT INTO whatsapp_sender_billing")));
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='complete'")));
+ assert.ok(f.calls.every(x=>!x.sql?.includes("INSERT INTO whatsapp_sender_billing")));
 });
 test("wrong sender or unavailable media leaves staff-visible placeholder for review",async()=>{
  for(const mock of [fake({media:false}),fake({sender:"neutro"})]){
