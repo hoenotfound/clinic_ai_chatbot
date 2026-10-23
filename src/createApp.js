@@ -214,17 +214,21 @@ function createApp({
     const businessAppEchoes = whatsapp.parseBusinessAppEchoes(webhookBody);
     const statusUpdates = whatsapp.parseStatusUpdates(webhookBody);
     const passiveSync = whatsappCoexistence.summarizePassiveSync(webhookBody);
-    // Persist opted-in, sender-authenticated Business App history BEFORE ACK,
-    // but never route imported messages to customer AI or follow-up workers.
-    // Feature defaults OFF; failure returns 503 so Meta may redeliver safely.
+    // Mark phone-side staff replies pending BEFORE slow optional history
+    // imports; otherwise an in-flight AI generation can race the echo.
+    for (const echo of businessAppEchoes) {
+      whatsappCoexistence.beginPendingAiForEcho(echo);
+    }
+    // Imported history is passive: no AI, lead stage, service window or
+    // follow-up. Errors return 503 so Meta can replay safely by WAMID.
     try {
       await coexistenceSync.acceptPassiveSync(webhookBody);
     } catch (err) {
+      for (const echo of businessAppEchoes) {
+        whatsappCoexistence.releasePendingAiForEcho(echo);
+      }
       console.error("Could not durably accept sender-scoped Business App sync:", err);
       return res.sendStatus(503);
-    }
-    for (const echo of businessAppEchoes) {
-      whatsappCoexistence.beginPendingAiForEcho(echo);
     }
 
     let durableClaims;
