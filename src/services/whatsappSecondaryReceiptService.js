@@ -259,12 +259,9 @@ async function recordSignedSecondaryStatusBatch({
         // but its WAMID may be unknown after a provider timeout. Flag a
         // sender-wide *unattributed* billing incident; never associate it
         // with another customer's reservation.
-        // A recognized operator-authorized SERVICE charge may need manual
-        // per-contact review when auto-reconcile is disabled. Do not suspend
-        // other Ariel customers merely because Meta exhausted the free quota.
-        // Unexpected categories, unapproved billing and identity errors still
-        // latch a sender-wide alarm.
-        if (event.pricingBillable === true && !authorizedServiceCharge) {
+        // Unmatched billing has NO verified reservation/approval at all;
+        // it must always alarm, even when operator-approved service sends exist.
+        if (event.pricingBillable === true) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
               (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -369,7 +366,9 @@ async function recordSignedSecondaryStatusBatch({
         // Subsequent new reservations must not ignore late contradictions.
         // A bounced message must not disable unrelated customers. Only
         // unexpected charges or identity incidents suspend the sender.
-        if (event.pricingBillable === true) {
+        // An operator-approved service charge awaiting manual reconciliation
+        // holds only this contact; other Ariel conversations may continue.
+        if (event.pricingBillable === true && !authorizedServiceCharge) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
                (sender_id,reservation_id,reason,latest_wamid_hash)
