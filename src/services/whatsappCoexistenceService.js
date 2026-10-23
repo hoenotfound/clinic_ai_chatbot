@@ -109,6 +109,8 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       : await contactsRepo.getOrCreateContact(echo.to);
 
     if (senderAwareEchoesEnabled() &&
+        echo.businessPhoneNumberId===process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+        echo.businessAccountId===process.env.WHATSAPP_SECONDARY_WABA_ID &&
         ["edit","revoke"].includes(echo.type)) {
       const changed=await echoMutations.record(echo,contact);
       if (changed?.isNew) confirmPendingAiForEcho(echo);
