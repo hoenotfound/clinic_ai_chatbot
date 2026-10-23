@@ -591,7 +591,7 @@ async function processIncomingMessage(
       contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       // Recheck at dispatch as defense in depth. A runtime flag toggle must
-      // not make Ariel generate Neutro-branded replies without authorization.
+      // not make secondary WhatsApp generate Neutro-branded replies without authorization.
       secondaryUsesPrimaryClinicContent(process.env);
     const secondaryInboxOnly = senderScoped &&
       process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
@@ -1774,7 +1774,7 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    // Ariel shares approved clinic CONTENT, but its optional images must
+    // secondary WhatsApp shares approved clinic CONTENT, but its optional images must
     // use only its separate durable media queue and billing/Graph transport.
     // An inactive media flag must never reach the primary image-sending path.
 
