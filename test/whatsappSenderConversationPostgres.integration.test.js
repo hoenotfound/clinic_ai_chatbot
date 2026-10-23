@@ -133,6 +133,33 @@ test("migration 080 allows two contact identities for the same customer while re
         },
       });
       assert.equal(scopedProof.nonprimaryContacts,1);
+      // Forward rollback: disable every secondary outbound feature without
+      // disabling permanent sender-aware reads or ingress. Both contacts
+      // stay bound and the existing primary message remains untouched.
+      const identityOnly = {
+        ...primaryEnv, WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+        WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+        WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+        WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+        WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+        WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+        WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",
+        WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"false",
+      };
+      assert.equal((await assertStoredSenderSafety({
+        database:db,env:identityOnly,
+      })).nonprimaryContacts,1);
+      for(const unsafe of [
+        {...identityOnly, WHATSAPP_MULTI_NUMBER_READ_ENABLED:"false"},
+        {...identityOnly, WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"false"},
+      ]) {
+        await assert.rejects(assertStoredSenderSafety({database:db,env:unsafe}),
+          /Unsafe WhatsApp rollback/);
+      }
+      assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n,2);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM messages WHERE contact_id=$1",
+        [oldContact])).rows[0].n,1);
       await assert.rejects(assertStoredSenderSafety({
         database:db,env:primaryEnv,
       }), /Unsafe WhatsApp rollback/);
