@@ -1,6 +1,6 @@
 "use strict";
 
-// Ariel-only staff media. No legacy provider fallback, media-ID cache sharing,
+// secondary WhatsApp-only staff media. No legacy provider fallback, media-ID cache sharing,
 // automatic retry, or template policy override.
 const { pool } = require("../db/db");
 const mediaStorage = require("./mediaStorageService");
