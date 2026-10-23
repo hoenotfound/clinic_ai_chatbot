@@ -49,7 +49,7 @@ router.get("/",async(req,res)=>{
     });
   }catch(err){
     console.error("Sender-specific followup config failed:",err);
-    return res.status(503).json({error:"Ariel follow-up rules unavailable."});
+    return res.status(503).json({error:"Secondary WhatsApp follow-up rules unavailable."});
   }
 });
 router.put("/:slot",async(req,res)=>{
@@ -65,13 +65,13 @@ router.put("/:slot",async(req,res)=>{
     if(req.body?.mediaKey||req.body?.mediaType){
       return res.status(409).json({
         code:"secondary_followup_media_configuration_not_available",
-        error:"Ariel follow-up media cannot reuse Neutro assets. Use a sender-approved attachment flow.",
+        error:"Secondary WhatsApp follow-up media cannot reuse Neutro assets. Use a sender-approved attachment flow.",
       });
     }
     const identity=await sender(pool,process.env);
     if(!identity)return res.status(409).json({
       code:"secondary_sender_not_activated",
-      error:"The verified Ariel sender must be registered before saving follow-ups.",
+      error:"The verified secondary sender must be registered before saving follow-ups.",
     });
     const updated=await pool.query(
       `INSERT INTO whatsapp_sender_followup_rules
@@ -88,8 +88,8 @@ router.put("/:slot",async(req,res)=>{
     return res.json({saved:true,rule:updated.rows[0],
       workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true"});
   }catch(err) {
-    console.error("Unable to save Ariel follow-up rule:",err);
-    return res.status(503).json({error:"Could not save the verified Ariel follow-up configuration."});
+    console.error("Unable to save Secondary WhatsApp follow-up rule:",err);
+    return res.status(503).json({error:"Could not save the verified Secondary WhatsApp follow-up configuration."});
   }
 });
 module.exports=router;
