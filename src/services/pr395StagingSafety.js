@@ -45,9 +45,9 @@ function assertPr395StagingSafety(env = process.env) {
   const secondaryId = String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim();
   const expectedId = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID || "").trim();
   const expectedNumber = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "").replace(/[^0-9]/g, "");
-  if (!/^\\d+$/.test(secondaryId) || secondaryId !== expectedId ||
+  if (!/^\d+$/.test(secondaryId) || secondaryId !== expectedId ||
       expectedId === String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
-      !/^\\d{9,15}$/.test(expectedNumber) ||
+      !/^\d{9,15}$/.test(expectedNumber) ||
       String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim()) {
     throw new Error("PR395 staging must pin a distinct second WhatsApp number; the unverified secondary account ID must remain unset.");
   }
