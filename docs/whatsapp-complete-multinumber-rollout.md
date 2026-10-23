@@ -196,20 +196,24 @@ unmodified by this remediation. Code changes require **fresh exact-head CI**.
   from 1 October 2026 each phone number gets 1,000 free service messages per
   month, then service messages are charged individually.
 - Ariel AI and AI-dependent follow-ups are **deliberately hard-disabled at
-  startup** because the current `src/server.js` still uses global Neutro
-  clinic services, prices, intro and AI prompt. There is not yet an
-  independently verified Ariel clinic content profile. Never try to
-  bypass that safety gate by enabling the flag directly.
+  startup** because the current `src/server.js` uses the global Neutro
+  clinic services, prices, intro and AI prompt. Ariel is a second number
+  under Neutro's business portfolio, not necessarily a different clinic.
+  Reusing Neutro's approved clinic content *may* be correct, but only after
+  staff explicitly approves that sender-to-content binding. Do not invent
+  separate Ariel services/prices or bypass the safety gate.
 - Live Render `da-chatbot-neutro-sense-tcm` follows `main` with
   **auto-deploy ON**. Do not merge this PR before staged signed Meta
   callbacks, exact credential/number verification, billing consent and a
   separate go-live authorization.
-- The linked WhatsApp Business connector identifies Ariel Lee's business
-  number as registered but cannot establish that DA CHATBOT App
-  `1029862536608134` is administered by the connected Meta business.
-  Staging activation is therefore blocked until appropriate app access and
-  webhook subscription can be verified. Do not edit ownership/subscriptions
-  in order to make a passing test.
+- Ariel Lee's WhatsApp Business App number is registered under the
+  Neutro Sense business portfolio. That does **not** prove Meta coexistence,
+  a sender-scoped token, or webhook subscription. The linked WhatsApp tools
+  cannot inspect DA CHATBOT App `1029862536608134` under that portfolio.
+  A client business need not own the developer's Tech Provider app: verify
+  the actual authorized subscription and phone/account relationship, but
+  do **not** move or connect client business assets solely to satisfy a
+  limited connector's permissions.
 
 ### Forward-only rollback rehearsal
 
@@ -226,6 +230,27 @@ tables, and keep the running application at a version that **knows all
 installed migration versions**. Do **not** redeploy the previous 077
 binary against database schema 093, manually delete migration history,
 reset unknown billing reservations, or point live Render at QA.
+
+### Read-only Meta two-number preflight
+
+Run only with a **staging callback URL**, and a runtime file containing
+the verified first and second phone/account IDs and DA CHATBOT App ID.
+Supply `WHATSAPP_MANAGEMENT_TOKEN` and
+`WHATSAPP_SECONDARY_MANAGEMENT_TOKEN` in the operator environment, or
+the corresponding sender-specific tokens in the runtime env file.
+Do not put tokens on the command line or in an issue.
+
+```bash
+npm run whatsapp-sender:verify-dual -- --runtime-env-file ./staging.env --client-url https://your-staging-host
+```
+
+The command performs **GET requests only**, requires exact phone ownership
+and app-specific callback subscriptions for **both** senders, and reports
+`verified: false` if one side cannot be established. The primary token
+is never reused for the Ariel account. A shared Meta account is supported
+only when both phone IDs are separately proven within it. This preflight
+is **not** a substitute for signed incoming/receipt tests and was not
+run against live Meta until the correct staging tokens become available.
 
 ### What still needs real-world testing
 
