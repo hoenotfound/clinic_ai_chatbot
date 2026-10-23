@@ -265,3 +265,88 @@ test("status propagation failure does not discard a successfully authorized sing
   assert.equal(result.phone.coexistenceReady, false);
   assert.equal(result.activationRequired, true);
 });
+
+test("dual-number onboarding reports the secondary target and never the live Neutro credentials", () => {
+  const config = publicConfig(env({
+    WHATSAPP_PHONE_NUMBER_ID: "101",
+    WHATSAPP_WABA_ID: "202",
+    WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID: "303",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID: "303",
+    WHATSAPP_SECONDARY_WABA_ID: "404",
+  }));
+  assert.equal(config.configured, true);
+  assert.equal(config.runtime.targetMode, "secondary");
+  assert.equal(config.runtime.phoneNumberId, "303");
+  assert.equal(config.runtime.wabaId, "404");
+  assert.equal(JSON.stringify(config.runtime).includes('"101"'), false);
+  assert.equal(JSON.stringify(config.runtime).includes('"202"'), false);
+});
+
+test("dual-number onboarding refuses unpinned or primary-colliding target configuration", async () => {
+  for (const extra of [
+    { WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness", WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID: "" },
+    { WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness", WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID: "101", WHATSAPP_PHONE_NUMBER_ID: "101" },
+  ]) {
+    const config = publicConfig(env(extra));
+    assert.equal(config.configured, false);
+    let fetchCalled = false;
+    await assert.rejects(
+      completeEmbeddedSignup({
+        code: "some-code",
+        sessionInfo: finish({ phone_number_id: "101" }),
+        env: env(extra),
+        fetchImpl: async () => { fetchCalled = true; throw Error("unexpected Meta call"); },
+      }),
+      (error) => ["WHATSAPP_COEXISTENCE_SECONDARY_TARGET_UNPINNED",
+        "WHATSAPP_COEXISTENCE_PRIMARY_PHONE_BLOCKED"].includes(error.code)
+    );
+    assert.equal(fetchCalled, false);
+  }
+});
+
+test("wrong business app number is rejected before token exchange", async () => {
+  const expectedEnv = env({
+    WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID: "1318355951360575",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60174831336",
+    WHATSAPP_PHONE_NUMBER_ID: "110552088553929",
+  });
+  await assert.rejects(
+    completeEmbeddedSignup({
+      code: "code",
+      sessionInfo: finish({ phone_number_id: "110552088553929" }),
+      env: expectedEnv,
+      fetchImpl: async () => { throw Error("must never exchange code"); },
+    }),
+    (error) => error.code === "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH"
+  );
+});
+
+test("dual-number phone display must match pinned E164 before recording authorization", async () => {
+  const { assertExpectedSecondaryPhone } = require("../src/services/whatsappCoexistenceOnboardingService");
+  const expectedEnv = env({
+    WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID: "1318355951360575",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60174831336",
+  });
+  assert.doesNotThrow(() => assertExpectedSecondaryPhone({
+    id: "1318355951360575", displayPhoneNumber: "+60 17-483 1336"
+  }, expectedEnv));
+  assert.throws(() => assertExpectedSecondaryPhone({
+    id: "1318355951360575", displayPhoneNumber: "+60 12-297 2817"
+  }, expectedEnv), (error) => error.code === "WHATSAPP_COEXISTENCE_SECONDARY_DISPLAY_MISMATCH");
+});
+
+test("Meta 2026 account-type phone_numbers error fails closed with actionable diagnostic", async () => {
+  const { fetchPhoneNumbers } = require("../src/services/whatsappCoexistenceOnboardingService");
+  const meta = async () => ({
+    ok: false, status: 400,
+    json: async () => ({ error: { code: 100, message: "(#100) Tried accessing nonexisting field (phone_numbers)" } })
+  });
+  await assert.rejects(
+    fetchPhoneNumbers({ wabaId: "1071636698738276", accessToken: "token", env: env(), fetchImpl: meta }),
+    (error) => error.code === "WHATSAPP_COEXISTENCE_ACCOUNT_TYPE_UNVERIFIED" &&
+      error.status === 409 && error.retrySafe === false
+  );
+});
