@@ -91,8 +91,8 @@ test("PR395 staging gate precedes webhook handlers, and workers are off before r
   const app=fs.readFileSync(path.join(__dirname,"../src/createApp.js"),"utf8");
   const startup=fs.readFileSync(path.join(__dirname,"../src/services/applicationStartup.js"),"utf8");
   const entry=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(app,/app\.post\("\/webhook", stagingWebhookGuard, webhookJsonParser/);
-  assert.match(app,/app\.post\("\/meta-webhook", stagingWebhookGuard, metaWebhookJsonParser/);
+  assert.match(app,/app\.post\("\/webhook", webhookJsonParser, stagingWebhookGuard/);
+  assert.match(app,/app\.post\("\/meta-webhook", metaWebhookJsonParser, stagingWebhookGuard/);
   assert.ok(startup.indexOf('if (process.env.PR395_STAGING_MODE === "true")') <
     startup.indexOf("startAutomatedFollowUps();"));
   assert.ok(entry.indexOf("assertPr395StagingSafety(process.env)") <
