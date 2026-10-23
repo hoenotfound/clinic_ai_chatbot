@@ -191,7 +191,7 @@ async function acceptPassiveSync(body,{database=pool,env=process.env}={}){
  return{enabled:true,staged};
 }
 async function runOnce({
- database=pool,env=process.env,maxJobs=2,
+ database=pool,env=process.env,conversations=senderRepo,maxJobs=2,
 }={}){
  if(!enabled(env))return{disabled:true,processed:0,failed:0};
  const sender=await database.query(
@@ -239,7 +239,7 @@ async function runOnce({
      if(!payload||String(payload.accountId)!==
        String(env.WHATSAPP_SECONDARY_WABA_ID))
        throw Error("Archived sync sender identity mismatch.");
-     await importPassiveChange(payload,{database,env});
+     await importPassiveChange(payload,{database,env,conversations});
      await database.query(
        `UPDATE whatsapp_sender_coexistence_import_jobs
         SET status='completed',payload=NULL,last_error=NULL,updated_at=NOW()
