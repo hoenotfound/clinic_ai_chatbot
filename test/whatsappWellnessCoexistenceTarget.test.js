@@ -24,9 +24,11 @@ const env={
  WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"false",
  WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"false",
 };
-test("selected 中医养生馆 target uses verified phone and WhatsApp account ID, not Messaging Account ID",()=>{
+test("selected 中医养生馆 target pins its phone without asserting an unverified WhatsApp account ID",()=>{
  assert.match(cfg,/WHATSAPP_SECONDARY_PHONE_NUMBER_ID=1318355951360575/);
- assert.match(cfg,/WHATSAPP_SECONDARY_WABA_ID=1071636698738276/);
+ assert.match(cfg,/WHATSAPP_SECONDARY_WABA_ID=REPLACE_AFTER_AUTHORIZED_META_VERIFICATION/);
+ assert.match(cfg,/WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=\\+60174831336/);
+ assert.doesNotMatch(cfg,/# WHATSAPP_SECONDARY_WABA_ID=1071636698738276/);
  assert.match(cfg,/WHATSAPP_SECONDARY_SENDER_KEY=tcm_wellness/);
  assert.ok(!cfg.includes("WHATSAPP_SECONDARY_WABA_ID="+MESSAGING_ACCOUNT));
  assert.doesNotThrow(()=>assertExpectedSecondaryTarget(env));
