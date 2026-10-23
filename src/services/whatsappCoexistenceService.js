@@ -9,6 +9,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 const echoMedia = require("./whatsappCoexistenceMediaService");
+const echoMutations = require("./whatsappCoexistenceMutationService");
 
 const BUSINESS_APP_ACTOR = "WhatsApp Business App";
 
@@ -107,6 +108,18 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       ? await senderConversations.claimSenderContact(verifiedEchoIdentity(echo))
       : await contactsRepo.getOrCreateContact(echo.to);
 
+    if (senderAwareEchoesEnabled() &&
+        ["edit","revoke"].includes(echo.type)) {
+      const changed=await echoMutations.record(echo,contact);
+      if (changed?.isNew) confirmPendingAiForEcho(echo);
+      else releasePendingAiForEcho(echo);
+      // An edit/revoke updates the ORIGINAL provider-authenticated staff
+      // message. It never creates another assistant message or booking event.
+      return changed?.messageId
+        ? {contact,message:{id:changed.messageId},isNew:false,isMutation:true}
+        : null;
+    }
+
     // Insert the provider message and apply Staff Assist ownership rules in one
     // DB transaction. Ordinary AI-owned chats remain AI-owned; a synthetic AI
     // handoff is claimed as real Staff ownership. A retried echo is a true no-op.
@@ -176,6 +189,13 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
 
 async function finalizeBusinessAppEcho(persisted) {
   if (!persisted?.contact?.id || !persisted?.message?.id) return;
+  if(persisted.isMutation){
+    realtimeEvents.publish("conversation_changed",{
+      contactId:persisted.contact.id,
+      messageId:persisted.message.id,reason:"message",
+    });
+    return;
+  }
 
   realtimeEvents.publish("conversation_changed", {
     contactId: persisted.contact.id,
