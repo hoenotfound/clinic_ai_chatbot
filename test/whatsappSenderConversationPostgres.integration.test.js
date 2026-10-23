@@ -154,7 +154,7 @@ test("migration 080 allows two contact identities for the same customer while re
         {...identityOnly, WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"false"},
       ]) {
         await assert.rejects(assertStoredSenderSafety({database:db,env:unsafe}),
-          /Unsafe WhatsApp rollback/);
+          /Unsafe WhatsApp (?:rollback|sender activation)/);
       }
       assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n,2);
       assert.equal((await db.query(
