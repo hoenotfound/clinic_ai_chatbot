@@ -87,7 +87,7 @@ test("secondary inbox only requires active exact Meta registry identity",async()
    /unsafe|requires|incomplete/i);
  const badDb={query:async(sql)=>sql.includes("COUNT(*)")?
    {rows:[{total:0,nonprimary:0}]}:{rows:[]}};
- await assert.rejects(assertStoredSenderSafety({env,database:badDb}),/active sender registration/);
+ await assert.rejects(assertStoredSenderSafety({env,database:badDb}),/exact verified sender registration/);
 });
 
 
