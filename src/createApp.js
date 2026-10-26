@@ -313,10 +313,6 @@ function createApp({
             return null;
           }
         })),
-        lifecycleWork.then((result) => {
-          if (!result.accepted) durabilityFailures += 1;
-          return result;
-        }),
         Promise.all(reactionEvents.map(async (reaction) => {
           try {
             return await messagesRepo.applyWhatsappReaction(reaction);
@@ -326,6 +322,10 @@ function createApp({
             return null;
           }
         })),
+        lifecycleWork.then((result) => {
+          if (!result.accepted) durabilityFailures += 1;
+          return result;
+        }),
       ]);
     } catch (err) {
       for (const echo of businessAppEchoes) {
