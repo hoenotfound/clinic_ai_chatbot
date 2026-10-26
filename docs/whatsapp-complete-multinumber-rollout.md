@@ -2,7 +2,7 @@
 
 **Status: Draft implementation, isolated Neon QA migrated through v099; live coexistence unverified. NOT APPROVED FOR PRODUCTION.**
 
-**2026-10-23 target change:** The secondary target is **中医养生馆** (+60 17-483 1336), not the previously proposed sender. Verified using the connected Neutro Sense Face & Body Meta business: phone number ID `1318355951360575`, WhatsApp Account ID `1071636698738276`, Messaging Account ID `1852014482431209` (NOT the webhook account ID). The prior sender's content/billing approval does **not** authorize any message for this new number. All secondary flags remain OFF. Do not change the primary Neutro sender. Meta DA CHATBOT app `1029862536608134` callback authorization could not be verified through the linked business tools; actual coexistence and webhook subscription still need authenticated verification and a signed callback drill.
+**26 October 2026 identity correction:** The selected secondary Business App account is **中医养生馆** (+60 17-483 1336). Candidate phone number ID `1318355951360575` is pinned for validation, **not yet independently verified with the authorized Meta Embedded Signup token**. Earlier assumed WhatsApp Account ID `1071636698738276` failed a Graph `/phone_numbers` query and must NOT be treated as confirmed. Business Settings shows Messaging Account `1852014482431209`, a different account type; do not substitute it for a phone-owning account or webhook account without live verification. The Meta DA CHATBOT App ID is `1029862536608134`. The secondary AI content and billing approvals still require a fresh owner decision; keep every secondary activation flag OFF.
 
 All Phase 2 implementation is kept in a single Draft PR #395. Older work
 from #384, #387, #389, #391, and #393 is included. No Phase 2 feature
@@ -420,3 +420,12 @@ v077. The production-derived QA branch has been verified at v099 (183 contacts r
 Render auto-deploy on `main` means a merge is a LIVE migration/deploy:
 **do not merge** until staging passes and a forward-only rollback plan is
 approved. Never run the older v077 app binary against a migrated v099 schema.
+
+### 26 October 2026 safety fixes (Draft only)
+
+- Webhook processing now starts each durably claimed Neutro inbound turn independently of later secondary billing/echo/history failures. Those failures still return 503 so Meta can retry the secondary event without silently discarding it. Simulated mixed-callback regression tests cover receipt, history, echo and secondary inbound failures.
+- Meta coexistence subscriptions include `account_update`, `messages`, `history`, `smb_app_state_sync` and `smb_message_echoes`. Any lifecycle event that is not a customer message must never trigger AI, CRM opt-in or sending.
+- Secondary onboarding is blocked until an operator verifies **Embedded Signup v4** in the actual Meta Login for Business configuration and explicitly sets `META_EMBEDDED_SIGNUP_V4_CONFIRMED=true`. The flag is an operator attestation, not an API-verification result. Configurations using v2/v3 are no longer acceptable for new onboarding after 15 October 2026.
+- An authorization result does not persist a sending token or activate a phone; the authorized account/phone pair, app, callback subscription, coexistence status, privacy and billing authority still require live validation.
+- Preserve history-sync setup **before** Business App QR approval because the initial consented sync has a time-limited window. The existing PR395 staging sandbox intentionally refuses provider POSTs and cannot satisfy live acceptance until an independently authorized, provider-enabled environment exists.
+- **NOT RELEASED:** This is software hardening, not proof of coexistence or proof that Neutro can never be affected by a shared infrastructure outage. Retain Draft status and production schema v077.
