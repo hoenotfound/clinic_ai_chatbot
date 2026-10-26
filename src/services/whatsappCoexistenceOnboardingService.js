@@ -110,13 +110,13 @@ function publicConfig(env = process.env) {
   if (!values.configId) missing.push("META_EMBEDDED_SIGNUP_CONFIG_ID");
   if (!appSecret(env)) missing.push("META_APP_SECRET");
   if (!clean(env.WHATSAPP_VERIFY_TOKEN)) missing.push("WHATSAPP_VERIFY_TOKEN");
+  const secondary = secondaryTargetMode(env);
   // October 2026: old Embedded Signup configurations no longer support new
   // onboarding. This is an operator confirmation of the Meta dashboard
   // configuration, not something the API can infer from config_id.
   if (secondary && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
     missing.push("META_EMBEDDED_SIGNUP_V4_CONFIRMED");
   }
-  const secondary = secondaryTargetMode(env);
   if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID))) {
     missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID");
   }
