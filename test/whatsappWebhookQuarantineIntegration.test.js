@@ -32,7 +32,8 @@ function payload(...changes) {
 }
 
 function webhookHarness({ failAudit = false, dualInbox = false,
-  receiptIngress = false, receiptFailure = false } = {}) {
+  receiptIngress = false, receiptFailure = false, historyFailure = false,
+  echoFailure = false, secondaryInboundFailure = false } = {}) {
   let handler = null;
   const claims = [];
   const scheduled = [];
@@ -80,16 +81,25 @@ function webhookHarness({ failAudit = false, dualInbox = false,
       return items.length;
     },
     notifyWhatsAppSenderQuarantine: async () => true,
-    coexistenceSync: {acceptPassiveSync: async()=>({enabled:false,staged:0})},
+    coexistenceSync: {acceptPassiveSync: async()=>{
+      if (historyFailure) throw new Error("synthetic secondary history database outage");
+      return {enabled:false,staged:0};
+    }},
     whatsappCoexistence: {
       summarizePassiveSync: () => ({ historyChunks: 0, appStateItems: 0 }),
       beginPendingAiForEcho() {},
       releasePendingAiForEcho() {},
-      persistBusinessAppEcho: async () => null,
+      persistBusinessAppEcho: async () => {
+        if (echoFailure) throw new Error("synthetic secondary echo database outage");
+        return null;
+      },
       finalizeBusinessAppEcho: noop,
     },
     storeDeliveryStatusUpdates: async () => [],
     durablyClaimIncoming: async (number, inbound) => {
+      if (secondaryInboundFailure && inbound.businessPhoneNumberId === ARIEL) {
+        throw new Error("synthetic secondary contact database outage");
+      }
       claims.push({ number, inbound });
       return { id: claims.length };
     },
@@ -216,7 +226,7 @@ test("verified Ariel status staging precedes acknowledgement and does not reach 
   assert.equal(h.audits.length,0);
 });
 
-test("Ariel receipt storage failure returns 503 before accepting a mixed Neutro customer turn",async()=>{
+test("secondary receipt storage failure returns 503 for retry after scheduling Neutro",async()=>{
   const h=webhookHarness({dualInbox:true,receiptIngress:true,receiptFailure:true});
   const response=await h.send({object:"whatsapp_business_account",entry:[
     {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary")]},
@@ -228,6 +238,52 @@ test("Ariel receipt storage failure returns 503 before accepting a mixed Neutro 
     }]},
   ]});
   assert.equal(response,503);
-  assert.equal(h.claims.length,0);
+  assert.equal(h.claims.length,1);
+  assert.equal(h.claims[0].inbound.id,"wamid.primary");
+  assert.equal(h.scheduled.length,1);
   assert.equal(h.receiptWrites.length,1);
+});
+
+test("secondary history storage failure cannot postpone a mixed Neutro customer turn",async()=>{
+  const h=webhookHarness({dualInbox:true,historyFailure:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-history")]},
+    {id:"200000000000002",changes:[{
+      field:"history",value:{metadata:{phone_number_id:ARIEL},history:[]},
+    }]},
+  ]});
+  assert.equal(status,503,"Meta must retry secondary history, not silently discard it");
+  assert.equal(h.claims.length,1);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.claims[0].inbound.id,"wamid.primary-history");
+});
+
+test("secondary incoming storage failure does not stop an unrelated Neutro message",async()=>{
+  const h=webhookHarness({dualInbox:true,secondaryInboundFailure:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-contact")]},
+    {id:"200000000000002",changes:[event(ARIEL,"wamid.secondary-contact")]},
+  ]});
+  assert.equal(status,503);
+  assert.equal(h.claims.length,1);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.claims[0].inbound.id,"wamid.primary-contact");
+});
+
+test("secondary Business App echo persistence failure cannot stop a Neutro reply",async()=>{
+  const h=webhookHarness({dualInbox:true,echoFailure:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-echo")]},
+    {id:"200000000000002",changes:[{
+      field:"smb_message_echoes",
+      value:{metadata:{phone_number_id:ARIEL},message_echoes:[{
+        id:"wamid.secondary-echo",from:"60174831336",to:"60135550000",
+        type:"text",text:{body:"App staff reply"}
+      }]}
+    }]},
+  ]});
+  assert.equal(status,503);
+  assert.equal(h.claims.length,1);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.claims[0].inbound.id,"wamid.primary-echo");
 });
