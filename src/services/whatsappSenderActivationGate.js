@@ -26,8 +26,21 @@ function assertExpectedSecondaryTarget(env=process.env) {
       throw new Error("Unsafe secondary target: "+key+" does not match verified receiving identity.");
   }
 }
+function assertSecondaryLifecyclePin(env = process.env) {
+  // A coexistence account_update may contain only the phone's E164 number.
+  // Without this independently approved pin a signed disconnect would be
+  // quietly quarantined and secondary sends could remain enabled.
+  if (env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true") return;
+  const pin = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "").trim();
+  const primary = String(env.WHATSAPP_PHONE_NUMBER || "").replace(/\D/g, "");
+  if (!/^\+[1-9]\d{7,14}$/.test(pin) ||
+      (primary && primary === pin.slice(1))) {
+    throw new Error("Unsafe WhatsApp secondary lifecycle pin: set the verified secondary E164 phone number before activation.");
+  }
+}
 function assertSecondaryOperationalSafety(env = process.env) {
   assertExpectedSecondaryTarget(env);
+  assertSecondaryLifecyclePin(env);
   const receiptIngress = env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true";
   const autoReconcile = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
   const billedReview = env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true";
@@ -157,11 +170,15 @@ async function assertStoredSenderSafety({
       "WHERE meta_phone_number_id=$1 AND meta_account_id=$2",
       [env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
     );
-    if(secondary.rows?.length!==1 ||
-       secondary.rows[0].sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
-       secondary.rows[0].state!=="active") {
-      throw new Error("Secondary WhatsApp Inbox needs a matching active sender registration.");
+    if (secondary.rows?.length !== 1 ||
+        secondary.rows[0].sender_key !== env.WHATSAPP_SECONDARY_SENDER_KEY ||
+        !["active", "disabled"].includes(secondary.rows[0].state)) {
+      throw new Error("Secondary WhatsApp Inbox needs an exact verified sender registration.");
     }
+    // A signed PARTNER_REMOVED deliberately disables the second sender.
+    // Startup MUST continue serving Neutro while all secondary send/AI/media
+    // paths fail closed on the disabled sender state.
+    // Never accept 'testing' as a substitute for authorized activation.
   }
   if (ingressEnabled) {
     const registered = await database.query(
@@ -178,4 +195,4 @@ async function assertStoredSenderSafety({
   return { verified: true, scopedContacts: total, nonprimaryContacts: nonprimary };
 }
 
-module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent, assertExpectedSecondaryTarget };
+module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent, assertExpectedSecondaryTarget, assertSecondaryLifecyclePin };
