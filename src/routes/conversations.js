@@ -803,7 +803,12 @@ router.get("/", async (req, res) => {
       return {
         ...c,
         whatsapp_is_secondary: secondary,
+        whatsapp_secondary_connection_state: secondary
+          ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
+            ? "connected" : "suspended") : null,
         whatsapp_secondary_ai_enabled: secondary &&
+          c.whatsapp_sender_state === "active" &&
+          c.whatsapp_sender_coexistence_enabled === true &&
           process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
       };
     }));
