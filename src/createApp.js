@@ -189,17 +189,40 @@ function createApp({
     // query must not indefinitely block Neutro's durable customer work.
     // Timed-out work is NOT acknowledged: the entire Meta callback returns
     // retryable 503; WAMIDs and receipt/event fingerprints keep replay safe.
-    function boundedSecondaryWork(operation, label) {
+    function boundedSecondaryWork(operation, label, onLateSuccess = null) {
       const configured = Number(process.env.WHATSAPP_SECONDARY_WEBHOOK_WORK_TIMEOUT_MS);
       const timeoutMs = Number.isInteger(configured) && configured >= 100 &&
         configured <= 5000 ? configured : 2500;
-      let timer;
-      return Promise.race([
-        Promise.resolve().then(operation),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(label + " timed out")), timeoutMs);
-        }),
-      ]).finally(() => clearTimeout(timer));
+      // Never claim that Meta accepted unfinished work. If a secondary
+      // customer insert commits after timeout, we still schedule its durable
+      // message exactly once rather than relying on a duplicate replay to
+      // claim it again. Other late successes are idempotent audit/receipt work.
+      return new Promise((resolve, reject) => {
+        let expired = false;
+        const timer = setTimeout(() => {
+          expired = true;
+          reject(new Error(label + " timed out"));
+        }, timeoutMs);
+        Promise.resolve().then(operation).then((result) => {
+          if (expired) {
+            if (onLateSuccess) {
+              try { onLateSuccess(result); } catch (error) {
+                console.error("Could not schedule late secondary webhook claim:", error);
+              }
+            }
+            return;
+          }
+          clearTimeout(timer);
+          resolve(result);
+        }, (error) => {
+          if (expired) {
+            console.error("Late secondary webhook operation failed after retry response:", error);
+            return;
+          }
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
     }
     // Write a disconnect before processing secondary customer turns in this
     // callback. A reconnection notice is audit-only and never auto-activates.
@@ -274,6 +297,13 @@ function createApp({
                 await boundedSecondaryWork(
                   () => durablyClaimIncoming(queueKey, incoming),
                   "Secondary inbound claim",
+                  (lateClaim) => {
+                    if (lateClaim) {
+                      scheduleDurableClaim(queueKey, lateClaim).catch((error) => {
+                        console.error("Failed to schedule late durable WhatsApp inbound:", error);
+                      });
+                    }
+                  },
                 ) : await durablyClaimIncoming(queueKey, incoming);
               // Claim independently. An unrelated secondary DB error cannot
               // erase the successful Neutro claim; prepare/reply starts only
@@ -338,7 +368,16 @@ function createApp({
     for (const persisted of durableBusinessAppEchoes) {
       if (!persisted) continue;
       try {
-        await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+        const isSecondaryEcho = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+          persisted.contact?.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
+        if (isSecondaryEcho) {
+          await boundedSecondaryWork(
+            () => whatsappCoexistence.finalizeBusinessAppEcho(persisted),
+            "Secondary Business App echo finalization",
+          );
+        } else {
+          await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+        }
       } catch (error) {
         // The provider echo was already durably stored. Request an idempotent
         // replay for secondary bookkeeping without holding a primary reply.
