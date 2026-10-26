@@ -101,6 +101,31 @@ test("sender identity comes from bound DB row, not caller labels or customer num
   }));
 });
 
+test("coexistence suspension latch blocks API sending even after sender state is manually set active", async () => {
+  const calls = [];
+  const coexEnv = {
+    ...env,
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60174831336",
+    WHATSAPP_COEXISTENCE_ENABLED: "true",
+  };
+  // A disconnect clears coexistence_enabled and disables the sender.
+  // Simply restoring state='active' does not constitute verified reconnection.
+  await denied(createVerifiedSecondaryOutboundTransport(contact, {
+    env: coexEnv,
+    database: database([{ ...boundRow(), sender_coexistence_enabled: false }]),
+    fetchImpl: mockedFetch(calls),
+  }));
+  assert.equal(calls.length, 0);
+
+  const client = await createVerifiedSecondaryOutboundTransport(contact, {
+    env: coexEnv,
+    database: database([{ ...boundRow(), sender_coexistence_enabled: true }]),
+    fetchImpl: mockedFetch(calls),
+  });
+  assert.equal((await client.sendText("Only after approved reconnection")).success, true);
+  assert.equal(calls.length, 1);
+});
+
 test("never resolve Ariel using Neutro primary phone/account credentials", async () => {
   for (const badEnv of [
     { ...env, WHATSAPP_SECONDARY_PHONE_NUMBER_ID: env.WHATSAPP_PHONE_NUMBER_ID },
