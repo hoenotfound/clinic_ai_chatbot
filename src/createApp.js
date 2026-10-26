@@ -181,7 +181,7 @@ function createApp({
       return res.sendStatus(503);
     }
     if (secondaryLifecycle.length) {
-      const lifeKeys = new Set(secondaryLifecycle.map((item) => item.fingerprint));
+      const lifeKeys = new Set(secondaryLifecycle.map((item) => item.quarantineFingerprint || item.fingerprint));
       isolated.quarantined = isolated.quarantined.filter((item) => !lifeKeys.has(item.fingerprint));
     }
 
@@ -201,7 +201,9 @@ function createApp({
         let expired = false;
         const timer = setTimeout(() => {
           expired = true;
-          reject(new Error(label + " timed out"));
+          const error = new Error(label + " timed out");
+          error.code = "SECONDARY_WEBHOOK_TIMEOUT";
+          reject(error);
         }, timeoutMs);
         Promise.resolve().then(operation).then((result) => {
           if (expired) {
@@ -335,10 +337,25 @@ function createApp({
               await boundedSecondaryWork(
                 () => whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true }),
                 "Secondary Business App echo",
+                (lateEcho) => {
+                  // Persistence itself resolves/cancels pending-AI ownership.
+                  // After a timeout the normal result array no longer includes
+                  // this echo, so still run any post-persist side effects.
+                  if (lateEcho) {
+                    Promise.resolve().then(() => whatsappCoexistence.finalizeBusinessAppEcho(lateEcho))
+                      .catch((lateError) => console.error("Late Business App echo finalization failed:", lateError));
+                  }
+                },
               ) : await whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true });
           } catch (error) {
             durabilityFailures += 1;
-            whatsappCoexistence.releasePendingAiForEcho(echo);
+            // A timeout does NOT cancel the pending ownership barrier:
+            // the underlying DB operation is still alive and may commit
+            // a real staff echo after the webhook has returned 503.
+            // persistBusinessAppEcho releases/confirms when it actually settles.
+            if (error.code !== "SECONDARY_WEBHOOK_TIMEOUT") {
+              whatsappCoexistence.releasePendingAiForEcho(echo);
+            }
             console.error("Could not durably store WhatsApp Business App echo:", error);
             return null;
           }
@@ -565,15 +582,33 @@ function createApp({
       let events;
       try {
         events = extractSecondaryLifecycle(req.body, process.env);
-        // This route can handle account updates only. If Meta sent any
-        // messages/history/foreign lifecycle changes here, require a corrected
-        // subscription instead of ACKing and dropping the event.
-        const changes = (req.body.entry || []).flatMap((entry) => entry.changes || []);
-        if (!events.length || changes.length !== events.length ||
-            changes.some((change) => change.field !== "account_update")) {
+        // Messages/history on this endpoint need the correct callback URL:
+        // never ACK-and-drop customer data. Legitimate account_update events
+        // of other types are not fatal; durably audit them and return 200.
+        const entries = Array.isArray(req.body.entry) ? req.body.entry : null;
+        if (!entries || entries.length > 200 ||
+            entries.some((entry) => !entry || !Array.isArray(entry.changes)) ||
+            entries.some((entry) => entry.changes.some((change) =>
+              !change || change.field !== "account_update" ||
+              !change.value || typeof change.value !== "object"))) {
           return res.sendStatus(503);
         }
-        await persistSecondaryLifecycle(events, { env: process.env });
+        const changes = entries.flatMap((entry) =>
+          entry.changes.map((change) => ({ entry, change })));
+        if (changes.length > 200) return res.sendStatus(503);
+        const recognized = new Set(events.map((event) => event.quarantineFingerprint || event.fingerprint));
+        const crypto = require("node:crypto");
+        const other = changes.map(({ entry, change }) => ({
+          fingerprint: crypto.createHash("sha256")
+            .update(JSON.stringify({ account: entry.id ?? null, change })).digest("hex"),
+          reason: "unsupported_whatsapp_event",
+          field: "account_update",
+          accountId: typeof entry.id === "string" && /^\\d+$/.test(entry.id) ? entry.id : null,
+          phoneNumberId: null,
+        })).filter((item) => !recognized.has(item.fingerprint));
+        // A critical disconnection must be durable before it is ACKed.
+        if (events.length) await persistSecondaryLifecycle(events, { env: process.env });
+        if (other.length) await recordQuarantinedWhatsAppChanges(other);
         return res.sendStatus(200);
       } catch (error) {
         console.error("Could not durably accept signed app-level WhatsApp lifecycle:", error);
