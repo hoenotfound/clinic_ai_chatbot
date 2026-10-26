@@ -26,6 +26,7 @@ function fakeDatabase() {
   return {
     queries,events,
     get sender(){return{state,coexistence}},
+    reactivate(){state="active";coexistence=true},
     async connect(){
       return {
         release(){},
@@ -91,4 +92,26 @@ test("unverified sender row fails closed instead of deactivating another busines
   const events=extractSecondaryLifecycle(body("200000000000002","PARTNER_REMOVED","+60174831336"),env());
   await assert.rejects(()=>persistSecondaryLifecycle(events,{database,env:env()}),
     /sender identity mismatch/);
+});
+
+test("an identical signed removal after manual reactivation disables secondary again",async()=>{
+  const database=fakeDatabase(),config=env();
+  const payload=body("200000000000002","PARTNER_REMOVED","+60174831336");
+  const event=extractSecondaryLifecycle(payload,config);
+  await persistSecondaryLifecycle(event,{database,env:config});
+  assert.equal(database.sender.state,"disabled");
+  database.reactivate(); // independent, explicitly authorized operator action
+  assert.equal(database.sender.state,"active");
+  const again=await persistSecondaryLifecycle(event,{database,env:config});
+  assert.equal(again.count,0,"same fingerprint remains a single audit row");
+  assert.equal(database.sender.state,"disabled","duplicate cannot permit live sends");
+});
+test("entry.time distinguishes separate real disconnect occurrences",()=>{
+ const config=env(),p=body("200000000000002","PARTNER_REMOVED","+60174831336");
+ p.entry[0].time=1761483600;
+ const first=extractSecondaryLifecycle(p,config)[0];
+ p.entry[0].time=1761487200;
+ const second=extractSecondaryLifecycle(p,config)[0];
+ assert.notEqual(first.fingerprint,second.fingerprint);
+ assert.equal(first.quarantineFingerprint,second.quarantineFingerprint);
 });
