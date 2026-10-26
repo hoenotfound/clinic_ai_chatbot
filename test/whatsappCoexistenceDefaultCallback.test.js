@@ -12,6 +12,7 @@ function harness(overrides={},persistFailure=false){
   assert.ok(begin>=0&&end>begin);
   let handler=null;
   const writes=[];
+  const audits=[];
   const env={
     WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
     WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
@@ -24,7 +25,12 @@ function harness(overrides={},persistFailure=false){
   vm.runInNewContext(s.slice(begin,end),{
     app:{post:(_p,...a)=>{handler=a.at(-1);}},
     metaWebhookJsonParser(){},stagingWebhookGuard(){},
-    process:{env},extractSecondaryLifecycle,
+    process:{env},require,extractSecondaryLifecycle,
+    recordQuarantinedWhatsAppChanges:async (events)=>{
+      audits.push(...events);
+      if(persistFailure)throw Error("synthetic quarantine database failure");
+      return events.length;
+    },
     persistSecondaryLifecycle:async(events)=>{
       writes.push(...events);
       if(persistFailure)throw Error("synthetic disconnected audit outage");
@@ -32,7 +38,7 @@ function harness(overrides={},persistFailure=false){
     },
     console:{error(){},log(){},warn(){}}
   },{timeout:2000});
-  return{writes,async send(body){
+  return{writes,audits,async send(body){
     let code=null;
     await handler({body},{sendStatus(value){code=value;return this;}});
     return code;
@@ -71,8 +77,33 @@ test("app-level callback rejects a different app secret, foreign number, or DB o
   assert.equal(await wrong.send(callback()),503);
   assert.equal(wrong.writes.length,0);
   const foreign=harness();
-  assert.equal(await foreign.send(callback("PARTNER_REMOVED","200000000000001")),503);
+  assert.equal(await foreign.send(callback("PARTNER_REMOVED","200000000000001")),200);
   assert.equal(foreign.writes.length,0);
+  assert.equal(foreign.audits.length,1);
   const failing=harness({},true);
   assert.equal(await failing.send(callback()),503);
+});
+
+test("unsupported signed account updates are audited and ACKed without retry storm",async()=>{
+  const h=harness();
+  assert.equal(await h.send(callback("PHONE_NUMBER_STATUS_UPDATE")),200);
+  assert.equal(h.writes.length,0);
+  assert.equal(h.audits.length,1);
+  assert.equal(h.audits[0].field,"account_update");
+  assert.equal(h.audits[0].reason,"unsupported_whatsapp_event");
+});
+test("known disconnect and unrelated signed account update coexist in one durable batch",async()=>{
+  const h=harness();
+  const input=callback();
+  input.entry[0].changes.push({
+    field:"account_update",value:{event:"ACCOUNT_VIOLATION"}
+  });
+  assert.equal(await h.send(input),200);
+  assert.equal(h.writes.length,1);
+  assert.equal(h.audits.length,1);
+});
+test("unknown account update audit outage is retryable, not silently acknowledged",async()=>{
+  const h=harness({},true);
+  assert.equal(await h.send(callback("ACCOUNT_VIOLATION")),503);
+  assert.equal(h.audits.length,1);
 });
