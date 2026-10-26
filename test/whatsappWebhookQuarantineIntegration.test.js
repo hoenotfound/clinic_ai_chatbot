@@ -36,6 +36,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   receiptIngress = false, receiptFailure = false, historyFailure = false,
   echoFailure = false, secondaryInboundFailure = false, secondaryInboundHang = false,
   secondaryInboundLate = false, receiptHang = false, historyHang = false, echoHang = false,
+  echoLate = false,
   lifecycleFailure = false } = {}) {
   let handler = null;
   const claims = [];
@@ -44,6 +45,8 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   const replies = [];
   const receiptWrites = [];
   const lifecycleWrites = [];
+  const pendingEchoes = new Set();
+  const finalizedEchoes = [];
 
   // Execute the real route definition, with signed-body middleware and every
   // side effect replaced by deterministic in-memory test doubles. This tests
@@ -102,14 +105,18 @@ function webhookHarness({ failAudit = false, dualInbox = false,
     }},
     whatsappCoexistence: {
       summarizePassiveSync: () => ({ historyChunks: 0, appStateItems: 0 }),
-      beginPendingAiForEcho() {},
-      releasePendingAiForEcho() {},
-      persistBusinessAppEcho: async () => {
+      beginPendingAiForEcho(echo) { pendingEchoes.add(echo.id); },
+      releasePendingAiForEcho(echo) { pendingEchoes.delete(echo.id); },
+      persistBusinessAppEcho: async (echo) => {
         if (echoHang) return new Promise(() => {});
+        if (echoLate) await new Promise(resolve => setTimeout(resolve, 175));
         if (echoFailure) throw new Error("synthetic secondary echo database outage");
-        return null;
+        pendingEchoes.delete(echo.id); // real persistence settles ownership
+        return echoLate ? { contact: { id: 1 }, message: { id: 1 }, isNew: true } : null;
       },
-      finalizeBusinessAppEcho: noop,
+      finalizeBusinessAppEcho: async (persisted) => {
+        finalizedEchoes.push(persisted.message.id);
+      },
     },
     storeDeliveryStatusUpdates: async () => [],
     durablyClaimIncoming: async (number, inbound) => {
@@ -137,7 +144,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   vm.runInNewContext(route, context, { timeout: 2000 });
   assert.equal(typeof handler, "function");
   return {
-    claims, audits, scheduled, replies, receiptWrites, lifecycleWrites,
+    claims, audits, scheduled, replies, receiptWrites, lifecycleWrites, pendingEchoes, finalizedEchoes,
     async send(body) {
       const response = {
         statusCode: null,
@@ -417,4 +424,38 @@ test("secondary claim finishing after deadline still schedules the durable job o
   await new Promise(resolve=>setTimeout(resolve,120));
   assert.equal(h.scheduled.length,2,"late-committed secondary message must still be scheduled");
   assert.notEqual(h.scheduled[0].key,h.scheduled[1].key);
+});
+
+test("a timed-out staff echo keeps the AI collision barrier until persistence actually settles",async()=>{
+  const h=webhookHarness({dualInbox:true,echoLate:true});
+  const body={object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-collision")]},
+    {id:"200000000000002",changes:[{field:"smb_message_echoes",value:{
+      metadata:{phone_number_id:ARIEL},
+      message_echoes:[{id:"wamid.staff-late",from:"60174831336",to:"60135550000",
+        type:"text",text:{body:"staff reply"}}]
+    }}]}
+  ]};
+  const status=await h.send(body);
+  assert.equal(status,503);
+  assert.ok(h.pendingEchoes.has("wamid.staff-late"),
+    "Do not clear pending AI cancellation merely because the HTTP deadline expired");
+  assert.equal(h.scheduled.length,1,"Neutro remains scheduled");
+  await new Promise(resolve=>setTimeout(resolve,130));
+  assert.equal(h.pendingEchoes.has("wamid.staff-late"),false);
+  assert.equal(h.finalizedEchoes.length,1,
+    "late-success echo still runs post-commit lifecycle bookkeeping");
+});
+test("an unresolved staff echo timeout remains protected against competing AI",async()=>{
+  const h=webhookHarness({dualInbox:true,echoHang:true});
+  const body={object:"whatsapp_business_account",entry:[{
+    id:"200000000000002",changes:[{field:"smb_message_echoes",value:{
+      metadata:{phone_number_id:ARIEL},
+      message_echoes:[{id:"wamid.staff-stall",from:"60174831336",to:"60135550000",
+        type:"text",text:{body:"staff reply"}}]
+    }}]
+  }]};
+  assert.equal(await h.send(body),503);
+  assert.ok(h.pendingEchoes.has("wamid.staff-stall"),
+    "must fail closed while the DB operation is unresolved");
 });
