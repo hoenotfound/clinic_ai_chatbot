@@ -69,7 +69,8 @@ test("secondary inbox only requires active exact Meta registry identity",async()
    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
    WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
    WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
-   WHATSAPP_SECONDARY_TOKEN:"synthetic-fixture"
+   WHATSAPP_SECONDARY_TOKEN:"synthetic-fixture",
+   WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336"
  };
  const good={query:async(sql)=>{
    if(sql.includes("COUNT(*)"))return{rows:[{total:1,nonprimary:1}]};
@@ -132,6 +133,7 @@ test("fully configured secondary operational flags still preserve strict Neutro 
     WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
     WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
     WHATSAPP_SECONDARY_TOKEN:"private-test-token",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
     WHATSAPP_APP_SECRET:"synthetic-meta-hmac",
   };
   assert.throws(
@@ -223,4 +225,46 @@ test("fully configured secondary operational flags still preserve strict Neutro 
       /Unsafe WhatsApp secondary operational activation/
     );
   }
+});
+
+test("a verified suspended secondary sender does not prevent Neutro startup",async()=>{
+ const env={...safe,
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+   WHATSAPP_SECONDARY_SENDER_KEY:"wellness",
+   WHATSAPP_SECONDARY_TOKEN:"synthetic",
+   WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
+ };
+ const db={query:async(sql)=>{
+   if(sql.includes("COUNT(*)"))return{rows:[{total:2,nonprimary:2}]};
+   if(sql.includes("SELECT sender_key,state"))return{rows:[{sender_key:"wellness",state:"disabled"}]};
+   return{rows:[{id:1,sender_key:"neutro",state:"active"}]};
+ }};
+ assert.equal((await assertStoredSenderSafety({env,database:db})).verified,true);
+ for(const badState of ["testing","invalid"]){
+  const bad={query:async(sql)=>sql.includes("COUNT(*)")?
+    {rows:[{total:2,nonprimary:2}]}:sql.includes("SELECT sender_key,state")?
+    {rows:[{sender_key:"wellness",state:badState}]}:
+    {rows:[{id:1,sender_key:"neutro",state:"active"}]}};
+  await assert.rejects(assertStoredSenderSafety({env,database:bad}),/exact verified sender registration/);
+ }
+});
+test("secondary receiver cannot activate without exact E164 lifecycle pin",()=>{
+ const base={...safe,
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+   WHATSAPP_SECONDARY_SENDER_KEY:"wellness",
+   WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
+ };
+ assert.doesNotThrow(()=>assertSenderIngressSafety(base));
+ for(const invalid of ["", "60174831336", "+601", "+60-174831336"]){
+   assert.throws(()=>assertSenderIngressSafety({
+     ...base,WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:invalid
+   }),/lifecycle pin/);
+ }
+ assert.throws(()=>assertSenderIngressSafety({
+   ...base,WHATSAPP_PHONE_NUMBER:"+60174831336"
+ }),/lifecycle pin/);
 });
