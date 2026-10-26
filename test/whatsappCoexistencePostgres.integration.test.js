@@ -160,6 +160,14 @@ test("PostgreSQL v100 disconnect transaction suspends only secondary and is repl
    assert.equal((await persistSecondaryLifecycle(removal,{database,env:settings})).count,0);
    const reconnect=extractSecondaryLifecycle(makeBody("ACCOUNT_RECONNECTED"),settings);
    assert.equal((await persistSecondaryLifecycle(reconnect,{database,env:settings})).count,1);
+   // Simulate an operator verifying the second number and re-enabling it,
+   // followed by a NEW PARTNER_REMOVED with identical payload (or replay).
+   // It must be disabled again without ever touching Neutro.
+   await db.query(
+     "UPDATE whatsapp_sender_accounts SET state='active',coexistence_enabled=TRUE "+
+     "WHERE sender_key='ariel'"
+   );
+   assert.equal((await persistSecondaryLifecycle(removal,{database,env:settings})).count,0);
    const rows=(await db.query(
      "SELECT sender_key,state,coexistence_enabled FROM whatsapp_sender_accounts ORDER BY sender_key"
    )).rows;
