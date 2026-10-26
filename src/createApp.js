@@ -166,6 +166,29 @@ function createApp({
       return res.sendStatus(503);
     }
 
+    // Save genuinely foreign-only callbacks before ACK. Legitimate secondary
+    // billing statuses are handled separately after their signed receipt is
+    // recorded; they must not require a foreign-event audit first.
+    const hasExpectedSecondaryStatus = process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+      isolated.quarantined.some((event) =>
+        event.reason === "unsupported_whatsapp_event" &&
+        event.field === "messages" &&
+        event.accountId === process.env.WHATSAPP_SECONDARY_WABA_ID &&
+        event.phoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID
+      );
+    let quarantineOnly = isolated.quarantined.length > 0 &&
+      isolated.acceptedActionable === 0 && !hasExpectedSecondaryStatus;
+    if (quarantineOnly) {
+      try {
+        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
+      } catch (error) {
+        console.error("Could not durably quarantine WhatsApp callback:", error);
+        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        return res.sendStatus(503);
+      }
+      void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+    }
+
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
@@ -192,13 +215,10 @@ function createApp({
             const queueKey = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
               ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from;
             try {
-              const durableClaim = await durablyClaimIncoming(queueKey, incoming);
-              // Start each verified customer turn as soon as it is durable.
-              // A failing second-number echo/receipt/history must not hold up
-              // a Neutro response in the same Meta callback.
-              scheduleDurableClaim(queueKey, durableClaim).catch((error) => {
-                console.error("Failed to schedule durable WhatsApp inbound work:", error);
-              });
+              const durableClaim = await durablyClaimIncoming(incoming.from, incoming);
+              // Claim independently. An unrelated secondary DB error cannot
+              // erase the successful Neutro claim; prepare/reply starts only
+              // AFTER the webhook responds, including on a partial 503 retry.
               return { queueKey, durableClaim };
             } catch (error) {
               durabilityFailures += 1;
@@ -271,14 +291,12 @@ function createApp({
       });
     }
 
-    // Primary statuses are already durable and customer turns are scheduled.
-    // On secondary failure return 503 for a safe Meta replay, never discard
-    // the secondary ledger or delay a valid Neutro conversation.
-    processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
-      console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
-    });
+    // Partial durability failure must preserve an idempotent provider retry,
+    // while accepted Neutro work continues only AFTER the HTTP response.
     if (durabilityFailures > 0) {
-      return res.sendStatus(503);
+      res.sendStatus(503);
+      scheduleAcceptedWhatsAppWork();
+      return;
     }
 
     // Stage secondary receipts before ACK, but only AFTER genuine inbound
@@ -287,7 +305,11 @@ function createApp({
     // statuses remain excluded from all Neutro billing and retry handlers.
     if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
       if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
-          !Buffer.isBuffer(req.whatsappSignedRawBody)) return res.sendStatus(503);
+          !Buffer.isBuffer(req.whatsappSignedRawBody)) {
+        res.sendStatus(503);
+        scheduleAcceptedWhatsAppWork();
+        return;
+      }
       let savedReceipts;
       try {
         savedReceipts = await recordSignedSecondaryStatusBatch({
@@ -297,11 +319,15 @@ function createApp({
         });
       } catch (error) {
         console.error("Could not store verified secondary WhatsApp receipts:", error);
-        return res.sendStatus(503);
+        res.sendStatus(503);
+        scheduleAcceptedWhatsAppWork();
+        return;
       }
       if (!savedReceipts.accepted) {
         console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
-        return res.sendStatus(503);
+        res.sendStatus(503);
+        scheduleAcceptedWhatsAppWork();
+        return;
       }
       // Previously these expected statuses were quarantined. Now they have
       // been durably staged; retain every other foreign/malformed quarantine.
@@ -319,26 +345,50 @@ function createApp({
       await coexistenceSync.acceptPassiveSync(webhookBody);
     } catch (err) {
       console.error("Could not durably accept sender-scoped Business App sync:", err);
-      return res.sendStatus(503);
+      res.sendStatus(503);
+      scheduleAcceptedWhatsAppWork();
+      return;
     }
 
-    // A foreign-only callback has no valid Neutro work to delay. Persist
-    // its privacy-safe audit before ACK; a transient DB failure asks Meta
-    // to retry instead of silently dropping an unknown callback.
-    const quarantineOnly = isolated.quarantined.length > 0
-      && isolated.acceptedActionable === 0;
-    if (quarantineOnly) {
+
+    // When a secondary status was stored but other foreign events remain,
+    // audit the leftover foreign-only events before success ACK.
+    if (!quarantineOnly && isolated.quarantined.length > 0 &&
+        isolated.acceptedActionable === 0) {
       try {
         await recordQuarantinedWhatsAppChanges(isolated.quarantined);
-      } catch (err) {
-        console.error("Could not durably quarantine WhatsApp callback:", err);
-        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
-        return res.sendStatus(503);
+      } catch (error) {
+        console.error("Could not durably audit remaining foreign WhatsApp events:", error);
+        res.sendStatus(503);
+        scheduleAcceptedWhatsAppWork();
+        return;
       }
+      quarantineOnly = true;
       void notifyWhatsAppSenderQuarantine(isolated.quarantined);
     }
 
     res.sendStatus(200);
+    scheduleAcceptedWhatsAppWork();
+
+    // All messaging and delivery-status side effects remain after the
+    // response. Calling this on an HTTP 503 permits a durable Neutro
+    // message to continue while Meta retries a failed secondary event.
+    function scheduleAcceptedWhatsAppWork() {
+      setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
+        console.error("Failed to record WhatsApp webhook activity:", err);
+      });
+      for (const accepted of durableClaims || []) {
+        if (!accepted) continue;
+        const { queueKey, durableClaim } = accepted;
+        scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
+          console.error("Failed to schedule durable WhatsApp inbound work:", err);
+        });
+      }
+      processStoredDeliveryStatuses(durableStatusJobs || []).catch((err) => {
+        console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
+      });
+    }
+
 
     // A mixed batch must never delay/deny the existing customer's accepted
     // message because a foreign-number quarantine insert is slow or failing.
@@ -360,9 +410,6 @@ function createApp({
       );
     }
 
-    setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
-      console.error("Failed to record WhatsApp webhook activity:", err);
-    });
 
   });
 
