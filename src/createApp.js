@@ -365,11 +365,15 @@ function createApp({
       return res.sendStatus(503);
     }
 
-    for (const persisted of durableBusinessAppEchoes) {
+    for (let echoIndex = 0; echoIndex < durableBusinessAppEchoes.length; echoIndex++) {
+      const persisted = durableBusinessAppEchoes[echoIndex];
       if (!persisted) continue;
       try {
+        // The verified originating echo is more authoritative than any
+        // optional profile field on a subsequently loaded contact.
         const isSecondaryEcho = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
-          persisted.contact?.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
+          businessAppEchoes[echoIndex]?.businessPhoneNumberId ===
+            process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
         if (isSecondaryEcho) {
           await boundedSecondaryWork(
             () => whatsappCoexistence.finalizeBusinessAppEcho(persisted),
