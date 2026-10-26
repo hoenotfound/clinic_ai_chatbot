@@ -384,7 +384,7 @@ function createApp({
           console.error("Failed to schedule durable WhatsApp inbound work:", err);
         });
       }
-      processStoredDeliveryStatuses(durableStatusJobs || []).catch((err) => {
+      processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
         console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
       });
     }
