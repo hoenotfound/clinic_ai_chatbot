@@ -93,7 +93,7 @@ test("WhatsApp webhook activity is recorded without delaying the durable ACK", (
   assert.ok(handlerEnd > handlerStart, "WhatsApp webhook handler should have a bounded source section");
 
   const handler = app.slice(handlerStart, handlerEnd);
-  const durableInboundIndex = handler.indexOf("durablyClaimIncoming(incoming.from, incoming)");
+  const durableInboundIndex = handler.indexOf("durablyClaimIncoming(queueKey, incoming)");
   const durableStatusIndex = handler.indexOf("storeDeliveryStatusUpdates(statusUpdates)");
   const ackIndex = handler.indexOf("res.sendStatus(200);");
   const webhookActivityIndex = handler.indexOf('setupStatusRepo.recordWebhook("whatsapp_webhook")');
