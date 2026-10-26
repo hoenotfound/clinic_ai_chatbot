@@ -6,6 +6,9 @@ const whatsapp = require("./services/whatsappService");
 const { partitionLegacyWhatsAppWebhook } = require("./services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("./services/whatsappSecondaryInboxBoundary");
 const { recordSignedSecondaryStatusBatch } = require("./services/whatsappSecondaryReceiptService");
+const {
+  extractSecondaryLifecycle, persistSecondaryLifecycle,
+} = require("./services/whatsappCoexistenceAccountUpdateService");
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
 const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
@@ -166,6 +169,49 @@ function createApp({
       return res.sendStatus(503);
     }
 
+    // Lifecycle account_update events can use the app-level WhatsApp callback
+    // without phone_number_id metadata. Match a pinned secondary account and
+    // E164 before excluding them from foreign-event quarantine. Never route
+    // them through the customer-message or AI handlers.
+    let secondaryLifecycle;
+    try {
+      secondaryLifecycle = extractSecondaryLifecycle(req.body, process.env);
+    } catch (error) {
+      console.error("Rejected invalid WhatsApp coexistence lifecycle batch:", error);
+      return res.sendStatus(503);
+    }
+    if (secondaryLifecycle.length) {
+      const lifeKeys = new Set(secondaryLifecycle.map((item) => item.fingerprint));
+      isolated.quarantined = isolated.quarantined.filter((item) => !lifeKeys.has(item.fingerprint));
+    }
+
+    // Bound secondary DB work during a mixed callback. A stalled second-number
+    // query must not indefinitely block Neutro's durable customer work.
+    // Timed-out work is NOT acknowledged: the entire Meta callback returns
+    // retryable 503; WAMIDs and receipt/event fingerprints keep replay safe.
+    function boundedSecondaryWork(operation, label) {
+      const configured = Number(process.env.WHATSAPP_SECONDARY_WEBHOOK_WORK_TIMEOUT_MS);
+      const timeoutMs = Number.isInteger(configured) && configured >= 100 &&
+        configured <= 5000 ? configured : 2500;
+      let timer;
+      return Promise.race([
+        Promise.resolve().then(operation),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(label + " timed out")), timeoutMs);
+        }),
+      ]).finally(() => clearTimeout(timer));
+    }
+    // Write a disconnect before processing secondary customer turns in this
+    // callback. A reconnection notice is audit-only and never auto-activates.
+    const lifecycleWork = secondaryLifecycle.length ?
+      boundedSecondaryWork(
+        () => persistSecondaryLifecycle(secondaryLifecycle, { env: process.env }),
+        "Secondary coexistence lifecycle",
+      ).catch((error) => {
+        console.error("Could not durably process secondary lifecycle:", error);
+        return { accepted: false };
+      }) : Promise.resolve({ accepted: true, count: 0 });
+
     // Save genuinely foreign-only callbacks before ACK. Legitimate secondary
     // billing statuses are handled separately after their signed receipt is
     // recorded; they must not require a foreign-event audit first.
@@ -215,7 +261,20 @@ function createApp({
             const queueKey = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
               ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from;
             try {
-              const durableClaim = await durablyClaimIncoming(incoming.from, incoming);
+              const secondary = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+                incoming.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
+              if (secondary && secondaryLifecycle.length) {
+                const life = await lifecycleWork;
+                if (!life.accepted) throw Error("Secondary lifecycle audit not durable");
+                if (secondaryLifecycle.some((item) =>
+                  item.eventType === "PARTNER_REMOVED" || item.eventType === "ACCOUNT_OFFBOARDED"
+                )) throw Error("Secondary sender disconnected during this callback");
+              }
+              const durableClaim = secondary ?
+                await boundedSecondaryWork(
+                  () => durablyClaimIncoming(queueKey, incoming),
+                  "Secondary inbound claim",
+                ) : await durablyClaimIncoming(queueKey, incoming);
               // Claim independently. An unrelated secondary DB error cannot
               // erase the successful Neutro claim; prepare/reply starts only
               // AFTER the webhook responds, including on a partial 503 retry.
@@ -234,7 +293,19 @@ function createApp({
         }),
         Promise.all(businessAppEchoes.map(async (echo) => {
           try {
-            return await whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true });
+            const secondary = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
+              echo.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
+            if (secondary && secondaryLifecycle.length) {
+              const life = await lifecycleWork;
+              if (!life.accepted || secondaryLifecycle.some((item) =>
+                item.eventType === "PARTNER_REMOVED" || item.eventType === "ACCOUNT_OFFBOARDED"
+              )) throw Error("Secondary Business App connection not active");
+            }
+            return secondary ?
+              await boundedSecondaryWork(
+                () => whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true }),
+                "Secondary Business App echo",
+              ) : await whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true });
           } catch (error) {
             durabilityFailures += 1;
             whatsappCoexistence.releasePendingAiForEcho(echo);
@@ -242,6 +313,10 @@ function createApp({
             return null;
           }
         })),
+        lifecycleWork.then((result) => {
+          if (!result.accepted) durabilityFailures += 1;
+          return result;
+        }),
         Promise.all(reactionEvents.map(async (reaction) => {
           try {
             return await messagesRepo.applyWhatsappReaction(reaction);
@@ -312,11 +387,14 @@ function createApp({
       }
       let savedReceipts;
       try {
-        savedReceipts = await recordSignedSecondaryStatusBatch({
-          rawBody: req.whatsappSignedRawBody,
-          signatureHeader: req.headers["x-hub-signature-256"],
-          subsetFromVerifiedWebhook: true,
-        });
+        savedReceipts = await boundedSecondaryWork(
+          () => recordSignedSecondaryStatusBatch({
+            rawBody: req.whatsappSignedRawBody,
+            signatureHeader: req.headers["x-hub-signature-256"],
+            subsetFromVerifiedWebhook: true,
+          }),
+          "Secondary receipt storage",
+        );
       } catch (error) {
         console.error("Could not store verified secondary WhatsApp receipts:", error);
         res.sendStatus(503);
@@ -342,7 +420,10 @@ function createApp({
     // Imported history is passive: no AI, lead stage, service window or
     // follow-up. Errors return 503 so Meta can replay safely by WAMID.
     try {
-      await coexistenceSync.acceptPassiveSync(webhookBody);
+      await boundedSecondaryWork(
+        () => coexistenceSync.acceptPassiveSync(webhookBody),
+        "Coexistence passive synchronization",
+      );
     } catch (err) {
       console.error("Could not durably accept sender-scoped Business App sync:", err);
       res.sendStatus(503);
