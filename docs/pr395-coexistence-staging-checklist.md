@@ -92,7 +92,11 @@ deliver genuine webhook traffic here: Meta would retry 503 callbacks.
 
 Only for a controlled QR validation session, add the correct DA CHATBOT
 `META_APP_SECRET`, `META_EMBEDDED_SIGNUP_CONFIG_ID`, and validated Meta
-permissions to **staging**. The onboarding UI should report `configured`
+permissions to **staging**. Verify that the configuration is a current Facebook
+Login for Business **Embedded Signup v4** configuration with WhatsApp Business App
+coexistence support, then attest using
+`META_EMBEDDED_SIGNUP_V4_CONFIRMED=true`. This flag cannot verify Meta
+configuration ownership automatically; check the actual Meta developer dashboard first. The onboarding UI should report `configured`
 when all requirements exist. Protect the test route; do not connect production
 Meta webhooks yet.
 
@@ -140,3 +144,13 @@ The current sandbox mode is intentionally non-operational: a separate sanitized
 acceptance environment and controlled provider-routing permission are needed
 to perform live signed two-number E2E tests. Do not disable this guard merely
 to make an acceptance test pass.
+
+## 26 October 2026 safety review update
+
+- Added nonblocking primary inbound scheduling: if a mixed verified callback contains Neutro and secondary events, primary messages are scheduled after their durable claim, independently of secondary receipt/history/echo failures. Secondary failure returns retryable 503; never accept it as a successful secondary receipt.
+- Added required coexistence `account_update` subscription alongside `messages`, `history`, `smb_app_state_sync` and `smb_message_echoes`. Account updates are lifecycle signals, **not** customer messages, and must not invoke AI.
+- The production staging sandbox is still **authorization-only**. Never disable `PR395_STAGING_MODE` merely to bypass its webhook 503 safeguard or use production Neutro credentials on staging.
+- Meta's October 2026 account model distinguishes phone-owning WhatsApp Accounts from Messaging Accounts. Identify the actual authorized webhook account ID from signed Meta callbacks, and the authorized phone/management relationship via Meta. Do not treat `1071636698738276` or `1852014482431209` as equivalent or validated.
+- Ensure the history/contact sync receiver, authorized app, subscription and bounded job worker are ready **before** the authorized QR approval; consented initial sync is time-limited.
+- The content and services on the second number are not assumed identical to Neutro. Require explicit second-business approval before enabling AI, media or follow-ups.
+- No live Meta onboarding, authorization, billing spend or webhook subscription changes are performed by this PR update.
