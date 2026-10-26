@@ -34,8 +34,11 @@ test("standard Messenger/Instagram messages persist before returning HTTP 200", 
     'app.post("/meta-webhook", metaWebhookJsonParser',
     'app.get("/promo-images/:id"'
   );
+  // The earlier WhatsApp account_update branch also ACKs on this endpoint.
+  // Check the Messenger/Instagram ACK after its own durable claim, not that
+  // separate signed lifecycle acknowledgement.
   const durable = route.indexOf("await durablyClaimIncoming");
-  const ack = route.indexOf("res.sendStatus(200)");
+  const ack = route.lastIndexOf("res.sendStatus(200)");
 
   assert.ok(durable >= 0, "Meta route must durably claim standard inbound messages");
   assert.ok(ack > durable, "Meta ACK must happen after durable standard-message persistence");
