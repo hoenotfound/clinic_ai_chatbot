@@ -437,3 +437,11 @@ The former version 99 release gate is superseded by schema **100**, which adds a
 Meta callback processing now applies a bounded deadline to secondary durable work. On a secondary timeout, it preserves Meta retry (HTTP 503) while scheduling already-saved primary messages. A late-completing secondary inbound claim still schedules its own message. This remains a single shared database pool and callback service; it does **not** promise hard isolation from infrastructure-wide outages.
 
 **Remaining external release blockers:** actual DA CHATBOT app ownership/subscription, Embedded Signup v4 configuration verification, a Meta-authorized consented QR session, a signed two-number E2E drill, disconnection and restore checks, separately approved clinic content/billing, and a production-forward migration rehearsal. Current isolated staging blocks provider ingress/outbound. Keep PR #395 Draft until those are complete. Never merge solely because CI passed.
+
+## 26 October 2026 — final production-regression repairs (still Draft)
+
+Critical restart safety: `assertStoredSenderSafety` allows an *exactly identified* secondary account in `disabled` state while keeping its send/AI/workers closed; primary Neutro must remain active. `getContactById` can display a disconnected secondary without authorizing messages. The secondary E164 lifecycle phone pin is now mandatory before any dual Inbox activation.
+
+A repeat signed disconnect, even after manual reactivation, disables the secondary again; distinct account-update `entry.time` values create distinct audit fingerprints. Old replays may suspend conservatively: a human must re-verify before reactivation. Echo-persistence timeouts no longer clear the pending-AI guard until the real operation settles. Other legitimate `account_update` types on the signed default Meta callback are hashed and audited (200), while misrouted message/history events remain retryable (503).
+
+The Inbox displays a suspended number and blocks secondary composer and template entry; the server-side transport continues to verify `state='active'` before any send. No Meta credentials, WhatsApp authorization, production sender state, QR, subscriptions or production migrations were changed by these PR commits. Complete real signed two-number QA and independent commercial/policy authorization before merging.
