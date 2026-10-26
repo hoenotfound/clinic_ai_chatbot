@@ -169,3 +169,15 @@ or payment method. No app or subscriber was changed. Complete the app connection
 and verification through authorized Meta Business Settings before any provider
 tests, then use the sender-specific read-only verifier and signed callbacks to
 determine the configured `WHATSAPP_SECONDARY_WABA_ID`.
+
+## 26 Oct 2026 — coexistence resilience hardening (schema v100)
+
+- [x] Added independent sender-qualified durable inbound claim queue keys. A slow secondary incoming/echo/receipt/history/lifecycle operation has a bounded deadline (default 2500 ms), after which Meta gets a retryable 503 and Neutro's already-durable work is scheduled after that response.
+- [x] If a secondary incoming claim completes after the deadline, the late durable claim is still scheduled; it is never lost merely because a replay sees a duplicate provider WAMID.
+- [x] Migration 100 stores idempotent, privacy-limited coexistence account_update lifecycle evidence. A sender-verified `PARTNER_REMOVED` / `ACCOUNT_OFFBOARDED` disables **only** the configured secondary sender and its coexistence switch. `ACCOUNT_RECONNECTED` is audit-only; it can never re-enable sending without independently verified operator activation.
+- [x] WhatsApp app-level default callback `/meta-webhook` now prevents signed `account_update` disconnection events from being blindly ACKed as Facebook/Instagram traffic, but requires matching Meta/WhatsApp app secrets and exact sender E164/account evidence. Other WhatsApp event types on that endpoint fail closed; fix the provider callback URL instead of dropping messages.
+- [x] Added independent slow-work, delayed-commit, disconnect/reconnect and PostgreSQL transaction tests. Historical schema-version regression expectations moved from 99 to 100.
+- [ ] Confirm **the Meta app default WhatsApp Business Account topic callback URL**, not only the per-account callback override, is pointed at a supported signed endpoint. Verify required `account_update`, `messages`, `history`, `smb_message_echoes`, `smb_app_state_sync` subscriptions with the authorized DA CHATBOT app. Do not change a production Meta callback during staging.
+- [ ] Confirm `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=+60174831336`, the account ID supplied in Embedded Signup and sender registry are independently verified before receiver activation. A missing E164 pin prevents trusted lifecycle matching.
+- [ ] Real signed disconnect/reconnect, simultaneous Neutro/secondary inbound, delayed receipt and media E2E tests still require authorized provider-enabled QA. The current staging sandbox intentionally rejects live provider POSTs.
+- [ ] Confirm owner-approved clinic content, privacy and Meta billing, plus a forward-only migration/rollback plan before merge. Neutro production must stay on existing schema until separate approval.
