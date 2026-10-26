@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const { partitionLegacyWhatsAppWebhook } = require("../src/services/whatsappLegacySenderBoundary");
 const { partitionSecondaryInboxWebhook } = require("../src/services/whatsappSecondaryInboxBoundary");
+const { extractSecondaryLifecycle } = require("../src/services/whatsappCoexistenceAccountUpdateService");
 const whatsapp = require("../src/services/whatsappService");
 
 const NEUTRO = "100000000000001";
@@ -33,13 +34,16 @@ function payload(...changes) {
 
 function webhookHarness({ failAudit = false, dualInbox = false,
   receiptIngress = false, receiptFailure = false, historyFailure = false,
-  echoFailure = false, secondaryInboundFailure = false } = {}) {
+  echoFailure = false, secondaryInboundFailure = false, secondaryInboundHang = false,
+  receiptHang = false, historyHang = false, echoHang = false,
+  lifecycleFailure = false } = {}) {
   let handler = null;
   const claims = [];
   const scheduled = [];
   const audits = [];
   const replies = [];
   const receiptWrites = [];
+  const lifecycleWrites = [];
 
   // Execute the real route definition, with signed-body middleware and every
   // side effect replaced by deterministic in-memory test doubles. This tests
@@ -56,22 +60,32 @@ function webhookHarness({ failAudit = false, dualInbox = false,
     } },
     webhookJsonParser: () => {},
     stagingWebhookGuard: (_req, _res, next) => next(),
-    Buffer,
+    Buffer, setTimeout, clearTimeout,
     whatsapp,
     partitionLegacyWhatsAppWebhook,
     partitionSecondaryInboxWebhook,
+    extractSecondaryLifecycle,
+    persistSecondaryLifecycle: async (events) => {
+      lifecycleWrites.push(events);
+      if (lifecycleFailure) throw Error("synthetic lifecycle database failure");
+      return { accepted: true, count: events.length };
+    },
     process: { env: {
       WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED: dualInbox ? "true" : "false",
       WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED: receiptIngress ? "true" : "false",
       WHATSAPP_WABA_ID: "200000000000001",
       WHATSAPP_SECONDARY_PHONE_NUMBER_ID: ARIEL,
       WHATSAPP_SECONDARY_WABA_ID: "200000000000002",
+      WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness",
+      WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60174831336",
+      WHATSAPP_SECONDARY_WEBHOOK_WORK_TIMEOUT_MS: "100",
       WHATSAPP_PHONE_NUMBER_ID: NEUTRO,
       WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED: "false",
       WHATSAPP_SINGLE_SENDER_STRICT_METADATA: "false",
     } },
     recordSignedSecondaryStatusBatch: async (args) => {
       receiptWrites.push(args);
+      if (receiptHang) return new Promise(() => {});
       return receiptFailure ? {accepted:false,code:"test_receipt_storage_failed"} :
         {accepted:true,matched:1};
     },
@@ -82,6 +96,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
     },
     notifyWhatsAppSenderQuarantine: async () => true,
     coexistenceSync: {acceptPassiveSync: async()=>{
+      if (historyHang) return new Promise(() => {});
       if (historyFailure) throw new Error("synthetic secondary history database outage");
       return {enabled:false,staged:0};
     }},
@@ -90,6 +105,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
       beginPendingAiForEcho() {},
       releasePendingAiForEcho() {},
       persistBusinessAppEcho: async () => {
+        if (echoHang) return new Promise(() => {});
         if (echoFailure) throw new Error("synthetic secondary echo database outage");
         return null;
       },
@@ -97,6 +113,9 @@ function webhookHarness({ failAudit = false, dualInbox = false,
     },
     storeDeliveryStatusUpdates: async () => [],
     durablyClaimIncoming: async (number, inbound) => {
+      if (secondaryInboundHang && inbound.businessPhoneNumberId === ARIEL) {
+        return new Promise(() => {});
+      }
       if (secondaryInboundFailure && inbound.businessPhoneNumberId === ARIEL) {
         throw new Error("synthetic secondary contact database outage");
       }
@@ -115,7 +134,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   vm.runInNewContext(route, context, { timeout: 2000 });
   assert.equal(typeof handler, "function");
   return {
-    claims, audits, scheduled, replies, receiptWrites,
+    claims, audits, scheduled, replies, receiptWrites, lifecycleWrites,
     async send(body) {
       const response = {
         statusCode: null,
@@ -301,4 +320,85 @@ test("account_update lifecycle callback never becomes a customer message or AI t
   assert.equal(h.scheduled.length,1);
   assert.equal(h.claims[0].inbound.id,"wamid.primary-lifecycle");
   assert.equal(h.audits.length,1);
+});
+
+test("secondary inbound that never settles does not hold Neutro; primary queue is sender-specific", async () => {
+  const h = webhookHarness({ dualInbox: true, secondaryInboundHang: true });
+  const start = Date.now();
+  const status = await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-stall")]},
+    {id:"200000000000002",changes:[event(ARIEL,"wamid.secondary-stall")]},
+  ]});
+  assert.equal(status,503,"unknown secondary durability must be retried by Meta");
+  assert.ok(Date.now()-start<1200,"primary must not wait indefinitely for the second number");
+  assert.equal(h.claims.length,1);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.claims[0].number, `whatsapp:${NEUTRO}:60135550000`);
+});
+
+test("secondary billing receipt that stalls cannot postpone Neutro's reply", async () => {
+  const h = webhookHarness({dualInbox:true,receiptIngress:true,receiptHang:true});
+  const status = await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-receipt-hang")]},
+    {id:"200000000000002",changes:[{
+      field:"messages",value:{metadata:{phone_number_id:ARIEL},
+      statuses:[{id:"wamid.receipt-hang",status:"sent",recipient_id:"60135550000"}]}
+    }]}
+  ]});
+  assert.equal(status,503);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.receiptWrites.length,1);
+});
+
+test("secondary app echo that stalls cannot postpone Neutro's reply", async () => {
+  const h = webhookHarness({dualInbox:true,echoHang:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-echo-hang")]},
+    {id:"200000000000002",changes:[{
+      field:"smb_message_echoes",value:{metadata:{phone_number_id:ARIEL},
+      message_echoes:[{id:"wamid.echo-hang",from:"60174831336",to:"60135550000",
+      type:"text",text:{body:"staff"}}]}
+    }]}
+  ]});
+  assert.equal(status,503);
+  assert.equal(h.scheduled.length,1);
+});
+
+test("secondary history that stalls cannot postpone Neutro's reply", async () => {
+  const h = webhookHarness({dualInbox:true,historyHang:true});
+  const status = await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-sync-hang")]},
+    {id:"200000000000002",changes:[{
+      field:"history",value:{metadata:{phone_number_id:ARIEL},history:[]}
+    }]}
+  ]});
+  assert.equal(status,503);
+  assert.equal(h.scheduled.length,1);
+});
+
+test("signed PARTNER_REMOVED lifecycle records sender disconnection without touching Neutro", async()=>{
+  const h=webhookHarness({dualInbox:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-disconnect")]},
+    {id:"200000000000002",changes:[{field:"account_update",
+      value:{event:"PARTNER_REMOVED",phone_number:"+60 17-483 1336",
+        disconnection_info:{reason:"ACCOUNT_DISCONNECTED"}}}]}
+  ]});
+  assert.equal(status,200);
+  assert.equal(h.lifecycleWrites.length,1);
+  assert.equal(h.lifecycleWrites[0][0].eventType,"PARTNER_REMOVED");
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.audits.length,0);
+});
+
+test("lifecycle database failure returns retryable 503 while Neutro continues",async()=>{
+  const h=webhookHarness({dualInbox:true,lifecycleFailure:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-lifecycle-fail")]},
+    {id:"200000000000002",changes:[{field:"account_update",
+      value:{event:"ACCOUNT_OFFBOARDED"}}]}
+  ]});
+  assert.equal(status,503);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.lifecycleWrites.length,1);
 });
