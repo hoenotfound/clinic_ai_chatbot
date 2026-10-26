@@ -9,9 +9,14 @@ const { pool } = require("../db/db");
 const EVENTS = new Set(["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED", "ACCOUNT_RECONNECTED"]);
 const DISCONNECTS = new Set(["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED"]);
 function digits(value) { return String(value || "").replace(/[^0-9]/g, ""); }
-function fingerprint(accountId, change) {
+function fingerprint(accountId, change, entryTime = null) {
+  // WhatsApp account_update carries entry.time (Unix seconds). It separates
+  // two independent disconnect occurrences with identical reason/initiator.
   return crypto.createHash("sha256")
-    .update(JSON.stringify({ account: accountId, change })).digest("hex");
+    .update(JSON.stringify({
+      account: accountId, change,
+      ...(Number.isSafeInteger(entryTime) && entryTime > 0 ? { time: entryTime } : {}),
+    })).digest("hex");
 }
 function extractSecondaryLifecycle(body, env = process.env) {
   if (env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true") return [];
@@ -34,8 +39,11 @@ function extractSecondaryLifecycle(body, env = process.env) {
       // Account-wide events lacking phone_number may still require a
       // conservative suspension of the pinned secondary sender.
       if (indicated !== undefined && (!normalized || normalized !== number)) continue;
+      const entryTime = Number(entry.time);
       events.push(Object.freeze({
-        fingerprint: fingerprint(entry.id, change),
+        fingerprint: fingerprint(entry.id, change, entry.time == null ? null : entryTime),
+        // The legacy quarantine partition hashes without the entry timestamp.
+        quarantineFingerprint: fingerprint(entry.id, change),
         accountId: account, phoneNumberId: phoneId, phoneNumber: normalized || null,
         eventType: change.value.event,
       }));
@@ -80,14 +88,18 @@ async function persistSecondaryLifecycle(events, {
         [event.fingerprint, senderId, event.eventType, account,
           event.phoneNumber, disabled ? "disabled" : "reconnect_review"]
       );
-      if (recorded.rowCount !== 1) continue;
-      count++;
+      if (recorded.rowCount === 1) count++;
       if (disabled) {
-        // Never change the existing primary sender. The secondary's outbound,
-        // contacts and AI paths all require state=active and fail closed.
+        // Never let a previously seen fingerprint become an exemption from a
+        // later disconnect. After an authorized manual reactivation, an
+        // identical signed PARTNER_REMOVED is still a valid stop signal.
+        // A stale replay may conservatively suspend sending again; that is
+        // safer than silently leaving an unlinked secondary active.
+        // Only the exact pinned SECONDARY row can be changed.
         await client.query(
           "UPDATE whatsapp_sender_accounts SET state='disabled', " +
-          "coexistence_enabled=FALSE, updated_at=NOW() WHERE id=$1",
+          "coexistence_enabled=FALSE, updated_at=NOW() " +
+          "WHERE id=$1 AND (state <> 'disabled' OR coexistence_enabled=TRUE)",
           [senderId]
         );
       }
