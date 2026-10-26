@@ -241,7 +241,9 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const scoped = await pool.query(
     "SELECT c.*,sa.sender_key AS whatsapp_sender_key, " +
     "sa.meta_phone_number_id AS whatsapp_sender_phone_number_id, " +
-    "sa.meta_account_id AS whatsapp_sender_account_id " +
+    "sa.meta_account_id AS whatsapp_sender_account_id, " +
+    "sa.state AS whatsapp_sender_state, " +
+    "sa.coexistence_enabled AS whatsapp_sender_coexistence_enabled " +
     "FROM contacts c " +
     "JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
     "WHERE c.channel='whatsapp' AND c.whatsapp_number=$1 " +
@@ -340,13 +342,15 @@ async function getContactById(id) {
       "FROM whatsapp_sender_accounts WHERE id=$1",
       [contact.whatsapp_sender_id]
     );
-    if (owner.rows?.length !== 1 || owner.rows[0].state !== "active") {
+    if (owner.rows?.length !== 1 ||
+        !["active", "disabled"].includes(owner.rows[0].state)) {
       throw new Error("Cannot verify persisted WhatsApp contact sender identity.");
     }
     contact.whatsapp_sender_key = owner.rows[0].sender_key;
     contact.whatsapp_sender_display_name = owner.rows[0].display_name;
     contact.whatsapp_sender_phone_number_id = owner.rows[0].meta_phone_number_id;
     contact.whatsapp_sender_account_id = owner.rows[0].meta_account_id;
+    contact.whatsapp_sender_state = owner.rows[0].state;
   }
   return contact;
 }
@@ -543,6 +547,8 @@ ${senderAwareInboxReadsEnabled() ? `
       sa.display_name AS whatsapp_sender_display_name,
       sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
       sa.meta_account_id AS whatsapp_sender_account_id,
+      sa.state AS whatsapp_sender_state,
+      sa.coexistence_enabled AS whatsapp_sender_coexistence_enabled,
       ` : ""}
       c.mode,
       c.takeover_by,
