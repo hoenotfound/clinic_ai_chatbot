@@ -11,13 +11,17 @@ Do not mistake this document or a passing CI job for production approval.
 - Production Neon `steep-forest-44509907` `main` remains v077.
 - An older Neutro QA branch `br-steep-flower-b3qayk0r` in the production Neon project still has 183 historical contacts. **Render staging is no longer connected to this Neon project.**
 - Render staging now uses **independent Neon project `wandering-dream-82267835`** (`da-chatbot-pr395-isolated-staging`), branch `br-late-sky-ao8xggam`, database `neondb`, role `pr395_staging_owner`. It was migrated through v099 and verified to contain **0 contacts, 1 staging admin and 0 active senders**. The old QA databases are not accessed by this new project.
-- Candidate second Business App number: 中医养生馆 / +60 17-483 1336.
-  Previously noted phone ID `1318355951360575`; this is a pin requiring
-  authoritative Meta token verification, not a permission grant.
-- The previous supposed secondary account ID `1071636698738276` is
-  **UNVERIFIED**: Meta Graph API returned `(#100) nonexisting field
-  (phone_numbers)`. The Meta Messaging Account visible in Business Settings
-  is `1852014482431209`. The two IDs are not interchangeable.
+- Read-only Meta account inventory (26 Oct) confirms 中医养生馆 /
+  +60 17-483 1336 has phone ID `1318355951360575`, phone-owning
+  WhatsApp Account ID `1071636698738276`, and associated Messaging
+  Account ID `1852014482431209`. Ownership of the physical number is
+  established; the DA CHATBOT app-specific token, webhook account ID,
+  callback `entry.id` and subscription are **not** established.
+- The historical Graph `(#100) nonexisting field (phone_numbers)` for
+  `1071636698738276` means that the queried node does not expose the
+  legacy `phone_numbers` edge. It is NOT evidence that the account ID
+  does not exist. Never substitute either account ID in live configuration
+  without verified signup and signed webhook evidence.
 - Use a separate URL, credentials, session secret and isolated DB. All other
   WhatsApp numbers, especially Neutro's primary sender, remain unchanged.
 
@@ -154,3 +158,14 @@ to make an acceptance test pass.
 - Ensure the history/contact sync receiver, authorized app, subscription and bounded job worker are ready **before** the authorized QR approval; consented initial sync is time-limited.
 - The content and services on the second number are not assumed identical to Neutro. Require explicit second-business approval before enabling AI, media or follow-ups.
 - No live Meta onboarding, authorization, billing spend or webhook subscription changes are performed by this PR update.
+
+## Read-only Meta business finding (26 Oct 2026)
+
+The connected Neutro Sense Face & Body business inventory lists the second number
+as linked/registered on WhatsApp. However, this connection does not show an
+administered WhatsApp-enabled DA CHATBOT developer app for that business.
+The status inspection therefore cannot prove DA CHATBOT's callback, subscription
+or payment method. No app or subscriber was changed. Complete the app connection
+and verification through authorized Meta Business Settings before any provider
+tests, then use the sender-specific read-only verifier and signed callbacks to
+determine the configured `WHATSAPP_SECONDARY_WABA_ID`.
