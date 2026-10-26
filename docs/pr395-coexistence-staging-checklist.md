@@ -181,3 +181,13 @@ determine the configured `WHATSAPP_SECONDARY_WABA_ID`.
 - [ ] Confirm `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=+60174831336`, the account ID supplied in Embedded Signup and sender registry are independently verified before receiver activation. A missing E164 pin prevents trusted lifecycle matching.
 - [ ] Real signed disconnect/reconnect, simultaneous Neutro/secondary inbound, delayed receipt and media E2E tests still require authorized provider-enabled QA. The current staging sandbox intentionally rejects live provider POSTs.
 - [ ] Confirm owner-approved clinic content, privacy and Meta billing, plus a forward-only migration/rollback plan before merge. Neutro production must stay on existing schema until separate approval.
+
+## 26 Oct 2026 — final disconnect-safety regression repair (schema remains v100)
+
+- [x] A signed secondary disconnect now suspends only the verified secondary sender; **startup still succeeds** with a disabled secondary record, while primary Neutro remains required to be active. The sender-aware read path can display its suspended contact rather than throwing.
+- [x] An *identical* signed removal after a manual reactivation disables the secondary again even if the old audit fingerprint exists. Meta's optional `entry.time` differentiates independent occurrences. A late retry of an old removal can conservatively suspend sends again; explicit independent operator verification is required to resume.
+- [x] `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164` is **mandatory** and exactly E.164 when secondary Inbox coexistence is enabled. For this number use the independently verified `+60174831336`. Missing/mismatched lifecycle proof fails activation; the primary number and primary token must remain separate.
+- [x] When a Business App echo persistence exceeds its webhook deadline, the pending human/AI collision barrier is **not** cleared while the underlying database operation remains unresolved; late successful persistence still executes finalization. This is fail-closed during indefinite DB stalls.
+- [x] Non-message account-update types delivered to the same-app-secret default Meta callback are *durably audited* then ACKed; an erroneously delivered WhatsApp message/history still yields HTTP 503 rather than silent loss.
+- [x] Inbox server status and staff composer now reflect a suspended secondary sender; no UI claim of AI availability when the registry is disabled.
+- [ ] Authorized Meta subscription verification and signed dual-number live tests remain required. Staging is deliberately provider-disabled and not a coexistence acceptance environment.
