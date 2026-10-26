@@ -54,7 +54,8 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
     result = await database.query(
       "SELECT c.whatsapp_number, c.whatsapp_sender_id, " +
       "sc.sender_id AS bound_sender_id, sc.customer_wa_id, sc.state AS binding_state, " +
-      "sa.sender_key, sa.meta_phone_number_id, sa.meta_account_id, sa.state AS sender_state " +
+      "sa.sender_key, sa.meta_phone_number_id, sa.meta_account_id, " +
+      "sa.state AS sender_state, sa.coexistence_enabled AS sender_coexistence_enabled " +
       "FROM contacts c JOIN whatsapp_sender_conversations sc ON sc.contact_id=c.id " +
       "JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id " +
       "WHERE c.id=$1 AND c.channel='whatsapp'",
@@ -66,7 +67,14 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
   const rows = result?.rows || [];
   if (rows.length !== 1) reject();
   const row = rows[0];
+  // A manually toggled active state alone must NOT reopen a Business App
+  // coexistence number that a signed disconnect suspended. The lifecycle
+  // handler clears coexistence_enabled as a separate, durable safety latch.
+  // Legacy non-coexistence synthetic transport fixtures have no E164 pin.
+  const coexistencePinned = Boolean(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164)) ||
+    env.WHATSAPP_COEXISTENCE_ENABLED === "true";
   if (row.binding_state !== "bound" || row.sender_state !== "active" ||
+      (coexistencePinned && row.sender_coexistence_enabled !== true) ||
       String(row.whatsapp_sender_id) !== String(row.bound_sender_id) ||
       !row.whatsapp_sender_id ||
       row.whatsapp_number !== contact.whatsapp_number ||
