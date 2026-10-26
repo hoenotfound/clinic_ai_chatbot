@@ -52,6 +52,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # Temporary supply-chain verification to record the published package SRI.
+      - name: Inspect patched body-parser package integrity
+        run: npm view body-parser@1.20.9 dist.integrity --json
       - run: npm ci
       - name: Check backend JavaScript syntax
         shell: bash
