@@ -603,7 +603,7 @@ function createApp({
             .update(JSON.stringify({ account: entry.id ?? null, change })).digest("hex"),
           reason: "unsupported_whatsapp_event",
           field: "account_update",
-          accountId: typeof entry.id === "string" && /^\\d+$/.test(entry.id) ? entry.id : null,
+          accountId: typeof entry.id === "string" && /^\d+$/.test(entry.id) ? entry.id : null,
           phoneNumberId: null,
         })).filter((item) => !recognized.has(item.fingerprint));
         // A critical disconnection must be durable before it is ACKed.
