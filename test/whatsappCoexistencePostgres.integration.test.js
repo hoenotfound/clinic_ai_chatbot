@@ -120,3 +120,62 @@ test("fresh v099 SQL isolates sender-owned coexistence history, media echoes and
   await db.end();
  }
 });
+
+test("PostgreSQL v100 disconnect transaction suspends only secondary and is replay safe",{
+ skip:!url,
+},async()=>{
+ const {extractSecondaryLifecycle,persistSecondaryLifecycle}=
+   require("../src/services/whatsappCoexistenceAccountUpdateService");
+ const db=new Client({connectionString:url});
+ const schema="coex_disconnect_"+process.pid+"_"+Date.now();
+ await db.connect();
+ try{
+   await db.query("CREATE SCHEMA "+schema);
+   await db.query("SET search_path TO "+schema);
+   const database={
+     query:(...args)=>db.query(...args),
+     connect:async()=>{
+       const c=new Client({connectionString:url}); await c.connect();
+       await c.query("SET search_path TO "+schema);
+       return{query:(...args)=>c.query(...args),release:()=>c.end()};
+     }
+   };
+   await runMigrations(database,{quiet:true});
+   await db.query(
+     "INSERT INTO whatsapp_sender_accounts "+
+     "(sender_key,meta_phone_number_id,meta_account_id,display_name,state,coexistence_enabled) "+
+     "VALUES('neutro','100000000000001','200000000000001','Neutro','active',TRUE),"+
+     "('ariel','100000000000002','200000000000002','Second','active',TRUE)"
+   );
+   const settings={...env,WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336"};
+   const makeBody=(event)=>({object:"whatsapp_business_account",entry:[{
+     id:settings.WHATSAPP_SECONDARY_WABA_ID,
+     changes:[{field:"account_update",value:{
+       event,phone_number:"+60174831336"
+     }}]
+   }]});
+   const removal=extractSecondaryLifecycle(makeBody("PARTNER_REMOVED"),settings);
+   assert.equal(removal.length,1);
+   assert.equal((await persistSecondaryLifecycle(removal,{database,env:settings})).count,1);
+   assert.equal((await persistSecondaryLifecycle(removal,{database,env:settings})).count,0);
+   const reconnect=extractSecondaryLifecycle(makeBody("ACCOUNT_RECONNECTED"),settings);
+   assert.equal((await persistSecondaryLifecycle(reconnect,{database,env:settings})).count,1);
+   const rows=(await db.query(
+     "SELECT sender_key,state,coexistence_enabled FROM whatsapp_sender_accounts ORDER BY sender_key"
+   )).rows;
+   assert.deepEqual(rows,[
+     {sender_key:"ariel",state:"disabled",coexistence_enabled:false},
+     {sender_key:"neutro",state:"active",coexistence_enabled:true},
+   ]);
+   const audit=(await db.query(
+     "SELECT event_type,action FROM whatsapp_sender_coexistence_lifecycle_events ORDER BY recorded_at"
+   )).rows;
+   assert.equal(audit.length,2);
+   assert.ok(audit.some(item=>item.event_type==="PARTNER_REMOVED"&&item.action==="disabled"));
+   assert.ok(audit.some(item=>item.event_type==="ACCOUNT_RECONNECTED"&&item.action==="reconnect_review"));
+ }finally{
+   await db.query("SET search_path TO public").catch(()=>{});
+   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+   await db.end();
+ }
+});
