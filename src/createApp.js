@@ -242,7 +242,14 @@ function createApp({
 
     for (const persisted of durableBusinessAppEchoes) {
       if (!persisted) continue;
-      await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+      try {
+        await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+      } catch (error) {
+        // The provider echo was already durably stored. Request an idempotent
+        // replay for secondary bookkeeping without holding a primary reply.
+        durabilityFailures += 1;
+        console.error("Could not finalize WhatsApp Business App echo:", error);
+      }
     }
 
     for (const update of durableReactionUpdates) {
@@ -281,11 +288,17 @@ function createApp({
     if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
       if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
           !Buffer.isBuffer(req.whatsappSignedRawBody)) return res.sendStatus(503);
-      const savedReceipts = await recordSignedSecondaryStatusBatch({
-        rawBody: req.whatsappSignedRawBody,
-        signatureHeader: req.headers["x-hub-signature-256"],
-        subsetFromVerifiedWebhook: true,
-      });
+      let savedReceipts;
+      try {
+        savedReceipts = await recordSignedSecondaryStatusBatch({
+          rawBody: req.whatsappSignedRawBody,
+          signatureHeader: req.headers["x-hub-signature-256"],
+          subsetFromVerifiedWebhook: true,
+        });
+      } catch (error) {
+        console.error("Could not store verified secondary WhatsApp receipts:", error);
+        return res.sendStatus(503);
+      }
       if (!savedReceipts.accepted) {
         console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
         return res.sendStatus(503);
