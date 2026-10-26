@@ -110,6 +110,12 @@ function publicConfig(env = process.env) {
   if (!values.configId) missing.push("META_EMBEDDED_SIGNUP_CONFIG_ID");
   if (!appSecret(env)) missing.push("META_APP_SECRET");
   if (!clean(env.WHATSAPP_VERIFY_TOKEN)) missing.push("WHATSAPP_VERIFY_TOKEN");
+  // October 2026: old Embedded Signup configurations no longer support new
+  // onboarding. This is an operator confirmation of the Meta dashboard
+  // configuration, not something the API can infer from config_id.
+  if (secondary && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
+    missing.push("META_EMBEDDED_SIGNUP_V4_CONFIRMED");
+  }
   const secondary = secondaryTargetMode(env);
   if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID))) {
     missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID");
@@ -430,6 +436,12 @@ async function completeEmbeddedSignup({
 }) {
   const finish = validateFinishSession(sessionInfo);
   const expectedPhoneId = requireExpectedSecondaryPhone(env);
+  if (expectedPhoneId && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Verify that the DA CHATBOT Facebook Login for Business configuration uses Embedded Signup v4 before connecting this Business App number.",
+      { code: "WHATSAPP_COEXISTENCE_V4_CONFIG_UNVERIFIED", status: 409, retrySafe: false }
+    );
+  }
   // Reject the wrong selection BEFORE exchanging Meta's authorization code
   // when the completion event explicitly supplies the phone ID.
   if (expectedPhoneId && finish.phoneNumberId && finish.phoneNumberId !== expectedPhoneId) {
