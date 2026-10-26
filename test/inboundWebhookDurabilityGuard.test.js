@@ -55,8 +55,13 @@ test("AI/media work remains after webhook acknowledgement", () => {
     'app.get("/promo-images/:id"'
   );
 
+  // The new late-completion callback mentions scheduleDurableClaim earlier
+  // in source, but is invoked only after its timeout has already responded.
+  // Verify normal reply scheduling still happens in the post-response routine.
+  const normalScheduler = whatsappRoute.indexOf("function scheduleAcceptedWhatsAppWork()");
   assert.ok(
-    whatsappRoute.indexOf("scheduleDurableClaim") > whatsappRoute.indexOf("res.sendStatus(200)"),
+    normalScheduler > whatsappRoute.indexOf("res.sendStatus(200)") &&
+      whatsappRoute.indexOf("scheduleDurableClaim", normalScheduler) > normalScheduler,
     "WhatsApp reply processing must remain after the ACK"
   );
   assert.ok(
