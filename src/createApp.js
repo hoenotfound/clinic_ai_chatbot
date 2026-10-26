@@ -166,48 +166,6 @@ function createApp({
       return res.sendStatus(503);
     }
 
-    // Stage secondary WhatsApp statuses from the original HMAC-authenticated body BEFORE
-    // acknowledging or running any existing primary sender worker.
-    // Primary statuses remain in the original legacy partition; secondary
-    // statuses remain excluded from all Neutro billing and retry handlers.
-    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
-      if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
-          !Buffer.isBuffer(req.whatsappSignedRawBody)) return res.sendStatus(503);
-      const savedReceipts = await recordSignedSecondaryStatusBatch({
-        rawBody: req.whatsappSignedRawBody,
-        signatureHeader: req.headers["x-hub-signature-256"],
-        subsetFromVerifiedWebhook: true,
-      });
-      if (!savedReceipts.accepted) {
-        console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
-        return res.sendStatus(503);
-      }
-      // Previously these expected statuses were quarantined. Now they have
-      // been durably staged; retain every other foreign/malformed quarantine.
-      isolated.quarantined = isolated.quarantined.filter((event) =>
-        !(event.reason === "unsupported_whatsapp_event" &&
-          event.field === "messages" &&
-          event.accountId === process.env.WHATSAPP_SECONDARY_WABA_ID &&
-          event.phoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)
-      );
-    }
-
-    // A foreign-only callback has no valid Neutro work to delay. Persist
-    // its privacy-safe audit before ACK; a transient DB failure asks Meta
-    // to retry instead of silently dropping an unknown callback.
-    const quarantineOnly = isolated.quarantined.length > 0
-      && isolated.acceptedActionable === 0;
-    if (quarantineOnly) {
-      try {
-        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
-      } catch (err) {
-        console.error("Could not durably quarantine WhatsApp callback:", err);
-        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
-        return res.sendStatus(503);
-      }
-      void notifyWhatsAppSenderQuarantine(isolated.quarantined);
-    }
-
     const webhookBody = isolated.acceptedBody;
     const incomingMessages = whatsapp.parseIncomingMessages(webhookBody);
     const reactionEvents = whatsapp.parseReactionEvents(webhookBody).filter((event) =>
@@ -222,18 +180,7 @@ function createApp({
     for (const echo of businessAppEchoes) {
       whatsappCoexistence.beginPendingAiForEcho(echo);
     }
-    // Imported history is passive: no AI, lead stage, service window or
-    // follow-up. Errors return 503 so Meta can replay safely by WAMID.
-    try {
-      await coexistenceSync.acceptPassiveSync(webhookBody);
-    } catch (err) {
-      for (const echo of businessAppEchoes) {
-        whatsappCoexistence.releasePendingAiForEcho(echo);
-      }
-      console.error("Could not durably accept sender-scoped Business App sync:", err);
-      return res.sendStatus(503);
-    }
-
+    let durabilityFailures = 0;
     let durableClaims;
     let durableStatusJobs;
     let durableBusinessAppEchoes;
@@ -241,23 +188,49 @@ function createApp({
     try {
       [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
-          incomingMessages.map(async (incoming) => ({
-            queueKey: process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
-              ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from,
-            durableClaim: await durablyClaimIncoming(incoming.from, incoming),
-          }))
+          incomingMessages.map(async (incoming) => {
+            const queueKey = process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" && incoming.businessPhoneNumberId
+              ? `whatsapp:${incoming.businessPhoneNumberId}:${incoming.from}` : incoming.from;
+            try {
+              const durableClaim = await durablyClaimIncoming(queueKey, incoming);
+              // Start each verified customer turn as soon as it is durable.
+              // A failing second-number echo/receipt/history must not hold up
+              // a Neutro response in the same Meta callback.
+              scheduleDurableClaim(queueKey, durableClaim).catch((error) => {
+                console.error("Failed to schedule durable WhatsApp inbound work:", error);
+              });
+              return { queueKey, durableClaim };
+            } catch (error) {
+              durabilityFailures += 1;
+              console.error("Failed to durably claim WhatsApp inbound message:", error);
+              return null;
+            }
+          })
         ),
-        storeDeliveryStatusUpdates(statusUpdates),
-        Promise.all(
-          businessAppEchoes.map((echo) =>
-            whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })
-          )
-        ),
-        Promise.all(
-          reactionEvents.map((reaction) =>
-            messagesRepo.applyWhatsappReaction(reaction)
-          )
-        ),
+        storeDeliveryStatusUpdates(statusUpdates).catch((error) => {
+          durabilityFailures += 1;
+          console.error("Could not durably store primary WhatsApp status updates:", error);
+          return [];
+        }),
+        Promise.all(businessAppEchoes.map(async (echo) => {
+          try {
+            return await whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true });
+          } catch (error) {
+            durabilityFailures += 1;
+            whatsappCoexistence.releasePendingAiForEcho(echo);
+            console.error("Could not durably store WhatsApp Business App echo:", error);
+            return null;
+          }
+        })),
+        Promise.all(reactionEvents.map(async (reaction) => {
+          try {
+            return await messagesRepo.applyWhatsappReaction(reaction);
+          } catch (error) {
+            durabilityFailures += 1;
+            console.error("Could not durably store WhatsApp reaction:", error);
+            return null;
+          }
+        })),
       ]);
     } catch (err) {
       for (const echo of businessAppEchoes) {
@@ -291,6 +264,67 @@ function createApp({
       });
     }
 
+    // Primary statuses are already durable and customer turns are scheduled.
+    // On secondary failure return 503 for a safe Meta replay, never discard
+    // the secondary ledger or delay a valid Neutro conversation.
+    processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
+      console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
+    });
+    if (durabilityFailures > 0) {
+      return res.sendStatus(503);
+    }
+
+    // Stage secondary receipts before ACK, but only AFTER genuine inbound
+    // messages have been stored and scheduled independently of this ledger.
+    // Primary statuses remain in the original legacy partition; secondary
+    // statuses remain excluded from all Neutro billing and retry handlers.
+    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
+      if (process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" ||
+          !Buffer.isBuffer(req.whatsappSignedRawBody)) return res.sendStatus(503);
+      const savedReceipts = await recordSignedSecondaryStatusBatch({
+        rawBody: req.whatsappSignedRawBody,
+        signatureHeader: req.headers["x-hub-signature-256"],
+        subsetFromVerifiedWebhook: true,
+      });
+      if (!savedReceipts.accepted) {
+        console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
+        return res.sendStatus(503);
+      }
+      // Previously these expected statuses were quarantined. Now they have
+      // been durably staged; retain every other foreign/malformed quarantine.
+      isolated.quarantined = isolated.quarantined.filter((event) =>
+        !(event.reason === "unsupported_whatsapp_event" &&
+          event.field === "messages" &&
+          event.accountId === process.env.WHATSAPP_SECONDARY_WABA_ID &&
+          event.phoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)
+      );
+    }
+
+    // Imported history is passive: no AI, lead stage, service window or
+    // follow-up. Errors return 503 so Meta can replay safely by WAMID.
+    try {
+      await coexistenceSync.acceptPassiveSync(webhookBody);
+    } catch (err) {
+      console.error("Could not durably accept sender-scoped Business App sync:", err);
+      return res.sendStatus(503);
+    }
+
+    // A foreign-only callback has no valid Neutro work to delay. Persist
+    // its privacy-safe audit before ACK; a transient DB failure asks Meta
+    // to retry instead of silently dropping an unknown callback.
+    const quarantineOnly = isolated.quarantined.length > 0
+      && isolated.acceptedActionable === 0;
+    if (quarantineOnly) {
+      try {
+        await recordQuarantinedWhatsAppChanges(isolated.quarantined);
+      } catch (err) {
+        console.error("Could not durably quarantine WhatsApp callback:", err);
+        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        return res.sendStatus(503);
+      }
+      void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+    }
+
     res.sendStatus(200);
 
     // A mixed batch must never delay/deny the existing customer's accepted
@@ -316,15 +350,7 @@ function createApp({
     setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
       console.error("Failed to record WhatsApp webhook activity:", err);
     });
-    for (const { queueKey, durableClaim } of durableClaims) {
-      scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
-        console.error("Failed to schedule durable WhatsApp inbound work:", err);
-      });
-    }
 
-    processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
-      console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
-    });
   });
 
   app.get("/meta-webhook", (req, res) => {
