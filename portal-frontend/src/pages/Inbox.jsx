@@ -1963,6 +1963,13 @@ function ConversationList({
                         {conversation.whatsapp_sender_display_name}
                       </span>
                     )}
+                    {conversation.whatsapp_is_secondary === true &&
+                      conversation.whatsapp_secondary_connection_state !== "connected" && (
+                      <span role="status" title="Secondary number disconnected; outgoing messages paused"
+                        className="rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                        Number suspended
+                      </span>
+                    )}
                     {messagingPolicyStatus(conversation, replyWindowNow).humanAgentAllowed && (
                       <span
                         title="Only a staff-written reply is permitted. AI replies and automatic follow-ups are not allowed."
@@ -2236,7 +2243,12 @@ function ThreadView({
 
   activeContactIdRef.current = contact?.contact_id;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
-  const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.manualReplyAllowed;
+  const secondarySenderSuspended = contact?.channel === "whatsapp" &&
+    contact?.whatsapp_is_secondary === true &&
+    (contact?.whatsapp_sender_state !== "active" ||
+      contact?.whatsapp_sender_coexistence_enabled !== true);
+  const policyBlocksComposer = secondarySenderSuspended ||
+    (messagingPolicy.applies && !messagingPolicy.manualReplyAllowed);
   const quietReplyAvailable =
     messagingPolicy.applies &&
     messagingPolicy.freeformAllowed &&
@@ -2244,6 +2256,7 @@ function ThreadView({
   const whatsappTemplateAvailable =
     canReplyToLeads &&
     messagingPolicy.channel === "whatsapp" &&
+    !secondarySenderSuspended &&
     !messagingPolicy.freeformAllowed;
   const whatsappTemplateOptInRecorded = Boolean(
     (contact?.whatsapp_opt_in_at || contact?.whatsappOptInAt) &&
@@ -2269,14 +2282,18 @@ function ThreadView({
         .replace(/^Reply available\s*·\s*/i, "")
         .replace(/\s+remaining$/i, "")
     : "";
-  const composerPlaceholder = policyBlocksComposer
+  const composerPlaceholder = secondarySenderSuspended
+    ? "Secondary WhatsApp disconnected. Sending paused."
+    : policyBlocksComposer
     ? `${messagingPolicy.channelLabel} reply unavailable`
     : imageFile || attachmentFile
     ? "Add a caption…"
     : contact?.mode === "human"
     ? "Message…"
     : "Reply…";
-  const composerLabel = policyBlocksComposer
+  const composerLabel = secondarySenderSuspended
+    ? "Secondary WhatsApp is suspended pending reconnection verification"
+    : policyBlocksComposer
     ? `${messagingPolicy.channelLabel} reply unavailable`
     : imageFile || attachmentFile
     ? "Add a caption to the selected attachment"
@@ -3137,6 +3154,12 @@ function ThreadView({
                     title={"Reply from " + contact.whatsapp_sender_display_name}
                   >
                     via {contact.whatsapp_sender_display_name}
+                  </span>
+                )}
+                {secondarySenderSuspended && (
+                  <span role="status" title="WhatsApp account disconnected. Verify reconnection before sending."
+                    className="rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                    Number suspended
                   </span>
                 )}
                 <span
