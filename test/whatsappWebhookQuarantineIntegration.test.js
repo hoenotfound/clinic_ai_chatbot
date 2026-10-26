@@ -35,7 +35,7 @@ function payload(...changes) {
 function webhookHarness({ failAudit = false, dualInbox = false,
   receiptIngress = false, receiptFailure = false, historyFailure = false,
   echoFailure = false, secondaryInboundFailure = false, secondaryInboundHang = false,
-  receiptHang = false, historyHang = false, echoHang = false,
+  secondaryInboundLate = false, receiptHang = false, historyHang = false, echoHang = false,
   lifecycleFailure = false } = {}) {
   let handler = null;
   const claims = [];
@@ -115,6 +115,9 @@ function webhookHarness({ failAudit = false, dualInbox = false,
     durablyClaimIncoming: async (number, inbound) => {
       if (secondaryInboundHang && inbound.businessPhoneNumberId === ARIEL) {
         return new Promise(() => {});
+      }
+      if (secondaryInboundLate && inbound.businessPhoneNumberId === ARIEL) {
+        await new Promise(resolve => setTimeout(resolve, 175));
       }
       if (secondaryInboundFailure && inbound.businessPhoneNumberId === ARIEL) {
         throw new Error("synthetic secondary contact database outage");
@@ -401,4 +404,17 @@ test("lifecycle database failure returns retryable 503 while Neutro continues",a
   assert.equal(status,503);
   assert.equal(h.scheduled.length,1);
   assert.equal(h.lifecycleWrites.length,1);
+});
+
+test("secondary claim finishing after deadline still schedules the durable job once",async()=>{
+  const h=webhookHarness({dualInbox:true,secondaryInboundLate:true});
+  const response=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-late-commit")]},
+    {id:"200000000000002",changes:[event(ARIEL,"wamid.secondary-late-commit")]}
+  ]});
+  assert.equal(response,503);
+  assert.equal(h.scheduled.length,1,"Neutro starts independently after secondary timeout");
+  await new Promise(resolve=>setTimeout(resolve,120));
+  assert.equal(h.scheduled.length,2,"late-committed secondary message must still be scheduled");
+  assert.notEqual(h.scheduled[0].key,h.scheduled[1].key);
 });
