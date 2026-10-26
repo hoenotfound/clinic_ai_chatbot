@@ -509,6 +509,34 @@ function createApp({
   });
 
   app.post("/meta-webhook", metaWebhookJsonParser, stagingWebhookGuard, async (req, res) => {
+    // Meta can deliver account_update at the app-level default callback rather
+    // than at the per-account WhatsApp callback override. Never acknowledge a
+    // WhatsApp payload as a Messenger/Instagram turn, or silently lose a
+    // coexistence disconnection. Require the SAME verified Meta app secret
+    // before the WhatsApp lifecycle path is eligible here.
+    if (req.body?.object === "whatsapp_business_account") {
+      if (!process.env.META_APP_SECRET || !process.env.WHATSAPP_APP_SECRET ||
+          process.env.META_APP_SECRET !== process.env.WHATSAPP_APP_SECRET) {
+        return res.sendStatus(503);
+      }
+      let events;
+      try {
+        events = extractSecondaryLifecycle(req.body, process.env);
+        // This route can handle account updates only. If Meta sent any
+        // messages/history/foreign lifecycle changes here, require a corrected
+        // subscription instead of ACKing and dropping the event.
+        const changes = (req.body.entry || []).flatMap((entry) => entry.changes || []);
+        if (!events.length || changes.length !== events.length ||
+            changes.some((change) => change.field !== "account_update")) {
+          return res.sendStatus(503);
+        }
+        await persistSecondaryLifecycle(events, { env: process.env });
+        return res.sendStatus(200);
+      } catch (error) {
+        console.error("Could not durably accept signed app-level WhatsApp lifecycle:", error);
+        return res.sendStatus(503);
+      }
+    }
     const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
     const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
     for (const echo of staffEchoes) {
