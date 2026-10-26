@@ -70,7 +70,8 @@ test("disconnect disables only the verified secondary sender and repeated event 
   assert.equal(database.sender.state,"disabled");
   assert.equal(database.sender.coexistence,false);
   assert.equal((await persistSecondaryLifecycle(updates,{database,env:config})).count,0);
-  assert.equal(database.queries.filter(q=>q.sql.startsWith("UPDATE whatsapp_sender_accounts")).length,1);
+  assert.equal(database.queries.filter(q=>q.sql.startsWith("UPDATE whatsapp_sender_accounts")).length,2,
+    "replayed signed disconnect deliberately rechecks suspension; SQL WHERE makes it idempotent");
   assert.equal(database.events.size,1);
 });
 test("reconnect is recorded but cannot reactivate a disabled secondary sender",async()=>{
