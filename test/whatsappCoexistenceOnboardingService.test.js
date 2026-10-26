@@ -14,6 +14,7 @@ function env(overrides = {}) {
     META_APP_ID: "app-123",
     META_APP_SECRET: "app-secret",
     META_EMBEDDED_SIGNUP_CONFIG_ID: "config-456",
+    META_EMBEDDED_SIGNUP_V4_CONFIRMED: "true",
     META_GRAPH_API_VERSION: "v26.0",
     WHATSAPP_VERIFY_TOKEN: "verify-token",
     WHATSAPP_COEXISTENCE_ENABLED: "false",
@@ -349,4 +350,28 @@ test("Meta 2026 account-type phone_numbers error fails closed with actionable di
     (error) => error.code === "WHATSAPP_COEXISTENCE_ACCOUNT_TYPE_UNVERIFIED" &&
       error.status === 409 && error.retrySafe === false
   );
+});
+
+test("secondary Embedded Signup refuses a legacy or unverified Meta configuration before token exchange", async () => {
+  const unsafe = env({
+    WHATSAPP_SECONDARY_SENDER_KEY: "tcm_wellness",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID: "1318355951360575",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60174831336",
+    META_EMBEDDED_SIGNUP_V4_CONFIRMED: "false",
+  });
+  const config = publicConfig(unsafe);
+  assert.equal(config.configured, false);
+  assert.ok(config.missing.includes("META_EMBEDDED_SIGNUP_V4_CONFIRMED"));
+  let called = false;
+  await assert.rejects(
+    completeEmbeddedSignup({
+      code: "test-code",
+      sessionInfo: finish({ phone_number_id: "1318355951360575" }),
+      env: unsafe,
+      fetchImpl: async () => { called = true; throw Error("Meta must not be called"); }
+    }),
+    (error) => error.code === "WHATSAPP_COEXISTENCE_V4_CONFIG_UNVERIFIED" &&
+      error.status === 409 && error.retrySafe === false
+  );
+  assert.equal(called, false);
 });
