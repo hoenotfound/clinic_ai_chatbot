@@ -429,3 +429,11 @@ approved. Never run the older v077 app binary against a migrated v099 schema.
 - An authorization result does not persist a sending token or activate a phone; the authorized account/phone pair, app, callback subscription, coexistence status, privacy and billing authority still require live validation.
 - Preserve history-sync setup **before** Business App QR approval because the initial consented sync has a time-limited window. The existing PR395 staging sandbox intentionally refuses provider POSTs and cannot satisfy live acceptance until an independently authorized, provider-enabled environment exists.
 - **NOT RELEASED:** This is software hardening, not proof of coexistence or proof that Neutro can never be affected by a shared infrastructure outage. Retain Draft status and production schema v077.
+
+## 26 October 2026 — Post-review fixes, schema 100
+
+The former version 99 release gate is superseded by schema **100**, which adds a separate audit for verified secondary coexistence disconnection events. A signed `account_update` reporting `PARTNER_REMOVED` or `ACCOUNT_OFFBOARDED` can only disable the pinned secondary sender; it cannot modify Neutro's registered primary account. `ACCOUNT_RECONNECTED` does **not** automatically re-enable the sender. Default app-level callbacks and the per-WABA WhatsApp callback both use verified lifecycle routing when correctly configured.
+
+Meta callback processing now applies a bounded deadline to secondary durable work. On a secondary timeout, it preserves Meta retry (HTTP 503) while scheduling already-saved primary messages. A late-completing secondary inbound claim still schedules its own message. This remains a single shared database pool and callback service; it does **not** promise hard isolation from infrastructure-wide outages.
+
+**Remaining external release blockers:** actual DA CHATBOT app ownership/subscription, Embedded Signup v4 configuration verification, a Meta-authorized consented QR session, a signed two-number E2E drill, disconnection and restore checks, separately approved clinic content/billing, and a production-forward migration rehearsal. Current isolated staging blocks provider ingress/outbound. Keep PR #395 Draft until those are complete. Never merge solely because CI passed.
