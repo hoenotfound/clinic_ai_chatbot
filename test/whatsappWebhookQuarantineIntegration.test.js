@@ -287,3 +287,18 @@ test("secondary Business App echo persistence failure cannot stop a Neutro reply
   assert.equal(h.scheduled.length,1);
   assert.equal(h.claims[0].inbound.id,"wamid.primary-echo");
 });
+
+test("account_update lifecycle callback never becomes a customer message or AI turn", async()=>{
+  const h=webhookHarness({dualInbox:true});
+  const status=await h.send({object:"whatsapp_business_account",entry:[
+    {id:"200000000000001",changes:[event(NEUTRO,"wamid.primary-lifecycle")]},
+    {id:"200000000000002",changes:[{
+      field:"account_update",value:{event:"PHONE_NUMBER_STATUS_UPDATE"},
+    }]},
+  ]});
+  assert.equal(status,200);
+  assert.equal(h.claims.length,1);
+  assert.equal(h.scheduled.length,1);
+  assert.equal(h.claims[0].inbound.id,"wamid.primary-lifecycle");
+  assert.equal(h.audits.length,1);
+});
