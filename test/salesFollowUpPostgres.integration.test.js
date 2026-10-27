@@ -11,6 +11,7 @@ const files = [
   "src/db/whatsappPolicySchema.sql",
   "src/db/migrations/024_whatsapp_marketing_opt_out.sql",
   "src/db/migrations/054_whatsapp_free_entry_followups.sql",
+  "src/db/migrations/057_whatsapp_free_entry_referrals.sql",
   "src/db/migrations/078_sales_follow_up_tasks.sql"
 ];
 const NOW = new Date("2026-10-27T08:00:00Z");
