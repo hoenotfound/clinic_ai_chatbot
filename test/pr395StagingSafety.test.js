@@ -46,6 +46,35 @@ test("PR395 sandbox is inert until explicitly enabled with pinned DB and protect
   })),/both matching verified phone IDs or neither/);
 
 });
+test("preidentity staging starts only with the exact private QA pin and zero sender IDs",()=>{
+  const preview=safe({
+    PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED:"true",
+    PR395_STAGING_APPROVED_TEST_PHONE_E164:"+60120000000",
+    WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"",
+    WHATSAPP_SECONDARY_WABA_ID:"",
+    WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"",
+  });
+  assert.deepEqual(assertPr395StagingSafety(preview),{
+    staging:true,workersDisabled:true,providerProcessingDisabled:true
+  });
+  for(const bad of [
+    {PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_WABA_ID:"333333333333333"},
+    {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"333333333333333"},
+    {PR395_STAGING_APPROVED_TEST_PHONE_E164:""},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_TOKEN:"real-production-token-must-not-be-used"},
+  ]){
+    assert.throws(()=>assertPr395StagingSafety({...preview,...bad}));
+  }
+  assert.throws(()=>assertPr395StagingSafety({
+    NODE_ENV:"production",PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED:"true"
+  }));
+});
+
 test("PR395 sandbox fails startup for missing locks, QA DB pin, insecure secrets and active outbound flags",()=>{
   const bad=[
     {PR395_STAGING_BASIC_AUTH_ENABLED:"false"},
