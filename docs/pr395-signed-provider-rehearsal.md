@@ -107,6 +107,120 @@ relay is currently health-only, 503 on every webhook; never set it as the
 Meta callback in preparation mode. Neutro's account-specific override stays
 unchanged.
 
+## Real-provider activation runbook (strict staged go/no-go)
+
+**Status on 27 Oct 2026: NOT approved for owner QR scan.** The personal
+WhatsApp Business App number is pre-pinned privately in staging but has NOT
+been connected to DA CHATBOT. Its Meta WABA ID and Phone Number ID are still
+unknown and **must never** be replaced with a guess or the previous clinic
+ID. Isolated QA Neon schema 101 has no senders/onboarding/sync jobs.
+The relay is publicly deployed but is in **preparation-only** mode: only
+`GET /health/live` responds with HTTP 200; webhook delivery returns 503.
+The current app-default callback is still
+`https://clinic-ai-chatbot.onrender.com/webhook`.
+
+The **read-only** safety model
+`src/services/pr395CoexistenceActivationReadiness.js` and its tests require
+**independently observed evidence**, not mere passed unit tests, before
+any real signup or one-time sync. It never invokes Graph, modifies Render,
+changes a callback, stores credentials, or sends messages.
+
+### Gate A — before the personal Business App QR
+
+1. Preserve Neutro's separate WABA callback override and all existing
+   production messages. Snapshot Meta app-level callback, subscribed fields,
+   authorized businesses and which accounts depend on the legacy default.
+2. Provide a verified, signed app-default lifecycle route before onboarding.
+   `account_update` **cannot** use a per-WABA override. The current
+   health-only Render relay cannot handle any of these events. The existing
+   app-default must either be made safe for the new QA lifecycle or, only
+   after a full regression/forwarding trial for every current tenant, be
+   switched to a fully configured relay. Do NOT point Meta at the inert URL.
+3. Rehearse a safe *pre-identity* event holding/response policy because Meta
+   may create the WABA ID only during Embedded Signup. It must not ACK and
+   silently discard a new QA account's lifecycle, contact or history events.
+   An unrecognized event must remain recoverable without delivering it to
+   an unrelated client's chatbot. Keep signed raw-body HMAC verification.
+4. Show staging can accept signed QR-issued secondary callbacks **after
+   authorization** with a bounded transition: exact WABA+phone pin, primary
+   credential rejection, isolated sender registry, durable `history` and
+   `smb_app_state_sync` queue inserts, importer drain, duplicate replay,
+   disconnection suspend, and 503 on DB outage. Staging is intentionally
+   returning 503 today and is NOT yet a production-ready receiver.
+5. Confirm the owner's history-sharing preference. Back up the Business App
+   chats and obtain explicit consent to connect **only** the personal QA
+   number. Keep all staff/AI/media/template/follow-up/billing outbound off.
+6. Confirm the v4 Embedded Signup config `936687052431880`, both WhatsApp
+   scopes, the subscribed fields `messages`, `history`,
+   `smb_app_state_sync`, `smb_message_echoes`, and `account_update`,
+   private AES-GCM key, and owner-qualified QA E.164.
+
+### Gate B — immediately after explicit owner-approved QR onboarding
+
+1. A successful `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` supplies Meta's
+   WABA and phone identity. The server verifies exact phone ownership using
+   the **signup-issued secondary token**, checks required scopes, and
+   atomically stores only AES-GCM encrypted credential + validation audit.
+   Check the Meta phone status `is_on_biz_app=true`,
+   `platform_type=CLOUD_API`. NEVER invoke ordinary
+   `/{phone_id}/register` for Business App Coexistence.
+2. With the actual Meta IDs, pin ONLY the isolated QA secondary in Render and
+   Neon. Prepare a sender-specific, **inbound-only** receiver: ensure all
+   existing primary-sender credentials are inert and every outbound flag is
+   false. Enable the passive importer only after a signed webhook
+   acceptance/replay test and verified WABA account-specific override.
+3. Subscribe DA CHATBOT to this new WABA and configure/verify its
+   **account-specific** callback URL
+   `https://da-chatbot-pr395-staging.onrender.com/webhook`
+   using the verified secondary token. A successful GET challenge alone
+   is not proof: confirm `/{WABA_ID}/subscribed_apps` reports DA CHATBOT
+   and the exact override. Do **not** edit the current app-default
+   callback or Neutro WABA override.
+4. Prove a real Meta-signed `messages` or `smb_message_echoes` event
+   reaches ONLY the QA receiver and is stored durably (no AI). Confirm
+   `account_update` routing separately using the proven app-default
+   lifecycle handler. Missing or wrong account/phone, signature or database
+   failure must not be ACKed as valid customer work.
+
+### Gate C — one-time consented SMB data sync, under 24 hours
+
+1. Reconfirm the exact verified secondary Meta IDs and decrypt the
+   sender-bound unexpired token server-side. Confirm the account-specific
+   override, durable inbound 200 behavior, importer running and no previous
+   `smb_app_data` requests for this sender. Record the business owner's
+   consent and onboarding completion timestamp. If a request already
+   succeeded or its provider outcome is unknown, **DO NOT retry**.
+2. Use `prepareCoexistenceSyncPlan()` only to generate a **non-sending**
+   preview after all gates pass. The one-time contacts call is
+   `POST /{verified_phone_number_id}/smb_app_data` with JSON
+   `{"messaging_product":"whatsapp","sync_type":"smb_app_state_sync"}`.
+   Only with explicit owner *history* consent, separately send
+   `{"messaging_product":"whatsapp","sync_type":"history"}` to the SAME
+   phone-number endpoint. These are independent, one-time requests.
+3. Persist Meta's `request_id`, HTTP outcome, time and sync type in the
+   separate QA audit before declaring completion. Do not send blind
+   retries on timeouts or unknown responses. Monitor `smb_app_state_sync`
+   and `history` webhook phases/chunks, job acknowledgments and worker
+   failures; history opt-out/error `2593109` means no history transfer.
+   Do not confuse API acceptance with completed import. A progress
+   marker and stored import counts are needed to prove completion.
+4. Check that imported history is passive, sender-isolated, cannot create
+   a live 24-hour customer service window, AI job, follow-up, outbound
+   billing reservation or marketing consent. Verify actual QA contacts/
+   imported rows and zero Neutro production changes.
+5. For a missing webhook or partial import, preserve the request ID and
+   investigate with Meta instead of repeating a one-time request. Suspend
+   QA provider ingress on disconnection, wrong sender or unverified routing.
+
+**Current limits:** the code implements encrypted credential handoff,
+read-only sender mapping, a pure sync planner, webhook staging, importer and
+a safe preparation relay. It does NOT yet implement an operator-approved
+live sync dispatcher with a persisted once-only request ledger, an
+automated safe default-callback cutover, or pre-identity webhook buffering.
+Do not interpret this document or passing CI as proof those missing live
+capabilities have been activated. These must be completed/reviewed before
+the QR and any real sync.
+
 ## New test-only guard in this PR
 
 The default protected sandbox remains unchanged, with Meta POSTs returning 503 and all background workers disabled. The staging variables are not automatically updated by changing this PR; do not enable provider flags while they still refer to the old clinic phone.
