@@ -6,9 +6,10 @@ const { csvCell, identifierCsvCell, malaysiaDateTime, malaysiaDateStamp } = requ
 
 const router = express.Router();
 
+// Use the same business-wide access policy as Inbox and Pipeline.
+// Sending/updating outcomes separately requires manage_assigned_leads.
 function canManageAll(req) {
-  return hasCapability(req.user, "view_all_leads") &&
-    (hasCapability(req.user, "manage_lead_assignment") || hasCapability(req.user, "export_customer_data"));
+  return hasCapability(req.user, "view_all_leads");
 }
 
 function canView(req) {
