@@ -145,12 +145,13 @@ async function dispatchOnce(input, {
     errorCode = "uncertain_network_outcome";
   }
   try {
-    await database.query(
+    const confirmed = await database.query(
       "UPDATE whatsapp_coexistence_sync_dispatch_requests " +
       "SET state=$2,http_status=$3,provider_error_code=$4,provider_request_id=$5," +
       "resolved_at=NOW(),updated_at=NOW() WHERE id=$1 AND state='dispatching'",
       [reserved.id,state,status,errorCode,providerRequestId]
     );
+    if (confirmed.rowCount !== 1) throw Error("Dispatch outcome row was not updated.");
   } catch (_) {
     // The durable 'dispatching' claim still prohibits a second POST.
     throw Error("Sync request outcome could not be persisted. Treat as UNKNOWN; do not retry.");
