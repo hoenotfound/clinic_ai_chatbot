@@ -73,7 +73,7 @@ function unassignedProtectedQaTarget(env = process.env) {
     !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
     !clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) &&
     !clean(env.WHATSAPP_SECONDARY_WABA_ID) &&
-    /^\\+[1-9]\\d{7,14}$/.test(pinned) &&
+    /^\+[1-9]\d{7,14}$/.test(pinned) &&
     pinned === approved && pinned !== "+60174831336" &&
     (!primary || normalizedPhone(pinned) !== primary);
 }
@@ -107,7 +107,7 @@ function assertExpectedSecondaryPhone(phone, env = process.env) {
   // The account might have been authorized for the wrong Business App
   // number. Even when no Meta phone ID was available pre-signup, verify the
   // actual account-owned phone against the privately pinned E.164.
-  if (!/^\\d+$/.test(metaId) ||
+  if (!/^\d+$/.test(metaId) ||
       metaId === clean(env.WHATSAPP_PHONE_NUMBER_ID) ||
       metaId === "1318355951360575") {
     throw new WhatsAppCoexistenceOnboardingError(
