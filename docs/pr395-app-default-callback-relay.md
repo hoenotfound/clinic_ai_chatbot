@@ -60,6 +60,67 @@ Do not change Meta's app-default callback while preparing this test. A future au
 - Tests: `node --test test/whatsappAppDefaultRelay.test.js`.
   These are simulated tests and do not establish live Meta compatibility.
 
+## Pre-identity lifecycle bootstrap — CODE ONLY, not an active Meta callback
+
+PR #395 now includes an **opt-in bootstrap routing mode** for the short gap
+before Embedded Signup returns the new personal-number WABA ID. Existing
+`WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true` still overrides everything:
+the currently deployed relay remains **inert** (health only, all callbacks 503).
+
+The bootstrap relay uses signed HMAC `account_update` events and sends the
+**exact privately pinned personal QA E.164** to
+`/pr395-preidentity-webhook` on isolated PR395 staging. An explicit
+legacy WABA allowlist is mandatory. It routes only allowlisted legacy
+WABA events to the old callback; it refuses all other/ambiguous events
+with 503. Unknown account-wide events *without a phone* cannot be
+safely attributed before Meta returns WABA ownership and also return 503.
+No unknown customer's messages or history are forwarded to Neutro or
+acknowledged as saved. Mixed batches need both destinations to succeed;
+the legacy receiver must be idempotent across retries.
+
+**Before considering any app-default cutover**, the operator must identify
+**every** WABA that currently relies on the legacy app-default callback,
+run signed real-provider acceptance with a separately authorized sender,
+verify all downstream callback delivery/acknowledgment and review timing
+and rollback. Do not assume the currently known Neutro WABA is the only
+existing app client (it has an independent override).
+
+Example **private** configuration for a future, separately approved relay
+(not to be applied yet; placeholders cannot be used for live routing):
+
+```dotenv
+WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=false
+WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE=true
+WHATSAPP_DEFAULT_RELAY_APP_SECRET=<exact app secret from Meta>
+WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN=<fresh private verify token>
+WHATSAPP_DEFAULT_RELAY_LEGACY_URL=https://clinic-ai-chatbot.onrender.com/webhook
+WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS=<verified full legacy default WABA allowlist CSV>
+WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=<privately verified QA E.164>
+WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID=
+WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL=https://da-chatbot-pr395-staging.onrender.com/pr395-preidentity-webhook
+```
+
+The matching staging receiver must separately have
+`PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED=true` under protected
+`PR395_STAGING_MODE=true` with zero secondary Meta IDs and all
+outbound/provider workers disabled. It verifies exact HMAC against the
+Meta app secret, audits only signed candidate WABA ID, business phone,
+event type, time and fingerprint in **isolated Neon migration 102**;
+its durable HTTP 200 includes
+`X-DA-Coexistence-Preidentity-Accepted: 1` only **after DB COMMIT**.
+Unknown/mismatched/mixed payloads or SQL failures are 503. Audit rows
+are **candidate evidence only**, not authorization to register that WABA
+or activate an account.
+
+The isolated HTTP and PostgreSQL tests use synthetic IDs and receivers.
+They do **not** validate an active Meta app-default cutover, or eliminate
+the need for the actual provider's onboarding events and timing review.
+Keep `PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED=false` and
+`WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true` on deployed services
+until a separately approved live rehearsal. During the signup window,
+turning an unknown account-wide Meta event into a 503 retry is the
+intentional non-loss policy; verify provider retries in acceptance tests.
+
 ## Isolated relay-to-receiver acceptance test
 
 `test/whatsappAppDefaultRelay.integration.test.js` exercises the actual
