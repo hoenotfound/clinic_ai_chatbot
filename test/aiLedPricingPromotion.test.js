@@ -882,3 +882,93 @@ test("session quantity and benefit questions never expose compact prices to the 
     Object.assign(config,original);
   }
 });
+
+
+test("legacy media never sends refused 9D graphic when customer asks separately for 3D", async () => {
+  const nine = {
+    ...trial,
+    name:"9D First Trial", linkedService:"9D 逆龄抗衰",
+    imageUrl:"https://example.test/promo/9d",
+    caption:"9D First Trial 优惠",
+  };
+  const customerText="9D不要报价了，我想问3D多少钱？";
+  const h=[{role:"user",content:customerText}];
+  const original=config.automatedFollowUp;
+  config.automatedFollowUp={...original,assessmentFirstPricingEnabled:false};
+  try {
+    const base={
+      aiPricingEnabled:false,pricingDecision:null,
+      priceQuery:true,packageQuery:false,customerText,conversationHistory:h,
+      promotions:[trial,nine],services,serviceAliases:aliases,
+      contactId:1729,
+    };
+    let wrongReason=null;
+    const wrong=await resolvePricePromotionForReply(mediaArgs(null,{
+      ...base,treatment:"9D 逆龄抗衰",
+      verifiedServiceFromText:"9D 逆龄抗衰",
+      onSkip:(reason)=>{wrongReason=reason;},
+    }));
+    assert.equal(wrong,null,"wrong model-picked 9D cannot deliver its graphic");
+    assert.equal(wrongReason,"refused_or_mismatched_treatment_price_graphic");
+    const correct=await resolvePricePromotionForReply(mediaArgs(null,{
+      ...base,treatment:"3D 小颜术",
+      verifiedServiceFromText:"3D 小颜术",
+    }));
+    assert.deepEqual(correct?.packages?.map(p=>p.imageUrl),[trial.imageUrl],
+      "explicitly named 3D can receive only its own configured graphic");
+    for(const rejected of [
+      "3D不要报价了，我想问3D多少钱？",
+      "9D不要报价了，我想问这个多少钱？",
+      "9D不要报价了，我想问3D多少钱？不要再联系",
+      "9D不要报价，3D多少钱，骨盆也多少钱",
+    ]) {
+      let reason=null;
+      const media=await resolvePricePromotionForReply(mediaArgs(null,{
+        ...base,customerText:rejected,
+        conversationHistory:[{role:"user",content:rejected}],
+        treatment:"9D 逆龄抗衰",
+        verifiedServiceFromText:"9D 逆龄抗衰",
+        onSkip:x=>{reason=x;},
+      }));
+      assert.equal(media,null,rejected);
+      assert.equal(reason,"refused_or_mismatched_treatment_price_graphic",rejected);
+    }
+    // A normal non-refusal price question still uses the original legacy path.
+    const ordinary="9D多少钱？";
+    const legacy=await resolvePricePromotionForReply(mediaArgs(null,{
+      ...base,customerText:ordinary,conversationHistory:[{role:"user",content:ordinary}],
+      treatment:"9D 逆龄抗衰",verifiedServiceFromText:"9D 逆龄抗衰",
+    }));
+    assert.deepEqual(legacy?.packages?.map(p=>p.imageUrl),[nine.imageUrl]);
+  } finally {
+    config.automatedFollowUp=original;
+  }
+});
+
+test("current colloquial price request plus permission for future offers remains priced and media-eligible", async () => {
+  const { hasFuturePromotionPermissionWithoutPrice }=require("../src/utils/customerEnquiryEvidence");
+  for(const customerText of [
+    "3D什么价，之后有优惠可以发我",
+    "3D现在什么价，之后有优惠可以发我",
+    "3D RM几多，之后有优惠可以通知我",
+    "3D做一次要多少，之后有优惠可以发我",
+  ]) {
+    assert.equal(hasFuturePromotionPermissionWithoutPrice(customerText),false,customerText);
+    const h=[{role:"user",content:customerText}];
+    const decision=decide({priceQuery:false,customerText,conversationHistory:h});
+    assert.equal(decision?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(decision?.prices?.map(p=>p.price),["RM488"],customerText);
+    await inAssessmentFirst(async()=>{
+      const media=await resolvePricePromotionForReply(mediaArgs(decision,{
+        customerText,conversationHistory:h,contactId:1818,
+      }));
+      assert.deepEqual(media?.packages?.map(p=>p.imageUrl),[trial.imageUrl],customerText);
+    });
+  }
+  const futureOnly="3D之后有优惠可以通知我";
+  assert.equal(hasFuturePromotionPermissionWithoutPrice(futureOnly),true);
+  assert.equal(decide({
+    priceQuery:false,customerText:futureOnly,
+    conversationHistory:[{role:"user",content:futureOnly}],
+  }),null);
+});
