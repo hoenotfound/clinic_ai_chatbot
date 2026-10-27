@@ -11,10 +11,14 @@ does not change any currently configured Meta subscriptions or callbacks.
   and renewed `whatsapp_business_messaging`.
 - The user confirmed subscriptions for `messages`, `history`,
   `smb_app_state_sync`, `smb_message_echoes`, `account_update`.
-- Existing Neutro WhatsApp Messaging Account `1593376338308612` returned
-  app ID `1029862536608134` and account-specific override
+- A prior Graph review reported a Neutro account using app
+  `1029862536608134` and an account-specific override at
   `https://neutrosense.dasmarketingsolution.com/webhook`.
-  Keep this callback **unchanged**.
+  **Reverify this live by Graph before cutover.** The connected WhatsApp Business
+  tool labels `1593376338308612` a *Messaging Account* ID, not a verified
+  WhatsApp phone-owning account ID. Never substitute a billing/messaging account
+  ID as a WABA identifier merely because past notes used the same label.
+  Preserve the existing callback unchanged.
 - Meta WhatsApp app-default callback shown in the dashboard is
   `https://clinic-ai-chatbot.onrender.com/webhook`. Render resolves that
   hostname to the separate older `clinic_ai_chatbot` service, deployed from
@@ -59,6 +63,67 @@ Do not change Meta's app-default callback while preparing this test. A future au
   messaging send permissions or history importer.
 - Tests: `node --test test/whatsappAppDefaultRelay.test.js`.
   These are simulated tests and do not establish live Meta compatibility.
+
+## Legacy WABA inventory and live cutover acceptance — not yet complete
+
+**Scope:** enumerate every *phone-owning* WhatsApp Business Account
+currently subscribed to Meta Developer App `1029862536608134` (not just
+accounts visible through a personal WhatsApp connector, nor Messaging
+Accounts for templates/billing). The current connector can see relevant
+customer/owner portfolios but **cannot administer or inspect the named DA
+CHATBOT Developer App**. Its empty app subscription result therefore
+cannot establish that no subscriptions exist.
+
+**Read-only operator workflow in Meta Graph API Explorer (v26.0):**
+
+1. In the Developer App's Settings > Basic, establish its actual owning
+   Meta Business portfolio ID. With an authorized Graph token held in
+   Explorer *only* (never paste tokens, Graph Explorer URLs with tokens,
+   or secrets into PR/GitHub/ChatGPT), enumerate owned and shared WABAs:
+   `GET /{BUSINESS_ID}/owned_whatsapp_business_accounts?fields=id,name`
+   and `GET /{BUSINESS_ID}/client_whatsapp_business_accounts?fields=id,name`.
+   Follow **all paging cursors** and include delegated client accounts
+   exposed through the app's integrations. Also inspect Business Settings
+   app assignments to make sure delegated users/accounts are not omitted.
+2. For each **actual WABA ID**, request
+   `GET /{WABA_ID}/subscribed_apps`, check whether app
+   `1029862536608134` appears under
+   `whatsapp_business_api_data.id`, and record the returned
+   `override_callback_uri` (or its absence). For each associated phone,
+   inspect `GET /{PHONE_NUMBER_ID}?fields=display_phone_number,webhook_configuration`
+   and any more-specific phone callback override.
+3. Label the **message/history/sync destination** using the precedence
+   phone override > WABA override > app default. Independently label the
+   `account_update` destination as the **app-default callback** even if
+   the phone/WABA has an override. Mark any unreadable/paginated/missing
+   account as **UNVERIFIED**, not "no subscription".
+4. Only after every authorized WABA is accounted for, create a complete
+   explicit `WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS` allowlist for all
+   accounts that may send events to the legacy default. Do not assume
+   the known Neutro messaging-account ID is a Graph WABA ID. Require
+   an operator-approved account list and a rollback snapshot; never
+   allow a wildcard.
+
+**Live acceptance (not yet performed):** first prove the active
+standalone relay against **nonproduction signed HTTPS receivers** with
+the old app-level Meta callback unchanged; verify TLS, GET challenge,
+HMAC, all allowlisted legacy fields, QA exact-E.164 lifecycle, mixed
+batches, replay/idempotency, durable acknowledgment, rejected unknowns,
+database outage and rollback behavior. Passing local GitHub HTTP tests
+alone is not a live Meta acceptance. Before pointing the *real app* to
+this relay, obtain explicit operator approval, capture the original
+verify token and callback for rollback, verify how every legacy account
+behaves for both message and non-overridable account-update fields, and
+schedule a monitored short cutover with real signed Meta test/traffic.
+Restore the original app-default callback if routing or callbacks are
+unconfirmed. Avoid firing synthetic events at the old customer-facing
+handler: its deployed code may acknowledge unknown lifecycle types.
+
+**Current GO/NO-GO: NO-GO.** Full developer-app-scoped WABA inventory is
+not available through the connected WhatsApp plugin. The relay is still
+`WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true`, and staging's
+preidentity receiver switch is false. Never set Meta's callback to
+the health-only service; it currently rejects every webhook POST.
 
 ## Pre-identity lifecycle bootstrap — CODE ONLY, not an active Meta callback
 
