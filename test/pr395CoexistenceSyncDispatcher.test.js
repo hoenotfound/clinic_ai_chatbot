@@ -89,6 +89,7 @@ test("only one Meta POST even when the first request timed out",async()=>{
 });
 test("confirmed success, explicit provider rejection and ambiguous 2xx are separate terminal states",async()=>{
  for(const [status,payload,expected] of [
+  [200,{messaging_product:"whatsapp",request_id:"meta-req-123"},"accepted"],
   [200,{success:true},"accepted"],[403,{error:{code:5}},"rejected"],
   [200,{unexpected:"yes"},"unknown"],[429,{error:{code:4}},"unknown"]
  ]){
@@ -97,6 +98,7 @@ test("confirmed success, explicit provider rejection and ambiguous 2xx are separ
    fetchImpl:async()=>response(status,payload)});
   assert.equal(result.state,expected);
   assert.equal([...database.requests.values()][0].state,expected);
+  if(payload.request_id)assert.equal(result.providerRequestId,payload.request_id);
  }
 });
 test("database failure AFTER POST leaves durable dispatching claim and blocks automatic retry",async()=>{
