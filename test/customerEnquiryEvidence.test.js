@@ -475,3 +475,29 @@ test("different-treatment quote refusals preserve only a separate customer price
     "9D不要报价，不过我想了解3D的效果",
   ]) assert.equal(hasCustomerPriceEnquiry(message), false, message);
 });
+
+
+test("future-offer permission does not erase a current local-language price enquiry",()=>{
+  const {
+    hasFuturePromotionPermissionWithoutPrice, isFollowUpConsentEnquiry,
+    stripFutureFollowUpPermission, hasExplicitPriceRequest,
+  }=require("../src/utils/customerEnquiryEvidence");
+  const current=[
+    "3D什么价，之后有优惠可以发我",
+    "3D现在什么价，之后有优惠可以发我",
+    "3D RM几多，之后有优惠可以通知我",
+    "3D做一次要多少，之后有优惠可以发我",
+  ];
+  for(const text of current){
+    const parsed=stripFutureFollowUpPermission(text);
+    assert.equal(parsed.hasFuturePermission,true,text);
+    assert.equal(hasExplicitPriceRequest(parsed.text),true,text);
+    assert.equal(hasFuturePromotionPermissionWithoutPrice(text),false,text);
+    assert.equal(isFollowUpConsentEnquiry(text),false,text);
+    assert.equal(hasCustomerPriceEnquiry(text),true,text);
+  }
+  const justFuture="3D之后有优惠可以通知我";
+  assert.equal(hasFuturePromotionPermissionWithoutPrice(justFuture),true);
+  assert.equal(isFollowUpConsentEnquiry(justFuture),true);
+  assert.equal(hasCustomerPriceEnquiry(justFuture),false);
+});
