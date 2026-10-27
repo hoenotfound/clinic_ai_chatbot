@@ -32,6 +32,10 @@ function configFromEnv(env = process.env) {
   const bootstrap = env.WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE === "true";
   const allowlist=String(env.WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS||"")
     .split(",").map(x=>x.trim()).filter(Boolean);
+  // Enforce a complete explicit legacy account allowlist in both relay modes.
+  const validLegacyAllowlist=allowlist.length>0 &&
+    allowlist.every(x=>/^\d+$/.test(x)) &&
+    new Set(allowlist).size===allowlist.length;
   const config={
     appSecret:String(env.WHATSAPP_DEFAULT_RELAY_APP_SECRET||""),
     verifyToken:String(env.WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN||""),
@@ -39,6 +43,12 @@ function configFromEnv(env = process.env) {
     secondaryPhone:String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164||""),
     legacyUrl:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LEGACY_URL,"Legacy callback"),
     lifecycleUrl:bootstrap?null:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL,"Lifecycle callback"),
+    ...(!bootstrap?{
+      legacyWabas:allowlist,
+      legacyLifecycleUrl:requireHttpsWebhook(
+        env.WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL,
+        "Verified legacy lifecycle audit","/pr395-legacy-lifecycle-webhook")
+    }:{}),
     ...(bootstrap?{bootstrap:{
       legacyWabas:allowlist,
       legacyLifecycleUrl:requireHttpsWebhook(
@@ -50,16 +60,18 @@ function configFromEnv(env = process.env) {
   };
   if(config.appSecret.length<24||config.verifyToken.length<16||
      !/^\+[1-9]\d{7,14}$/.test(config.secondaryPhone)||
+     !validLegacyAllowlist||
      (bootstrap?(
        config.secondaryWaba!==""||allowlist.length!==1||
-       !allowlist.every(x=>/^\d+$/.test(x))||
-       new Set(allowlist).size!==allowlist.length||
        config.bootstrap.preidentityUrl===config.legacyUrl||
        config.bootstrap.legacyLifecycleUrl===config.legacyUrl||
        config.bootstrap.legacyLifecycleUrl===config.bootstrap.preidentityUrl
      ):(
        !/^\d+$/.test(config.secondaryWaba)||
-       config.legacyUrl===config.lifecycleUrl
+       allowlist.includes(config.secondaryWaba)||
+       config.legacyUrl===config.lifecycleUrl||
+       config.legacyUrl===config.legacyLifecycleUrl||
+       config.lifecycleUrl===config.legacyLifecycleUrl
      ))) {
     throw Error("Default callback relay identity/secrets are not fully configured");
   }
@@ -88,7 +100,7 @@ function partitionSignedBatch(payload,config) {
      !Array.isArray(payload.entry)||!payload.entry.length||payload.entry.length>200)
     throw Error("Unexpected default WhatsApp callback payload");
   const legacy=[],legacyLifecycle=[],lifecycle=[],preidentity=[];
-  const knownLegacy=config.bootstrap?new Set(config.bootstrap.legacyWabas):null;
+  const knownLegacy=new Set(config.bootstrap?.legacyWabas || config.legacyWabas || []);
   for(const entry of payload.entry){
     if(!entry||!Array.isArray(entry.changes)||!entry.changes.length||
        entry.changes.length>200)throw Error("Invalid WhatsApp callback entry");
@@ -99,7 +111,7 @@ function partitionSignedBatch(payload,config) {
          Array.isArray(change.value))
         throw Error("Invalid WhatsApp callback change");
       const entryId=String(entry.id||"");
-      if(knownLegacy){
+      if(config.bootstrap){
         if(knownLegacy.has(entryId)){
           // The old callback can acknowledge account_update with HTTP 200
           // without any lifecycle persistence. All such updates must be
@@ -130,8 +142,14 @@ function partitionSignedBatch(payload,config) {
             throw Error("Secondary lifecycle phone mismatches approved identity");
           lifecycleChanges.push(change);continue;
         }
+        throw Error("Unrecognized secondary account event");
       }
-      legacyChanges.push(change);
+      if(!knownLegacy.has(entryId))
+        throw Error("Unrecognized account at app-default callback");
+      // Do not ACK a legacy account_update without a durable audit.
+      // This guarantee is required in both bootstrap and post-onboarding modes.
+      if(change.field==="account_update")legacyLifecycleChanges.push(change);
+      else legacyChanges.push(change);
     }
     if(legacyChanges.length)legacy.push({...entry,changes:legacyChanges});
     if(legacyLifecycleChanges.length)legacyLifecycle.push({...entry,changes:legacyLifecycleChanges});
@@ -187,7 +205,7 @@ async function postSigned(url, payload, config, fetchImpl, deadline) {
   }
   // Old single-number servers could return 200 without persisting anything.
   // Require an explicit durable lifecycle marker from PR #395, never trust 200.
-  if(config.bootstrap && url===config.bootstrap.legacyLifecycleUrl &&
+  if(url===(config.bootstrap?.legacyLifecycleUrl || config.legacyLifecycleUrl) &&
      response.headers?.get?.("x-da-legacy-lifecycle-accepted")!=="1"){
     throw Error("Legacy lifecycle receiver did not prove a durable account update audit");
   }
@@ -215,7 +233,7 @@ async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fe
     // An interrupted mixed batch may be replayed. All downstream receivers
     // MUST be idempotent by provider message ID / event fingerprint.
     if (batches.legacy) await postSigned(config.legacyUrl, batches.legacy, config, fetchImpl, deadline);
-    if (batches.legacyLifecycle) await postSigned(config.bootstrap.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl, deadline);
+    if (batches.legacyLifecycle) await postSigned(config.bootstrap?.legacyLifecycleUrl || config.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl, deadline);
     if (batches.lifecycle) await postSigned(config.lifecycleUrl, batches.lifecycle, config, fetchImpl, deadline);
     if (batches.preidentity) await postSigned(config.bootstrap.preidentityUrl, batches.preidentity, config, fetchImpl, deadline);
     return 200;

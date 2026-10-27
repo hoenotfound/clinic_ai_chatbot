@@ -29,6 +29,7 @@ const LEGACY_ACCOUNT = "111111111111111";
 const QA_PHONE_ID = "333333333333333";
 const QA_E164 = "+60120000000";
 const LEGACY_URL = "https://legacy-relay-integration.example.invalid/webhook";
+const LEGACY_AUDIT_URL = "https://legacy-relay-integration.example.invalid/pr395-legacy-lifecycle-webhook";
 const QA_URL = "https://isolated-relay-integration.example.invalid/webhook";
 const env = {
   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED: "true",
@@ -110,7 +111,8 @@ function createFakeReceiver(legacy, state, db) {
     const pieces = [];
     for await (const chunk of req) pieces.push(chunk);
     const raw = Buffer.concat(pieces);
-    if (req.method !== "POST" || req.url !== "/webhook" ||
+    if (req.method !== "POST" ||
+        !(req.url === "/webhook" || (legacy && req.url === "/pr395-legacy-lifecycle-webhook")) ||
         !validMetaSignature(raw, req.headers["x-hub-signature-256"], APP_SECRET)) {
       res.writeHead(403).end(); return;
     }
@@ -120,8 +122,13 @@ function createFakeReceiver(legacy, state, db) {
     if (legacy) {
       state.legacyRequests.push(payload);
       if (state.legacyFails) {res.writeHead(503).end(); return;}
-      // The old app receives only unrelated, signed account-level events.
+      // Only the dedicated legacy lifecycle path may acknowledge account_update.
       assert.ok(payload.entry.every(entry => entry.id !== QA_ACCOUNT));
+      if (req.url === "/pr395-legacy-lifecycle-webhook") {
+        assert.ok(payload.entry.every(entry => entry.changes.every(change => change.field === "account_update")));
+        res.writeHead(200, {"X-DA-Legacy-Lifecycle-Accepted": "1"}).end(); return;
+      }
+      assert.ok(payload.entry.every(entry => entry.changes.every(change => change.field !== "account_update")));
       res.writeHead(200).end(); return;
     }
     state.qaRequests.push(payload);
@@ -157,7 +164,9 @@ async function withRelay(fn) {
     const oldAddress = await listen(legacy);
     const qaAddress = await listen(receiver);
     const mapped = new Map([
-      [LEGACY_URL, oldAddress + "/webhook"], [QA_URL, qaAddress + "/webhook"],
+      [LEGACY_URL, oldAddress + "/webhook"],
+      [LEGACY_AUDIT_URL, oldAddress + "/pr395-legacy-lifecycle-webhook"],
+      [QA_URL, qaAddress + "/webhook"],
     ]);
     // No global network fallback. Every relay egress attempt must map to the
     // two isolated receivers above; domain names are never contacted.
@@ -168,7 +177,9 @@ async function withRelay(fn) {
     relay = createRelayServer({
       appSecret: APP_SECRET, verifyToken: "synthetic-verify-token-123",
       secondaryWaba: QA_ACCOUNT, secondaryPhone: QA_E164,
-      legacyUrl: LEGACY_URL, lifecycleUrl: QA_URL,
+      legacyWabas: [LEGACY_ACCOUNT],
+      legacyUrl: LEGACY_URL, legacyLifecycleUrl: LEGACY_AUDIT_URL,
+      lifecycleUrl: QA_URL,
     }, {fetchImpl});
     const url = await listen(relay);
     return await fn({url, state, database: db.state});
