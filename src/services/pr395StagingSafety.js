@@ -80,6 +80,7 @@ const OUTBOUND_SWITCHES = [
 function assertPr395StagingSafety(env = process.env) {
   if (!isPr395Staging(env)) {
     if (env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" ||
+        env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED === "true" ||
         env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
       throw new Error("Provider rehearsal must never run outside PR395's isolated staging mode.");
     }
@@ -125,6 +126,19 @@ function assertPr395StagingSafety(env = process.env) {
   if (!hostname || !pin || hostname !== pin ||
       !/\.neon\.tech$/.test(hostname)) {
     throw new Error("PR395 staging DATABASE_URL must match its explicitly pinned isolated Neon endpoint host.");
+  }
+  if (env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED === "true") {
+    const {enabled:preidentityEnabled} = require("./pr395PreidentityReceiver");
+    if (!preidentityEnabled(env) ||
+        env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true" ||
+        env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" ||
+        OUTBOUND_SWITCHES.some(key=>env[key]==="true") ||
+        REHEARSAL_OUTBOUND_FORBIDDEN.some(key=>env[key]==="true") ||
+        String(env.WHATSAPP_SECONDARY_EXPECTED_WABA_ID||"").trim() ||
+        String(env.WHATSAPP_TOKEN||"").trim() &&
+          !String(env.WHATSAPP_TOKEN).startsWith("pr395-inert-")) {
+      throw new Error("PR395 preidentity receiver requires unassigned QA IDs, isolated database, verified app HMAC, and no provider sending.");
+    }
   }
   if (providerRehearsalEnabled(env)) {
     verifiedRehearsalTarget(env);
