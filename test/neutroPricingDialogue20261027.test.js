@@ -222,3 +222,109 @@ test("pricing dialogue is never carried past verified human staff intervention",
   ];
   assert.equal(shadow(history,"多少钱"),null);
 });
+
+
+test("numbers describing sessions, durations or price amounts are never two treatments", () => {
+  const first = [
+    turn("user","想了解 3D 小颜术",210),
+    turn("assistant","我们有 3D 小颜术 和 9D 逆龄抗衰 两款护理",200),
+  ];
+  for (const current of [
+    "做2小时多少钱？", "两次疗程多少钱？",
+    "2小时第一次护理多少钱", "两周做一次多少钱",
+    "2次是RM488吗？", "2小时的话有什么价格",
+  ]) {
+    assert.equal(dual([...first,turn("user",current,100)],current),null,current);
+  }
+});
+
+test("an intervening pelvic selection supersedes a previously shown facial two-service menu", () => {
+  const history = [
+    turn("user","我想了解 3D",220),
+    turn("assistant","我们有 3D 小颜术 和 9D 逆龄抗衰",215),
+    turn("user","我想了解骨盆调理",200),
+    turn("assistant","骨盆调理主要针对体态",195),
+    turn("user","这两个价钱多少",190),
+  ];
+  assert.equal(dual(history,"这两个价钱多少"),null);
+  // Even if the later bot only said "好的", the customer's own switch
+  // must invalidate the old pair.
+  assert.equal(dual([
+    history[0],history[1],history[2],
+    turn("assistant","好的～",195), history[4],
+  ],"这两个价钱多少"),null);
+});
+
+test("an assistant offering individual 3D/9D and an optional combo still supports separate prices", () => {
+  for (const menu of [
+    "单做 3D 小颜术、9D 逆龄抗衰，也有 3D+9D组合。",
+    "可以选择 3D 小颜术，或者 9D 逆龄抗衰，另外也有组合配套",
+    "3D 小颜术、9D 逆龄抗衰都是独立护理；也有3D+9D组合",
+  ]) {
+    const history = [
+      turn("user","哪两项的价钱？",240),
+      turn("assistant",menu,230),
+      turn("user","这两个价钱多少",220),
+    ];
+    const quote = dual(history,"这两个价钱多少");
+    assert.deepEqual(quote?.prices.map(x => x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],menu);
+    assert.ok(quote?.prices.every(x => x.label === "first_trial"),menu);
+    assert.match(quote.reply,/3D 小颜术（First Trial 体验价）：RM488/u);
+    assert.match(quote.reply,/9D 逆龄抗衰（First Trial 体验价）：RM488/u);
+    assert.match(quote.reply,/不是组合配套/u);
+  }
+});
+
+test("a combo-only pitch is not evidence of two separately quoted services", () => {
+  const base = [
+    turn("user","我想了解价钱",210),
+    turn("assistant","现在有 3D+9D组合限时优惠",200),
+    turn("user","这两个价钱多少",190),
+  ];
+  assert.equal(dual(base,"这两个价钱多少"),null);
+  assert.equal(dual([
+    base[0],turn("assistant","有 3D 小颜术、9D 逆龄抗衰、骨盆调理",200),base[2],
+  ],"这两个价钱多少"),null,"more than two presented treatments is ambiguous");
+});
+
+test("two individually named treatments can be quoted without borrowing an assistant menu", () => {
+  const history = [
+    turn("user","你好",220),
+    turn("assistant","你好，请问想了解什么？",215),
+    turn("user","3D和9D多少钱？",200),
+  ];
+  const result=dual(history,"3D和9D多少钱？");
+  assert.equal(result?.prices.length,2);
+  assert.deepEqual(result?.prices.map(x=>x.label),["first_trial","first_trial"]);
+});
+
+test("unknown labels remain current offers, never an invented First Trial", () => {
+  const history=[
+    turn("user","你们有哪些价钱？",220),
+    turn("assistant","我们有 3D 小颜术、9D 逆龄抗衰",215),
+    turn("user","这两个价钱多少",200),
+  ];
+  const generic = promotions.map(p => p.linkedService !== "9D 逆龄抗衰" ? p : ({
+    ...p,name:"9D 优惠",caption:"优惠价 RM488",
+  }));
+  const answer=resolveTwoTreatmentPriceReply({
+    customerText:"这两个价钱多少",
+    session:recentVerifiedPricingSession(history,"这两个价钱多少",now),
+    services,serviceAliases,promotions:generic,language:"zh",now,
+  });
+  assert.equal(answer?.prices[1].label,"current_offer");
+  assert.match(answer.reply,/9D 逆龄抗衰（当前优惠价）：RM488/u);
+  assert.doesNotMatch(answer.reply,/9D 逆龄抗衰（First Trial/u);
+});
+
+test("two-treatment decisions are audited as approved text-only and never select images", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  assert.match(source,/approved: Boolean\(approvedPricingDecision \|\| twoTreatmentQuote\)/u);
+  assert.match(source,/approvalReason: twoTreatmentQuote \? "two_treatments_verified_text_only"/u);
+  assert.match(source,/decisionSource: twoTreatmentQuote\?\.source/u);
+  assert.match(source,/const promoBundle = twoTreatmentQuote \? null : await resolvePricePromotionForReply/u);
+  assert.match(source,/replyStatus: !sendOutcome\.sendResult\.success \? "text_not_accepted"/u);
+});
