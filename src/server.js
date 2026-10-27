@@ -1228,6 +1228,46 @@ async function processIncomingMessage(
       }
     }
 
+    // A model can classify an objectively answerable TWO-treatment price
+    // question as an INFORMATION review. Resolve the two independently
+    // verified offers first; only a fresh Neon check confirming NO pending
+    // clinical review may clear that specific information flag.
+    // Keep clinical, staff, safety, consent and billing controls unchanged.
+    const recoverableTwoPriceReview = flagged && reviewRequired &&
+      reviewType === "information";
+    let twoTreatmentQuote = aiPricingMode === "shadow" &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      (!flagged || recoverableTwoPriceReview) &&
+      !bookingReady && !keywordReason && !urgentSafety &&
+      !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+      !marketingStopQuestion
+      ? resolveTwoTreatmentPriceReply({
+          customerText: text,
+          session: recentVerifiedPricingSession(history, text),
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          language: mediaLanguage,
+        }) : null;
+    if (twoTreatmentQuote && recoverableTwoPriceReview) {
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (reviewEvidence?.pendingClinicalReview === false) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        aiReply = "我帮你确认这两项护理各自的价格 😊";
+        console.info("[Pricing] Recovered verified two-price information review " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
+      } else {
+        twoTreatmentQuote = null;
+      }
+    }
+
     // A customer-confirmed ad treatment can scope "all of them" to the
     // packages of THAT treatment only when the previous user asked about
     // price and the bot just asked "which treatment's price?".
@@ -1319,20 +1359,6 @@ async function processIncomingMessage(
       allowOfferEnquiries: clinicConfig.aiPricingOfferEnquiriesEnabled === true,
     });
     const approvedPricingDecision = pricingApproval.decision;
-    // Quote both independently verified treatments as TEXT ONLY when the
-    // customer explicitly asks for both, not a 3D+9D combination promotion.
-    const twoTreatmentQuote = aiPricingMode === "shadow" &&
-      !flagged && !bookingReady && !keywordReason && !urgentSafety &&
-      !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
-      !marketingStopQuestion
-      ? resolveTwoTreatmentPriceReply({
-          customerText:text,
-          session:recentVerifiedPricingSession(history,text),
-          services:clinicConfig.services,
-          serviceAliases:clinicConfig.serviceAliases,
-          promotions:clinicConfig.promotions,
-          language:mediaLanguage,
-        }) : null;
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
         twoTreatmentQuote || shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
