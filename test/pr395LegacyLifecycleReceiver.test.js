@@ -46,6 +46,7 @@ function store(){
    if(sql==="BEGIN")return{rowCount:0};
    if(sql==="COMMIT"){state.commits++;return{rowCount:0}};
    if(sql==="ROLLBACK"){state.rollbacks++;return{rowCount:0}};
+   if(sql.includes("INSERT INTO whatsapp_pr395_legacy_lifecycle_alerts"))return{rowCount:1};
    if(!sql.includes("INSERT INTO whatsapp_legacy_lifecycle_relay_audit"))
      throw Error("Unexpected SQL");
    if(state.fail)throw Error("Simulated database unavailable");
