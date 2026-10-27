@@ -119,6 +119,10 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     treatment: row.treatment_interest || row.summary_treatment,
     temperature: row.temperature,
     stageName: row.stage_name,
+    reason: row.task_status === "later" || (row.task_status === "contacted" && row.task_due_at)
+      ? "follow_up_due" : row.task_status === "not_interested" ? "interested_again" :
+      row.task_status === "booked" ? "booking_cancelled" : "new",
+    taskDueAt: row.task_due_at,
     owner: row.owner_username || "Unassigned",
     lastCustomerReplyAt: row.last_inbound_at,
     summary: String(row.chat_summary || "").slice(0, 300),
@@ -158,6 +162,14 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
       const error = new Error("The conversation or lead status has changed. Refresh before updating."); error.status = 409; throw error;
     }
     const inboundId = eligible[0].lastInboundId;
+    const previousTask = (await client.query(
+      "SELECT status,last_inbound_id,due_at,updated_by FROM sales_follow_up_tasks WHERE lead_id=$1",
+      [id]
+    )).rows[0] || null;
+    const previousLead = (await client.query(
+      "SELECT stage_id,appointment_status,appointment_at,updated_at FROM leads WHERE id=$1",
+      [id]
+    )).rows[0];
     await client.query(
       `INSERT INTO sales_follow_up_tasks (lead_id,status,last_inbound_id,due_at,updated_by)
        VALUES ($1,$2,$3,$4,$5)
@@ -165,10 +177,6 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
          SET status=EXCLUDED.status, last_inbound_id=EXCLUDED.last_inbound_id,
              due_at=EXCLUDED.due_at, updated_by=EXCLUDED.updated_by, updated_at=now()`,
       [id,status,inboundId,validatedDate,username]
-    );
-    await client.query(
-      "INSERT INTO sales_follow_up_events (lead_id,actor,outcome,inbound_id,due_at) VALUES ($1,$2,$3,$4,$5)",
-      [id,username,status,inboundId,validatedDate]
     );
     if (status === "booked") {
       const previous = await client.query(
@@ -206,6 +214,21 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
           JSON.stringify({appointmentStatus:"set",previousAppointmentStatus:current.appointment_status})]
       );
     }
+    const appliedLead = (await client.query(
+      "SELECT stage_id,appointment_status,appointment_at,updated_at FROM leads WHERE id=$1",
+      [id]
+    )).rows[0];
+    const appliedTask = (await client.query(
+      "SELECT updated_at FROM sales_follow_up_tasks WHERE lead_id=$1", [id]
+    )).rows[0];
+    const event = await client.query(
+      `INSERT INTO sales_follow_up_events
+        (lead_id,actor,outcome,inbound_id,due_at,previous_state)
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb) RETURNING id`,
+      [id,username,status,inboundId,validatedDate,JSON.stringify({
+        previousTask, previousLead, appliedLead, appliedTaskUpdatedAt: appliedTask.updated_at
+      })]
+    );
     await client.query("COMMIT");
     if (status === "booked") {
       // The existing Pipeline clears Booking Ready attention after commit,
@@ -223,7 +246,7 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
       }
     }
     realtimeEvents.publish("pipeline_changed", { leadId: id });
-    return { ok: true, leadId: id, status };
+    return { ok: true, leadId: id, status, eventId: Number(event.rows[0].id) };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -233,6 +256,128 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
 }
 
 
+const UNDO_MINUTES = 10;
+function invalidCorrection(message, status = 409) {
+  const error = new Error(message); error.status = status; throw error;
+}
+
+async function listRecentCorrections({ username, canViewAll = false, now = new Date(), queryable = pool }) {
+  const r = await queryable.query(
+    `SELECT e.id AS "eventId", e.lead_id AS "leadId", e.outcome,
+      e.inbound_id AS "lastInboundId", e.created_at AS "createdAt",
+      COALESCE(NULLIF(BTRIM(c.name), ''), NULLIF(BTRIM(c.whatsapp_profile_name), ''),
+        c.whatsapp_number) AS "customerName"
+      FROM sales_follow_up_events e
+      JOIN leads l ON l.id=e.lead_id
+      JOIN contacts c ON c.id=l.contact_id
+      WHERE e.undone_at IS NULL AND e.previous_state IS NOT NULL
+        AND e.created_at >= $3::timestamptz - interval '10 minutes'
+        AND (e.actor=$2::text OR $1::boolean)
+        AND ($1::boolean OR l.owner_username=$2::text)
+        AND NOT EXISTS (
+          SELECT 1 FROM sales_follow_up_events newer
+          WHERE newer.lead_id=e.lead_id AND newer.id > e.id
+        )
+      ORDER BY e.created_at DESC, e.id DESC LIMIT 20`,
+    [canViewAll, username, now]
+  );
+  return r.rows;
+}
+
+// Only undo the latest outcome, for up to ten minutes, while the lead and
+// message context are unchanged. This cannot recall a WhatsApp message.
+async function undoOutcome({ leadId, eventId, username, canManageAll = false, now = new Date() }) {
+  const id=Number(leadId), eid=Number(eventId);
+  if (![id,eid].every(x=>Number.isSafeInteger(x)&&x>0)) invalidCorrection("Invalid correction request.",400);
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const target=await client.query("SELECT contact_id FROM leads WHERE id=$1", [id]);
+    if (!target.rows.length) invalidCorrection("Lead not found.",404);
+    await client.query("SELECT id FROM contacts WHERE id=$1 FOR UPDATE", [target.rows[0].contact_id]);
+    const row=await client.query(
+      "SELECT id,contact_id,owner_username,stage_id,appointment_status,appointment_at,updated_at FROM leads WHERE id=$1 FOR UPDATE",
+      [id]
+    );
+    const lead=row.rows[0];
+    if (!lead || (!canManageAll && lead.owner_username!==username)) invalidCorrection("Not assigned to you.",403);
+    const event=(await client.query(
+      "SELECT * FROM sales_follow_up_events WHERE id=$1 AND lead_id=$2 FOR UPDATE",
+      [eid,id]
+    )).rows[0];
+    if (!event || event.undone_at || !event.previous_state ||
+        (!canManageAll && event.actor!==username)) invalidCorrection("This result cannot be corrected.",403);
+    if (now.getTime()-new Date(event.created_at).getTime()>UNDO_MINUTES*60000 ||
+        now.getTime()<new Date(event.created_at).getTime()) {
+      invalidCorrection("Correction time expired. Ask a manager to review the Pipeline.");
+    }
+    const latestEvent=await client.query(
+      "SELECT id FROM sales_follow_up_events WHERE lead_id=$1 ORDER BY id DESC LIMIT 1", [id]
+    );
+    if (Number(latestEvent.rows[0]?.id)!==eid) invalidCorrection("A newer result already exists.");
+    const inbound=(await client.query(
+      "SELECT id FROM messages WHERE contact_id=$1 AND role='user' ORDER BY created_at DESC,id DESC LIMIT 1",
+      [lead.contact_id]
+    )).rows[0];
+    if (Number(inbound?.id)!==Number(event.inbound_id)) {
+      invalidCorrection("Customer replied since this result. Refresh the Pipeline first.");
+    }
+    const applied=event.previous_state.appliedLead;
+    const task=(await client.query(
+      "SELECT status,last_inbound_id,due_at,updated_at FROM sales_follow_up_tasks WHERE lead_id=$1 FOR UPDATE", [id]
+    )).rows[0];
+    if (!applied || !task || task.status!==event.outcome ||
+        Number(task.last_inbound_id)!==Number(event.inbound_id) ||
+        new Date(task.updated_at).getTime()!==new Date(event.previous_state.appliedTaskUpdatedAt).getTime() ||
+        Number(lead.stage_id)!==Number(applied.stage_id) ||
+        lead.appointment_status!==applied.appointment_status ||
+        String(lead.appointment_at ? new Date(lead.appointment_at).toISOString() : "")!==
+          String(applied.appointment_at ? new Date(applied.appointment_at).toISOString() : "") ||
+        new Date(lead.updated_at).getTime()!==new Date(applied.updated_at).getTime()) {
+      invalidCorrection("The lead changed after this update. Review it in Pipeline rather than undoing.");
+    }
+    const previous=event.previous_state;
+    if (event.outcome==="booked") {
+      await client.query(
+        "UPDATE leads SET stage_id=$2,appointment_status=$3,appointment_at=$4,updated_at=now() WHERE id=$1",
+        [id,previous.previousLead.stage_id,previous.previousLead.appointment_status,
+          previous.previousLead.appointment_at]
+      );
+      if (Number(lead.stage_id)!==Number(previous.previousLead.stage_id)) {
+        await client.query(
+          "INSERT INTO lead_stage_history (lead_id,from_stage_id,to_stage_id,changed_by) VALUES ($1,$2,$3,$4)",
+          [id,lead.stage_id,previous.previousLead.stage_id,username]
+        );
+      }
+      await client.query(
+        "INSERT INTO lead_activities (lead_id,activity_type,description,actor,metadata) VALUES ($1,'updated',$2,$3,$4::jsonb)",
+        [id,"Corrected mistaken Sales Follow-up booking.",username,JSON.stringify({undoneEventId:eid})]
+      );
+    }
+    if (previous.previousTask) {
+      await client.query(
+        `UPDATE sales_follow_up_tasks
+         SET status=$2,last_inbound_id=$3,due_at=$4,updated_by=$5,updated_at=now()
+         WHERE lead_id=$1`,
+        [id,previous.previousTask.status,previous.previousTask.last_inbound_id,
+          previous.previousTask.due_at,previous.previousTask.updated_by]
+      );
+    } else {
+      await client.query("DELETE FROM sales_follow_up_tasks WHERE lead_id=$1", [id]);
+    }
+    await client.query(
+      "UPDATE sales_follow_up_events SET undone_at=now(),undone_by=$2 WHERE id=$1",
+      [eid,username]
+    );
+    await client.query("COMMIT");
+    realtimeEvents.publish("pipeline_changed",{leadId:id});
+    return { ok:true, leadId:id, undoneEventId:eid };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(()=>{});
+    throw error;
+  } finally { client.release(); }
+}
+
 async function countMonthlyOutcomes({ username, canViewAll = false, queryable = pool, now = new Date() }) {
   // Month boundaries are Malaysia-local, not UTC, so the monthly figures
   // match the period understood by Neutro's sales manager.
@@ -240,7 +385,7 @@ async function countMonthlyOutcomes({ username, canViewAll = false, queryable = 
     `SELECT e.outcome, COUNT(DISTINCT e.lead_id)::integer AS leads
      FROM sales_follow_up_events e
      JOIN leads l ON l.id = e.lead_id
-     WHERE e.created_at >= (
+     WHERE e.undone_at IS NULL AND e.created_at >= (
        date_trunc('month', $3::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur')
        AT TIME ZONE 'Asia/Kuala_Lumpur'
      ) AND e.created_at <= $3::timestamptz
@@ -254,4 +399,4 @@ async function countMonthlyOutcomes({ username, canViewAll = false, queryable = 
   );
 }
 
-module.exports = { extendedFollowUpHoldHours, listPending, recordOutcome, countMonthlyOutcomes };
+module.exports = { extendedFollowUpHoldHours, listPending, recordOutcome, countMonthlyOutcomes, listRecentCorrections, undoOutcome };
