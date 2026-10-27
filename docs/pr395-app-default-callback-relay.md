@@ -100,6 +100,44 @@ Independently include WABAs held by customers delegated to the app.
 Absent matching app subscription in a single portfolio is **not** an
 all-portfolio inventory. No routing cutover approved.
 
+## Confirmed portfolio 622200677557573 Graph inventory (27 Oct 2026)
+
+The operator queried these account collections through Graph API v26.0
+with an authenticated **DA CHATBOT app-context** user token
+(`app_id=1029862536608134`, including `business_management` and
+`whatsapp_business_management`):
+
+- `GET /622200677557573/owned_whatsapp_business_accounts?fields=id,name&limit=100`
+  returned `{"data":[]}`. **No owned WABAs were visible to this token
+  in this specific business portfolio.**
+- `GET /622200677557573/client_whatsapp_business_accounts?fields=id,name&limit=100`
+  returned **one visible account**: `1593376338308612`
+  (`Neutro Sense TCM`). Paging metadata was sanitized in the user
+  transcript: cannot assert that all pages were exhausted without
+  confirming there is no `paging.next` URL.
+- Previously confirmed `GET /1593376338308612/subscribed_apps`
+  reports app `1029862536608134` and verified WABA callback
+  `https://neutrosense.dasmarketingsolution.com/webhook`.
+  Do not change or clear it.
+
+**Important:** zero owned + one client describes this **one business
+portfolio under the current token**, not a reverse inventory of all WABAs
+subscribed to the DA CHATBOT app across every shared/customer portfolio.
+Additionally, an account-specific override protects supported
+`messages`/history fields, **not** `account_update`, which remains an
+app-default callback event. The bootstrap relay currently forwards
+allowlisted old WABA account events to the legacy callback; that route is
+**not verified to durably handle Neutro lifecycle updates**. Do not treat
+the subscription override alone as proof of cutover safety.
+
+**Next read-only verification:** confirm the client listing has no
+`paging.next`, then `GET
+/1593376338308612/phone_numbers?fields=id,display_phone_number,webhook_configuration`
+to discover any per-number override without touching it. Check the
+app's actual subscriptions/tenant assignments outside this portfolio.
+Continue **NO-GO** on app-default cutover, PR merge and Coexistence QR
+until signed provider and legacy lifecycle acceptance is demonstrated.
+
 ## Legacy WABA inventory and live cutover acceptance — not yet complete
 
 **Scope:** enumerate every *phone-owning* WhatsApp Business Account
