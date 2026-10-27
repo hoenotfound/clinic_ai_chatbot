@@ -32,6 +32,10 @@ function configFromEnv(env = process.env) {
   const bootstrap = env.WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE === "true";
   const allowlist=String(env.WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS||"")
     .split(",").map(x=>x.trim()).filter(Boolean);
+  // Enforce a complete explicit legacy account allowlist in both relay modes.
+  const validLegacyAllowlist=allowlist.length>0 &&
+    allowlist.every(x=>/^\d+$/.test(x)) &&
+    new Set(allowlist).size===allowlist.length;
   const config={
     appSecret:String(env.WHATSAPP_DEFAULT_RELAY_APP_SECRET||""),
     verifyToken:String(env.WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN||""),
@@ -39,6 +43,7 @@ function configFromEnv(env = process.env) {
     secondaryPhone:String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164||""),
     legacyUrl:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LEGACY_URL,"Legacy callback"),
     lifecycleUrl:bootstrap?null:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL,"Lifecycle callback"),
+    ...(!bootstrap?{legacyWabas:allowlist}:{}),
     ...(bootstrap?{bootstrap:{
       legacyWabas:allowlist,
       legacyLifecycleUrl:requireHttpsWebhook(
@@ -50,15 +55,15 @@ function configFromEnv(env = process.env) {
   };
   if(config.appSecret.length<24||config.verifyToken.length<16||
      !/^\+[1-9]\d{7,14}$/.test(config.secondaryPhone)||
+     !validLegacyAllowlist||
      (bootstrap?(
        config.secondaryWaba!==""||allowlist.length!==1||
-       !allowlist.every(x=>/^\d+$/.test(x))||
-       new Set(allowlist).size!==allowlist.length||
        config.bootstrap.preidentityUrl===config.legacyUrl||
        config.bootstrap.legacyLifecycleUrl===config.legacyUrl||
        config.bootstrap.legacyLifecycleUrl===config.bootstrap.preidentityUrl
      ):(
        !/^\d+$/.test(config.secondaryWaba)||
+       allowlist.includes(config.secondaryWaba)||
        config.legacyUrl===config.lifecycleUrl
      ))) {
     throw Error("Default callback relay identity/secrets are not fully configured");
@@ -88,7 +93,7 @@ function partitionSignedBatch(payload,config) {
      !Array.isArray(payload.entry)||!payload.entry.length||payload.entry.length>200)
     throw Error("Unexpected default WhatsApp callback payload");
   const legacy=[],legacyLifecycle=[],lifecycle=[],preidentity=[];
-  const knownLegacy=config.bootstrap?new Set(config.bootstrap.legacyWabas):null;
+  const knownLegacy=new Set(config.bootstrap?.legacyWabas || config.legacyWabas || []);
   for(const entry of payload.entry){
     if(!entry||!Array.isArray(entry.changes)||!entry.changes.length||
        entry.changes.length>200)throw Error("Invalid WhatsApp callback entry");
@@ -99,7 +104,7 @@ function partitionSignedBatch(payload,config) {
          Array.isArray(change.value))
         throw Error("Invalid WhatsApp callback change");
       const entryId=String(entry.id||"");
-      if(knownLegacy){
+      if(config.bootstrap){
         if(knownLegacy.has(entryId)){
           // The old callback can acknowledge account_update with HTTP 200
           // without any lifecycle persistence. All such updates must be
@@ -130,7 +135,10 @@ function partitionSignedBatch(payload,config) {
             throw Error("Secondary lifecycle phone mismatches approved identity");
           lifecycleChanges.push(change);continue;
         }
+        throw Error("Unrecognized secondary account event");
       }
+      if(!knownLegacy.has(entryId))
+        throw Error("Unrecognized account at app-default callback");
       legacyChanges.push(change);
     }
     if(legacyChanges.length)legacy.push({...entry,changes:legacyChanges});
