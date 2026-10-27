@@ -675,3 +675,68 @@ test("separately verified two prices remain text-only when production combo alia
   assert.equal(quote?.source,"verified_two_separate_treatments");
   assert.deepEqual(quote?.prices.map(x=>x.label),["first_trial","first_trial"]);
 });
+
+
+test("joint 3D/9D price enquiries never receive two separate First Trial amounts", () => {
+  const joined = [
+    "3D 和 9D 一起做多少钱？",
+    "3D和9D加起来一共多少钱？",
+    "3D 跟 9D 同时做的价格多少？",
+    "3D 和 9D 合起来总共多少钱？",
+    "3D 跟 9D 打包价多少钱？",
+    "3D and 9D together how much?",
+    "3D and 9D total price?",
+    "What is the combined cost for 3D and 9D?",
+    "3D dan 9D buat sekali berapa harga?",
+    "3D dan 9D jumlah harga berapa?",
+    "3D dan 9D buat serentak berapa harga?",
+    "3D 和 9D 分别多少钱？如果一起做呢？",
+    "3D and 9D separately how much, and together?",
+  ];
+  for (const current of joined) {
+    assert.equal(dual([turn("user",current,60)],current),null,
+      "an unpriced combo cannot inherit RM488 individual quotes: "+current);
+  }
+});
+
+test("an active two-service menu cannot turn a joint-price request into two prices", () => {
+  const first = [
+    turn("user","你们有哪两种脸部疗程？",260),
+    turn("assistant","3D 小颜术和9D 逆龄抗衰都有各自配套",250),
+  ];
+  for (const current of [
+    "这两个一起做多少钱？",
+    "这两项加起来一共多少钱？",
+    "both together how much?",
+    "这两个分别多少钱，一起做有优惠吗？",
+  ]) {
+    assert.equal(dual([...first,turn("user",current,240)],current),null,current);
+  }
+  const joint = "这两个一起做多少钱？";
+  const followUp = [
+    ...first,
+    turn("user",joint,220),
+    turn("assistant","请问你想了解哪一项疗程的价格呢？",210),
+    turn("user","两个",200),
+  ];
+  assert.equal(dual(followUp,"两个"),null,
+    "an older joint-price request must not turn into a two-price continuation");
+});
+
+test("explicit individual-price questions still recover with production combo aliases", () => {
+  const individual = [
+    "3D 和 9D 分开多少钱？",
+    "3D、9D分别多少钱？",
+    "3D/9D各自价钱多少？",
+    "3D & 9D 各自多少钱",
+    "3D and 9D separately how much?",
+    "3D 和 9D 分别多少钱？不要组合",
+    "3D 和 9D 分别多少钱，一起发给我",
+  ];
+  for (const current of individual) {
+    const quote=dual([turn("user",current,60)],current);
+    assert.deepEqual(quote?.prices.map(x=>x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],current);
+    assert.deepEqual(quote?.prices.map(x=>x.amount),["RM488","RM488"],current);
+  }
+});
