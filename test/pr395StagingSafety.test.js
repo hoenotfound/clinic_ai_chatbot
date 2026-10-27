@@ -105,3 +105,93 @@ test("PR395 staging gate precedes webhook handlers, and workers are off before r
   assert.ok(entry.indexOf("assertPr395StagingSafety(process.env)") <
     entry.indexOf("const app = createApp("));
 });
+
+test("provider rehearsal needs verified secondary account pin and all inbound-only switches",()=>{
+  const verified={
+    ...safe(),
+    PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true",
+    PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"true",
+    WHATSAPP_WABA_ID:"1593376338308612",
+    WHATSAPP_PHONE_NUMBER_ID:"1234567890123",
+    WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness",
+    WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
+    WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
+    WHATSAPP_SECONDARY_TOKEN:"dedicated-secondary-qa-token",
+    WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+    WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+    WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+    WHATSAPP_COEXISTENCE_ENABLED:"true",
+    WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true",
+    WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+    WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+  };
+  assert.deepEqual(assertPr395StagingSafety(verified),{
+    staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
+  });
+  for(const overrides of [
+    {WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"1852014482431209"},
+    {WHATSAPP_SECONDARY_WABA_ID:""},
+    {WHATSAPP_SECONDARY_TOKEN:""},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false"},
+    {PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"false"},
+    {WHATSAPP_APP_SECRET:"different-secret-0123456789"},
+  ]) assert.throws(()=>assertPr395StagingSafety({...verified,...overrides}),Error,
+    JSON.stringify(overrides));
+  assert.throws(()=>assertPr395StagingSafety({...verified,PR395_STAGING_MODE:"false"}),
+    /outside PR395/);
+});
+test("signed rehearsal only accepts events for its exact second account and phone",()=>{
+  const env={
+    ...safe(),
+    PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true",
+    WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness",
+    WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
+    WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
+    WHATSAPP_WABA_ID:"1593376338308612",
+  };
+  const lifecycle={object:"whatsapp_business_account",entry:[{
+    id:"222222222222222",changes:[{field:"account_update",value:{
+      event:"PARTNER_REMOVED",phone_number:"+60 17-483 1336"
+    }}]
+  }]};
+  const msg={object:"whatsapp_business_account",entry:[{
+    id:"222222222222222",changes:[{field:"messages",value:{
+      metadata:{phone_number_id:"1318355951360575"},
+      messages:[{id:"wamid.test",from:"60120000000",type:"text",text:{body:"test"}}]
+    }}]
+  }]};
+  const run=(body,route="/webhook")=>{
+    let called=false,code=null;
+    const res={set(){return this},status(n){code=n;return this},json(){return this}};
+    stagingWebhookGuard({body,path:route},res,()=>{called=true},env);
+    return {called,code};
+  };
+  assert.equal(run(msg).called,true);
+  assert.equal(run(lifecycle,"/meta-webhook").called,true);
+  assert.equal(run(lifecycle,"/webhook").called,true);
+  assert.equal(run({...msg,entry:[{...msg.entry[0],id:"1593376338308612"}]}).code,503);
+  const status={...msg,entry:[{...msg.entry[0],
+    changes:[{field:"messages",value:{
+      metadata:{phone_number_id:"1318355951360575"},statuses:[{id:"wamid.test"}]
+    }}]}]};
+  assert.equal(run(status).code,503);
+  assert.equal(run(msg,"/meta-webhook").code,503);
+  assert.equal(run({object:"whatsapp_business_account",entry:[
+    ...msg.entry,...lifecycle.entry
+  ]}).called,true);
+  const mixed={object:"whatsapp_business_account",entry:[
+    ...msg.entry,{id:"1593376338308612",changes:lifecycle.entry[0].changes}
+  ]};
+  assert.equal(run(mixed).code,503);
+});
+test("rehearsal does not start AI processing even if a durable inbound claim was enqueued",()=>{
+  const worker=fs.readFileSync(path.join(__dirname,"../src/services/inboundProcessingService.js"),"utf8");
+  assert.match(worker,/process\.env\.PR395_STAGING_MODE === "true"\) return;/);
+  const startup=fs.readFileSync(path.join(__dirname,"../src/services/applicationStartup.js"),"utf8");
+  assert.match(startup,/providerRehearsalEnabled\(process\.env\)/);
+  assert.match(startup,/coexistenceHistory\.start\(\);/);
+});
