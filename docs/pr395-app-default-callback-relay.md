@@ -478,8 +478,21 @@ WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN=<existing DA CHATBOT WhatsApp callback verif
 WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID=<validated WABA from v4 Embedded Signup, never guessed>
 WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=<private QA E.164 configured in Render>
 WHATSAPP_DEFAULT_RELAY_LEGACY_URL=https://clinic-ai-chatbot.onrender.com/webhook
+WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS=<complete authorized legacy account ID list, comma separated>
 WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL=<isolated-provider-enabled-qa-https-webhook>
 ```
+
+The relay requires an explicit `WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS` in
+both bootstrap and post-onboarding mode. IDs must be unique and numeric, and
+must not include the secondary account ID. Any signed unknown account causes
+HTTP 503 for the entire batch **before** forwarding to the legacy destination.
+Do not use wildcards or infer the list from one portfolio's incomplete inventory.
+
+**Remaining cutover blocker:** In post-onboarding mode, allowlisted legacy
+`account_update` events still reach the old callback without the bootstrap
+mode's commit-bound lifecycle audit. Complete a separate durable legacy
+lifecycle routing review and real-provider acceptance before activating
+post-onboarding relay mode. An allowlist alone does not prove safe cutover.
 
 The lifecycle target must be a separate authorized, **provider-enabled**
 acceptance handler when testing. It must run PR #395, validate the same
