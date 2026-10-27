@@ -74,7 +74,22 @@ async function recordBatch(body,{env=process.env,database=pool}={}){
        "ON CONFLICT(fingerprint) DO NOTHING RETURNING fingerprint",
        [event.fingerprint,event.account,event.eventType,event.phone,event.entryTime]
      );
-     if(row.rowCount===1)inserted++;
+     if(row.rowCount===1){
+       inserted++;
+       // Alert and signed audit commit atomically. Never disable or modify
+       // the legacy production sender based on a staging callback.
+       const critical=new Set([
+         "PARTNER_REMOVED","ACCOUNT_OFFBOARDED","ACCOUNT_DISCONNECTED",
+         "PHONE_NUMBER_REMOVED","ACCOUNT_DISABLED","DISCONNECTED"
+       ]).has(event.eventType);
+       await connection.query(
+         "INSERT INTO whatsapp_pr395_legacy_lifecycle_alerts "+
+         "(fingerprint,account_id,event_type,severity) VALUES($1,$2,$3,$4) "+
+         "ON CONFLICT(fingerprint) DO NOTHING",
+         [event.fingerprint,event.account,event.eventType,
+          critical?"critical":"review"]
+       );
+     }
    }
    await connection.query("COMMIT");transaction=false;
    return{durable:true,accepted:events.length,inserted};
