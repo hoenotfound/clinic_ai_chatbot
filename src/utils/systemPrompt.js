@@ -349,7 +349,11 @@ function conversationPromotionsList(conversationContext) {
         conversationContext?.currentCustomerText || "", [],
         { allowTextOnlyOffers: true })
     : null;
-  const compactVerifiedPrices = aiPriceReference?.length
+  // Only expose even a compact verified amount to the model on a customer-
+  // authored price request; quantity, duration and benefit questions never
+  // require a hidden price reference.
+  const verifiedMoneyEnquiry = hasExplicitPriceRequest(conversationContext?.currentCustomerText || "");
+  const compactVerifiedPrices = verifiedMoneyEnquiry && aiPriceReference?.length
     ? [
         "  VERIFIED PRICE REFERENCE (internal only): quote these amounts ONLY for a CURRENT customer price request. Do not send or promise images based on this reference.",
         ...aiPriceReference.map((item) =>
@@ -372,7 +376,7 @@ function conversationPromotionsList(conversationContext) {
   const casualSessionAmount = /(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|是|需|需要|收费|收費|花|大概|大约|大約)?\s*(?:多少|几多|幾多)(?!\s*(?:次|分钟|分鐘|小时|小時|天|日|月|年))|(?:first[\s-]*trial|首次|初次|第一次)\s*(?:体验|體驗|护理|護理|疗程|療程)?\s*(?:要|是|需|需要|大概)?\s*(?:多少|几多|幾多)(?!\s*(?:次|分钟|分鐘|小时|小時|天|日|月|年))/iu.test(
     String(conversationContext?.currentCustomerText || "")
   );
-  if (casualSessionAmount && compactVerifiedPrices.length) {
+  if (casualSessionAmount && verifiedMoneyEnquiry && compactVerifiedPrices.length) {
     return [
       "- Current treatment promotion summaries and verified amounts (no long ad captions).",
       ...relevant.map(renderCompactPromotion),
