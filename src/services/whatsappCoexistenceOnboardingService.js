@@ -67,6 +67,7 @@ function unassignedProtectedQaTarget(env = process.env) {
   const approved = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
   const primary = normalizedPhone(env.WHATSAPP_PHONE_NUMBER);
   return env.PR395_STAGING_MODE === "true" &&
+    env.PR395_STAGING_APP_ONLY_SIGNUP_READY === "true" &&
     env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED !== "true" &&
     env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" &&
     env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa" &&
