@@ -28,7 +28,7 @@ test("sales follow-up candidate query applies owner and journey scoping in SQL",
   assert.equal(captured.params[6], 500);
 });
 
-test("manager view is explicit and never implied by default sales permission", async (t) => {
+test("global query visibility follows caller view_all_leads permission", async (t) => {
   const previousQuery = pool.query;
   t.after(() => { pool.query = previousQuery; });
   let params;
