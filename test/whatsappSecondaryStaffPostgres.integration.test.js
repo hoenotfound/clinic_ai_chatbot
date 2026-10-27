@@ -40,7 +40,7 @@ test("real PostgreSQL sender-qualified Ariel staff send never borrows Neutro win
       },
       query:(...args)=>db.query(...args),
     };
-    assert.equal(loadMigrations().at(-1).version,103);
+    assert.equal(loadMigrations().at(-1).version,104);
     await runMigrations(database,{quiet:true});
     const senders=(await db.query(
       "INSERT INTO whatsapp_sender_accounts " +
