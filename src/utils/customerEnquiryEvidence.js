@@ -3,7 +3,7 @@ const { withoutExplicitMarketingRefusal } = require("./marketingRefusal");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
-const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|rm\s*\d{2,})\b|\b(?:harga|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|优惠|優惠|折扣|促销|促銷|\b(?:(?:special|current|any|what|which)\s+offers?)\b)/iu;
+const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|rm\s*\d{2,})\b|\b(?:harga|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|优惠|優惠|折扣|促销|促銷|\b(?:(?:special|current|any|what|which)\s+offers?)\b)/iu;
 
 
 // Naming a package is treatment interest, not by itself a request for its
@@ -21,6 +21,7 @@ const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringg
 const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
 // Malaysian colloquial price requests are not generic treatment or package
 // enquiries. "几钱" is different from "几次" or "几多疗程".
+// Bare "几多" is ambiguous and must not make a session-count question a price request.
 const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[钱錢]|幾\s*多\s*[钱錢]|多\s*[少幾几]\s*(?:块|塊|令吉)|(?:几|幾)\s*(?:块|塊)(?:钱|錢)?|(?:价\s*位|價\s*位)(?=\s*(?:[?？]|多少|如何|怎么|怎麼|什么|什麼|几|幾|$))|(?:(?:price|harga|kos|caj|rate|fee|rm)\s*(?:please|pls|plz|berapa|brp)|(?:pm|p\.?m\.?)\s*(?:(?:一下|下|我|me)\s*)?(?:价格|價錢|价钱|价位|價位|几钱|幾錢|harga|price)))/iu;
 
 // Malaysian Chinese WhatsApp users often omit 钱/price in shorthand such as
