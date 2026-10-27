@@ -487,6 +487,12 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
     const list = () => worker.listCandidates(settings, client);
     const eligible = await list();
     assert.equal(eligible.length,1,"eligible CTWA lead appears in candidate queue");
+    await client.query("INSERT INTO sales_follow_up_tasks (lead_id,status,updated_at) VALUES (1,'contacted',now())");
+    assert.equal((await list()).length,0,
+      "confirmed personal WhatsApp contact blocks future automated marketing slots");
+    await client.query("DELETE FROM sales_follow_up_tasks WHERE lead_id=1");
+    assert.equal((await list()).length,1,
+      "unrelated original WhatsApp follow-up eligibility is preserved");
     await client.query(`
       INSERT INTO follow_up_ai_decisions
         (contact_id,trigger_message_id,follow_up_step,action,reason)
