@@ -24,7 +24,7 @@ jobs:
     environment:
       name: pr395-isolated-webhook-rehearsal
     env:
-      PR395_APPROVED_SHA: 19b1bbe00b18e28fb90cdf5755c9ac8ac49484ca
+      PR395_APPROVED_SHA: e1b0dc8f682477aec69f6afe671f81758f772f2b
     steps:
       - name: Checkout trusted main-only harness, no persisted token
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

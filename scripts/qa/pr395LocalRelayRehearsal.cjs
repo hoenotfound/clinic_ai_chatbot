@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 const http = require("node:http");
 const test = require("node:test");
 
-const PINNED = "19b1bbe00b18e28fb90cdf5755c9ac8ac49484ca";
+const PINNED = "e1b0dc8f682477aec69f6afe671f81758f772f2b";
 const PR_SOURCE = process.env.PR395_RELAY_SOURCE;
 if (process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
     process.env.GITHUB_REF !== "refs/heads/main" ||
@@ -120,7 +120,7 @@ function config(){
     WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL:OUT.pre
   });
 }
-async function fixture(fn){
+async function fixture(fn,{dispatchTimeoutMs,uncooperativeRole}={}){
   const state=createState();
   const servers={
     legacy:receiver("legacy",state),
@@ -136,9 +136,14 @@ async function fixture(fn){
     }
     const fetchImpl=(uri,opts)=>{
       if(!map.has(uri))throw Error("FATAL: attempted nonlocal or unknown relay egress");
+      if(uncooperativeRole && uri===OUT[uncooperativeRole]){
+        state[uncooperativeRole].requests++;
+        state[uncooperativeRole].inflightSignal=opts.signal;
+        return new Promise(()=>{}); // deliberately ignores AbortSignal
+      }
       return fetch(map.get(uri),opts);
     };
-    relay=createRelayServer(config(),{fetchImpl});
+    relay=createRelayServer(config(),{fetchImpl,...(dispatchTimeoutMs?{dispatchTimeoutMs}:{})});
     const url=await listen(relay);
     return await fn({url,state});
   }finally{
@@ -233,12 +238,14 @@ test("legacy receiver failure and audit DB outage fail closed; replay eventually
     assert.deepEqual(["legacy","audit","pre"].map(name=>state[name].unique.size),[1,1,1]);
   });
 });
-test("cold/slow downstream COMMIT before 8s timeout results in retryable 503, never a false ACK",async()=>{
+test("bounded total deadline: late audit COMMIT yields 503, no false ACK, replay recovers",async()=>{
   await fixture(async({url,state})=>{
-    state.audit.delay=8500; // models late response after durable write
+    state.audit.delay=220; // durable commit before receiver sends HTTP response
     const started=Date.now();
     assert.equal(await send(url,mixed()),503);
-    assert.ok(Date.now()-started>=7300,"test did not exercise the relay's real timeout");
+    const elapsed=Date.now()-started;
+    assert.ok(elapsed>=35 && elapsed<2000,
+      "relay should return promptly after its 75ms shared deadline: "+elapsed+"ms");
     assert.equal(state.audit.unique.size,1);
     assert.equal(state.pre.requests,0);
     // No automatic relay retry. A later provider replay is explicitly separate.
@@ -246,5 +253,19 @@ test("cold/slow downstream COMMIT before 8s timeout results in retryable 503, ne
     assert.equal(await send(url,mixed()),200);
     assert.equal(state.audit.unique.size,1,"late durable insert must be idempotent");
     assert.equal(state.pre.unique.size,1);
-  });
+  },{dispatchTimeoutMs:75});
+});
+test("never-settling audit transport cannot block upstream HTTP beyond total deadline",async()=>{
+  await fixture(async({url,state})=>{
+    const started=Date.now();
+    assert.equal(await send(url,mixed()),503);
+    const elapsed=Date.now()-started;
+    assert.ok(elapsed>=35 && elapsed<2000,
+      "upstream must not wait for an uncooperative transport: "+elapsed+"ms");
+    assert.equal(state.legacy.unique.size,1);
+    assert.equal(state.audit.requests,1);
+    assert.equal(state.audit.inflightSignal?.aborted,true);
+    assert.equal(state.pre.requests,0);
+    assert.equal(state.pre.unique.size,0);
+  },{dispatchTimeoutMs:75,uncooperativeRole:"audit"});
 });
