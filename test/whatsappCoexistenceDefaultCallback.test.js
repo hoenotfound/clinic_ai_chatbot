@@ -17,7 +17,7 @@ function harness(overrides={},persistFailure=false){
     WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
     WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
     WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
-    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60187004870",
     META_APP_SECRET:"same-signed-app",
     WHATSAPP_APP_SECRET:"same-signed-app",
     ...overrides
@@ -47,7 +47,7 @@ function harness(overrides={},persistFailure=false){
 function callback(event="PARTNER_REMOVED",account="200000000000002"){
   return{object:"whatsapp_business_account",entry:[{
     id:account,changes:[{field:"account_update",value:{
-      event,phone_number:"+60 17-483 1336",disconnection_info:{reason:"ACCOUNT_DISCONNECTED"}
+      event,phone_number:"+60 18-700 4870",disconnection_info:{reason:"ACCOUNT_DISCONNECTED"}
     }}]
   }]};
 }
