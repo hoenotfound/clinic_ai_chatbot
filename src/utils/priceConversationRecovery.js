@@ -18,8 +18,13 @@ const ADMIN_FEE = /(?:押金|订金|訂金|定金|评估|評估|咨询费|諮詢
 // Count *distinct treatments*, never two hours, visits, sessions or an RM amount.
 const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|and).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|and).{0,12}3\s*d))/iu;
 const NON_TREATMENT_COUNT = /(?:[这這]?[两兩]|[这這]?2)\s*(?:个|個)?\s*(?:半\s*)?(?:小时|小時|钟头|鐘頭|周|週|星期|礼拜|月|年|天|次|回|人|位)/iu;
+const OMIT_COMBO = /(?:不要|不想要?|不需要|不选|不選|不是|不用)\s*(?:(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d)\s*)?(?:组合|組合|搭配|combo|bundle)(?:配套|套餐|价|價|价格|價格)?/giu;
 const COMBO = /(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu;
 const CLARIFICATION = /(?:哪.{0,22}(?:疗程|療程|价钱|價錢|价格|價格|收费|收費)|想了解哪.{0,40}(?:价格|价钱|價錢)|\b(?:which|what)\b.{0,65}\b(?:treatment|price|cost)\b)/iu;
+const MENU_PRICE_QUESTION = /(?:价钱|價錢|价格|價格|收费|收費|费用|費用|价格|多少钱|多少錢|price|cost|harga)/iu;
+const MENU_SELECTION_QUESTION = /(?:请问|請問|哪|选|選|想了解|想知道|想问|想問|which|what|would\s+you\s+like)/iu;
+const MULTIPLE_PACKAGES = /(?:package\s*[ab]|配套\s*[ab]|套餐\s*[ab]|(?:两|兩|2)\s*(?:个|個|项|項)?配套)/iu;
+const SHORT_BOTH = /^(?:(?:这|這)?(?:两|兩)\s*(?:个|個|项|項|页|頁)(?:都要|都想了解|都想知道)?|both(?:\s+(?:please|of them))?)[\s!！。?？]*$/iu;
 const CONCERN_3D = /^(?:(?:我想|想|要|做)\s*)?(?:调整|調整|改善|处理|處理)?\s*(?:左右)?\s*大小脸(?:的视觉|視覺|视觉|問題|问题)?[\s!！。?？]*$/u;
 
 function namedSingle(text, services, aliases) {
@@ -52,10 +57,26 @@ function shortChoice(text, services, aliases, preceding) {
   // the bot has independently explained 3D in this very thread.
   if (CONCERN_3D.test(String(text || "").trim())) {
     const face = services.find(s => s.name === "3D 小颜术");
-    if (face && preceding.some(turn => turn.role === "assistant" &&
-        !isVerifiedStaffTurn(turn) &&
-        findServicesInText(pricingMessageText(turn), serviceCandidates(services, aliases))
-          .includes(face.name))) return face;
+    const candidates = serviceCandidates(services, aliases);
+    // Trust an explicit bot explanation connecting 3D with the customer's
+    // size/asymmetry concern, not a generic menu that merely names 3D and 9D.
+    const botMappedConcern = preceding.some(turn => turn.role === "assistant" &&
+      !isVerifiedStaffTurn(turn) &&
+      pricingMessageText(turn).split(/[，,。；;!！?？\n]/u).some(clause =>
+        /大小脸/u.test(clause) &&
+        findServicesInText(clause, candidates).length === 1 &&
+        findServicesInText(clause, candidates)[0] === face?.name
+      ));
+    // Or the customer established the size concern before a bot explained
+    // 3D in direct response (and there is no competing service in that reply).
+    const priorConcernConfirmed = preceding.some((turn, index) => {
+      if (turn.role !== "user" || !/大小脸/u.test(pricingMessageText(turn))) return false;
+      const next = preceding[index + 1];
+      if (next?.role !== "assistant" || isVerifiedStaffTurn(next)) return false;
+      const mentioned = [...new Set(findServicesInText(pricingMessageText(next), candidates))];
+      return mentioned.length === 1 && mentioned[0] === face?.name;
+    });
+    if (face && (botMappedConcern || priorConcernConfirmed)) return face;
   }
   return null;
 }
@@ -66,7 +87,10 @@ function recentTurns(session, now) {
   if (last?.role !== "user" || !isRecentPricingThread(session,0,now) ||
       session.some(turn => isVerifiedStaffTurn(turn) ||
         (turn.role === "user" && hasClinicalMediaRisk(pricingMessageText(turn))))) return null;
-  return session.filter(turn => turn.pricingCreatedAtMs >= now - MAX_CONTEXT_MS);
+  const bounded = session.filter(turn => turn.pricingCreatedAtMs >= now - MAX_CONTEXT_MS);
+  // No orphan assistant menu may authorize a quote after the 3h cutoff.
+  const firstUser = bounded.findIndex(turn => turn.role === "user");
+  return firstUser < 0 ? null : bounded.slice(firstUser);
 }
 
 // "3D" or "调整大小脸" after a price question and one or more bot
@@ -77,7 +101,7 @@ function resolveRecentPriceSelection({
 } = {}) {
   const turns = recentTurns(session, now);
   const current = String(customerText || "").trim();
-  if (!turns || turns.length < 4 || !current || current.length > 90 ||
+  if (!turns || turns.length < 3 || !current || current.length > 90 ||
       RESET.test(current) || BROAD.test(current) || ADMIN_FEE.test(current) ||
       hasExplicitPriceRequest(current) || TWO_REQUEST.test(current) ||
       pricingMessageText(turns.at(-1)).trim() !== current ||
@@ -226,25 +250,39 @@ function resolveTwoTreatmentPriceReply({
 } = {}) {
   const turns = recentTurns(session, now);
   const current = String(customerText || "").trim();
-  if (!turns || !current || current.length > 115 || !TWO_REQUEST.test(current) ||
-      NON_TREATMENT_COUNT.test(current) ||
-      RESET.test(current) || BROAD.test(current) || ADMIN_FEE.test(current) ||
-      COMBO.test(current) || pricingMessageText(turns.at(-1)).trim() !== current)
+  // Removing only a clear NEGATION of the combo lets "3D 和 9D 分开
+  // 多少钱？不要组合" mean two independent quotes. Positive combo requests
+  // and refusals of treatment itself still fail closed.
+  const effective = current.replace(OMIT_COMBO, " ").trim();
+  if (!turns || !current || current.length > 115 ||
+      !TWO_REQUEST.test(effective) || NON_TREATMENT_COUNT.test(effective) ||
+      RESET.test(effective) || BROAD.test(effective) || ADMIN_FEE.test(effective) ||
+      COMBO.test(effective) || pricingMessageText(turns.at(-1)).trim() !== current)
     return null;
   const before = turns.slice(0,-1);
-  const direct = hasExplicitPriceRequest(current);
+  const direct = hasExplicitPriceRequest(effective);
   if (!direct) {
-    // A bare "两个" only continues an immediately unresolved price enquiry
-    // which *already asked about two* and led to the bot's clarification.
-    if (!/^(?:(?:两|兩)\s*(?:个|個|项|項|页|頁)(?:都要|都想了解|都想知道)?|both(?:\s+(?:please|of them))?)[\s!！。?？]*$/iu.test(current) ||
-        before.at(-1)?.role !== "assistant" ||
-        !CLARIFICATION.test(pricingMessageText(before.at(-1))) ||
-        !before.filter(x => x.role === "user").slice(-2)
-          .some(x => TWO_REQUEST.test(pricingMessageText(x)) &&
-            hasExplicitPriceRequest(pricingMessageText(x)))) return null;
+    // A short "两个" directly answers a PRICE choice between exactly two
+    // distinct treatments. Do not require a redundant earlier "both prices"
+    // question. Preserve the older continuation when the bot asks a generic
+    // clarification following a verified two-price request.
+    const precedingBot = before.at(-1);
+    const botText = pricingMessageText(precedingBot);
+    const choices = separateServicesInMenu(botText, serviceCandidates(services, serviceAliases));
+    const explicitMenu = precedingBot?.role === "assistant" &&
+      !isVerifiedStaffTurn(precedingBot) &&
+      choices.length === 2 && MENU_PRICE_QUESTION.test(botText) &&
+      MENU_SELECTION_QUESTION.test(botText) && !MULTIPLE_PACKAGES.test(botText);
+    const priorTwoPrice = precedingBot?.role === "assistant" &&
+      CLARIFICATION.test(botText) &&
+      before.filter(x => x.role === "user").slice(-2)
+        .some(x => TWO_REQUEST.test(pricingMessageText(x)) &&
+          hasExplicitPriceRequest(pricingMessageText(x)));
+    if (!SHORT_BOTH.test(current) || (!explicitMenu && !priorTwoPrice))
+      return null;
   }
   const names = requestedTwoTreatmentServices(
-    current, before, services, serviceAliases
+    effective, before, services, serviceAliases
   );
   if (!names || names.length !== 2) return null;
 
