@@ -354,8 +354,8 @@ test("20-message truncated history beginning with an assistant preserves a fresh
   assert.equal(recentVerifiedPricingSession(untrusted,"请问一次多少钱",now)?.[0].role,"user",
     "a missing boundary timestamp must not authorize old orphan assistant content");
   delete untrusted[18].pricingCreatedAtMs;
-  assert.equal(recentVerifiedPricingSession(untrusted,"请问一次多少钱",now),null,
-    "missing timestamps inside the customer-led exchange remain disallowed");
+  assert.equal(shadow(untrusted,"请问一次多少钱"),null,
+    "missing timestamps inside the customer-led exchange never recover its earlier treatment");
 });
 
 test("three-turn fee clarification accepts a bot-grounded facial concern, not a generic alias guess", () => {
@@ -464,4 +464,35 @@ test("outbound two-treatment quote is guarded before the model information hando
   assert.match(source,/if \(twoTreatmentQuote\) \{\s*\/\/ A verified multi-treatment request/u);
   assert.match(source,/const promoBundle = twoTreatmentQuote \? null : await resolvePricePromotionForReply/u);
   assert.match(source,/mediaReason: promoBundle \? null : pricingMediaSkipReason/u);
+});
+
+
+test("a first inbound message that names two treatments and asks separate prices needs no prior menu", () => {
+  for(const current of [
+    "3D 和 9D 分开多少钱？不要组合",
+    "3D and 9D separately, not the combo, how much?",
+    "3D dan 9D berapa harga? bukan pakej",
+  ]){
+    const history=[turn("user",current,50)];
+    const result=dual(history,current);
+    assert.deepEqual(result?.prices.map(x=>x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],current);
+    assert.deepEqual(result?.prices.map(x=>x.amount),["RM488","RM488"]);
+  }
+  for(const current of ["这两个多少钱","两个","3D+9D组合多少钱","做两次多少钱"]){
+    const history=[turn("user",current,50)];
+    assert.equal(dual(history,current),null,current);
+  }
+});
+
+test("no-combo negation cannot hide safety or treatment rejection", () => {
+  const candidates=[
+    "3D 和 9D 我都不要，别发价钱",
+    "3D 和 9D 都不要组合，也不用发我优惠",
+    "3D+9D组合就是我要的，多少钱？",
+    "我要combo 3D 和 9D，多少钱",
+  ];
+  for(const current of candidates){
+    assert.equal(dual([turn("user",current,60)],current),null,current);
+  }
 });
