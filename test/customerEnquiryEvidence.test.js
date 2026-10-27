@@ -432,3 +432,46 @@ test("Malaysian Chinese quantity, refusals, budgets and follow-up opt-ins cannot
     assert.equal(isStandalonePriceQuestion(message),false,message);
   }
 });
+
+
+test("Malaysian Chinese benefit/quotation-of-text requests never become monetary enquiries", () => {
+  const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
+  for (const message of [
+    "3D有什么价值？",
+    "9D有什麼價值？",
+    "3D什么价值比较高?",
+    "9D 有啥价值比其他项目好？",
+    "Can you quote a customer's feedback about 3D?",
+    "Please quote this customer's message for me",
+    "9D 一次多少人一起?",
+    "3D 一次多少个部位?",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(message), false, message);
+    assert.equal(hasExplicitPriceRequest(message), false, message);
+  }
+  for (const message of [
+    "3D 什么价？", "9D啥价", "3D体验价？",
+    "3D優惠價?", "9D优惠价？", "3D体验价是多少?",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(message), true, message);
+    assert.equal(hasExplicitPriceRequest(message), true, message);
+  }
+});
+
+test("different-treatment quote refusals preserve only a separate customer price request", () => {
+  const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
+  const positives=[
+    "9D不要报价了，我想问3D多少钱？",
+    "9D不需要报价，但3D优惠价多少？",
+    "3D不要报价，9D多少钱?",
+  ];
+  for (const message of positives) {
+    assert.equal(hasCustomerPriceEnquiry(message), true, message);
+    assert.equal(hasExplicitPriceRequest(message), true, message);
+  }
+  for (const message of [
+    "3D不要报价", "9D不需要报价。",
+    "3D不要报价，9D的效果好不好？",
+    "9D不要报价，不过我想了解3D的效果",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), false, message);
+});
