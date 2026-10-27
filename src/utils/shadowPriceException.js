@@ -11,6 +11,7 @@ const {
 } = require("./priceFollowUpContext");
 const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { resolveAiPricingDecision } = require("./aiPricingIntentDecision");
+const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
 const {
@@ -250,6 +251,34 @@ function resolveShadowPriceException({
     text, complimentaryAssessmentExperienceEnabled, session
   ) || session.some(turn => turn.role === "user" &&
     hasClinicalMediaRisk(pricingMessageText(turn)))) return null;
+
+  // A customer may refuse one quotation and ask for a DIFFERENT treatment
+  // in one message. Its service comes only from the verified current clause.
+  // Handle this before older-session recovery, and keep the original
+  // session's staff, safety and trusted timestamp checks intact.
+  const mixed = resolveIndependentRefusalPriceRequest({
+    customerText: text, services, serviceAliases,
+  });
+  if (mixed) {
+    const scoped = resolveAiPricingDecision({
+      priceQuery: true, packageQuery: false, treatment: null,
+      customerText: text, conversationHistory: session, services,
+      serviceAliases, promotions, metaAdContext,
+      complimentaryAssessmentExperienceEnabled, now,
+    });
+    if (!scoped || scoped.type !== "price" ||
+        scoped.treatment !== mixed.treatment ||
+        scoped.source !== "current_customer" || !scoped.prices?.length) return null;
+    const verified = shadowVerifiedPrice({
+      source: "current_customer", treatment: mixed.treatment,
+      customerText: mixed.priceText, conversationHistory: session, promotions,
+    });
+    return verified ? Object.freeze({
+      ...verified,
+      scopedPriceText: mixed.priceText,
+      scopedRefusedTreatment: mixed.refusedTreatment,
+    }) : null;
+  }
 
   // "疗程多少钱" -> bot: "which treatment's price?" -> "盆骨调整".
   // The customer answer inherits only that immediate, independently verified
