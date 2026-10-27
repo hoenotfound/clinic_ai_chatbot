@@ -8,6 +8,7 @@ The protected synthetic [relay rehearsal run #40489411845](https://github.com/ho
 
 - Replace the 8-second **per-downstream** POST timeout with a 30-second **single total deadline** for the whole forwarded batch. An individual HTTP POST receives only the time remaining, never a fresh budget after previous deliveries.
 - If the shared deadline expires before initiating a later POST, make no further downstream delivery attempt; return retryable HTTP 503.
+- The 30-second deadline is enforced by a **monotonic timer and an independent Promise.race**, plus best-effort AbortController cancellation. A fetch implementation that ignores its signal cannot keep the upstream webhook waiting indefinitely (subject to the Node event loop being responsive).
 - If a downstream POST times out after a possible commit or supplies a late HTTP 200 after expiry, treat its outcome as **unknown**, return 503, and **never retry it from within the relay**.
 - Preserve strict HMAC validation, fixed known-WABA routing, signed downstream forwarding, and required durable ACK headers for lifecycle/preidentity events. Preserve fail-closed handling for unknown or incorrect receivers.
 - Keep timeout injection **test-only** through `createRelayServer(config,{dispatchTimeoutMs})` / `dispatchSignedBatch(...,{dispatchTimeoutMs})`; no new production environment switch and no new polling, scheduled wake-up, automatic delivery retries, HTTP listeners, DB tables, or external services.
@@ -22,8 +23,8 @@ The protected synthetic [relay rehearsal run #40489411845](https://github.com/ho
 
 ## Acceptance checklist
 
-- New `test/pr395RelayDeadline.test.js` regression tests: signed mixed routing, deduplication on explicit replay, shared budget, timeout after simulated commit, absent durable ACK, legacy failure, invalid timeouts, foreign WABA and ignored AbortSignal.
-- Existing relay unit and localhost integration tests pass.
-- All PR CI jobs green on the **exact stacked-PR head**.
+- New `test/pr395RelayDeadline.test.js` regression tests: signed mixed routing, deduplication on explicit replay, shared budget, timeout after simulated commit, absent durable ACK, legacy failure, invalid timeouts, foreign WABA, never-settling transport, ignoring AbortSignal, and bounded **real HTTP upstream response**.
+- Existing relay unit and **all seven** localhost HTTP integration tests run in the stacked PR workflow. It installs dependencies with `npm ci --ignore-scripts --no-audit --no-fund`, without accessing production infrastructure.
+- Stacked safety workflow green on the **exact stacked-PR head**: **27/27 tests** (11 new deadline regressions, 9 existing relay unit tests, 7 HTTP integration tests), with no secrets, real Meta traffic, Render API calls, or Neon connections. This is not the full main-branch deployment CI suite.
 - Independently review the PR diff and confirm no files outside relay implementation, tests, and this note changed.
 - Keep Neutro Render Auto-Deploy OFF. Only consider merging the small stacked PR into PR395's feature branch after explicit owner approval; **do not merge PR395 to main or enable Meta delivery**.
