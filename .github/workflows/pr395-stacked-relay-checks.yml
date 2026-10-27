@@ -1,0 +1,38 @@
+name: PR395 stacked relay safety tests
+
+# Runs only for a stacked PR targeting the isolated coexistence feature
+# branch; no credentials, Meta calls, Render calls, releases or deploys.
+on:
+  pull_request:
+    branches:
+      - feature/whatsapp-complete-multinumber-integration-20261022
+    paths:
+      - 'src/services/whatsappAppDefaultRelay.js'
+      - 'test/pr395RelayDeadline.test.js'
+      - 'test/whatsappAppDefaultRelay.test.js'
+      - '.github/workflows/pr395-stacked-relay-checks.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr395-stacked-relay-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-relay-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout stacked PR merge (no persisted credentials)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Confirm Node and syntax (no package install)
+        run: |
+          node --version
+          node --check src/services/whatsappAppDefaultRelay.js
+          node --check test/pr395RelayDeadline.test.js
+      - name: Run built-in Node relay tests against synthetic endpoints only
+        run: |
+          node --test test/pr395RelayDeadline.test.js test/whatsappAppDefaultRelay.test.js
