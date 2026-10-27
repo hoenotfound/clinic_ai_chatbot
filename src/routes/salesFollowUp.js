@@ -109,7 +109,7 @@ router.post("/:leadId/undo", async (req, res) => {
 });
 
 router.patch("/:leadId/outcome", async (req, res) => {
-  if (!hasCapability(req.user, "manage_assigned_leads")) return res.sendStatus(403);
+  if (!canView(req) || !hasCapability(req.user, "manage_assigned_leads")) return res.sendStatus(403);
   try {
     const result = await followUpRepo.recordOutcome({
       leadId: req.params.leadId, status: req.body?.status,
