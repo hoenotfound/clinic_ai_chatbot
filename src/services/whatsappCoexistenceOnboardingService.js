@@ -6,6 +6,7 @@ const {
   normalizedGraphVersion,
 } = require("../provisioning/whatsappWebhookSubscription");
 
+const {credentialVaultReady} = require("./whatsappCoexistenceCredentialVault");
 const FINISH_EVENT = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
 const EMBEDDED_SIGNUP_TYPE = "WA_EMBEDDED_SIGNUP";
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -149,6 +150,10 @@ function publicConfig(env = process.env) {
   // configuration, not something the API can infer from config_id.
   if (secondary && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
     missing.push("META_EMBEDDED_SIGNUP_V4_CONFIRMED");
+  }
+  if (secondary && env.PR395_STAGING_MODE === "true" &&
+      !credentialVaultReady(env)) {
+    missing.push("PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY");
   }
   if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID)) &&
       !unassignedProtectedQaTarget(env)) {
@@ -467,6 +472,9 @@ async function completeEmbeddedSignup({
   sessionInfo,
   env = process.env,
   fetchImpl = global.fetch,
+  // Internal callback only. The Meta access token MUST NOT be returned to
+  // any frontend API response, log, onboarding audit column or exception.
+  onVerifiedCredential = null,
 }) {
   const finish = validateFinishSession(sessionInfo);
   const expectedPhoneId = requireExpectedSecondaryPhone(env);
@@ -519,6 +527,30 @@ async function completeEmbeddedSignup({
   const phone = choosePhoneNumber(phones, finish.phoneNumberId);
   assertExpectedSecondaryPhone(phone, env);
   const runtime = publicConfig(env).runtime;
+  if (typeof onVerifiedCredential === "function") {
+    if (!token.scopes.includes("whatsapp_business_messaging")) {
+      throw new WhatsAppCoexistenceOnboardingError(
+        "The Meta authorization did not grant whatsapp_business_messaging.",
+        { code: "WHATSAPP_COEXISTENCE_MESSAGING_SCOPE_MISSING",status:409,retrySafe:false }
+      );
+    }
+    // debug_token expiry has precedence. OAuth expires_in is only a fallback.
+    // If neither is available, refuse to persist indefinite credentials.
+    const expiry=token.expiresAt || (
+      Number.isSafeInteger(exchanged.expiresIn) && exchanged.expiresIn>0
+        ? new Date(Date.now()+exchanged.expiresIn*1000).toISOString()
+        : null
+    );
+    await onVerifiedCredential({
+      accessToken:exchanged.accessToken,
+      wabaId:waba.id,phoneNumberId:phone.id,
+      displayPhoneNumber:phone.displayPhoneNumber,
+      verifiedName:phone.verifiedName,
+      coexistenceReady:phone.coexistenceReady,
+      eventVersion:finish.eventVersion,
+      tokenExpiresAt:expiry,
+    });
+  }
 
   return {
     event: FINISH_EVENT,
