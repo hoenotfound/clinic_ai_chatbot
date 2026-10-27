@@ -131,7 +131,6 @@ function assertPr395StagingSafety(env = process.env) {
   if(env.PR395_STAGING_LEGACY_LIFECYCLE_ENABLED==="true"){
     const {enabled:legacyAuditEnabled}=require("./pr395LegacyLifecycleReceiver");
     if(!legacyAuditEnabled(env) ||
-       env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED==="true" ||
        env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED==="true" ||
        env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING==="true" ||
        OUTBOUND_SWITCHES.some(k=>env[k]==="true") ||
