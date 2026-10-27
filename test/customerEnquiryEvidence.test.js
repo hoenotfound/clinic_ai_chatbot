@@ -363,3 +363,72 @@ test("plain-language opt-outs never unlock immediate pricing media", () => {
     "No promotions please, but what is the price of pelvic treatment?",
   ]) assert.equal(hasCustomerPriceEnquiry(value), true, value);
 });
+
+
+test("Malaysian Chinese WhatsApp price phrasing is monetary across casual Chinese and code-mixing", () => {
+  const { hasExplicitPriceRequest, isStandalonePriceQuestion } =
+    require("../src/utils/customerEnquiryEvidence");
+  const messages = [
+    "3D现在什么价？",
+    "9D 什么价 ah?",
+    "3D啥价",
+    "请问3D报价",
+    "可以给我报价吗？",
+    "Can you quote me for 3D?",
+    "9D quote me",
+    "3D quote?",
+    "3D RM几多？",
+    "9D 幾多RM?",
+    "3D價多少？",
+    "3D 做一次要多少？",
+    "9D 一次多少啊",
+    "3D 1次大概多少?",
+    "3D 1 session 多少?",
+    "骨盆调理做一次几多？",
+    "3D first trial 要多少？",
+    "9D首次体验多少?",
+    "3D几多?",
+    "9D 幾多?",
+    "3D价格how much ah?",
+    "3D收费怎么算？",
+    "9D price pls",
+    "3D how much ya",
+    "3D berapa harga?",
+    "3D brp harga?",
+    "3D brp RM?",
+  ];
+  for (const message of messages) {
+    assert.equal(hasCustomerPriceEnquiry(message),true,message);
+    assert.equal(hasExplicitPriceRequest(message),true,message);
+  }
+  for (const message of ["做一次要多少？","一次几多？","这个做一次要多少？","1 session 大概多少?"]) {
+    assert.equal(isStandalonePriceQuestion(message),true,message);
+    assert.equal(hasExplicitPriceRequest(message),true,message);
+  }
+});
+
+test("Malaysian Chinese quantity, refusals, budgets and follow-up opt-ins cannot unlock price graphics", () => {
+  const { hasExplicitPriceRequest, isStandalonePriceQuestion } =
+    require("../src/utils/customerEnquiryEvidence");
+  const notPrices=[
+    "几多?", "幾多", "多少", "3D几多次?", "9D有几多种配套？",
+    "3D 一次多少分钟?", "9D 一次多少天恢复?",
+    "3D做一次多少个小时", "第一次体验多少分钟?",
+    "3D first trial 几多次?", "3D 1 session 多少分钟?",
+    "3D做一次需要多少次?", "我已经有报价了",
+    "Quotation already received, thanks", "3D 我预算 RM300",
+    "不需要价格", "不要报价", "我只想了解3D，不需要报价",
+    "3D 价格不是问题", "3D price too expensive",
+    "骨盆调理之后有优惠可以通知我",
+    "Can you tell me how many sessions 3D takes?",
+    "How much longer until I can do 9D?",
+    "Berapa sesi rawatan 3D diperlukan?",
+  ];
+  for (const message of notPrices) {
+    assert.equal(hasCustomerPriceEnquiry(message),false,message);
+    assert.equal(hasExplicitPriceRequest(message),false,message);
+  }
+  for (const message of ["几多?","3D几多次?","一次多少分钟?"]) {
+    assert.equal(isStandalonePriceQuestion(message),false,message);
+  }
+});
