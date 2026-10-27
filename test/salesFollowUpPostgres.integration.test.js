@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { Client } = require("pg");
-const { listPending } = require("../src/db/salesFollowUpRepo");
+const { pool } = require("../src/db/db");
+const { listPending, recordOutcome, undoOutcome, listRecentCorrections, countMonthlyOutcomes } = require("../src/db/salesFollowUpRepo");
 
 const URL = process.env.TEST_DATABASE_URL;
 const files = [
@@ -12,7 +13,8 @@ const files = [
   "src/db/migrations/024_whatsapp_marketing_opt_out.sql",
   "src/db/migrations/054_whatsapp_free_entry_followups.sql",
   "src/db/migrations/057_whatsapp_free_entry_referrals.sql",
-  "src/db/migrations/078_sales_follow_up_tasks.sql"
+  "src/db/migrations/078_sales_follow_up_tasks.sql",
+  "src/db/migrations/079_sales_follow_up_corrections.sql"
 ];
 const NOW = new Date("2026-10-27T08:00:00Z");
 
@@ -104,4 +106,62 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
 
     await client.query("UPDATE contacts SET whatsapp_opt_out_at='2026-10-26T08:00:00Z' WHERE id=$1", [contactId]);
     assert.equal((await pending()).length, 0);
+
+    // End-to-end correction is time-limited, verified against latest inbound
+    // and restores earlier task, stage and appointment state atomically.
+    await client.query("UPDATE contacts SET whatsapp_opt_out_at=NULL WHERE id=$1", [contactId]);
+    const originalConnect = pool.connect;
+    const originalQuery = pool.query;
+    pool.connect = async () => ({ query: client.query.bind(client), release() {} });
+    pool.query = client.query.bind(client);
+    t.after(() => { pool.connect = originalConnect; pool.query = originalQuery; });
+
+    const outcome = await recordOutcome({
+      leadId, expectedLastInboundId: inbound.rows[0].id,
+      status: "not_interested", username:"sales-a", now:new Date()
+    });
+    assert.ok(outcome.eventId);
+    assert.equal((await pending()).length,0);
+    const recent=await listRecentCorrections({ username:"sales-a", queryable:client });
+    assert.equal(Number(recent[0].eventId),outcome.eventId);
+    await assert.rejects(
+      undoOutcome({leadId,eventId:outcome.eventId,username:"other-salesperson"}),
+      err=>err.status===403
+    );
+
+    const changed=await client.query(
+      "INSERT INTO messages (contact_id,role,content) VALUES ($1,'user','New customer reply') RETURNING id",
+      [contactId]
+    );
+    await assert.rejects(
+      undoOutcome({leadId,eventId:outcome.eventId,username:"sales-a"}),
+      err=>err.status===409
+    );
+    await client.query("DELETE FROM messages WHERE id=$1",[changed.rows[0].id]);
+    await undoOutcome({leadId,eventId:outcome.eventId,username:"sales-a"});
+    assert.equal((await pending()).length,1);
+    assert.equal((await listRecentCorrections({username:"sales-a",queryable:client})).length,0);
+
+    const apptBefore=(await client.query(
+      "SELECT stage_id,appointment_status,appointment_at FROM leads WHERE id=$1",[leadId]
+    )).rows[0];
+    const booking=await recordOutcome({
+      leadId, expectedLastInboundId:inbound.rows[0].id,
+      status:"booked",dueAt:new Date(Date.now()+86400000).toISOString(),
+      username:"sales-a"
+    });
+    const booked=(await client.query(
+      "SELECT appointment_status FROM leads WHERE id=$1",[leadId]
+    )).rows[0];
+    assert.equal(booked.appointment_status,"set");
+    await undoOutcome({leadId,eventId:booking.eventId,username:"sales-a"});
+    const restored=(await client.query(
+      "SELECT stage_id,appointment_status,appointment_at FROM leads WHERE id=$1",[leadId]
+    )).rows[0];
+    assert.equal(restored.stage_id,apptBefore.stage_id);
+    assert.equal(restored.appointment_status,apptBefore.appointment_status);
+    assert.equal(String(restored.appointment_at),String(apptBefore.appointment_at));
+    const totals=await countMonthlyOutcomes({username:"sales-a",queryable:client});
+    assert.equal(totals.booked,0);
+    assert.equal(totals.not_interested,0);
   });
