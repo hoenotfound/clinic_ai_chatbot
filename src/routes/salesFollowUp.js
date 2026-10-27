@@ -86,6 +86,27 @@ router.get("/export", async (req, res) => {
   } catch (error) { return publicError(res, error); }
 });
 
+router.get("/recent", async (req, res) => {
+  if (!canView(req) || !hasCapability(req.user, "manage_assigned_leads")) return res.sendStatus(403);
+  try {
+    const updates = await followUpRepo.listRecentCorrections({
+      username: req.user.username, canViewAll: canManageAll(req)
+    });
+    res.set("Cache-Control", "no-store");
+    return res.json({ updates, correctionMinutes: 10 });
+  } catch (error) { return publicError(res, error); }
+});
+
+router.post("/:leadId/undo", async (req, res) => {
+  if (!canView(req) || !hasCapability(req.user, "manage_assigned_leads")) return res.sendStatus(403);
+  try {
+    return res.json(await followUpRepo.undoOutcome({
+      leadId: req.params.leadId, eventId: req.body?.eventId,
+      username: req.user.username, canManageAll: canManageAll(req)
+    }));
+  } catch (error) { return publicError(res, error); }
+});
+
 router.patch("/:leadId/outcome", async (req, res) => {
   if (!hasCapability(req.user, "manage_assigned_leads")) return res.sendStatus(403);
   try {
