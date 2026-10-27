@@ -508,6 +508,12 @@ function createApp({
       void notifyWhatsAppSenderQuarantine(isolated.quarantined);
     }
 
+    // The app-default relay must never accept a silent 200 from an old
+    // server that did not persist the pinned secondary disconnection.
+    // This header is emitted only after lifecycleWork has succeeded.
+    if (secondaryLifecycle.length && typeof res.setHeader === "function") {
+      res.setHeader("X-DA-Coexistence-Lifecycle-Accepted", "1");
+    }
     res.sendStatus(200);
     scheduleAcceptedWhatsAppWork();
 
