@@ -1,0 +1,223 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { useToasts, ToastContainer } from "../components/Toast";
+
+const OUTCOMES = [
+  ["contacted", "Contacted, waiting for reply"],
+  ["later", "Follow up later"],
+  ["booked", "Appointment booked"],
+  ["not_interested", "Not interested"],
+  ["unable", "Unable to contact"]
+];
+const fmt = (value) => value
+  ? new Intl.DateTimeFormat("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
+  : "Not available";
+
+export default function SalesFollowUp() {
+  const { permissions } = useAuth();
+  const { toasts, showToast, dismissToast } = useToasts();
+  const [payload, setPayload] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [period, setPeriod] = useState("weekly");
+  const [temperature, setTemperature] = useState("all");
+  const [selected, setSelected] = useState(null);
+  const [outcome, setOutcome] = useState("contacted");
+  const [dueAt, setDueAt] = useState("");
+  const [saving, setSaving] = useState(false);
+  const canUpdate = permissions.manage_assigned_leads === true;
+  const canExport = permissions.export_customer_data === true;
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try { setPayload(await api.getSalesFollowUps()); }
+    catch (error) { showToast(error.message || "Could not load follow-ups.", "error"); }
+    finally { setLoading(false); }
+  }, [showToast]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const leads = useMemo(() =>
+    (payload?.leads || []).filter(lead => temperature === "all" || lead.temperature === temperature),
+    [payload, temperature]);
+
+  async function exportReport() {
+    if (exporting || !canExport) return;
+    setExporting(true);
+    try {
+      const { blob, filename } = await api.downloadSalesFollowUps(period);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      showToast("Sales follow-up list downloaded.", "info");
+    } catch (error) { showToast(error.message || "Export failed.", "error"); }
+    finally { setExporting(false); }
+  }
+
+  function openResult(lead) {
+    setSelected(lead);
+    setOutcome("contacted");
+    setDueAt("");
+  }
+
+  async function saveResult(event) {
+    event.preventDefault();
+    if (!selected || saving || !canUpdate) return;
+    if (["later", "booked"].includes(outcome) && !dueAt) {
+      showToast("Please choose the follow-up or appointment date.", "warning");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.updateSalesFollowUp(selected.leadId, {
+        status: outcome,
+        ...(["later", "booked"].includes(outcome) ? { dueAt: new Date(dueAt).toISOString() } : {})
+      });
+      setSelected(null);
+      showToast("Follow-up result saved.", "info");
+      await refresh();
+    } catch (error) {
+      showToast(error.message || "Could not save result.", "error");
+      if (error.status === 409) { setSelected(null); await refresh(); }
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="h-full overflow-y-auto bg-[var(--color-bg)]">
+      <div className="mx-auto max-w-5xl px-4 py-6 sm:px-7 lg:py-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="font-display text-xl font-bold sm:text-2xl">Sales Follow-up</h1>
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+              Customers ready for a personal WhatsApp follow-up. No messages are sent by this page.
+            </p>
+          </div>
+          <button type="button" onClick={refresh} disabled={loading} className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-medium disabled:opacity-50">Refresh</button>
+        </div>
+
+        <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-4">
+          {[
+            ["Pending", payload?.counts?.pending ?? "–"],
+            ["Hot", payload?.counts?.hot ?? "–"],
+            ["Warm", payload?.counts?.warm ?? "–"]
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl border border-[var(--color-border)] bg-white p-3 sm:p-4">
+              <p className="text-xs text-[var(--color-text-muted)]">{label}</p>
+              <p className="mt-1 font-display text-2xl font-bold">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {canExport && (
+          <div className="mt-5 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white p-3">
+            <label htmlFor="sales-follow-up-period" className="text-sm font-medium">Download list:</label>
+            <select id="sales-follow-up-period" value={period} onChange={event => setPeriod(event.target.value)}
+              className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm">
+              <option value="weekly">Weekly handover</option>
+              <option value="monthly">Monthly handover</option>
+            </select>
+            <button type="button" onClick={exportReport} disabled={exporting || loading || !payload?.counts?.pending}
+              className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+              {exporting ? "Preparing..." : "Export CSV"}
+            </button>
+            <p className="w-full text-xs text-[var(--color-text-muted)]">
+              Both exports include all currently pending leads, including older outstanding enquiries. The period identifies the handover cadence.
+            </p>
+          </div>
+        )}
+
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-base font-bold">Customers to contact</h2>
+          <label className="text-sm">
+            <span className="mr-2 text-[var(--color-text-muted)]">Priority</span>
+            <select value={temperature} onChange={event => setTemperature(event.target.value)}
+              className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2">
+              <option value="all">Hot + Warm</option><option value="hot">Hot only</option><option value="warm">Warm only</option>
+            </select>
+          </label>
+        </div>
+        {loading ? <p className="mt-8 text-sm text-[var(--color-text-muted)]">Loading follow-ups...</p>
+          : !payload ? <p className="mt-8 text-sm">Unable to load. Use Refresh to retry.</p>
+            : leads.length === 0 ? (
+              <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white p-6 text-center text-sm text-[var(--color-text-muted)]">
+                No pending leads for this filter. Customers with no recorded WhatsApp permission are not included.
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3">
+                {leads.map(lead => (
+                  <article key={lead.leadId} className="rounded-xl border border-[var(--color-border)] bg-white p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="font-semibold">{lead.customerName}</h3>
+                        <p className="mt-0.5 text-sm text-[var(--color-text-muted)]">{lead.treatment} · {lead.owner}</p>
+                      </div>
+                      <span className={"rounded-full px-2.5 py-1 text-xs font-semibold " + (lead.temperature === "hot" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700")}>
+                        {lead.temperature === "hot" ? "Hot" : "Warm"}
+                      </span>
+                    </div>
+                    {lead.summary && <p className="mt-2 text-sm">{lead.summary}</p>}
+                    {lead.nextAction && <p className="mt-1 text-sm text-[var(--color-text-muted)]">Next: {lead.nextAction}</p>}
+                    <p className="mt-2 text-xs text-[var(--color-text-muted)]">Last customer reply: {fmt(lead.lastCustomerReplyAt)}</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <a href={lead.whatsappUrl} target="_blank" rel="noopener noreferrer"
+                        className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white">
+                        Open WhatsApp
+                      </a>
+                      {canUpdate && <button type="button" onClick={() => openResult(lead)}
+                        className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium">
+                        Update result
+                      </button>}
+                      <a href={"/inbox?contact=" + encodeURIComponent(lead.contactId)}
+                        className="ml-auto text-sm text-[var(--color-primary)] hover:underline">View history</a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+
+        {selected && canUpdate && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center">
+            <form onSubmit={saveResult} role="dialog" aria-modal="true" aria-labelledby="sales-follow-up-result-title"
+              className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <h2 id="sales-follow-up-result-title" className="text-lg font-bold">Update follow-up result</h2>
+              <p className="mt-1 text-sm text-[var(--color-text-muted)]">{selected.customerName}</p>
+              <fieldset className="mt-4 space-y-3">
+                {OUTCOMES.map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-3 text-sm">
+                    <input type="radio" name="follow-up-outcome" value={value} checked={outcome === value}
+                      onChange={() => { setOutcome(value); setDueAt(""); }} />
+                    {label}
+                  </label>
+                ))}
+              </fieldset>
+              {["later", "booked"].includes(outcome) && (
+                <label className="mt-4 block text-sm font-medium">
+                  {outcome === "later" ? "Next follow-up date and time" : "Confirmed appointment date and time"}
+                  <input type="datetime-local" required value={dueAt} onChange={event => setDueAt(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2"/>
+                </label>
+              )}
+              <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                Opening WhatsApp does not mark a message as sent. Choose the actual result only after contacting the customer.
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" disabled={saving} onClick={() => setSelected(null)}
+                  className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm">Cancel</button>
+                <button type="submit" disabled={saving} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {saving ? "Saving..." : "Save result"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+        <ToastContainer toasts={toasts} onDismiss={dismissToast}/>
+      </div>
+    </div>
+  );
+}
