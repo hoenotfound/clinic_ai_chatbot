@@ -4,7 +4,7 @@
 
 ## Isolation and verified identities
 
-- Personal Business App QA number: **+60 18-700 4870**. Its phone ID/WABA must be learned from Meta after authenticated onboarding; do not reuse the clinic test number's ID.
+- Personal Business App QA number: **privately pinned in Render; do not commit its E.164**. Its phone ID/WABA must be learned from Meta after authenticated onboarding; do not reuse the clinic test number's ID.
 - Existing Neutro WABA: `1593376338308612`; Neutro phone ID: `1408739622311791`.
 - DA CHATBOT app: `1029862536608134`. Embedded Signup config: `936687052431880`.
 - **Never change app-default** `https://clinic-ai-chatbot.onrender.com/webhook` without separate approval. Neutro's account override stays `https://neutrosense.dasmarketingsolution.com/webhook`.
@@ -28,14 +28,14 @@
 2. Confirm with read-only Graph that Neutro's primary phone, WABA and account-specific webhook override still point to production. Confirm the app-default callback is unchanged.
 3. Map every legacy WABA actually subscribed to app `1029862536608134` (complete pagination and delegated portfolios). Do not claim the one portfolio inventory is comprehensive.
 4. Independently rehearse the separate relay with signed realistic events: mixed Neutro/secondary batches, correct HMAC, strict routing, Neutro lifecycle durable commit and required acknowledgment headers, timeout and replay handling.
-5. Verify the owner personal Business App E.164 pin `+60187004870`. Confirm no old `tcm_wellness`/Ariel credentials, clinic phone ID or guessed account ID are reused. Pin new IDs **only when verified by the actual Meta signup**.
+5. Verify the owner personal Business App E.164 pin stored privately in staging. Confirm no old `tcm_wellness`/Ariel credentials, clinic phone ID or guessed account ID are reused. Pin new IDs **only when verified by the actual Meta signup**.
 6. Ensure provider-capable isolated inbound processing, durable importer, DB schema and monitoring work *before* signup. The existing authorization-only sandbox intentionally returns 503 to provider messages and is not by itself sufficient.
 7. Confirm the operator is available to check Neutro production live throughout the test, with clear stop criteria and a restore plan that **does not roll back production schema or casually overwrite Meta callback settings**.
 8. Ensure written owner approval explicitly covers the QR and recognizes potential WhatsApp Business App synchronization changes. QR approval does not automatically grant history sharing, real message sending, or paid billing approval.
 
 ## Immediately after a separately approved QR
 
-1. Verify real Meta WABA and phone-number ownership and `+60187004870` exact match. If mismatch, **stop**.
+1. Verify real Meta WABA and phone-number ownership and the privately pinned QA E.164 exact match. If mismatch, **stop**.
 2. Check `is_on_biz_app`, `platform_type`, WABA app subscription and account callback override using signed provider evidence. Check Neutro phone/webhook again. If it changes, **stop** and investigate without modifying production.
 3. Test a signed benign inbound/echo to the QA receiver with AI/staff outbound still disabled; verify only the correct sender and QA database rows are touched.
 4. Record verifiable user choice about contacts and history separately. A history opt-out must never be silently turned into consent.
