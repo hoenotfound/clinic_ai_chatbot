@@ -22,7 +22,7 @@ function safe(overrides={}) {
     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",
     WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"290000000000002",
     WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"290000000000002",
-    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60187004870",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000",
     ...overrides
   };
 }
@@ -35,7 +35,7 @@ test("PR395 sandbox is inert until explicitly enabled with pinned DB and protect
   assert.deepEqual(assertPr395StagingSafety(safe({
     WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",
     WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"",
-    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60187004870",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000",
     WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
   })),{staging:true,workersDisabled:true,providerProcessingDisabled:true});
   assert.throws(()=>assertPr395StagingSafety(safe({
@@ -126,6 +126,7 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
     ...safe(),
     PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true",
     PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"true",
+    PR395_STAGING_APPROVED_TEST_PHONE_E164:"+60120000000",
     WHATSAPP_WABA_ID:"1593376338308612",
     WHATSAPP_PHONE_NUMBER_ID:"1234567890123",
     WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
@@ -148,6 +149,8 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:""},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575"},
     {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336"},
+    {PR395_STAGING_APPROVED_TEST_PHONE_E164:"+60128880000"},
+    {PR395_STAGING_APPROVED_TEST_PHONE_E164:""},
     {WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness"},
     {WHATSAPP_SECONDARY_WABA_ID:""},
     {WHATSAPP_SECONDARY_TOKEN:""},
@@ -174,7 +177,7 @@ test("signed rehearsal only accepts events for its exact second account and phon
   };
   const lifecycle={object:"whatsapp_business_account",entry:[{
     id:"222222222222222",changes:[{field:"account_update",value:{
-      event:"PARTNER_REMOVED",phone_number:"+60 18-700 4870"
+      event:"PARTNER_REMOVED",phone_number:"+60 12-000 0000"
     }}]
   }]};
   const msg={object:"whatsapp_business_account",entry:[{
