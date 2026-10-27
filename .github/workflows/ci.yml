@@ -82,7 +82,13 @@ jobs:
   portal-playwright:
     name: playwright-${{ matrix.label }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Microsoft ships WebKit, Chromium and their Linux libraries preinstalled.
+    # Pin to the same version as @playwright/test below. This avoids the
+    # unexpectedly slow Ubuntu apt mirror that exhausted the 15-minute iPhone
+    # job timeout before tests could even start.
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -117,8 +123,12 @@ jobs:
       - run: npm ci
       - name: Install Playwright test runner
         run: npm install --no-save @playwright/test@1.55.0
-      - name: Install required Playwright browser
-        run: npx playwright install --with-deps ${{ matrix.browser }}
+      # The pinned Playwright container already includes matching browsers
+      # and OS dependencies; do NOT run apt-get / playwright install --with-deps.
+      - name: Confirm preinstalled Playwright browser
+        run: |
+          test -d /ms-playwright
+          node -e "const p=require('playwright-core'); const browser = '${{ matrix.browser }}'; const fs=require('fs'); const exe=p[browser].executablePath(); console.log(browser, exe); if(!fs.existsSync(exe))process.exit(1)"
       - name: Run Playwright smoke tests
         run: npx playwright test --project=${{ matrix.project }} ${{ matrix.shard_args }}
 
