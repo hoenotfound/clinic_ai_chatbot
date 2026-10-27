@@ -16,8 +16,7 @@ function extendedFollowUpHoldHours(env = process.env) {
 }
 
 async function listPending({ username, canViewAll = false, leadId = null, queryable = pool, now = new Date() }) {
-  const result = await queryable.query(
-    `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
+  const sql = `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
             l.treatment_interest, l.appointment_status, l.is_closed, l.next_follow_up_at,
             s.name AS stage_name, s.stage_type, s.system_key,
             c.channel, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
@@ -92,11 +91,25 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
        AND ($1::boolean OR l.owner_username = $2::text)
        AND ($4::integer IS NULL OR l.id = $4)
      ORDER BY last_inbound.created_at DESC, l.id DESC
-     LIMIT $7::integer OFFSET $8::integer`,
-    [canViewAll, username, extendedFollowUpHoldHours(), leadId, now,
-      clinicConfig.automatedFollowUp?.freeEntry?.activatedAt || null, 500, 0]
-  );
-  return result.rows.filter((row) => pendingSalesFollowUp(row, now)).map((row) => ({
+     LIMIT $7::integer OFFSET $8::integer`;
+  // Fetch bounded candidate batches instead of losing the whole export at 3,001.
+  const candidates = [];
+  const PAGE_SIZE = 500;
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    // A defensive ceiling prevents a misconfigured report from exhausting Neon
+    // compute indefinitely; an error never silently produces a partial export.
+    if (offset >= 100000) {
+      const err = new Error("This report is unusually large. Contact an administrator to narrow it.");
+      err.status = 409; throw err;
+    }
+    const result = await queryable.query(sql, [
+      canViewAll, username, extendedFollowUpHoldHours(), leadId, now,
+      clinicConfig.automatedFollowUp?.freeEntry?.activatedAt || null, PAGE_SIZE, offset
+    ]);
+    candidates.push(...result.rows);
+    if (result.rows.length < PAGE_SIZE) break;
+  }
+  return candidates.filter((row) => pendingSalesFollowUp(row, now)).map((row) => ({
     leadId: row.lead_id,
     contactId: row.contact_id,
     customerName: row.customer_name,
@@ -113,22 +126,34 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
   }));
 }
 
-async function recordOutcome({ leadId, status, dueAt, username, canManageAll = false, now = new Date() }) {
+async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, username, canManageAll = false, now = new Date() }) {
   const id = Number(leadId);
   if (!Number.isSafeInteger(id) || id <= 0) {
     const error = new Error("Invalid lead."); error.status = 400; throw error;
+  }
+  const inboundExpected = Number(expectedLastInboundId);
+  if (!Number.isSafeInteger(inboundExpected) || inboundExpected < 1) {
+    const error = new Error("Refresh the lead before saving the follow-up result.");
+    error.status = 400; throw error;
   }
   const validatedDate = assertFollowUpOutcome(status, dueAt, now);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const locked = await client.query("SELECT id, owner_username FROM leads WHERE id=$1 FOR UPDATE", [id]);
+    // Contacts are locked before leads to preserve inbound/booking lock order.
+    // Re-read lead ID after the contact lock so reassignment is checked fresh.
+    const target = await client.query("SELECT contact_id FROM leads WHERE id=$1", [id]);
+    if (!target.rows.length) {
+      const error = new Error("Lead not found."); error.status = 404; throw error;
+    }
+    await client.query("SELECT id FROM contacts WHERE id=$1 FOR UPDATE", [target.rows[0].contact_id]);
+    const locked = await client.query("SELECT id, owner_username, contact_id FROM leads WHERE id=$1 FOR UPDATE", [id]);
     if (!locked.rows.length || (!canManageAll && locked.rows[0].owner_username !== username)) {
       const error = new Error("Lead not found or not assigned to you."); error.status = 404; throw error;
     }
     const eligible = await listPending({ username, canViewAll: canManageAll, leadId: id, queryable: client, now });
-    if (eligible.length !== 1) {
-      const error = new Error("This lead is no longer pending. Refresh before updating."); error.status = 409; throw error;
+    if (eligible.length !== 1 || Number(eligible[0].lastInboundId) !== inboundExpected) {
+      const error = new Error("The conversation or lead status has changed. Refresh before updating."); error.status = 409; throw error;
     }
     const inboundId = eligible[0].lastInboundId;
     await client.query(
