@@ -163,6 +163,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Playwright Docker runs under a different HOME/UID than actions/checkout.
+          # Trust only this ephemeral repository workspace; keep SHA checks intact.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           test "$GITHUB_REF" = "refs/heads/main"
           # Fetch public PR head directly; reject changed SHA, never trust a branch label.
           git -c credential.helper= fetch --no-tags --depth=1 \
