@@ -159,6 +159,9 @@ async function postSigned(url, payload, config, fetchImpl, deadline) {
     headers: { "content-type": "application/json", "x-hub-signature-256": signature },
     body: raw,
   });
+  // Even a test/custom transport that ignores AbortSignal cannot turn a late
+  // reply into a valid acknowledgment after the total forwarding deadline.
+  if (Date.now() > deadline) throw Error("Relay forwarding deadline expired awaiting downstream ACK");
   if (!response || response.status < 200 || response.status >= 300) {
     throw Error(`Downstream callback refused an event (${response?.status || "network"})`);
   }
