@@ -43,7 +43,12 @@ function configFromEnv(env = process.env) {
     secondaryPhone:String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164||""),
     legacyUrl:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LEGACY_URL,"Legacy callback"),
     lifecycleUrl:bootstrap?null:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL,"Lifecycle callback"),
-    ...(!bootstrap?{legacyWabas:allowlist}:{}),
+    ...(!bootstrap?{
+      legacyWabas:allowlist,
+      legacyLifecycleUrl:requireHttpsWebhook(
+        env.WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL,
+        "Verified legacy lifecycle audit","/pr395-legacy-lifecycle-webhook")
+    }:{}),
     ...(bootstrap?{bootstrap:{
       legacyWabas:allowlist,
       legacyLifecycleUrl:requireHttpsWebhook(
@@ -64,7 +69,9 @@ function configFromEnv(env = process.env) {
      ):(
        !/^\d+$/.test(config.secondaryWaba)||
        allowlist.includes(config.secondaryWaba)||
-       config.legacyUrl===config.lifecycleUrl
+       config.legacyUrl===config.lifecycleUrl||
+       config.legacyUrl===config.legacyLifecycleUrl||
+       config.lifecycleUrl===config.legacyLifecycleUrl
      ))) {
     throw Error("Default callback relay identity/secrets are not fully configured");
   }
@@ -139,7 +146,10 @@ function partitionSignedBatch(payload,config) {
       }
       if(!knownLegacy.has(entryId))
         throw Error("Unrecognized account at app-default callback");
-      legacyChanges.push(change);
+      // Do not ACK a legacy account_update without a durable audit.
+      // This guarantee is required in both bootstrap and post-onboarding modes.
+      if(change.field==="account_update")legacyLifecycleChanges.push(change);
+      else legacyChanges.push(change);
     }
     if(legacyChanges.length)legacy.push({...entry,changes:legacyChanges});
     if(legacyLifecycleChanges.length)legacyLifecycle.push({...entry,changes:legacyLifecycleChanges});
@@ -195,7 +205,7 @@ async function postSigned(url, payload, config, fetchImpl, deadline) {
   }
   // Old single-number servers could return 200 without persisting anything.
   // Require an explicit durable lifecycle marker from PR #395, never trust 200.
-  if(config.bootstrap && url===config.bootstrap.legacyLifecycleUrl &&
+  if(url===(config.bootstrap?.legacyLifecycleUrl || config.legacyLifecycleUrl) &&
      response.headers?.get?.("x-da-legacy-lifecycle-accepted")!=="1"){
     throw Error("Legacy lifecycle receiver did not prove a durable account update audit");
   }
@@ -223,7 +233,7 @@ async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fe
     // An interrupted mixed batch may be replayed. All downstream receivers
     // MUST be idempotent by provider message ID / event fingerprint.
     if (batches.legacy) await postSigned(config.legacyUrl, batches.legacy, config, fetchImpl, deadline);
-    if (batches.legacyLifecycle) await postSigned(config.bootstrap.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl, deadline);
+    if (batches.legacyLifecycle) await postSigned(config.bootstrap?.legacyLifecycleUrl || config.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl, deadline);
     if (batches.lifecycle) await postSigned(config.lifecycleUrl, batches.lifecycle, config, fetchImpl, deadline);
     if (batches.preidentity) await postSigned(config.bootstrap.preidentityUrl, batches.preidentity, config, fetchImpl, deadline);
     return 200;
