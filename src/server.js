@@ -32,7 +32,8 @@ const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./
 const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
-const { resolveShadowPriceException } = require("./utils/shadowPriceException");
+const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
+const { resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -1227,6 +1228,49 @@ async function processIncomingMessage(
       }
     }
 
+    // A model can classify an objectively answerable TWO-treatment price
+    // question as an INFORMATION review. Resolve the two independently
+    // verified offers first; only a fresh Neon check confirming NO pending
+    // clinical review may clear that specific information flag.
+    // Keep clinical, staff, safety, consent and billing controls unchanged.
+    const recoverableTwoPriceReview = flagged && reviewRequired &&
+      reviewType === "information";
+    let twoTreatmentQuote = aiPricingMode === "shadow" &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      (!flagged || recoverableTwoPriceReview) &&
+      !bookingReady && !keywordReason && !urgentSafety &&
+      !isActiveSafetyConcern(text) && !isExplicitStaffRequest(text) &&
+      !marketingStopQuestion
+      ? resolveTwoTreatmentPriceReply({
+          customerText: text,
+          session: recentVerifiedPricingSession(history, text),
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          language: mediaLanguage,
+        }) : null;
+    if (twoTreatmentQuote && recoverableTwoPriceReview) {
+      const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
+        contact.id, savedInbound.id
+      );
+      if (canRecoverTwoPriceInformationReview({
+        quote: twoTreatmentQuote, flagged, reviewRequired, reviewType,
+        pendingClinicalReview: reviewEvidence?.pendingClinicalReview,
+      })) {
+        flagged = false;
+        reviewRequired = false;
+        reviewType = null;
+        bookingReady = false;
+        priceQuery = true;
+        packageQuery = false;
+        aiReply = "我帮你确认这两项护理各自的价格 😊";
+        console.info("[Pricing] Recovered verified two-price information review " +
+          "contact=" + contact.id + " inbound=" + savedInbound.id);
+      } else {
+        twoTreatmentQuote = null;
+      }
+    }
+
     // A customer-confirmed ad treatment can scope "all of them" to the
     // packages of THAT treatment only when the previous user asked about
     // price and the bot just asked "which treatment's price?".
@@ -1319,15 +1363,17 @@ async function processIncomingMessage(
     });
     const approvedPricingDecision = pricingApproval.decision;
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
-        shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
+        twoTreatmentQuote || shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
         " inbound=" + savedInbound.id +
         " mode=" + aiPricingMode +
         " observed=" + Boolean(pricingDecision) +
-        " authorized=" + Boolean(approvedPricingDecision) +
-        " reason=" + pricingApproval.reason +
-        " source=" + (approvedPricingDecision?.source || "none") +
-        " treatment=" + (approvedPricingDecision?.treatment || "none"));
+        " authorized=" + Boolean(approvedPricingDecision || twoTreatmentQuote) +
+        " reason=" + (twoTreatmentQuote ? "two_treatments_verified" : pricingApproval.reason) +
+        " source=" + (twoTreatmentQuote?.source || approvedPricingDecision?.source || "none") +
+        " treatment=" + (twoTreatmentQuote
+          ? twoTreatmentQuote.prices.map(item => item.treatment).join(" / ")
+          : approvedPricingDecision?.treatment || "none"));
     }
     // Enabled and independently verified Shadow exceptions MUST use the
     // approved decision exclusively. A rejected candidate cannot re-enter the
@@ -1486,6 +1532,14 @@ async function processIncomingMessage(
         text, history, mediaLanguage
       );
       if (feeClarification) reply = feeClarification;
+    }
+
+    if (twoTreatmentQuote) {
+      // A verified multi-treatment request is not approval for promotional
+      // graphics. Existing WhatsApp send/billing controls still apply.
+      reply = twoTreatmentQuote.reply;
+      console.info("[Pricing] Verified two separate text-only prices contact=" +
+        contact.id + " inbound=" + savedInbound.id);
     }
 
     // Images are optional and sent only AFTER Meta accepts this text.
@@ -1748,8 +1802,9 @@ async function processIncomingMessage(
     {
       // A directly named service or a one-turn standalone price follow-up
       // remains customer-verified; never trust a stale CRM/ad label.
-      let pricingMediaSkipReason = "not_evaluated";
-      const promoBundle = await resolvePricePromotionForReply({
+      let pricingMediaSkipReason = twoTreatmentQuote
+        ? "two_treatments_text_only" : "not_evaluated";
+      const promoBundle = twoTreatmentQuote ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
         pricingDecision: pricingAuthorityRequired ? approvedPricingDecision : null,
@@ -1803,7 +1858,7 @@ async function processIncomingMessage(
       // This optional write occurs after the text-send outcome is known and
       // cannot affect accepted text, media sending or retry semantics.
       if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
-          shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
+          twoTreatmentQuote || shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
         const quotedApprovedPrices = approvedPricingDecision?.prices?.length
           ? approvedPricingDecision.prices.every(item => reply.includes(item.price))
           : false;
@@ -1814,11 +1869,15 @@ async function processIncomingMessage(
             inboundMessageId: savedInbound.id,
             mode: aiPricingMode,
             observed: Boolean(pricingDecision),
-            approved: Boolean(approvedPricingDecision),
-            approvalReason: pricingApproval.reason,
-            treatment: approvedPricingDecision?.treatment || null,
-            decisionSource: approvedPricingDecision?.source || null,
+            approved: Boolean(approvedPricingDecision || twoTreatmentQuote),
+            approvalReason: twoTreatmentQuote ? "two_treatments_verified_text_only"
+              : pricingApproval.reason,
+            treatment: twoTreatmentQuote
+              ? twoTreatmentQuote.prices.map(item => item.treatment).join(" / ")
+              : approvedPricingDecision?.treatment || null,
+            decisionSource: twoTreatmentQuote?.source || approvedPricingDecision?.source || null,
             replyStatus: !sendOutcome.sendResult.success ? "text_not_accepted"
+              : twoTreatmentQuote ? "verified_two_treatment_prices_quoted"
               : approvedPricingDecision ? (quotedApprovedPrices ? "approved_price_quoted"
                 : approvedPricingDecision.servicePrice && reply.includes(approvedPricingDecision.servicePrice)
                   ? "approved_service_price_quoted" : "approved_quote_not_found")
