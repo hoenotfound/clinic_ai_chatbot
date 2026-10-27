@@ -479,6 +479,7 @@ WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID=<validated WABA from v4 Embedded Signup
 WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=<private QA E.164 configured in Render>
 WHATSAPP_DEFAULT_RELAY_LEGACY_URL=https://clinic-ai-chatbot.onrender.com/webhook
 WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS=<complete authorized legacy account ID list, comma separated>
+WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL=<provider-enabled-durable-legacy-audit-https-/pr395-legacy-lifecycle-webhook>
 WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL=<isolated-provider-enabled-qa-https-webhook>
 ```
 
@@ -488,11 +489,14 @@ must not include the secondary account ID. Any signed unknown account causes
 HTTP 503 for the entire batch **before** forwarding to the legacy destination.
 Do not use wildcards or infer the list from one portfolio's incomplete inventory.
 
-**Remaining cutover blocker:** In post-onboarding mode, allowlisted legacy
-`account_update` events still reach the old callback without the bootstrap
-mode's commit-bound lifecycle audit. Complete a separate durable legacy
-lifecycle routing review and real-provider acceptance before activating
-post-onboarding relay mode. An allowlist alone does not prove safe cutover.
+**Post-onboarding lifecycle safeguard:** allowlisted legacy
+`account_update` events go to the same dedicated durable legacy-audit
+receiver as bootstrap mode, not the old `/webhook`. A plain HTTP 200
+without `X-DA-Legacy-Lifecycle-Accepted: 1` is rejected with HTTP 503.
+The legacy audit target is required in both modes. Actual provider-signed
+delivery, the receiving service's active configuration, callback latency,
+and rollback have **not** been approved or verified. Keep Meta callbacks
+unchanged and both QA receiver switches OFF until a separate live plan.
 
 The lifecycle target must be a separate authorized, **provider-enabled**
 acceptance handler when testing. It must run PR #395, validate the same
@@ -500,6 +504,64 @@ DA CHATBOT signature, verify the exact second sender account and phone, and
 durably persist a signed suspension before responding 200. Do not point
 the relay at the currently provider-disabled sandbox or an old main binary.
 A new Render service may incur charges; request owner approval first.
+
+## Read-only cutover and rollback review — 27 Oct 2026
+
+**Decision: NO-GO.** The protected localhost rehearsal proves code behavior
+against synthetic receivers, not real Meta delivery. The existing app-default
+and Neutro account-specific callbacks must remain unchanged.
+
+### Pre-cutover evidence (operator approval required separately)
+
+- Identify the actual DA CHATBOT app-owning portfolio and enumerate **all**
+  directly owned, client and delegated subscribed account IDs, including
+  pagination and per-account `subscribed_apps`. The current portfolio
+  `622200677557573` only establishes one visible client account.
+- Preserve an offline rollback snapshot: current app-default callback URL,
+  app verification-token reference (never copy secret values into a PR),
+  subscribed fields, Neutro's account-level override, tested deployment SHAs,
+  legacy allowlist, known provider IDs and receiver enablement states.
+- Have an approved, dedicated HTTPS relay and isolated audit/QA receivers
+  running the **reviewed exact code**, with verified HMAC validation, durable
+  Neon commit-bound ACK and idempotent Meta retry behavior. Prove a
+  downstream-database outage returns HTTP 503. No legacy account_update can
+  receive a plain 200 from the old handler.
+- Measure cold and warm start response times under REAL signed Meta delivery
+  before relying on the relay's internal 30-second budget. The default
+  internal timeout is **not** Meta's delivery deadline, and no safe live
+  latency threshold has yet been established.
+- Independently prove WhatsApp messages/history/echoes stay with the exact
+  recipient number, and QA sender credentials cannot fall back to Neutro.
+  Keep all secondary AI replies, follow-ups, marketing and outbound disabled
+  until distinct, explicit approval.
+- Run a rollback rehearsal in nonproduction first, then obtain distinct,
+  explicit approval for the app-default callback change and QR onboarding.
+
+### During a separately approved, monitored cutover
+
+- Never change or remove Neutro's account-specific override.
+- Change ONLY the app-default callback after a snapshot and rollback owner
+  are recorded. Verify both the provider GET challenge and signed HTTP POSTs
+  with exact sender ownership and durable acknowledgment.
+- Watch for unknown account IDs, 403/503 rates, delayed/duplicate events,
+  missing durable ACKs, Neon unavailable states and Neutro message delivery.
+  Any unaccounted-for account or lifecycle delivery error is a STOP condition.
+
+### Rollback order
+
+1. **Disable the secondary sender and its automation first** to avoid
+   silently ACKing secondary lifecycle events at the old app-default handler.
+   Preserve already-recorded audit evidence and pending events.
+2. Restore the exact original app-default callback/verification configuration,
+   without touching Neutro's account-specific override or main deployment.
+3. Confirm signed Neutro inbound/outbound and its unchanged override; inspect
+   any uncertain in-flight relay POSTs without blindly retrying duplicate sends.
+4. Keep QA messages quarantined until provider receipts, sender identity and
+   deduplication have been reconciled; do not restart secondary sending merely
+   because the old callback was restored.
+
+Real Meta provider acceptance, provider-specific latency, inventory completeness
+and an approved rollback operator are **not yet evidenced**.
 
 ## Must-pass acceptance BEFORE changing the Meta app-default URL
 

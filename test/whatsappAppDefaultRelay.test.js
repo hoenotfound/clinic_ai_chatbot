@@ -10,6 +10,7 @@ const cfg = {
   secondaryWaba: "22222222222", secondaryPhone: "+60120000000",
   legacyWabas: ["11111111111"],
   legacyUrl: "https://clinic-ai-chatbot.onrender.com/webhook",
+  legacyLifecycleUrl: "https://audit-qa.example.com/pr395-legacy-lifecycle-webhook",
   lifecycleUrl: "https://coexistence-qa.example.com/webhook",
 };
 function entry(id, field, value) { return { id, changes: [{ field, value }] }; }
@@ -27,6 +28,7 @@ function collector() {
     assert.equal(options.redirect, "manual");
     calls.push({ url, payload: JSON.parse(raw.toString()) });
     return { status: 200, headers: { get(name) {
+      if (url === cfg.legacyLifecycleUrl && name === "x-da-legacy-lifecycle-accepted") return "1";
       return url === cfg.lifecycleUrl && name === "x-da-coexistence-lifecycle-accepted" ? "1" : null;
     } } };
   }};
@@ -47,6 +49,37 @@ test("allowlisted legacy messages still reach the original app-default handler",
   const signed = sign(p);
   assert.equal(await dispatchSignedBatch(signed.raw, signed.signature, cfg, c.fetch), 200);
   assert.deepEqual(c.calls.map(x => x.url), [cfg.legacyUrl]);
+});
+test("allowlisted legacy account_update uses durable audit, never ordinary legacy webhook", async () => {
+  const c = collector();
+  const p = {object:"whatsapp_business_account",entry:[
+    entry(cfg.legacyWabas[0], "account_update", {event:"PARTNER_REMOVED"})
+  ]};
+  const signed = sign(p);
+  assert.equal(await dispatchSignedBatch(signed.raw, signed.signature, cfg, c.fetch), 200);
+  assert.deepEqual(c.calls.map(x => x.url), [cfg.legacyLifecycleUrl]);
+  assert.deepEqual(c.calls[0].payload, p);
+  const noAck = [];
+  const status = await dispatchSignedBatch(signed.raw, signed.signature, cfg, async url => {
+    noAck.push(url);
+    return {status:200,headers:{get:()=>null}};
+  });
+  assert.equal(status, 503);
+  assert.deepEqual(noAck, [cfg.legacyLifecycleUrl]);
+});
+test("legacy audit outage returns 503 and blocks secondary forwarding in mixed batch", async () => {
+  const c = collector();
+  const p = {object:"whatsapp_business_account",entry:[
+    entry(cfg.legacyWabas[0], "account_update", {event:"PARTNER_REMOVED"}),
+    entry(cfg.secondaryWaba, "account_update", removal)
+  ]};
+  const signed = sign(p);
+  const status=await dispatchSignedBatch(signed.raw,signed.signature,cfg,async (url,opts)=>{
+    assert.equal(url,cfg.legacyLifecycleUrl);
+    return {status:503};
+  });
+  assert.equal(status,503);
+  assert.equal(c.calls.length,0);
 });
 test("signed foreign account cannot forward any field to Neutro legacy", async () => {
   const c = collector();
@@ -123,9 +156,13 @@ test("only strong secrets, pinned sender and HTTPS /webhook destinations start",
     WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS: cfg.legacyWabas.join(","),
     WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164: cfg.secondaryPhone,
     WHATSAPP_DEFAULT_RELAY_LEGACY_URL: cfg.legacyUrl,
+    WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL: cfg.legacyLifecycleUrl,
     WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL: cfg.lifecycleUrl,
   };
   assert.deepEqual(configFromEnv(env),cfg);
+  assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:""}),/HTTPS/);
+  assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:cfg.legacyUrl}),/HTTPS/);
+  assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:cfg.lifecycleUrl}),/HTTPS/);
   assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:""}),/identity\/secrets/);
   assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:"333,333"}),/identity\/secrets/);
   assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:"*"}),/identity\/secrets/);
