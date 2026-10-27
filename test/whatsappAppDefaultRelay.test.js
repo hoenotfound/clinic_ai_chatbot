@@ -7,12 +7,12 @@ const { configFromEnv, partitionSignedBatch, dispatchSignedBatch, createRelaySer
 const cfg = {
   appSecret: "test-app-secret-not-a-real-meta-key",
   verifyToken: "test-verify-token-not-live",
-  secondaryWaba: "22222222222", secondaryPhone: "+60174831336",
+  secondaryWaba: "22222222222", secondaryPhone: "+60187004870",
   legacyUrl: "https://clinic-ai-chatbot.onrender.com/webhook",
-  lifecycleUrl: "https://neutrosense.dasmarketingsolution.com/webhook",
+  lifecycleUrl: "https://coexistence-qa.example.com/webhook",
 };
 function entry(id, field, value) { return { id, changes: [{ field, value }] }; }
-const removal = { event: "PARTNER_REMOVED", phone_number: "+60 17-483 1336" };
+const removal = { event: "PARTNER_REMOVED", phone_number: "+60 18-700 4870" };
 function sign(payload) {
   const raw = Buffer.from(JSON.stringify(payload));
   return { raw, signature: "sha256=" + crypto.createHmac("sha256", cfg.appSecret).update(raw).digest("hex") };
