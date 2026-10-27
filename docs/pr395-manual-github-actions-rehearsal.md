@@ -49,3 +49,13 @@ Expected: one audit row and one `severity='review'`, `delivery_state='pending'` 
 - Automatic retries, checkout, deployment, API token provisioning, `smb_app_data`, inbound AI, Meta subscription, phone registration and Meta callback modification are **not implemented here**.
 - This test directly exercises the **deployed PR395 staging receiver**, not the inert standalone relay nor real provider traffic. Passing does **not** authorize relay cutover or QR scan.
 - A synthetic event stored in staging is not proof a real Neutro disconnect would traverse Meta's app-default callback. A later separately approved provider-route acceptance and full WABA inventory remain required.
+
+## 27 Oct 2026: cold-start timeout and corrected test sequence
+
+First manual run: [GitHub Actions #40480090984](https://github.com/hoenotfound/clinic_ai_chatbot/actions/runs/40480090984), failed during **the first invalid-HMAC POST** after the old 8-second client timeout. GitHub logs show the timeout at 09:21:30Z. Staging Render startup began ~09:21:34Z and became ready after the job exited. Isolated Neon read-only count then showed **zero audit and zero alert rows**. This is consistent with Render Free cold start; it does **not** establish an actual valid signed webhook delivery.
+
+The updated workflow first probes the fixed staging-only `GET /health/ready` endpoint with a bounded 180-second wait, retrying **only this harmless GET** across expected startup HTTP 502/503/504 or network timeouts. It proceeds only after JSON `{"ready":true,"status":"ready"}` and HTTP 200. Unexpected responses fail closed. It then executes the original signed checks, allowing up to 45 seconds for each POST, and a job timeout of 10 minutes.
+
+**Never automatically retry a signed POST** after timeout/unknown network outcome: the server might have committed a record despite the client not seeing its acknowledgment. The updated workflow prints the nonsecret expected fingerprint **before** the first POST to support read-only Neon reconciliation if any later POST becomes uncertain. If the job fails after printing that fingerprint, check the exact fingerprint in isolated Neon before any rerun. A new manual run produces a distinct synthetic marker and will add another audit row if its signed event succeeds.
+
+Operational gates remain: manually dispatched on `main`, protected environment reviewer, encrypted environment-scoped HMAC secret, no automatic triggers, no PR code checkout, no Meta traffic, no QR, no Neutro production deployment, no relay cutover, no application PR #395 merge. Neutro Render Auto-Deploy must remain OFF until the controlled operational review is complete.
