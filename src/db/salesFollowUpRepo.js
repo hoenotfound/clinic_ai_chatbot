@@ -152,7 +152,14 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
     if (!target.rows.length) {
       const error = new Error("Lead not found."); error.status = 404; throw error;
     }
-    await client.query("SELECT id FROM contacts WHERE id=$1 FOR UPDATE", [target.rows[0].contact_id]);
+    const lockedContact = await client.query(
+      "SELECT id, needs_attention, attention_reason, updated_at FROM contacts WHERE id=$1 FOR UPDATE",
+      [target.rows[0].contact_id]
+    );
+    const contactBefore = lockedContact.rows[0];
+    if (!contactBefore) {
+      const error = new Error("Contact not found."); error.status = 404; throw error;
+    }
     const locked = await client.query("SELECT id, owner_username, contact_id FROM leads WHERE id=$1 FOR UPDATE", [id]);
     if (!locked.rows.length || (!canManageAll && locked.rows[0].owner_username !== username)) {
       const error = new Error("Lead not found or not assigned to you."); error.status = 404; throw error;
@@ -170,6 +177,7 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
       "SELECT stage_id,appointment_status,appointment_at,updated_at FROM leads WHERE id=$1",
       [id]
     )).rows[0];
+    let clearedAttention = null;
     await client.query(
       `INSERT INTO sales_follow_up_tasks (lead_id,status,last_inbound_id,due_at,updated_by)
        VALUES ($1,$2,$3,$4,$5)
@@ -213,6 +221,24 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
         [id,"Appointment confirmed from Sales Follow-up.",username,
           JSON.stringify({appointmentStatus:"set",previousAppointmentStatus:current.appointment_status})]
       );
+      // The contact was locked BEFORE the lead. Clear Booking Ready in the
+      // same transaction as the booking, recording its previous state for Undo.
+      // Do not clear other attention reasons or overwrite concurrent changes.
+      const cleared = await client.query(
+        `UPDATE contacts
+           SET needs_attention=false, attention_reason=NULL, updated_at=now()
+         WHERE id=$1 AND needs_attention=true
+           AND attention_reason LIKE 'Booking ready:%'
+         RETURNING updated_at`,
+        [contactBefore.id]
+      );
+      if (cleared.rows[0]) {
+        clearedAttention = {
+          needsAttention: contactBefore.needs_attention,
+          attentionReason: contactBefore.attention_reason,
+          appliedUpdatedAt: cleared.rows[0].updated_at
+        };
+      }
     }
     const appliedLead = (await client.query(
       "SELECT stage_id,appointment_status,appointment_at,updated_at FROM leads WHERE id=$1",
@@ -226,24 +252,15 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
         (lead_id,actor,outcome,inbound_id,due_at,previous_state)
         VALUES ($1,$2,$3,$4,$5,$6::jsonb) RETURNING id`,
       [id,username,status,inboundId,validatedDate,JSON.stringify({
-        previousTask, previousLead, appliedLead, appliedTaskUpdatedAt: appliedTask.updated_at
+        previousTask, previousLead, appliedLead, appliedTaskUpdatedAt: appliedTask.updated_at,
+        clearedAttention
       })]
     );
     await client.query("COMMIT");
-    if (status === "booked") {
-      // The existing Pipeline clears Booking Ready attention after commit,
-      // never while the lead row lock is held (contact/lead lock order).
-      try {
-        const cleared = await pool.query(
-          "UPDATE contacts c SET needs_attention=false, attention_reason=NULL, updated_at=now() WHERE c.id=$1 AND c.needs_attention=true AND c.attention_reason LIKE 'Booking ready:%' RETURNING c.id",
-          [eligible[0].contactId]
-        );
-        if (cleared.rows[0]) realtimeEvents.publish("conversation_changed", {
-          contactId: eligible[0].contactId, reason: "booking_confirmed"
-        });
-      } catch (cleanupError) {
-        console.error("Sales follow-up booking attention cleanup failed:", cleanupError);
-      }
+    if (clearedAttention) {
+      realtimeEvents.publish("conversation_changed", {
+        contactId: eligible[0].contactId, reason: "booking_confirmed"
+      });
     }
     realtimeEvents.publish("pipeline_changed", { leadId: id });
     return { ok: true, leadId: id, status, eventId: Number(event.rows[0].id) };
@@ -294,7 +311,12 @@ async function undoOutcome({ leadId, eventId, username, canManageAll = false, no
     await client.query("BEGIN");
     const target=await client.query("SELECT contact_id FROM leads WHERE id=$1", [id]);
     if (!target.rows.length) invalidCorrection("Lead not found.",404);
-    await client.query("SELECT id FROM contacts WHERE id=$1 FOR UPDATE", [target.rows[0].contact_id]);
+    const contactResult = await client.query(
+      "SELECT id, needs_attention, attention_reason, updated_at FROM contacts WHERE id=$1 FOR UPDATE",
+      [target.rows[0].contact_id]
+    );
+    const contact = contactResult.rows[0];
+    if (!contact) invalidCorrection("Contact not found.",404);
     const row=await client.query(
       "SELECT id,contact_id,owner_username,stage_id,appointment_status,appointment_at,updated_at FROM leads WHERE id=$1 FOR UPDATE",
       [id]
@@ -337,6 +359,17 @@ async function undoOutcome({ leadId, eventId, username, canManageAll = false, no
       invalidCorrection("The lead changed after this update. Review it in Pipeline rather than undoing.");
     }
     const previous=event.previous_state;
+    // Never restore an old Booking Ready alert over an updated staff Inbox
+    // action, new alert, or any newer contact mutation. Fail the entire
+    // correction atomically, leaving the booking unchanged for staff review.
+    const alertToRestore = previous.clearedAttention;
+    if (event.outcome === "booked" && alertToRestore) {
+      if (contact.needs_attention !== false || contact.attention_reason != null ||
+          new Date(contact.updated_at).getTime() !==
+            new Date(alertToRestore.appliedUpdatedAt).getTime()) {
+        invalidCorrection("Inbox attention changed after booking. Review in Inbox and Pipeline before correcting.");
+      }
+    }
     if (event.outcome==="booked") {
       await client.query(
         "UPDATE leads SET stage_id=$2,appointment_status=$3,appointment_at=$4,updated_at=now() WHERE id=$1",
@@ -353,6 +386,12 @@ async function undoOutcome({ leadId, eventId, username, canManageAll = false, no
         "INSERT INTO lead_activities (lead_id,activity_type,description,actor,metadata) VALUES ($1,'updated',$2,$3,$4::jsonb)",
         [id,"Corrected mistaken Sales Follow-up booking.",username,JSON.stringify({undoneEventId:eid})]
       );
+      if (alertToRestore) {
+        await client.query(
+          "UPDATE contacts SET needs_attention=$2, attention_reason=$3, updated_at=now() WHERE id=$1",
+          [contact.id, alertToRestore.needsAttention, alertToRestore.attentionReason]
+        );
+      }
     }
     if (previous.previousTask) {
       await client.query(
@@ -371,6 +410,11 @@ async function undoOutcome({ leadId, eventId, username, canManageAll = false, no
     );
     await client.query("COMMIT");
     realtimeEvents.publish("pipeline_changed",{leadId:id});
+    if (event.outcome === "booked" && previous.clearedAttention) {
+      realtimeEvents.publish("conversation_changed", {
+        contactId: lead.contact_id, reason: "sales_follow_up_booking_corrected"
+      });
+    }
     return { ok:true, leadId:id, undoneEventId:eid };
   } catch (error) {
     await client.query("ROLLBACK").catch(()=>{});
