@@ -364,6 +364,22 @@ function conversationPromotionsList(conversationContext) {
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
 
+  // A colloquial single-session amount question is a real monetary enquiry,
+  // but does not justify injecting the entire sales caption into Gemini.
+  // Keep the existing compact verified-price reference for "做一次多少"
+  // even when customerEnquiryEvidence recognizes it as an explicit price ask.
+  // Normal requests to see package descriptions/options still use full copy.
+  const casualSessionAmount = /(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|是|需|需要|收费|收費|花|大概|大约|大約)?\s*(?:多少|几多|幾多)(?!\s*(?:次|分钟|分鐘|小时|小時|天|日|月|年))|(?:first[\s-]*trial|首次|初次|第一次)\s*(?:体验|體驗|护理|護理|疗程|療程)?\s*(?:要|是|需|需要|大概)?\s*(?:多少|几多|幾多)(?!\s*(?:次|分钟|分鐘|小时|小時|天|日|月|年))/iu.test(
+    String(conversationContext?.currentCustomerText || "")
+  );
+  if (casualSessionAmount && compactVerifiedPrices.length) {
+    return [
+      "- Current treatment promotion summaries and verified amounts (no long ad captions).",
+      ...relevant.map(renderCompactPromotion),
+      ...compactVerifiedPrices,
+    ].join("\n");
+  }
+
   // Show only compact offer facts on non-commercial turns. Even an explicit
   // treatment mention is not consent to receive unsolicited promotion copy.
   if ((conversationContext?.promotionIntent !== true && !explicitConversationPriceRequest(conversationContext)) ||
