@@ -14,6 +14,7 @@ const { isContinuedTreatmentPriceQuestion, resolveContinuedTreatmentPriceService
 } = require("./priceFollowUpContext");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { getActivePromotions } = require("./activePromotion");
+const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 
 const RESET = /(?:换个|換個|改聊|另外想|先不聊|不聊这个|不聊這個|其他话题|其他話題|不要这个|不要這個|不想了解|\b(?:instead|rather|switch|different treatment|another treatment|not interested|stop|unsubscribe)\b)/iu;
 const REFUSAL = /(?:不要(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠|促销|促銷)|不想(?:了解|知道|问|問|看)?(?:一下)?(?:报价|報價|价格|價格|價錢|价钱|优惠|優惠)|不用(?:报价|報價|价格|價格)|不需要(?:报价|報價|价格|價格|價錢|价钱)|别(?:报|報)价|\b(?:do not|don't|no)\s+(?:send|want|need)\b.{0,35}\b(?:price|promo|offer)\b)/iu;
@@ -228,7 +229,14 @@ function resolveAiPricingDecision({
   complimentaryAssessmentExperienceEnabled = false, metaAdContext = null,
   now = Date.now(),
 } = {}) {
-  const current = String(customerText || "").trim();
+  const original = String(customerText || "").trim();
+  // A different treatment's refused quotation cannot veto a clearly
+  // separate customer-authored price request. Do not infer from an ad or model.
+  const independentRequest = resolveIndependentRefusalPriceRequest({
+    customerText: original, services, serviceAliases,
+  });
+  const current = independentRequest?.priceText || original;
+  if (independentRequest && hasClinicalMediaRisk(original)) return null;
   const explicitAmount = hasCurrentPriceAmountRequest(current);
   const explicitOptions = hasExplicitPackageOptionsRequest(current);
   const currentNamedService = safeServiceFromCustomer(current, services, serviceAliases);
@@ -277,7 +285,9 @@ function resolveAiPricingDecision({
   const continued = type === "price" ? resolveContinuedTreatmentPriceService({
     customerText: current, conversationHistory, services, serviceAliases, promotions,
   }) : null;
-  const anchor = continued
+  const anchor = independentRequest
+    ? { treatment: independentRequest.treatment, source: "current_customer" }
+    : continued
     ? { treatment: continued.name, source: "continued_customer" }
     : concernContinuation || bothContinuation
       ? { treatment: (concernContinuation || bothContinuation).name,
@@ -315,6 +325,10 @@ function resolveAiPricingDecision({
   return Object.freeze({
     type, treatment: anchor.treatment, source: anchor.source,
     clarifiedPriceService, prices, servicePrice,
+    ...(independentRequest ? {
+      scopedPriceText: independentRequest.priceText,
+      scopedRefusedTreatment: independentRequest.refusedTreatment,
+    } : {}),
   });
 }
 
