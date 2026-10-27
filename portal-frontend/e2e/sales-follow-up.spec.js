@@ -81,7 +81,7 @@ test("personal WhatsApp link, manual outcome and stale-conversation ID are corre
   await expect.poll(() => calls.length).toBe(1);
   expect(calls[0]).toMatchObject({status:"contacted", expectedLastInboundId:234});
   expect(Date.parse(calls[0].dueAt)).toBeGreaterThan(Date.now());
-  await expect(page.getByText("Recent results")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent results", exact: true })).toBeVisible();
   await page.getByRole("button", {name:"Correct result"}).click();
   await expect(page.getByRole("dialog")).toContainText("Undo the result");
   await page.getByRole("button", {name:"Undo Result"}).click();
