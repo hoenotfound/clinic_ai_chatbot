@@ -25,7 +25,9 @@ function collector() {
       "sha256=" + crypto.createHmac("sha256", cfg.appSecret).update(raw).digest("hex"));
     assert.equal(options.redirect, "manual");
     calls.push({ url, payload: JSON.parse(raw.toString()) });
-    return { status: 200 };
+    return { status: 200, headers: { get(name) {
+      return url === cfg.lifecycleUrl && name === "x-da-coexistence-lifecycle-accepted" ? "1" : null;
+    } } };
   }};
 }
 test("the signed secondary account_update is sent only to its lifecycle receiver", async () => {
@@ -70,6 +72,11 @@ test("bad signature or mismatched secondary phone never reaches a receiver", asy
   assert.equal(await dispatchSignedBatch(s.raw, "sha256=wrong", cfg, c.fetch), 403);
   assert.equal(await dispatchSignedBatch(s.raw, s.signature, cfg, c.fetch), 503);
   assert.equal(c.calls.length, 0);
+});
+test("old receiver false 200 without durable lifecycle acknowledgment fails closed", async () => {
+  const p = { object:"whatsapp_business_account",entry:[entry(cfg.secondaryWaba,"account_update",removal)] };
+  const s = sign(p);
+  assert.equal(await dispatchSignedBatch(s.raw,s.signature,cfg,async () => ({status:200})),503);
 });
 test("downstream failure returns 503 so Meta can retry the signed event", async () => {
   const p = { object: "whatsapp_business_account", entry: [entry(cfg.secondaryWaba, "account_update", removal)] };
