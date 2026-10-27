@@ -77,7 +77,6 @@ test("personal WhatsApp link, manual outcome and stale-conversation ID are corre
   await expect(page.getByRole("button", {name:"Save result"})).toBeDisabled();
   await page.getByLabel("Message sent, waiting for reply").check();
   await expect(page.getByLabel("When should we follow up again?")).not.toBeEmpty();
-  await page.getByLabel("Customer is not interested").check();
   await page.getByRole("button", {name:"Save result"}).click();
   await expect.poll(() => calls.length).toBe(1);
   expect(calls[0]).toMatchObject({status:"contacted", expectedLastInboundId:234});
@@ -97,13 +96,14 @@ test("manager export and server-side conflict remain clear", async ({ page }) =>
   await page.goto("/sales-follow-up");
   await page.getByText("Manager reports & export").click();
   await expect(page.getByRole("button", {name:"Export CSV"})).toBeVisible();
-  await page.getByLabel("Download list:").selectOption("monthly");
+  await page.getByLabel("Report type").selectOption("monthly");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.getByRole("button", {name:"Export CSV"}).click()
   ]);
   expect(download.suggestedFilename()).toBe("sales-follow-up-monthly.csv");
   await page.getByRole("button", {name:"2. Record Result"}).click();
+  await page.getByLabel("Customer is not interested").check();
   await page.getByRole("button", {name:"Save result"}).click();
   await expect.poll(() => calls.length).toBe(1);
   await expect(page.getByRole("dialog")).toHaveCount(0);
