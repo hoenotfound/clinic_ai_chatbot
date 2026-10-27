@@ -77,7 +77,7 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
        ORDER BY m.created_at DESC, m.id DESC LIMIT 1
      ) last_inbound ON true
      LEFT JOIN LATERAL (
-       SELECT summary_data, through_message_id
+       SELECT summary_data, through_message_id, updated_at
        FROM lead_temperature_scores sc
        WHERE sc.lead_id = l.id AND sc.status = 'completed'
          AND sc.through_message_id >= last_inbound.id
