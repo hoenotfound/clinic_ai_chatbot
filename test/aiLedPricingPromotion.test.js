@@ -709,3 +709,51 @@ test("Neutro pelvic caption-only Package A RM388 and B RM288 stay scoped with bo
   }));
   assert.deepEqual(graphics?.packages?.map(p=>p.name),["Package A","Package B"]);
 });
+
+
+test("enabled pricing verifies Malaysian Chinese WhatsApp price shorthand even if Gemini misses priceQuery", async () => {
+  const phrases = [
+    "3D现在什么价？",
+    "3D啥价",
+    "3D报价?",
+    "3D quote me",
+    "3D RM几多?",
+    "3D 几多?",
+    "3D 做一次要多少？",
+    "3D 1 session 多少?",
+    "3D first trial 要多少？",
+    "3D brp RM?",
+  ];
+  for (const customerText of phrases) {
+    const h=[{role:"user",content:customerText}];
+    const d=decide({
+      priceQuery:false, customerText, conversationHistory:h,
+    });
+    assert.equal(d?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(d?.prices?.map(x=>x.price),["RM488"],customerText);
+  }
+  await inAssessmentFirst(async()=>{
+    const customerText="3D 做一次要多少？";
+    const h=[{role:"user",content:customerText}];
+    const decision=decide({priceQuery:false,customerText,conversationHistory:h});
+    const media=await resolvePricePromotionForReply(mediaArgs(decision,{
+      customerText,conversationHistory:h, contactId:702,
+    }));
+    assert.equal(media?.packages?.length,1);
+    assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl,
+      "the eligible single-treatment price request may send its configured graphic");
+  });
+});
+
+test("Malaysian Chinese quantity, budget and staff-only observations cannot authorize AI pricing",()=>{
+  for(const customerText of [
+    "3D几多次?", "3D一次多少分钟?",
+    "3D first trial 几多次?",
+    "3D 1 session 多少天恢复?",
+    "3D 我预算 RM300", "3D 价格不是问题",
+    "3D 我已经有报价了", "3D 不需要报价",
+  ]) {
+    const h=[{role:"user",content:customerText}];
+    assert.equal(decide({priceQuery:true,customerText,conversationHistory:h}),null,customerText);
+  }
+});
