@@ -13,6 +13,9 @@ const { resolveClarifiedPriceService } = require("./priceClarificationContext");
 const { resolveAiPricingDecision } = require("./aiPricingIntentDecision");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { safeServiceFromCustomer } = require("./initialOfferReplyGuard");
+const {
+  resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
+} = require("./priceConversationRecovery");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
 
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -256,6 +259,20 @@ function resolveShadowPriceException({
       clarifiedPriceService: clarification,
     });
   }
+  // Recover a service the customer explicitly chose after the bot provided
+  // pricing options. This does not treat a model/advertisement as the choice.
+  const recentSelection = resolveRecentPriceSelection({
+    customerText:text, session, services, serviceAliases, now,
+  });
+  if (recentSelection) {
+    const decision = shadowVerifiedPrice({
+      source:"customer_price_selection", treatment:recentSelection.name,
+      customerText:text, conversationHistory:session, promotions,
+      clarifiedPriceService:recentSelection.name,
+    });
+    if (decision) return decision;
+  }
+
   const packageRequest = resolveDirectCustomerPackageRequest({
     customerText: text, conversationHistory: session, services, serviceAliases,
     promotions, allowOfferEnquiries,
@@ -316,6 +333,20 @@ function resolveShadowPriceException({
     const result = shadowVerifiedPrice({
       source: "continued_customer", treatment: continued.name,
       customerText: text, conversationHistory: session, promotions,
+    });
+    if (result) return result;
+  }
+
+  // A bounded customer-led discussion can have several normal Q&A turns
+  // after the original treatment choice. A direct price question still refers
+  // to that verified service, unless staff, a new topic or ambiguity intervened.
+  const established = resolveEstablishedTreatmentPrice({
+    customerText:text, session, services, serviceAliases, now,
+  });
+  if (established) {
+    const result = shadowVerifiedPrice({
+      source:"customer_established_treatment", treatment:established.name,
+      customerText:text, conversationHistory:session, promotions,
     });
     if (result) return result;
   }
