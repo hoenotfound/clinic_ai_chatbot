@@ -496,3 +496,109 @@ test("no-combo negation cannot hide safety or treatment rejection", () => {
     assert.equal(dual([turn("user",current,60)],current),null,current);
   }
 });
+
+
+test("distinct 3D and 9D price requests accept punctuation and spoken Chinese, not combo intent", () => {
+  for (const current of [
+    "3D、9D分别多少钱？",
+    "3D跟9D分别多少钱？",
+    "3D/9D各自价钱多少？",
+    "3D 9D分别多少钱？",
+    "9D与3D各自多少钱？",
+    "3D & 9D 各自多少钱",
+  ]) {
+    const history = [turn("user", current, 45)];
+    const quote = dual(history, current);
+    assert.deepEqual(quote?.prices.map(x => x.treatment),
+      current.startsWith("9D") ? ["9D 逆龄抗衰","3D 小颜术"]
+        : ["3D 小颜术","9D 逆龄抗衰"],current);
+    assert.deepEqual(quote?.prices.map(x => x.amount),["RM488","RM488"],current);
+  }
+  for (const current of [
+    "3D & 9D多少钱？", "3D+9D组合多少钱？",
+    "3D/9D组合配套多少钱？", "3D 和 9D组合优惠多少钱",
+  ]) {
+    assert.equal(dual([turn("user",current,45)],current),null,current);
+  }
+});
+
+test("both after a two-package question never means two separate treatments", () => {
+  const examples = [
+    "3D 小颜术和 9D 逆龄抗衰都有两种配套，你想了解哪个价钱？",
+    "3D 小颜术和 9D 逆龄抗衰有两套方案，你想知道哪个价格？",
+    "3D 小颜术和 9D 逆龄抗衰各有 2 个套餐，你想了解哪种价钱？",
+    "3D 小颜术和 9D 逆龄抗衰 have two packages each. Which package price?",
+    "3D 小颜术和 9D 逆龄抗衰，哪一个配套的价格你想了解？",
+  ];
+  for (const menu of examples) {
+    const history=[turn("user","我想了解价钱",200),
+      turn("assistant",menu,190),turn("user","两个",180)];
+    assert.equal(dual(history,"两个"),null,menu);
+    const priced=[history[0],history[1],turn("user","这两个多少钱",180)];
+    assert.equal(dual(priced,"这两个多少钱"),null,menu);
+  }
+});
+
+test("a stale 3D concern must not override a newer 9D selection", () => {
+  const history=[
+    turn("user","请问价钱多少",650),
+    turn("assistant","3D 小颜术可以改善大小脸。你想了解哪项护理价钱？",640),
+    turn("user","9D",590),
+    turn("assistant","好的～9D 逆龄抗衰主要是紧致提升。你想了解哪一项疗程价格？",580),
+    turn("user","调整大小脸",570),
+  ];
+  assert.equal(shadow(history,"调整大小脸"),null);
+  assert.equal(resolveRecentPriceSelection({
+    customerText:"调整大小脸",
+    session:recentVerifiedPricingSession(history,"调整大小脸",now),
+    services,serviceAliases,now,
+  }),null);
+  const directSwitch = [...history.slice(0,-1),
+    turn("user","3D",570)];
+  assert.equal(shadow(directSwitch,"3D")?.treatment,"3D 小颜术",
+    "an explicit NEW 3D choice must still be honored");
+});
+
+test("the last price menu must be active and immediately relevant", () => {
+  const shared = [
+    turn("user","你们有什么护理？",480),
+    turn("assistant","我们有 3D 小颜术、9D 逆龄抗衰 两种护理",470),
+  ];
+  const offTopicPairs=[
+    [turn("user","营业时间是几点？",450),turn("assistant","我们营业时间是10am-8pm",440)],
+    [turn("user","周末有开吗？",450),turn("assistant","周末营业哦",440)],
+    [turn("user","在哪里呢？",450),turn("assistant","我们在PJ哦",440)],
+    [turn("user","可以预约星期三吗？",450),turn("assistant","可以帮你安排周三",440)],
+    [turn("user","可以先看看介绍吗？",450),turn("assistant","护理师可以先讲解流程",440)],
+  ];
+  for (const pair of offTopicPairs) {
+    const current="这两个价钱多少";
+    assert.equal(dual([...shared,...pair,turn("user",current,400)],current),
+      null,pair[0].content);
+  }
+  const recentPrice=[...shared,turn("user","这两个价钱多少",450),
+    turn("assistant","请问你想了解哪一项疗程的价格呢？",440),
+    turn("user","两个",400)];
+  assert.equal(dual(recentPrice,"两个")?.prices.length,2,
+    "the one-step immediate pricing clarification is retained");
+});
+
+test("the October 31 promotion cutoff is clinic-local and stale prices fail closed", () => {
+  const { getActivePromotions } = require("../src/utils/activePromotion");
+  const timeLimited=promotions.filter(p=>
+    p.linkedService === "3D 小颜术" || p.linkedService === "9D 逆龄抗衰"
+  ).map(p=>({...p, validFrom:"2026-10-01", validUntil:"2026-10-31"}));
+  assert.equal(getActivePromotions(timeLimited,
+    new Date("2026-10-31T15:59:59.000Z")).length,2,
+    "23:59:59 October 31 Malaysia is still valid");
+  assert.equal(getActivePromotions(timeLimited,
+    new Date("2026-10-31T16:00:00.000Z")).length,0,
+    "00:00 November 1 Malaysia must expire both promotions");
+  const expired = timeLimited.map(p=>({...p,validUntil:"2001-01-01"}));
+  const customer="3D、9D分别多少钱？";
+  const reply=resolveTwoTreatmentPriceReply({
+    customerText:customer,session:[turn("user",customer,15)],
+    services,serviceAliases,promotions:expired,language:"zh",now,
+  });
+  assert.equal(reply,null,"an expired promotion must never be sent as a current price");
+});
