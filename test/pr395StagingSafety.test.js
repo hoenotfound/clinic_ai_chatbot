@@ -20,9 +20,9 @@ function safe(overrides={}) {
     DATABASE_URL:"postgresql://user:secret@ep-qa123.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
     PR395_STAGING_EXPECTED_DATABASE_HOST:"ep-qa123.ap-southeast-1.aws.neon.tech",
     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",
-    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
-    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575",
-    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"290000000000002",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"290000000000002",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60187004870",
     ...overrides
   };
 }
@@ -113,7 +113,7 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
     PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"true",
     WHATSAPP_WABA_ID:"1593376338308612",
     WHATSAPP_PHONE_NUMBER_ID:"1234567890123",
-    WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness",
+    WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
     WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
     WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
     WHATSAPP_SECONDARY_TOKEN:"dedicated-secondary-qa-token",
@@ -130,6 +130,9 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
   });
   for(const overrides of [
     {WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"1852014482431209"},
+    {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336"},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness"},
     {WHATSAPP_SECONDARY_WABA_ID:""},
     {WHATSAPP_SECONDARY_TOKEN:""},
     {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
@@ -148,19 +151,19 @@ test("signed rehearsal only accepts events for its exact second account and phon
   const env={
     ...safe(),
     PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true",
-    WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness",
+    WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
     WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
     WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
     WHATSAPP_WABA_ID:"1593376338308612",
   };
   const lifecycle={object:"whatsapp_business_account",entry:[{
     id:"222222222222222",changes:[{field:"account_update",value:{
-      event:"PARTNER_REMOVED",phone_number:"+60 17-483 1336"
+      event:"PARTNER_REMOVED",phone_number:"+60 18-700 4870"
     }}]
   }]};
   const msg={object:"whatsapp_business_account",entry:[{
     id:"222222222222222",changes:[{field:"messages",value:{
-      metadata:{phone_number_id:"1318355951360575"},
+      metadata:{phone_number_id:"290000000000002"},
       messages:[{id:"wamid.test",from:"60120000000",type:"text",text:{body:"test"}}]
     }}]
   }]};
@@ -171,12 +174,13 @@ test("signed rehearsal only accepts events for its exact second account and phon
     return {called,code};
   };
   assert.equal(run(msg).called,true);
+  assert.equal(run({...msg, entry:[{...msg.entry[0],changes:[{field:"messages",value:{metadata:{phone_number_id:"1318355951360575"},messages:[{id:"wamid.foreign"}]}}]}]}).code,503);
   assert.equal(run(lifecycle,"/meta-webhook").called,true);
   assert.equal(run(lifecycle,"/webhook").called,true);
   assert.equal(run({...msg,entry:[{...msg.entry[0],id:"1593376338308612"}]}).code,503);
   const status={...msg,entry:[{...msg.entry[0],
     changes:[{field:"messages",value:{
-      metadata:{phone_number_id:"1318355951360575"},statuses:[{id:"wamid.test"}]
+      metadata:{phone_number_id:"290000000000002"},statuses:[{id:"wamid.test"}]
     }}]}]};
   assert.equal(run(status).code,503);
   assert.equal(run(msg,"/meta-webhook").code,503);
