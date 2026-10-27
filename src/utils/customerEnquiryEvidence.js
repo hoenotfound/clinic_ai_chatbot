@@ -17,7 +17,7 @@ const PACKAGE_OPTIONS_REQUEST = /(?:\b(?:do\s+you\s+have\s+(?:any\s+)?(?:a\s+)?p
 // evidence, unless the message separately contains an explicit money term.
 const ENGLISH_MONEY_QUESTION = /\bhow\s+much\b(?!\s+(?:time|long(?:er)?|duration|recovery|rest|downtime|pain|discomfort|swelling|water|weight|pressure|effort|sleep|exercise|work|energy|space|area|difference|improvement|notice|healing|waiting|treatment\s+time)\b|\s+(?:is|are|was|were)\s+(?:(?:the|my|your|a|an|this)\s+)?(?:recovery|healing|waiting|rest|downtime|treatment|appointment|procedure)\s+(?:time|duration|period)\b|\s+(?:does|do|did|will|would|should|can|could|must|need)\b[^?.!,;]{0,85}\b(?:take|last|hurt|heal|recover|rest|sleep|wait|waiting)\b)/iu;
 
-const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b)|\b(?:rm|ringgit)\s+berapa\b)/iu;
+const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b|(?:satu|1)\s+sesi\b)|\b(?:rm|ringgit)\s+berapa\b)/iu;
 const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
 // Malaysian colloquial price requests are not generic treatment or package
 // enquiries. "几钱" is different from "几次" or "几多疗程".
@@ -260,7 +260,8 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   // A price adjective or affordability observation does not request another
   // quotation/graphic. A separate explicit question still takes precedence.
   const affordabilityOnly = /(?:价位|價位|价格|價格|价钱|價錢|\b(?:price|pricing|harga)\b).{0,30}(?:太高|偏高|太贵|太貴|好贵|好貴|有点贵|有點貴|很贵|很貴|贵了|貴了|超出预算|超出預算|too\s+(?:high|expensive)|expensive|mahal)|(?:超出预算|超出預算|负担不起|負擔不起|cannot\s+afford|can't\s+afford).{0,28}(?:价位|價位|价格|價格|价钱|價錢|\b(?:price|pricing|harga)\b)/iu.test(current);
-  const clearRequest = LOCAL_MONETARY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
+  const clearRequest = LOCAL_MONETARY_QUESTION.test(current) ||
+    MALAY_MONEY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
   if ((nonRequest || affordabilityOnly) && !clearRequest) return false;
   // A money amount given as the customer's own budget does not ask what our
   // treatment costs. Bare RM amounts need a question/request to qualify.
@@ -272,7 +273,8 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (/\bhow\s+much\b/iu.test(current) &&
       !ENGLISH_MONEY_QUESTION.test(current) &&
       !/(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fee|rm\s*\d+)\b)/iu.test(current)) return false;
-  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
+  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) ||
+    MALAY_MONEY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
 
 function hasCustomerServiceEnquiry(customerText) {
