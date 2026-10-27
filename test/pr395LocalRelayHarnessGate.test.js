@@ -25,7 +25,9 @@ for (const [name, overrides] of [
       GITHUB_REF: "refs/heads/main",
       PR395_APPROVED_SHA: pinned,
       RUNNER_TEMP: "/tmp/pr395-guard-regression-only",
-      PR395_RELAY_SOURCE: "",
+      // A syntactically valid temporary source path; all invalid preflight
+      // cases must be rejected before attempting require() or I/O.
+      PR395_RELAY_SOURCE: "/tmp/pr395-guard-regression-only/fake-relay.js",
       ...overrides,
     };
     const result = spawnSync(process.execPath, [harness], {
