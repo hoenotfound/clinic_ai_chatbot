@@ -32,7 +32,7 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
       await client.query(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     }
     const contact = await client.query(
-      "INSERT INTO contacts (whatsapp_number, name, whatsapp_opt_in_at) VALUES ('60123456789','Example','2026-10-01T00:00:00Z') RETURNING id"
+      "INSERT INTO contacts (whatsapp_number, name, whatsapp_opt_in_at, whatsapp_opt_in_source) VALUES ('60123456789','Example','2026-10-01T00:00:00Z','customer_request') RETURNING id"
     );
     const contactId = contact.rows[0].id;
     const inbound = await client.query(
