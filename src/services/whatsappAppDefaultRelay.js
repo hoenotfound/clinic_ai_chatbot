@@ -72,7 +72,12 @@ function partitionSignedBatch(payload, config) {
         if (SECONDARY_FIELDS.has(change.field)) {
           throw Error("Secondary message/sync reached the app-default callback instead of its override");
         }
-        if (change.field === "account_update" && LIFECYCLE_EVENTS.has(change.value.event)) {
+        if (change.field === "account_update") {
+          if (!LIFECYCLE_EVENTS.has(change.value.event)) {
+            // Never silently ACK a new secondary lifecycle type on the old
+            // single-number receiver. Keep it retryable for operator review.
+            throw Error("Unknown secondary account update requires routing review");
+          }
           if (!matchingPhone(change.value.phone_number, config.secondaryPhone)) {
             throw Error("Secondary lifecycle phone mismatches the approved identity");
           }
@@ -123,6 +128,20 @@ async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fe
   } catch (_) { return 503; }
 }
 
+// Safe to deploy before onboarding: no Meta secrets, no downstream receiver
+// network calls, no webhook verification handshake and no acceptance of POSTs.
+// This MUST NOT be selected once the Meta app callback is pointed here.
+function createPreparationRelayServer() {
+  return http.createServer((req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (req.method === "GET" && req.url === "/health/live") {
+      res.writeHead(200, {"content-type": "text/plain"}).end("relay preparation mode: inactive");
+      return;
+    }
+    res.writeHead(503, {"content-type": "text/plain"}).end("Meta routing is not enabled");
+  });
+}
+
 function createRelayServer(config, { fetchImpl = global.fetch } = {}) {
   return http.createServer(async (req, res) => {
     try {
@@ -156,4 +175,4 @@ function createRelayServer(config, { fetchImpl = global.fetch } = {}) {
     }
   });
 }
-module.exports = { configFromEnv, createRelayServer, dispatchSignedBatch, partitionSignedBatch, validMetaSignature };
+module.exports = { configFromEnv, createRelayServer, createPreparationRelayServer, dispatchSignedBatch, partitionSignedBatch, validMetaSignature };
