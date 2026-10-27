@@ -58,6 +58,8 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
                 AND proof.billable=false
                 AND proof.delivery_status IN ('sent','delivered','read')
               WHERE ref.contact_id=c.id
+                AND l.marketing_consent = 'opted_in'
+                AND c.needs_attention = false
                 AND (ref.ctwa_clid IS NOT NULL OR ref.meta_ad_id IS NOT NULL)
                 AND first_reply.created_at >= $6::timestamptz - interval '24 hours'
                 AND first_reply.created_at + ($3::integer * interval '1 hour') > $5::timestamptz
