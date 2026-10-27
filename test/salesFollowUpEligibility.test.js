@@ -9,7 +9,7 @@ function candidate(patch = {}) {
     lead_id: 12, contact_id: 17, last_inbound_id: 20,
     is_closed: false, stage_type: "open", system_key: "contacted",
     temperature: "warm", channel: "whatsapp", whatsapp_number: "60123456789",
-    whatsapp_opt_in_at: "2026-10-01T00:00:00Z",
+    whatsapp_opt_in_at: "2026-10-01T00:00:00Z", whatsapp_opt_in_source: "customer_request",
     whatsapp_opt_out_at: null, whatsapp_marketing_opt_out_at: null,
     treatment_interest: "3D 小颜术", summary_treatment: "",
     appointment_status: "none", mode: "ai",
@@ -41,7 +41,7 @@ test("appointment, visited and closed journeys are excluded", () => {
 });
 test("contact permission and opt-out are fail-closed", () => {
   for (const patch of [
-    { whatsapp_opt_in_at: null }, { whatsapp_opt_out_at: "2026-10-26" },
+    { whatsapp_opt_in_at: null }, { whatsapp_opt_in_source: null }, { whatsapp_opt_out_at: "2026-10-26" },
     { whatsapp_marketing_opt_out_at: "2026-10-26" },
     { whatsapp_number: "bad" }, { channel: "instagram" }
   ]) assert.equal(pendingSalesFollowUp(candidate(patch), NOW), false);
@@ -55,6 +55,7 @@ test("AI follow-up, staff takeover, and recent staff response exclude candidates
 });
 test("contacted leads wait until a NEW inbound conversation becomes stale", () => {
   assert.equal(pendingSalesFollowUp(candidate({ task_status: "contacted", task_last_inbound_id: 20 }), NOW), false);
+  assert.equal(pendingSalesFollowUp(candidate({ task_status: "contacted", task_last_inbound_id: 20, task_due_at: NOW }), NOW), true);
   assert.equal(pendingSalesFollowUp(candidate({ task_status: "contacted", task_last_inbound_id: 19 }), NOW), true);
 });
 test("unable-to-contact outcomes do not loop without new customer activity", () => {
@@ -68,10 +69,14 @@ test("booked and explicitly not-interested tasks remain excluded", () => {
   for (const status of ["booked", "not_interested"]) {
     assert.equal(pendingSalesFollowUp(candidate({ task_status: status, task_last_inbound_id: 19 }), NOW), false);
   }
+  assert.equal(pendingSalesFollowUp(candidate({ task_status:"not_interested", task_last_inbound_id: 19, new_verified_interest: true }), NOW), true);
+  assert.equal(pendingSalesFollowUp(candidate({ task_status:"booked", appointment_status:"cancelled", task_last_inbound_id: 20, booking_reopened_after_task: true }), NOW), true);
+  assert.equal(pendingSalesFollowUp(candidate({ task_status:"booked", appointment_status:"cancelled", booking_reopened_after_task: false }), NOW), false);
 });
 test("only supported outcomes can be recorded", () => {
   assert.throws(() => assertFollowUpOutcome("pending", null, NOW), /valid/);
   assert.equal(assertFollowUpOutcome("contacted", null, NOW), null);
+  assert.equal(assertFollowUpOutcome("contacted", "2026-10-28T08:00:00Z", NOW).toISOString(), "2026-10-28T08:00:00.000Z");
 });
 test("later and booked require a future date", () => {
   for (const status of ["later", "booked"]) {
