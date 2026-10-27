@@ -510,8 +510,7 @@ test("distinct 3D and 9D price requests accept punctuation and spoken Chinese, n
     const history = [turn("user", current, 45)];
     const quote = dual(history, current);
     assert.deepEqual(quote?.prices.map(x => x.treatment),
-      current.startsWith("9D") ? ["9D 逆龄抗衰","3D 小颜术"]
-        : ["3D 小颜术","9D 逆龄抗衰"],current);
+      ["3D 小颜术","9D 逆龄抗衰"],current);
     assert.deepEqual(quote?.prices.map(x => x.amount),["RM488","RM488"],current);
   }
   for (const current of [
