@@ -208,10 +208,10 @@ function isFirstTrialAmountQuestion(customerText) {
 
 function isStandalonePriceQuestion(customerText) {
   const t = String(customerText || "").normalize("NFKC").trim();
-  return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t);
+  return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t) ||
     // A short session-amount question may refer to an already independently
     // confirmed treatment. The context resolver enforces freshness and ownership.
-    || /^(?:(?:请问|請問|这个|這個|这项|這項|那个|那個)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)[\s?？!！。呢啊呀啦哦咯~]*$/iu.test(t);
+    /^(?:(?:请问|請問|这个|這個|这项|這項|那个|那個)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)[\s?？!！。呢啊呀啦哦咯~]*$/iu.test(t);
 }
 
 function isContextualBarePriceQuestion(customerText, treatment = null) {
