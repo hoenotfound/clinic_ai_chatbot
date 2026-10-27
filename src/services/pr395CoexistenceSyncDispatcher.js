@@ -107,7 +107,7 @@ async function dispatchOnce(input, {
     [reserved.id]
   );
   if (claimed.rows?.length !== 1) throw Error("One-time dispatch claim was lost; do not POST.");
-  let state = "unknown", status = null, errorCode = null;
+  let state = "unknown", status = null, errorCode = null, providerRequestId = null;
   try {
     const url = "https://graph.facebook.com/" +
       normalizedGraphVersion(env.META_GRAPH_API_VERSION || DEFAULT_GRAPH_API_VERSION) +
@@ -126,8 +126,13 @@ async function dispatchOnce(input, {
     });
     status = Number.isInteger(response?.status) ? response.status : null;
     const data = await response.json().catch(() => null);
-    // Ambiguous HTTP 2xx must NOT be considered confirmed success.
-    if (response.ok === true && data?.success === true) state = "accepted";
+    // Meta typically returns a request_id for this endpoint, not a success flag.
+    // Never mark an unrecognized HTTP 2xx response confirmed.
+    const requestId = typeof data?.request_id === "string" ? data.request_id.trim() : "";
+    if (response.ok === true && data?.messaging_product === "whatsapp" &&
+        requestId.length > 0 && requestId.length <= 512) {
+      state = "accepted"; providerRequestId = requestId;
+    } else if (response.ok === true && data?.success === true) state = "accepted";
     else if (response.ok === false && status >= 400 && status < 500 &&
              status !== 408 && status !== 429) {
       state = "rejected"; errorCode = "definitive_provider_rejection";
@@ -142,15 +147,15 @@ async function dispatchOnce(input, {
   try {
     await database.query(
       "UPDATE whatsapp_coexistence_sync_dispatch_requests " +
-      "SET state=$2,http_status=$3,provider_error_code=$4," +
+      "SET state=$2,http_status=$3,provider_error_code=$4,provider_request_id=$5," +
       "resolved_at=NOW(),updated_at=NOW() WHERE id=$1 AND state='dispatching'",
-      [reserved.id,state,status,errorCode]
+      [reserved.id,state,status,errorCode,providerRequestId]
     );
   } catch (_) {
     // The durable 'dispatching' claim still prohibits a second POST.
     throw Error("Sync request outcome could not be persisted. Treat as UNKNOWN; do not retry.");
   }
-  return { id:reserved.id,state,httpStatus:status,requiresManualReview:state!=="accepted" };
+  return { id:reserved.id,state,httpStatus:status,providerRequestId,requiresManualReview:state!=="accepted" };
 }
 async function quarantineStaleClaims({
   database=pool, olderThanMinutes=2
