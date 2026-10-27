@@ -52,9 +52,9 @@ const SPECIFIC_TREATMENT_TOPIC = /(?:\b(?:treatments?|rawatan|facial|pelvic|pelv
 
 const DECLINED_TREATMENT = /(?:\b(?:not\s+interested|no\s+interest|don['’]?t\s+want|do\s+not\s+want|not\s+looking\s+for)\b|不感兴趣|不感興趣|不想了解|不想做|不要这个|不要這個|没兴趣|沒興趣|tak\s+(?:berminat|mahu|nak))/iu;
 
-const NON_REQUEST_PRICE_COMMENT = /(?:价格|價格|價錢|价钱|價位|价位|\b(?:price|pricing|harga)\b).{0,32}(?:不是问题|不是問題|没问题|沒問題|太贵|太貴|好贵|好貴|很贵|很貴|偏高|too\s+(?:high|expensive)|expensive|mahal)/iu;
+const NON_REQUEST_PRICE_COMMENT = /(?:[预預]算|\bbudget\b).{0,25}(?:RM|MYR)\s*\d{2,}|(?:价格|價格|價錢|价钱|價位|价位|\b(?:price|pricing|harga)\b).{0,32}(?:不是问题|不是問題|没问题|沒問題|太贵|太貴|好贵|好貴|很贵|很貴|偏高|too\s+(?:high|expensive)|expensive|mahal)/iu;
 
-const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(?:ing)?\s+for)\s+(?:the\s+)?(?:price|pricing|package|promo)\b|(?:不[想要需]|不用|无需|不必)(?:知道|了解|问|問)?(?:价格|價錢|价钱|配套|套餐|报价|報價|quote|quotation))/iu;
+const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(?:ing)?\s+for)\s+(?:the\s+)?(?:price|pricing|package|promo)\b|(?:不[想要需]|不需要|不用|无需|不必)(?:知道|了解|问|問)?(?:价格|價錢|价钱|配套|套餐|报价|報價|quote|quotation))/iu;
 
 // Positive treatment-interest language, independent of Meta and AI labels.
 // Keep this deliberately conservative: absent evidence means no automatic media.
@@ -233,7 +233,7 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (!current) return false;
   if (isContextualBarePriceQuestion(current, treatment)) return true;
   // A customer refusing to discuss prices is not making a price request.
-  const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用|报价|報價)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost|quote|quotation)\b/iu.test(current);
+  const declined = /(?:不用|不要|不想|不需要|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用|报价|報價)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost|quote|quotation)\b/iu.test(current);
   if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
   // Mentioning a budget or saying prices are acceptable is not a request
   // for the clinic's actual treatment price. These statements used to bypass
