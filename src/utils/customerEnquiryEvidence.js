@@ -23,6 +23,25 @@ const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali
 // enquiries. "几钱" is different from "几次" or "几多疗程".
 const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[钱錢]|幾\s*多\s*[钱錢]|多\s*[少幾几]\s*(?:块|塊|令吉)|(?:几|幾)\s*(?:块|塊)(?:钱|錢)?|(?:价\s*位|價\s*位)(?=\s*(?:[?？]|多少|如何|怎么|怎麼|什么|什麼|几|幾|$))|(?:(?:price|harga|kos|caj|rate|fee|rm)\s*(?:please|pls|plz|berapa|brp)|(?:pm|p\.?m\.?)\s*(?:(?:一下|下|我|me)\s*)?(?:价格|價錢|价钱|价位|價位|几钱|幾錢|harga|price)))/iu;
 
+// Malaysian Chinese WhatsApp users often omit 钱/price in shorthand such as
+// "3D 做一次要多少", "现在什么价", "first trial 几多", "RM几多",
+// or ask for a "quote". Be narrow: bare 多少/几多 alone must NOT unlock
+// prices or optional sales graphics; nor can duration/session-count questions.
+// The downstream service authority still requires a customer-verified treatment.
+const LOCAL_WHATSAPP_PRICE = new RegExp([
+  String.raw`(?:什么|什麼|啥)\s*(?:价|價)(?:钱|錢|格|位)?`,
+  String.raw`|(?:报|報)\s*价`,
+  String.raw`|\b(?:quote|quotation)\b\s*(?:me\b|我|一下|给我|給我|[?？])`,
+  String.raw`|\b(?:can|could|may|please|pls|send|give|share|need|want)\b.{0,35}\b(?:quote|quotation)\b`,
+  String.raw`|\b(?:rm|myr)\s*(?:几|幾)\s*(?:多(?:钱|錢)?|钱|錢|块|塊)`,
+  String.raw`|(?:几|幾)\s*多\s*(?:rm|myr)\b`,
+  String.raw`|(?:价|價)\s*(?:是|要|大概|约|約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|(?:first[\s-]*trial|首次|初次|第一次)\s*(?:体验|體驗|护理|護理|疗程|療程)?\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|\b[39]\s*d\b\s*(?:这个|這個)?\s*(?:要|收|大概|大约|大約)?\s*(?:几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|\b(?:brp|brapa)\s*(?:rm|myr|harga|kos)\b`,
+].join(""), "iu");
+
 // The generic word "berapa" means "how many/how much", not necessarily price.
 const ADMIN_TOPIC = /(?:\b(?:contact(?:\s+(?:details?|information|info|number))?|phone(?:\s+number)?|tel(?:ephone)?|mobile(?:\s+number)?|whatsapp(?:\s+number)?|e-?mail|address|location|branches?|opening\s+(?:hours?|times?)|operating\s+hours?|working\s+hours?|business\s+hours?|parking|directions?|google\s+maps?|postal\s+code|opening\s+day|closing\s+time|appointment\s+(?:slots?|time|availability)|payment\s+method|payment\s+options?)\b|联络方式|聯絡方式|联系方式|聯繫方式|电话号码|電話號碼|电话|電話|地址|在哪里|在哪裡|营业时间|營業時間|几点开门|幾點開門|停车|停車|分行|分店|怎么去|怎麼去|停车位|停車位|\b(?:nombor\s+(?:telefon|whatsapp)|telefon|hubungi|alamat|lokasi|cawangan|waktu\s+operasi|tempat\s+letak\s+kereta|parking)\b)/iu;
 
@@ -162,7 +181,7 @@ function hasCustomerPriceEnquiry(customerText) {
     stripFutureFollowUpPermission(value).text
   );
   return PRICE_OR_PACKAGE.test(current) ||
-    LOCAL_MONETARY_QUESTION.test(current) ||
+    LOCAL_MONETARY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) ||
     PACKAGE_OPTIONS_REQUEST.test(current) ||
     ENGLISH_MONEY_QUESTION.test(current) ||
     (MALAY_MONEY_QUESTION.test(current) && !MALAY_NON_PRICE_QUANTITY.test(current));
@@ -184,6 +203,9 @@ function isFirstTrialAmountQuestion(customerText) {
 function isStandalonePriceQuestion(customerText) {
   const t = String(customerText || "").normalize("NFKC").trim();
   return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t);
+    // A short session-amount question may refer to an already independently
+    // confirmed treatment. The context resolver enforces freshness and ownership.
+    || /^(?:(?:请问|請問|这个|這個|这项|這項|那个|那個)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)[\s?？!！。呢啊呀啦哦咯~]*$/iu.test(t);
 }
 
 function isContextualBarePriceQuestion(customerText, treatment = null) {
@@ -214,7 +236,7 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   // A price adjective or affordability observation does not request another
   // quotation/graphic. A separate explicit question still takes precedence.
   const affordabilityOnly = /(?:价位|價位|价格|價格|价钱|價錢|\b(?:price|pricing|harga)\b).{0,30}(?:太高|偏高|太贵|太貴|好贵|好貴|有点贵|有點貴|很贵|很貴|贵了|貴了|超出预算|超出預算|too\s+(?:high|expensive)|expensive|mahal)|(?:超出预算|超出預算|负担不起|負擔不起|cannot\s+afford|can't\s+afford).{0,28}(?:价位|價位|价格|價格|价钱|價錢|\b(?:price|pricing|harga)\b)/iu.test(current);
-  const clearRequest = LOCAL_MONETARY_QUESTION.test(current) || /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
+  const clearRequest = LOCAL_MONETARY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
   if ((nonRequest || affordabilityOnly) && !clearRequest) return false;
   // A money amount given as the customer's own budget does not ask what our
   // treatment costs. Bare RM amounts need a question/request to qualify.
@@ -226,7 +248,7 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (/\bhow\s+much\b/iu.test(current) &&
       !ENGLISH_MONEY_QUESTION.test(current) &&
       !/(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fee|rm\s*\d+)\b)/iu.test(current)) return false;
-  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
+  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
 
 function hasCustomerServiceEnquiry(customerText) {
