@@ -421,6 +421,9 @@ export const api = {
   addContactNote: (id, content) =>
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
+  getSalesFollowUps: () => request("/sales-follow-up"),
+  updateSalesFollowUp: (leadId, payload) => request(`/sales-follow-up/${leadId}/outcome`, { method: "PATCH", body: JSON.stringify(payload) }),
+  downloadSalesFollowUps: (period = "weekly") => download(`/sales-follow-up/export?period=${encodeURIComponent(period)}`),
   getPipeline: () => request("/pipeline"),
   getConfiguredBranches: () => request("/pipeline/configured-branches"),
   getAnalytics: (filters = {}) => {
