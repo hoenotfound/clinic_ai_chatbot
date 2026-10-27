@@ -147,3 +147,25 @@ test("foreign WABA cannot trigger a legacy downstream POST in bootstrap",async()
     net.fetchImpl,{dispatchTimeoutMs:150}),503);
   assert.equal(net.calls.length,0);
 });
+
+test("one overall budget is shared across fast-enough individual downstream POSTs",async()=>{
+  const fixture=signed();
+  const net=transport({delays:{[URLS.old]:115,[URLS.audit]:115}});
+  assert.equal(await dispatchSignedBatch(fixture.raw,fixture.signature,config,
+    net.fetchImpl,{dispatchTimeoutMs:190}),503);
+  assert.deepEqual(net.calls,[URLS.old,URLS.audit],
+    "audit should use the remaining time, not a fresh 190ms");
+  assert.equal(net.records.size,2);
+});
+test("late HTTP 200 from noncompliant custom transport cannot bypass deadline",async()=>{
+  const fixture=signed();
+  const calls=[];
+  const late=async(url)=>{
+    calls.push(url);
+    await new Promise(resolve=>setTimeout(resolve,70)); // ignores AbortSignal
+    return ack(url);
+  };
+  assert.equal(await dispatchSignedBatch(fixture.raw,fixture.signature,config,
+    late,{dispatchTimeoutMs:30}),503);
+  assert.deepEqual(calls,[URLS.old]);
+});
