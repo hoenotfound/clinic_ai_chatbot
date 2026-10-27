@@ -41,11 +41,17 @@ function recentVerifiedPricingSession(conversationHistory = [], customerText, no
     later = timestamp;
     start = i;
   }
-  const session = turns.slice(start);
-  if (!session.length || session[0]?.role !== "user" ||
-      session.some(isVerifiedStaffTurn) ||
-      !isRecentPricingThread(session, 0, now)) return null;
-  return session;
+  const bounded = turns.slice(start);
+  // A 20-message AI snapshot can begin in the middle of a previous bot
+  // explanation. Never let orphan assistant text authorize a price, but do
+  // not discard a NEW customer-led exchange merely because of this truncation.
+  // Check staff across the entire timestamped window BEFORE trimming.
+  if (!bounded.length || bounded.some(isVerifiedStaffTurn) ||
+      !isRecentPricingThread(bounded, 0, now)) return null;
+  const firstCustomer = bounded.findIndex(turn => turn.role === "user");
+  if (firstCustomer < 0) return null;
+  const session = bounded.slice(firstCustomer);
+  return session.length && session.at(-1)?.role === "user" ? session : null;
 }
 
 function shadowVerifiedPrice({
