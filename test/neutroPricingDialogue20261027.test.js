@@ -233,6 +233,7 @@ test("numbers describing sessions, durations or price amounts are never two trea
     "做2小时多少钱？", "两次疗程多少钱？",
     "2小时第一次护理多少钱", "两周做一次多少钱",
     "2次是RM488吗？", "2小时的话有什么价格",
+    "两个小时是多少钱", "2个人的护理多少钱", "两个星期要多少钱",
   ]) {
     assert.equal(dual([...first,turn("user",current,100)],current),null,current);
   }
