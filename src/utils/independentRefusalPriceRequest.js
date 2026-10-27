@@ -11,7 +11,7 @@ const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 
 const REFUSED_QUOTE = /(?:不要|不用|不需要|不想|无需|無需|别|別|請勿|请勿)\s*(?:再|给我|給我|帮我|幫我)?\s*(?:报价|報價|价格|價格|价钱|價錢|优惠价|優惠價|quote|quotation)|\b(?:don't|do not|no)\s+(?:need|want)\s+(?:the\s+)?(?:price|quote|quotation)\b/iu;
 const DELIMITER = /[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu;
-const HIGH_RISK = /(?:不要任何|全部都不要|所有都不要|别再|別再|停止|退订|退訂|unsubscribe|opt\s*out|stop\s+messaging|不要发消息|不要發消息|不接受任何|不要联系|不要聯繫)/iu;
+const HIGH_RISK = /(?:不要任何|全部都不要|所有都不要|别再|別再|停止|退订|退訂|unsubscribe|opt\s*out|stop\s+messaging|不要发消息|不要發消息|不接受任何|不要联系|不要聯繫|不要再联系|不要再聯繫|别再联系|別再聯繫|不要再联络|不要再聯絡|别再发|別再發)/iu;
 
 function resolveIndependentRefusalPriceRequest({
   customerText, services = [], serviceAliases = [],
