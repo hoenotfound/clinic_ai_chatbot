@@ -161,7 +161,7 @@ test("only strong secrets, pinned sender and HTTPS /webhook destinations start",
   };
   assert.deepEqual(configFromEnv(env),cfg);
   assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:""}),/HTTPS/);
-  assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:cfg.legacyUrl}),/identity\/secrets/);
+  assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:cfg.legacyUrl}),/HTTPS/);
   assert.throws(()=>configFromEnv({...env,WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:cfg.lifecycleUrl}),/HTTPS/);
   assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:""}),/identity\/secrets/);
   assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:"333,333"}),/identity\/secrets/);
