@@ -36,6 +36,9 @@ function configFromEnv(env = process.env) {
     lifecycleUrl:bootstrap?null:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL,"Lifecycle callback"),
     ...(bootstrap?{bootstrap:{
       legacyWabas:allowlist,
+      legacyLifecycleUrl:requireHttpsWebhook(
+        env.WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL,
+        "Verified legacy lifecycle audit","/pr395-legacy-lifecycle-webhook"),
       preidentityUrl:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL,
         "Preidentity receiver","/pr395-preidentity-webhook")
     }}:{}),
@@ -43,10 +46,12 @@ function configFromEnv(env = process.env) {
   if(config.appSecret.length<24||config.verifyToken.length<16||
      !/^\+[1-9]\d{7,14}$/.test(config.secondaryPhone)||
      (bootstrap?(
-       config.secondaryWaba!==""||!allowlist.length||
+       config.secondaryWaba!==""||allowlist.length!==1||
        !allowlist.every(x=>/^\d+$/.test(x))||
        new Set(allowlist).size!==allowlist.length||
-       config.bootstrap.preidentityUrl===config.legacyUrl
+       config.bootstrap.preidentityUrl===config.legacyUrl||
+       config.bootstrap.legacyLifecycleUrl===config.legacyUrl||
+       config.bootstrap.legacyLifecycleUrl===config.bootstrap.preidentityUrl
      ):(
        !/^\d+$/.test(config.secondaryWaba)||
        config.legacyUrl===config.lifecycleUrl
@@ -77,12 +82,12 @@ function partitionSignedBatch(payload,config) {
   if(payload?.object!=="whatsapp_business_account"||
      !Array.isArray(payload.entry)||!payload.entry.length||payload.entry.length>200)
     throw Error("Unexpected default WhatsApp callback payload");
-  const legacy=[],lifecycle=[],preidentity=[];
+  const legacy=[],legacyLifecycle=[],lifecycle=[],preidentity=[];
   const knownLegacy=config.bootstrap?new Set(config.bootstrap.legacyWabas):null;
   for(const entry of payload.entry){
     if(!entry||!Array.isArray(entry.changes)||!entry.changes.length||
        entry.changes.length>200)throw Error("Invalid WhatsApp callback entry");
-    const legacyChanges=[],lifecycleChanges=[],preidentityChanges=[];
+    const legacyChanges=[],legacyLifecycleChanges=[],lifecycleChanges=[],preidentityChanges=[];
     for(const change of entry.changes){
       if(!change||typeof change.field!=="string"||
          !change.value||typeof change.value!=="object"||
@@ -91,7 +96,11 @@ function partitionSignedBatch(payload,config) {
       const entryId=String(entry.id||"");
       if(knownLegacy){
         if(knownLegacy.has(entryId)){
-          legacyChanges.push(change);
+          // The old callback can acknowledge account_update with HTTP 200
+          // without any lifecycle persistence. All such updates must be
+          // auditable, with an explicit COMMIT-bound downstream proof.
+          if(change.field==="account_update")legacyLifecycleChanges.push(change);
+          else legacyChanges.push(change);
         }else if(/^\d+$/.test(entryId)&&change.field==="account_update" &&
                  typeof change.value.phone_number==="string" &&
                  matchingPhone(change.value.phone_number,config.secondaryPhone) &&
@@ -120,11 +129,13 @@ function partitionSignedBatch(payload,config) {
       legacyChanges.push(change);
     }
     if(legacyChanges.length)legacy.push({...entry,changes:legacyChanges});
+    if(legacyLifecycleChanges.length)legacyLifecycle.push({...entry,changes:legacyLifecycleChanges});
     if(lifecycleChanges.length)lifecycle.push({...entry,changes:lifecycleChanges});
     if(preidentityChanges.length)preidentity.push({...entry,changes:preidentityChanges});
   }
   return{
     legacy:legacy.length?{...payload,entry:legacy}:null,
+    legacyLifecycle:legacyLifecycle.length?{...payload,entry:legacyLifecycle}:null,
     lifecycle:lifecycle.length?{...payload,entry:lifecycle}:null,
     preidentity:preidentity.length?{...payload,entry:preidentity}:null,
   };
@@ -143,6 +154,10 @@ async function postSigned(url, payload, config, fetchImpl = global.fetch) {
   }
   // Old single-number servers could return 200 without persisting anything.
   // Require an explicit durable lifecycle marker from PR #395, never trust 200.
+  if(config.bootstrap && url===config.bootstrap.legacyLifecycleUrl &&
+     response.headers?.get?.("x-da-legacy-lifecycle-accepted")!=="1"){
+    throw Error("Legacy lifecycle receiver did not prove a durable account update audit");
+  }
   if(config.bootstrap && url===config.bootstrap.preidentityUrl &&
      response.headers?.get?.("x-da-coexistence-preidentity-accepted")!=="1"){
     throw Error("Preidentity receiver did not prove a durable isolated audit");
@@ -161,6 +176,7 @@ async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fe
     // An interrupted mixed batch may be replayed. Both receivers MUST be
     // idempotent by provider message ID / event fingerprint.
     if (batches.legacy) await postSigned(config.legacyUrl, batches.legacy, config, fetchImpl);
+    if (batches.legacyLifecycle) await postSigned(config.bootstrap.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl);
     if (batches.lifecycle) await postSigned(config.lifecycleUrl, batches.lifecycle, config, fetchImpl);
     if (batches.preidentity) await postSigned(config.bootstrap.preidentityUrl, batches.preidentity, config, fetchImpl);
     return 200;
