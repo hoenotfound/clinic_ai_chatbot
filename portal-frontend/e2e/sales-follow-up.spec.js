@@ -120,3 +120,56 @@ test("searching customers is immediate and does not change server data", async (
   await expect(page.getByText("Customer A")).toBeVisible();
   expect(calls).toHaveLength(0);
 });
+
+test("narrow iPhone layout prevents input zoom and keeps save actions reachable", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await mockFollowUps(page, { exportPermission: true });
+  await page.goto("/sales-follow-up");
+  const search = page.getByPlaceholder("Search name, phone or treatment");
+  await expect(search).toBeVisible();
+  expect(await search.evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth))
+    .toBeLessThanOrEqual(2);
+
+  await page.getByRole("button", { name: "2. Record Result" }).click();
+  const modal = page.getByRole("dialog");
+  await expect(modal).toBeVisible();
+  await page.getByLabel("Message sent, waiting for reply").check();
+  const date = page.getByLabel("When should we follow up again?");
+  expect(await date.evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+
+  // Even with all five options and the reminder controls, Save stays in view.
+  await modal.evaluate(el => { el.scrollTop = 0; });
+  const footer = page.getByTestId("sales-result-actions");
+  const modalBox = await modal.boundingBox();
+  const footerBox = await footer.boundingBox();
+  expect(footerBox.y + footerBox.height).toBeLessThanOrEqual(modalBox.y + modalBox.height + 3);
+
+  for (const name of ["Cancel", "Save result", "In 3 days", "In 7 days"]) {
+    const button = page.getByRole("button", { name, exact: true });
+    expect((await button.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test("returning from personal WhatsApp preserves the active lead without marking contacted", async ({ page }) => {
+  const calls = await mockFollowUps(page);
+  await page.goto("/sales-follow-up");
+  const openWhatsApp = page.getByRole("link", { name: "1. Open WhatsApp" });
+  // Stop the external navigation only for the test. Keep the real click event
+  // so React persists the return context.
+  await openWhatsApp.evaluate(el => el.addEventListener("click", e => e.preventDefault(), { once: true }));
+  await openWhatsApp.click();
+  await expect(page.getByRole("button", { name: "Continue: Record Result" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Continue: Record Result" })).toBeVisible();
+  expect(calls).toHaveLength(0);
+  await page.getByRole("button", { name: "Continue: Record Result" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save result" })).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByRole("button", { name: "Continue: Record Result" })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Continue: Record Result" })).toHaveCount(0);
+  expect(calls).toHaveLength(0);
+});
