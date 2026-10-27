@@ -12,7 +12,7 @@ const { getActivePromotions } = require("./activePromotion");
 const { pricingMessageText, isVerifiedStaffTurn, isRecentPricingThread } = require("./priceFollowUpContext");
 
 const MAX_CONTEXT_MS = 3 * 60 * 60 * 1000;
-const RESET = /(?:换个|換個|改聊|不聊|其他话题|其他話題|另外想|不要|不想(?:做|了解)|退订|退訂|\b(?:stop|unsubscribe|opt\s*out|switch|instead|another\s+treatment|not\s+interested|don't\s+want)\b)/iu;
+const RESET = /(?:换个|換個|改聊|不聊|其他话题|其他話題|另外想|想改做|改做其他|改做其它|改选|改選|其他疗程|其它疗程|其他療程|其它療程|不要|不想(?:做|了解)|退订|退訂|\b(?:stop|unsubscribe|opt\s*out|switch|instead|another\s+treatment|not\s+interested|don't\s+want)\b)/iu;
 const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所有(?:疗程|療程|服务|服務|项目|項目)|\b(?:all\s+(?:treatments?|services?)|whole\s+clinic|price\s+list)\b)/iu;
 const ADMIN_FEE = /(?:押金|订金|訂金|定金|评估|評估|咨询费|諮詢費|挂号|掛號|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
 const TWO_REQUEST = /(?:这|這)?(?:两|兩|2)\s*(?:个|個|项|項|种|種|页|頁)?|两项|兩項|两个|兩個|\b(?:both|two)\b|(?:3\s*d.{0,12}(?:和|与|及|and).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|及|and).{0,12}3\s*d)/iu;
