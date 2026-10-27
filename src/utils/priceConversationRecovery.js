@@ -166,6 +166,17 @@ function resolveEstablishedTreatmentPrice({
     if (mentions.length > 1) return null;
     let named = shortChoice(source, services, serviceAliases, prior.slice(Math.max(0,index-7),index));
     if (!named && mentions.length) return null;
+    // An asymmetry concern is not an explicit switch from a customer-selected
+    // service. Even when a later bot happens to mention 3D in its answer,
+    // preserve the latest named customer choice (including a newer 9D).
+    if (CONCERN_3D.test(source)) {
+      const earlierNames = prior.slice(0, index).filter(turn => turn.role === "user")
+        .map(turn => [...new Set(findServicesInText(pricingMessageText(turn), candidates))])
+        .filter(names => names.length > 0);
+      const latestEarlierNames = earlierNames.at(-1);
+      if (latestEarlierNames && (latestEarlierNames.length !== 1 ||
+          latestEarlierNames[0] !== "3D 小颜术")) return null;
+    }
     // A face concern can establish 3D only when a recent bot explained
     // that configured service (not from an ad name or model guess).
     if (!named && CONCERN_3D.test(source)) {
@@ -241,9 +252,25 @@ function activeTwoServiceMenu(before, candidates) {
   return names.length === 2 ? names : null;
 }
 
-function requestedTwoTreatmentServices(current, before, services, aliases) {
+// The production clinic also aliases "3D+9D" to a combined package. The
+// general matcher intentionally normalizes away punctuation, meaning an
+// individual-price list "3D、9D分别多少钱" can look exactly like that combo.
+ // Only in an EXPLICIT SEPARATE-PRICE question, insert a real word connector
+ // between bare service codes before matching. Do not change global matching,
+ // the configured aliases or the handling of positive combination requests.
+function separatePriceServiceText(text) {
+  return String(text || "").replace(
+    /\b(3\s*d|9\s*d)\s*(?:、|\/|&|\s+)\s*(9\s*d|3\s*d)\b/giu,
+    (whole, first, second) =>
+      first.trim().toLowerCase() === second.trim().toLowerCase()
+        ? whole : first + " 和 " + second
+  );
+}
+
+function requestedTwoTreatmentServices(current, before, services, aliases, explicitlySeparate = false) {
   const candidates = serviceCandidates(services, aliases);
-  const directNames = [...new Set(findServicesInText(current, candidates))];
+  const priceText = explicitlySeparate ? separatePriceServiceText(current) : current;
+  const directNames = [...new Set(findServicesInText(priceText, candidates))];
   if (directNames.length > 2 || directNames.some(name => COMBO.test(name))) return null;
   if (directNames.length === 2) return directNames;
   if (directNames.length) return null;
@@ -306,12 +333,13 @@ function resolveTwoTreatmentPriceReply({
       return null;
   }
   const names = requestedTwoTreatmentServices(
-    effective, before, services, serviceAliases
+    effective, before, services, serviceAliases, separate
   );
   if (!names || names.length !== 2 ||
       (turns.length === 1 && (
         !direct ||
-        [...new Set(findServicesInText(effective,
+        [...new Set(findServicesInText(
+          separate ? separatePriceServiceText(effective) : effective,
           serviceCandidates(services, serviceAliases)))].length !== 2
       ))) return null;
 
