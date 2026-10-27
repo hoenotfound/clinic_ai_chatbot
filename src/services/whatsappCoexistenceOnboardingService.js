@@ -110,7 +110,7 @@ function assertExpectedSecondaryPhone(phone, env = process.env) {
   // actual account-owned phone against the privately pinned E.164.
   if (!/^\d+$/.test(metaId) ||
       metaId === clean(env.WHATSAPP_PHONE_NUMBER_ID) ||
-      metaId === "1318355951360575") {
+      (unassignedProtectedQaTarget(env) && metaId === "1318355951360575")) {
     throw new WhatsAppCoexistenceOnboardingError(
       "The authorized phone ID is invalid, belongs to the primary account, or matches the excluded clinic test number.",
       { code: "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH", status: 409, retrySafe: false }
