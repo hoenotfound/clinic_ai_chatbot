@@ -125,6 +125,10 @@ function assertPr395StagingSafety(env = process.env) {
         OUTBOUND_SWITCHES.some(key => env[key] === "true" &&
           !REHEARSAL_INGRESS_SWITCHES.includes(key)) ||
         !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
+        // The staging binary must not possess production primary Cloud API
+        // sending credentials. This is enforced even if the portal is accessed.
+        (String(env.WHATSAPP_TOKEN || "").trim() &&
+          !String(env.WHATSAPP_TOKEN).startsWith("pr395-inert-")) ||
         String(env.WHATSAPP_APP_SECRET) !== String(env.META_APP_SECRET)) {
       throw new Error("PR395 provider rehearsal requires verified inbound configuration and forbids all outbound traffic.");
     }
