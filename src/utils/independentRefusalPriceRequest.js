@@ -30,10 +30,10 @@ function resolveIndependentRefusalPriceRequest({
   const requested = mentioned(clauses[1]);
   if (refused.length !== 1 || requested.length !== 1 ||
       refused[0] === requested[0]) return null;
-  const refusedService = safeServiceFromCustomer(clauses[0], services, serviceAliases);
+  // Refused service is deliberately negated; safeServiceFromCustomer
+  // correctly excludes such a mention. It is evidence of what NOT to quote.
   const requestedService = safeServiceFromCustomer(clauses[1], services, serviceAliases);
-  if (!refusedService || refusedService.name !== refused[0] ||
-      !requestedService || requestedService.name !== requested[0] ||
+  if (!requestedService || requestedService.name !== requested[0] ||
       !hasExplicitPriceRequest(clauses[1])) return null;
   return Object.freeze({
     treatment: requested[0],
