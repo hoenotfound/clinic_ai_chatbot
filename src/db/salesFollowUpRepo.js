@@ -230,4 +230,26 @@ async function recordOutcome({ leadId, status, dueAt, expectedLastInboundId, use
   }
 }
 
-module.exports = { extendedFollowUpHoldHours, listPending, recordOutcome };
+
+async function countMonthlyOutcomes({ username, canViewAll = false, queryable = pool, now = new Date() }) {
+  // Month boundaries are Malaysia-local, not UTC, so the monthly figures
+  // match the period understood by Neutro's sales manager.
+  const result = await queryable.query(
+    `SELECT e.outcome, COUNT(DISTINCT e.lead_id)::integer AS leads
+     FROM sales_follow_up_events e
+     JOIN leads l ON l.id = e.lead_id
+     WHERE e.created_at >= (
+       date_trunc('month', $3::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur')
+       AT TIME ZONE 'Asia/Kuala_Lumpur'
+     ) AND e.created_at <= $3::timestamptz
+       AND ($1::boolean OR l.owner_username = $2::text)
+     GROUP BY e.outcome`,
+    [canViewAll, username, now]
+  );
+  return Object.fromEntries(
+    ["contacted", "later", "booked", "not_interested", "unable"]
+      .map(outcome => [outcome, Number(result.rows.find(row => row.outcome === outcome)?.leads || 0)])
+  );
+}
+
+module.exports = { extendedFollowUpHoldHours, listPending, recordOutcome, countMonthlyOutcomes };
