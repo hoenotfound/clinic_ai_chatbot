@@ -257,6 +257,40 @@ if present, follow the next page privately in Graph Explorer until absent.
 Known Neutro app-default `account_update` remains a lifecycle-cutover risk.
 No change to either Meta callback, sender or production service is approved.
 
+### Operator-confirmed pagination completion — 27 Oct 2026
+
+The operator has inspected the **unsanitized** Graph API Explorer JSON
+responses and explicitly confirmed that **neither** of these two endpoints
+returned a `paging.next` URL; the responses contained only the
+`paging.cursors.before` and `paging.cursors.after` values:
+
+- `GET /622200677557573/client_whatsapp_business_accounts`:
+  exactly one visible account, **Neutro Sense TCM**
+  (WABA `1593376338308612`); **all pages checked**.
+- `GET /1593376338308612/phone_numbers`:
+  exactly one visible number `+601130535053`
+  (Meta Phone Number ID `1408739622311791`); **all pages checked**.
+
+The previously supplied
+`GET /622200677557573/owned_whatsapp_business_accounts`
+returned an empty `data` array. Thus this portfolio's owned/client
+and Neutro-phone collections are now **enumerated to the final page
+under the user's present Graph token and asset permissions**.
+
+**Scope limit:** this is **not** reverse discovery of every WABA that
+might subscribe to DA CHATBOT app `1029862536608134` through other
+portfolios/delegated customer businesses. Do not convert this
+portfolio-specific result into a claim of global app subscription
+completeness, or assume that the old callback can safely handle unknown
+`account_update` events.
+
+**Next cutover gate:** verify the protected legacy lifecycle audit using
+real Meta-signed delivery under a separately approved provider
+acceptance plan; establish monitored Neutro disconnect intervention and
+immediate rollback before any app-default callback change. For now
+`WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true`, receiver flags off,
+Meta callbacks unchanged, no real signup/QR or sender changes.
+
 ## Legacy WABA inventory and live cutover acceptance — not yet complete
 
 **Scope:** enumerate every *phone-owning* WhatsApp Business Account
