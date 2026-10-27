@@ -87,8 +87,11 @@ function inspectPr395CoexistenceReadiness({
   }
   const canRequestSync=Boolean(afterSignup)&&missingAfter.length===0;
   return {
-    qr:{approved:canApproveQr,missing:missingBefore},
-    sync:{ready:canRequestSync,missing:missingAfter,
+    // Advisory only: the operator must independently verify evidence and
+    // explicitly authorize the QR / later Meta mutations. Never wire these
+    // booleans directly to an automatic production action.
+    qr:{preflightComplete:canApproveQr,missing:missingBefore},
+    sync:{preflightComplete:canRequestSync,missing:missingAfter,
       requests:canRequestSync?syncPlan.requests:[]},
     callbackGuidance:"Preserve the existing app-level callback. account_update is not covered by WABA callback overrides.",
     automaticNetworkActions:false,
