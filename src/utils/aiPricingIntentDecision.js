@@ -58,9 +58,13 @@ const PRICE_QUESTION_CLAUSE =
 
 function hasCurrentPriceAmountRequest(customerText) {
   const current = String(customerText || "").trim();
-  return CURRENT_PRICE_AMOUNT_REQUEST.test(current) ||
+  // This shared customer-evidence gate prevents an AI priceQuery hint from
+  // turning "一次多少人/部位" or benefit questions into a paid quote.
+  return hasExplicitPriceRequest(current) && (
+    CURRENT_PRICE_AMOUNT_REQUEST.test(current) ||
     PRICE_QUESTION_CLAUSE.test(current) || isFirstTrialAmountQuestion(current) ||
-    LOCAL_WHATSAPP_PRICE.test(current);
+    LOCAL_WHATSAPP_PRICE.test(current)
+  );
 }
 
 const BRIDGE = /(?:这个|這個|那个|那個|效果|有效|多久|时间|時間|包括|包含|套餐|配套|护理|護理|疗程|療程|调理|調理|\b(?:this|that|it|results?|effective|duration|long|include|package|session|treatment|details?|pakej|rawatan)\b)/iu;
