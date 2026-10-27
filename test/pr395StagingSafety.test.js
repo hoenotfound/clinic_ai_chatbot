@@ -30,6 +30,21 @@ test("PR395 sandbox is inert until explicitly enabled with pinned DB and protect
   assert.deepEqual(assertPr395StagingSafety(safe()),
     {staging:true,workersDisabled:true,providerProcessingDisabled:true});
   assert.deepEqual(assertPr395StagingSafety({NODE_ENV:"production"}),{staging:false});
+  // New personal QA number has not completed Meta authorization yet.
+  // Protected mode can clear the prior clinic ID without weakening the gate.
+  assert.deepEqual(assertPr395StagingSafety(safe({
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60187004870",
+    WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
+  })),{staging:true,workersDisabled:true,providerProcessingDisabled:true});
+  assert.throws(()=>assertPr395StagingSafety(safe({
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",
+  })),/both matching verified phone IDs or neither/);
+  assert.throws(()=>assertPr395StagingSafety(safe({
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"",
+  })),/both matching verified phone IDs or neither/);
+
 });
 test("PR395 sandbox fails startup for missing locks, QA DB pin, insecure secrets and active outbound flags",()=>{
   const bad=[
@@ -130,6 +145,7 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
   });
   for(const overrides of [
     {WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"1852014482431209"},
+    {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:""},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575"},
     {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336"},
     {WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness"},
