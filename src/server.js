@@ -33,7 +33,7 @@ const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackage
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
-const { resolveTwoTreatmentPriceReply } = require("./utils/priceConversationRecovery");
+const { resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -1253,7 +1253,10 @@ async function processIncomingMessage(
       const reviewEvidence = await contactsRepo.getTcmReviewEvidence(
         contact.id, savedInbound.id
       );
-      if (reviewEvidence?.pendingClinicalReview === false) {
+      if (canRecoverTwoPriceInformationReview({
+        quote: twoTreatmentQuote, flagged, reviewRequired, reviewType,
+        pendingClinicalReview: reviewEvidence?.pendingClinicalReview,
+      })) {
         flagged = false;
         reviewRequired = false;
         reviewType = null;
