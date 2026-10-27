@@ -120,15 +120,57 @@ async function recordOutcome({ leadId, status, dueAt, username, canManageAll = f
       [id,username,status,inboundId,validatedDate]
     );
     if (status === "booked") {
+      const previous = await client.query(
+        "SELECT l.stage_id, l.appointment_status, s.system_key, s.name AS stage_name FROM leads l JOIN pipeline_stages s ON s.id=l.stage_id WHERE l.id=$1",
+        [id]
+      );
+      const current = previous.rows[0];
+      let next = null;
+      // Match the existing Pipeline booking behavior: only auto-move default
+      // New/Contacted stages, never a customized or previously visited stage.
+      if (["new", "contacted"].includes(current.system_key)) {
+        const appointmentStage = await client.query(
+          "SELECT id, name FROM pipeline_stages WHERE system_key='appointment_set' AND stage_type='open' LIMIT 1"
+        );
+        next = appointmentStage.rows[0] || null;
+      }
       await client.query(
-        `UPDATE leads SET appointment_status='set', appointment_at=$2,
-           stage_id=COALESCE((SELECT id FROM pipeline_stages WHERE system_key='appointment_set' AND stage_type='open' LIMIT 1),stage_id),
-           updated_at=now()
-         WHERE id=$1 AND is_closed=false`,
-        [id,validatedDate]
+        "UPDATE leads SET appointment_status='set', appointment_at=$2, stage_id=COALESCE($3::integer,stage_id), updated_at=now() WHERE id=$1 AND is_closed=false",
+        [id, validatedDate, next?.id || null]
+      );
+      if (next && Number(next.id) !== Number(current.stage_id)) {
+        await client.query(
+          "INSERT INTO lead_stage_history (lead_id,from_stage_id,to_stage_id,changed_by) VALUES ($1,$2,$3,$4)",
+          [id,current.stage_id,next.id,username]
+        );
+        await client.query(
+          "INSERT INTO lead_activities (lead_id,activity_type,description,actor,metadata) VALUES ($1,'stage',$2,$3,$4::jsonb)",
+          [id,"Moved from " + current.stage_name + " to " + next.name + ".",username,
+            JSON.stringify({fromStageId:current.stage_id,toStageId:next.id})]
+        );
+      }
+      await client.query(
+        "INSERT INTO lead_activities (lead_id,activity_type,description,actor,metadata) VALUES ($1,'updated',$2,$3,$4::jsonb)",
+        [id,"Appointment confirmed from Sales Follow-up.",username,
+          JSON.stringify({appointmentStatus:"set",previousAppointmentStatus:current.appointment_status})]
       );
     }
     await client.query("COMMIT");
+    if (status === "booked") {
+      // The existing Pipeline clears Booking Ready attention after commit,
+      // never while the lead row lock is held (contact/lead lock order).
+      try {
+        const cleared = await pool.query(
+          "UPDATE contacts c SET needs_attention=false, attention_reason=NULL, updated_at=now() WHERE c.id=$1 AND c.needs_attention=true AND c.attention_reason LIKE 'Booking ready:%' RETURNING c.id",
+          [eligible[0].contactId]
+        );
+        if (cleared.rows[0]) realtimeEvents.publish("conversation_changed", {
+          contactId: eligible[0].contactId, reason: "booking_confirmed"
+        });
+      } catch (cleanupError) {
+        console.error("Sales follow-up booking attention cleanup failed:", cleanupError);
+      }
+    }
     realtimeEvents.publish("pipeline_changed", { leadId: id });
     return { ok: true, leadId: id, status };
   } catch (error) {
