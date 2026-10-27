@@ -172,7 +172,16 @@ function hasCustomerPriceEnquiry(customerText) {
   // Declining one treatment must not suppress a separate, explicit CURRENT
   // pricing question about another treatment in the same customer message.
   // A standalone refusal still does not authorize promotional images.
-  if (DECLINED_PRICE.test(value)) return false;
+  if (DECLINED_PRICE.test(value)) {
+    // A refusal of one quote does not cancel a new, separate price question
+    // after an explicit contrast. Service ownership is verified downstream;
+    // this boolean alone NEVER authorizes a quote or promotion image.
+    const clauses = value.split(/[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu)
+      .map(x => x.trim()).filter(Boolean);
+    return clauses.length === 2 && DECLINED_PRICE.test(clauses[0]) &&
+      !DECLINED_PRICE.test(clauses[1]) &&
+      hasExplicitPriceRequest(clauses[1]);
+  }
   // A price objection/budget opinion alone asks for neither a new amount nor
   // a promotional graphic. Preserve any separate explicit price request.
   if (NON_REQUEST_PRICE_COMMENT.test(value) && !hasExplicitPriceRequest(value)) return false;
