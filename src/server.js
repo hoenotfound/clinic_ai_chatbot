@@ -1334,15 +1334,17 @@ async function processIncomingMessage(
           language:mediaLanguage,
         }) : null;
     if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
-        shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
+        twoTreatmentQuote || shadowPriceException || numberedPricingSelection || scopedPackagePrice) {
       console.info("[Pricing authority] contact=" + contact.id +
         " inbound=" + savedInbound.id +
         " mode=" + aiPricingMode +
         " observed=" + Boolean(pricingDecision) +
-        " authorized=" + Boolean(approvedPricingDecision) +
-        " reason=" + pricingApproval.reason +
-        " source=" + (approvedPricingDecision?.source || "none") +
-        " treatment=" + (approvedPricingDecision?.treatment || "none"));
+        " authorized=" + Boolean(approvedPricingDecision || twoTreatmentQuote) +
+        " reason=" + (twoTreatmentQuote ? "two_treatments_verified" : pricingApproval.reason) +
+        " source=" + (twoTreatmentQuote?.source || approvedPricingDecision?.source || "none") +
+        " treatment=" + (twoTreatmentQuote
+          ? twoTreatmentQuote.prices.map(item => item.treatment).join(" / ")
+          : approvedPricingDecision?.treatment || "none"));
     }
     // Enabled and independently verified Shadow exceptions MUST use the
     // approved decision exclusively. A rejected candidate cannot re-enter the
@@ -1827,7 +1829,7 @@ async function processIncomingMessage(
       // This optional write occurs after the text-send outcome is known and
       // cannot affect accepted text, media sending or retry semantics.
       if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
-          shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
+          twoTreatmentQuote || shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
         const quotedApprovedPrices = approvedPricingDecision?.prices?.length
           ? approvedPricingDecision.prices.every(item => reply.includes(item.price))
           : false;
@@ -1838,10 +1840,13 @@ async function processIncomingMessage(
             inboundMessageId: savedInbound.id,
             mode: aiPricingMode,
             observed: Boolean(pricingDecision),
-            approved: Boolean(approvedPricingDecision),
-            approvalReason: pricingApproval.reason,
-            treatment: approvedPricingDecision?.treatment || null,
-            decisionSource: approvedPricingDecision?.source || null,
+            approved: Boolean(approvedPricingDecision || twoTreatmentQuote),
+            approvalReason: twoTreatmentQuote ? "two_treatments_verified_text_only"
+              : pricingApproval.reason,
+            treatment: twoTreatmentQuote
+              ? twoTreatmentQuote.prices.map(item => item.treatment).join(" / ")
+              : approvedPricingDecision?.treatment || null,
+            decisionSource: twoTreatmentQuote?.source || approvedPricingDecision?.source || null,
             replyStatus: !sendOutcome.sendResult.success ? "text_not_accepted"
               : twoTreatmentQuote ? "verified_two_treatment_prices_quoted"
               : approvedPricingDecision ? (quotedApprovedPrices ? "approved_price_quoted"
