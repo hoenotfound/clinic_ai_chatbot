@@ -6,7 +6,7 @@ const { resolveShadowPriceException, recentVerifiedPricingSession } =
   require("../src/utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
-const { resolveTwoTreatmentPriceReply } = require("../src/utils/priceConversationRecovery");
+const { resolveRecentPriceSelection, resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("../src/utils/priceConversationRecovery");
 
 const now = Date.now();
 const turn = (role, content, secondsBefore = 0, staff = false) => ({
@@ -21,6 +21,7 @@ const serviceAliases = [
   {alias:"骨盆",officialService:"骨盆调理"},
   {alias:"盆骨调整",officialService:"骨盆调理"},
   {alias:"3D小颜术",officialService:"3D 小颜术"},
+  {alias:"3D",officialService:"3D 小颜术"},
   {alias:"9D",officialService:"9D 逆龄抗衰"},
 ];
 const promotions = [
@@ -328,4 +329,139 @@ test("two-treatment decisions are audited as approved text-only and never select
   assert.match(source,/decisionSource: twoTreatmentQuote\?\.source/u);
   assert.match(source,/const promoBundle = twoTreatmentQuote \? null : await resolvePricePromotionForReply/u);
   assert.match(source,/replyStatus: !sendOutcome\.sendResult\.success \? "text_not_accepted"/u);
+});
+
+
+test("20-message truncated history beginning with an assistant preserves a fresh customer-confirmed price", () => {
+  const tail = [
+    turn("user","想了解 3D 小颜术",200),
+    turn("assistant","我们的 3D 小颜术是徒手面部护理",190),
+    turn("user","请问一次多少钱",180),
+  ];
+  const orphan = Array.from({length:17},(_,i)=>
+    turn("assistant","[Automated explanation] 好的",2400-(i*100))
+  );
+  const history=[...orphan,...tail]; // same 20-message limit as the Inbox AI snapshot
+  assert.equal(history.length,20);
+  const session=recentVerifiedPricingSession(history,"请问一次多少钱",now);
+  assert.equal(session?.[0]?.content,"想了解 3D 小颜术");
+  assert.equal(shadow(history,"请问一次多少钱")?.treatment,"3D 小颜术");
+  const unsafe=[...orphan];
+  unsafe[3]=turn("assistant","[Verified STAFF message] 请稍等",2100,true);
+  assert.equal(recentVerifiedPricingSession([...unsafe,...tail],"请问一次多少钱",now),null);
+  const untrusted=history.map(x=>({...x}));
+  delete untrusted[0].pricingCreatedAtMs;
+  assert.equal(recentVerifiedPricingSession(untrusted,"请问一次多少钱",now)?.[0].role,"user",
+    "a missing boundary timestamp must not authorize old orphan assistant content");
+  delete untrusted[18].pricingCreatedAtMs;
+  assert.equal(recentVerifiedPricingSession(untrusted,"请问一次多少钱",now),null,
+    "missing timestamps inside the customer-led exchange remain disallowed");
+});
+
+test("three-turn fee clarification accepts a bot-grounded facial concern, not a generic alias guess", () => {
+  const question=turn("user","请问价格是多少",130);
+  const mapped=turn("assistant",
+    "你想了解哪项护理的价格？3D 小颜术可以改善大小脸，9D 逆龄抗衰主要是紧致。",120);
+  const selected=turn("user","调整大小脸",110);
+  const history=[question,mapped,selected];
+  assert.equal(shadow(history,"调整大小脸")?.treatment,"3D 小颜术");
+  assert.equal(shadow(history,"调整大小脸")?.source,"customer_price_selection");
+  assert.equal(shadow([
+    question,turn("assistant","我们有 3D 小颜术 和 9D 逆龄抗衰，哪项价钱？",120),selected,
+  ],"调整大小脸"),null,
+  "the bot must actually associate the concern with one specific treatment");
+  assert.equal(shadow([
+    question,turn("assistant","9D 逆龄抗衰可以改善大小脸，3D 小颜术也有",120),selected,
+  ],"调整大小脸"),null,"no contradictory or model-inferred concern mapping");
+  const named=shadow([
+    question,turn("assistant","请问你想了解哪一项疗程的价格呢？",120),
+    turn("user","3D",110),
+  ],"3D");
+  assert.equal(named?.treatment,"3D 小颜术","live Neutro has exact 3D alias");
+});
+
+test("two-item answer directly resolves an immediate priced two-treatment menu", () => {
+  for (const content of ["两个","两项","both","两个都想了解"]) {
+    const history=[
+      turn("user","想了解护理",160),
+      turn("assistant","你想了解 3D 小颜术 还是 9D 逆龄抗衰的价钱？",150),
+      turn("user",content,140),
+    ];
+    const result=dual(history,content);
+    assert.deepEqual(result?.prices.map(x=>x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],content);
+    assert.deepEqual(result?.prices.map(x=>x.amount),["RM488","RM488"]);
+  }
+});
+
+test("two-item answer does not turn two packages, concerns or sessions into two treatment prices", () => {
+  const prefixes=[
+    "3D 小颜术 Package A 和 Package B，你想了解哪个配套的价钱？",
+    "3D 小颜术与 9D 逆龄抗衰有两种问题，你更在意哪种呢？",
+    "我们的 3D 小颜术 和 9D 逆龄抗衰每个项目各有两个配套，请问想了解哪个配套价钱？",
+    "3D 小颜术每次40分钟，可以做两次，请问想做几次？",
+  ];
+  for(const content of prefixes){
+    const history=[turn("user","想了解",220),turn("assistant",content,210),
+      turn("user","两个",200)];
+    assert.equal(dual(history,"两个"),null,content);
+  }
+});
+
+test("explicit separate prices with a negated combo are independently verified", () => {
+  const msgs=[
+    "3D 和 9D 分开多少钱？不要组合",
+    "3D 和 9D 各自价钱多少？不是组合配套",
+    "3D 和 9D 分别多少钱？不需要组合",
+  ];
+  for(const current of msgs){
+    const history=[turn("user","你好",180),
+      turn("assistant","你好，想了解什么护理呢？",170),
+      turn("user",current,160)];
+    const result=dual(history,current);
+    assert.deepEqual(result?.prices.map(x=>x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],current);
+    assert.match(result?.reply||"",/不是组合配套/u);
+  }
+  for(const current of ["3D+9D组合多少钱","不要3D，9D多少钱",
+    "我不要3D也不要9D，多少钱","3D和9D的组合多少钱"]){
+    const history=[turn("user","你好",180),
+      turn("assistant","我们有 3D 小颜术和 9D 逆龄抗衰",170),
+      turn("user",current,160)];
+    assert.equal(dual(history,current),null,current);
+  }
+});
+
+test("information-review recovery requires a verified dual quote and fresh no-clinical-review evidence", () => {
+  const history=[
+    turn("user","想了解",200),
+    turn("assistant","你想了解 3D 小颜术 还是 9D 逆龄抗衰的价钱？",195),
+    turn("user","两个",190),
+  ];
+  const quote=dual(history,"两个");
+  assert.ok(quote?.prices?.length===2);
+  const base={quote,flagged:true,reviewRequired:true,reviewType:"information"};
+  assert.equal(canRecoverTwoPriceInformationReview({...base,pendingClinicalReview:false}),true);
+  assert.equal(canRecoverTwoPriceInformationReview({...base,pendingClinicalReview:null}),false);
+  assert.equal(canRecoverTwoPriceInformationReview({...base,pendingClinicalReview:true}),false);
+  assert.equal(canRecoverTwoPriceInformationReview({...base,reviewType:"clinical",pendingClinicalReview:false}),false);
+  assert.equal(canRecoverTwoPriceInformationReview({...base,reviewRequired:false,pendingClinicalReview:false}),false);
+  assert.equal(canRecoverTwoPriceInformationReview({...base,flagged:false,pendingClinicalReview:false}),false);
+  assert.equal(canRecoverTwoPriceInformationReview({...base,quote:null,pendingClinicalReview:false}),false);
+});
+
+test("outbound two-treatment quote is guarded before the model information handoff and stays text-only", () => {
+  const fs=require("node:fs"),path=require("node:path");
+  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const quotePosition=source.indexOf("let twoTreatmentQuote = aiPricingMode");
+  const approvalPosition=source.indexOf("const pricingApproval = resolveApprovedPricingAssessment");
+  const recoverPosition=source.indexOf("canRecoverTwoPriceInformationReview({");
+  const sendPosition=source.indexOf("const sendOutcome = await sendTrackedText(");
+  assert.ok(quotePosition>0 && quotePosition<approvalPosition);
+  assert.ok(recoverPosition>quotePosition && recoverPosition<approvalPosition);
+  assert.ok(sendPosition>approvalPosition);
+  assert.match(source,/getTcmReviewEvidence\(\s*contact\.id, savedInbound\.id\s*\)/u);
+  assert.match(source,/if \(twoTreatmentQuote\) \{\s*\/\/ A verified multi-treatment request/u);
+  assert.match(source,/const promoBundle = twoTreatmentQuote \? null : await resolvePricePromotionForReply/u);
+  assert.match(source,/mediaReason: promoBundle \? null : pricingMediaSkipReason/u);
 });
