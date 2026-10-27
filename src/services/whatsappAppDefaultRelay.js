@@ -4,8 +4,13 @@
 // chatbot npm start path. Deploy separately and only after an end-to-end trial.
 const crypto = require("node:crypto");
 const http = require("node:http");
+const { performance } = require("node:perf_hooks");
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+// Single bounded forwarding budget for an entire signed Meta batch, not one
+// timeout per destination. Free Render cold starts can exceed the old 8s,
+// but this is NOT a guarantee that Meta will keep its HTTP request open.
+const DEFAULT_DISPATCH_TIMEOUT_MS = 30000;
 const SECONDARY_FIELDS = new Set(["messages", "history", "smb_app_state_sync", "smb_message_echoes"]);
 const LIFECYCLE_EVENTS = new Set(["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED", "ACCOUNT_RECONNECTED"]);
 
@@ -141,14 +146,42 @@ function partitionSignedBatch(payload,config) {
   };
 }
 
-async function postSigned(url, payload, config, fetchImpl = global.fetch) {
+async function postSigned(url, payload, config, fetchImpl, deadline) {
+  // Never begin another POST if an earlier downstream has exhausted the
+  // shared deadline. An in-flight POST may have committed despite timeout:
+  // report 503, let Meta decide about redelivery, and rely on durable
+  // fingerprint/message-ID deduplication downstream. NEVER retry here.
+  const remaining = Math.ceil(deadline - performance.now());
+  if (remaining <= 0) throw Error("Relay forwarding deadline expired before downstream POST");
   const raw = Buffer.from(JSON.stringify(payload));
   const signature = "sha256=" + crypto.createHmac("sha256", config.appSecret).update(raw).digest("hex");
-  const response = await fetchImpl(url, {
-    method: "POST", redirect: "manual", signal: AbortSignal.timeout(8000),
-    headers: { "content-type": "application/json", "x-hub-signature-256": signature },
-    body: raw,
+  const controller = new AbortController();
+  let timeoutId;
+  // AbortSignal alone cannot enforce the deadline when a transport ignores
+  // cancellation. Race its result against our own timer. A timed-out POST may
+  // already have committed: never retry here; let Meta replay the whole batch.
+  const expiry = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(Error("Relay forwarding deadline expired awaiting downstream ACK"));
+    }, remaining);
   });
+  let response;
+  try {
+    response = await Promise.race([
+      Promise.resolve().then(() => fetchImpl(url, {
+        method: "POST", redirect: "manual", signal: controller.signal,
+        headers: { "content-type": "application/json", "x-hub-signature-256": signature },
+        body: raw,
+      })),
+      expiry,
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  // Even a noncompliant transport's late successful result is not a durable
+  // ACK once the shared deadline elapsed.
+  if (performance.now() >= deadline) throw Error("Relay forwarding deadline expired awaiting downstream ACK");
   if (!response || response.status < 200 || response.status >= 300) {
     throw Error(`Downstream callback refused an event (${response?.status || "network"})`);
   }
@@ -167,18 +200,24 @@ async function postSigned(url, payload, config, fetchImpl = global.fetch) {
     throw Error("Lifecycle receiver did not prove that the verified event was durable");
   }
 }
-async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fetch) {
+async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fetch,
+  { dispatchTimeoutMs = DEFAULT_DISPATCH_TIMEOUT_MS } = {}) {
   if (!validMetaSignature(raw, signature, config.appSecret)) return 403;
+  if (!Number.isSafeInteger(dispatchTimeoutMs) || dispatchTimeoutMs < 20 ||
+      dispatchTimeoutMs > DEFAULT_DISPATCH_TIMEOUT_MS) return 503;
   let batches;
   try { batches = partitionSignedBatch(JSON.parse(raw.toString("utf8")), config); }
   catch (_) { return 503; }
+  // The deadline is shared by all downstream deliveries, including mixed
+  // legacy lifecycle and preidentity batches. No hidden per-target retry.
+  const deadline = performance.now() + dispatchTimeoutMs;
   try {
-    // An interrupted mixed batch may be replayed. Both receivers MUST be
-    // idempotent by provider message ID / event fingerprint.
-    if (batches.legacy) await postSigned(config.legacyUrl, batches.legacy, config, fetchImpl);
-    if (batches.legacyLifecycle) await postSigned(config.bootstrap.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl);
-    if (batches.lifecycle) await postSigned(config.lifecycleUrl, batches.lifecycle, config, fetchImpl);
-    if (batches.preidentity) await postSigned(config.bootstrap.preidentityUrl, batches.preidentity, config, fetchImpl);
+    // An interrupted mixed batch may be replayed. All downstream receivers
+    // MUST be idempotent by provider message ID / event fingerprint.
+    if (batches.legacy) await postSigned(config.legacyUrl, batches.legacy, config, fetchImpl, deadline);
+    if (batches.legacyLifecycle) await postSigned(config.bootstrap.legacyLifecycleUrl, batches.legacyLifecycle, config, fetchImpl, deadline);
+    if (batches.lifecycle) await postSigned(config.lifecycleUrl, batches.lifecycle, config, fetchImpl, deadline);
+    if (batches.preidentity) await postSigned(config.bootstrap.preidentityUrl, batches.preidentity, config, fetchImpl, deadline);
     return 200;
   } catch (_) { return 503; }
 }
@@ -197,7 +236,13 @@ function createPreparationRelayServer() {
   });
 }
 
-function createRelayServer(config, { fetchImpl = global.fetch } = {}) {
+function createRelayServer(config, {
+  fetchImpl = global.fetch, dispatchTimeoutMs = DEFAULT_DISPATCH_TIMEOUT_MS
+} = {}) {
+  if (!Number.isSafeInteger(dispatchTimeoutMs) || dispatchTimeoutMs < 20 ||
+      dispatchTimeoutMs > DEFAULT_DISPATCH_TIMEOUT_MS) {
+    throw Error("Invalid relay dispatch deadline");
+  }
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", "http://relay.local");
@@ -221,7 +266,7 @@ function createRelayServer(config, { fetchImpl = global.fetch } = {}) {
         chunks.push(chunk);
       }
       const code = await dispatchSignedBatch(Buffer.concat(chunks),
-        req.headers["x-hub-signature-256"], config, fetchImpl);
+        req.headers["x-hub-signature-256"], config, fetchImpl, {dispatchTimeoutMs});
       res.writeHead(code).end();
     } catch (error) {
       // Meta retries 503; never acknowledge a crash or downstream failure.
