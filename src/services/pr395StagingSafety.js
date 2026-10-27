@@ -6,6 +6,55 @@
 function isPr395Staging(env = process.env) {
   return env.PR395_STAGING_MODE === "true";
 }
+function providerRehearsalEnabled(env = process.env) {
+  return isPr395Staging(env) && env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true";
+}
+const REHEARSAL_INGRESS_SWITCHES = [
+  "WHATSAPP_MULTI_NUMBER_READ_ENABLED",
+  "WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED",
+  "WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED",
+  "WHATSAPP_COEXISTENCE_ENABLED",
+  "WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED",
+  "WHATSAPP_SINGLE_SENDER_STRICT_METADATA",
+  "WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED",
+];
+const REHEARSAL_OUTBOUND_FORBIDDEN = [
+  "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+  "WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+  "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED",
+  "WHATSAPP_FEP_FOLLOWUPS_ENABLED",
+];
+function digits(value) { return String(value || "").replace(/\\D/g, ""); }
+function verifiedRehearsalTarget(env) {
+  const waba = String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim();
+  const expectedWaba = String(env.WHATSAPP_SECONDARY_EXPECTED_WABA_ID || "").trim();
+  const phone = String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim();
+  const expectedPhone = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID || "").trim();
+  const e164 = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "");
+  if (!/^\\d+$/.test(waba) || waba !== expectedWaba ||
+      waba === String(env.WHATSAPP_WABA_ID || "") ||
+      !/^\\d+$/.test(phone) || phone !== expectedPhone ||
+      phone === String(env.WHATSAPP_PHONE_NUMBER_ID || "") ||
+      !/^\\+[1-9]\\d{7,14}$/.test(e164) ||
+      digits(e164) === digits(env.WHATSAPP_PHONE_NUMBER || "") ||
+      env.WHATSAPP_SECONDARY_SENDER_KEY !== "tcm_wellness") {
+    throw new Error("Provider rehearsal requires a separately verified secondary account, phone, E164 and sender key.");
+  }
+  return { waba, phone, e164 };
+}
+
 
 const OUTBOUND_SWITCHES = [
   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
@@ -27,6 +76,10 @@ const OUTBOUND_SWITCHES = [
 
 function assertPr395StagingSafety(env = process.env) {
   if (!isPr395Staging(env)) {
+    if (env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" ||
+        env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
+      throw new Error("Provider rehearsal must never run outside PR395's isolated staging mode.");
+    }
     if (env.NODE_ENV === "staging" ||
         env.PR395_STAGING_BASIC_AUTH_ENABLED === "true" ||
         String(env.PR395_STAGING_EXPECTED_DATABASE_HOST || "").trim()) {
@@ -48,7 +101,7 @@ function assertPr395StagingSafety(env = process.env) {
   if (!/^\d+$/.test(secondaryId) || secondaryId !== expectedId ||
       expectedId === String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
       !/^\d{9,15}$/.test(expectedNumber) ||
-      String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim()) {
+      (!providerRehearsalEnabled(env) && String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim())) {
     throw new Error("PR395 staging must pin a distinct second WhatsApp number; the unverified secondary account ID must remain unset.");
   }
   for (const key of ["SESSION_SECRET", "WHATSAPP_APP_SECRET", "META_APP_SECRET"]) {
@@ -64,17 +117,53 @@ function assertPr395StagingSafety(env = process.env) {
       !/\.neon\.tech$/.test(hostname)) {
     throw new Error("PR395 staging DATABASE_URL must match its explicitly pinned isolated Neon endpoint host.");
   }
-  if (OUTBOUND_SWITCHES.some(key => env[key] === "true")) {
-    throw new Error("PR395 staging forbids active WhatsApp sends, sync or follow-up/ingress flags.");
+  if (providerRehearsalEnabled(env)) {
+    verifiedRehearsalTarget(env);
+    if (env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" ||
+        REHEARSAL_INGRESS_SWITCHES.some(key => env[key] !== "true") ||
+        REHEARSAL_OUTBOUND_FORBIDDEN.some(key => env[key] === "true") ||
+        OUTBOUND_SWITCHES.some(key => env[key] === "true" &&
+          !REHEARSAL_INGRESS_SWITCHES.includes(key)) ||
+        !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
+        String(env.WHATSAPP_APP_SECRET) !== String(env.META_APP_SECRET)) {
+      throw new Error("PR395 provider rehearsal requires verified inbound configuration and forbids all outbound traffic.");
+    }
+    return { staging: true, workersDisabled: true, providerProcessingDisabled: false, historyImporterOnly: true };
   }
-  if (env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
-    throw new Error("PR395 staging provider processing is prohibited until an isolated synthetic-data acceptance build is reviewed.");
+  if (OUTBOUND_SWITCHES.some(key => env[key] === "true") ||
+      env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
+    throw new Error("PR395 protected staging forbids active WhatsApp provider processing or sends.");
   }
   return { staging: true, workersDisabled: true, providerProcessingDisabled: true };
 }
 
+function validProviderRehearsalEvent(body, path, env) {
+  const { waba, phone, e164 } = verifiedRehearsalTarget(env);
+  if (body?.object !== "whatsapp_business_account" ||
+      !Array.isArray(body.entry) || body.entry.length < 1 || body.entry.length > 200) return false;
+  const regular = new Set(["messages", "smb_message_echoes", "history", "smb_app_state_sync"]);
+  return body.entry.every(entry =>
+    String(entry?.id || "") === waba && Array.isArray(entry.changes) &&
+    entry.changes.length > 0 && entry.changes.length <= 200 &&
+    entry.changes.every(change => {
+      if (!change?.value || typeof change.value !== "object" || Array.isArray(change.value)) return false;
+      if (path === "/meta-webhook" && change.field !== "account_update") return false;
+      if (change.field === "account_update") {
+        const n = change.value.phone_number;
+        return n == null || (typeof n === "string" && digits(n) === digits(e164));
+      }
+      return path === "/webhook" && regular.has(change.field) &&
+        change.value.metadata?.phone_number_id === phone &&
+        !(change.field === "messages" && Array.isArray(change.value.statuses) && change.value.statuses.length > 0);
+    })
+  );
+}
 function stagingWebhookGuard(req, res, next, env = process.env) {
   if (isPr395Staging(env)) {
+    if (providerRehearsalEnabled(env) && validProviderRehearsalEvent(req.body, req.path, env)) {
+      // The request body has already passed the raw-body HMAC parser upstream.
+      return next();
+    }
     // No DB writes, no AI, no real customer responses on the sandbox URL.
     // Meta callbacks must never be configured to target this service until
     // a separate signed two-number test plan is authorized.
@@ -84,4 +173,4 @@ function stagingWebhookGuard(req, res, next, env = process.env) {
   return next();
 }
 
-module.exports = { isPr395Staging, assertPr395StagingSafety, stagingWebhookGuard, OUTBOUND_SWITCHES };
+module.exports = { isPr395Staging, providerRehearsalEnabled, verifiedRehearsalTarget, validProviderRehearsalEvent, assertPr395StagingSafety, stagingWebhookGuard, OUTBOUND_SWITCHES };
