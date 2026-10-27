@@ -30,16 +30,17 @@ const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[�
 // prices or optional sales graphics; nor can duration/session-count questions.
 // The downstream service authority still requires a customer-verified treatment.
 const LOCAL_WHATSAPP_PRICE = new RegExp([
-  String.raw`(?:什么|什麼|啥)\s*(?:价|價)(?:钱|錢|格|位)?`,
+  String.raw`(?:什么|什麼|啥)\s*(?:价|價)(?!值|值)(?:钱|錢|格|位)?`,
   String.raw`|(?:报|報)\s*价(?=\s*(?:[?？!！。~]*$|吗|嗎|呢|一下|给我|給我|看看|发|發|send))`,
   String.raw`|\b(?:quote|quotation)\b\s*(?:me\b|我|一下|给我|給我|[?？])`,
-  String.raw`|\b(?:can|could|may|please|pls|send|give|share|need|want)\b.{0,35}\b(?:quote|quotation)\b`,
+  String.raw`|\b(?:can|could|may|please|pls|send|give|share|need|want)\b.{0,35}\b(?:quote|quotation)\b\s*(?:me\b|for\b|price\b|cost\b|[?？]|$)`,
   String.raw`|\b(?:rm|myr)\s*(?:几|幾)\s*(?:多(?:钱|錢)?|钱|錢|块|塊)`,
   String.raw`|(?:几|幾)\s*多\s*(?:rm|myr)\b`,
   String.raw`|(?:价|價)\s*(?:是|要|大概|约|約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
   String.raw`|(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
   String.raw`|(?:first[\s-]*trial|首次|初次|第一次)\s*(?:体验|體驗|护理|護理|疗程|療程)?\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
   String.raw`|\b[39]\s*d\b\s*(?:这个|這個)?\s*(?:要|收|大概|大约|大約)?\s*(?:几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|(?:体验|體驗|优惠|優惠|促销|促銷|试做|試做)\s*(?:价|價)(?:格|钱|錢)?(?=\s*(?:[?？!！。呢啊呀啦哦咯~]*$|(?:是|要|大概|多少|几多|幾多)))`,
   String.raw`|\b(?:brp|brapa)\s*(?:rm|myr|harga|kos)\b`,
 ].join(""), "iu");
 
