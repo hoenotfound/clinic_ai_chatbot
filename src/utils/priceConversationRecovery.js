@@ -25,6 +25,12 @@ const COMBO = /(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d|组合|組合|
 // closed even when the user also mentions individual prices in the same turn.
 // Only price-intent text is passed to the final two-quote resolver.
 const JOINT_PRICE_INTENT = /(?:一起|一齐|一齊|一同|同时|同時|一并|一併|一块|一塊)\s*(?:做|进行|進行|护理|護理|治疗|治療|体验|體驗|安排|买|買|算|计算|計算|收费|收費|的?\s*(?:价格|價格|价钱|價錢|多少钱|多少錢))|(?:一起|一齐|一齊)\s*(?:是|要|的)?\s*(?:多少钱|多少錢|几多钱|幾多錢|价钱|價錢|价格|價格)|(?:加起来|加起來|加埋|合起来|合起來|一共|总共|總共|合计|合計|总价|總價|打包价|打包價)|\b(?:together|combined|jointly|joint|total\s+(?:price|cost|charge|amount)|both\s+(?:at\s+once|in\s+(?:one|the\s+same)\s+(?:session|visit))|at\s+the\s+same\s+time)\b|\b(?:gabung(?:an)?|serentak|sekaligus|sekali\s+gus|dua[-\s]*dua\s+sekali|buat\s+(?:dua[-\s]*dua\s+)?sekali|jumlah\s+(?:harga|kos|untuk\s+(?:dua|kedua)))\b/iu;
+// Customers asking for a shared 套餐/配套, a Malay pakej/sekali price, or
+// something "打包" are NOT requesting two independent treatment prices.
+// Never treat "打包发给我" (send both quotes in one message) as a bundle.
+// This is applied only inside verified two-treatment price resolution; do
+// not change package handling for single treatments or other clinic flows.
+const JOINT_PACKAGE_INTENT = /(?:打包(?!\s*(?:发|發|寄|传|傳|给|給|send|share))|(?:套餐|配套)(?!\s*(?:分别|分別|各自))|\b(?:pakej|package|sekali)\b)/iu;
 const CLARIFICATION = /(?:哪.{0,22}(?:疗程|療程|价钱|價錢|价格|價格|收费|收費)|想了解哪.{0,40}(?:价格|价钱|價錢)|\b(?:which|what)\b.{0,65}\b(?:treatment|price|cost)\b)/iu;
 const MENU_PRICE_QUESTION = /(?:价钱|價錢|价格|價格|收费|收費|费用|費用|价格|多少钱|多少錢|price|cost|harga)/iu;
 const MENU_SELECTION_QUESTION = /(?:请问|請問|哪|选|選|想了解|想知道|想问|想問|which|what|would\s+you\s+like)/iu;
@@ -250,7 +256,8 @@ function activeTwoServiceMenu(before, candidates) {
   const menu = pricingMessageText(earlierMenu).trim();
   if (!TWO_REQUEST.test(asked) || !hasExplicitPriceRequest(asked) ||
       RESET.test(asked) || BROAD.test(asked) ||
-      ADMIN_FEE.test(asked) || COMBO.test(asked) || JOINT_PRICE_INTENT.test(asked) ||
+      ADMIN_FEE.test(asked) || COMBO.test(asked) ||
+       JOINT_PRICE_INTENT.test(asked) || JOINT_PACKAGE_INTENT.test(asked) ||
       hasClinicalMediaRisk(asked) || !menu || MULTIPLE_PACKAGES.test(menu))
     return null;
   const names = separateServicesInMenu(menu, candidates);
@@ -309,7 +316,7 @@ function resolveTwoTreatmentPriceReply({
   const ampersandOnly = /(?:3\s*d\s*&\s*9\s*d|9\s*d\s*&\s*3\s*d)/iu.test(effective) &&
     !/(?:3\s*d\s*[+＋]\s*9\s*d|9\s*d\s*[+＋]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu.test(effective);
   const comboRequested = (COMBO.test(effective) && !(ampersandOnly && separate)) ||
-    JOINT_PRICE_INTENT.test(effective);
+    JOINT_PRICE_INTENT.test(effective) || JOINT_PACKAGE_INTENT.test(effective);
   if (!turns || !current || current.length > 115 ||
       !(TWO_REQUEST.test(effective) || (ampersandOnly && separate)) ||
       NON_TREATMENT_COUNT.test(effective) ||
