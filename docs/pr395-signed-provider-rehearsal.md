@@ -231,6 +231,47 @@ Do not interpret this document or passing CI as proof those missing live
 capabilities have been activated. These must be completed/reviewed before
 the QR and any real sync.
 
+## 27 October — pre-identity receiver and app-default bootstrap are implemented, NOT activated
+
+New components: `src/services/pr395PreidentityReceiver.js`,
+`src/db/migrations/102_whatsapp_coexistence_preidentity_events.sql`,
+`POST /pr395-preidentity-webhook` in `src/createApp.js`, and optional
+`WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE` in the standalone relay.
+Unit, local signed-HTTP and real-PostgreSQL tests use **synthetic**
+account IDs and phone numbers; no Meta webhook or actual customer
+account is connected by implementing these modules.
+
+The bootstrap receiver can safely store candidate account-update metadata
+*before* the QR-issued WABA ID exists, **but never treats those events as
+proof of authorization**. Strict protections: raw Meta app-secret HMAC;
+staging-only, unassigned secondary IDs; exact private QA E.164; zero
+customer message/history data, AI, outbound or follow-ups; SQL transaction
+and idempotent fingerprint; durable acceptance header only after COMMIT.
+Foreign/mixed/unattributable events are 503, not ACKed.
+
+The relay's bootstrap mode must have **the complete verified legacy-default
+WABA allowlist**, exact legacy HTTPS callback and private QA E.164.
+Unknown account-wide `account_update` messages with no identifying phone
+remain 503 and require operator investigation/retry evidence; there is
+no safe way to claim they belong to the personal QA number before Meta
+returns the WABA ID.
+
+**No switch has been activated in Render.** After protected staging deploy,
+explicitly pin `PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED=false` and keep
+the dedicated standalone relay's
+`WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true`. Meta's app-default
+callback stays `https://clinic-ai-chatbot.onrender.com/webhook`.
+The actual PR395 readiness approvals remain false. No real account
+onboarding is permitted until a separately authorized, end-to-end
+Meta/provider and legacy callback cutover test passes. Once IDs arrive,
+the separate verified-ID inbound receiver/override must take over;
+the preidentity audit must never be replayed as messages or cause
+automatic phone registration or account reactivation.
+
+The **once-only smb_app_data dispatch ledger and real history execution**
+remain separate outstanding work. Do not start the 24-hour sync window
+until that is ready, tested and separately approved.
+
 ## New test-only guard in this PR
 
 The default protected sandbox remains unchanged, with Meta POSTs returning 503 and all background workers disabled. The staging variables are not automatically updated by changing this PR; do not enable provider flags while they still refer to the old clinic phone.
