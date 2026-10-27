@@ -43,34 +43,34 @@ test("current protected stage cannot approve QR based on Render Live or mocked C
  const v=inspectPr395CoexistenceReadiness({env:env(),evidence:{
    confirmedMetaFields:[...REQUIRED_META_FIELDS]
  },now});
- assert.equal(v.qr.approved,false);
+ assert.equal(v.qr.preflightComplete,false);
  assert.ok(v.qr.missing.includes("receiver_pre_signup_catch_path_rehearsed"));
  assert.ok(v.qr.missing.includes("default_callback_lifecycle_route_rehearsed"));
- assert.equal(v.sync.ready,false);
+ assert.equal(v.sync.preflightComplete,false);
  assert.deepEqual(v.sync.requests,[]);
  assert.equal(v.automaticNetworkActions,false);
 });
 test("pre-QR acceptance requires every independent observed evidence item",()=>{
  const accepted=inspectPr395CoexistenceReadiness({env:env(),evidence:preEvidence(),now});
  assert.deepEqual(accepted.qr.missing,[]);
- assert.equal(accepted.qr.approved,true);
+ assert.equal(accepted.qr.preflightComplete,true);
  for(const property of [
    "preSignupCallbackSafetyProven","appDefaultLifecycleSafetyProven",
    "importerTransitionRehearsed"
  ]){
    assert.equal(inspectPr395CoexistenceReadiness({
      env:env(),evidence:{...preEvidence(),[property]:false},now
-   }).qr.approved,false);
+   }).qr.preflightComplete,false);
  }
  assert.equal(inspectPr395CoexistenceReadiness({
    env:env(),evidence:{...preEvidence(),confirmedMetaFields:["messages"]},now
- }).qr.approved,false);
+ }).qr.preflightComplete,false);
 });
 test("sync requests require sender ownership, override, receiver, explicit approval and 24h",()=>{
  const p=inspectPr395CoexistenceReadiness({
    env:env(),evidence:preEvidence(),afterSignup:postEvidence(),now
  });
- assert.equal(p.sync.ready,true);
+ assert.equal(p.sync.preflightComplete,true);
  assert.deepEqual(p.sync.requests.map(x=>x.body.sync_type),[
    "smb_app_state_sync","history"
  ]);
@@ -90,14 +90,14 @@ test("sync requests require sender ownership, override, receiver, explicit appro
    const result=inspectPr395CoexistenceReadiness({
      env:env(),evidence:preEvidence(),afterSignup:{...postEvidence(),...bad},now
    });
-   assert.equal(result.sync.ready,false,JSON.stringify(bad));
+   assert.equal(result.sync.preflightComplete,false,JSON.stringify(bad));
    assert.deepEqual(result.sync.requests,[]);
  }
  const expired=inspectPr395CoexistenceReadiness({
    env:env(),evidence:preEvidence(),afterSignup:postEvidence(),
    now:new Date("2026-10-28T03:01:00Z")
  });
- assert.equal(expired.sync.ready,false);
+ assert.equal(expired.sync.preflightComplete,false);
  assert.ok(expired.sync.missing.includes("one_time_24_hour_window"));
 });
 test("authorization blocked without isolated staging, vault or with outbound enabled",()=>{
@@ -110,6 +110,6 @@ test("authorization blocked without isolated staging, vault or with outbound ena
  ]){
    assert.equal(inspectPr395CoexistenceReadiness({
      env:{...env(),...override},evidence:preEvidence(),now
-   }).qr.approved,false);
+   }).qr.preflightComplete,false);
  }
 });
