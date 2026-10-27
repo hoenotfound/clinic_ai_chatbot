@@ -230,6 +230,33 @@ Do not activate the relay or scan the personal Business App QR before
 full account inventory, operational disconnect handling, provider-signed
 end-to-end verification and owner approval.
 
+### Meta read-only recheck — 27 Oct 2026
+
+Under DA CHATBOT app context (`app_id=1029862536608134`), an operator
+re-ran `GET /622200677557573/client_whatsapp_business_accounts` and
+`GET /1593376338308612/phone_numbers`. Visible response data confirms:
+
+- Client business accounts: exactly **one entry shown**, Neutro Sense TCM
+  WABA `1593376338308612`. This does **not** establish last page:
+  `paging` was sanitized; the absence/presence of `paging.next` was not
+  shared.
+- Neutro phone `1408739622311791`, display `+60 11-3053 5053`,
+  `platform_type=CLOUD_API`, `quality_rating=GREEN`,
+  throughput `STANDARD`, `code_verification_status=EXPIRED`.
+  This verification-code state alone is **not** proof of inactive sending;
+  verify actual service health separately, do not re-register a live number.
+- Phone's `webhook_configuration.whatsapp_business_account`:
+  `https://neutrosense.dasmarketingsolution.com/webhook`.
+  Phone's `webhook_configuration.application`:
+  `https://clinic-ai-chatbot.onrender.com/webhook`.
+
+The user has already provided all relevant account and phone IDs, so
+**do not request the same queries again**. The remaining inventory question
+is whether `paging.next` exists for each response after token-safe redaction;
+if present, follow the next page privately in Graph Explorer until absent.
+Known Neutro app-default `account_update` remains a lifecycle-cutover risk.
+No change to either Meta callback, sender or production service is approved.
+
 ## Legacy WABA inventory and live cutover acceptance — not yet complete
 
 **Scope:** enumerate every *phone-owning* WhatsApp Business Account
