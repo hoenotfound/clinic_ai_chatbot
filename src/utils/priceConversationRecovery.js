@@ -16,9 +16,9 @@ const RESET = /(?:换个|換個|改聊|不聊|其他话题|其他話題|另外�
 const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所有(?:疗程|療程|服务|服務|项目|項目)|\b(?:all\s+(?:treatments?|services?)|whole\s+clinic|price\s+list)\b)/iu;
 const ADMIN_FEE = /(?:押金|订金|訂金|定金|评估|評估|咨询费|諮詢費|挂号|掛號|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
 // Count *distinct treatments*, never two hours, visits, sessions or an RM amount.
-const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|and).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|and).{0,12}3\s*d))/iu;
+const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|and|dan).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|and|dan).{0,12}3\s*d))/iu;
 const NON_TREATMENT_COUNT = /(?:[这這]?[两兩]|[这這]?2)\s*(?:个|個)?\s*(?:半\s*)?(?:小时|小時|钟头|鐘頭|周|週|星期|礼拜|月|年|天|次|回|人|位)/iu;
-const OMIT_COMBO = /(?:不要|不想要?|不需要|不选|不選|不是|不用)\s*(?:(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d)\s*)?(?:组合|組合|搭配|combo|bundle)(?:配套|套餐|价|價|价格|價格)?/giu;
+const OMIT_COMBO = /(?:不要|不想要?|不需要|不选|不選|不是|不用)\s*(?:(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d)\s*)?(?:组合|組合|搭配|combo|bundle)(?:配套|套餐|价|價|价格|價格)?|\b(?:not\s+(?:the\s+)?|no\s+|don't\s+want\s+(?:the\s+)?|without\s+(?:the\s+)?)\s*(?:combo|bundle)\b|\b(?:bukan|tak\s+nak|tidak\s+mahu)\s*(?:pakej|combo|bundle)\b/giu;
 const COMBO = /(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu;
 const CLARIFICATION = /(?:哪.{0,22}(?:疗程|療程|价钱|價錢|价格|價格|收费|收費)|想了解哪.{0,40}(?:价格|价钱|價錢)|\b(?:which|what)\b.{0,65}\b(?:treatment|price|cost)\b)/iu;
 const MENU_PRICE_QUESTION = /(?:价钱|價錢|价格|價格|收费|收費|费用|費用|价格|多少钱|多少錢|price|cost|harga)/iu;
@@ -248,8 +248,19 @@ function resolveTwoTreatmentPriceReply({
   customerText, session = [], services = [], serviceAliases = [],
   promotions = [], language = "zh", now = Date.now(),
 } = {}) {
-  const turns = recentTurns(session, now);
   const current = String(customerText || "").trim();
+  const turns = recentTurns(session, now) || (
+    // A first inbound message explicitly NAMING both configured services and
+    // asking their prices is already customer evidence. This narrow exception
+    // needs no previous bot menu, but still requires a trusted fresh timestamp.
+    Array.isArray(session) && session.length === 1 &&
+    session[0]?.role === "user" &&
+    isRecentPricingThread(session, 0, now) &&
+    session[0].pricingCreatedAtMs >= now - MAX_CONTEXT_MS &&
+    !hasClinicalMediaRisk(pricingMessageText(session[0])) &&
+    pricingMessageText(session[0]).trim() === current
+      ? session : null
+  );
   // Removing only a clear NEGATION of the combo lets "3D 和 9D 分开
   // 多少钱？不要组合" mean two independent quotes. Positive combo requests
   // and refusals of treatment itself still fail closed.
@@ -284,7 +295,12 @@ function resolveTwoTreatmentPriceReply({
   const names = requestedTwoTreatmentServices(
     effective, before, services, serviceAliases
   );
-  if (!names || names.length !== 2) return null;
+  if (!names || names.length !== 2 ||
+      (turns.length === 1 && (
+        !direct ||
+        [...new Set(findServicesInText(effective,
+          serviceCandidates(services, serviceAliases)))].length !== 2
+      ))) return null;
 
   // Each treatment must have exactly one independently verified active offer.
   // Do not assume the same amount is a combined package amount.
