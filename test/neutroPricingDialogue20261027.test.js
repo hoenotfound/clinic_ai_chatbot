@@ -740,3 +740,65 @@ test("explicit individual-price questions still recover with production combo al
     assert.deepEqual(quote?.prices.map(x=>x.amount),["RM488","RM488"],current);
   }
 });
+
+
+test("bundle package wording must not quote independent First Trial prices", () => {
+  const packages = [
+    "3D和9D打包多少钱？",
+    "3D 跟 9D 打包做多少钱？",
+    "3D和9D套餐价格多少？",
+    "3D 跟 9D 配套是多少钱？",
+    "3D 和 9D 一套多少钱？打包价呢？",
+    "3D dan 9D sekali berapa harga?",
+    "3D dan 9D pakej berapa harga?",
+    "3D dan 9D harga pakej?",
+    "3D and 9D package price?",
+    "3D and 9D one package how much?",
+    "3D、9D分别多少钱，打包做又是多少钱？",
+    "3D 和 9D 两项单独多少钱，套餐是多少钱？",
+  ];
+  for (const current of packages) {
+    const history=[turn("user",current,60)];
+    assert.equal(dual(history,current),null,current);
+    const result=shadow(history,current);
+    assert.equal(result,null,"Shadow must not turn an unpriced bundle into a single-treatment quote: "+current);
+  }
+});
+
+test("a recent joint package request cannot be reused as two-price clarification", () => {
+  const menu=[
+    turn("user","有哪两种面部护理？",280),
+    turn("assistant","3D 小颜术和9D 逆龄抗衰是不同的护理",270),
+  ];
+  for (const asked of [
+    "3D和9D打包多少钱？",
+    "3D dan 9D pakej berapa harga?",
+    "3D dan 9D sekali berapa harga?",
+  ]) {
+    const history=[
+      ...menu,
+      turn("user",asked,220),
+      turn("assistant","请问你想了解哪项疗程的价格？",210),
+      turn("user","两个",200),
+    ];
+    assert.equal(dual(history,"两个"),null,
+      "one-step clarification must not convert combo request into two separate offers: "+asked);
+  }
+});
+
+test("bundle message-delivery wording and explicit separate package options remain independent", () => {
+  const individual=[
+    "3D和9D分别多少钱？打包发给我",
+    "3D 和 9D 分开多少钱？打包发一下",
+    "3D跟9D各自多少钱？打包send我",
+    "3D和9D两项配套分别多少钱？",
+    "3D dan 9D harga asing-asing berapa? bukan pakej",
+    "3D and 9D separately how much? not the combo",
+  ];
+  for (const current of individual) {
+    const quoted=dual([turn("user",current,60)],current);
+    assert.deepEqual(quoted?.prices.map(x=>x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],current);
+    assert.deepEqual(quoted?.prices.map(x=>x.amount),["RM488","RM488"],current);
+  }
+});
