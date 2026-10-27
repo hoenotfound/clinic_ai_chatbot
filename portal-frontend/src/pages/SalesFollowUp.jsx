@@ -298,25 +298,41 @@ export default function SalesFollowUp() {
         {selected && canUpdate && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center">
             <form onSubmit={saveResult} role="dialog" aria-modal="true" aria-labelledby="sales-follow-up-result-title"
-              className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
-              <h2 id="sales-follow-up-result-title" className="text-lg font-bold">Update follow-up result</h2>
+              className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+              <h2 id="sales-follow-up-result-title" className="text-lg font-bold">Record Follow-up Result</h2>
               <p className="mt-1 text-sm text-[var(--color-text-muted)]">{selected.customerName}</p>
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">Select what actually happened. Opening WhatsApp alone does not count as contact.</p>
               <fieldset className="mt-4 space-y-3">
+                <legend className="mb-2 text-sm font-semibold">What happened?</legend>
                 {OUTCOMES.map(([value, label]) => (
-                  <label key={value} className="flex items-center gap-3 text-sm">
+                  <label key={value} className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] p-3 text-sm">
                     <input type="radio" name="follow-up-outcome" value={value} checked={outcome === value}
-                      onChange={() => { setOutcome(value); setDueAt(""); }} />
+                      onChange={() => selectOutcome(value)} />
                     {label}
                   </label>
                 ))}
               </fieldset>
               {["later", "booked", "contacted"].includes(outcome) && (
-                <label className="mt-4 block text-sm font-medium">
-                  {outcome === "booked" ? "Confirmed appointment date and time" :
-                    outcome === "later" ? "Next follow-up date and time" : "Remind me again (optional)"}
-                  <input type="datetime-local" required={outcome !== "contacted"} value={dueAt} onChange={event => setDueAt(event.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2"/>
-                </label>
+                <div className="mt-4">
+                  <label htmlFor="sales-follow-up-due" className="block text-sm font-semibold">
+                    {outcome === "booked" ? "Confirmed appointment date and time" : "When should we follow up again?"}
+                  </label>
+                  {outcome !== "booked" && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setDueAt(inDaysLocal(3))}
+                        className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">In 3 days</button>
+                      <button type="button" onClick={() => setDueAt(inDaysLocal(7))}
+                        className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm">In 7 days</button>
+                    </div>
+                  )}
+                  <input id="sales-follow-up-due" type="datetime-local" required value={dueAt}
+                    min={inDaysLocal(0)} onChange={event => setDueAt(event.target.value)}
+                    className="mt-2 w-full rounded-lg border border-[var(--color-border)] px-3 py-3 text-sm"/>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    {outcome === "booked" ? "Select this only when the appointment is confirmed." :
+                      "This customer will reappear when the reminder is due."}
+                  </p>
+                </div>
               )}
               <p className="mt-3 text-xs text-[var(--color-text-muted)]">
                 Opening WhatsApp does not mark a message as sent. Choose the actual result only after contacting the customer.
@@ -324,11 +340,36 @@ export default function SalesFollowUp() {
               <div className="mt-5 flex justify-end gap-2">
                 <button type="button" disabled={saving} onClick={() => setSelected(null)}
                   className="rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm">Cancel</button>
-                <button type="submit" disabled={saving} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                <button type="submit" disabled={saving || !outcome} className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
                   {saving ? "Saving..." : "Save result"}
                 </button>
               </div>
             </form>
+          </div>
+        )}
+        {undoConfirm && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center">
+            <div role="dialog" aria-modal="true" aria-labelledby="sales-follow-up-undo-title"
+              className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <h2 id="sales-follow-up-undo-title" className="text-lg font-bold">Correct this result?</h2>
+              <p className="mt-2 text-sm">
+                Undo the result for <strong>{undoConfirm.customerName}</strong>?
+                This restores the prior status only if nothing else has changed.
+              </p>
+              {undoConfirm.outcome === "booked" && (
+                <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+                  If other staff acted on the booking, verify the appointment directly with the clinic.
+                </p>
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" disabled={saving} onClick={() => setUndoConfirm(null)}
+                  className="rounded-lg border border-[var(--color-border)] px-4 py-3 text-sm">Keep Result</button>
+                <button type="button" disabled={saving} onClick={undoResult}
+                  className="rounded-lg bg-[var(--color-primary)] px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">
+                  {saving ? "Correcting..." : "Undo Result"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
         <ToastContainer toasts={toasts} onDismiss={dismissToast}/>
