@@ -38,7 +38,8 @@ function shortChoice(text, services, aliases, preceding) {
   const short = /^(?:3|9)\s*d[\s.。?？!！]*$/iu.exec(String(text || "").trim());
   if (short) {
     const prefix = short[0].trim().slice(0,1) + "D";
-    const found = services.filter(s => new RegExp("^" + prefix + "(?:\\b|\\s)", "iu").test(s.name));
+    const found = services.filter(s => !COMBO.test(s.name) &&
+      new RegExp("^" + prefix + "(?:\\b|\\s)", "iu").test(s.name));
     if (found.length === 1 && preceding.some(turn => turn.role === "assistant" &&
         !isVerifiedStaffTurn(turn) &&
         findServicesInText(pricingMessageText(turn), serviceCandidates(services, aliases))
@@ -132,7 +133,14 @@ function resolveEstablishedTreatmentPrice({
     // A face concern can establish 3D only when a recent bot explained
     // that configured service (not from an ad name or model guess).
     if (!named && CONCERN_3D.test(source)) {
-      named = shortChoice(source, services, serviceAliases, prior.slice(Math.max(0,index-9),index));
+      // The customer supplied the concern; only a bot reply explaining the
+      // matching configured facial treatment may confirm that interpretation.
+      // Do not derive a treatment from an advert or old CRM interest.
+      const face = services.find(s => s.name === "3D 小颜术");
+      const nextAssistant = prior.slice(index + 1).find(turn => turn.role === "assistant");
+      const explained = nextAssistant &&
+        [...new Set(findServicesInText(pricingMessageText(nextAssistant),candidates))];
+      if (face && explained?.length === 1 && explained[0] === face.name) named = face;
     }
     if (!named) continue;
     const since = prior.slice(index + 1);
