@@ -46,6 +46,7 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
       [contactId,stage.rows[0].id,inbound.rows[0].id]
     );
     const leadId = lead.rows[0].id;
+    await client.query("UPDATE leads SET marketing_consent='opted_in' WHERE id=$1", [leadId]);
     async function pending(username="sales-a") {
       return listPending({ username, queryable: client, now: NOW });
     }
