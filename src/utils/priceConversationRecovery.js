@@ -16,14 +16,15 @@ const RESET = /(?:换个|換個|改聊|不聊|其他话题|其他話題|另外�
 const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所有(?:疗程|療程|服务|服務|项目|項目)|\b(?:all\s+(?:treatments?|services?)|whole\s+clinic|price\s+list)\b)/iu;
 const ADMIN_FEE = /(?:押金|订金|訂金|定金|评估|評估|咨询费|諮詢費|挂号|掛號|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
 // Count *distinct treatments*, never two hours, visits, sessions or an RM amount.
-const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|and|dan).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|and|dan).{0,12}3\s*d))/iu;
+const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|跟|、|\/|and|dan).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|跟|、|\/|and|dan).{0,12}3\s*d)|(?:3\s*d\s+9\s*d|9\s*d\s+3\s*d).{0,20}(?:分开|分開|分别|分別|各自|单独|單獨|separately|each))/iu;
 const NON_TREATMENT_COUNT = /(?:[这這]?[两兩]|[这這]?2)\s*(?:个|個)?\s*(?:半\s*)?(?:小时|小時|钟头|鐘頭|周|週|星期|礼拜|月|年|天|次|回|人|位)/iu;
 const OMIT_COMBO = /(?:不要|不想要?|不需要|不选|不選|不是|不用)\s*(?:(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d)\s*)?(?:组合|組合|搭配|combo|bundle)(?:配套|套餐|价|價|价格|價格)?|\b(?:not\s+(?:the\s+)?|no\s+|don't\s+want\s+(?:the\s+)?|without\s+(?:the\s+)?)\s*(?:combo|bundle)\b|\b(?:bukan|tak\s+nak|tidak\s+mahu)\s*(?:pakej|combo|bundle)\b/giu;
 const COMBO = /(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu;
 const CLARIFICATION = /(?:哪.{0,22}(?:疗程|療程|价钱|價錢|价格|價格|收费|收費)|想了解哪.{0,40}(?:价格|价钱|價錢)|\b(?:which|what)\b.{0,65}\b(?:treatment|price|cost)\b)/iu;
 const MENU_PRICE_QUESTION = /(?:价钱|價錢|价格|價格|收费|收費|费用|費用|价格|多少钱|多少錢|price|cost|harga)/iu;
 const MENU_SELECTION_QUESTION = /(?:请问|請問|哪|选|選|想了解|想知道|想问|想問|which|what|would\s+you\s+like)/iu;
-const MULTIPLE_PACKAGES = /(?:package\s*[ab]|配套\s*[ab]|套餐\s*[ab]|(?:两|兩|2)\s*(?:个|個|项|項)?配套)/iu;
+const MULTIPLE_PACKAGES = /(?:package\s*[ab]|配套\s*[ab]|套餐\s*[ab]|(?:两|兩|二|2)\s*(?:个|個|项|項|种|種|套|款)?\s*(?:配套|套餐|方案|packages?|pakej)|(?:which|what)\s+packages?|哪(?:个|個|一[个個款项項])\s*(?:配套|套餐|方案)|(?:各有|都有|每(?:个|個)项目|每(?:个|個)疗程).{0,14}(?:配套|套餐|方案|packages?|pakej))/iu;
+const SEPARATE_PRICE = /(?:分开|分開|分别|分別|各自|单独|單獨|individually|separately|separate\s+prices?|each|asing[- ]asing)/iu;
 const SHORT_BOTH = /^(?:(?:这|這)?(?:两|兩)\s*(?:个|個|项|項|页|頁)(?:都要|都想了解|都想知道)?|both(?:\s+(?:please|of them))?)[\s!！。?？]*$/iu;
 const CONCERN_3D = /^(?:(?:我想|想|要|做)\s*)?(?:调整|調整|改善|处理|處理)?\s*(?:左右)?\s*大小脸(?:的视觉|視覺|视觉|問題|问题)?[\s!！。?？]*$/u;
 
@@ -76,6 +77,14 @@ function shortChoice(text, services, aliases, preceding) {
       const mentioned = [...new Set(findServicesInText(pricingMessageText(next), candidates))];
       return mentioned.length === 1 && mentioned[0] === face?.name;
     });
+    // An explicit newer customer treatment choice supersedes the older
+    // facial explanation; a newer 9D choice cannot silently become 3D.
+    const namedSelections = preceding.filter(turn => turn.role === "user")
+      .map(turn => [...new Set(findServicesInText(pricingMessageText(turn), candidates))])
+      .filter(names => names.length > 0);
+    const latestSelection = namedSelections.at(-1);
+    if (latestSelection && (latestSelection.length !== 1 ||
+        latestSelection[0] !== face?.name)) return null;
     if (face && (botMappedConcern || priorConcernConfirmed)) return face;
   }
   return null;
@@ -205,32 +214,31 @@ function separateServicesInMenu(message, candidates) {
   return [...matched];
 }
 
-// A customer may refer to "those two" only while the two-service menu is
-// the ACTIVE subject. A later customer-selected service or a new bot
-// explanation of another treatment invalidates the older menu.
+// "These two" uses the IMMEDIATELY preceding bot menu, or one
+// clarification turn responding to an explicit two-price question. Never
+// search through unrelated hours/address/booking discussion to an old menu.
 function activeTwoServiceMenu(before, candidates) {
-  const latest = before.slice(-9);
-  for (let index = latest.length - 1; index >= 0; index--) {
-    const turn = latest[index];
-    const content = pricingMessageText(turn).trim();
-    if (!content) return null;
-    if (turn.role === "user") {
-      if (RESET.test(content) || BROAD.test(content) ||
-          hasClinicalMediaRisk(content) ||
-          findServicesInText(content, candidates).length) return null;
-      // Unrelated new questions make an old two-treatment menu stale.
-      if (/^(?:地址|位置|在哪里|在哪裡|location|address|where|预约|預約|booking|slot)/iu.test(content))
-        return null;
-      continue;
-    }
-    if (turn.role !== "assistant" || isVerifiedStaffTurn(turn)) return null;
-    const names = separateServicesInMenu(content, candidates);
-    if (names.length === 2) return names;
-    // A later assistant explanation or menu involving another treatment
-    // supersedes the earlier pair; never search past it for an old menu.
-    if (names.length || findServicesInText(content,candidates).length) return null;
-  }
-  return null;
+  const latest = before.at(-1);
+  if (latest?.role !== "assistant" || isVerifiedStaffTurn(latest)) return null;
+  const text = pricingMessageText(latest).trim();
+  if (!text || MULTIPLE_PACKAGES.test(text)) return null;
+  const latestNames = separateServicesInMenu(text, candidates);
+  if (latestNames.length === 2) return latestNames;
+  if (latestNames.length || findServicesInText(text, candidates).length ||
+      !CLARIFICATION.test(text)) return null;
+  const interveningPrice = before.at(-2);
+  const earlierMenu = before.at(-3);
+  if (interveningPrice?.role !== "user" || earlierMenu?.role !== "assistant" ||
+      isVerifiedStaffTurn(earlierMenu)) return null;
+  const asked = pricingMessageText(interveningPrice).trim();
+  const menu = pricingMessageText(earlierMenu).trim();
+  if (!TWO_REQUEST.test(asked) || !hasExplicitPriceRequest(asked) ||
+      RESET.test(asked) || BROAD.test(asked) ||
+      ADMIN_FEE.test(asked) || COMBO.test(asked) ||
+      hasClinicalMediaRisk(asked) || !menu || MULTIPLE_PACKAGES.test(menu))
+    return null;
+  const names = separateServicesInMenu(menu, candidates);
+  return names.length === 2 ? names : null;
 }
 
 function requestedTwoTreatmentServices(current, before, services, aliases) {
@@ -265,10 +273,15 @@ function resolveTwoTreatmentPriceReply({
   // 多少钱？不要组合" mean two independent quotes. Positive combo requests
   // and refusals of treatment itself still fail closed.
   const effective = current.replace(OMIT_COMBO, " ").trim();
+  const separate = SEPARATE_PRICE.test(effective);
+  const ampersandOnly = /(?:3\s*d\s*&\s*9\s*d|9\s*d\s*&\s*3\s*d)/iu.test(effective) &&
+    !/(?:3\s*d\s*[+＋]\s*9\s*d|9\s*d\s*[+＋]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu.test(effective);
+  const comboRequested = COMBO.test(effective) && !(ampersandOnly && separate);
   if (!turns || !current || current.length > 115 ||
-      !TWO_REQUEST.test(effective) || NON_TREATMENT_COUNT.test(effective) ||
+      !(TWO_REQUEST.test(effective) || (ampersandOnly && separate)) ||
+      NON_TREATMENT_COUNT.test(effective) ||
       RESET.test(effective) || BROAD.test(effective) || ADMIN_FEE.test(effective) ||
-      COMBO.test(effective) || pricingMessageText(turns.at(-1)).trim() !== current)
+      comboRequested || pricingMessageText(turns.at(-1)).trim() !== current)
     return null;
   const before = turns.slice(0,-1);
   const direct = hasExplicitPriceRequest(effective);
