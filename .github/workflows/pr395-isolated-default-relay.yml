@@ -1,0 +1,65 @@
+name: PR395 isolated default-callback relay (local only)
+
+# Manual-only, no provider traffic, no Meta callbacks, no Render traffic.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type LOCAL_RELAY_ONLY to run loopback-only synthetic PR395 relay tests'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr395-local-relay-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  local-relay:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'LOCAL_RELAY_ONLY' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    environment:
+      name: pr395-isolated-webhook-rehearsal
+    env:
+      PR395_APPROVED_SHA: 19b1bbe00b18e28fb90cdf5755c9ac8ac49484ca
+    steps:
+      - name: Checkout trusted main-only harness, no persisted token
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Read EXACT pinned PR395 relay implementation (not executed from PR)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This is a PUBLIC repository. The fetch never uses an auth secret.
+          git -c credential.helper= fetch --no-tags --depth=1 \
+            https://github.com/hoenotfound/clinic_ai_chatbot.git refs/pull/395/head
+          ACTUAL="$(git rev-parse FETCH_HEAD)"
+          if [[ "$ACTUAL" != "$PR395_APPROVED_SHA" ]]; then
+            echo "::error::PR395 head moved; requires new inspection and a new pinned review. Nothing was executed."
+            exit 1
+          fi
+          git show "$ACTUAL:src/services/whatsappAppDefaultRelay.js" > "$RUNNER_TEMP/pr395RelaySource.js"
+          node --check "$RUNNER_TEMP/pr395RelaySource.js"
+          echo "Verified exact PR #395 relay source: $ACTUAL"
+          echo "No PR checkout or runtime secret exposure."
+
+      - name: Execute signed relay against localhost mock receivers ONLY
+        shell: bash
+        env:
+          PR395_RELAY_SOURCE: ${{ runner.temp }}/pr395RelaySource.js
+        run: |
+          set -euo pipefail
+          node --check scripts/qa/pr395LocalRelayRehearsal.cjs
+          node --test scripts/qa/pr395LocalRelayRehearsal.cjs
+
+      - name: Security scope
+        if: always()
+        run: |
+          echo "Only synthetic identities and 127.0.0.1 receivers were used by the test harness."
+          echo "No Meta callback, staging, production, database or WhatsApp sending was modified."
