@@ -22,7 +22,7 @@ test("PostgreSQL 103 accepts signed legacy lifecycle metadata only, idempotently
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    }
   };
-  assert.equal(loadMigrations().at(-1).version,103);
+  assert.equal(loadMigrations().at(-1).version,104);
   await runMigrations(database,{quiet:true});
   const env={
    PR395_STAGING_MODE:"true",
