@@ -40,6 +40,7 @@ const {
 const { requireAuth } = require("./middleware/requireAuth");
 const { stagingAccessGuard } = require("./middleware/pr395StagingBasicAuth");
 const { stagingWebhookGuard } = require("./services/pr395StagingSafety");
+const preidentityReceiver = require("./services/pr395PreidentityReceiver");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
@@ -128,6 +129,29 @@ function createApp({
   // The socket opens before database/config initialization so Render can detect
   // the port, but customer/API traffic stays blocked until startup is complete.
   app.use(startupReadiness.requireReady);
+
+  // App-default relay bootstrap may receive a signed account_update before
+  // Embedded Signup provides the new WABA ID. Only the isolated QA Neon stores
+  // sanitized lifecycle evidence. No sender is activated or customer message
+  // processed. The raw JSON parser verifies Meta app HMAC before this handler.
+  app.post("/pr395-preidentity-webhook", webhookJsonParser, async (req,res) => {
+    if(!preidentityReceiver.enabled(process.env)){
+      res.set("Cache-Control","no-store");
+      return res.sendStatus(503);
+    }
+    try {
+      const result=await preidentityReceiver.acceptPreidentityBatch(req.body);
+      if(!result.durable)return res.sendStatus(503);
+      res.set("X-DA-Coexistence-Preidentity-Accepted","1");
+      res.set("Cache-Control","no-store");
+      return res.sendStatus(200);
+    }catch(error){
+      console.error("[PR395 preidentity] refused undurable or foreign signed event:",
+        error?.message || "unknown");
+      res.set("Cache-Control","no-store");
+      return res.sendStatus(503);
+    }
+  });
 
   app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
