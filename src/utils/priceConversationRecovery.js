@@ -15,7 +15,8 @@ const MAX_CONTEXT_MS = 3 * 60 * 60 * 1000;
 const RESET = /(?:换个|換個|改聊|不聊|其他话题|其他話題|另外想|想改做|改做其他|改做其它|改选|改選|其他疗程|其它疗程|其他療程|其它療程|不要|不想(?:做|了解)|退订|退訂|\b(?:stop|unsubscribe|opt\s*out|switch|instead|another\s+treatment|not\s+interested|don't\s+want)\b)/iu;
 const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所有(?:疗程|療程|服务|服務|项目|項目)|\b(?:all\s+(?:treatments?|services?)|whole\s+clinic|price\s+list)\b)/iu;
 const ADMIN_FEE = /(?:押金|订金|訂金|定金|评估|評估|咨询费|諮詢費|挂号|掛號|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
-const TWO_REQUEST = /(?:这|這)?(?:两|兩|2)\s*(?:个|個|项|項|种|種|页|頁)?|两项|兩項|两个|兩個|\b(?:both|two)\b|(?:3\s*d.{0,12}(?:和|与|及|and).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|及|and).{0,12}3\s*d)/iu;
+// Count *distinct treatments*, never two hours, visits, sessions or an RM amount.
+const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|and).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|and).{0,12}3\s*d))/iu;
 const COMBO = /(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu;
 const CLARIFICATION = /(?:哪.{0,22}(?:疗程|療程|价钱|價錢|价格|價格|收费|收費)|想了解哪.{0,40}(?:价格|价钱|價錢)|\b(?:which|what)\b.{0,65}\b(?:treatment|price|cost)\b)/iu;
 const CONCERN_3D = /^(?:(?:我想|想|要|做)\s*)?(?:调整|調整|改善|处理|處理)?\s*(?:左右)?\s*大小脸(?:的视觉|視覺|视觉|問題|问题)?[\s!！。?？]*$/u;
@@ -162,9 +163,62 @@ function resolveEstablishedTreatmentPrice({
   return null;
 }
 
-// Quote two SEPARATE, active verified treatment prices as TEXT ONLY when the
-// customer explicitly requests both. Never silently reinterpret two services
-// as a 3D+9D combo or send two unsolicited promotional graphics.
+// Verify which two *individual* services a bot just presented. An optional
+// combined package must not be confused with those two services. Split menu
+// alternatives so the combo clause does not hide independently listed items.
+function separateServicesInMenu(message, candidates) {
+  const text = String(message || "");
+  const chunks = text.split(/[，,、；;。!！?\n]|\b(?:otherwise|alternatively)\b/iu)
+    .flatMap(part => part.split(/(?:另外|或者|也有|还有|还可以|也可以|亦可|\bor\s+also\b)/iu));
+  const matched = new Set();
+  for (const chunk of chunks) {
+    if (COMBO.test(chunk)) continue;
+    for (const name of findServicesInText(chunk, candidates)) {
+      if (!COMBO.test(name)) matched.add(name);
+    }
+  }
+  return [...matched];
+}
+
+// A customer may refer to "those two" only while the two-service menu is
+// the ACTIVE subject. A later customer-selected service or a new bot
+// explanation of another treatment invalidates the older menu.
+function activeTwoServiceMenu(before, candidates) {
+  const latest = before.slice(-9);
+  for (let index = latest.length - 1; index >= 0; index--) {
+    const turn = latest[index];
+    const content = pricingMessageText(turn).trim();
+    if (!content) return null;
+    if (turn.role === "user") {
+      if (RESET.test(content) || BROAD.test(content) ||
+          hasClinicalMediaRisk(content) ||
+          findServicesInText(content, candidates).length) return null;
+      // Unrelated new questions make an old two-treatment menu stale.
+      if (/^(?:地址|位置|在哪里|在哪裡|location|address|where|预约|預約|booking|slot)/iu.test(content))
+        return null;
+      continue;
+    }
+    if (turn.role !== "assistant" || isVerifiedStaffTurn(turn)) return null;
+    const names = separateServicesInMenu(content, candidates);
+    if (names.length === 2) return names;
+    // A later assistant explanation or menu involving another treatment
+    // supersedes the earlier pair; never search past it for an old menu.
+    if (names.length || findServicesInText(content,candidates).length) return null;
+  }
+  return null;
+}
+
+function requestedTwoTreatmentServices(current, before, services, aliases) {
+  const candidates = serviceCandidates(services, aliases);
+  const directNames = [...new Set(findServicesInText(current, candidates))];
+  if (directNames.length > 2 || directNames.some(name => COMBO.test(name))) return null;
+  if (directNames.length === 2) return directNames;
+  if (directNames.length) return null;
+  return activeTwoServiceMenu(before, candidates);
+}
+
+// Quote two SEPARATE, active verified treatment offers as TEXT ONLY when
+// the customer explicitly asks for both. This is not a combo promotion.
 function resolveTwoTreatmentPriceReply({
   customerText, session = [], services = [], serviceAliases = [],
   promotions = [], language = "zh", now = Date.now(),
@@ -173,61 +227,66 @@ function resolveTwoTreatmentPriceReply({
   const current = String(customerText || "").trim();
   if (!turns || !current || current.length > 115 || !TWO_REQUEST.test(current) ||
       RESET.test(current) || BROAD.test(current) || ADMIN_FEE.test(current) ||
-      COMBO.test(current) || pricingMessageText(turns.at(-1)).trim() !== current) return null;
+      COMBO.test(current) || pricingMessageText(turns.at(-1)).trim() !== current)
+    return null;
   const before = turns.slice(0,-1);
   const direct = hasExplicitPriceRequest(current);
   if (!direct) {
-    // A bare "两个" only continues an immediately unresolved PRICE enquiry.
-    if (!/^(?:两个|兩個|两个都要|兩個都要|两个都想了解|兩個都想了解|both(?:\s+(?:please|of them))?)[\s!！。?？]*$/iu.test(current) ||
+    // A bare "两个" only continues an immediately unresolved price enquiry
+    // which *already asked about two* and led to the bot's clarification.
+    if (!/^(?:(?:两|兩)\s*(?:个|個|项|項|页|頁)(?:都要|都想了解|都想知道)?|both(?:\s+(?:please|of them))?)[\s!！。?？]*$/iu.test(current) ||
         before.at(-1)?.role !== "assistant" ||
         !CLARIFICATION.test(pricingMessageText(before.at(-1))) ||
         !before.filter(x => x.role === "user").slice(-2)
           .some(x => TWO_REQUEST.test(pricingMessageText(x)) &&
             hasExplicitPriceRequest(pricingMessageText(x)))) return null;
   }
-  const candidates = serviceCandidates(services,serviceAliases);
-  const explicitlyNamed = [...new Set(findServicesInText(current,candidates))];
-  if (explicitlyNamed.length > 2) return null;
-  let names = explicitlyNamed.length === 2 ? explicitlyNamed : null;
-  if (!names) {
-    // Recent assistant menu must identify exactly TWO distinct treatments.
-    // Never use a model/CRM/ad label alone, or a menu containing a combo.
-    for (const turn of before.slice(-9).reverse()) {
-      if (turn.role !== "assistant" || isVerifiedStaffTurn(turn)) continue;
-      const text = pricingMessageText(turn);
-      if (COMBO.test(text)) continue;
-      const found = [...new Set(findServicesInText(text,candidates))];
-      if (found.length === 2) { names = found; break; }
-    }
-  }
-  if (!names || names.length !== 2 ||
-      names.some(name => COMBO.test(name))) return null;
-  // Require two separately priced active promotions, one for each treatment.
-  // An unpriced package, mixed-scope menu or inconsistent promotion fails closed.
-  const active = getActivePromotions(promotions);
+  const names = requestedTwoTreatmentServices(
+    current, before, services, serviceAliases
+  );
+  if (!names || names.length !== 2) return null;
+
+  // Each treatment must have exactly one independently verified active offer.
+  // Do not assume the same amount is a combined package amount.
+  const active = getActivePromotions(promotions, new Date(now));
   const prices = names.map(name => {
-    const offers = active.filter(p => p.linkedService === name && p.sendOnPriceQuery === true);
-    if (offers.length !== 1) return null;
-    const options = verifiedPricesForService(name,promotions,current,session,
-      { allowTextOnlyOffers:true });
+    const matching = active.filter(p =>
+      p.linkedService === name && p.sendOnPriceQuery === true
+    );
+    if (matching.length !== 1) return null;
+    const options = verifiedPricesForService(
+      name, promotions, current, session, { allowTextOnlyOffers:true }
+    );
     if (!Array.isArray(options) || options.length !== 1 ||
         !/^RM[1-9]\d{0,5}$/u.test(String(options[0]?.price || ""))) return null;
-    return { treatment:name, amount:options[0].price };
+    const description = [
+      matching[0].name, options[0].name, options[0].title,
+      options[0].caption, matching[0].caption,
+    ].filter(Boolean).join(" ");
+    const firstTrial = /first[\s-]*trial|首次(?:体验|體驗|护理|護理|疗程|療程)|初次(?:体验|體驗)|第一次(?:体验|體驗)/iu.test(description);
+    return { treatment:name, amount:options[0].price,
+      label: firstTrial ? "first_trial" : "current_offer" };
   });
   if (prices.some(x => !x)) return null;
+
   const locale = String(language || "").toLowerCase();
+  const label = value => value.label === "first_trial"
+    ? locale.startsWith("en") ? "First Trial"
+      : locale.startsWith("ms") ? "Harga First Trial" : "First Trial 体验价"
+    : locale.startsWith("en") ? "Current offer"
+      : locale.startsWith("ms") ? "Harga promosi semasa" : "当前优惠价";
   const reply = locale.startsWith("en")
-    ? "The current prices for these two separate treatments are:\n" +
-      prices.map(x => "• " + x.treatment + ": " + x.amount).join("\n") +
-      "\nThese are individual treatment prices, not a combination package."
+    ? "Here are the prices for the two separate treatments:\n" +
+      prices.map(x => "• " + x.treatment + " (" + label(x) + "): " + x.amount).join("\n") +
+      "\nThese are individual treatment offers, not a combination package."
     : locale.startsWith("ms")
-      ? "Harga semasa bagi dua rawatan berasingan ini ialah:\n" +
-        prices.map(x => "• " + x.treatment + ": " + x.amount).join("\n") +
-        "\nIni harga rawatan berasingan, bukan pakej gabungan."
-      : "这两项独立护理目前的价格是：\n" +
-        prices.map(x => "• " + x.treatment + "：" + x.amount).join("\n") +
-        "\n以上是各自的护理价格，不是组合配套哦 😊";
-  return { prices, reply };
+      ? "Harga untuk dua rawatan berasingan ialah:\n" +
+        prices.map(x => "• " + x.treatment + " (" + label(x) + "): " + x.amount).join("\n") +
+        "\nIni harga untuk setiap rawatan, bukan pakej gabungan."
+      : "这两项护理各自的价格是：\n" +
+        prices.map(x => "• " + x.treatment + "（" + label(x) + "）：" + x.amount).join("\n") +
+        "\n以上是两项分开的优惠，不是组合配套哦 😊";
+  return { prices, reply, source:"verified_two_separate_treatments" };
 }
 
 module.exports = {
