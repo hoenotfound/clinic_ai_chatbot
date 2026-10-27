@@ -12,14 +12,23 @@
 - The app-default WhatsApp callback points to `https://clinic-ai-chatbot.onrender.com/webhook` (an older binary). The relay introduced in PR #395 is **code only**, not deployed and not ready for a live Meta cutover.
 - 中医养生馆 is `+60174831336`, Meta phone ID `1318355951360575`. A candidate phone-owning account `1071636698738276` and distinct messaging account `1852014482431209` were identified. Neither is established as the authorized `entry.id` for DA CHATBOT Embedded Signup. Do not guess `WHATSAPP_SECONDARY_WABA_ID`.
 
+## 27 Oct 2026 — first Coexistence test switched to personal account
+
+- **First live test candidate:** user's seldom-used WhatsApp Business App number **+60187004870**.
+- **Original proposed clinic test:** 中医养生馆 **+60174831336**, Meta Phone Number ID **1318355951360575**. This number is now explicitly **rejected** by the isolated provider rehearsal guard; its existing WhatsApp Business App and Cloud API state must remain untouched.
+- The new personal number's **Meta Phone Number ID and WABA/account ID have NOT been independently verified**. These IDs are not derivable from its E.164 digits. Do not use the old clinic Phone Number ID, a synthetic test ID, or guesses.
+- The staging Render service still has its existing **protected, provider-disabled configuration**. It must not be enabled until the operator verifies real account ownership, subscribes DA CHATBOT with the account-specific callback override, configures the correct credentials and registers only this verified QA sender in isolated Neon.
+- Staging **QA sender key** is now `coexistence_qa`. Never configure the original `tcm_wellness` identity for the personal-number test. This sender key does not authorize reusing Neutro business details, AI, templates or follow-ups.
+- Synthetic IDs like `290000000000002` in unit tests are **fixtures only**, not a Meta account or phone ID. Staging must fail closed if the verified new IDs are absent.
+
 ## New test-only guard in this PR
 
-The default protected sandbox remains unchanged, with Meta POSTs returning 503 and all background workers disabled.
+The default protected sandbox remains unchanged, with Meta POSTs returning 503 and all background workers disabled. The staging variables are not automatically updated by changing this PR; do not enable provider flags while they still refer to the old clinic phone.
 
 A second, opt-in mode `PR395_STAGING_PROVIDER_REHEARSAL_ENABLED=true` is **only eligible** after authorized number/WABA proof. Startup requires:
 
 1. Existing staging Basic Auth and isolated-Neon hostname pin, real HMAC app secret, `NODE_ENV=production`.
-2. The exact second account ID pinned in **both** `WHATSAPP_SECONDARY_WABA_ID` and `WHATSAPP_SECONDARY_EXPECTED_WABA_ID`, along with `WHATSAPP_SECONDARY_PHONE_NUMBER_ID=1318355951360575`, `WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID=1318355951360575` and `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=+60174831336`.
+2. The verified **personal QA** account ID pinned in both `WHATSAPP_SECONDARY_WABA_ID` and `WHATSAPP_SECONDARY_EXPECTED_WABA_ID`. The two phone ID variables (`WHATSAPP_SECONDARY_PHONE_NUMBER_ID`, `WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID`) must contain the **same real Meta Phone Number ID** for +60187004870, obtained through authorized Meta onboarding/asset inspection. Also pin `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=+60187004870`. **The actual Meta IDs are still unknown.**
 3. A separate authorized secondary token; no live Neutro primary Cloud API token in staging, no sender credential fallback.
 4. A valid, exact primary and secondary registry in the **isolated** database, with primary and secondary identities distinct. Staging presently has *zero* sender rows, so this prerequisite is not met. Register only after independent authorization and a reviewed database plan.
 5. Sender-scoped read/ingress and strict metadata/account guard enabled, plus `WHATSAPP_COEXISTENCE_ENABLED=true` and `WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED=true`.
@@ -37,7 +46,8 @@ WHATSAPP_COEXISTENCE_ENABLED=true
 WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED=true
 WHATSAPP_SINGLE_SENDER_STRICT_METADATA=true
 WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED=true
-WHATSAPP_SECONDARY_SENDER_KEY=tcm_wellness
+WHATSAPP_SECONDARY_SENDER_KEY=coexistence_qa
+WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=+60187004870
 # Verified account/phone/token settings are prerequisites, never inferred.
 ```
 Do not apply this configuration to existing protected staging today.
@@ -70,7 +80,7 @@ Before a live Meta default callback change, test the actual relay from a separat
 ## Blockers and release decision
 
 - Staging's sender registry is empty and its real authorized second WABA/token have not been confirmed. Do not populate guessed IDs.
-- The new controlled mode and relay tests require exact-head GitHub CI review and a later protected Render deployment.
+- The personal QA safeguard and relay tests require exact-head GitHub CI review and a later protected Render deployment. Before provider activation, separately verify and apply both new Meta IDs to Render (maintaining the isolated Neon pin).
 - The Meta default callback still targets an old Render service; never cut over without proving all existing tenants' event delivery and downstream lifecycle acceptance.
 - Signed end-to-end Meta delivery, history synchronization, opt-out, billing, staff echo and disconnect/reconnect scenarios are not yet tested. No QR scan or app-level webhook change.
 - Real Coexistence onboarding is an account change, not a simulated test. Only enable the verified number with explicit user approval and approved business history consent.
