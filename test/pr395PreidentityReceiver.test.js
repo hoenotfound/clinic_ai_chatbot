@@ -36,7 +36,7 @@ function qa(event="PARTNER_REMOVED",number=QA_PHONE){
 }
 function legacy(){
  return{object:"whatsapp_business_account",entry:[{
-  id:LEGACY_ACCOUNT,changes:[{field:"account_update",
+  id:LEGACY_ACCOUNT,changes:[{field:"message_template_status_update",
    value:{event:"ACCOUNT_VIOLATION"}}]
  }]};
 }
@@ -129,6 +129,7 @@ test("bootstrap relay enforces explicit legacy WABA allowlist and matching QA E1
   WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:LEGACY_ACCOUNT,
   WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164:QA_PHONE,
   WHATSAPP_DEFAULT_RELAY_LEGACY_URL:"https://legacy.example.invalid/webhook",
+  WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:"https://legacy-lifecycle.example.invalid/pr395-legacy-lifecycle-webhook",
   WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL:"https://qa.example.invalid/pr395-preidentity-webhook"
  });
  assert.equal(config.secondaryWaba,"");
@@ -140,6 +141,7 @@ test("bootstrap relay enforces explicit legacy WABA allowlist and matching QA E1
   WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:"",
   WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164:QA_PHONE,
   WHATSAPP_DEFAULT_RELAY_LEGACY_URL:"https://legacy.example.invalid/webhook",
+  WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:"https://legacy-lifecycle.example.invalid/pr395-legacy-lifecycle-webhook",
   WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL:"https://qa.example.invalid/pr395-preidentity-webhook"
  }),/fully configured/);
 });
@@ -183,6 +185,7 @@ test("signed REAL HTTP relay and QA receiver commit before acknowledged, preserv
    WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:LEGACY_ACCOUNT,
    WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164:QA_PHONE,
    WHATSAPP_DEFAULT_RELAY_LEGACY_URL:"https://legacy.example.invalid/webhook",
+  WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL:"https://legacy-lifecycle.example.invalid/pr395-legacy-lifecycle-webhook",
    WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL:"https://qa.example.invalid/pr395-preidentity-webhook"
   });
   const targets=new Map([
