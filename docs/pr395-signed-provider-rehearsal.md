@@ -60,6 +60,53 @@ IDs without the owner's approved account action. Do not start onboarding
 while history and callback handling still return 503. Prepare this path and
 all downstream acceptance checks first, including the app-default lifecycle relay.
 
+## 27 October 2026 — secure Embedded Signup system-user token handoff
+
+Before PR #395, Embedded Signup exchanged and verified the short-lived code
+but discarded the resulting **60-day system-user access token**. The new
+optional service callback captures that token **server-side only**, after
+validating the business account/phone, app ID and both WhatsApp permission
+scopes. The staging route refuses to consume the authorization code unless
+the dedicated credential encryption key is configured and checked.
+
+Migration `101_whatsapp_coexistence_encrypted_credentials.sql` adds an
+isolated credential table keyed by validated onboarding attempt. The route
+writes both the validation audit and AES-256-GCM ciphertext in **one database
+transaction**. The 12-byte random nonce and authentication tag are stored
+with ciphertext. AEAD associated data binds the encrypted token to the exact
+onboarding attempt, WABA ID and Meta Phone Number ID. Failed encryption,
+expired/missing token expiry or failed SQL means **no validated onboarding**.
+
+Generate a unique 32-byte base64 secret using your private administrator
+terminal: `openssl rand -base64 32`. Set it through Render's **private**
+environment settings as `PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY` on
+`da-chatbot-pr395-staging` only. NEVER commit or share its value, and never
+reuse an app secret/verify token/session secret. Keep this value stable while
+any test number is authorized: rotating it without rewrapping or deleting
+the old ciphertext prevents subsequent authorized token retrieval.
+
+The vault's internal `loadValidatedCredentialForSetup({wabaId,
+phoneNumberId})` requires **both** independently verified sender IDs,
+checks token expiry and decrypts only on the private staging service.
+This is a **server-side setup handoff**, not a new API endpoint or automatic
+send, registration, subscription, broadcast, marketing, or history sync.
+The client response continues to contain identifiers, token expiry and an
+activation-required status, **never an access token**. PR395 staging remains
+guarded: `PR395_STAGING_APP_ONLY_SIGNUP_READY=false`, provider rehearsal off,
+all AI/outbound/follow-ups off. No real phone authorization is implied.
+
+The key, expiry, sender-binding, fail-closed SQL write and real PostgreSQL
+tests must pass exact-head CI before staging deployment. A later authorized
+setup flow must still use the stored token to perform explicit WABA
+subscription/callback verification and one-time consented sync; don't scan
+the QR until that operational stage has been rehearsed.
+
+**App-level callback:** Leave Meta's default
+`https://clinic-ai-chatbot.onrender.com/webhook` unchanged. The standalone
+relay is currently health-only, 503 on every webhook; never set it as the
+Meta callback in preparation mode. Neutro's account-specific override stays
+unchanged.
+
 ## New test-only guard in this PR
 
 The default protected sandbox remains unchanged, with Meta POSTs returning 503 and all background workers disabled. The staging variables are not automatically updated by changing this PR; do not enable provider flags while they still refer to the old clinic phone.
