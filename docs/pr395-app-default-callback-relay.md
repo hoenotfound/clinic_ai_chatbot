@@ -479,6 +479,7 @@ WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID=<validated WABA from v4 Embedded Signup
 WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=<private QA E.164 configured in Render>
 WHATSAPP_DEFAULT_RELAY_LEGACY_URL=https://clinic-ai-chatbot.onrender.com/webhook
 WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS=<complete authorized legacy account ID list, comma separated>
+WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL=<provider-enabled-durable-legacy-audit-https-/pr395-legacy-lifecycle-webhook>
 WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL=<isolated-provider-enabled-qa-https-webhook>
 ```
 
@@ -488,11 +489,14 @@ must not include the secondary account ID. Any signed unknown account causes
 HTTP 503 for the entire batch **before** forwarding to the legacy destination.
 Do not use wildcards or infer the list from one portfolio's incomplete inventory.
 
-**Remaining cutover blocker:** In post-onboarding mode, allowlisted legacy
-`account_update` events still reach the old callback without the bootstrap
-mode's commit-bound lifecycle audit. Complete a separate durable legacy
-lifecycle routing review and real-provider acceptance before activating
-post-onboarding relay mode. An allowlist alone does not prove safe cutover.
+**Post-onboarding lifecycle safeguard:** allowlisted legacy
+`account_update` events go to the same dedicated durable legacy-audit
+receiver as bootstrap mode, not the old `/webhook`. A plain HTTP 200
+without `X-DA-Legacy-Lifecycle-Accepted: 1` is rejected with HTTP 503.
+The legacy audit target is required in both modes. Actual provider-signed
+delivery, the receiving service's active configuration, callback latency,
+and rollback have **not** been approved or verified. Keep Meta callbacks
+unchanged and both QA receiver switches OFF until a separate live plan.
 
 The lifecycle target must be a separate authorized, **provider-enabled**
 acceptance handler when testing. It must run PR #395, validate the same
