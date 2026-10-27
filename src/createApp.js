@@ -41,6 +41,7 @@ const followUpPerformanceRoutes = require("./routes/followUpPerformance");
 const advancedConfigRoutes = require("./routes/advancedConfig");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
+const salesFollowUpRoutes = require("./routes/salesFollowUp");
 const setupStatusRoutes = require("./routes/setupStatus");
 const whatsappCoexistenceOnboardingRoutes = require("./routes/whatsappCoexistenceOnboarding");
 const goLiveRoutes = require("./routes/goLive");
@@ -324,6 +325,7 @@ function createApp({
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);
   app.use("/api/pipeline", requireAuth, pipelineRoutes);
+  app.use("/api/sales-follow-up", requireAuth, salesFollowUpRoutes);
   app.use("/api/setup-status", requireAuth, setupStatusRoutes);
   app.use(
     "/api/whatsapp-coexistence/onboarding",
