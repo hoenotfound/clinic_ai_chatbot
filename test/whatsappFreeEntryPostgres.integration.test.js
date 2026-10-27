@@ -53,7 +53,8 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         id BIGSERIAL PRIMARY KEY, contact_id INTEGER, trigger_message_id INTEGER,
         follow_up_step INTEGER, action TEXT, reason TEXT, created_at TIMESTAMPTZ DEFAULT now()
       );
-      CREATE TABLE lead_attributions(
+      CREATE TABLE sales_follow_up_tasks(lead_id INTEGER PRIMARY KEY, status TEXT, updated_at TIMESTAMPTZ);
+       CREATE TABLE lead_attributions(
         lead_id INTEGER REFERENCES leads(id), first_message_id INTEGER,
         channel TEXT, meta_source_type TEXT, ctwa_clid TEXT, meta_ad_id TEXT
       );
@@ -722,7 +723,8 @@ test("Postgres FEP wake query uses the verified epoch, consent and unclaimed slo
           id INTEGER PRIMARY KEY, trigger_message_id INTEGER,
           contact_id INTEGER, action TEXT, reason TEXT
         );
-        CREATE TABLE whatsapp_free_only_reconciliations (
+        CREATE TABLE sales_follow_up_tasks(lead_id INTEGER PRIMARY KEY, status TEXT, updated_at TIMESTAMPTZ);
+         CREATE TABLE whatsapp_free_only_reconciliations (
           attempt_id INTEGER, verified_billing_hub BOOLEAN
         );
         CREATE TABLE whatsapp_free_entry_referrals (
