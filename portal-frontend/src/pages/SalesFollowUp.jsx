@@ -4,12 +4,35 @@ import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 
 const OUTCOMES = [
-  ["contacted", "Contacted, waiting for reply"],
-  ["later", "Follow up later"],
-  ["booked", "Appointment booked"],
-  ["not_interested", "Not interested"],
-  ["unable", "Unable to contact"]
+  ["contacted", "Message sent, waiting for reply"],
+  ["later", "Customer asked to follow up later"],
+  ["booked", "Appointment confirmed"],
+  ["not_interested", "Customer is not interested"],
+  ["unable", "Could not contact customer"]
 ];
+const OUTCOME_LABELS = Object.fromEntries(OUTCOMES);
+const REASON_LABELS = {
+  new: "Ready to contact",
+  follow_up_due: "Follow-up due",
+  interested_again: "Interested again",
+  booking_cancelled: "Booking cancelled"
+};
+function inDaysLocal(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const pad = n => String(n).padStart(2, "0");
+  return [d.getFullYear(),pad(d.getMonth()+1),pad(d.getDate())].join("-") +
+    "T" + [pad(d.getHours()),pad(d.getMinutes())].join(":");
+}
+function ageLabel(value) {
+  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
+  if (Number.isFinite(days) && days >= 0) {
+    if (days === 0) return "Today";
+    if (days === 1) return "1 day ago";
+    return days + " days ago";
+  }
+  return fmt(value);
+}
 const fmt = (value) => value
   ? new Intl.DateTimeFormat("en-MY", { timeZone: "Asia/Kuala_Lumpur", dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
   : "Not available";
@@ -23,28 +46,45 @@ export default function SalesFollowUp() {
   const [period, setPeriod] = useState("weekly");
   const [temperature, setTemperature] = useState("all");
   const [selected, setSelected] = useState(null);
-  const [outcome, setOutcome] = useState("contacted");
+  const [outcome, setOutcome] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [saving, setSaving] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(50);
+  const [search, setSearch] = useState("");
+  const [recent, setRecent] = useState([]);
+  const [undoConfirm, setUndoConfirm] = useState(null);
+  const [openedLeadId, setOpenedLeadId] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(30);
   const canUpdate = permissions.manage_assigned_leads === true;
   const canExport = permissions.export_customer_data === true;
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    try { setPayload(await api.getSalesFollowUps()); }
-    catch (error) { showToast(error.message || "Could not load follow-ups.", "error"); }
+    try {
+      setPayload(await api.getSalesFollowUps());
+      if (canUpdate) {
+        try { setRecent((await api.getRecentSalesFollowUps()).updates || []); }
+        catch (err) { setRecent([]); showToast(err.message || "Recent results unavailable.", "error"); }
+      }
+    }
+    catch (error) { setPayload(null); showToast(error.message || "Could not load follow-ups.", "error"); }
     finally { setLoading(false); }
-  }, [showToast]);
+  }, [canUpdate, showToast]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const leads = useMemo(() =>
-    (payload?.leads || [])
+  const leads = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return (payload?.leads || [])
       .filter(lead => temperature === "all" || lead.temperature === temperature)
-      .sort((a, b) => (a.temperature === "hot" ? 0 : 1) - (b.temperature === "hot" ? 0 : 1)),
-    [payload, temperature]);
-  useEffect(() => { setVisibleCount(50); }, [temperature]);
+      .filter(lead => !query || [lead.customerName,lead.whatsappNumber,lead.treatment]
+        .some(v => String(v || "").toLocaleLowerCase().includes(query)))
+      .sort((a,b) => {
+        const due = (a.reason === "follow_up_due" ? 0 : 1) - (b.reason === "follow_up_due" ? 0 : 1);
+        return due || (a.temperature === "hot" ? 0 : 1) - (b.temperature === "hot" ? 0 : 1);
+      });
+  }, [payload,temperature,search]);
+  const dueCount = (payload?.leads || []).filter(l => l.reason === "follow_up_due").length;
+  useEffect(() => { setVisibleCount(30); }, [temperature, search]);
 
   async function exportReport() {
     if (exporting || !canExport) return;
@@ -66,15 +106,35 @@ export default function SalesFollowUp() {
 
   function openResult(lead) {
     setSelected(lead);
-    setOutcome("contacted");
+    setOutcome("");
     setDueAt("");
+  }
+
+  function selectOutcome(value) {
+    setOutcome(value);
+    setDueAt(["contacted","later"].includes(value) ? inDaysLocal(3) : "");
+  }
+
+  async function undoResult() {
+    if (!undoConfirm || saving) return;
+    setSaving(true);
+    try {
+      await api.undoSalesFollowUp(undoConfirm.leadId, undoConfirm.eventId);
+      setUndoConfirm(null);
+      showToast("Previous result restored.", "info");
+      await refresh();
+    } catch (error) {
+      setUndoConfirm(null);
+      showToast(error.message || "Could not correct this result. Review Pipeline.", "error");
+      await refresh();
+    } finally { setSaving(false); }
   }
 
   async function saveResult(event) {
     event.preventDefault();
-    if (!selected || saving || !canUpdate) return;
-    if (["later", "booked"].includes(outcome) && !dueAt) {
-      showToast("Please choose the follow-up or appointment date.", "warning");
+    if (!selected || saving || !canUpdate || !outcome) return;
+    if (["later", "booked", "contacted"].includes(outcome) && !dueAt) {
+      showToast("Choose a reminder or appointment date.", "warning");
       return;
     }
     setSaving(true);
@@ -85,7 +145,8 @@ export default function SalesFollowUp() {
         ...(dueAt ? { dueAt: new Date(dueAt).toISOString() } : {})
       });
       setSelected(null);
-      showToast("Follow-up result saved.", "info");
+      setOpenedLeadId(null);
+      showToast("Result saved. Correct mistakes under Recent results.", "info");
       await refresh();
     } catch (error) {
       showToast(error.message || "Could not save result.", "error");
