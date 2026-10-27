@@ -6,7 +6,10 @@ const { resolveShadowPriceException, recentVerifiedPricingSession } =
   require("../src/utils/shadowPriceException");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { ensureVerifiedPriceReply } = require("../src/utils/verifiedPriceReply");
-const { resolveRecentPriceSelection, resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("../src/utils/priceConversationRecovery");
+const { resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
+  resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } =
+  require("../src/utils/priceConversationRecovery");
+const { serviceCandidates, findServicesInText } = require("../src/utils/conversationPromptContext");
 
 const now = Date.now();
 const turn = (role, content, secondsBefore = 0, staff = false) => ({
@@ -23,6 +26,16 @@ const serviceAliases = [
   {alias:"3D小颜术",officialService:"3D 小颜术"},
   {alias:"3D",officialService:"3D 小颜术"},
   {alias:"9D",officialService:"9D 逆龄抗衰"},
+  // These real Neutro Sense aliases are essential: generic normalization
+  // makes the bare "3D、9D" list overlap the COMBINATION service.
+  {alias:"3D+9D",officialService:"3D + 9D 组合"},
+  {alias:"9D+3D",officialService:"3D + 9D 组合"},
+  {alias:"3D + 9D",officialService:"3D + 9D 组合"},
+  {alias:"9D + 3D",officialService:"3D + 9D 组合"},
+  {alias:"3D9D组合",officialService:"3D + 9D 组合"},
+  {alias:"9D3D组合",officialService:"3D + 9D 组合"},
+  {alias:"3D 9D 组合",officialService:"3D + 9D 组合"},
+  {alias:"9D 3D 组合",officialService:"3D + 9D 组合"},
 ];
 const promotions = [
   {name:"3D 小颜术 First Trial",linkedService:"3D 小颜术",
@@ -600,4 +613,65 @@ test("the October 31 promotion cutoff is clinic-local and stale prices fail clos
     services,serviceAliases,promotions:expired,language:"zh",now,
   });
   assert.equal(reply,null,"an expired promotion must never be sent as a current price");
+});
+
+
+test("production combo aliases cannot swallow an explicit request for two separate treatment prices", () => {
+  const candidates=serviceCandidates(services,serviceAliases);
+  for(const raw of ["3D、9D分别多少钱？", "3D/9D各自价钱多少？",
+    "3D & 9D 各自多少钱", "3D 9D分别多少钱？"]) {
+    assert.deepEqual(findServicesInText(raw,candidates),["3D + 9D 组合"],
+      "exercise the REAL configured combo-alias collision: "+raw);
+    const history=[turn("user",raw,80)];
+    const quote=dual(history,raw);
+    assert.deepEqual(quote?.prices.map(x=>x.treatment),
+      ["3D 小颜术","9D 逆龄抗衰"],raw);
+    assert.deepEqual(quote?.prices.map(x=>x.amount),["RM488","RM488"],raw);
+    assert.match(quote?.reply||"",/不是组合配套/u);
+  }
+  for(const raw of ["3D+9D组合多少钱？","3D/9D组合配套多少钱？",
+    "3D & 9D多少钱？","3D 9D 组合多少钱",
+    "3D+9D分别多少钱？"]) {
+    assert.equal(dual([turn("user",raw,80)],raw),null,
+      "positive and ambiguous combo terms must not turn into individual prices: "+raw);
+  }
+});
+
+test("established price is never inferred from a 3D suggestion after customer's newer 9D choice", () => {
+  const selected=[
+    turn("user","9D",530),
+    turn("assistant","9D 逆龄抗衰的护理针对紧致提升",525),
+    turn("user","调整大小脸",420),
+    turn("assistant","3D 小颜术适合处理大小脸，可以了解看看",410),
+    turn("user","多少钱？",400),
+  ];
+  const contextual=recentVerifiedPricingSession(selected,"多少钱？",now);
+  assert.equal(resolveEstablishedTreatmentPrice({
+    customerText:"多少钱？",session:contextual,services,serviceAliases,now,
+  }),null,"a model mentioning 3D cannot supersede the user's latest explicit 9D");
+  assert.notEqual(shadow(selected,"多少钱？")?.treatment,"3D 小颜术",
+    "no other Shadow recovery may return the unauthorized 3D price");
+  const recognized=[
+    turn("user","3D",530),
+    turn("assistant","3D 小颜术的护理主要是面部轮廓",525),
+    turn("user","调整大小脸",420),
+    turn("assistant","3D 小颜术针对大小脸问题做面部调理",410),
+    turn("user","多少钱？",400),
+  ];
+  assert.equal(resolveEstablishedTreatmentPrice({
+    customerText:"多少钱？",
+    session:recentVerifiedPricingSession(recognized,"多少钱？",now),
+    services,serviceAliases,now,
+  })?.name,"3D 小颜术","a consistent customer-selected 3D treatment still quotes");
+});
+
+test("separately verified two prices remain text-only when production combo aliases are loaded", () => {
+  const current="3D、9D分别多少钱？";
+  const source=require("node:fs").readFileSync(require("node:path")
+    .join(__dirname,"../src/server.js"),"utf8");
+  assert.match(source,/reply = twoTreatmentQuote\.reply;/u);
+  assert.match(source,/const promoBundle = twoTreatmentQuote \? null : await resolvePricePromotionForReply/u);
+  const quote=dual([turn("user",current,75)],current);
+  assert.equal(quote?.source,"verified_two_separate_treatments");
+  assert.deepEqual(quote?.prices.map(x=>x.label),["first_trial","first_trial"]);
 });
