@@ -81,6 +81,7 @@ function assertPr395StagingSafety(env = process.env) {
   if (!isPr395Staging(env)) {
     if (env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" ||
         env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED === "true" ||
+        env.PR395_STAGING_LEGACY_LIFECYCLE_ENABLED === "true" ||
         env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
       throw new Error("Provider rehearsal must never run outside PR395's isolated staging mode.");
     }
@@ -126,6 +127,19 @@ function assertPr395StagingSafety(env = process.env) {
   if (!hostname || !pin || hostname !== pin ||
       !/\.neon\.tech$/.test(hostname)) {
     throw new Error("PR395 staging DATABASE_URL must match its explicitly pinned isolated Neon endpoint host.");
+  }
+  if(env.PR395_STAGING_LEGACY_LIFECYCLE_ENABLED==="true"){
+    const {enabled:legacyAuditEnabled}=require("./pr395LegacyLifecycleReceiver");
+    if(!legacyAuditEnabled(env) ||
+       env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED==="true" ||
+       env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED==="true" ||
+       env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING==="true" ||
+       OUTBOUND_SWITCHES.some(k=>env[k]==="true") ||
+       REHEARSAL_OUTBOUND_FORBIDDEN.some(k=>env[k]==="true") ||
+       (String(env.WHATSAPP_TOKEN||"").trim() &&
+        !String(env.WHATSAPP_TOKEN).startsWith("pr395-inert-"))){
+      throw new Error("Legacy lifecycle audit requires isolated, HMAC-verified and outbound-disabled staging.");
+    }
   }
   if (env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED === "true") {
     const {enabled:preidentityEnabled} = require("./pr395PreidentityReceiver");
