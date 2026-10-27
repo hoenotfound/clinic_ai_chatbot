@@ -114,7 +114,7 @@ async function seededSend(db,database) {
 test("migration 084 is repeatable and keeps both customer senders separate",
   {skip:!connectionString},async()=>{
     await withSchema(async({db,database})=>{
-      assert.equal(loadMigrations().at(-1).version,100);
+      assert.equal(loadMigrations().at(-1).version,101);
       assert.equal((await runMigrations(database,{quiet:true})).appliedCount,0);
       const inserted=await db.query("SELECT COUNT(*)::int AS n FROM whatsapp_sender_status_receipts");
       assert.equal(inserted.rows[0].n,0);
