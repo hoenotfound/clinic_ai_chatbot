@@ -9,6 +9,7 @@ const PRIMARY_NAV_ITEMS = [
   { to: "/inbox", label: "Inbox", icon: ChatIcon, capabilities: LEAD_VIEW },
   { to: "/contacts", label: "Contacts", icon: ContactsIcon, capabilities: LEAD_VIEW },
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, capabilities: LEAD_VIEW },
+  { to: "/sales-follow-up", label: "Sales Follow-up", icon: ContactsIcon, capabilities: LEAD_VIEW },
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
 ];
