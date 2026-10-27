@@ -6,6 +6,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const { performance } = require("node:perf_hooks");
 const {
   dispatchSignedBatch, createRelayServer
 } = require("../src/services/whatsappAppDefaultRelay");
@@ -168,4 +169,67 @@ test("late HTTP 200 from noncompliant custom transport cannot bypass deadline",a
   assert.equal(await dispatchSignedBatch(fixture.raw,fixture.signature,config,
     late,{dispatchTimeoutMs:30}),503);
   assert.deepEqual(calls,[URLS.old]);
+});
+
+test("never-settling downstream is bounded without relying on AbortSignal compliance",async()=>{
+  const fixture=signed(), calls=[], signals=[];
+  const ignoresAbort=(url,options)=>{
+    calls.push(url);
+    signals.push(options.signal);
+    return new Promise(()=>{}); // deliberately never settles or handles abort
+  };
+  const started=performance.now();
+  assert.equal(await dispatchSignedBatch(fixture.raw,fixture.signature,config,
+    ignoresAbort,{dispatchTimeoutMs:50}),503);
+  assert.ok(performance.now()-started<950,"relay remained blocked after deadline");
+  assert.deepEqual(calls,[URLS.old],"never attempt a second destination");
+  assert.equal(signals[0].aborted,true,"best-effort abort must still be signaled");
+});
+test("late transport ignores abort but upstream responds before its late HTTP 200",async()=>{
+  const fixture=signed(), calls=[];
+  let lateSettled=false;
+  const ignoresAbort=async(url)=>{
+    calls.push(url);
+    await new Promise(resolve=>setTimeout(resolve,500));
+    lateSettled=true;
+    return ack(url);
+  };
+  const started=performance.now();
+  assert.equal(await dispatchSignedBatch(fixture.raw,fixture.signature,config,
+    ignoresAbort,{dispatchTimeoutMs:50}),503);
+  assert.ok(performance.now()-started<950,"relay awaited a late provider response");
+  assert.equal(lateSettled,false,"must respond before the late downstream resolves");
+  assert.deepEqual(calls,[URLS.old]);
+});
+test("real local HTTP relay responds 503 for a hanging receiver within bounded deadline",async()=>{
+  const fixture=signed(), calls=[];
+  const server=createRelayServer(config,{
+    dispatchTimeoutMs:65,
+    fetchImpl:(_url,options)=>{
+      calls.push(options);
+      return new Promise(()=>{}); // an uncooperative downstream never answers
+    },
+  });
+  await new Promise((resolve,reject)=>{
+    server.once("error",reject);
+    server.listen(0,"127.0.0.1",resolve);
+  });
+  try {
+    const url="http://127.0.0.1:"+server.address().port+"/webhook";
+    const started=performance.now();
+    const response=await fetch(url,{
+      method:"POST",
+      headers:{"content-type":"application/json","x-hub-signature-256":fixture.signature},
+      body:fixture.raw,
+      signal:AbortSignal.timeout(2000),
+    });
+    assert.equal(response.status,503);
+    assert.ok(performance.now()-started<1000,"upstream HTTP request exceeded bounded relay deadline");
+    await response.body?.cancel();
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].signal.aborted,true);
+  }finally{
+    server.closeAllConnections();
+    await new Promise(resolve=>server.close(resolve));
+  }
 });
