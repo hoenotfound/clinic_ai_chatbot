@@ -19,10 +19,13 @@ test("sales follow-up candidate query applies owner and journey scoping in SQL",
   assert.match(captured.sql, /l\.started_message_id/);
   assert.match(captured.sql, /m\.role = 'user'/);
   assert.match(captured.sql, /staff\.sent_by_username IS NOT NULL/);
-  assert.match(captured.sql, /whatsapp_free_entry_followup_attempts/);
+  assert.match(captured.sql, /whatsapp_free_entry_referrals/);
+  assert.match(captured.sql, /whatsapp_free_entry_pricing_evidence/);
+  assert.match(captured.sql, /score.updated_at > t.updated_at/);
   assert.equal(captured.params[0], false);
   assert.equal(captured.params[1], "sales-a");
   assert.equal(captured.params[3], 99);
+  assert.equal(captured.params[6], 500);
 });
 
 test("manager view is explicit and never implied by default sales permission", async (t) => {
@@ -50,6 +53,7 @@ test("manual booking writes stage history and stays independent from AI follow-u
   assert.match(source, /INSERT INTO lead_stage_history/);
   assert.match(source, /INSERT INTO lead_activities/);
   assert.match(source, /FOR UPDATE/);
+  assert.match(source, /Number\(eligible\[0\]\.lastInboundId\) !== inboundExpected/);
   assert.match(source, /UPDATE leads SET appointment_status='set'/);
   assert.doesNotMatch(source, /UPDATE messages SET/);
 });
