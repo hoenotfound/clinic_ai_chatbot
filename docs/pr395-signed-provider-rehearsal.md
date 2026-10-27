@@ -28,8 +28,7 @@ The default protected sandbox remains unchanged, with Meta POSTs returning 503 a
 A second, opt-in mode `PR395_STAGING_PROVIDER_REHEARSAL_ENABLED=true` is **only eligible** after authorized number/WABA proof. Startup requires:
 
 1. Existing staging Basic Auth and isolated-Neon hostname pin, real HMAC app secret, `NODE_ENV=production`.
-2. The verified **personal QA** account ID pinned in both `WHATSAPP_SECONDARY_WABA_ID` and `WHATSAPP_SECONDARY_EXPECTED_WABA_ID`. The two phone ID variables (`WHATSAPP_SECONDARY_PHONE_NUMBER_ID`, `WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID`) must contain the **same real Meta Phone Number ID** for <private QA E.164 configured in Render>, obtained through authorized Meta onboarding/asset inspection. Also pin `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=<enter privately in Render>
-PR395_STAGING_APPROVED_TEST_PHONE_E164=<same independently approved E164, private>`. **The actual Meta IDs are still unknown.**
+2. The verified **personal QA** account ID pinned in both `WHATSAPP_SECONDARY_WABA_ID` and `WHATSAPP_SECONDARY_EXPECTED_WABA_ID`. The two phone ID variables (`WHATSAPP_SECONDARY_PHONE_NUMBER_ID`, `WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID`) must contain the **same real Meta Phone Number ID** for <private QA E.164 configured in Render>, obtained through authorized Meta onboarding/asset inspection. Also configure `WHATSAPP_SECONDARY_EXPECTED_PHONE_E164` and `PR395_STAGING_APPROVED_TEST_PHONE_E164` to the same independently approved E.164 using private Render environment variables. **The actual Meta IDs are still unknown.**
 3. A separate authorized secondary token; no live Neutro primary Cloud API token in staging, no sender credential fallback.
 4. A valid, exact primary and secondary registry in the **isolated** database, with primary and secondary identities distinct. Staging presently has *zero* sender rows, so this prerequisite is not met. Register only after independent authorization and a reviewed database plan.
 5. Sender-scoped read/ingress and strict metadata/account guard enabled, plus `WHATSAPP_COEXISTENCE_ENABLED=true` and `WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED=true`.
@@ -48,7 +47,8 @@ WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED=true
 WHATSAPP_SINGLE_SENDER_STRICT_METADATA=true
 WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED=true
 WHATSAPP_SECONDARY_SENDER_KEY=coexistence_qa
-WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=<private QA E.164 configured in Render>
+WHATSAPP_SECONDARY_EXPECTED_PHONE_E164=<approved private QA E.164>
+PR395_STAGING_APPROVED_TEST_PHONE_E164=<same approved private QA E.164>
 # Verified account/phone/token settings are prerequisites, never inferred.
 ```
 Do not apply this configuration to existing protected staging today.
