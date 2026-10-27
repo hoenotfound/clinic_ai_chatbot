@@ -187,3 +187,61 @@ test("PostgreSQL v100 disconnect transaction suspends only secondary and is repl
    await db.end();
  }
 });
+
+test("PostgreSQL v101 stores only encrypted, account-scoped secondary signup token",{
+ skip:!url,
+},async()=>{
+ const crypto=require("node:crypto");
+ const vault=require("../src/db/whatsappCoexistenceOnboardingRepo");
+ const driver=new Client({connectionString:url});
+ const schema="coex_v101_vault_"+process.pid+"_"+Date.now();
+ await driver.connect();
+ try{
+  await driver.query("CREATE SCHEMA "+schema);
+  await driver.query("SET search_path TO "+schema);
+  const database={
+   query:(...args)=>driver.query(...args),
+   connect:async()=>{
+    const client=new Client({connectionString:url});
+    await client.connect();
+    await client.query("SET search_path TO "+schema);
+    return{query:(...args)=>client.query(...args),release:()=>client.end()};
+   },
+  };
+  await runMigrations(database,{quiet:true});
+  const env={
+   PR395_STAGING_MODE:"true",
+   WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
+   WHATSAPP_WABA_ID:"111111111111111",
+   WHATSAPP_PHONE_NUMBER_ID:"222222222222222",
+   PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:crypto.randomBytes(32).toString("base64")
+  };
+  const sender={wabaId:"333333333333333",phoneNumberId:"444444444444444"};
+  const token="test-only-validated-system-user-credential";
+  const created=await vault.recordValidatedWithCredential({
+   ...sender,accessToken:token,coexistenceReady:true,
+   tokenExpiresAt:new Date(Date.now()+86400000).toISOString(),startedBy:"qa"
+  },{database,env});
+  assert.ok(created?.id);
+  const stored=await database.query(
+   "SELECT encode(ciphertext,'hex') AS c,encode(nonce,'hex') AS n FROM "+
+   "whatsapp_coexistence_onboarding_credentials WHERE attempt_id=$1",[created.id]
+  );
+  assert.equal(stored.rows.length,1);
+  assert.ok(!stored.rows[0].c.includes(Buffer.from(token).toString("hex")));
+  const loaded=await vault.loadValidatedCredentialForSetup(sender,{database,env});
+  assert.equal(loaded.accessToken,token);
+  await assert.rejects(vault.loadValidatedCredentialForSetup({
+   ...sender,phoneNumberId:"444444444444445"
+  },{database,env}),/No valid unexpired/);
+  const source=await database.query(
+   "SELECT id,status,waba_id,phone_number_id FROM whatsapp_coexistence_onboarding_attempts"
+  );
+  assert.equal(source.rows.length,1);
+  assert.equal(source.rows[0].status,"validated");
+ }finally{
+  await driver.query("SET search_path TO public").catch(()=>{});
+  await driver.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+  await driver.end();
+ }
+});
