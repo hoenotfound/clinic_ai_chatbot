@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_coexistence_sync_dispatch_requests (
  resolved_at TIMESTAMPTZ,
  http_status INTEGER,
  provider_error_code TEXT,
+ provider_request_id TEXT CHECK(provider_request_id IS NULL OR length(provider_request_id) BETWEEN 1 AND 512),
  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  UNIQUE(waba_id,phone_number_id,sync_type),
  CHECK(sync_type <> 'history' OR consent_granted=TRUE)
