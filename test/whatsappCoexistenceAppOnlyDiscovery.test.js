@@ -21,6 +21,7 @@ function qa(overrides = {}) {
     WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60120000000",
     PR395_STAGING_APPROVED_TEST_PHONE_E164: "+60120000000",
     PR395_STAGING_MODE: "true",
+    PR395_STAGING_APP_ONLY_SIGNUP_READY: "true",
     PR395_STAGING_PROVIDER_REHEARSAL_ENABLED: "false",
     PR395_STAGING_ALLOW_PROVIDER_PROCESSING: "false",
     WHATSAPP_PHONE_NUMBER_ID: "111111111111111",
@@ -66,6 +67,8 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
   assert.equal(publicConfig(source).runtime.expectedPhoneNumberId,null);
   assert.equal(requireExpectedSecondaryPhone(source),null);
   for (const override of [
+    {PR395_STAGING_APP_ONLY_SIGNUP_READY:"false"},
+    {PR395_STAGING_APP_ONLY_SIGNUP_READY:""},
     {PR395_STAGING_MODE:"false"},
     {PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true"},
     {PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"true"},
