@@ -1,0 +1,109 @@
+name: PR395 isolated signed webhook rehearsal
+
+# Intentionally manual only. This file must be reviewed and separately
+# registered on main before GitHub permits manual workflow_dispatch.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type STAGING_ONLY to send synthetic events to the isolated PR395 audit receiver'
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pr395-staging-signed-webhook-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  signed-staging-only:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'STAGING_ONLY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: pr395-isolated-webhook-rehearsal
+    env:
+      PR395_STAGING_HMAC_SECRET: ${{ secrets.PR395_STAGING_HMAC_SECRET }}
+    steps:
+      # Deliberately NO checkout, no dependency installation and no PR code.
+      # No URL, WABA ID, business phone or script path can be supplied by input.
+      - name: Verify signature handling and audit durability on isolated staging
+        shell: bash
+        run: |
+          node <<'NODE'
+          "use strict";
+          const {createHmac,createHash,randomUUID} = require("node:crypto");
+          const TARGET = "https://da-chatbot-pr395-staging.onrender.com/pr395-legacy-lifecycle-webhook";
+          const WABA = "1593376338308612";
+          const PHONE = "+601130535053";
+          const SECRET = process.env.PR395_STAGING_HMAC_SECRET || "";
+          function fail(message){throw new Error(message);}
+          async function post(payload,badSignature=false){
+            const raw=Buffer.from(JSON.stringify(payload));
+            const signature=badSignature
+              ? "sha256="+"0".repeat(64)
+              : "sha256="+createHmac("sha256",SECRET).update(raw).digest("hex");
+            const response=await fetch(TARGET,{
+              method:"POST",
+              redirect:"error",
+              signal:AbortSignal.timeout(8000),
+              headers:{
+                "content-type":"application/json",
+                "x-hub-signature-256":signature
+              },
+              body:raw
+            });
+            const result={status:response.status,ack:response.headers.get("x-da-legacy-lifecycle-accepted")};
+            await response.body?.cancel();
+            return result;
+          }
+          function requireRejected(result,label){
+            if(result.status < 400 || result.ack === "1")
+              fail(label+" was unexpectedly accepted (HTTP "+result.status+").");
+            console.log("PASS "+label+": rejected with HTTP "+result.status);
+          }
+          function requireDurable(result,label){
+            if(result.status !== 200 || result.ack !== "1")
+              fail(label+" was not durably accepted (HTTP "+result.status+", ACK "+(result.ack||"absent")+").");
+            console.log("PASS "+label+": HTTP 200 with durable ACK.");
+          }
+          async function main(){
+            if(process.env.GITHUB_EVENT_NAME!=="workflow_dispatch" ||
+               process.env.GITHUB_REF!=="refs/heads/main")
+              fail("Only manual dispatch on main is allowed.");
+            if(SECRET.length<24)
+              fail("Missing/invalid PR395_STAGING_HMAC_SECRET environment secret. No requests sent.");
+            const entryTime=Math.floor(Date.now()/1000);
+            const marker="github-actions-"+String(process.env.GITHUB_RUN_ID||"unknown")+
+              "-"+String(process.env.GITHUB_RUN_ATTEMPT||"1")+"-"+randomUUID();
+            const change={field:"account_update",value:{
+              event:"PR395_SYNTHETIC_REHEARSAL",
+              phone_number:PHONE,
+              rehearsal_marker:marker
+            }};
+            const payload={object:"whatsapp_business_account",entry:[{
+              id:WABA,time:entryTime,changes:[change]
+            }]};
+            // Reject unsafe requests BEFORE writing any synthetic audit record.
+            requireRejected(await post(payload,true),"invalid HMAC");
+            const foreignAccount={...payload,entry:[{...payload.entry[0],id:"999999999999999"}]};
+            requireRejected(await post(foreignAccount),"foreign WABA");
+            const foreignPhone=JSON.parse(JSON.stringify(payload));
+            foreignPhone.entry[0].changes[0].value.phone_number="+60120000000";
+            requireRejected(await post(foreignPhone),"foreign phone");
+
+            requireDurable(await post(payload),"signed synthetic lifecycle event");
+            requireDurable(await post(payload),"identical replay");
+
+            // The staging receiver stores one fingerprint and one review alert.
+            // Its Telegram alert worker must remain disabled for this rehearsal.
+            const fingerprint=createHash("sha256").update(JSON.stringify({
+              account:WABA,entryTime,change
+            })).digest("hex");
+            console.log("EXPECTED SYNTHETIC AUDIT FINGERPRINT: "+fingerprint);
+            console.log("EXPECTED DB: one lifecycle audit row and one pending REVIEW alert at this fingerprint.");
+            console.log("No real Meta callbacks or WhatsApp sending were performed.");
+          }
+          main().catch(e=>{console.error("REHEARSAL FAILED: "+e.message);process.exitCode=1;});
+          NODE
