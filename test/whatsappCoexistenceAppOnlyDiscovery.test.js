@@ -21,6 +21,7 @@ function qa(overrides = {}) {
     WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: "+60120000000",
     PR395_STAGING_APPROVED_TEST_PHONE_E164: "+60120000000",
     PR395_STAGING_MODE: "true",
+    PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
     PR395_STAGING_APP_ONLY_SIGNUP_READY: "true",
     PR395_STAGING_PROVIDER_REHEARSAL_ENABLED: "false",
     PR395_STAGING_ALLOW_PROVIDER_PROCESSING: "false",
@@ -67,6 +68,7 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
   assert.equal(publicConfig(source).runtime.expectedPhoneNumberId,null);
   assert.equal(requireExpectedSecondaryPhone(source),null);
   for (const override of [
+    {PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""},
     {PR395_STAGING_APP_ONLY_SIGNUP_READY:"false"},
     {PR395_STAGING_APP_ONLY_SIGNUP_READY:""},
     {PR395_STAGING_MODE:"false"},
@@ -110,4 +112,28 @@ test("wrong discovered App number or primary phone must be rejected before recor
   assert.throws(()=>assertExpectedSecondaryPhone({
     id:"1318355951360575",displayPhoneNumber:"+60120000000"
   },qa()),x=>x.code==="WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH");
+});
+
+test("validated secondary signup gives verified system token only to internal vault callback",async()=>{
+  const graph=metaFetch();
+  let received=null;
+  const result=await completeEmbeddedSignup({
+    code:"single-use-code",sessionInfo:finish(),env:qa(),fetchImpl:graph.fetch,
+    onVerifiedCredential:async data=>{ received=data; },
+  });
+  assert.equal(received.accessToken,"test-authorized-token");
+  assert.equal(received.wabaId,"222222222222222");
+  assert.equal(received.phoneNumberId,"333333333333333");
+  assert.equal(JSON.stringify(result).includes(received.accessToken),false);
+  assert.equal(JSON.stringify(result.permissions).includes(received.accessToken),false);
+  assert.equal(result.activationRequired,true);
+});
+test("wrong phone never gives a credential to the internal vault callback",async()=>{
+  const graph=metaFetch("+60 12-999 9999");
+  let callbacks=0;
+  await assert.rejects(completeEmbeddedSignup({
+    code:"single-use-code",sessionInfo:finish(),env:qa(),fetchImpl:graph.fetch,
+    onVerifiedCredential:async()=>{callbacks++;},
+  }),error=>error.code==="WHATSAPP_COEXISTENCE_SECONDARY_DISPLAY_MISMATCH");
+  assert.equal(callbacks,0);
 });
