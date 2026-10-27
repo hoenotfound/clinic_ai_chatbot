@@ -10,6 +10,7 @@ on:
       - 'src/services/whatsappAppDefaultRelay.js'
       - 'test/pr395RelayDeadline.test.js'
       - 'test/whatsappAppDefaultRelay.test.js'
+      - 'test/whatsappAppDefaultRelay.integration.test.js'
       - '.github/workflows/pr395-stacked-relay-checks.yml'
 
 permissions:
@@ -22,7 +23,7 @@ concurrency:
 jobs:
   isolated-relay-regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout stacked PR merge (no persisted credentials)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -33,6 +34,8 @@ jobs:
           node --version
           node --check src/services/whatsappAppDefaultRelay.js
           node --check test/pr395RelayDeadline.test.js
-      - name: Run built-in Node relay tests against synthetic endpoints only
+      - name: Install dependencies without lifecycle scripts (integration imports PostgreSQL client)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run synthetic unit and real localhost HTTP integration tests
         run: |
-          node --test test/pr395RelayDeadline.test.js test/whatsappAppDefaultRelay.test.js
+          node --test test/pr395RelayDeadline.test.js test/whatsappAppDefaultRelay.test.js test/whatsappAppDefaultRelay.integration.test.js
