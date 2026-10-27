@@ -10,7 +10,7 @@ const {spawnSync} = require("node:child_process");
 const path = require("node:path");
 
 const harness = path.resolve(__dirname, "../scripts/qa/pr395LocalRelayRehearsal.cjs");
-const pinned = "19b1bbe00b18e28fb90cdf5755c9ac8ac49484ca";
+const pinned = "e1b0dc8f682477aec69f6afe671f81758f772f2b";
 
 for (const [name, overrides] of [
   ["missing PR source", {PR395_RELAY_SOURCE: ""}],

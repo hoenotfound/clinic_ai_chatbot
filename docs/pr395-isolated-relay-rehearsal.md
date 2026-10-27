@@ -1,8 +1,8 @@
 # PR #395: protected localhost-only app-default relay rehearsal
 
-**Status: PREPARED IN SEPARATE WORKFLOW PR; NOT YET MANUALLY RUN. No QR, Meta callback change, Neutro production deployment, or PR #395 merge authorized.**
+**Status: PREVIOUS OLD-SHA REHEARSAL PASSED 8/8; RE-PIN AND UPDATED DEADLINE TESTS IN A NEW DRAFT PR. New-SHA rehearsal is NOT YET RUN. No QR, Meta callback change, Neutro production deployment, or PR #395 merge authorized.**
 
-This is an **entirely synthetic test** of the exact reviewed relay implementation at PR #395 SHA `19b1bbe00b18e28fb90cdf5755c9ac8ac49484ca`. It cannot establish real Meta provider delivery, the list of authorized WABAs, live account disconnection alert coverage, production safety under a callback cutover, or a 24-hour history import.
+This is an **entirely synthetic test** of the exact reviewed relay implementation at PR #395 SHA `e1b0dc8f682477aec69f6afe671f81758f772f2b`. It cannot establish real Meta provider delivery, the list of authorized WABAs, live account disconnection alert coverage, production safety under a callback cutover, or a 24-hour history import.
 
 ## Scope
 
@@ -28,19 +28,22 @@ New Node built-in-only test harness: `scripts/qa/pr395LocalRelayRehearsal.cjs`
 6. A legacy audit receiver returning HTTP 200 **without durable acknowledgment** causes 503, and blocks later preidentity forwarding.
 7. A preidentity receiver returning HTTP 200 **without durable acknowledgment** also causes 503.
 8. Legacy downstream outage and simulated lifecycle database outage return 503; a subsequent **explicit synthetic provider replay** recovers without duplicate mock commits.
-9. A slow legacy lifecycle receiver commits but responds later than the relay's current 8-second timeout. The relay returns 503, never falsely ACKs. An explicit retry demonstrates idempotent replay. This **demonstrates a remaining operational cold-start risk**, not a fix for it.
+9. A slow legacy lifecycle receiver commits but responds after an injected **75ms total shared deadline**. The relay returns 503 within a bounded elapsed time, never falsely ACKs, and explicit synthetic Meta replay finishes without duplicate mock commits.
+10. A deliberately never-settling downstream transport that **ignores AbortSignal** cannot keep the upstream HTTP connection blocked beyond the injected shared deadline; the relay returns 503, signals best-effort abort, and does not call later destinations.
+
+The protected manual harness uses a test-only 75ms deadline to verify the new cancellation-independent enforcement quickly. The relay's default upper budget is 30 seconds; **this is not a guarantee that Meta will wait 30 seconds**. The previous protected old-SHA rehearsal passed 8/8 in [run #40489411845](https://github.com/hoenotfound/clinic_ai_chatbot/actions/runs/40489411845). The new **9-case** rehearsal must run separately after this workflow update is reviewed and merged.
 
 ## Important limitations and follow-up
 
 - `createRelayServer` is tested against **localhost loopback mocks**, not the actual deployed Render relay (which intentionally remains inert) or real Meta-signed delivery.
 - The replay test models durability with deduplicating memory sets. It does not substitute for actual Neon transactional or delayed-commit proof. The **separate existing signed staging/Neon rehearsal** verified single-record audit and has been cleaned up.
-- Render Free startup may exceed the current relay's 8-second downstream POST deadline. Correct retryability is useful, but for real provider delivery we must design a bounded, cold-start-tolerant durable architecture and test the full end-to-end route **before** changing the Meta app-default callback.
+- A cold Render receiver or Meta's own webhook timeout may still expire before the new bounded 30-second total relay budget. Correct fail-closed and replay behavior is useful, but for real provider delivery we must prove downstream idempotency, callback-response timing, and cold-start-tolerant durable ingress **before** changing the Meta app-default callback.
 - Full developer-app-scoped WABA account inventory (including delegated businesses) is not proven, QA's real WABA/phone IDs are not yet issued, QA inbound receiver/history importer is not provider-accepted, and signed Meta callback cutover/rollback remain unverified.
 - **Never** set the Meta callback to the inert relay, scan the personal QA Business App QR, initiate `smb_app_data`, enable secondary sending, or merge PR #395 on the basis of these simulated test passes.
-- **Neutro Auto-Deploy stays OFF** until a separate operator decision; the workflow-only PR should be squash-merged only with `[skip render]` in the actual commit message after its own review and CI.
+- **Neutro Auto-Deploy stays OFF** until a separate operator decision. The workflow-only PR must have its own review and CI, and should be squash-merged only with `[skip render]` in the actual commit message. The old green run is not evidence of the new relay behavior.
 - GitHub only shows `Run workflow` for a manually triggered workflow once its YAML is present on the default branch. No merge and no manual run are automatic.
 
-## Running after separate authorization
+## Running after separate authorization (new SHA)
 
 After the workflow-only PR's CI is green and approved, merge **only that workflow PR**, then open GitHub **Actions > PR395 isolated default-callback relay (local only) > Run workflow**, select `main`, type `LOCAL_RELAY_ONLY`, and complete the environment reviewer approval. Do not rerun using a stale pinned PR SHA if PR #395's head has moved.
 
