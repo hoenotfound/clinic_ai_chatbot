@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { prepareCoexistenceSyncPlan } = require("../src/services/whatsappCoexistenceSyncPlan");
 const input = {
- phoneNumberId:"1318355951360575",
+ phoneNumberId:"290000000000002",
  onboardingCompletedAt:"2026-10-27T02:00:00Z",
  now:new Date("2026-10-27T02:20:00Z"),
  authorized:true,receiverReady:true,importerReady:true,historyConsent:true,
@@ -12,7 +12,7 @@ test("sync plan includes both one-time requests only after all readiness proof",
  const plan=prepareCoexistenceSyncPlan(input);
  assert.equal(plan.eligibleToRequest,true);
  assert.deepEqual(plan.requests.map(x=>x.body.sync_type),["smb_app_state_sync","history"]);
- assert.ok(plan.requests.every(x=>x.path==="/1318355951360575/smb_app_data"));
+ assert.ok(plan.requests.every(x=>x.path==="/290000000000002/smb_app_data"));
 });
 test("cannot trigger a one-time sync before onboarding, consent or importer readiness",()=>{
  for(const override of [
