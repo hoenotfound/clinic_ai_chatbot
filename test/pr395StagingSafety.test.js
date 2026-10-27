@@ -170,6 +170,7 @@ test("signed rehearsal only accepts events for its exact second account and phon
   const env={
     ...safe(),
     PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true",
+    PR395_STAGING_APPROVED_TEST_PHONE_E164:"+60120000000",
     WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
     WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
     WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
