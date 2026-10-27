@@ -30,6 +30,12 @@ WhatsApp account has a callback override. A separate solution is required
 because deploying PR #395 to Neutro production alone would leave Meta's
 app-default events pointed at the older service.
 
+## Current controlled QA target (27 October 2026)
+
+The first Coexistence test will use the owner's seldom-used WhatsApp Business App number **+60187004870**, not 中医养生馆. The personal number's Meta Phone Number ID, phone-owning account ID and DA CHATBOT authorization are **unverified**. Do not use the previously observed clinic Phone Number ID `1318355951360575` or account `1852014482431209` for the personal number.
+
+Do not change Meta's app-default callback while preparing this test. A future authorized isolated relay must pin `WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=+60187004870` and the independently verified personal WABA ID. Its lifecycle target must be a **provider-enabled isolated QA webhook**, not Neutro's production webhook. This is only a proposed routing configuration; no relay service is deployed.
+
 ## Implementation included in PR #395
 
 `src/services/whatsappAppDefaultRelay.js` is a standalone Node server with
@@ -74,9 +80,9 @@ PORT=10000
 WHATSAPP_DEFAULT_RELAY_APP_SECRET=<Meta DA CHATBOT app secret>
 WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN=<existing DA CHATBOT WhatsApp callback verify token>
 WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID=<validated WABA from v4 Embedded Signup, never guessed>
-WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=+60174831336
+WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164=+60187004870
 WHATSAPP_DEFAULT_RELAY_LEGACY_URL=https://clinic-ai-chatbot.onrender.com/webhook
-WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL=https://neutrosense.dasmarketingsolution.com/webhook
+WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL=<isolated-provider-enabled-qa-https-webhook>
 ```
 
 The lifecycle target must be a separate authorized, **provider-enabled**
