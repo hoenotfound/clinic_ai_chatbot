@@ -168,6 +168,7 @@ async function withRelay(fn) {
     relay = createRelayServer({
       appSecret: APP_SECRET, verifyToken: "synthetic-verify-token-123",
       secondaryWaba: QA_ACCOUNT, secondaryPhone: QA_E164,
+      legacyWabas: [LEGACY_ACCOUNT],
       legacyUrl: LEGACY_URL, lifecycleUrl: QA_URL,
     }, {fetchImpl});
     const url = await listen(relay);
