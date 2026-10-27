@@ -141,7 +141,12 @@ function stripFutureFollowUpPermission(customerText) {
 
 function hasFuturePromotionPermissionWithoutPrice(customerText) {
   const parsed = stripFutureFollowUpPermission(customerText);
+  // Permission for a FUTURE offer cannot override a separate current-price
+  // question, including Malaysian Chinese shorthand absent from PRICE_OR_PACKAGE.
+  // Reuse the same strict customer-authored monetary evidence as the quote
+  // gate rather than maintaining a divergent set of keywords here.
   return parsed.hasFuturePermission &&
+    !hasExplicitPriceRequest(parsed.text) &&
     !PRICE_OR_PACKAGE.test(parsed.text) &&
     !PACKAGE_OPTIONS_REQUEST.test(parsed.text) &&
     !ENGLISH_MONEY_QUESTION.test(parsed.text) &&
