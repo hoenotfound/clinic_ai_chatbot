@@ -6,9 +6,13 @@ const { pendingSalesFollowUp, assertFollowUpOutcome } = require("../utils/salesF
 function extendedFollowUpHoldHours(env = process.env) {
   const cfg = clinicConfig.automatedFollowUp;
   if (cfg?.enabled !== true || cfg?.freeEntry?.enabled !== true ||
-      env.WHATSAPP_FEP_FOLLOWUPS_ENABLED !== "true") return 0;
+      String(env.WHATSAPP_FEP_FOLLOWUPS_ENABLED || "").toLowerCase() !== "true" ||
+      !cfg.freeEntry.activatedAt || !Number.isFinite(Date.parse(cfg.freeEntry.activatedAt))) return 0;
   const slots = Array.isArray(cfg.freeEntry.slotsHours) ? cfg.freeEntry.slotsHours : [];
-  return Math.min(168, Math.max(72, ...slots.filter(Number.isInteger)) + 12);
+  const sevenDay = String(env.WHATSAPP_FEP_7DAY_VERIFIED || "").toLowerCase() === "true";
+  const ceiling = sevenDay ? 168 : 72;
+  const activeSlots = slots.filter(h => Number.isInteger(h) && h >= 25 && h < ceiling);
+  return activeSlots.length ? Math.min(ceiling, Math.max(...activeSlots) + 12) : 0;
 }
 
 async function listPending({ username, canViewAll = false, leadId = null, queryable = pool, now = new Date() }) {
@@ -16,7 +20,7 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
     `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
             l.treatment_interest, l.appointment_status, l.is_closed, l.next_follow_up_at,
             s.name AS stage_name, s.stage_type, s.system_key,
-            c.channel, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,
+            c.channel, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
             c.whatsapp_opt_out_at, c.whatsapp_marketing_opt_out_at,
             COALESCE(NULLIF(BTRIM(c.name),''), NULLIF(BTRIM(c.whatsapp_profile_name),''), c.whatsapp_number) AS customer_name,
             last_inbound.id AS last_inbound_id, last_inbound.created_at AS last_inbound_at,
@@ -24,18 +28,41 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
             COALESCE(score.summary_data->>'chatSummary','') AS chat_summary,
             COALESCE(score.summary_data->>'nextAction','') AS next_action,
             t.status AS task_status, t.due_at AS task_due_at, t.last_inbound_id AS task_last_inbound_id,
+            (l.updated_at > t.updated_at) AS booking_reopened_after_task,
+            (score.through_message_id >= last_inbound.id AND score.updated_at > t.updated_at
+             AND NULLIF(BTRIM(COALESCE(score.summary_data->>'treatmentInterest','')),'') IS NOT NULL) AS new_verified_interest,
             EXISTS (
               SELECT 1 FROM messages staff
               WHERE staff.contact_id = c.id AND staff.role='assistant'
                 AND staff.sent_by_username IS NOT NULL
                 AND (staff.created_at, staff.id) > (last_inbound.created_at, last_inbound.id)
+                AND staff.created_at > COALESCE(t.updated_at, last_inbound.created_at)
             ) AS staff_replied_after_inbound,
             ($3::integer > 0 AND EXISTS (
-              SELECT 1 FROM whatsapp_free_entry_followup_attempts a
-              JOIN messages first_reply ON first_reply.id = a.first_reply_message_id
-              WHERE a.contact_id = c.id AND a.created_at >= last_inbound.created_at
-                AND a.status IN ('sending','accepted','unknown')
+              -- Inspect verified free-entry eligibility BEFORE the next scheduled
+              -- attempt is claimed. Attempt-only checks miss all future sends.
+              SELECT 1 FROM whatsapp_free_entry_referrals ref
+              JOIN messages origin ON origin.id=ref.origin_message_id
+                AND origin.contact_id=c.id AND origin.role='user'
+              JOIN LATERAL (
+                SELECT m.id,m.created_at,m.whatsapp_message_id
+                FROM messages m
+                WHERE m.contact_id=c.id AND m.role='assistant'
+                  AND m.whatsapp_message_id IS NOT NULL
+                  AND m.created_at >= origin.created_at
+                  AND m.created_at < origin.created_at + interval '24 hours'
+                ORDER BY m.created_at,m.id LIMIT 1
+              ) first_reply ON true
+              JOIN whatsapp_free_entry_pricing_evidence proof
+                ON proof.wamid=first_reply.whatsapp_message_id
+                AND proof.pricing_type='free_entry_point'
+                AND proof.billable=false
+                AND proof.delivery_status IN ('sent','delivered','read')
+              WHERE ref.contact_id=c.id
+                AND (ref.ctwa_clid IS NOT NULL OR ref.meta_ad_id IS NOT NULL)
+                AND first_reply.created_at >= $6::timestamptz - interval '24 hours'
                 AND first_reply.created_at + ($3::integer * interval '1 hour') > $5::timestamptz
+                AND first_reply.created_at <= $5::timestamptz
             )) AS active_extended_follow_up
      FROM leads l
      JOIN pipeline_stages s ON s.id = l.stage_id
@@ -65,13 +92,10 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
        AND ($1::boolean OR l.owner_username = $2::text)
        AND ($4::integer IS NULL OR l.id = $4)
      ORDER BY last_inbound.created_at DESC, l.id DESC
-     LIMIT 3001`,
-    [canViewAll, username, extendedFollowUpHoldHours(), leadId, now]
+     LIMIT $7::integer OFFSET $8::integer`,
+    [canViewAll, username, extendedFollowUpHoldHours(), leadId, now,
+      clinicConfig.automatedFollowUp?.freeEntry?.activatedAt || null, 500, 0]
   );
-  if (result.rows.length > 3000) {
-    const error = new Error("More than 3,000 candidates. Narrow the report before exporting.");
-    error.status = 409; throw error;
-  }
   return result.rows.filter((row) => pendingSalesFollowUp(row, now)).map((row) => ({
     leadId: row.lead_id,
     contactId: row.contact_id,
