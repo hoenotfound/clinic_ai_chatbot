@@ -153,7 +153,14 @@ async function startApplication({
       // This public sandbox can be backed by a production-derived QA snapshot.
       // Never run inherited reminder, AI, retry, media, pruning, outreach or
       // customer-data lifecycle jobs against copied customer records.
-      console.log("[PR395 staging] All background workers disabled.");
+      if (require("./pr395StagingSafety").providerRehearsalEnabled(process.env)) {
+        // Only the consented one-time history/contact importer may run.
+        // No message/AI/retry/media/follow-up worker can start in QA.
+        coexistenceHistory.start();
+        console.log("[PR395 staging] Signed inbound rehearsal: history importer only; outbound/AI/follow-ups OFF.");
+      } else {
+        console.log("[PR395 staging] All background workers disabled.");
+      }
     } else {
     console.log("[Startup] Starting maintenance and recovery workers...");
     configRepo.pruneOrphanedPromoImages();
