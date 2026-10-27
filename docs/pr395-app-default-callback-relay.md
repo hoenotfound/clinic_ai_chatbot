@@ -52,14 +52,57 @@ Do not change Meta's app-default callback while preparing this test. A future au
   app secret. Both downstream handlers must tolerate Meta retry.
 - A lifecycle 200 must include `X-DA-Coexistence-Lifecycle-Accepted: 1`,
   set only after PR #395 durably handles the event. A 200 from an older
-  server without this header is treated as failed and retried. Unknown
-  secondary account_update types preserve legacy routing; only recognized
-  disconnection and reconnection events use the lifecycle handler.
+  server without this header is treated as failed and retried. Unknown secondary account_update types now fail closed with a retryable 503,
+  never reaching an old single-number receiver that could silently ACK them.
 - Downstream errors or missing callback overrides return retryable 503;
   invalid HMAC returns 403. The relay has no database, access tokens, AI,
   messaging send permissions or history importer.
 - Tests: `node --test test/whatsappAppDefaultRelay.test.js`.
   These are simulated tests and do not establish live Meta compatibility.
+
+## Isolated relay-to-receiver acceptance test
+
+`test/whatsappAppDefaultRelay.integration.test.js` exercises the actual
+standalone HTTP relay and two **local loopback** receiver servers with a
+strict allowlist. The relay's logical destinations are `.invalid` HTTPS
+names, intercepted and mapped to localhost by a test-only fetch dependency.
+The QA receiver uses the production lifecycle extraction/persistence
+functions but with a **synthetic in-memory SQL-shaped database**, never
+Neutro production, isolated Neon or real provider traffic.
+
+Required outcomes: signed mixed batches reach separate mock receivers;
+invalid HMAC fails 403; secondary messages, mismatched IDs and unrecognized
+secondary account updates cannot leak to legacy; downstream transaction
+failure/missing durable ACK is 503; retries are idempotent; legacy downstream
+503 does not silently acknowledge a mixed batch; staging sender gate rejects
+foreign account/phone metadata. It also runs the preparation-mode server and
+shows that `/health/live` alone returns 200 while every webhook GET/POST
+is rejected with 503.
+
+This is an **isolated integration simulation**, not a real Meta callback,
+provider-authorized sender registration, real Neon durability validation,
+or approval for changing the app-default callback.
+
+## Locked standalone Render preparation mode
+
+The standalone entrypoint supports
+`WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true` for a pre-onboarding,
+inert service. It requires **no Meta secrets, WABA ID or callback targets**;
+it never forwards requests, sends messages, or replies to Meta challenges.
+Only `GET /health/live` returns 200; all other paths, including
+`/webhook`, return 503. Disable auto-deploy and use the PR branch.
+
+Build: `npm ci --omit=dev`
+Start: `node scripts/runWhatsAppAppDefaultRelay.js`
+Plan: Render Free, region Singapore where available.
+Environment: `WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true`
+
+A prepared service is NOT an operational relay, and its public URL must
+**never** be entered into the Meta app callback settings. To activate routing
+later, first independently confirm real secondary WABA ID, app secret and
+callback-token continuity, both receiver endpoints, sender-specific
+durability and downstream ACK, and obtain a separate cutover approval. Do
+not rely on an inert 503 receiver for the 24-hour history import.
 
 ## Candidate isolated Render service (NOT CREATED)
 
