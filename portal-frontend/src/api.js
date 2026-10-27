@@ -422,6 +422,8 @@ export const api = {
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
   getSalesFollowUps: () => request("/sales-follow-up"),
+  getRecentSalesFollowUps: () => request("/sales-follow-up/recent"),
+  undoSalesFollowUp: (leadId, eventId) => request(`/sales-follow-up/${leadId}/undo`, { method: "POST", body: JSON.stringify({ eventId }) }),
   updateSalesFollowUp: (leadId, payload) => request(`/sales-follow-up/${leadId}/outcome`, { method: "PATCH", body: JSON.stringify(payload) }),
   downloadSalesFollowUps: (period = "weekly") => download(`/sales-follow-up/export?period=${encodeURIComponent(period)}`),
   getPipeline: () => request("/pipeline"),
