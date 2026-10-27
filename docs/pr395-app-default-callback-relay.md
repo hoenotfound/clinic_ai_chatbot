@@ -44,6 +44,11 @@ app-default events pointed at the older service.
   to the original `clinic-ai-chatbot` callback. For mixed batches,
   split by change and sign each subset with the same authorized Meta
   app secret. Both downstream handlers must tolerate Meta retry.
+- A lifecycle 200 must include `X-DA-Coexistence-Lifecycle-Accepted: 1`,
+  set only after PR #395 durably handles the event. A 200 from an older
+  server without this header is treated as failed and retried. Unknown
+  secondary account_update types preserve legacy routing; only recognized
+  disconnection and reconnection events use the lifecycle handler.
 - Downstream errors or missing callback overrides return retryable 503;
   invalid HMAC returns 403. The relay has no database, access tokens, AI,
   messaging send permissions or history importer.
@@ -87,7 +92,8 @@ A new Render service may incur charges; request owner approval first.
    endpoint. Relay its account-level event to the old callback and prove
    equivalent behavior. Test mixed primary + secondary events.
 2. Confirm correct same-app-secret HMAC acceptance by **both** downstream
-   services and strict 403/503 behavior for signature/DB outages.
+   services and strict 403/503 behavior for signature/DB outages, including an
+   old server returning 200 without the durable lifecycle marker.
 3. Verify the new, consented secondary Embedded Signup v4 account identity
    and pin the real webhook WABA ID. Do not call `/{phone_id}/register`
    on an app-Coexistence phone.
