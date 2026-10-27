@@ -54,6 +54,14 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     }
     assert.equal((await pending()).length, 1);
     assert.equal((await pending("other-salesperson")).length, 0);
+    // A Sales account with view_all_leads can manage eligible unassigned
+    // contacts just as it can in Inbox and Pipeline.
+    await client.query("UPDATE leads SET owner_username=NULL WHERE id=$1", [leadId]);
+    assert.equal((await pending()).length, 0);
+    assert.equal((await listPending({
+      username: "other-salesperson", canViewAll: true, queryable: client, now: NOW
+    })).length, 1);
+    await client.query("UPDATE leads SET owner_username='sales-a' WHERE id=$1", [leadId]);
 
     // Verified CTWA customers must NOT be offered for personal follow-up
     // before the next *unclaimed* 66-hour automated marketing slot.
@@ -145,6 +153,11 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     const apptBefore=(await client.query(
       "SELECT stage_id,appointment_status,appointment_at FROM leads WHERE id=$1",[leadId]
     )).rows[0];
+    const originalAttentionReason = "Booking ready: Customer requested an appointment";
+    await client.query(
+      "UPDATE contacts SET needs_attention=true, attention_reason=$2, updated_at=now() WHERE id=$1",
+      [contactId, originalAttentionReason]
+    );
     const booking=await recordOutcome({
       leadId, expectedLastInboundId:inbound.rows[0].id,
       status:"booked",dueAt:new Date(Date.now()+86400000).toISOString(),
@@ -154,6 +167,11 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
       "SELECT appointment_status FROM leads WHERE id=$1",[leadId]
     )).rows[0];
     assert.equal(booked.appointment_status,"set");
+    const afterBooking = (await client.query(
+      "SELECT needs_attention, attention_reason FROM contacts WHERE id=$1", [contactId]
+    )).rows[0];
+    assert.equal(afterBooking.needs_attention, false);
+    assert.equal(afterBooking.attention_reason, null);
     await undoOutcome({leadId,eventId:booking.eventId,username:"sales-a"});
     const restored=(await client.query(
       "SELECT stage_id,appointment_status,appointment_at FROM leads WHERE id=$1",[leadId]
@@ -161,7 +179,36 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     assert.equal(restored.stage_id,apptBefore.stage_id);
     assert.equal(restored.appointment_status,apptBefore.appointment_status);
     assert.equal(String(restored.appointment_at),String(apptBefore.appointment_at));
+    const restoredAttention=(await client.query(
+      "SELECT needs_attention, attention_reason FROM contacts WHERE id=$1", [contactId]
+    )).rows[0];
+    assert.equal(restoredAttention.needs_attention,true);
+    assert.equal(restoredAttention.attention_reason,originalAttentionReason);
     const totals=await countMonthlyOutcomes({username:"sales-a",queryable:client});
     assert.equal(totals.booked,0);
     assert.equal(totals.not_interested,0);
+
+    // A staff update or newly raised alert must win over a stale Undo.
+    const secondBooking=await recordOutcome({
+      leadId, expectedLastInboundId:inbound.rows[0].id,
+      status:"booked", dueAt:new Date(Date.now()+2*86400000).toISOString(),
+      username:"sales-a"
+    });
+    await client.query(
+      "UPDATE contacts SET needs_attention=true, attention_reason='Staff review: new issue', updated_at=now() WHERE id=$1",
+      [contactId]
+    );
+    await assert.rejects(
+      undoOutcome({leadId,eventId:secondBooking.eventId,username:"sales-a"}),
+      err=>err.status===409 && /Inbox attention changed/.test(err.message)
+    );
+    const stillBooked=(await client.query(
+      "SELECT appointment_status FROM leads WHERE id=$1", [leadId]
+    )).rows[0];
+    assert.equal(stillBooked.appointment_status,"set");
+    const newAttention=(await client.query(
+      "SELECT needs_attention,attention_reason FROM contacts WHERE id=$1", [contactId]
+    )).rows[0];
+    assert.equal(newAttention.needs_attention,true);
+    assert.equal(newAttention.attention_reason,"Staff review: new issue");
   });
