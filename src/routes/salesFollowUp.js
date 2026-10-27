@@ -23,9 +23,9 @@ function publicError(res, error) {
   return res.status(500).json({ error: "Couldn't load sales follow-ups." });
 }
 
-function csvForPending(rows, period) {
+function csvForPending(rows, period, summary = null) {
   const headers = ["Customer", "WhatsApp Number", "Treatment", "Priority", "Salesperson", "Last Customer Reply (MYT)", "AI Summary", "Suggested Next Action", "WhatsApp Link", "Report"];
-  return "\uFEFF" + [
+  const body = [
     headers.map(csvCell).join(","),
     ...rows.map(row => [
       csvCell(row.customerName),
@@ -39,7 +39,15 @@ function csvForPending(rows, period) {
       csvCell(row.whatsappUrl),
       csvCell(period)
     ].join(","))
-  ].join("\r\n");
+  ];
+  if (summary) {
+    body.push("", csvCell("Monthly outcome summary (unique leads)"));
+    body.push([csvCell("Outcome"), csvCell("Leads")].join(","));
+    for (const [status, count] of Object.entries(summary)) {
+      body.push([csvCell(status), csvCell(count)].join(","));
+    }
+  }
+  return "\uFEFF" + body.join("\r\n");
 }
 
 router.get("/", async (req, res) => {
@@ -55,12 +63,15 @@ router.get("/", async (req, res) => {
 });
 
 router.get("/export", async (req, res) => {
-  if (!hasCapability(req.user, "export_customer_data")) return res.sendStatus(403);
+  if (!hasCapability(req.user, "export_customer_data") || !canView(req)) return res.sendStatus(403);
   const period = req.query.period === "monthly" ? "monthly" : req.query.period === "weekly" ? "weekly" : null;
   if (!period) return res.status(400).json({ error: "Choose weekly or monthly." });
   try {
     // Never export cached UI data. Recheck eligibility and permissions at download time.
     const rows = await followUpRepo.listPending({ username: req.user.username, canViewAll: canManageAll(req) });
+    const monthlySummary = period === "monthly" ? await followUpRepo.countMonthlyOutcomes({
+      username: req.user.username, canViewAll: canManageAll(req)
+    }) : null;
     await customerExportRepo.recordCustomerExport({
       username: req.user.username, preset: "sales_follow_up", scope: "current",
       rowCount: rows.length, filters: { period, inactivityHours: 48 }
@@ -71,7 +82,7 @@ router.get("/export", async (req, res) => {
       "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
       "X-Export-Row-Count": String(rows.length)
     });
-    return res.status(200).send(csvForPending(rows, period));
+    return res.status(200).send(csvForPending(rows, period, monthlySummary));
   } catch (error) { return publicError(res, error); }
 });
 
@@ -80,6 +91,7 @@ router.patch("/:leadId/outcome", async (req, res) => {
   try {
     const result = await followUpRepo.recordOutcome({
       leadId: req.params.leadId, status: req.body?.status,
+      expectedLastInboundId: req.body?.expectedLastInboundId,
       dueAt: req.body?.dueAt, username: req.user.username,
       canManageAll: canManageAll(req)
     });
