@@ -99,11 +99,17 @@ function assertPr395StagingSafety(env = process.env) {
   const secondaryId = String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim();
   const expectedId = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID || "").trim();
   const expectedNumber = String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "").replace(/[^0-9]/g, "");
-  if (!/^\d+$/.test(secondaryId) || secondaryId !== expectedId ||
-      expectedId === String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim() ||
+  // Before Meta authorization, protected staging may deliberately carry NO
+  // secondary Meta IDs. Never retain the previous clinic's ID as a stand-in
+  // for the owner's personal QA number. Live provider rehearsal still requires
+  // a complete, independently verified phone + account identity.
+  const noSecondaryPhoneId = !secondaryId && !expectedId;
+  if ((providerRehearsalEnabled(env) && noSecondaryPhoneId) ||
+      (!noSecondaryPhoneId && (!/^\d+$/.test(secondaryId) || secondaryId !== expectedId ||
+        expectedId === String(env.WHATSAPP_PHONE_NUMBER_ID || "").trim())) ||
       !/^\d{9,15}$/.test(expectedNumber) ||
       (!providerRehearsalEnabled(env) && String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim())) {
-    throw new Error("PR395 staging must pin a distinct second WhatsApp number; the unverified secondary account ID must remain unset.");
+    throw new Error("PR395 staging requires either both matching verified phone IDs or neither while provider ingress is disabled.");
   }
   for (const key of ["SESSION_SECRET", "WHATSAPP_APP_SECRET", "META_APP_SECRET"]) {
     if (String(env[key] || "").length < 24) {
