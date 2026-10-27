@@ -212,6 +212,16 @@ changes a callback, stores credentials, or sends messages.
    investigate with Meta instead of repeating a one-time request. Suspend
    QA provider ingress on disconnection, wrong sender or unverified routing.
 
+**Extra signup safeguard:** the personal staging QR launch now also
+requires all of `PR395_STAGING_APP_ONLY_SIGNUP_READY`,
+`PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED`,
+`PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED` and
+`PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED` to be `true`.
+None should be switched on from CI alone. All remain **unset/false**
+until the operator obtains independently observed provider/callback
+acceptance and makes a separate approval decision. This prevents the
+single signup-ready flag from allowing a premature real account action.
+
 **Current limits:** the code implements encrypted credential handoff,
 read-only sender mapping, a pure sync planner, webhook staging, importer and
 a safe preparation relay. It does NOT yet implement an operator-approved
