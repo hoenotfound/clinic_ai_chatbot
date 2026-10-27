@@ -15,7 +15,7 @@ const PINNED = "19b1bbe00b18e28fb90cdf5755c9ac8ac49484ca";
 const PR_SOURCE = process.env.PR395_RELAY_SOURCE;
 if (process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
     process.env.GITHUB_REF !== "refs/heads/main" ||
-    process.env.PR395_APPROVED_SHA !== PINN ||
+    process.env.PR395_APPROVED_SHA !== PINNED ||
     !PR_SOURCE || !PR_SOURCE.startsWith(process.env.RUNNER_TEMP + "/")) {
   throw Error("NO-GO: main-only approved SHA and temporary source are required.");
 }
