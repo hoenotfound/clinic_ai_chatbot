@@ -14,7 +14,8 @@ function stagingAccessGuard(req, res, next, env = process.env) {
   // Provider callbacks keep their own raw-body Meta signature verification.
   // Health checks stay reachable so Render can manage the staging instance.
   if (req.path === "/" || /^\/health\/(?:live|ready)$/.test(req.path) ||
-      req.path === "/webhook" || req.path === "/meta-webhook") {
+      req.path === "/webhook" || req.path === "/meta-webhook" ||
+      req.path === "/pr395-preidentity-webhook") {
     return next();
   }
   res.set("Cache-Control", "no-store");
