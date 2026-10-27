@@ -73,8 +73,8 @@ router.get("/export", async (req, res) => {
       username: req.user.username, canViewAll: canManageAll(req)
     }) : null;
     await customerExportRepo.recordCustomerExport({
-      username: req.user.username, preset: "sales_follow_up", scope: "current",
-      rowCount: rows.length, filters: { period, inactivityHours: 48 }
+      username: req.user.username, preset: "customer", scope: "current",
+      rowCount: rows.length, filters: { exportType: "sales_follow_up", period, inactivityHours: 48 }
     });
     res.set({
       "Content-Type": "text/csv; charset=utf-8",
