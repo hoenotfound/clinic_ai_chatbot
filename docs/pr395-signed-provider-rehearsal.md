@@ -21,6 +21,45 @@
 - Staging **QA sender key** is now `coexistence_qa`. Never configure the original `tcm_wellness` identity for the personal-number test. This sender key does not authorize reusing Neutro business details, AI, templates or follow-ups.
 - Synthetic IDs like `290000000000002` in unit tests are **fixtures only**, not a Meta account or phone ID. Staging must fail closed if the verified new IDs are absent.
 
+## Business App-only first test: Meta ID discovery (no QR yet)
+
+The personal QA number currently exists only in the WhatsApp Business App.
+Meta can create/return a WABA ID during Embedded Signup and return the Phone Number ID
+in the session or through the authenticated `/{verified_waba_id}/phone_numbers`
+Graph edge afterward. There is no legitimate pre-signup Meta phone ID to
+copy from the Business App settings. Do NOT invent one or borrow the clinic ID.
+
+**Before signup:** Use protected staging (not provider rehearsal), set the
+independently verified personal QA E.164 privately in BOTH
+`WHATSAPP_SECONDARY_EXPECTED_PHONE_E164` and
+`PR395_STAGING_APPROVED_TEST_PHONE_E164`; keep
+`WHATSAPP_SECONDARY_PHONE_NUMBER_ID`,
+`WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID`, and
+`WHATSAPP_SECONDARY_WABA_ID` empty. The sender key is `coexistence_qa`.
+`PR395_STAGING_APP_ONLY_SIGNUP_READY=false` (default) keeps the
+Connect action **disabled** until a human operator has verified webhook,
+history-import readiness, authorization-only mode, and the rollback plan.
+Only then may the operator set it to `true` with explicit consent for the
+real account onboarding. Enabling this flag alone NEVER permits provider
+webhooks or outbound AI.
+
+**After Meta FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING:** The backend exchanges
+the one-time code, validates the app-scoped access token, verifies the
+WABA and its phone edge, checks the returned E.164 against the private pin,
+and rejects the Neutro primary and excluded clinic phone IDs. It records
+the verified IDs in the isolated onboarding audit but does NOT automatically
+register the Business App number, change the production callback, enable
+provider processing, or install sender runtime credentials. Review the
+returned IDs and account ownership separately, then stage exact sender rows
+before enabling any receiver. Normal `/{phone_id}/register` is not used
+for this Coexistence path.
+
+**Important:** The QR scan / in-app connection is a real account action,
+not an ID-only preview. The backend cannot obtain its final signup-issued
+IDs without the owner's approved account action. Do not start onboarding
+while history and callback handling still return 503. Prepare this path and
+all downstream acceptance checks first, including the app-default lifecycle relay.
+
 ## New test-only guard in this PR
 
 The default protected sandbox remains unchanged, with Meta POSTs returning 503 and all background workers disabled. The staging variables are not automatically updated by changing this PR; do not enable provider flags while they still refer to the old clinic phone.
@@ -81,7 +120,7 @@ Before a live Meta default callback change, test the actual relay from a separat
 ## Blockers and release decision
 
 - Staging's sender registry is empty and its real authorized second WABA/token have not been confirmed. Do not populate guessed IDs.
-- The personal QA safeguard and relay tests require exact-head GitHub CI review and a later protected Render deployment. Before provider activation, separately verify and apply both new Meta IDs to Render (maintaining the isolated Neon pin).
+- The app-only phone-ID discovery guard, personal QA safeguard and relay tests require exact-head GitHub CI review and a later protected Render deployment. Before provider activation, separately verify and apply both new Meta IDs to Render (maintaining the isolated Neon pin).
 - The Meta default callback still targets an old Render service; never cut over without proving all existing tenants' event delivery and downstream lifecycle acceptance.
 - Signed end-to-end Meta delivery, history synchronization, opt-out, billing, staff echo and disconnect/reconnect scenarios are not yet tested. No QR scan or app-level webhook change.
 - Real Coexistence onboarding is an account change, not a simulated test. Only enable the verified number with explicit user approval and approved business history consent.
