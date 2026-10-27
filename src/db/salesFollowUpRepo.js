@@ -13,7 +13,7 @@ function extendedFollowUpHoldHours(env = process.env) {
 
 async function listPending({ username, canViewAll = false, leadId = null, queryable = pool, now = new Date() }) {
   const result = await queryable.query(
-    \`SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
+    `SELECT l.id AS lead_id, l.contact_id, l.owner_username, l.temperature,
             l.treatment_interest, l.appointment_status, l.is_closed, l.next_follow_up_at,
             s.name AS stage_name, s.stage_type, s.system_key,
             c.channel, c.whatsapp_number, c.mode, c.whatsapp_opt_in_at,
@@ -65,7 +65,7 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
        AND ($1::boolean OR l.owner_username = $2::text)
        AND ($4::integer IS NULL OR l.id = $4)
      ORDER BY last_inbound.created_at DESC, l.id DESC
-     LIMIT 3001\`,
+     LIMIT 3001`,
     [canViewAll, username, extendedFollowUpHoldHours(), leadId, now]
   );
   if (result.rows.length > 3000) {
@@ -108,11 +108,11 @@ async function recordOutcome({ leadId, status, dueAt, username, canManageAll = f
     }
     const inboundId = eligible[0].lastInboundId;
     await client.query(
-      \`INSERT INTO sales_follow_up_tasks (lead_id,status,last_inbound_id,due_at,updated_by)
+      `INSERT INTO sales_follow_up_tasks (lead_id,status,last_inbound_id,due_at,updated_by)
        VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (lead_id) DO UPDATE
          SET status=EXCLUDED.status, last_inbound_id=EXCLUDED.last_inbound_id,
-             due_at=EXCLUDED.due_at, updated_by=EXCLUDED.updated_by, updated_at=now()\`,
+             due_at=EXCLUDED.due_at, updated_by=EXCLUDED.updated_by, updated_at=now()`,
       [id,status,inboundId,validatedDate,username]
     );
     await client.query(
@@ -121,10 +121,10 @@ async function recordOutcome({ leadId, status, dueAt, username, canManageAll = f
     );
     if (status === "booked") {
       await client.query(
-        \`UPDATE leads SET appointment_status='set', appointment_at=$2,
+        `UPDATE leads SET appointment_status='set', appointment_at=$2,
            stage_id=COALESCE((SELECT id FROM pipeline_stages WHERE system_key='appointment_set' AND stage_type='open' LIMIT 1),stage_id),
            updated_at=now()
-         WHERE id=$1 AND is_closed=false\`,
+         WHERE id=$1 AND is_closed=false`,
         [id,validatedDate]
       );
     }
