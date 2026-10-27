@@ -33,6 +33,7 @@ const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
 const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
 const coexistenceMutations = require("./whatsappCoexistenceMutationService");
 const coexistenceHistory = require("./whatsappCoexistenceHistoryService");
+const legacyLifecycleAlerts = require("./pr395LegacyLifecycleAlertService");
 const {
   startCustomerDataLifecycle,
 } = require("./customerDataLifecycleService");
@@ -150,6 +151,9 @@ async function startApplication({
     console.log("[Startup] Admin user bootstrap complete.");
 
     if (process.env.PR395_STAGING_MODE === "true") {
+      // Optional Telegram-only legacy lifecycle alerts use isolated audit rows.
+      // They never process customer messages or mutate Neutro production.
+      legacyLifecycleAlerts.start();
       // This public sandbox can be backed by a production-derived QA snapshot.
       // Never run inherited reminder, AI, retry, media, pruning, outreach or
       // customer-data lifecycle jobs against copied customer records.
@@ -159,7 +163,7 @@ async function startApplication({
         coexistenceHistory.start();
         console.log("[PR395 staging] Signed inbound rehearsal: history importer only; outbound/AI/follow-ups OFF.");
       } else {
-        console.log("[PR395 staging] All background workers disabled.");
+        console.log("[PR395 staging] All customer/WhatsApp background workers disabled; optional isolated audit alerts only.");
       }
     } else {
     console.log("[Startup] Starting maintenance and recovery workers...");
