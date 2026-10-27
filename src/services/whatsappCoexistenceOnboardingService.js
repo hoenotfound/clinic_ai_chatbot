@@ -62,8 +62,28 @@ function normalizedPhone(value) {
   return clean(value).replace(/[^0-9]/g, "");
 }
 
+function unassignedProtectedQaTarget(env = process.env) {
+  const pinned = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+  const approved = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
+  const primary = normalizedPhone(env.WHATSAPP_PHONE_NUMBER);
+  return env.PR395_STAGING_MODE === "true" &&
+    env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED !== "true" &&
+    env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" &&
+    env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa" &&
+    !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_WABA_ID) &&
+    /^\\+[1-9]\\d{7,14}$/.test(pinned) &&
+    pinned === approved && pinned !== "+60174831336" &&
+    (!primary || normalizedPhone(pinned) !== primary);
+}
+
 function requireExpectedSecondaryPhone(env = process.env) {
   if (!secondaryTargetMode(env)) return null;
+  // Business App-only phones do not expose their Cloud API phone ID before
+  // Meta Embedded Signup. Discover it *after* the signed completion and
+  // Graph WABA/phone ownership lookup, but only in locked-down staging.
+  if (unassignedProtectedQaTarget(env)) return null;
   const expected = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
   if (!/^\d+$/.test(expected)) {
     throw new WhatsAppCoexistenceOnboardingError(
@@ -82,8 +102,20 @@ function requireExpectedSecondaryPhone(env = process.env) {
 
 function assertExpectedSecondaryPhone(phone, env = process.env) {
   const expectedId = requireExpectedSecondaryPhone(env);
-  if (!expectedId) return;
-  if (clean(phone?.id) !== expectedId) {
+  if (!expectedId && !secondaryTargetMode(env)) return;
+  const metaId = clean(phone?.id);
+  // The account might have been authorized for the wrong Business App
+  // number. Even when no Meta phone ID was available pre-signup, verify the
+  // actual account-owned phone against the privately pinned E.164.
+  if (!/^\\d+$/.test(metaId) ||
+      metaId === clean(env.WHATSAPP_PHONE_NUMBER_ID) ||
+      metaId === "1318355951360575") {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "The authorized phone ID is invalid, belongs to the primary account, or matches the excluded clinic test number.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH", status: 409, retrySafe: false }
+    );
+  }
+  if (expectedId && metaId !== expectedId) {
     throw new WhatsAppCoexistenceOnboardingError(
       "Meta returned a different phone ID from the pinned secondary number. Verify the new phone ID manually before retrying.",
       { code: "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH", status: 409, retrySafe: false }
@@ -117,8 +149,9 @@ function publicConfig(env = process.env) {
   if (secondary && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
     missing.push("META_EMBEDDED_SIGNUP_V4_CONFIRMED");
   }
-  if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID))) {
-    missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID");
+  if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID)) &&
+      !unassignedProtectedQaTarget(env)) {
+    missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID or protected QA E.164 pin");
   }
   if (secondary && clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) ===
       clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
@@ -436,7 +469,7 @@ async function completeEmbeddedSignup({
 }) {
   const finish = validateFinishSession(sessionInfo);
   const expectedPhoneId = requireExpectedSecondaryPhone(env);
-  if (expectedPhoneId && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
+  if (secondaryTargetMode(env) && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
     throw new WhatsAppCoexistenceOnboardingError(
       "Verify that the DA CHATBOT Facebook Login for Business configuration uses Embedded Signup v4 before connecting this Business App number.",
       { code: "WHATSAPP_COEXISTENCE_V4_CONFIG_UNVERIFIED", status: 409, retrySafe: false }
@@ -523,6 +556,7 @@ module.exports = {
   publicConfig,
   fetchPhoneNumbers,
   secondaryTargetMode,
+  unassignedProtectedQaTarget,
   requireExpectedSecondaryPhone,
   assertExpectedSecondaryPhone,
   safeSessionInfo,
