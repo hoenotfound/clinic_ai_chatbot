@@ -8,6 +8,7 @@ const cfg = {
   appSecret: "test-app-secret-not-a-real-meta-key",
   verifyToken: "test-verify-token-not-live",
   secondaryWaba: "22222222222", secondaryPhone: "+60120000000",
+  legacyWabas: ["11111111111"],
   legacyUrl: "https://clinic-ai-chatbot.onrender.com/webhook",
   lifecycleUrl: "https://coexistence-qa.example.com/webhook",
 };
@@ -38,12 +39,43 @@ test("the signed secondary account_update is sent only to its lifecycle receiver
   assert.deepEqual(c.calls.map(x => x.url), [cfg.lifecycleUrl]);
   assert.deepEqual(c.calls[0].payload, p);
 });
-test("other client events still reach the original app-default handler", async () => {
+test("allowlisted legacy messages still reach the original app-default handler", async () => {
   const c = collector();
-  const p = { object: "whatsapp_business_account", entry: [entry("33333333333", "account_update", removal)] };
-  const s = sign(p);
-  assert.equal(await dispatchSignedBatch(s.raw, s.signature, cfg, c.fetch), 200);
+  const p = { object: "whatsapp_business_account", entry: [
+    entry(cfg.legacyWabas[0], "messages", { messages: [{ id: "wamid.legacy" }] })
+  ] };
+  const signed = sign(p);
+  assert.equal(await dispatchSignedBatch(signed.raw, signed.signature, cfg, c.fetch), 200);
   assert.deepEqual(c.calls.map(x => x.url), [cfg.legacyUrl]);
+});
+test("signed foreign account cannot forward any field to Neutro legacy", async () => {
+  const c = collector();
+  for (const field of ["messages", "account_update", "history"]) {
+    const p = { object: "whatsapp_business_account", entry: [
+      entry("33333333333", field, { event: "PARTNER_REMOVED", messages: [] })
+    ] };
+    const signed = sign(p);
+    assert.equal(await dispatchSignedBatch(signed.raw, signed.signature, cfg, c.fetch), 503);
+  }
+  assert.equal(c.calls.length, 0);
+});
+test("mixed authorized and foreign events reject entire batch before forwarding", async () => {
+  const c = collector();
+  const p = { object: "whatsapp_business_account", entry: [
+    entry(cfg.legacyWabas[0], "messages", { messages: [{ id: "wamid.legacy" }] }),
+    entry("99999999999", "messages", { messages: [{ id: "wamid.foreign" }] })
+  ] };
+  const signed = sign(p);
+  assert.equal(await dispatchSignedBatch(signed.raw, signed.signature, cfg, c.fetch), 503);
+  assert.equal(c.calls.length, 0);
+});
+test("unrecognized secondary field is not forwarded to legacy", async () => {
+  const c = collector();
+  const signed = sign({ object: "whatsapp_business_account", entry: [
+    entry(cfg.secondaryWaba, "unexpected_field", { event: "OTHER" })
+  ] });
+  assert.equal(await dispatchSignedBatch(signed.raw, signed.signature, cfg, c.fetch), 503);
+  assert.equal(c.calls.length, 0);
 });
 test("signed mixed batches are partitioned and re-signed without duplicate delivery", async () => {
   const c = collector();
@@ -88,11 +120,16 @@ test("only strong secrets, pinned sender and HTTPS /webhook destinations start",
     WHATSAPP_DEFAULT_RELAY_APP_SECRET: cfg.appSecret,
     WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN: cfg.verifyToken,
     WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID: cfg.secondaryWaba,
+    WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS: cfg.legacyWabas.join(","),
     WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164: cfg.secondaryPhone,
     WHATSAPP_DEFAULT_RELAY_LEGACY_URL: cfg.legacyUrl,
     WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL: cfg.lifecycleUrl,
   };
   assert.deepEqual(configFromEnv(env),cfg);
+  assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:""}),/identity\/secrets/);
+  assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:"333,333"}),/identity\/secrets/);
+  assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:"*"}),/identity\/secrets/);
+  assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS:cfg.secondaryWaba}),/identity\/secrets/);
   assert.throws(() => configFromEnv({...env, WHATSAPP_DEFAULT_RELAY_LEGACY_URL:"http://localhost/webhook"}),/HTTPS/);
 });
 test("Meta GET challenge works while unsigned POSTs are rejected", async () => {
