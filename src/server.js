@@ -493,6 +493,9 @@ async function durablyClaimIncoming(queueKey, incoming) {
  * normal bookkeeping and feed it into the existing typing-burst processor.
  */
 async function scheduleDurableClaim(queueKey, durableClaim) {
+  // Even with a durable inbound claim, the isolated provider rehearsal is
+  // receive-only. Do not lease or process a customer turn in staging.
+  if (process.env.PR395_STAGING_MODE === "true") return null;
   if (!durableClaim) return null;
   try {
     const prepared = await enqueueConversation(
