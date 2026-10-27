@@ -67,8 +67,15 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
   assert.equal(publicConfig(source).runtime.phoneNumberId,null);
   assert.equal(publicConfig(source).runtime.expectedPhoneNumberId,null);
   assert.equal(requireExpectedSecondaryPhone(source),null);
+  // Missing encryption key blocks signup authorization, but it does not
+  // retroactively make the intended QA phone identity invalid.
+  assert.equal(unassignedProtectedQaTarget(qa({
+    PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""
+  })),true);
+  assert.equal(publicConfig(qa({
+    PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""
+  })).configured,false);
   for (const override of [
-    {PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""},
     {PR395_STAGING_APP_ONLY_SIGNUP_READY:"false"},
     {PR395_STAGING_APP_ONLY_SIGNUP_READY:""},
     {PR395_STAGING_MODE:"false"},
