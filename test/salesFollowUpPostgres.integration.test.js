@@ -52,6 +52,38 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     assert.equal((await pending()).length, 1);
     assert.equal((await pending("other-salesperson")).length, 0);
 
+    // Verified CTWA customers must NOT be offered for personal follow-up
+    // before the next *unclaimed* 66-hour automated marketing slot.
+    const clinicConfig = require("../src/config/clinicConfig");
+    const originalConfig = clinicConfig.automatedFollowUp;
+    const originalFlag = process.env.WHATSAPP_FEP_FOLLOWUPS_ENABLED;
+    try {
+      clinicConfig.automatedFollowUp = {
+        enabled: true,
+        freeEntry: { enabled: true, activatedAt: "2026-10-23T00:00:00Z",
+          slotsHours: [26, 50, 66] }
+      };
+      process.env.WHATSAPP_FEP_FOLLOWUPS_ENABLED = "true";
+      const reply = await client.query(
+        "INSERT INTO messages (contact_id,role,content,whatsapp_message_id,created_at) VALUES ($1,'assistant','Reply','wamid.sales-fep','2026-10-24T08:05:00Z') RETURNING id",
+        [contactId]
+      );
+      await client.query(
+        "INSERT INTO whatsapp_free_entry_referrals (origin_message_id,contact_id,ctwa_clid,source_type) VALUES ($1,$2,'click-123','ad')",
+        [inbound.rows[0].id,contactId]
+      );
+      await client.query(
+        "INSERT INTO whatsapp_free_entry_pricing_evidence (wamid,pricing_type,billable,delivery_status) VALUES ('wamid.sales-fep','free_entry_point',false,'sent')"
+      );
+      assert.equal((await pending()).length, 0, "no attempt yet, but a future AI send remains scheduled");
+      clinicConfig.automatedFollowUp.freeEntry.enabled = false;
+      assert.equal((await pending()).length, 1);
+    } finally {
+      clinicConfig.automatedFollowUp = originalConfig;
+      if (originalFlag === undefined) delete process.env.WHATSAPP_FEP_FOLLOWUPS_ENABLED;
+      else process.env.WHATSAPP_FEP_FOLLOWUPS_ENABLED = originalFlag;
+    }
+
     await client.query(
       "INSERT INTO sales_follow_up_tasks (lead_id,status,last_inbound_id,updated_by) VALUES ($1,'contacted',$2,'sales-a')",
       [leadId,inbound.rows[0].id]
