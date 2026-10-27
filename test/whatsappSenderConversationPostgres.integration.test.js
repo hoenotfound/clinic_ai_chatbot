@@ -318,7 +318,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
         "VALUES($1,'user','existing customer enquiry') RETURNING id",[old]
       )).rows[0].id;
       const upgraded=await runMigrations(scoped,{quiet:true});
-      assert.equal(upgraded.appliedCount,26);
+      assert.equal(upgraded.appliedCount,27);
       assert.equal(upgraded.currentVersion,104);
       const proof=(await db.query(
         "SELECT c.id,c.whatsapp_number,c.whatsapp_sender_id,m.id AS message_id, " +
