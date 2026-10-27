@@ -41,6 +41,7 @@ const { requireAuth } = require("./middleware/requireAuth");
 const { stagingAccessGuard } = require("./middleware/pr395StagingBasicAuth");
 const { stagingWebhookGuard } = require("./services/pr395StagingSafety");
 const preidentityReceiver = require("./services/pr395PreidentityReceiver");
+const legacyLifecycleReceiver = require("./services/pr395LegacyLifecycleReceiver");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
 
@@ -149,6 +150,24 @@ function createApp({
       console.error("[PR395 preidentity] refused undurable or foreign signed event:",
         error?.message || "unknown");
       res.set("Cache-Control","no-store");
+      return res.sendStatus(503);
+    }
+  });
+
+  // Dedicated audit-only ingress for known legacy WABA app-default lifecycle
+  // events during a separately authorized cutover rehearsal. Requires the
+  // original raw-body Meta app HMAC, then a committed isolated Neon audit.
+  app.post("/pr395-legacy-lifecycle-webhook", webhookJsonParser, async(req,res)=>{
+    res.set("Cache-Control","no-store");
+    if(!legacyLifecycleReceiver.enabled(process.env))return res.sendStatus(503);
+    try{
+      const saved=await legacyLifecycleReceiver.recordBatch(req.body);
+      if(!saved.durable)return res.sendStatus(503);
+      res.set("X-DA-Legacy-Lifecycle-Accepted","1");
+      return res.sendStatus(200);
+    }catch(error){
+      console.error("[PR395 legacy lifecycle] event refused or undurable:",
+        error?.message||"unknown");
       return res.sendStatus(503);
     }
   });
