@@ -244,7 +244,15 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (isContextualBarePriceQuestion(current, treatment)) return true;
   // A customer refusing to discuss prices is not making a price request.
   const declined = /(?:不用|不要|不想|不需要|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用|报价|報價)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost|quote|quotation)\b/iu.test(current);
-  if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
+  if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) {
+    const clauses = current.split(/[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu)
+      .map(x => x.trim()).filter(Boolean);
+    if (clauses.length !== 2 || !/(?:不要|不用|不需要|不想|无需|無需|别|別|don't|do not|no)/iu.test(clauses[0]) ||
+        !hasExplicitPriceRequest(clauses[1])) return false;
+    // Only a distinct, configured requested service can authorize a quote.
+    // The pricing decision and final approval verify both service identities.
+    return true;
+  }
   // Mentioning a budget or saying prices are acceptable is not a request
   // for the clinic's actual treatment price. These statements used to bypass
   // the final no-unsolicited-prices check just because they contained RM/价钱.
