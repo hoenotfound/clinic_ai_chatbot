@@ -5,8 +5,9 @@
 const crypto = require("node:crypto");
 const http = require("node:http");
 
-const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const SECONDARY_FIELDS = new Set(["messages", "history", "smb_app_state_sync", "smb_message_echoes"]);
+const LIFECYCLE_EVENTS = new Set(["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED", "ACCOUNT_RECONNECTED"]);
 
 function requireHttpsWebhook(value, name) {
   let parsed;
@@ -71,7 +72,7 @@ function partitionSignedBatch(payload, config) {
         if (SECONDARY_FIELDS.has(change.field)) {
           throw Error("Secondary message/sync reached the app-default callback instead of its override");
         }
-        if (change.field === "account_update") {
+        if (change.field === "account_update" && LIFECYCLE_EVENTS.has(change.value.event)) {
           if (!matchingPhone(change.value.phone_number, config.secondaryPhone)) {
             throw Error("Secondary lifecycle phone mismatches the approved identity");
           }
@@ -100,6 +101,12 @@ async function postSigned(url, payload, config, fetchImpl = global.fetch) {
   });
   if (!response || response.status < 200 || response.status >= 300) {
     throw Error(`Downstream callback refused an event (${response?.status || "network"})`);
+  }
+  // Old single-number servers could return 200 without persisting anything.
+  // Require an explicit durable lifecycle marker from PR #395, never trust 200.
+  if (url === config.lifecycleUrl &&
+      response.headers?.get?.("x-da-coexistence-lifecycle-accepted") !== "1") {
+    throw Error("Lifecycle receiver did not prove that the verified event was durable");
   }
 }
 async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fetch) {
