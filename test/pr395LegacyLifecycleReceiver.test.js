@@ -165,7 +165,9 @@ test("real local signed relay HTTP requires a COMMIT-bound legacy audit ACK, nev
   assert.equal((await send(combined)).status,200);
   assert.equal(state.old,1);
   assert.equal(state.qa,1);
-  assert.equal(db.state.rows.size,1);
+  // A 503 caused by a missing ACK can still follow a durable commit.
+  // The provider retry must not duplicate either lifecycle fingerprint.
+  assert.equal(db.state.rows.size,2);
   state.failOld=true;
   assert.equal((await send(combined)).status,503);
   assert.equal((await send(payload("account_update","PARTNER_REMOVED","+60129999999"))).status,503);
