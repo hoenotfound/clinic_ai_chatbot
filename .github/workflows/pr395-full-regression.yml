@@ -1,0 +1,207 @@
+name: PR395 pinned full regression (manual, no deploy)
+
+# Manual-only checks of exact PR #395 code, run from trusted main workflow.
+# No Meta secrets, no provider calls, no Render/Neon service changes.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type PR395_TESTS_ONLY to run pinned non-deploy full regression'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr395-pinned-full-regression
+  cancel-in-progress: false
+
+env:
+  PR395_APPROVED_SHA: 662af9d16e911dd30825f861987e0dbcb1888340
+  NODE_ENV: test
+
+jobs:
+  backend-tests:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'PR395_TESTS_ONLY' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: pr395-isolated-webhook-rehearsal
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clinic_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clinic_ai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clinic_ai_test
+      FFMPEG_BIN: /tmp/clinic-ai-ci-ffmpeg
+      NODE_ENV: test
+      PR395_APPROVED_SHA: 662af9d16e911dd30825f861987e0dbcb1888340
+    steps:
+      - name: Checkout trusted main workflow (no token persisted)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify exact live PR395 head and checkout pinned commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          # Fetch public PR head directly; reject changed SHA, never trust a branch label.
+          git -c credential.helper= fetch --no-tags --depth=1 \
+            https://github.com/hoenotfound/clinic_ai_chatbot.git refs/pull/395/head
+          ACTUAL="$(git rev-parse FETCH_HEAD)"
+          if [[ "$ACTUAL" != "$PR395_APPROVED_SHA" ]]; then
+            echo "::error::PR395 changed since pin approval; NO-GO."
+            exit 1
+          fi
+          git checkout --detach "$ACTUAL"
+          test "$(git rev-parse HEAD)" = "$PR395_APPROVED_SHA"
+          echo "Verified isolated test SHA: $ACTUAL"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check all backend JavaScript syntax
+        run: find src scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Install project dependencies (local test environment)
+        run: npm ci
+      - name: Execute full backend test suite with local PostgreSQL
+        run: npm test
+      - name: Audit production dependencies
+        run: bash .github/scripts/npm-audit-retry.sh --omit=dev --audit-level=moderate
+
+  portal-static:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'PR395_TESTS_ONLY' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: pr395-isolated-webhook-rehearsal
+    defaults:
+      run:
+        working-directory: portal-frontend
+    steps:
+      - name: Checkout trusted main workflow (no token persisted)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify exact live PR395 head and checkout pinned commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          # Fetch public PR head directly; reject changed SHA, never trust a branch label.
+          git -c credential.helper= fetch --no-tags --depth=1 \
+            https://github.com/hoenotfound/clinic_ai_chatbot.git refs/pull/395/head
+          ACTUAL="$(git rev-parse FETCH_HEAD)"
+          if [[ "$ACTUAL" != "$PR395_APPROVED_SHA" ]]; then
+            echo "::error::PR395 changed since pin approval; NO-GO."
+            exit 1
+          fi
+          git checkout --detach "$ACTUAL"
+          test "$(git rev-parse HEAD)" = "$PR395_APPROVED_SHA"
+          echo "Verified isolated test SHA: $ACTUAL"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - name: Audit portal dependencies
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-retry.sh" --audit-level=moderate
+
+  portal-playwright:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirmation == 'PR395_TESTS_ONLY' }}
+    name: playwright-${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble
+    timeout-minutes: 25
+    environment: pr395-isolated-webhook-rehearsal
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: desktop-chromium
+            project: desktop-chromium
+            browser: chromium
+            shard_args: ""
+          - label: ipad-landscape-1-of-2
+            project: ipad-landscape
+            browser: webkit
+            shard_args: "--shard=1/2"
+          - label: ipad-landscape-2-of-2
+            project: ipad-landscape
+            browser: webkit
+            shard_args: "--shard=2/2"
+          - label: iphone-portrait
+            project: iphone-portrait
+            browser: webkit
+            shard_args: ""
+    defaults:
+      run:
+        working-directory: portal-frontend
+    steps:
+      - name: Checkout trusted main workflow (no token persisted)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify exact live PR395 head and checkout pinned commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          # Fetch public PR head directly; reject changed SHA, never trust a branch label.
+          git -c credential.helper= fetch --no-tags --depth=1 \
+            https://github.com/hoenotfound/clinic_ai_chatbot.git refs/pull/395/head
+          ACTUAL="$(git rev-parse FETCH_HEAD)"
+          if [[ "$ACTUAL" != "$PR395_APPROVED_SHA" ]]; then
+            echo "::error::PR395 changed since pin approval; NO-GO."
+            exit 1
+          fi
+          git checkout --detach "$ACTUAL"
+          test "$(git rev-parse HEAD)" = "$PR395_APPROVED_SHA"
+          echo "Verified isolated test SHA: $ACTUAL"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal-frontend/package-lock.json
+      - run: npm ci
+      - name: Install exact Playwright test version
+        run: npm install --no-save @playwright/test@1.55.0
+      - name: Verify preinstalled browser without apt-get
+        run: |
+          test -d /ms-playwright
+          node -e "const p=require('playwright-core');const fs=require('fs');const b='${{ matrix.browser }}';const exe=p[b].executablePath();console.log(b,exe);if(!fs.existsSync(exe))process.exit(1)"
+      - name: Execute all browser smoke tests
+        run: npx playwright test --project=${{ matrix.project }} ${{ matrix.shard_args }}
+
+  portal-checks:
+    if: ${{ always() && github.ref == 'refs/heads/main' && inputs.confirmation == 'PR395_TESTS_ONLY' }}
+    needs: [portal-static, portal-playwright]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: pr395-isolated-webhook-rehearsal
+    steps:
+      - name: Require static and ALL four browser jobs to pass
+        env:
+          STATIC_RESULT: ${{ needs.portal-static.result }}
+          PLAYWRIGHT_RESULT: ${{ needs.portal-playwright.result }}
+        run: |
+          echo "Portal static: $STATIC_RESULT"
+          echo "Four browser suites: $PLAYWRIGHT_RESULT"
+          test "$STATIC_RESULT" = success && test "$PLAYWRIGHT_RESULT" = success

@@ -11,7 +11,7 @@ const crypto = require("node:crypto");
 const http = require("node:http");
 const test = require("node:test");
 
-const PINNED = "e1b0dc8f682477aec69f6afe671f81758f772f2b";
+const PINNED = "662af9d16e911dd30825f861987e0dbcb1888340";
 const PR_SOURCE = process.env.PR395_RELAY_SOURCE;
 if (process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
     process.env.GITHUB_REF !== "refs/heads/main" ||
