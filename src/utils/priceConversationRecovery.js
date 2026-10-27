@@ -113,7 +113,8 @@ function resolveEstablishedTreatmentPrice({
   if (!turns || !current || current.length > 115 ||
       !hasExplicitPriceRequest(current) || BROAD.test(current) ||
       TWO_REQUEST.test(current) || RESET.test(current) ||
-      ADMIN_FEE.test(current) || pricingMessageText(turns.at(-1)).trim() !== current)
+      ADMIN_FEE.test(current) || /\b(?:RM|MYR)\s*[1-9]\d{1,4}\b/iu.test(current) ||
+      pricingMessageText(turns.at(-1)).trim() !== current)
     return null;
   const candidates = serviceCandidates(services, serviceAliases);
   const namedNow = findServicesInText(current, candidates);
@@ -144,6 +145,12 @@ function resolveEstablishedTreatmentPrice({
     }
     if (!named) continue;
     const since = prior.slice(index + 1);
+    // A bot mentioning a different treatment after the customer's selection
+    // interrupts the single-service topic. Only a NEW customer selection can
+    // then authorize a specific treatment price.
+    if (since.some(turn => turn.role === "assistant" &&
+      findServicesInText(pricingMessageText(turn),candidates)
+        .some(service => service !== named.name))) return null;
     if (!since.some(turn => turn.role === "assistant" &&
         findServicesInText(pricingMessageText(turn),candidates).includes(named.name)))
       continue;
