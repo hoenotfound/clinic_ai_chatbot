@@ -138,6 +138,38 @@ app's actual subscriptions/tenant assignments outside this portfolio.
 Continue **NO-GO** on app-default cutover, PR merge and Coexistence QR
 until signed provider and legacy lifecycle acceptance is demonstrated.
 
+## Confirmed Neutro phone-level webhook configuration (27 Oct 2026)
+
+Read-only DA CHATBOT app-context Graph API Explorer v26.0 result for
+`GET /1593376338308612/phone_numbers?fields=id,display_phone_number,webhook_configuration`:
+
+- Verified Neutro Meta Phone Number ID: `1408739622311791`.
+- Display phone: `+60 11-3053 5053`.
+- `webhook_configuration.whatsapp_business_account` =
+  `https://neutrosense.dasmarketingsolution.com/webhook`.
+- `webhook_configuration.application` =
+  `https://clinic-ai-chatbot.onrender.com/webhook`.
+- This corroborates `GET /1593376338308612/subscribed_apps` showing
+  DA CHATBOT app ID `1029862536608134` with the same account override.
+- A paging indicator was sanitized in the shared output, so verify there is
+  no additional `paging.next` before asserting only one phone under this
+  account. Similarly confirm the owned/client WABA page end before
+  claiming the app's complete legacy inventory.
+
+**Critical cutover gate:** the bootstrap relay's current allowlist branch
+for a known Neutro WABA forwards ALL fields including `account_update`
+to the old legacy webhook. That old production handler is not verified to
+commit lifecycle account updates, and a bare HTTP 200 would be a
+false-positive acknowledgment. Therefore **do not enter WABA
+`1593376338308612` in an active legacy allowlist and change the app
+callback without a verified signed, durable legacy lifecycle handler or
+a separately verified lifecycle route.** The account-specific override
+does not solve application-level lifecycle receipt.
+
+**Current Meta app default URL remains unchanged; relay preparation
+mode and provider-facing QA processing remain disabled.** No live
+Meta cutover or QR authorization approved.
+
 ## Legacy WABA inventory and live cutover acceptance — not yet complete
 
 **Scope:** enumerate every *phone-owning* WhatsApp Business Account
