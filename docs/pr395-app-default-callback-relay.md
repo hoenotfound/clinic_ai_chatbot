@@ -64,6 +64,42 @@ Do not change Meta's app-default callback while preparing this test. A future au
 - Tests: `node --test test/whatsappAppDefaultRelay.test.js`.
   These are simulated tests and do not establish live Meta compatibility.
 
+## Graph API Explorer results — Linkie Tech portfolio, not DA CHATBOT (27 Oct 2026)
+
+The operator's read-only Meta Graph responses used business portfolio
+`1566888928805945`, independently confirmed by the connected business
+inventory as **Linkie Tech**, which does **not** grant this connection
+administrative visibility into DA CHATBOT Meta App
+`1029862536608134`. These are not proof of the DA CHATBOT
+app-default callback's complete WhatsApp subscription list:
+
+- `GET /1566888928805945/owned_whatsapp_business_accounts?fields=id,name`
+  returned **Test WhatsApp Business Account** ID
+  `1612443146941177`, with one record and pagination cursors only.
+- `GET /1612443146941177/subscribed_apps` returned
+  **chatbot AI2** app `1389129506758387`, overriding to
+  `https://da-chatbot-da-chatbot-sales.onrender.com/webhook`,
+  and **WA DevX Webhook Events 1P App** `2202427980234937`
+  (no override indicated). The target DA CHATBOT App ID
+  `1029862536608134` was **absent** from this response.
+- `GET /1566888928805945/client_whatsapp_business_accounts?fields=id,name`
+  returned **DA Smarketing 2** ID `1529308092292368`.
+  The corresponding `GET /1529308092292368/subscribed_apps`
+  returned an empty `data` list **under the operator's current token**.
+  Do not conflate a subscription read with comprehensive account
+  visibility, particularly if Meta asset delegation is incomplete.
+
+**Next required evidence**: In Developer App
+`1029862536608134` → Settings → Basic / app owning business,
+identify the actual owning business portfolio ID, confirm appropriate
+read access on the related WABAs, then repeat owned/client account
+inventory for that portfolio and enumerate ALL pages. Check
+`GET /{WABA_ID}/subscribed_apps` for *each* account and explicitly
+match `whatsapp_business_api_data.id === "1029862536608134"`.
+Independently include WABAs held by customers delegated to the app.
+Absent matching app subscription in a single portfolio is **not** an
+all-portfolio inventory. No routing cutover approved.
+
 ## Legacy WABA inventory and live cutover acceptance — not yet complete
 
 **Scope:** enumerate every *phone-owning* WhatsApp Business Account
