@@ -329,7 +329,19 @@ function resolveTwoTreatmentPriceReply({
   return { prices, reply, source:"verified_two_separate_treatments" };
 }
 
+// Only a verified current dual quote may dismiss a model INFORMATION review.
+// The real DB clinical-review read is performed by the caller immediately
+// before this check; missing evidence never counts as no clinical risk.
+function canRecoverTwoPriceInformationReview({
+  quote = null, flagged = false, reviewRequired = false,
+  reviewType = null, pendingClinicalReview = null,
+} = {}) {
+  return Boolean(quote?.prices?.length === 2 &&
+    flagged === true && reviewRequired === true &&
+    reviewType === "information" && pendingClinicalReview === false);
+}
+
 module.exports = {
   resolveRecentPriceSelection, resolveEstablishedTreatmentPrice,
-  resolveTwoTreatmentPriceReply,
+  resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview,
 };
