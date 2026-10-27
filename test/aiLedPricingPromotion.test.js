@@ -757,3 +757,128 @@ test("Malaysian Chinese quantity, budget and staff-only observations cannot auth
     assert.equal(decide({priceQuery:true,customerText,conversationHistory:h}),null,customerText);
   }
 });
+
+
+test("what value and non-monetary quantities never authorize price or promotional media", async () => {
+  const { hasCurrentPriceAmountRequest } = require("../src/utils/aiPricingIntentDecision");
+  for (const customerText of [
+    "3D有什么价值？", "9D 有啥价值比其他项目好?",
+    "3D一次多少人一起?", "3D 一次多少个部位?",
+    "9D一次多少位可以做?", "Can you quote a customer's feedback about 3D?",
+  ]) {
+    const h=[{role:"user",content:customerText}];
+    assert.equal(hasCurrentPriceAmountRequest(customerText),false,customerText);
+    const decision=decide({priceQuery:true,customerText,conversationHistory:h});
+    assert.equal(decision,null,customerText);
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(decision,{
+      customerText, conversationHistory:h, priceQuery:true,
+    })),null,customerText);
+  }
+});
+
+test("real 体验价/优惠价 questions can use only the verified current promotion", async () => {
+  const { hasCurrentPriceAmountRequest }=require("../src/utils/aiPricingIntentDecision");
+  for(const customerText of ["3D体验价？","3D優惠價?","3D体验价是多少?"]) {
+    assert.equal(hasCurrentPriceAmountRequest(customerText),true,customerText);
+    const h=[{role:"user",content:customerText}];
+    const d=decide({priceQuery:false,customerText,conversationHistory:h});
+    assert.equal(d?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(d?.prices?.map(x=>x.price),["RM488"],customerText);
+  }
+  const customerText="3D体验价？";
+  const h=[{role:"user",content:customerText}];
+  const d=decide({priceQuery:false,customerText,conversationHistory:h});
+  await inAssessmentFirst(async()=>{
+    const media=await resolvePricePromotionForReply(mediaArgs(d,{
+      customerText,conversationHistory:h,contactId:709,
+    }));
+    assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl);
+  });
+});
+
+test("one refused treatment does not override an independent price request for another", async () => {
+  const { resolveApprovedPricingAssessment }=require("../src/utils/approvedPricingDecision");
+  const { resolveShadowPriceException }=require("../src/utils/shadowPriceException");
+  const { resolveIndependentRefusalPriceRequest }=require("../src/utils/independentRefusalPriceRequest");
+  const cases=[
+    "9D不要报价了，我想问3D多少钱？",
+    "9D不需要报价，但3D优惠价多少？",
+  ];
+  for(const customerText of cases){
+    const evidence=resolveIndependentRefusalPriceRequest({customerText,services,serviceAliases:aliases});
+    assert.equal(evidence?.treatment,"3D 小颜术",customerText);
+    assert.equal(evidence?.refusedTreatment,"9D 逆龄抗衰",customerText);
+    const h=[{role:"user",content:customerText}];
+    const decision=decide({priceQuery:false,customerText,conversationHistory:h});
+    assert.equal(decision?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(decision?.prices?.map(x=>x.price),["RM488"],customerText);
+    const approved=resolveApprovedPricingAssessment({
+      mode:"enabled",aiDecision:decision,customerText,conversationHistory:h,
+      services,serviceAliases:aliases,resultMedia:[],
+    });
+    assert.equal(approved.decision?.treatment,"3D 小颜术",customerText+" "+approved.reason);
+    await inAssessmentFirst(async()=>{
+      const media=await resolvePricePromotionForReply(mediaArgs(approved.decision,{
+        customerText,conversationHistory:h,contactId:721,
+      }));
+      assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl,customerText);
+    });
+    const ts=Date.now()-1000;
+    const timed=[{role:"user",content:customerText,pricingCreatedAtMs:ts}];
+    const shadow=resolveShadowPriceException({
+      customerText,conversationHistory:timed,services,serviceAliases:aliases,
+      promotions,
+    });
+    assert.equal(shadow?.treatment,"3D 小颜术",customerText);
+    const approvedShadow=resolveApprovedPricingAssessment({
+      mode:"shadow",shadowException:shadow,customerText,conversationHistory:timed,
+      services,serviceAliases:aliases,resultMedia:[],
+    });
+    assert.equal(approvedShadow.decision?.treatment,"3D 小颜术",customerText);
+  }
+  for(const customerText of [
+    "3D不要报价了，我想问3D多少钱？",
+    "9D不要报价了，我想问这个多少钱？",
+    "9D不要报价了，我想问3D多少钱？不要再联系",
+    "9D不要报价，3D多少钱，骨盆也多少钱",
+  ]){
+    assert.equal(resolveIndependentRefusalPriceRequest({
+      customerText,services,serviceAliases:aliases,
+    }),null,customerText);
+    assert.equal(decide({priceQuery:true,customerText,
+      conversationHistory:[{role:"user",content:customerText}]}),null,customerText);
+  }
+});
+
+test("session quantity and benefit questions never expose compact prices to the AI prompt",()=>{
+  const {buildConversationPromptContext}=require("../src/utils/conversationPromptContext");
+  const {buildSystemPrompt}=require("../src/utils/systemPrompt");
+  const original={
+    aiPricingIntentMode:config.aiPricingIntentMode,
+    services:config.services, promotions:config.promotions,
+    serviceAliases:config.serviceAliases,automatedFollowUp:config.automatedFollowUp,
+  };
+  try {
+    config.aiPricingIntentMode="enabled";
+    config.services=services;config.promotions=[trial];config.serviceAliases=aliases;
+    config.automatedFollowUp={...original.automatedFollowUp,assessmentFirstPricingEnabled:true};
+    for(const customerText of [
+      "3D做一次多少人一起？", "3D一次多少个部位？", "3D有什么价值？",
+    ]){
+      const context=buildConversationPromptContext([{role:"user",content:customerText}],
+        {services,aliases,promotions:[trial]});
+      const prompt=buildSystemPrompt({conversationContext:context});
+      assert.doesNotMatch(prompt,/VERIFIED PRICE REFERENCE/u,customerText);
+    }
+    const text="请问,做一次多少";
+    const context=buildConversationPromptContext([
+      {role:"user",content:"想了解3D小颜术"},
+      {role:"assistant",content:"可以先了解3D小颜术的护理"},
+      {role:"user",content:text},
+    ],{services,aliases,promotions:[trial]});
+    assert.match(buildSystemPrompt({conversationContext:context}),
+      /VERIFIED PRICE REFERENCE[\s\S]{0,350}RM488/u);
+  } finally {
+    Object.assign(config,original);
+  }
+});
