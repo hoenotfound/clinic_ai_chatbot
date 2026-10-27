@@ -170,6 +170,66 @@ does not solve application-level lifecycle receipt.
 mode and provider-facing QA processing remain disabled.** No live
 Meta cutover or QR authorization approved.
 
+## Legacy lifecycle durable relay acceptance — coded, NOT enabled
+
+PR #395 now implements an **optional, isolated, audit-only path for a
+known legacy account** so `account_update` cannot be silently 200-ACKed by
+the old `clinic-ai-chatbot` handler during a future relay evaluation:
+
+- In `WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE=true`, a known account's
+  `account_update` changes are split and sent to
+  `WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL`, instead of
+  `WHATSAPP_DEFAULT_RELAY_LEGACY_URL`. The relay requires
+  `X-DA-Legacy-Lifecycle-Accepted: 1` from the audit receiver
+  **after a database COMMIT**; bare HTTP 200 causes retryable 503.
+  Other known legacy fields continue to their existing legacy callback.
+- A second independent protected HMAC route
+  `POST /pr395-legacy-lifecycle-webhook` verifies the actual known
+  WABA ID and, when the Meta event includes a phone, the separately
+  verified Neutro phone number. It writes only sanitized account ID,
+  event type, optional phone, entry time, fingerprint, and the default
+  `review_required` status. New additive migration **103** adds the
+  isolated Neon table `whatsapp_legacy_lifecycle_relay_audit`.
+- Bootstrap deliberately supports **one** known legacy WABA until the
+  complete app-default account inventory is proven. Multiple IDs fail
+  initialization rather than secretly using a single-account audit
+  destination for multiple customers. No wildcard route exists.
+- The receiver can run alongside the *separate* personal QA
+  preidentity audit in staging, but both are **OFF** unless a separate
+  approved cutover is being rehearsed. Full synthetic signed HTTP,
+  missing-ACK, replay, foreign identity and real PostgreSQL 103 tests
+  cover the safe paths. They do **NOT** prove live Meta traffic delivery.
+
+**Never treat this audit as operational disconnect enforcement.**
+An incident response workflow must independently suspend Neutro outbound
+sending if an actionable disconnect/authorization event occurs. This
+review-only audit does not change Neutro's sender configuration, create
+Meta subscriptions, send WhatsApp messages, or automatically reactivate a
+number. Until a responder and rollback path are verified, real cutover
+stays **NO-GO**.
+
+Proposed **private settings for a later operator-approved, isolated
+rehearsal ONLY** (do not apply now):
+
+```dotenv
+# Protected QA staging, not Neutro:
+PR395_STAGING_LEGACY_LIFECYCLE_ENABLED=false
+PR395_STAGING_LEGACY_WABA_ID=1593376338308612
+PR395_STAGING_LEGACY_PHONE_E164=+601130535053
+
+# Dedicated relay (PREPARATION=true continues to reject all Meta webhooks):
+WHATSAPP_DEFAULT_RELAY_PREPARATION_MODE=true
+WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE=false
+WHATSAPP_DEFAULT_RELAY_LEGACY_LIFECYCLE_URL=https://da-chatbot-pr395-staging.onrender.com/pr395-legacy-lifecycle-webhook
+```
+
+Preserve `https://clinic-ai-chatbot.onrender.com/webhook` as Meta's
+app-default callback, and preserve Neutro's account override
+`https://neutrosense.dasmarketingsolution.com/webhook`.
+Do not activate the relay or scan the personal Business App QR before
+full account inventory, operational disconnect handling, provider-signed
+end-to-end verification and owner approval.
+
 ## Legacy WABA inventory and live cutover acceptance — not yet complete
 
 **Scope:** enumerate every *phone-owning* WhatsApp Business Account
