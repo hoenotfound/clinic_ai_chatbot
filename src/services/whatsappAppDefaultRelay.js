@@ -9,28 +9,48 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const SECONDARY_FIELDS = new Set(["messages", "history", "smb_app_state_sync", "smb_message_echoes"]);
 const LIFECYCLE_EVENTS = new Set(["PARTNER_REMOVED", "ACCOUNT_OFFBOARDED", "ACCOUNT_RECONNECTED"]);
 
-function requireHttpsWebhook(value, name) {
+function requireHttpsWebhook(value, name, expectedPath = "/webhook") {
   let parsed;
   try { parsed = new URL(String(value || "")); } catch (_) { throw Error(`${name} must be an HTTPS webhook URL`); }
   if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
-      parsed.search || parsed.hash || parsed.pathname !== "/webhook") {
+      parsed.search || parsed.hash || parsed.pathname !== expectedPath) {
     throw Error(`${name} must be a clean HTTPS /webhook URL`);
   }
   return parsed.toString();
 }
 
 function configFromEnv(env = process.env) {
-  const config = {
-    appSecret: String(env.WHATSAPP_DEFAULT_RELAY_APP_SECRET || ""),
-    verifyToken: String(env.WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN || ""),
-    secondaryWaba: String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID || ""),
-    secondaryPhone: String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164 || ""),
-    legacyUrl: requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LEGACY_URL, "Legacy callback"),
-    lifecycleUrl: requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL, "Lifecycle callback"),
+  // The bootstrap mode is a separate, opt-in signed relay configuration.
+  // Before Embedded Signup the QR-issued WABA does not exist yet. Never
+  // guess it, wildcard-route all unknown accounts, or send callbacks to
+  // the existing single-number handler without a known-account allowlist.
+  const bootstrap = env.WHATSAPP_DEFAULT_RELAY_BOOTSTRAP_MODE === "true";
+  const allowlist=String(env.WHATSAPP_DEFAULT_RELAY_LEGACY_WABA_IDS||"")
+    .split(",").map(x=>x.trim()).filter(Boolean);
+  const config={
+    appSecret:String(env.WHATSAPP_DEFAULT_RELAY_APP_SECRET||""),
+    verifyToken:String(env.WHATSAPP_DEFAULT_RELAY_VERIFY_TOKEN||""),
+    secondaryWaba:String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_WABA_ID||""),
+    secondaryPhone:String(env.WHATSAPP_DEFAULT_RELAY_SECONDARY_PHONE_E164||""),
+    legacyUrl:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LEGACY_URL,"Legacy callback"),
+    lifecycleUrl:bootstrap?null:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_LIFECYCLE_URL,"Lifecycle callback"),
+    ...(bootstrap?{bootstrap:{
+      legacyWabas:allowlist,
+      preidentityUrl:requireHttpsWebhook(env.WHATSAPP_DEFAULT_RELAY_PREIDENTITY_URL,
+        "Preidentity receiver","/pr395-preidentity-webhook")
+    }}:{}),
   };
-  if (config.appSecret.length < 24 || config.verifyToken.length < 16 ||
-      !/^\d+$/.test(config.secondaryWaba) || !/^\+[1-9]\d{7,14}$/.test(config.secondaryPhone) ||
-      config.legacyUrl === config.lifecycleUrl) {
+  if(config.appSecret.length<24||config.verifyToken.length<16||
+     !/^\\+[1-9]\\d{7,14}$/.test(config.secondaryPhone)||
+     (bootstrap?(
+       config.secondaryWaba!==""||!allowlist.length||
+       !allowlist.every(x=>/^\\d+$/.test(x))||
+       new Set(allowlist).size!==allowlist.length||
+       config.bootstrap.preidentityUrl===config.legacyUrl
+     ):(
+       !/^\\d+$/.test(config.secondaryWaba)||
+       config.legacyUrl===config.lifecycleUrl
+     ))) {
     throw Error("Default callback relay identity/secrets are not fully configured");
   }
   return config;
@@ -53,46 +73,60 @@ function matchingPhone(actual, expected) {
 // A signed Meta batch can contain several accounts and fields. Split it into
 // independently signed provider payloads without changing event content.
 // Never forward secondary customer messages to the legacy application.
-function partitionSignedBatch(payload, config) {
-  if (payload?.object !== "whatsapp_business_account" ||
-      !Array.isArray(payload.entry) || !payload.entry.length || payload.entry.length > 200) {
+function partitionSignedBatch(payload,config) {
+  if(payload?.object!=="whatsapp_business_account"||
+     !Array.isArray(payload.entry)||!payload.entry.length||payload.entry.length>200)
     throw Error("Unexpected default WhatsApp callback payload");
-  }
-  const legacy = [], lifecycle = [];
-  for (const entry of payload.entry) {
-    if (!entry || !Array.isArray(entry.changes) || !entry.changes.length ||
-        entry.changes.length > 200) throw Error("Invalid WhatsApp callback entry");
-    const legacyChanges = [], lifecycleChanges = [];
-    for (const change of entry.changes) {
-      if (!change || typeof change.field !== "string" ||
-          !change.value || typeof change.value !== "object" || Array.isArray(change.value)) {
+  const legacy=[],lifecycle=[],preidentity=[];
+  const knownLegacy=config.bootstrap?new Set(config.bootstrap.legacyWabas):null;
+  for(const entry of payload.entry){
+    if(!entry||!Array.isArray(entry.changes)||!entry.changes.length||
+       entry.changes.length>200)throw Error("Invalid WhatsApp callback entry");
+    const legacyChanges=[],lifecycleChanges=[],preidentityChanges=[];
+    for(const change of entry.changes){
+      if(!change||typeof change.field!=="string"||
+         !change.value||typeof change.value!=="object"||
+         Array.isArray(change.value))
         throw Error("Invalid WhatsApp callback change");
-      }
-      if (String(entry.id || "") === config.secondaryWaba) {
-        if (SECONDARY_FIELDS.has(change.field)) {
-          throw Error("Secondary message/sync reached the app-default callback instead of its override");
+      const entryId=String(entry.id||"");
+      if(knownLegacy){
+        if(knownLegacy.has(entryId)){
+          legacyChanges.push(change);
+        }else if(/^\\d+$/.test(entryId)&&change.field==="account_update" &&
+                 typeof change.value.phone_number==="string" &&
+                 matchingPhone(change.value.phone_number,config.secondaryPhone) &&
+                 typeof change.value.event==="string" &&
+                 /^[-A-Z0-9_]{1,64}$/.test(change.value.event)){
+          // Only the exact E.164 may cross this pre-identity boundary.
+          // Never route unknown-account messages/history or an account-wide
+          // event with NO phone: neither establishes sender ownership.
+          preidentityChanges.push(change);
+        }else{
+          throw Error("Ambiguous or foreign account event during preidentity bootstrap");
         }
-        if (change.field === "account_update") {
-          if (!LIFECYCLE_EVENTS.has(change.value.event)) {
-            // Never silently ACK a new secondary lifecycle type on the old
-            // single-number receiver. Keep it retryable for operator review.
+        continue;
+      }
+      if(entryId===config.secondaryWaba){
+        if(SECONDARY_FIELDS.has(change.field))
+          throw Error("Secondary message/sync reached app-default callback instead of override");
+        if(change.field==="account_update"){
+          if(!LIFECYCLE_EVENTS.has(change.value.event))
             throw Error("Unknown secondary account update requires routing review");
-          }
-          if (!matchingPhone(change.value.phone_number, config.secondaryPhone)) {
-            throw Error("Secondary lifecycle phone mismatches the approved identity");
-          }
-          lifecycleChanges.push(change);
-          continue;
+          if(!matchingPhone(change.value.phone_number,config.secondaryPhone))
+            throw Error("Secondary lifecycle phone mismatches approved identity");
+          lifecycleChanges.push(change);continue;
         }
       }
       legacyChanges.push(change);
     }
-    if (legacyChanges.length) legacy.push({ ...entry, changes: legacyChanges });
-    if (lifecycleChanges.length) lifecycle.push({ ...entry, changes: lifecycleChanges });
+    if(legacyChanges.length)legacy.push({...entry,changes:legacyChanges});
+    if(lifecycleChanges.length)lifecycle.push({...entry,changes:lifecycleChanges});
+    if(preidentityChanges.length)preidentity.push({...entry,changes:preidentityChanges});
   }
-  return {
-    legacy: legacy.length ? { ...payload, entry: legacy } : null,
-    lifecycle: lifecycle.length ? { ...payload, entry: lifecycle } : null,
+  return{
+    legacy:legacy.length?{...payload,entry:legacy}:null,
+    lifecycle:lifecycle.length?{...payload,entry:lifecycle}:null,
+    preidentity:preidentity.length?{...payload,entry:preidentity}:null,
   };
 }
 
@@ -109,7 +143,11 @@ async function postSigned(url, payload, config, fetchImpl = global.fetch) {
   }
   // Old single-number servers could return 200 without persisting anything.
   // Require an explicit durable lifecycle marker from PR #395, never trust 200.
-  if (url === config.lifecycleUrl &&
+  if(config.bootstrap && url===config.bootstrap.preidentityUrl &&
+     response.headers?.get?.("x-da-coexistence-preidentity-accepted")!=="1"){
+    throw Error("Preidentity receiver did not prove a durable isolated audit");
+  }
+  if (config.lifecycleUrl && url === config.lifecycleUrl &&
       response.headers?.get?.("x-da-coexistence-lifecycle-accepted") !== "1") {
     throw Error("Lifecycle receiver did not prove that the verified event was durable");
   }
@@ -124,6 +162,7 @@ async function dispatchSignedBatch(raw, signature, config, fetchImpl = global.fe
     // idempotent by provider message ID / event fingerprint.
     if (batches.legacy) await postSigned(config.legacyUrl, batches.legacy, config, fetchImpl);
     if (batches.lifecycle) await postSigned(config.lifecycleUrl, batches.lifecycle, config, fetchImpl);
+    if (batches.preidentity) await postSigned(config.bootstrap.preidentityUrl, batches.preidentity, config, fetchImpl);
     return 200;
   } catch (_) { return 503; }
 }
