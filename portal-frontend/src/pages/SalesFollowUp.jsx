@@ -26,6 +26,7 @@ export default function SalesFollowUp() {
   const [outcome, setOutcome] = useState("contacted");
   const [dueAt, setDueAt] = useState("");
   const [saving, setSaving] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(50);
   const canUpdate = permissions.manage_assigned_leads === true;
   const canExport = permissions.export_customer_data === true;
 
@@ -39,8 +40,11 @@ export default function SalesFollowUp() {
   useEffect(() => { refresh(); }, [refresh]);
 
   const leads = useMemo(() =>
-    (payload?.leads || []).filter(lead => temperature === "all" || lead.temperature === temperature),
+    (payload?.leads || [])
+      .filter(lead => temperature === "all" || lead.temperature === temperature)
+      .sort((a, b) => (a.temperature === "hot" ? 0 : 1) - (b.temperature === "hot" ? 0 : 1)),
     [payload, temperature]);
+  useEffect(() => { setVisibleCount(50); }, [temperature]);
 
   async function exportReport() {
     if (exporting || !canExport) return;
@@ -77,7 +81,8 @@ export default function SalesFollowUp() {
     try {
       await api.updateSalesFollowUp(selected.leadId, {
         status: outcome,
-        ...(["later", "booked"].includes(outcome) ? { dueAt: new Date(dueAt).toISOString() } : {})
+        expectedLastInboundId: selected.lastInboundId,
+        ...(dueAt ? { dueAt: new Date(dueAt).toISOString() } : {})
       });
       setSelected(null);
       showToast("Follow-up result saved.", "info");
@@ -122,12 +127,12 @@ export default function SalesFollowUp() {
               <option value="weekly">Weekly handover</option>
               <option value="monthly">Monthly handover</option>
             </select>
-            <button type="button" onClick={exportReport} disabled={exporting || loading || !payload?.counts?.pending}
+            <button type="button" onClick={exportReport} disabled={exporting || loading}
               className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
               {exporting ? "Preparing..." : "Export CSV"}
             </button>
             <p className="w-full text-xs text-[var(--color-text-muted)]">
-              Both exports include all currently pending leads, including older outstanding enquiries. The period identifies the handover cadence.
+              Weekly downloads the pending backlog. Monthly also includes the current month's contacted and booking totals. Both include older outstanding enquiries.
             </p>
           </div>
         )}
@@ -150,7 +155,7 @@ export default function SalesFollowUp() {
               </div>
             ) : (
               <div className="mt-3 grid gap-3">
-                {leads.map(lead => (
+                {leads.slice(0, visibleCount).map(lead => (
                   <article key={lead.leadId} className="rounded-xl border border-[var(--color-border)] bg-white p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0">
@@ -180,6 +185,12 @@ export default function SalesFollowUp() {
                 ))}
               </div>
             )}
+        {leads.length > visibleCount && !loading && (
+          <button type="button" onClick={() => setVisibleCount(value => value + 50)}
+            className="mt-4 w-full rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-medium">
+            Show more ({leads.length - visibleCount} remaining)
+          </button>
+        )}
 
         {selected && canUpdate && (
           <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center">
@@ -196,10 +207,11 @@ export default function SalesFollowUp() {
                   </label>
                 ))}
               </fieldset>
-              {["later", "booked"].includes(outcome) && (
+              {["later", "booked", "contacted"].includes(outcome) && (
                 <label className="mt-4 block text-sm font-medium">
-                  {outcome === "later" ? "Next follow-up date and time" : "Confirmed appointment date and time"}
-                  <input type="datetime-local" required value={dueAt} onChange={event => setDueAt(event.target.value)}
+                  {outcome === "booked" ? "Confirmed appointment date and time" :
+                    outcome === "later" ? "Next follow-up date and time" : "Remind me again (optional)"}
+                  <input type="datetime-local" required={outcome !== "contacted"} value={dueAt} onChange={event => setDueAt(event.target.value)}
                     className="mt-1 w-full rounded-lg border border-[var(--color-border)] px-3 py-2"/>
                 </label>
               )}
