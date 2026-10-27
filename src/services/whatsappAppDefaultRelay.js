@@ -41,14 +41,14 @@ function configFromEnv(env = process.env) {
     }}:{}),
   };
   if(config.appSecret.length<24||config.verifyToken.length<16||
-     !/^\\+[1-9]\\d{7,14}$/.test(config.secondaryPhone)||
+     !/^\+[1-9]\d{7,14}$/.test(config.secondaryPhone)||
      (bootstrap?(
        config.secondaryWaba!==""||!allowlist.length||
-       !allowlist.every(x=>/^\\d+$/.test(x))||
+       !allowlist.every(x=>/^\d+$/.test(x))||
        new Set(allowlist).size!==allowlist.length||
        config.bootstrap.preidentityUrl===config.legacyUrl
      ):(
-       !/^\\d+$/.test(config.secondaryWaba)||
+       !/^\d+$/.test(config.secondaryWaba)||
        config.legacyUrl===config.lifecycleUrl
      ))) {
     throw Error("Default callback relay identity/secrets are not fully configured");
@@ -92,7 +92,7 @@ function partitionSignedBatch(payload,config) {
       if(knownLegacy){
         if(knownLegacy.has(entryId)){
           legacyChanges.push(change);
-        }else if(/^\\d+$/.test(entryId)&&change.field==="account_update" &&
+        }else if(/^\d+$/.test(entryId)&&change.field==="account_update" &&
                  typeof change.value.phone_number==="string" &&
                  matchingPhone(change.value.phone_number,config.secondaryPhone) &&
                  typeof change.value.event==="string" &&
