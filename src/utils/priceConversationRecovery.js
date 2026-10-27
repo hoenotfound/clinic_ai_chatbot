@@ -17,6 +17,7 @@ const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所
 const ADMIN_FEE = /(?:押金|订金|訂金|定金|评估|評估|咨询费|諮詢費|挂号|掛號|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
 // Count *distinct treatments*, never two hours, visits, sessions or an RM amount.
 const TWO_REQUEST = /(?:[这這]?[两兩]\s*(?:个|個|项|項|种|種|页|頁|款)(?:护理|護理|疗程|療程|服务|服務)?|[这這]?2\s*(?:个|個|项|項|种|種|款)(?:护理|護理|疗程|療程|服务|服務)?|\b(?:both|two\s+(?:(?:different|separate)\s+)?(?:treatments?|services?|prices?))\b|(?:3\s*d.{0,12}(?:和|与|與|及|and).{0,12}9\s*d|9\s*d.{0,12}(?:和|与|與|及|and).{0,12}3\s*d))/iu;
+const NON_TREATMENT_COUNT = /(?:[这這]?[两兩]|[这這]?2)\s*(?:个|個)?\s*(?:半\s*)?(?:小时|小時|钟头|鐘頭|周|週|星期|礼拜|月|年|天|次|回|人|位)/iu;
 const COMBO = /(?:3\s*d\s*[+＋&]\s*9\s*d|9\s*d\s*[+＋&]\s*3\s*d|组合|組合|\b(?:combo|bundle)\b)/iu;
 const CLARIFICATION = /(?:哪.{0,22}(?:疗程|療程|价钱|價錢|价格|價格|收费|收費)|想了解哪.{0,40}(?:价格|价钱|價錢)|\b(?:which|what)\b.{0,65}\b(?:treatment|price|cost)\b)/iu;
 const CONCERN_3D = /^(?:(?:我想|想|要|做)\s*)?(?:调整|調整|改善|处理|處理)?\s*(?:左右)?\s*大小脸(?:的视觉|視覺|视觉|問題|问题)?[\s!！。?？]*$/u;
@@ -226,6 +227,7 @@ function resolveTwoTreatmentPriceReply({
   const turns = recentTurns(session, now);
   const current = String(customerText || "").trim();
   if (!turns || !current || current.length > 115 || !TWO_REQUEST.test(current) ||
+      NON_TREATMENT_COUNT.test(current) ||
       RESET.test(current) || BROAD.test(current) || ADMIN_FEE.test(current) ||
       COMBO.test(current) || pricingMessageText(turns.at(-1)).trim() !== current)
     return null;
