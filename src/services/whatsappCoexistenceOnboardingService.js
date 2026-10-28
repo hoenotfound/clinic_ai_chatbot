@@ -63,15 +63,17 @@ function normalizedPhone(value) {
   return clean(value).replace(/[^0-9]/g, "");
 }
 
+// Pre-QR synthetic rehearsals are distinct from post-QR real Meta delivery.
+// No rehearsal flag authorizes one-time history sync or a customer send.
 function unassignedProtectedQaTarget(env = process.env) {
   const pinned = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
   const approved = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
   const primary = normalizedPhone(env.WHATSAPP_PHONE_NUMBER);
   return env.PR395_STAGING_MODE === "true" &&
     env.PR395_STAGING_APP_ONLY_SIGNUP_READY === "true" &&
-    env.PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED === "true" &&
-    env.PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED === "true" &&
-    env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED === "true" &&
+    env.PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED === "true" &&
+    env.PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED === "true" &&
+    env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED === "true" &&
     env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED !== "true" &&
     env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" &&
     env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa" &&
@@ -166,14 +168,14 @@ function publicConfig(env = process.env) {
     const qaE164 = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
     const approvedE164 = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
     const blockers = env.PR395_STAGING_MODE !== "true" ? [] : [
-      ["PR395_STAGING_APP_ONLY_SIGNUP_READY (app-only signup not verified)",
+      ["PR395_STAGING_APP_ONLY_SIGNUP_READY (explicit QR authorization still required)",
         env.PR395_STAGING_APP_ONLY_SIGNUP_READY === "true"],
-      ["PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED (pre-signup callback proof missing)",
-        env.PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED === "true"],
-      ["PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED (lifecycle route proof missing)",
-        env.PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED === "true"],
-      ["PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED (importer transition proof missing)",
-        env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED === "true"],
+      ["PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED (signed pre-QR receiver rehearsal missing)",
+        env.PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED === "true"],
+      ["PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED (synthetic lifecycle routing rehearsal missing)",
+        env.PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED === "true"],
+      ["PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED (isolated history handoff rehearsal missing)",
+        env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED === "true"],
       ["WHATSAPP_SECONDARY_SENDER_KEY must be coexistence_qa",
         env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa"],
       ["WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 is not valid E.164",
@@ -203,6 +205,25 @@ function publicConfig(env = process.env) {
     configured: missing.length === 0,
     missing,
     ...values,
+    onboardingPhases: {
+      beforeQr: {
+        ready: missing.length === 0,
+        proofType: "signed synthetic routing and isolated importer rehearsal",
+        requiresExplicitQrApproval: true,
+      },
+      afterQr: {
+        status: "requires actual Meta onboarding",
+        checks: [
+          "Meta-issued account and phone ownership",
+          "Business App plus Cloud API coexistence status",
+          "sender-scoped token and callback override",
+          "real signed inbound, echo and lifecycle delivery",
+          "durable sender-scoped history importer",
+        ],
+        onceOnlyHistorySyncAutomatic: false,
+        requiresSeparateOwnerHistoryConsent: true,
+      },
+    },
     featureType: "whatsapp_business_app_onboarding",
     sessionInfoVersion: "3",
     runtime: {

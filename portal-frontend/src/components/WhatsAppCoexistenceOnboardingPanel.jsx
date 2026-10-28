@@ -270,6 +270,21 @@ export default function WhatsAppCoexistenceOnboardingPanel() {
         </p>
       </div>
 
+      {config?.onboardingPhases && (
+        <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs leading-5 text-[var(--color-text)]">
+          <p className="font-semibold">Two separate verification stages</p>
+          <p className="mt-1">
+            Before QR: signed synthetic routing and history-import rehearsals plus explicit
+            authorization for this test number. These checks do not prove real Meta delivery.
+          </p>
+          <p className="mt-1">
+            After QR: confirm Meta-issued identity, real signed webhook delivery, callback
+            override and importer. Contacts/history sync requires separate owner consent and
+            is never started automatically.
+          </p>
+        </div>
+      )}
+
       {!loading && !config?.configured && (
         <div className="mt-4 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] p-3 text-xs leading-5 text-[var(--color-text)]">
           Embedded Signup is not ready on this deployment. Configure:{" "}
