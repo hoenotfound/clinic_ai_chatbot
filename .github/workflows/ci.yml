@@ -62,6 +62,13 @@ jobs:
         shell: bash
         run: find src scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: npm test
+      # Only isolated PR #412; run after the other Postgres rehearsals, not
+      # concurrently with the v077->v079 temporary database test.
+      - name: Real signed secondary QA HTTP-to-PostgreSQL integration
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 412 }}
+        env:
+          RUN_SECONDARY_QA_HTTP_INTEGRATION: "true"
+        run: node --test test/whatsappSecondaryQaRealPostgresHttp.test.js
       - name: Audit production dependencies (retry registry errors)
         run: bash .github/scripts/npm-audit-retry.sh --omit=dev --audit-level=moderate
 

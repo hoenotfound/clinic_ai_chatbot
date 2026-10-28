@@ -424,5 +424,5 @@ async function dispatchDefaultWebhook(req, res, primaryHandler, {
 
 module.exports = {
   enabled, configFromEnv, assertQaConfiguration, partitionDefaultBatch,
-  recordAuditBatch, dispatchDefaultWebhook, PASSIVE_META_FIELDS
+  recordAuditBatch, getQaPool, dispatchDefaultWebhook, PASSIVE_META_FIELDS
 };
