@@ -61,10 +61,10 @@ function db(data,{sender=true,validSchema=true}={}){
 test("QA passive review reads encrypted messages/echo/history/contacts without PII or effects",async()=>{
   const rows=[
     row("messages",{messages:[{from:"60111111111",text:{body:"secret customer message"}}]}),
-    row("smb_message_echoes",{smb_message_echoes:[{message:{text:"secret staff"}}]}),
-    row("history",{history:[{phase:0,progress:100,
-      conversations:[{id:"private",messages:[{text:"older customer message"}]}]}]}),
-    row("smb_app_state_sync",{state_sync:[{contacts:[{name:"private person"}]}]})
+    row("smb_message_echoes",{message_echoes:[{message:{text:"secret staff"}}]}),
+    row("history",{history:[{metadata:{phase:"0",progress:"100"},
+      threads:[{id:"private",messages:[{text:"older customer message"}]}]}]}),
+    row("smb_app_state_sync",{state_sync:[{type:"contact",contact:{name:"private person"}}]})
   ];
   const database=db(rows);
   const result=await review.reviewSecondaryCapture({env:cfg(),database,limit:20});
