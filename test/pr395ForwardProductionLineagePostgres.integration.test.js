@@ -3,7 +3,12 @@
 // the existing PR395 QA Neon database or an external DATABASE_URL.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Client } = require("pg");
+const { Client, Pool } = require("pg");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const qaCapture = require("../src/services/whatsappSecondaryQaCapture");
+const handoff = require("../src/services/whatsappSecondaryCaptureHandoff");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 
 const enabled = process.env.PR395_DISPOSABLE_MIGRATION_REHEARSAL === "true";
@@ -16,6 +21,7 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
     "Only the disposable GitHub Actions Postgres service is permitted");
   const admin = new Client({ connectionString: url });
   const schema = "pr395_forward_" + process.pid + "_" + Date.now();
+  const captureSchema = "pr395_capture_" + process.pid + "_" + Date.now();
   await admin.connect();
   try {
     await admin.query("CREATE SCHEMA " + schema);
@@ -174,10 +180,158 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
       /newer than|version|history/i,
       "old rollback binary must fail closed on v106 database"
     );
+
+    // Real PostgreSQL proof of the entire encrypted capture -> passive
+    // Inbox handoff. Both schemas are disposable in LOCAL CI PostgreSQL.
+    // This NEVER reads or writes an external Neon database.
+    await admin.query("CREATE SCHEMA " + captureSchema);
+    const sourcePool = new Pool({
+      connectionString: url, max:2, options:"-c search_path=" + captureSchema
+    });
+    const inboxPool = new Pool({
+      connectionString: url, max:2, options:"-c search_path=" + schema
+    });
+    try {
+      await sourcePool.query("CREATE TABLE schema_migrations(version int PRIMARY KEY,name text NOT NULL)");
+      await sourcePool.query(
+        "INSERT INTO schema_migrations(version,name) VALUES " +
+        "(102,'whatsapp_coexistence_preidentity_events')," +
+        "(103,'whatsapp_legacy_lifecycle_relay_audit')," +
+        "(104,'whatsapp_coexistence_once_only_and_lifecycle_alerts')"
+      );
+      await sourcePool.query(
+        "CREATE TABLE whatsapp_sender_accounts (" +
+        "id BIGSERIAL PRIMARY KEY, sender_key text UNIQUE NOT NULL," +
+        "meta_account_id text NOT NULL,meta_phone_number_id text NOT NULL," +
+        "state text NOT NULL,coexistence_enabled boolean NOT NULL)"
+      );
+      const encryptedSchemaSql=fs.readFileSync(path.join(__dirname,
+        "../ops/qa-only/001_secondary_encrypted_capture.sql"),"utf8");
+      const checkpointSchemaSql=fs.readFileSync(path.join(__dirname,
+        "../ops/qa-only/002_secondary_capture_history_handoff.sql"),"utf8");
+      await sourcePool.query(encryptedSchemaSql);
+      await sourcePool.query(checkpointSchemaSql);
+      await sourcePool.query(
+        "INSERT INTO whatsapp_sender_accounts(" +
+        "sender_key,meta_account_id,meta_phone_number_id,state,coexistence_enabled)" +
+        "VALUES ('coexistence_qa','889900','112233','testing',TRUE)"
+      );
+      // The target is independently VERIFIED and active only in disposable
+      // CI. The QA source remains testing, and the live primary remains OFF.
+      const second = await inboxPool.query(
+        "INSERT INTO whatsapp_sender_accounts(" +
+        "sender_key,meta_account_id,meta_phone_number_id,display_name,state,coexistence_enabled)" +
+        "VALUES ('coexistence_qa','889900','112233','Synthetic second number','active',TRUE)" +
+        "RETURNING id"
+      );
+      const secondId = second.rows[0].id;
+      const syntheticEnv = {
+        WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
+        WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"true",
+        WHATSAPP_APP_SECRET:"synthetic-key-".repeat(3),
+        META_APP_SECRET:"synthetic-key-".repeat(3),
+        WHATSAPP_PAID_DEFAULT_VERIFY_TOKEN:"synthetic-verify-".repeat(3),
+        WHATSAPP_WABA_ID:"1593376338308612",
+        WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
+        WHATSAPP_PAID_DEFAULT_PRIMARY_PHONE_E164:"+601130535053",
+        WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164:"+60174831336",
+        WHATSAPP_PAID_REAL_CLINIC_REHEARSAL_ENABLED:"true",
+        WHATSAPP_PAID_REAL_CLINIC_OPERATOR_APPROVED:"true",
+        WHATSAPP_PAID_REAL_CLINIC_E164_PIN:"+60174831336",
+        DATABASE_URL:"postgresql://synthetic:synthetic@ep-disposable-target.neon.tech/not-used",
+        WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL:
+          "postgresql://synthetic:synthetic@ep-disposable-source.neon.tech/not-used",
+        WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:"ep-disposable-source.neon.tech",
+        WHATSAPP_PAID_SECONDARY_QA_WABA_ID:"889900",
+        WHATSAPP_PAID_SECONDARY_QA_PHONE_ID:"112233",
+        WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:"+60174831336",
+        WHATSAPP_PAID_SECONDARY_QA_OPERATOR_APPROVED:"true",
+        WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED:"true",
+        WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED:"true",
+        WHATSAPP_PAID_SECONDARY_QA_CAPTURE_KEY_B64:Buffer.alloc(32,13).toString("base64"),
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED:"true",
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED:"true",
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_HOST:"ep-disposable-target.neon.tech",
+        PR395_STAGING_MODE:"true"
+      };
+      const now=String(Math.floor(Date.now()/1000)-3600);
+      const oldHistory={object:"whatsapp_business_account",entry:[{
+        id:"889900",time:Number(now),changes:[{field:"history",value:{
+          metadata:{phone_number_id:"112233"},
+          history:[{metadata:{phase:1,progress:100},threads:[{
+            id:"60126662222",messages:[{
+              id:"wamid.real-pg-history-in",from:"60126662222",timestamp:now,
+              type:"text",text:{body:"Synthetic customer message"}
+            },{
+              id:"wamid.real-pg-history-out",from:"60174831336",
+              to:"60126662222",timestamp:now,
+              type:"text",text:{body:"Synthetic business reply"}
+            }]}]}]
+        }}]
+      }]};
+      const captured=await qaCapture.captureSignedSecondaryBatch(oldHistory,{
+        env:syntheticEnv,database:sourcePool,signatureVerified:true
+      });
+      assert.equal(captured.inserted,1);
+      const replay=await qaCapture.captureSignedSecondaryBatch(oldHistory,{
+        env:syntheticEnv,database:sourcePool,signatureVerified:true
+      });
+      assert.equal(replay.inserted,0,"Meta retries are encrypted only once");
+      const handed=await handoff.handoffOnce({
+        env:syntheticEnv,sourceDatabase:sourcePool,
+        targetDatabase:inboxPool,processInboxJobs:true
+      });
+      assert.equal(handed.transferred,1);
+      assert.equal(handed.importer.processed,1);
+      const actual=await inboxPool.query(
+        "SELECT m.whatsapp_message_id,m.role,m.content,m.source_created_at," +
+        "c.whatsapp_sender_id,x.conversation_id " +
+        "FROM messages m JOIN contacts c ON c.id=m.contact_id " +
+        "JOIN whatsapp_sender_message_context x ON x.message_id=m.id " +
+        "WHERE m.whatsapp_message_id IN ($1,$2) ORDER BY m.whatsapp_message_id",
+        ["wamid.real-pg-history-in","wamid.real-pg-history-out"]
+      );
+      assert.equal(actual.rows.length,2);
+      assert.deepEqual(actual.rows.map(r=>r.role),["user","assistant"]);
+      assert.ok(actual.rows.every(r=>String(r.whatsapp_sender_id)===String(secondId)));
+      assert.equal(new Date(actual.rows[0].source_created_at).getTime(),
+        Number(now)*1000);
+      const afterMessages=await inboxPool.query(
+        "SELECT count(*)::int AS n FROM whatsapp_sender_coexistence_history_messages " +
+        "WHERE sender_id=$1",[secondId]
+      );
+      assert.equal(afterMessages.rows[0].n,2);
+      const checkpoint=await sourcePool.query(
+        "SELECT count(*)::int AS n FROM whatsapp_secondary_qa_capture_events " +
+        "WHERE handoff_completed_at IS NOT NULL"
+      );
+      assert.equal(checkpoint.rows[0].n,1);
+      const again=await handoff.handoffOnce({
+        env:syntheticEnv,sourceDatabase:sourcePool,
+        targetDatabase:inboxPool,processInboxJobs:true
+      });
+      assert.equal(again.transferred,0);
+      assert.equal((await inboxPool.query(
+        "SELECT count(*)::int AS n FROM messages WHERE whatsapp_message_id " +
+        "IN ('wamid.real-pg-history-in','wamid.real-pg-history-out')"
+      )).rows[0].n,2,"Replay must not create new Inbox messages");
+      assert.equal((await inboxPool.query(
+        "SELECT count(*)::int AS n FROM contacts WHERE channel='facebook'"
+      )).rows[0].n,13,"Messenger history stays unchanged");
+      assert.equal((await inboxPool.query(
+        "SELECT content FROM messages WHERE whatsapp_message_id='wamid.legacy-retained'"
+      )).rows[0].content,"Existing Neutro chat stays intact");
+      console.log("PASS synthetic encrypted QA capture -> sender-specific Inbox -> replay safe.");
+    } finally {
+      await sourcePool.end();
+      await inboxPool.end();
+    }
+
     console.log("PASS disposable v079 -> v106; original chat and migration checksums preserved;");
     console.log("PASS sender isolation, no automatic activation, idempotence and rollback guard.");
   } finally {
     await admin.query("SET search_path TO public").catch(()=>{});
+    await admin.query("DROP SCHEMA IF EXISTS " + captureSchema + " CASCADE").catch(()=>{});
     await admin.query("DROP SCHEMA IF EXISTS " + schema + " CASCADE").catch(()=>{});
     await admin.end();
   }
