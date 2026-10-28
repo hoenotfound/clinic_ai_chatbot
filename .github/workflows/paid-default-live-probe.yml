@@ -35,7 +35,7 @@ jobs:
           type_curl_exit=$?
           # An invalid HMAC on the NEW endpoint must never reach Neutro AI.
           # This is NOT a real Meta-signed event or live receipt proof.
-          default_post="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15             --silent --show-error --output /dev/null --write-out "%{http_code}"             --header "Content-Type: application/json"             --header "X-Hub-Signature-256: sha256=$(printf '0%.0s' {1..64})"             --data-binary '{"object":"whatsapp_business_account","entry":[{"id":"0","changes":[{"field":"messages","value":{}}]}]}'             "$HOST/whatsapp/default")"
+          default_post="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15             --silent --show-error --output /dev/null --write-out "%{http_code}"             --header "Content-Type: application/json"             --header "X-Hub-Signature-256: sha256=$(printf '0%.0s' {1..64})"             --data-binary ''             "$HOST/whatsapp/default")"
           post_curl_exit=$?
           printf 'curl exit codes: legacy=%s default_get=%s content_type=%s default_post=%s\n' \
             "$legacy_curl_exit" "$get_curl_exit" "$type_curl_exit" "$post_curl_exit"
