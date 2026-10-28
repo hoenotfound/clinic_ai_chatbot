@@ -361,7 +361,7 @@ test("Neutro-only events never touch the QA database pool", async () => {
 });
 test("routing uses existing signed 2 MB parser and leaves original /webhook intact", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/createApp.js"), "utf8");
-  assert.match(source, /app\.post\("\/webhook", webhookJsonParser, primaryWhatsappWebhookHandler/);
+  assert.match(source, /app\.post\("\/webhook", webhookJsonParser, stagingWebhookGuard, primaryWhatsappWebhookHandler/);
   assert.match(source, /app\.post\("\/whatsapp\/default",/);
   assert.match(source, /}, webhookJsonParser, async \(req, res\) => \{/);
   assert.match(source, /dispatchPaidDefaultWithSecondary\(\s*req, res, primaryWhatsappWebhookHandler/);

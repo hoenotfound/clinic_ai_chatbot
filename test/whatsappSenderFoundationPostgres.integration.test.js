@@ -32,12 +32,12 @@ async function isolatedSchema(fn) {
   }
 }
 
-test("migration 078 preserves a seeded production-sized legacy Inbox and is repeatable",
+test("migration 080 preserves a seeded production-sized legacy Inbox and is repeatable",
   { skip: !connectionString }, async () => {
     await isolatedSchema(async ({ db, pool }) => {
-      const migrations = loadMigrations().filter(m => m.version <= 78);
-      assert.equal(migrations.at(-1).version, 78);
-      await runMigrations(pool, { quiet: true, migrations: migrations.filter(m => m.version < 78) });
+      const migrations = loadMigrations().filter(m => m.version <= 80);
+      assert.equal(migrations.at(-1).version, 80);
+      await runMigrations(pool, { quiet: true, migrations: migrations.filter(m => m.version < 80) });
       const contacts = await db.query(`
         INSERT INTO contacts (whatsapp_number)
         SELECT '6018' || LPAD(n::text, 7, '0')
@@ -64,9 +64,9 @@ test("migration 078 preserves a seeded production-sized legacy Inbox and is repe
           (SELECT md5(string_agg(id::text || ':' || contact_id || ':' || content,
                                   ',' ORDER BY id))
              FROM messages) AS message_fingerprint`);
-      const apply = await runMigrations(pool, { quiet: true, migrations: loadMigrations().filter(m => m.version <= 78) });
+      const apply = await runMigrations(pool, { quiet: true, migrations: loadMigrations().filter(m => m.version <= 80) });
       assert.equal(apply.appliedCount, 1);
-      assert.equal(apply.currentVersion, 78);
+      assert.equal(apply.currentVersion, 80);
       const after = await db.query(`
         SELECT
           (SELECT COUNT(*)::integer FROM contacts) AS contacts,
@@ -92,7 +92,7 @@ test("migration 078 preserves a seeded production-sized legacy Inbox and is repe
       assert.ok(unique.rows[0].contact_unique);
       assert.ok(unique.rows[0].channel_unique);
       assert.ok(unique.rows[0].quarantine_table);
-      const repeat = await runMigrations(pool, { quiet: true, migrations: loadMigrations().filter(m => m.version <= 78) });
+      const repeat = await runMigrations(pool, { quiet: true, migrations: loadMigrations().filter(m => m.version <= 80) });
       assert.equal(repeat.appliedCount, 0);
     });
   }
@@ -101,7 +101,7 @@ test("migration 078 preserves a seeded production-sized legacy Inbox and is repe
 test("foreign WhatsApp events are durably quarantined without contact creation and dedupe on replay",
   { skip: !connectionString }, async () => {
     await isolatedSchema(async ({ db, pool }) => {
-      await runMigrations(pool, { quiet: true, migrations: loadMigrations().filter(m => m.version <= 78) });
+      await runMigrations(pool, { quiet: true, migrations: loadMigrations().filter(m => m.version <= 80) });
       const webhook = {
         object: "whatsapp_business_account",
         entry: [{ id: "200000000000002", changes: [{
@@ -143,7 +143,7 @@ test("secondary status and foreign passive quarantines satisfy the DB reason con
     await isolatedSchema(async ({ db, pool }) => {
       await runMigrations(pool, {
         quiet: true,
-        migrations: loadMigrations().filter(m => m.version <= 78),
+        migrations: loadMigrations().filter(m => m.version <= 80),
       });
       const payload = {
         object: "whatsapp_business_account",

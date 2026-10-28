@@ -58,9 +58,12 @@ function webhookHarness({ failAudit = false, dualInbox = false,
   const route = source.slice(start, end);
   const noop = () => Promise.resolve();
   const context = {
-    app: { post(_path, ...middlewareAndHandler) {
-      handler = middlewareAndHandler[middlewareAndHandler.length - 1];
-    } },
+    app: {
+      get(_path, ...handlers) {},
+      post(_path, ...middlewareAndHandler) {
+        if (_path === "/webhook") handler = middlewareAndHandler[middlewareAndHandler.length - 1];
+      }
+    },
     webhookJsonParser: () => {},
     stagingWebhookGuard: (_req, _res, next) => next(),
     Buffer, setTimeout, clearTimeout,
