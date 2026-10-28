@@ -65,7 +65,7 @@ function configFromEnv(env = process.env) {
   // Parse an optional pin for event classification. Audit-only paths demand
   // the complete strict QA configuration before any QA write.
   const rawQaE164 = String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "");
-  const qaE164 = /^\\+[1-9]\\d{7,14}$/.test(rawQaE164) ? rawQaE164 : null;
+  const qaE164 = /^\+[1-9]\d{7,14}$/.test(rawQaE164) ? rawQaE164 : null;
   return Object.freeze({
     appSecret, verifyToken, primaryWaba, primaryPhoneId, primaryE164,
     qaE164,
