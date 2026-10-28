@@ -116,6 +116,16 @@ function partitionDefaultBatch(body, config) {
   }
   const primary = [];
   const audits = [];
+  function quarantine(accountId, entryTime, change, reason) {
+    const candidatePhone = change?.value?.metadata?.phone_number_id;
+    audits.push({
+      kind: "quarantine",
+      fingerprint: fingerprint(accountId, entryTime, change),
+      accountId, reason,
+      field: String(change.field).slice(0, 100),
+      phoneId: numberId(candidatePhone)
+    });
+  }
   let total = 0;
   for (const entry of body.entry) {
     const accountId = requireNumber(entry && entry.id, "entry WABA");
@@ -142,22 +152,23 @@ function partitionDefaultBatch(body, config) {
       if (change.field === "account_update") {
         if (typeof value.event !== "string" ||
             !/^[A-Z][A-Z0-9_]{0,63}$/.test(value.event)) {
-          throw new Error("Invalid Meta account update");
+          quarantine(accountId, entryTime, change, "malformed_whatsapp_change");
+          continue;
         }
         const suppliedPhone = value.phone_number;
         if (isPrimary) {
-          if (value.metadata?.phone_number_id != null &&
-              value.metadata.phone_number_id !== config.primaryPhoneId) {
-            throw new Error("Primary lifecycle phone ID mismatch");
-          }
-          if (suppliedPhone != null &&
-              (typeof suppliedPhone !== "string" ||
-               digits(suppliedPhone) !== digits(config.primaryE164))) {
-            throw new Error("Primary lifecycle phone mismatch");
+          if ((value.metadata?.phone_number_id != null &&
+               value.metadata.phone_number_id !== config.primaryPhoneId) ||
+              (suppliedPhone != null &&
+               (typeof suppliedPhone !== "string" ||
+                digits(suppliedPhone) !== digits(config.primaryE164)))) {
+            quarantine(accountId, entryTime, change, "different_business_phone");
+            continue;
           }
         } else if (typeof suppliedPhone !== "string" ||
                    digits(suppliedPhone) !== digits(config.qaE164)) {
-          throw new Error("Unknown or unpinned account update");
+          quarantine(accountId, entryTime, change, "different_business_account");
+          continue;
         }
         audits.push({
           kind: isPrimary ? "primary" : "preidentity",
@@ -168,17 +179,32 @@ function partitionDefaultBatch(body, config) {
         });
         continue;
       }
-      if (!isPrimary || !PRIMARY_FIELDS.has(change.field)) {
-        throw new Error("Unsupported or foreign Meta event");
+      if (!isPrimary) {
+        // Signed foreign-account messages can never reach Neutro AI.
+        quarantine(accountId, entryTime, change, "different_business_account");
+        continue;
+      }
+      if (!PRIMARY_FIELDS.has(change.field)) {
+        quarantine(accountId, entryTime, change, "unsupported_whatsapp_event");
+        continue;
       }
       // Customer-related primary events must positively identify Neutro.
       // Do not use the first configured phone as a fallback.
       if (value.metadata?.phone_number_id !== config.primaryPhoneId) {
-        throw new Error("Primary message/sync phone ID mismatch or missing");
+        quarantine(accountId, entryTime, change,
+          value.metadata?.phone_number_id == null
+            ? "missing_business_phone" : "different_business_phone");
+        continue;
       }
       primaryChanges.push(change);
     }
     if (primaryChanges.length) primary.push({ ...entry, changes: primaryChanges });
+  }
+  // Do not ACK batches containing only unknown/foreign events. When a
+  // verified Neutro message is also present, record the unfamiliar event in
+  // QA quarantine without blocking the primary durable message handler.
+  if (!primary.length && !audits.some(a => a.kind !== "quarantine")) {
+    throw new Error("No authorized WhatsApp event in signed batch");
   }
   return {
     primary: primary.length ? { ...body, entry: primary } : null,
@@ -257,6 +283,16 @@ async function recordAuditBatch(audits, config, database = getQaPool(config)) {
           "RETURNING fingerprint",
           [audit.fingerprint, audit.accountId, config.qaE164,
            audit.eventType, audit.entryTime]
+        );
+        if (result.rowCount === 1) inserted++;
+      } else if (audit.kind === "quarantine") {
+        const result = await client.query(
+          "INSERT INTO whatsapp_sender_quarantined_events " +
+          "(fingerprint,reason,event_field,meta_account_id,meta_phone_number_id) " +
+          "VALUES($1,$2,$3,$4,$5) ON CONFLICT(fingerprint) DO NOTHING " +
+          "RETURNING fingerprint",
+          [audit.fingerprint, audit.reason, audit.field,
+           audit.accountId, audit.phoneId]
         );
         if (result.rowCount === 1) inserted++;
       } else {
