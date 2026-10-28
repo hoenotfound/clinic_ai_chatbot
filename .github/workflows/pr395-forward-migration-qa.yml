@@ -51,3 +51,7 @@ jobs:
             test/pr395RealClinicRoutingGuard.test.js \
             test/whatsappPaidDefaultHttp.test.js \
             test/whatsappCoexistenceHistoryService.test.js
+      - name: Real signed HTTP clinic-history capture to disposable PostgreSQL
+        env:
+          RUN_SECONDARY_QA_HTTP_INTEGRATION: "true"
+        run: node --test test/whatsappSecondaryQaRealPostgresHttp.test.js
