@@ -39,7 +39,8 @@ const REHEARSAL_OUTBOUND_FORBIDDEN = [
 function digits(value) { return String(value || "").replace(/\D/g, ""); }
 const CLINIC_SECOND_NUMBER_E164 = "+60174831336";
 function clinicSecondNumberApproved(env) {
-  return env.PR395_STAGING_REAL_CLINIC_ENABLED === "true" &&
+  return env.PR395_STAGING_MODE === "true" &&
+    env.PR395_STAGING_REAL_CLINIC_ENABLED === "true" &&
     env.PR395_STAGING_REAL_CLINIC_OPERATOR_APPROVED === "true" &&
     env.PR395_STAGING_REAL_CLINIC_E164_PIN === CLINIC_SECOND_NUMBER_E164 &&
     env.PR395_STAGING_APPROVED_TEST_PHONE_E164 === CLINIC_SECOND_NUMBER_E164 &&
@@ -91,7 +92,9 @@ function assertPr395StagingSafety(env = process.env) {
     if (env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" ||
         env.PR395_STAGING_PREIDENTITY_RECEIVER_ENABLED === "true" ||
         env.PR395_STAGING_LEGACY_LIFECYCLE_ENABLED === "true" ||
-        env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
+        env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true" ||
+        env.PR395_STAGING_REAL_CLINIC_ENABLED === "true" ||
+        env.PR395_STAGING_REAL_CLINIC_OPERATOR_APPROVED === "true") {
       throw new Error("Provider rehearsal must never run outside PR395's isolated staging mode.");
     }
     if (env.NODE_ENV === "staging" ||
