@@ -7,9 +7,25 @@ function event(account,phone,field){
 }
 function batch(...entry){return{object:"whatsapp_business_account",entry};}
 const env={
+  WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
   WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"true",
+  WHATSAPP_APP_SECRET:"x".repeat(32),META_APP_SECRET:"x".repeat(32),
+  WHATSAPP_PAID_DEFAULT_VERIFY_TOKEN:"v".repeat(32),
+  WHATSAPP_PAID_DEFAULT_PRIMARY_PHONE_E164:"+601130535053",
+  WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164:"+60129998888",
+  WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL:
+    "postgresql://qa:pass@ep-qa.ap-southeast-1.aws.neon.tech/neondb",
+  WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:"ep-qa.ap-southeast-1.aws.neon.tech",
+  DATABASE_URL:"postgresql://prod:pass@ep-prod.ap-southeast-1.aws.neon.tech/neondb",
+  WHATSAPP_PAID_SECONDARY_QA_CAPTURE_KEY_B64:Buffer.alloc(32,17).toString("base64"),
+  WHATSAPP_PAID_SECONDARY_QA_OPERATOR_APPROVED:"true",
+  WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED:"true",
+  WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED:"true",
   WHATSAPP_PAID_SECONDARY_QA_WABA_ID:"889900",
-  WHATSAPP_WABA_ID:"1593376338308612"
+  WHATSAPP_PAID_SECONDARY_QA_PHONE_ID:"112233",
+  WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:"+60129998888",
+  WHATSAPP_WABA_ID:"1593376338308612",
+  WHATSAPP_PHONE_NUMBER_ID:"1408739622311791"
 };
 test("bridge is OFF by default and leaves the complete Neutro body untouched",()=>{
   const body=batch(event("1593376338308612","1408739622311791","messages"));
@@ -97,4 +113,41 @@ test("foreign accounts, no ID and malformed batch never get classified as second
   assert.equal(bridge.splitSecondaryQaChanges(foreign,{
     ...env,WHATSAPP_PAID_SECONDARY_QA_WABA_ID:"not-an-id"}).secondary,null);
   assert.throws(()=>bridge.splitSecondaryQaChanges({entry:[]},env),/Malformed/);
+});
+
+test("secondary app-wide alerts are audited without invoking Neutro or exposing payload",async()=>{
+  const body=batch({id:"889900",changes:[{field:"security",value:{event:"WARNING"}}]});
+  const split=bridge.splitSecondaryQaChanges(body,env);
+  assert.equal(split.secondary,null);
+  assert.equal(split.remaining,null);
+  assert.deepEqual(split.notifications.map(x=>x.field),["security"]);
+  const result=[];
+  const res={headersSent:false,statusCode:0,
+    sendStatus(v){this.statusCode=v;this.headersSent=true;return this;}};
+  await bridge.dispatchPaidDefaultWithSecondary({body},res,()=>{throw Error("Neutro!");},{
+    env,
+    dispatchPrimary:()=>{throw Error("Neutro!");},
+    auditSecondary:async(audits,config)=>{
+      result.push({audits,config});
+      return{durable:true,inserted:1};
+    }
+  });
+  assert.equal(res.statusCode,200);
+  assert.equal(result.length,1);
+  assert.equal(result[0].audits[0].accountId,"889900");
+  assert.equal(result[0].audits[0].phoneId,null);
+  assert.match(result[0].audits[0].fingerprint,/^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(result[0].audits).includes("WARNING"),false);
+});
+test("wrong secondary phone alert is quarantined, not accepted by bridge",()=>{
+  const bad=batch({id:"889900",changes:[{
+    field:"security",value:{metadata:{phone_number_id:"1408739622311791"}}
+  }]});
+  const split=bridge.splitSecondaryQaChanges(bad,env);
+  assert.equal(split.notifications.length,0);
+  assert.equal(split.remaining.entry[0].changes[0].field,"security");
+  const phone=batch({id:"889900",changes:[{
+    field:"account_alerts",value:{phone_number:"+601130535053"}
+  }]});
+  assert.equal(bridge.splitSecondaryQaChanges(phone,env).notifications.length,0);
 });
