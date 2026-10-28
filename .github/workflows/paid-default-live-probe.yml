@@ -26,7 +26,11 @@ jobs:
           legacy="$(get_status "$HOST/webhook?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
           # The new GET route must be absent (404), disabled (503), or return
           # 403 when enabled but no valid challenge is supplied.
-          default_get="$(get_status "$HOST/whatsapp/default")"
+          default_get="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15 \
+            --silent --show-error --output /tmp/paid-default-get-body \
+            --write-out "%{http_code}" "$HOST/whatsapp/default")"
+          default_content_type="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15 \
+            --silent --show-error --output /dev/null --write-out "%{content_type}" "$HOST/whatsapp/default")"
           # An invalid HMAC on the NEW endpoint must never reach Neutro AI.
           # This is NOT a real Meta-signed event or live receipt proof.
           default_post="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15             --silent --show-error --output /dev/null --write-out "%{http_code}"             --header "Content-Type: application/json"             --header "X-Hub-Signature-256: sha256=$(printf '0%.0s' {1..64})"             --data-binary '{"object":"whatsapp_business_account","entry":[{"id":"0","changes":[{"field":"messages","value":{}}]}]}'             "$HOST/whatsapp/default")"
@@ -38,14 +42,22 @@ jobs:
             *) echo "FAIL: existing Neutro webhook challenge authorization changed"; exit 1;;
           esac
           case "$default_get" in
-            404|403|503) ;;
+            200|404|403|503) ;;
             *) echo "FAIL: default GET route returned unsafe/unexpected status"; exit 1;;
           esac
           case "$default_post" in
             404|403|503) ;;
             *) echo "FAIL: default POST route accepted an invalid signature or returned unexpected status"; exit 1;;
           esac
-          if [[ "$default_get" == "404" && "$default_post" == "404" ]]; then
+          if [[ "$default_get" == "200" && "$default_post" == "404" ]]; then
+            # Original production serves its SPA HTML for any unknown GET path.
+            # This is *not* a Meta verification success; no matching POST exists.
+            if [[ "$default_content_type" != text/html* ]] ||
+               grep --quiet --fixed-strings --line-regexp "synthetic-noop" /tmp/paid-default-get-body; then
+              echo "FAIL: unexpected unauthorized callback challenge response"; exit 1
+            fi
+            echo "RESULT: original production SPA fallback; app-default route NOT deployed"
+          elif [[ "$default_get" == "404" && "$default_post" == "404" ]]; then
             echo "RESULT: not yet deployed on paid Render"
           elif [[ "$default_get" == "503" && "$default_post" == "503" ]]; then
             echo "RESULT: deployed but default route safely OFF"
