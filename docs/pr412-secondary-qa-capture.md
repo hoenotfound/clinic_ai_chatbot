@@ -76,3 +76,56 @@ existing app default callback until these events are handled explicitly.
 
 **Until then:** keep PRs #395, #411 and #412 draft; leave flags OFF, do not
 merge, deploy, switch Meta callbacks, send secondary messages or scan QR.
+
+## Operational Meta notification review (read-only, not automated)
+
+PR #411 now saves subscribed **Neutro-only** account, security, phone-quality,
+template and calling notifications as sanitized, idempotent QA audit rows.
+There is no automatic staff notification, ticketing integration, template
+approval update, call processing or acknowledgement state. The receipt
+HTTP 200 only confirms persistence of audit metadata.
+
+PR #412 includes:
+`node scripts/qa/readOnlyOperationalWebhookQueue.cjs`.
+
+Run it manually with the same verified independent QA Neon connection settings
+as PR #411: `DATABASE_URL`, `WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL`,
+`WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST`, and Neutro's
+`WHATSAPP_WABA_ID`. It rejects production/QA host collisions, performs
+a single bounded, parameterized SQL **SELECT** over the last 24 hours,
+and prints a sanitized list with operator action suggestions.
+Security/account alerts exit with code 3, so a human can spot urgent entries.
+Missing data/connection reports an error rather than claiming safety.
+**Do not use this as a scheduled alert** until operator access, escalation
+ownership and a regular checking cadence are separately configured.
+
+Records currently share QA's `whatsapp_sender_quarantined_events` table with
+`reason=unsupported_whatsapp_event` (meaning the chatbot did not act on
+the notification). Their severity is a conservative *field-based triage*
+and does not mean the underlying Meta event was a confirmed compromise.
+The source table has no operator acknowledgement state, so repeat queries
+may show previously reviewed entries. To investigate a field such as
+`message_template_status_update`, use the authorized Meta dashboard; no
+notification payload or customer message content is available in the QA
+audit table.
+
+The read-only QA inventory query found zero records for these fields in the
+last seven days on 2026-10-28. This is expected before deploying the new
+ingress, **not** proof of successful live Meta delivery.
+
+## Migration rehearsal still awaiting a separately authorized disposable DB
+
+PR #411's CI pins a v079-compatible rollback **source tree**, but has not
+booted that tree against a restored database. Before deployment:
+- Verify a non-production restored copy of v077 with realistic schema;
+- Apply only unchanged main 078 and 079 migrations there;
+- Start the proposed v079 application and then the pinned v079-compatible
+  rollback build, checking health and signed primary webhook behavior;
+- Confirm sender isolation and that neither QA's conflicting 078–104 nor
+  optional `ops/qa-only` table DDL ever run in the production migration path;
+- Record DB branch/database identity, migration checksums and cleanup;
+- Separately approve staging DDL and the later v080–106 forward migration
+  rehearsal before secondary sending or history import.
+
+Do not automatically promote the standalone QA capture or switch Meta
+callbacks on the strength of green unit/browser CI alone.
