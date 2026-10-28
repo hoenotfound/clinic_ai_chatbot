@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   enabled, configFromEnv, assertQaConfiguration, partitionDefaultBatch,
-  recordAuditBatch, dispatchDefaultWebhook
+  recordAuditBatch, dispatchDefaultWebhook, PASSIVE_META_FIELDS
 } = require("../src/services/whatsappPaidDefaultIngress");
 
 function env(overrides = {}) {
@@ -149,7 +149,7 @@ test("unknown WA account, missing phone, wrong WABA and unsupported fields fail 
   const missingPhone = batch(message(config.primaryWaba, undefined));
   const wrongLifecycle = batch(lifecycle("777123", "+60119998888"));
   const missingLifecycle = batch(lifecycle("777123", null));
-  const unknownField = batch(message(config.primaryWaba, config.primaryPhoneId, "message_template_status_update"));
+  const unknownField = batch(message(config.primaryWaba, config.primaryPhoneId, "template_category_update"));
   const mutatedAccount = batch(lifecycle(config.primaryWaba, "+60119998888"));
   const wrongLifecyclePhoneId = lifecycle(config.primaryWaba, config.primaryE164);
   wrongLifecyclePhoneId.changes[0].value.metadata = { phone_number_id: "555" };
@@ -369,4 +369,159 @@ test("routing uses existing signed 2 MB parser and leaves original /webhook inta
   assert.ok(source.indexOf('app.post("/webhook"') <
             source.indexOf('app.post("/whatsapp/default"'));
   assert.doesNotMatch(source, /https:\/\/clinic-ai-chatbot\.onrender\.com/);
+});
+
+function operationalNotification(account, field, value = {}) {
+  return {
+    id: account, time: 1790591000,
+    changes: [{ field, value }]
+  };
+}
+
+test("all eight subscribed operational Meta fields are monitor-only, never Neutro inbound", async () => {
+  const e = env();
+  const config = configFromEnv(e);
+  const expected = [
+    "account_alerts", "account_review_update", "calls",
+    "message_template_quality_update", "message_template_status_update",
+    "phone_number_name_update", "phone_number_quality_update", "security"
+  ];
+  assert.deepEqual([...PASSIVE_META_FIELDS].sort(), [...expected].sort());
+  for (const field of expected) {
+    const payload = batch(operationalNotification(e.WHATSAPP_WABA_ID, field, {
+      secret_text: "Never persist this raw notification payload"
+    }));
+    const plan = partitionDefaultBatch(payload, config);
+    assert.equal(plan.primary, null, field);
+    assert.equal(plan.audits.length, 1);
+    assert.equal(plan.audits[0].kind, "notification");
+    assert.equal(plan.audits[0].field, field);
+    const db = mockDatabase();
+    assert.deepEqual(await recordAuditBatch(plan.audits, config, db),
+      { durable: true, inserted: 1 });
+    const insert = db.queries.find(q =>
+      q.sql.includes("INSERT INTO whatsapp_sender_quarantined_events"));
+    assert.ok(insert, "signed operational notification must commit in isolated QA");
+    assert.equal(insert.params[1], "unsupported_whatsapp_event");
+    assert.equal(insert.params[2], field);
+    assert.equal(insert.params[3], e.WHATSAPP_WABA_ID);
+    assert.equal(db.queries.at(-1).sql, "COMMIT");
+    assert.ok(db.queries.every(query =>
+      !JSON.stringify(query.params || []).includes("Never persist this raw")),
+      "never write Meta notification values to QA audit tables");
+  }
+});
+
+test("operational notification-only batches ACK only after durable QA commit", async () => {
+  const e = env();
+  const input = batch(operationalNotification(e.WHATSAPP_WABA_ID,
+    "message_template_status_update", { event: "APPROVED" }));
+  const response = fakeResponse();
+  const logs = [];
+  const previousWarn = console.warn;
+  console.warn = (...args) => logs.push(args);
+  let primaryCalls = 0;
+  const sequence = [];
+  try {
+    await dispatchDefaultWebhook({ body: input }, response,
+      () => { primaryCalls++; }, {
+        env: e,
+        persist: async () => {
+          sequence.push("qa-commit");
+          assert.equal(response.headersSent, false);
+          return { durable: true, inserted: 1 };
+        }
+      });
+  } finally {
+    console.warn = previousWarn;
+  }
+  assert.deepEqual(sequence, ["qa-commit"]);
+  assert.equal(primaryCalls, 0);
+  assert.equal(response.code, 200);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0][0], /MANUAL operator review/);
+  assert.deepEqual(logs[0][1].fields, ["message_template_status_update"]);
+  assert.ok(logs[0][1].fingerprints[0].match(/^[a-f0-9]{64}$/));
+  assert.equal(JSON.stringify(logs).includes("APPROVED"), false);
+
+  const failed = fakeResponse();
+  await assert.rejects(dispatchDefaultWebhook({ body: input }, failed,
+    () => { primaryCalls++; }, {
+      env: e,
+      persist: async () => { throw Error("QA unavailable"); }
+    }), /QA unavailable/);
+  assert.equal(failed.headersSent, false);
+  assert.equal(primaryCalls, 0);
+});
+
+test("known Meta operational event and Neutro message never cross-route", async () => {
+  const e = env();
+  const input = batch(
+    operationalNotification(e.WHATSAPP_WABA_ID, "security", { event: "CHANGED" }),
+    message(e.WHATSAPP_WABA_ID, e.WHATSAPP_PHONE_NUMBER_ID)
+  );
+  const response = fakeResponse();
+  const ordered = [];
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    await dispatchDefaultWebhook({ body: input }, response, (req, res) => {
+      ordered.push("neutro");
+      assert.equal(req.body.entry.length, 1);
+      assert.deepEqual(req.body.entry[0].changes.map(change => change.field), ["messages"]);
+      res.sendStatus(200);
+    }, {
+      env: e,
+      persist: async (audits) => {
+        ordered.push("qa-commit");
+        assert.equal(response.code, 200);
+        assert.deepEqual(audits.map(a => a.kind), ["notification"]);
+        return { durable: true, inserted: 1 };
+      }
+    });
+  } finally { console.warn = origWarn; }
+  assert.deepEqual(ordered, ["neutro", "qa-commit"]);
+  assert.equal(response.code, 200);
+});
+
+test("foreign, wrong-phone, unknown and malformed operational events still fail closed", () => {
+  const e = env();
+  const config = configFromEnv(e);
+  for (const input of [
+    batch(operationalNotification("999999", "account_alerts")),
+    batch(operationalNotification(e.WHATSAPP_WABA_ID, "account_alerts", {
+      metadata: { phone_number_id: "8888" }
+    })),
+    batch(operationalNotification(e.WHATSAPP_WABA_ID, "security", {
+      phone_number: "+60174831336"
+    })),
+    batch(operationalNotification(e.WHATSAPP_WABA_ID, "user_preferences")),
+    batch(operationalNotification(e.WHATSAPP_WABA_ID, "account_alerts", null))
+  ]) {
+    assert.throws(() => partitionDefaultBatch(input, config));
+  }
+});
+
+test("replayed operational notification is idempotent and does not duplicate alert", async () => {
+  const e = env();
+  const config = configFromEnv(e);
+  const plan = partitionDefaultBatch(batch(operationalNotification(
+    e.WHATSAPP_WABA_ID, "account_alerts", { event: "WARNING" }
+  )), config);
+  const db = mockDatabase({ duplicate: true });
+  assert.deepEqual(await recordAuditBatch(plan.audits, config, db),
+    { durable: true, inserted: 0 });
+  const logs = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => logs.push(args);
+  try {
+    const response = fakeResponse();
+    await dispatchDefaultWebhook({ body: batch(operationalNotification(
+      e.WHATSAPP_WABA_ID, "account_alerts", { event: "WARNING" }
+    )) }, response, () => { throw Error("Must never call Neutro"); }, {
+      env: e, persist: async () => ({ durable: true, inserted: 0 })
+    });
+    assert.equal(response.code, 200);
+    assert.equal(logs.length, 0);
+  } finally { console.warn = originalWarn; }
 });
