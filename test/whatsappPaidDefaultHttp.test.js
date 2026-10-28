@@ -135,3 +135,87 @@ test("real Express router verifies dedicated GET token, rejects unsigned or fore
     assert.equal(signedForeign.status, 503);
   });
 });
+
+function neutroMessageBody() {
+  return JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [{
+      id: "1593376338308612",
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: {
+            display_phone_number: "601130535053",
+            phone_number_id: "1408739622311791"
+          },
+          contacts: [{ wa_id: "60122222222", profile: { name: "Test Customer" } }],
+          messages: [{
+            id: "wamid.neutro-test-1",
+            from: "60122222222",
+            timestamp: "1790591000",
+            type: "text", text: { body: "Please explain 3D treatment" }
+          }]
+        }
+      }]
+    }]
+  });
+}
+
+function appWithDurableClaims(claims, { fail = false } = {}) {
+  return createApp({
+    sessionSecret: "safe-test-session-secret".repeat(3),
+    durablyClaimIncoming: async (phone, incoming) => {
+      if (fail) throw Error("Durable Neutro storage failed");
+      claims.push({ phone, incoming });
+      return { claimed: true, phone };
+    },
+    scheduleDurableClaim: async () => {},
+    queueIncomingForReply: async () => {}
+  });
+}
+
+test("real signed Neutro Cloud API POST uses the SAME durable handler on both routes", async t => {
+  setEnv(t, environment());
+  readiness.markReady();
+  const claims = [];
+  await withServer(appWithDurableClaims(claims), async url => {
+    const raw = neutroMessageBody();
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Hub-Signature-256": signed(environment().WHATSAPP_APP_SECRET, raw)
+    };
+    const existing = await fetch(url + "/webhook", {
+      method: "POST", headers, body: raw
+    });
+    assert.equal(existing.status, 200);
+    assert.equal(claims.length, 1);
+    const routed = await fetch(url + "/whatsapp/default", {
+      method: "POST", headers, body: raw
+    });
+    assert.equal(routed.status, 200);
+    assert.equal(claims.length, 2);
+    assert.deepEqual(claims[0], claims[1]);
+    assert.equal(claims[0].phone, "60122222222");
+    assert.equal(claims[0].incoming.text, "Please explain 3D treatment");
+    assert.equal(claims[0].incoming.from, "60122222222");
+  });
+});
+
+test("real Neutro durable-store errors still return 503, not a false 200", async t => {
+  setEnv(t, environment());
+  readiness.markReady();
+  await withServer(appWithDurableClaims([], { fail: true }), async url => {
+    const raw = neutroMessageBody();
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Hub-Signature-256": signed(environment().WHATSAPP_APP_SECRET, raw)
+    };
+    for (const route of ["/webhook", "/whatsapp/default"]) {
+      const response = await fetch(url + route, {
+        method: "POST", headers, body: raw
+      });
+      assert.equal(response.status, 503);
+    }
+  });
+});
