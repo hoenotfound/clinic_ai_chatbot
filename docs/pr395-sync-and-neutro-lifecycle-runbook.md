@@ -8,7 +8,7 @@
 - Existing Neutro WABA: `1593376338308612`; Neutro phone ID: `1408739622311791`.
 - DA CHATBOT app: `1029862536608134`. Embedded Signup config: `936687052431880`.
 - **Updated 28 Oct 2026:** owner verified Meta app-default callback is `https://neutrosense.dasmarketingsolution.com/whatsapp/default` (paid Render), with all 13 fields preserved. Neutro's WABA and phone overrides remain `https://neutrosense.dasmarketingsolution.com/webhook`. This is a previously approved cutover, **not** QR authorization. Do not change either callback during QR; reconfirm current Meta configuration read-only before onboarding. The older `https://clinic-ai-chatbot.onrender.com/webhook` is a rollback candidate, not the current default.
-- Dedicated Render staging `srv-dbdgmnks728c73btahcg`: branch is PR #395, auto-deploy OFF. Isolated Neon `wandering-dream-82267835`. Confirm staging's actual connection, flags and fresh deployed commit before testing. Do not touch Neutro production Render/Neon.
+- Dedicated Render staging `srv-dbdgmnks728c73btahcg`: deployed PR #414 branch `pr395-history-handoff-20261028`, auto-deploy OFF. Isolated QA Neon `wandering-dream-82267835`, source `neondb` v104 and destination `pr414_forward_qa` v106. Never touch Neutro production Render/Neon for rehearsals.
 - Keep `PR395_STAGING_MODE=true`. All outbound sending/AI/follow-ups/retries remain disabled. `PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED` remains **OFF** during deploy and before owner's later explicit sync approval.
 - Pre-signup callback and legacy audit paths are not substitutes for a live signed provider receiver.
 
@@ -35,22 +35,30 @@ must remain OFF in all deployed services until a supervised, identity-verified
 rollout is separately approved. Never copy an old personal-QA account, token
 or phone ID; get the real WABA and phone ID from authenticated Meta onboarding.
 
-**Critical receiver handoff still incomplete:** The paid app-default path
-can encrypt and store signed secondary `history` and `smb_app_state_sync`
-events in `whatsapp_secondary_qa_capture_events`, but this is a holding
-queue, NOT the WhatsApp Inbox importer. The standalone history importer reads
-`whatsapp_sender_coexistence_import_jobs` and requires an active, verified
-sender. The capture path requires the sender to remain in state `testing`.
-There is no proven safe, idempotent, owner-consented capture-to-import bridge.
-Do not claim imported chats or start the one-time sync until that bridge (or
-a directly verified signed callback to the isolated importer) passes real
-HTTP-to-disposable-PostgreSQL tests, replay and outage tests, and strict
-Neutro/Messenger isolation.
+**Updated PR #414 history bridge evidence (28 Oct 2026):** The new
+`whatsappSecondaryCaptureHandoff` moves consent-gated AES-GCM encrypted
+`history` and `smb_app_state_sync` QA captures to sender-qualified durable
+Inbox jobs, and imports them through the passive history worker. It requires
+an exact testing source sender and an active, distinct destination sender.
+The first real-DB QA rehearsal on paid-branch code passed: 2 encrypted
+captured changes, 2 handoffs, 3 original-time Inbox messages, contact
+name, media placeholder, replay deduplication, zero billing/sends. Both
+QA databases were verified empty of synthetic rows after cleanup, and
+the opt-in rehearsal flags were disabled again. GitHub CI also passed.
+
+**Still unproven:** real Meta-origin signed callback delivery for this exact
+second WhatsApp Business App identity and the once-only post-onboarding
+history request. Neither the staging rehearsal nor CI is permission to
+scan QR. The current production paid Render still runs `main` on migration
+079. Review, approve and deploy PR #414 to production with all secondary
+sending/sync disabled before the QR, and prove the primary still works.
+See `docs/pr414-pre-qr-release-gates.md`.
 
 The separate rehearsal branch's local signed HTTP test (synthetic IDs, no
 Meta API call) verifies HMAC authentication, AES-GCM encrypted QA storage,
 duplicate rejection, consent refusal and unchanged Neutro routing. It does
-not prove real signed Meta POST delivery or transfer into Inbox history.
+not prove real signed Meta POST delivery; a separate live-QA database
+handoff/import rehearsal now proves the synthetic Inbox transfer.
 The real clinic number must not be onboarded on the strength of this test
 alone. No Meta callback, production database or existing staging database
 is changed by the rehearsal branch.

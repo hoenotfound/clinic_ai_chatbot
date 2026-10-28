@@ -1,14 +1,12 @@
 # PR #414 isolated QA staging: safe activation checklist
 
-**Status: prepared, not deployed. Do not scan a Coexistence QR, send to Meta,
-merge this PR into main, or change Neutro production.**
+**Status: deployed to QA staging and real-DB synthetic rehearsal PASSED. Do not scan a Coexistence QR, send to Meta, merge into production, or change Neutro production without separate release approval.**
 
 ## Existing resources verified 28 October 2026
 
 - Render free staging service: `srv-dbdgmnks728c73btahcg`
   (`da-chatbot-pr395-staging`), auto-deploy disabled.
-- Existing staging branch: `feature/whatsapp-complete-multinumber-integration-20261022`
-  (last deployed commit `8a47a92c`). Leave this branch and PR #395 intact.
+- Current staging branch: `pr395-history-handoff-20261028` at reviewed commit `3c4771d0`. PR #395 remains separate.
 - Neon *QA* project: `wandering-dream-82267835`, branch
   `br-late-sky-ao8xggam`. **This is NOT Neutro production Neon.**
 - Encrypted source database: `neondb` under existing
@@ -105,3 +103,30 @@ media placeholders, and no outbound or billing side effects. Check old QA
 
 **A green synthetic test does not authorize QR onboarding.** Real Meta
 signed delivery and consented history import still require supervised checks.
+
+## D. Completed synthetic live-QA evidence — 28 Oct 2026
+
+Render staging deployed commit `3c4771d0` with explicit one-shot
+`PR414_QA_SYNTHETIC_REHEARSAL_ON_BOOT=true` and separate synthetic operator
+approval for one run only. The actual Node capture service, AES-GCM
+encryption, QA Postgres handoff, sender-qualified import and replay checks
+all passed without sending messages or calling Meta.
+
+- 2 captured history/contact changes; 2 durable transfers
+- 3 Inbox history messages with correct sender identity, names, original
+  timestamps, one media placeholder and inbound/outbound role direction
+- Identical signed-receiver-equivalent synthetic retry: zero duplicates
+- Billing attempts: zero
+- Source QA remained migration 104; target remained migration 106
+- All rehearsal source and target test rows were cleaned; read-only
+  Postgres queries independently confirmed 0 source/target senders,
+  captures, contacts, messages, import jobs and sync events
+- Rehearsal/approval flags were set back to `false` and staging remained live
+- Full GitHub CI succeeded for this head
+
+The synthetic function supplies a test-only `signatureVerified` proof
+after bypassing HTTP (actual signed HTTP is separately covered by CI).
+This is **not** genuine Meta-origin webhook delivery.
+
+See `docs/pr414-pre-qr-release-gates.md` for the remaining production
+and actual Meta approvals.
