@@ -22,6 +22,26 @@ const NEVER_SEND = [
 ];
 
 function assertOperatorIsolation(env, action) {
+  // Nonsecret gate diagnostics only. Never log tokens, credentials, phones or payloads.
+  const gates = {
+    action: ["inspect","import"].includes(action),
+    staging: env.PR395_STAGING_MODE === "true",
+    operator: env.PR414_QA_REAL_HISTORY_OPERATOR_APPROVED === "true",
+    noSynthetic: env.PR414_QA_SYNTHETIC_REHEARSAL_ON_BOOT !== "true",
+    noProvider: env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true",
+    noSyncDispatch: env.PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED !== "true",
+    noSender: !NEVER_SEND.some(key => env[key] === "true"),
+    sameHostQa: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST === "true",
+    sourcePin: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE === "neondb",
+    targetPin: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE === "pr414_forward_qa",
+    historyConsent: env.WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED === "true",
+    processingConsent: env.WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED === "true",
+    realQaPhone: env.WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164 === "+60174831336",
+    handoffEnabled: action !== "import" || env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED === "true",
+    handoffApproved: action !== "import" || env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED === "true"
+  };
+  const missing = Object.keys(gates).filter(key => !gates[key]);
+  if (missing.length) console.error("[PR414 real QA] blocked nonsecret gate names: " + missing.join(","));
   if (!["inspect", "import"].includes(action) ||
       env.PR395_STAGING_MODE !== "true" ||
       env.PR414_QA_REAL_HISTORY_OPERATOR_APPROVED !== "true" ||
