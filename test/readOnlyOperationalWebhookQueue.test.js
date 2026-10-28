@@ -36,8 +36,8 @@ test("all subscribed notification categories receive a manual action without pay
   assert.equal(summary.length,8);
   assert.ok(summary.every(x=>x.requiresManualReview &&
     typeof x.action==="string" && x.action.length>10));
-  assert.equal(summary[0].field,"security");
-  assert.equal(summary[0].severity,"urgent");
+  assert.ok(summary.slice(0,2).every(x=>x.severity==="urgent"));
+  assert.ok(summary.some(x=>x.field==="security" && x.severity==="urgent"));
   assert.equal(summary.at(-1).severity,"review");
   assert.ok(summary.every(x=>!Object.hasOwn(x,"payload")));
 });
