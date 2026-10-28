@@ -259,26 +259,40 @@ test("tampered ciphertext, source phone mismatch and target failure never checkp
   }),/target unavailable/);
   assert.equal(src.rows[0].handoff_completed_at,undefined);
 });
-test("620 historical messages are split into three bounded durable jobs",async()=>{
+test("620 history messages are encrypted into seven bounded, replayable Inbox jobs",async()=>{
   const bulk=Array.from({length:620},(_,i)=>({
     id:"wamid.synthetic-bulk-"+i,
     from:"60126662222",timestamp:timestamp(),
     type:"text",text:{body:"Historical message "+i}
   }));
-  const src=sourceDb([encrypted("history",bulk)]);
+  const synthetic={object:"whatsapp_business_account",entry:[{
+    id:"889900",time:1790000000,changes:[change("history",bulk)]
+  }]};
+  const jobs=capture.classify(synthetic,capture.captureConfig(env()));
+  const encryptedRows=jobs.map(job=>{
+    const e=capture.encryptJob(job,Buffer.alloc(32,29));
+    return {fingerprint:e.fingerprint,sender_id:9,event_field:e.field,
+      ciphertext:e.ciphertext,nonce:e.nonce,auth_tag:e.tag,payload_bytes:e.bytes};
+  });
+  const src=sourceDb(encryptedRows);
   const dest=targetDb();
-  const stageOnly=await handoff.handoffOnce({
-    env:env(),sourceDatabase:src,targetDatabase:dest.database
+  const staged=await handoff.handoffOnce({
+    env:env(),sourceDatabase:src,targetDatabase:dest.database,maxEvents:10
   });
-  assert.equal(stageOnly.transferred,1);
-  assert.equal(dest.jobs.size,3);
+  assert.equal(staged.transferred,7);
+  assert.equal(dest.jobs.size,7);
   assert.deepEqual([...dest.jobs.values()].map(j=>
-    j.payload.change.value.history[0].threads[0].messages.length),[250,250,120]);
+    j.payload.change.value.history[0].threads[0].messages.length),
+    [100,100,100,100,100,100,20]);
   assert.equal(dest.messages.size,0);
-  const importer=await dest.importJobs({
-    database:dest.database,env:handoff.configForHandoff(env()).importEnv,maxJobs:3
-  });
-  assert.equal(importer.processed,3);
+  let processed=0;
+  for(let i=0;i<3;i++){
+    const result=await dest.importJobs({
+      database:dest.database,env:handoff.configForHandoff(env()).importEnv
+    });
+    processed+=result.processed;
+  }
+  assert.equal(processed,7);
   assert.equal(dest.messages.size,620);
 });
 test("live messages/echoes never become a passive history job",async()=>{
