@@ -79,11 +79,16 @@ async function importPassiveChange({accountId,change},{
             !Number.isFinite(timestamp) ||
             timestamp>now+60 || timestamp<now-366*86400)continue;
          const from=cleanPhone(msg.from);
-         const to=cleanPhone(msg.to);
-         // Confirm message direction from the ORIGINAL sender/recipient.
-         // A history item with ambiguous direction is skipped, never guessed.
-         const inbound=from===phone && (!to||to!==phone);
-         const outbound=to===phone && from!==phone;
+         const to=msg.to == null ? null : cleanPhone(msg.to);
+         const businessPhone=cleanPhone(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+         // Meta history does not always include "to". Determine direction
+         // only from the verified business number and thread participant.
+         // Never attribute an unrelated or ambiguous history message.
+         if(!businessPhone || businessPhone===phone) {
+           throw Error("Verified secondary business phone required for history import.");
+         }
+         const inbound=from===phone && (to===null || to===businessPhone);
+         const outbound=from===businessPhone && (to===null || to===phone);
          if(inbound===outbound)continue;
          const client=await database.connect();
          try{
