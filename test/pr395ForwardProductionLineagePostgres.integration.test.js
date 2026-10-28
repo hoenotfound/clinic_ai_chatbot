@@ -238,9 +238,9 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
         WHATSAPP_PAID_REAL_CLINIC_REHEARSAL_ENABLED:"true",
         WHATSAPP_PAID_REAL_CLINIC_OPERATOR_APPROVED:"true",
         WHATSAPP_PAID_REAL_CLINIC_E164_PIN:"+60174831336",
-        DATABASE_URL:"postgresql://synthetic:synthetic@ep-disposable-target.neon.tech/not-used",
+        DATABASE_URL:"postgresql://synthetic:synthetic@ep-disposable-target.neon.tech/qa_inbox",
         WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL:
-          "postgresql://synthetic:synthetic@ep-disposable-source.neon.tech/not-used",
+          "postgresql://synthetic:synthetic@ep-disposable-source.neon.tech/capture",
         WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:"ep-disposable-source.neon.tech",
         WHATSAPP_PAID_SECONDARY_QA_WABA_ID:"889900",
         WHATSAPP_PAID_SECONDARY_QA_PHONE_ID:"112233",
@@ -252,8 +252,8 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
         WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED:"true",
         WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED:"true",
         WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_HOST:"ep-disposable-target.neon.tech",
-        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"not-used",
-        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"not-used",
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"qa_inbox",
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"capture",
         PR395_STAGING_MODE:"true"
       };
       const now=String(Math.floor(Date.now()/1000)-3600);
