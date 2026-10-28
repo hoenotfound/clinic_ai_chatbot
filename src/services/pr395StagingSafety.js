@@ -37,6 +37,14 @@ const REHEARSAL_OUTBOUND_FORBIDDEN = [
   "WHATSAPP_FEP_FOLLOWUPS_ENABLED",
 ];
 function digits(value) { return String(value || "").replace(/\D/g, ""); }
+const CLINIC_SECOND_NUMBER_E164 = "+60174831336";
+function clinicSecondNumberApproved(env) {
+  return env.PR395_STAGING_REAL_CLINIC_ENABLED === "true" &&
+    env.PR395_STAGING_REAL_CLINIC_OPERATOR_APPROVED === "true" &&
+    env.PR395_STAGING_REAL_CLINIC_E164_PIN === CLINIC_SECOND_NUMBER_E164 &&
+    env.PR395_STAGING_APPROVED_TEST_PHONE_E164 === CLINIC_SECOND_NUMBER_E164 &&
+    env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 === CLINIC_SECOND_NUMBER_E164;
+}
 function verifiedRehearsalTarget(env) {
   const waba = String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim();
   const expectedWaba = String(env.WHATSAPP_SECONDARY_EXPECTED_WABA_ID || "").trim();
@@ -47,10 +55,11 @@ function verifiedRehearsalTarget(env) {
   if (!/^\d+$/.test(waba) || waba !== expectedWaba ||
       waba === String(env.WHATSAPP_WABA_ID || "") ||
       !/^\d+$/.test(phone) || phone !== expectedPhone ||
-      phone === "1318355951360575" || // Reserved for 中医养生馆, not the personal QA number.
+      (phone === "1318355951360575" && !clinicSecondNumberApproved(env)) || // Only permitted in separately approved real-clinic QA mode.
       phone === String(env.WHATSAPP_PHONE_NUMBER_ID || "") ||
       !/^\+[1-9]\d{7,14}$/.test(e164) ||
-      e164 !== privateQaPin || e164 === "+60174831336" ||
+      e164 !== privateQaPin ||
+      (e164 === CLINIC_SECOND_NUMBER_E164 && !clinicSecondNumberApproved(env)) ||
       digits(e164) === digits(env.WHATSAPP_PHONE_NUMBER || "") ||
       env.WHATSAPP_SECONDARY_SENDER_KEY !== "coexistence_qa") {
     throw new Error("Provider rehearsal requires a separately verified secondary account, phone, E164 and sender key.");
@@ -213,4 +222,4 @@ function stagingWebhookGuard(req, res, next, env = process.env) {
   return next();
 }
 
-module.exports = { isPr395Staging, providerRehearsalEnabled, verifiedRehearsalTarget, validProviderRehearsalEvent, assertPr395StagingSafety, stagingWebhookGuard, OUTBOUND_SWITCHES };
+module.exports = { isPr395Staging, providerRehearsalEnabled, clinicSecondNumberApproved, verifiedRehearsalTarget, validProviderRehearsalEvent, assertPr395StagingSafety, stagingWebhookGuard, OUTBOUND_SWITCHES };
