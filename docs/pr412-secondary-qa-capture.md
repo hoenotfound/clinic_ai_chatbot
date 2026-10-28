@@ -113,6 +113,23 @@ The read-only QA inventory query found zero records for these fields in the
 last seven days on 2026-10-28. This is expected before deploying the new
 ingress, **not** proof of successful live Meta delivery.
 
+## CI-only migration rehearsal and remaining production-copy gate
+
+The added `test/neutroV079DisposablePostgresRehearsal.test.js` runs only
+when `TEST_DATABASE_URL` points to **localhost or 127.0.0.1**. On GitHub CI's
+disposable PostgreSQL 16 service, it creates an isolated synthetic database,
+executes the actual migration runner through v077, applies unchanged sales
+migrations 078 and 079, verifies the resulting schema/checksums, confirms
+a v079-aware runner starts without new migration work, and confirms v077-only
+code refuses the newer history. The test drops its CI database afterward.
+It does **not** connect to Neon and does not contain patient data.
+
+This is a fresh-schema compatibility rehearsal, not yet a restored-production
+regression test: real historic rows, foreign key anomalies, production indexes,
+Neon pooled connection behavior and a full old application restart need a
+separately authorized disposable *restored production* database and a verified
+backup before approving a live deployment.
+
 ## Migration rehearsal still awaiting a separately authorized disposable DB
 
 PR #411's CI pins a v079-compatible rollback **source tree**, but has not
