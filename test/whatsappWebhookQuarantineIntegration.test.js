@@ -65,6 +65,7 @@ function webhookHarness({ failAudit = false, dualInbox = false,
       }
     },
     webhookJsonParser: () => {},
+    paidDefaultHistoryJsonParser: () => {},
     stagingWebhookGuard: (_req, _res, next) => next(),
     Buffer, setTimeout, clearTimeout,
     whatsapp,
