@@ -13,7 +13,7 @@ function splitSecondaryQaChanges(body,env=process.env){
   const expected=String(env.WHATSAPP_PAID_SECONDARY_QA_WABA_ID||"");
   const primary=String(env.WHATSAPP_WABA_ID||"");
   if(!/^\d{1,32}$/.test(expected)||expected===primary)
-    return {secondary:null,remaining:body};
+    return {secondary:null,notifications:[],remaining:body};
   if(!body||body.object!=="whatsapp_business_account"||
      !Array.isArray(body.entry)||!body.entry.length||body.entry.length>100)
     throw Error("Malformed app-default WhatsApp batch");
@@ -37,8 +37,8 @@ function splitSecondaryQaChanges(body,env=process.env){
         const expectedE164=String(env.WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164||"");
         if(!val||typeof val!=="object"||Array.isArray(val)||
            (phone!==null&&phone!==pinned)||
-           (e164!==null&&String(e164).replace(/\\D/g,"")!==
-             expectedE164.replace(/\\D/g,""))) {
+           (e164!==null&&String(e164).replace(/\D/g,"")!==
+             expectedE164.replace(/\D/g,""))) {
           other.push(change);
         } else {
           const timestamp=entry.time??null;
