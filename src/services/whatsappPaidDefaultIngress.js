@@ -61,43 +61,55 @@ function configFromEnv(env = process.env) {
   const primaryE164 = requireE164(
     env.WHATSAPP_PAID_DEFAULT_PRIMARY_PHONE_E164, "primary E164"
   );
-  const qaE164 = requireE164(
-    env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164, "QA E164"
-  );
-  if (digits(primaryE164) === digits(qaE164) || qaE164 === "+60174831336") {
+  // The signed primary Neutro handler must not depend on QA credentials.
+  // Parse an optional pin for event classification. Audit-only paths demand
+  // the complete strict QA configuration before any QA write.
+  const rawQaE164 = String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "");
+  const qaE164 = /^\\+[1-9]\\d{7,14}$/.test(rawQaE164) ? rawQaE164 : null;
+  return Object.freeze({
+    appSecret, verifyToken, primaryWaba, primaryPhoneId, primaryE164,
+    qaE164,
+    qaDatabaseUrl: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL || ""),
+    pinnedQaHost: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST || "")
+      .trim().toLowerCase(),
+    primaryDatabaseUrl: String(env.DATABASE_URL || ""),
+    secondarySendingEnabled: FORBIDDEN_SECONDARY_SENDS.some(key => env[key] === "true"),
+    secondarySenderConfigured: Boolean(
+      String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim() ||
+      String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim()
+    )
+  });
+}
+
+function assertQaConfiguration(config) {
+  if (!config.qaE164 || config.qaE164 === "+60174831336" ||
+      digits(config.qaE164) === digits(config.primaryE164)) {
     throw new Error("Secondary QA phone must be independently pinned");
   }
-  if (FORBIDDEN_SECONDARY_SENDS.some(key => env[key] === "true")) {
+  if (config.secondarySendingEnabled) {
     throw new Error("Personal WhatsApp outbound must stay disabled");
   }
-  if (String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim() ||
-      String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim()) {
+  if (config.secondarySenderConfigured) {
     throw new Error("Bootstrap-only router cannot activate a secondary sender");
   }
-  const qaDatabaseUrl = String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL || "");
-  const pinnedQaHost = String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST || "")
-    .trim().toLowerCase();
-  const primaryDatabaseUrl = String(env.DATABASE_URL || "");
   let qaUrl, primaryUrl;
   try {
-    qaUrl = new URL(qaDatabaseUrl);
-    primaryUrl = new URL(primaryDatabaseUrl);
+    qaUrl = new URL(config.qaDatabaseUrl);
+    primaryUrl = new URL(config.primaryDatabaseUrl);
   } catch (_) {
     throw new Error("Production and QA database connections must be configured");
   }
   if (!["postgres:", "postgresql:"].includes(qaUrl.protocol) ||
       !["postgres:", "postgresql:"].includes(primaryUrl.protocol) ||
       !qaUrl.username || !qaUrl.password || !primaryUrl.hostname ||
-      !pinnedQaHost || qaUrl.hostname.toLowerCase() !== pinnedQaHost ||
-      !pinnedQaHost.endsWith(".neon.tech") ||
+      !config.pinnedQaHost ||
+      qaUrl.hostname.toLowerCase() !== config.pinnedQaHost ||
+      !config.pinnedQaHost.endsWith(".neon.tech") ||
       qaUrl.hostname.toLowerCase() === primaryUrl.hostname.toLowerCase() ||
-      qaDatabaseUrl === primaryDatabaseUrl) {
+      config.qaDatabaseUrl === config.primaryDatabaseUrl) {
     throw new Error("QA Neon host must be explicitly pinned and separate from production");
   }
-  return Object.freeze({
-    appSecret, verifyToken, primaryWaba, primaryPhoneId, primaryE164,
-    qaE164, qaDatabaseUrl, pinnedQaHost
-  });
+  return config;
 }
 
 function fingerprint(accountId, entryTime, change) {
@@ -215,6 +227,7 @@ function partitionDefaultBatch(body, config) {
 // This QA-only pool is deliberately not imported from ../db/db and is not
 // part of Neutro startup migrations, workers, or customer repositories.
 function getQaPool(config) {
+  assertQaConfiguration(config);
   if (qaPool && qaPoolKey !== config.qaDatabaseUrl) {
     throw new Error("QA Neon database changed during a running process");
   }
@@ -357,6 +370,6 @@ async function dispatchDefaultWebhook(req, res, primaryHandler, {
 }
 
 module.exports = {
-  enabled, configFromEnv, partitionDefaultBatch, recordAuditBatch,
-  dispatchDefaultWebhook
+  enabled, configFromEnv, assertQaConfiguration, partitionDefaultBatch,
+  recordAuditBatch, dispatchDefaultWebhook
 };
