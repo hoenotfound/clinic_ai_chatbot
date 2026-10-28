@@ -174,6 +174,17 @@ async function runOnBoot(env=process.env) {
   const operatorEnv = {
     ...env,
     WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164:onboardedE164,
+    // These placeholders are ONLY passed to local config validators.
+    // No HTTP endpoint, Meta request or process.env receives them.
+    WHATSAPP_APP_SECRET:"pr414-no-meta-network-local-validation-secret",
+    META_APP_SECRET:"pr414-no-meta-network-local-validation-secret",
+    WHATSAPP_PAID_DEFAULT_VERIFY_TOKEN:"pr414-no-meta-network-local-verification",
+    WHATSAPP_WABA_ID:"910000000000001",
+    WHATSAPP_PHONE_NUMBER_ID:"910000000000002",
+    WHATSAPP_PAID_DEFAULT_PRIMARY_PHONE_E164:"+60129999901",
+    WHATSAPP_PHONE_NUMBER:"+60129999901",
+    WHATSAPP_SECONDARY_WABA_ID:"",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",
     WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
     WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"true",
     WHATSAPP_PAID_SECONDARY_QA_OPERATOR_APPROVED:"true",
