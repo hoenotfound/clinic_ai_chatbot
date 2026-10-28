@@ -219,3 +219,28 @@ test("real Neutro durable-store errors still return 503, not a false 200", async
     }
   });
 });
+
+test("real primary POST remains 200 with all QA database variables absent", async t => {
+  setEnv(t, {
+    ...environment(),
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL: null,
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST: null,
+    WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164: null
+  });
+  readiness.markReady();
+  const claims = [];
+  await withServer(appWithDurableClaims(claims), async url => {
+    const raw = neutroMessageBody();
+    const response = await fetch(url + "/whatsapp/default", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": signed(environment().WHATSAPP_APP_SECRET, raw)
+      },
+      body: raw
+    });
+    assert.equal(response.status, 200);
+    assert.equal(claims.length, 1);
+    assert.equal(claims[0].incoming.from, "60122222222");
+  });
+});
