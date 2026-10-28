@@ -162,8 +162,9 @@ function publicConfig(env = process.env) {
       !unassignedProtectedQaTarget(env)) {
     missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID or protected QA E.164 pin");
   }
-  if (secondary && clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) ===
-      clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
+  const expectedSecondaryId = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
+  if (secondary && expectedSecondaryId &&
+      expectedSecondaryId === clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
     missing.push("A distinct secondary phone number ID");
   }
 

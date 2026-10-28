@@ -67,6 +67,12 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
   const source = qa();
   assert.equal(unassignedProtectedQaTarget(source),true);
   assert.equal(publicConfig(source).configured,true);
+  // A pre-signup personal Business App number has no assigned Meta phone ID.
+  // Both IDs being absent must not be mistaken for matching account IDs.
+  assert.equal(publicConfig(qa({WHATSAPP_PHONE_NUMBER_ID:""})).configured,true);
+  assert.equal(publicConfig(qa({WHATSAPP_PHONE_NUMBER_ID:""})).missing.includes("A distinct secondary phone number ID"),false);
+  // A real matching, nonempty phone ID must still fail closed.
+  assert.equal(publicConfig(qa({WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"111111111111111"})).configured,false);
   assert.equal(publicConfig(source).runtime.phoneNumberId,null);
   assert.equal(publicConfig(source).runtime.expectedPhoneNumberId,null);
   assert.equal(requireExpectedSecondaryPhone(source),null);
