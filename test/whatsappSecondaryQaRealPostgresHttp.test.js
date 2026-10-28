@@ -71,7 +71,9 @@ async function server(app,fn){
   finally {await new Promise(resolve=>instance.close(resolve));}
 }
 test("signed real HTTP secondary capture persists, deduplicates, isolates and enforces history consent",{
-  skip:!local,timeout:120000
+  // Run only in a dedicated CI step after npm test to avoid competing
+  // CREATE/DROP DATABASE operations with the v077->v079 rehearsal.
+  skip:!local||process.env.RUN_SECONDARY_QA_HTTP_INTEGRATION!=="true",timeout:120000
 },async t=>{
   assertLocal();
   const databaseName="qa_capture_http_"+crypto.randomBytes(6).toString("hex");
