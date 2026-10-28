@@ -366,7 +366,7 @@ test("default supports larger signed history while Neutro keeps signed 2 MB pars
   assert.match(source, /}, paidDefaultHistoryJsonParser, async \(req, res\) => \{/);
   assert.match(source, /dispatchPaidDefaultWithSecondary\(\s*req, res, primaryWhatsappWebhookHandler/);
   assert.match(source, /app\.get\("\/whatsapp\/default"/);
-  assert.match(source, /createWebhookJsonParser\\(verifySignedWhatsappBody, "8mb"\\)/);
+  assert.match(source, /createWebhookJsonParser\(verifySignedWhatsappBody, "8mb"\)/);
   assert.ok(source.indexOf('app.post("/webhook"') <
             source.indexOf('app.post("/whatsapp/default"'));
   assert.doesNotMatch(source, /https:\/\/clinic-ai-chatbot\.onrender\.com/);
