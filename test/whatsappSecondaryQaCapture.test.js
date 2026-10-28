@@ -64,7 +64,10 @@ function db(opts={}) {
 test("secondary staging remains default OFF and has no route connected to Neutro",()=>{
   assert.throws(()=>capture.captureConfig(env({WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"false"})),/disabled/);
   const app=fs.readFileSync(path.join(__dirname,"../src/createApp.js"),"utf8");
-  assert.doesNotMatch(app,/whatsappSecondaryQaCapture|captureSignedSecondaryBatch/);
+  assert.match(app, /app\.post\("\/whatsapp\/secondary-qa-capture"/);
+  assert.match(app, /webhookJsonParser, async \(req, res\) => \{/);
+  assert.ok(app.indexOf('app.post("/webhook"') <
+    app.indexOf('app.post("/whatsapp/secondary-qa-capture"'));
   const source=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryQaCapture.js"),"utf8");
   assert.doesNotMatch(source,/fetch\(|sendWhatsApp|callGraph|startAutomatedFollowUps|queueIncomingForReply/);
 });
