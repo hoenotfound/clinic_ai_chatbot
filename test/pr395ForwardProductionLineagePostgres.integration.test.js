@@ -252,6 +252,8 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
         WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED:"true",
         WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED:"true",
         WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_HOST:"ep-disposable-target.neon.tech",
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"not-used",
+        WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"not-used",
         PR395_STAGING_MODE:"true"
       };
       const now=String(Math.floor(Date.now()/1000)-3600);
