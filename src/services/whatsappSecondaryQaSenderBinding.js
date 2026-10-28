@@ -24,7 +24,11 @@ function validated(binding,env){
 }
 async function bindQaSender(binding,{env=process.env,database=null}={}){
   const {waba,phone}=validated(binding,env);
-  const config=capture.captureConfig(env);
+  // Binding is safe while the live capture route remains OFF. Validate
+  // every underlying isolation/consent pin without changing process.env.
+  const config=capture.captureConfig({
+    ...env,WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"true"
+  });
   if(config.waba!==waba||config.phoneId!==phone)
     throw Error("Verified secondary IDs do not match pinned QA capture configuration");
   const pool=database||ingress.getQaPool(config);
