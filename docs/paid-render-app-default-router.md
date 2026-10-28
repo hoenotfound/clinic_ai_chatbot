@@ -20,6 +20,22 @@ existing /webhook endpoint, migrate Neutro's customer tables, or send messages.
   existing Neutro handler, not to a free Render relay.
 - Standalone known Neutro account_update and pinned personal-number
   preidentity account_update are committed to independent QA Neon before 200.
+- Additional subscribed v26 Meta notifications for the VERIFIED Neutro WABA
+  are audited (not operationally processed): account_alerts,
+  account_review_update, calls, message_template_quality_update,
+  message_template_status_update, phone_number_name_update,
+  phone_number_quality_update and security. They never enter the customer
+  inbound path. This also covers WABA-level template/account fields without
+  a phone ID; an explicitly mismatched phone is rejected.
+- Notification-only delivery returns HTTP 200 ONLY after its sanitized,
+  idempotent record is committed to isolated QA Neon; QA failures return 503.
+  New notification records issue a fingerprint-and-field-only log warning
+  requiring MANUAL operator review. No live alert fan-out, template catalog
+  refresh, calling implementation or automatic account action exists.
+- The QA notification record uses the already-created isolated table
+  whatsapp_sender_quarantined_events, reason unsupported_whatsapp_event,
+  meaning 'not operationally acted upon', without schema migrations or
+  customer payload retention.
 - For a mixed signed batch, the unchanged Neutro handler FIRST durably claims
   and acknowledges verified primary events. Only AFTER its successful 200 does
   the QA audit run. If QA Neon is unavailable, Neutro keeps its confirmed 200;
@@ -87,10 +103,17 @@ The rollback candidate MUST NOT be auto-deployed while production is still v077.
 ## Still required before callback cutover or QR
 
 1. Full signed HTTP integration and existing Neutro regression tests pass.
-2. Review actual subscribed Meta fields and add explicit handlers for
-   template, quality, security and other app-default events. Unsupported
-   events are either QA-quarantined with mixed verified primary messages or
-   rejected when no authorized event exists. This bootstrap route remains
+2. Actual Meta v26 subscriptions were verified in the owner's screenshots:
+   messages, account_update, history, smb_app_state_sync, smb_message_echoes,
+   account_alerts, account_review_update, calls, message_template_quality_update,
+   message_template_status_update, phone_number_name_update,
+   phone_number_quality_update and security. Additional Neutro-only operational
+   fields are now passively audited. **Not equivalent to processing**: an
+   operator must review notifications and implement any necessary lifecycle,
+   template/catalog and security actions before the production callback switch.
+   Unknown accounts, unknown fields and mismatching phone identity still fail
+   closed with 503. Inventory all other accounts subscribed to the same app
+   before the cutover so they are not stranded. This bootstrap route remains
    NOT ready for app-default callback cutover.
 3. Measure mixed-event and secondary history bursts on 0.5 CPU / 512 MB.
 4. Validate the real Meta app secret and verify token without exposing values.
