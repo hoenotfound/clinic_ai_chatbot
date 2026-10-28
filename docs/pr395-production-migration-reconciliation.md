@@ -79,3 +79,23 @@ Both must be rechecked before creating future migrations.
 rollback guard rejects future migrations beyond 079. PR #412 adds only an
 optional encrypted QA capture route and an isolated QA-only DDL artifact;
 it does NOT copy or apply any of the proposed production migrations.
+
+## Additional reconciliation finding (28 Oct 2026)
+
+Independent inspection of original PR #395 SQL found two migrations that
+**change referential integrity**, not just append tables. Original
+`080_whatsapp_sender_scoped_contact_identity.sql` (proposed NEW 082)
+creates sender-scoped replacement contact indexes and then **drops**
+`contacts_whatsapp_number_key`. Original
+`081_whatsapp_sender_binding_integrity.sql` (proposed NEW 083)
+**drops and recreates** three foreign-key constraints with CASCADE/RESTRICT
+semantics. These may be correct for multi-sender isolation, but require an
+actual restored-production dataset with index/constraint inventory and
+rollback tests. They are NOT safe to blindly renumber and auto-apply to
+Neutro, even if unit tests pass.
+
+**Decision:** keep v080–106 a manifest only. Do not merge PR #395 SQL
+until full schema reconciliation and realistic data/regression checks
+are independently approved. An initial receive-only QR rehearsal on
+isolated QA does NOT need these migrations and cannot claim a functional
+shared Inbox, AI, or follow-up support for the second sender.
