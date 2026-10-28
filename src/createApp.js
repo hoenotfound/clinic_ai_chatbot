@@ -5,6 +5,7 @@ const cookieSession = require("cookie-session");
 const whatsapp = require("./services/whatsappService");
 const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
 const secondaryQaCapture = require("./services/whatsappSecondaryQaCapture");
+const secondaryQaBridge = require("./services/whatsappPaidDefaultSecondaryBridge");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
@@ -247,8 +248,10 @@ function createApp({
     }
   }, webhookJsonParser, async (req, res) => {
     try {
-      return await paidDefaultIngress.dispatchDefaultWebhook(
-        req, res, primaryWhatsappWebhookHandler
+      return await secondaryQaBridge.dispatchPaidDefaultWithSecondary(
+        req, res, primaryWhatsappWebhookHandler, {
+          captureSecondary: (body, opts) => captureSecondaryQaBatch(body, opts)
+        }
       );
     } catch (error) {
       // Never return 200 for unknown accounts, undurable QA writes, or failed
