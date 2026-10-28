@@ -67,6 +67,12 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
   const source = qa();
   assert.equal(unassignedProtectedQaTarget(source),true);
   assert.equal(publicConfig(source).configured,true);
+  assert.equal(publicConfig(qa({
+    PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED:"false"
+  })).missing.some(x=>x.includes("PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED")),true);
+  assert.equal(publicConfig(qa({
+    PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED:"false"
+  })).missing.some(x=>x.includes("PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED")),true);
   // A pre-signup personal Business App number has no assigned Meta phone ID.
   // Both IDs being absent must not be mistaken for matching account IDs.
   assert.equal(publicConfig(qa({WHATSAPP_PHONE_NUMBER_ID:""})).configured,true);

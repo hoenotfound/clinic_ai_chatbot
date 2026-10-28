@@ -160,7 +160,34 @@ function publicConfig(env = process.env) {
   }
   if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID)) &&
       !unassignedProtectedQaTarget(env)) {
-    missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID or protected QA E.164 pin");
+    // An existing Business App phone has no known Cloud API phone ID until
+    // signup. Diagnose which independent safety proof is missing instead of
+    // misleading the administrator into inventing a numeric Meta ID.
+    const qaE164 = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+    const approvedE164 = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
+    const blockers = env.PR395_STAGING_MODE !== "true" ? [] : [
+      ["PR395_STAGING_APP_ONLY_SIGNUP_READY (app-only signup not verified)",
+        env.PR395_STAGING_APP_ONLY_SIGNUP_READY === "true"],
+      ["PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED (pre-signup callback proof missing)",
+        env.PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED === "true"],
+      ["PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED (lifecycle route proof missing)",
+        env.PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED === "true"],
+      ["PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED (importer transition proof missing)",
+        env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED === "true"],
+      ["WHATSAPP_SECONDARY_SENDER_KEY must be coexistence_qa",
+        env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa"],
+      ["QA phone pin must match privately approved test number",
+        /^\\+[1-9]\\d{7,14}$/.test(qaE164) && qaE164 === approvedE164 &&
+          qaE164 !== "+60174831336" &&
+          qaE164.replace(/\\D/g, "") !== clean(env.WHATSAPP_PHONE_NUMBER).replace(/\\D/g, "")],
+      ["Remove unverified WHATSAPP_SECONDARY_PHONE_NUMBER_ID and WHATSAPP_SECONDARY_WABA_ID",
+        !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) && !clean(env.WHATSAPP_SECONDARY_WABA_ID)],
+      ["Keep PR395_STAGING_PROVIDER_REHEARSAL_ENABLED and PR395_STAGING_ALLOW_PROVIDER_PROCESSING off",
+        env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED !== "true" &&
+          env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true"],
+    ].filter(([, ready]) => !ready).map(([description]) => description);
+    missing.push(...(blockers.length ? blockers :
+      ["WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID or protected QA E.164 pin"]));
   }
   const expectedSecondaryId = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
   if (secondary && expectedSecondaryId &&
@@ -599,3 +626,12 @@ module.exports = {
   safeSessionInfo,
   validateFinishSession,
 };
+
+// Staging-only, non-secret startup diagnosis. Never log private phone pins,
+// Meta tokens or full environment variables.
+if (process.env.PR395_STAGING_MODE === "true") {
+  const readiness = publicConfig(process.env);
+  console.info("[PR395 protected QA preflight]", JSON.stringify({
+    ready: readiness.configured, missing: readiness.missing,
+  }));
+}
