@@ -3,6 +3,7 @@ const express = require("express");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
@@ -123,7 +124,8 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/webhook", webhookJsonParser, async (req, res) => {
+  let primaryWhatsappWebhookHandler;
+  app.post("/webhook", webhookJsonParser, primaryWhatsappWebhookHandler = async (req, res) => {
     const incomingMessages = whatsapp.parseIncomingMessages(req.body);
     const reactionEvents = whatsapp.parseReactionEvents(req.body);
     const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
@@ -209,6 +211,49 @@ function createApp({
     processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
       console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
     });
+  });
+
+  // Dedicated Meta APP-DEFAULT callback on the existing paid Render process.
+  // The primary /webhook remains unchanged. This route is strictly default-OFF,
+  // signs with the existing Meta app secret and only records audit metadata for
+  // the personal WhatsApp Business App during preidentity bootstrap.
+  app.get("/whatsapp/default", (req, res) => {
+    if (!paidDefaultIngress.enabled()) return res.sendStatus(503);
+    let config;
+    try {
+      config = paidDefaultIngress.configFromEnv();
+    } catch (error) {
+      console.error("[Paid default router] Configuration unavailable:", error.message);
+      return res.sendStatus(503);
+    }
+    if (req.query["hub.mode"] === "subscribe" &&
+        verifyTokenMatches(req.query["hub.verify_token"], config.verifyToken) &&
+        typeof req.query["hub.challenge"] === "string") {
+      return res.status(200).send(req.query["hub.challenge"]);
+    }
+    return res.sendStatus(403);
+  });
+
+  app.post("/whatsapp/default", (req, res, next) => {
+    if (!paidDefaultIngress.enabled()) return res.sendStatus(503);
+    try {
+      paidDefaultIngress.configFromEnv();
+      return next();
+    } catch (error) {
+      console.error("[Paid default router] Configuration unavailable:", error.message);
+      return res.sendStatus(503);
+    }
+  }, webhookJsonParser, async (req, res) => {
+    try {
+      return await paidDefaultIngress.dispatchDefaultWebhook(
+        req, res, primaryWhatsappWebhookHandler
+      );
+    } catch (error) {
+      // Never return 200 for unknown accounts, undurable QA writes, or failed
+      // primary processing. Meta may retry; database event keys deduplicate.
+      console.error("[Paid default router] Rejected signed event:", error.message);
+      if (!res.headersSent) return res.sendStatus(503);
+    }
   });
 
   app.get("/meta-webhook", (req, res) => {

@@ -1,0 +1,428 @@
+"use strict";
+
+// App-default WhatsApp ingress for the existing paid Neutro process.
+// Bootstrap/audit only: it must NOT process the personal number's messages,
+// change sender activation, issue provider requests, or import history.
+const crypto = require("node:crypto");
+const { Pool } = require("pg");
+
+const PRIMARY_FIELDS = new Set([
+  "messages", "smb_message_echoes", "history", "smb_app_state_sync"
+]);
+// Exact non-conversational fields enabled in the owner's Meta v26 dashboard.
+// These are monitoring-only: do NOT deliver them as inbound customer messages,
+// mark a number connected, change templates, or trigger AI/follow-ups.
+const PASSIVE_META_FIELDS = new Set([
+  "account_alerts", "account_review_update", "calls",
+  "message_template_quality_update", "message_template_status_update",
+  "phone_number_name_update", "phone_number_quality_update", "security"
+]);
+const FORBIDDEN_SECONDARY_SENDS = [
+  "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED"
+];
+const DISCONNECTS = new Set([
+  "PARTNER_REMOVED", "ACCOUNT_OFFBOARDED", "ACCOUNT_DISCONNECTED",
+  "PHONE_NUMBER_REMOVED", "ACCOUNT_DISABLED", "DISCONNECTED"
+]);
+let qaPool = null;
+let qaPoolKey = null;
+
+function enabled(env = process.env) {
+  return env.WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED === "true";
+}
+function digits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+function numberId(value) {
+  return typeof value === "string" && /^\d+$/.test(value) ? value : null;
+}
+function requireNumber(value, label) {
+  const id = numberId(value);
+  if (!id) throw new Error("Missing or invalid " + label);
+  return id;
+}
+function requireE164(value, label) {
+  if (typeof value !== "string" || !/^\+[1-9]\d{7,14}$/.test(value)) {
+    throw new Error("Invalid " + label);
+  }
+  return value;
+}
+
+function configFromEnv(env = process.env) {
+  if (!enabled(env)) throw new Error("Paid default router is disabled");
+  const appSecret = String(env.WHATSAPP_APP_SECRET || "");
+  const metaSecret = String(env.META_APP_SECRET || "");
+  const verifyToken = String(env.WHATSAPP_PAID_DEFAULT_VERIFY_TOKEN || "");
+  if (appSecret.length < 24 || metaSecret !== appSecret || verifyToken.length < 16) {
+    throw new Error("Paid router Meta app verification is incomplete");
+  }
+  const primaryWaba = requireNumber(env.WHATSAPP_WABA_ID, "primary WABA");
+  const primaryPhoneId = requireNumber(env.WHATSAPP_PHONE_NUMBER_ID, "primary phone ID");
+  const primaryE164 = requireE164(
+    env.WHATSAPP_PAID_DEFAULT_PRIMARY_PHONE_E164, "primary E164"
+  );
+  // The signed primary Neutro handler must not depend on QA credentials.
+  // Parse an optional pin for event classification. Audit-only paths demand
+  // the complete strict QA configuration before any QA write.
+  const rawQaE164 = String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "");
+  const qaE164 = /^\+[1-9]\d{7,14}$/.test(rawQaE164) ? rawQaE164 : null;
+  return Object.freeze({
+    appSecret, verifyToken, primaryWaba, primaryPhoneId, primaryE164,
+    qaE164,
+    qaDatabaseUrl: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL || ""),
+    pinnedQaHost: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST || "")
+      .trim().toLowerCase(),
+    primaryDatabaseUrl: String(env.DATABASE_URL || ""),
+    secondarySendingEnabled: FORBIDDEN_SECONDARY_SENDS.some(key => env[key] === "true"),
+    secondarySenderConfigured: Boolean(
+      String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim() ||
+      String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "").trim()
+    )
+  });
+}
+
+function assertQaConfiguration(config) {
+  if (!config.qaE164 || config.qaE164 === "+60174831336" ||
+      digits(config.qaE164) === digits(config.primaryE164)) {
+    throw new Error("Secondary QA phone must be independently pinned");
+  }
+  if (config.secondarySendingEnabled) {
+    throw new Error("Personal WhatsApp outbound must stay disabled");
+  }
+  if (config.secondarySenderConfigured) {
+    throw new Error("Bootstrap-only router cannot activate a secondary sender");
+  }
+  let qaUrl, primaryUrl;
+  try {
+    qaUrl = new URL(config.qaDatabaseUrl);
+    primaryUrl = new URL(config.primaryDatabaseUrl);
+  } catch (_) {
+    throw new Error("Production and QA database connections must be configured");
+  }
+  if (!["postgres:", "postgresql:"].includes(qaUrl.protocol) ||
+      !["postgres:", "postgresql:"].includes(primaryUrl.protocol) ||
+      !qaUrl.username || !qaUrl.password || !primaryUrl.hostname ||
+      !config.pinnedQaHost ||
+      qaUrl.hostname.toLowerCase() !== config.pinnedQaHost ||
+      !config.pinnedQaHost.endsWith(".neon.tech") ||
+      qaUrl.hostname.toLowerCase() === primaryUrl.hostname.toLowerCase() ||
+      config.qaDatabaseUrl === config.primaryDatabaseUrl) {
+    throw new Error("QA Neon host must be explicitly pinned and separate from production");
+  }
+  return config;
+}
+
+function fingerprint(accountId, entryTime, change) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify({ account: accountId, entryTime, change }))
+    .digest("hex");
+}
+
+// Validate the ENTIRE Meta batch before any database write or legacy dispatch.
+// Unknown/foreign events fail closed. No fallback to Neutro is possible.
+function partitionDefaultBatch(body, config) {
+  if (!body || body.object !== "whatsapp_business_account" ||
+      !Array.isArray(body.entry) || body.entry.length < 1 ||
+      body.entry.length > 200) {
+    throw new Error("Invalid Meta WhatsApp batch");
+  }
+  const primary = [];
+  const audits = [];
+  function quarantine(accountId, entryTime, change, reason) {
+    const candidatePhone = change?.value?.metadata?.phone_number_id;
+    audits.push({
+      kind: "quarantine",
+      fingerprint: fingerprint(accountId, entryTime, change),
+      accountId, reason,
+      field: String(change.field).slice(0, 100),
+      phoneId: numberId(candidatePhone)
+    });
+  }
+  let total = 0;
+  for (const entry of body.entry) {
+    const accountId = requireNumber(entry && entry.id, "entry WABA");
+    if (!Array.isArray(entry.changes) || !entry.changes.length ||
+        entry.changes.length > 200) {
+      throw new Error("Invalid Meta changes array");
+    }
+    const primaryChanges = [];
+    let entryTime = null;
+    if (entry.time != null) {
+      entryTime = Number(entry.time);
+      if (!Number.isSafeInteger(entryTime) || entryTime <= 0) {
+        throw new Error("Invalid Meta entry time");
+      }
+    }
+    for (const change of entry.changes) {
+      if (++total > 200 || !change || typeof change.field !== "string" ||
+          !change.value || typeof change.value !== "object" ||
+          Array.isArray(change.value)) {
+        throw new Error("Invalid or excessive Meta changes");
+      }
+      const value = change.value;
+      const isPrimary = accountId === config.primaryWaba;
+      if (change.field === "account_update") {
+        if (typeof value.event !== "string" ||
+            !/^[A-Z][A-Z0-9_]{0,63}$/.test(value.event)) {
+          quarantine(accountId, entryTime, change, "malformed_whatsapp_change");
+          continue;
+        }
+        const suppliedPhone = value.phone_number;
+        if (isPrimary) {
+          if ((value.metadata?.phone_number_id != null &&
+               value.metadata.phone_number_id !== config.primaryPhoneId) ||
+              (suppliedPhone != null &&
+               (typeof suppliedPhone !== "string" ||
+                digits(suppliedPhone) !== digits(config.primaryE164)))) {
+            quarantine(accountId, entryTime, change, "different_business_phone");
+            continue;
+          }
+        } else if (typeof suppliedPhone !== "string" ||
+                   digits(suppliedPhone) !== digits(config.qaE164)) {
+          quarantine(accountId, entryTime, change, "different_business_account");
+          continue;
+        }
+        audits.push({
+          kind: isPrimary ? "primary" : "preidentity",
+          fingerprint: fingerprint(accountId, entryTime, change),
+          accountId, entryTime, eventType: value.event,
+          phone: isPrimary ? (suppliedPhone == null ? null : config.primaryE164)
+                           : config.qaE164
+        });
+        continue;
+      }
+      if (!isPrimary) {
+        // A signed app-wide notification for an unknown account is NOT proof
+        // it belongs to Neutro. Do not ACK or forward unknown-account-only
+        // batches until account routing has been positively verified.
+        quarantine(accountId, entryTime, change, "different_business_account");
+        continue;
+      }
+      if (PASSIVE_META_FIELDS.has(change.field)) {
+        // Account-wide template/review alerts may omit a phone entirely.
+        // An explicitly different phone is never accepted as Neutro. This
+        // receiver only audits metadata; it never acts upon its contents.
+        const metaPhoneId = value.metadata?.phone_number_id ?? value.phone_number_id;
+        const number = value.phone_number;
+        const phoneMatches = number == null ||
+          (typeof number === "string" &&
+           (digits(number) === digits(config.primaryE164) ||
+            number === config.primaryPhoneId));
+        if ((metaPhoneId != null && metaPhoneId !== config.primaryPhoneId) ||
+            !phoneMatches) {
+          quarantine(accountId, entryTime, change, "different_business_phone");
+          continue;
+        }
+        audits.push({
+          kind: "notification",
+          fingerprint: fingerprint(accountId, entryTime, change),
+          accountId, field: change.field,
+          phoneId: metaPhoneId == null ? null : config.primaryPhoneId
+        });
+        continue;
+      }
+      if (!PRIMARY_FIELDS.has(change.field)) {
+        quarantine(accountId, entryTime, change, "unsupported_whatsapp_event");
+        continue;
+      }
+      // Customer-related primary events must positively identify Neutro.
+      // Do not use the first configured phone as a fallback.
+      if (value.metadata?.phone_number_id !== config.primaryPhoneId) {
+        quarantine(accountId, entryTime, change,
+          value.metadata?.phone_number_id == null
+            ? "missing_business_phone" : "different_business_phone");
+        continue;
+      }
+      primaryChanges.push(change);
+    }
+    if (primaryChanges.length) primary.push({ ...entry, changes: primaryChanges });
+  }
+  // Do not ACK batches containing only unknown/foreign events. When a
+  // verified Neutro message is also present, record the unfamiliar event in
+  // QA quarantine without blocking the primary durable message handler.
+  if (!primary.length && !audits.some(a => a.kind !== "quarantine")) {
+    throw new Error("No authorized WhatsApp event in signed batch");
+  }
+  return {
+    primary: primary.length ? { ...body, entry: primary } : null,
+    audits
+  };
+}
+
+// This QA-only pool is deliberately not imported from ../db/db and is not
+// part of Neutro startup migrations, workers, or customer repositories.
+function getQaPool(config) {
+  assertQaConfiguration(config);
+  if (qaPool && qaPoolKey !== config.qaDatabaseUrl) {
+    throw new Error("QA Neon database changed during a running process");
+  }
+  if (!qaPool) {
+    qaPoolKey = config.qaDatabaseUrl;
+    qaPool = new Pool({
+      connectionString: config.qaDatabaseUrl,
+      ssl: { rejectUnauthorized: false },
+      max: 2,
+      connectionTimeoutMillis: 2000,
+      idleTimeoutMillis: 10000,
+      statement_timeout: 3000,
+      query_timeout: 4000,
+      application_name: "da-chatbot-paid-default-qa-audit"
+    });
+    qaPool.on("error", error => {
+      console.error("[Paid default router] QA Neon pool error:", error.code || "unknown");
+    });
+  }
+  return qaPool;
+}
+
+async function recordAuditBatch(audits, config, database = getQaPool(config)) {
+  if (!audits.length) return { durable: true, inserted: 0 };
+  const client = await database.connect();
+  let inTransaction = false;
+  try {
+    await client.query("BEGIN");
+    inTransaction = true;
+    // Exact QA schema required: production v077/079 must never receive writes.
+    const schema = await client.query(
+      "SELECT version, name FROM schema_migrations WHERE version IN (102,103,104)"
+    );
+    const versions = new Map(schema.rows.map(row => [Number(row.version), row.name]));
+    if (versions.get(102) !== "whatsapp_coexistence_preidentity_events" ||
+        versions.get(103) !== "whatsapp_legacy_lifecycle_relay_audit" ||
+        versions.get(104) !== "whatsapp_coexistence_once_only_and_lifecycle_alerts") {
+      throw new Error("QA database migration identity mismatch");
+    }
+    let inserted = 0;
+    for (const audit of audits) {
+      if (audit.kind === "primary") {
+        const result = await client.query(
+          "INSERT INTO whatsapp_legacy_lifecycle_relay_audit " +
+          "(fingerprint,account_id,event_type,account_phone_e164,entry_time) " +
+          "VALUES($1,$2,$3,$4,$5) ON CONFLICT(fingerprint) DO NOTHING " +
+          "RETURNING fingerprint",
+          [audit.fingerprint, audit.accountId, audit.eventType,
+           audit.phone, audit.entryTime]
+        );
+        if (result.rowCount === 1) {
+          inserted++;
+          await client.query(
+            "INSERT INTO whatsapp_pr395_legacy_lifecycle_alerts " +
+            "(fingerprint,account_id,event_type,severity) VALUES($1,$2,$3,$4) " +
+            "ON CONFLICT(fingerprint) DO NOTHING",
+            [audit.fingerprint, audit.accountId, audit.eventType,
+             DISCONNECTS.has(audit.eventType) ? "critical" : "review"]
+          );
+        }
+      } else if (audit.kind === "preidentity") {
+        const result = await client.query(
+          "INSERT INTO whatsapp_coexistence_preidentity_events " +
+          "(fingerprint,candidate_waba_id,candidate_phone_e164,event_type,entry_time) " +
+          "VALUES($1,$2,$3,$4,$5) ON CONFLICT(fingerprint) DO NOTHING " +
+          "RETURNING fingerprint",
+          [audit.fingerprint, audit.accountId, config.qaE164,
+           audit.eventType, audit.entryTime]
+        );
+        if (result.rowCount === 1) inserted++;
+      } else if (audit.kind === "quarantine" || audit.kind === "notification") {
+        // Keep use of the existing isolated QA table: no production migration.
+        // 'unsupported_whatsapp_event' means "not operationally actioned".
+        // Never store raw webhook values, customer data or access tokens.
+        const reason = audit.kind === "notification"
+          ? "unsupported_whatsapp_event" : audit.reason;
+        const result = await client.query(
+          "INSERT INTO whatsapp_sender_quarantined_events " +
+          "(fingerprint,reason,event_field,meta_account_id,meta_phone_number_id) " +
+          "VALUES($1,$2,$3,$4,$5) ON CONFLICT(fingerprint) DO NOTHING " +
+          "RETURNING fingerprint",
+          [audit.fingerprint, reason, audit.field,
+           audit.accountId, audit.phoneId]
+        );
+        if (result.rowCount === 1) inserted++;
+      } else {
+        throw new Error("Unsupported audit owner");
+      }
+    }
+    await client.query("COMMIT");
+    inTransaction = false;
+    return { durable: true, inserted };
+  } catch (error) {
+    if (inTransaction) await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// An ACK is only a durable QA record, not an action on a security, account,
+// calling or template change. Provide a bounded operator-review signal.
+function reportMetaNotifications(audits, result) {
+  if (!result || result.inserted <= 0) return;
+  const notifications = audits.filter(audit => audit.kind === "notification");
+  if (!notifications.length) return;
+  console.warn("[Paid default router] WhatsApp operational notifications " +
+    "saved in QA; MANUAL operator review required.", {
+    fields: [...new Set(notifications.map(audit => audit.field))],
+    fingerprints: notifications.map(audit => audit.fingerprint)
+  });
+}
+
+async function dispatchDefaultWebhook(req, res, primaryHandler, {
+  env = process.env, persist = recordAuditBatch
+} = {}) {
+  if (typeof primaryHandler !== "function") {
+    throw new Error("Primary WhatsApp handler is required");
+  }
+  const config = configFromEnv(env);
+  const { primary, audits } = partitionDefaultBatch(req.body, config);
+  // Neutro MUST be handled first. A separate QA Neon outage must never
+  // delay the primary message's durable claim or HTTP acknowledgement.
+  if (primary) {
+    req.body = primary;
+    // Keep using the unchanged production message/status/AI handler.
+    const primaryResult = await primaryHandler(req, res);
+    if (audits.length && res.headersSent && res.statusCode === 200) {
+      // The primary response has already been acknowledged by its handler.
+      // Failure here is intentionally NOT an HTTP failure for Neutro.
+      // Audit-only batches below still fail closed so Meta can retry.
+      try {
+        const result = await persist(audits, config);
+        if (!result || result.durable !== true) {
+          throw new Error("QA lifecycle audit was not durable");
+        }
+        reportMetaNotifications(audits, result);
+      } catch (error) {
+        // Explicit degraded audit signal, without exposing patient content,
+        // private database URLs, tokens or raw webhook payloads.
+        console.error("[Paid default router] QA lifecycle audit failed AFTER " +
+          "Neutro HTTP 200. Manual audit reconciliation required.", {
+          errorCode: typeof error.code === "string" ? error.code : "QA_AUDIT_FAILURE",
+          fingerprints: audits.map(item => item.fingerprint)
+        });
+      }
+    }
+    return primaryResult;
+  }
+  // Without primary customer work, audit records are still a hard requirement.
+  // Never acknowledge an audit-only Meta event before the QA commit.
+  if (audits.length) {
+    const result = await persist(audits, config);
+    if (!result || result.durable !== true) {
+      throw new Error("QA lifecycle audit was not durable");
+    }
+    reportMetaNotifications(audits, result);
+  }
+  return res.sendStatus(200);
+}
+
+module.exports = {
+  enabled, configFromEnv, assertQaConfiguration, partitionDefaultBatch,
+  recordAuditBatch, dispatchDefaultWebhook, PASSIVE_META_FIELDS
+};
