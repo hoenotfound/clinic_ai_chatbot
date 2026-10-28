@@ -43,6 +43,12 @@ Existing WHATSAPP_APP_SECRET and META_APP_SECRET must match the real DA CHATBOT
 app secret; existing WHATSAPP_WABA_ID and WHATSAPP_PHONE_NUMBER_ID must identify
 Neutro; DATABASE_URL stays the current production URI. Never commit secrets.
 
+QA credentials and the optional secondary-number pin are deliberately NOT a
+requirement to verify a Neutro primary-only webhook. If QA is misconfigured,
+the correctly signed primary message still reaches the existing handler. For
+audit records, the QA pin, host, URI, disabled secondary-send switches and
+distinct Neon hosts are validated strictly.
+
 The QA URI host must differ from the production URI host and equal the
 explicit QA host pin. The QA pool is limited to 2 connections, low timeouts,
 and does not run migrations. Audit inserts require the QA schema migration
