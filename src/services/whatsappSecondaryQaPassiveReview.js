@@ -20,17 +20,29 @@ function summarizeChange(field,change) {
   const value=change.value;
   const history=safeArray(value.history);
   const states=safeArray(value.state_sync);
-  const echoes=safeArray(value.smb_message_echoes);
+  const echoes=safeArray(value.message_echoes).length
+    ? safeArray(value.message_echoes):safeArray(value.smb_message_echoes);
   const messages=safeArray(value.messages);
-  const progress=history.map(h=>h?.progress).filter(n=>Number.isFinite(n)&&
-    Number.isInteger(n)&&n>=0&&n<=100);
-  const phases=history.map(h=>h?.phase).filter(n=>Number.isInteger(n)&&n>=0&&n<=2);
+  // Meta may encode phase/progress inside chunk.metadata as strings.
+  const ordinal=(v,min,max)=>{
+    const n=Number(v);
+    return (v===null||v===undefined||v===""||
+      !Number.isInteger(n)||n<min||n>max)?null:n;
+  };
+  const progress=history.map(h=>ordinal(h?.metadata?.progress??h?.progress,0,100))
+    .filter(n=>n!==null);
+  const phases=history.map(h=>ordinal(h?.metadata?.phase??h?.phase,0,2))
+    .filter(n=>n!==null);
   const errors=history.reduce((n,h)=>n+safeArray(h?.errors).length,0);
-  const historicalMessages=history.reduce((n,h)=>
-    n+safeArray(h?.conversations).reduce((sum,c)=>
-      sum+safeArray(c?.messages).length,0),0);
+  const historicalMessages=history.reduce((n,h)=>{
+    const threads=safeArray(h?.threads).length?safeArray(h?.threads):
+      safeArray(h?.conversations);
+    return n+threads.reduce((sum,thread)=>
+      sum+safeArray(thread?.messages).length,0);
+  },0);
+  // Meta state_sync can be one contact event per array member.
   const contactItems=states.reduce((n,s)=>n+
-    safeArray(s?.contacts).length,0);
+    (s?.type==="contact"&&s?.contact?1:0)+safeArray(s?.contacts).length,0);
   return {
     field,
     historyChunks:boundedCount(history.length),
