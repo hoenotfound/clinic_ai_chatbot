@@ -48,8 +48,13 @@ function batch(...entries) {
 }
 function fakeResponse() {
   return {
-    code: null,
-    sendStatus(code) { this.code = code; return this; }
+    code: null, headersSent: false, statusCode: 200,
+    sendStatus(code) {
+      this.code = code;
+      this.statusCode = code;
+      this.headersSent = true;
+      return this;
+    }
   };
 }
 
@@ -229,19 +234,66 @@ test("only confirmed primary payload reaches the exact existing handler", async 
   }, {
     env: e, persist: async () => { order.push("qa-commit"); return { durable: true }; }
   });
-  assert.deepEqual(order, ["qa-commit", "neutro"]);
+  assert.deepEqual(order, ["neutro", "qa-commit"]);
   assert.equal(res.code, 200);
 });
-test("bad QA commit prevents Neutro handler dispatch for mixed account batch", async () => {
+test("QA Neon outage cannot prevent a verified Neutro HTTP 200 or durable handler", async () => {
   const e = env();
+  const response = fakeResponse();
   let primary = 0;
-  await assert.rejects(dispatchDefaultWebhook({
+  const logs = [];
+  const prior = console.error;
+  console.error = (...parts) => logs.push(parts);
+  try {
+    await dispatchDefaultWebhook({
+      body: batch(lifecycle("777123", e.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164),
+        message(e.WHATSAPP_WABA_ID, e.WHATSAPP_PHONE_NUMBER_ID))
+    }, response, async (_request, res) => {
+      primary++;
+      res.sendStatus(200);
+    }, {
+      env: e, persist: async () => {
+        assert.equal(primary, 1, "Neutro must already be handled");
+        assert.equal(response.code, 200, "Neutro must already be ACKed");
+        throw new Error("QA unavailable");
+      }
+    });
+  } finally {
+    console.error = prior;
+  }
+  assert.equal(primary, 1);
+  assert.equal(response.code, 200);
+  assert.equal(logs.length, 1, "an auditable incident must be reported");
+  assert.match(logs[0][0], /Manual audit reconciliation required/);
+  assert.deepEqual(Object.keys(logs[0][1]), ["errorCode", "fingerprints"]);
+  assert.equal(logs[0][1].fingerprints.length, 1);
+});
+
+test("failed Neutro primary processing does not create a false success audit", async () => {
+  const e = env();
+  const response = fakeResponse();
+  let auditCalls = 0;
+  await dispatchDefaultWebhook({
     body: batch(lifecycle("777123", e.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164),
       message(e.WHATSAPP_WABA_ID, e.WHATSAPP_PHONE_NUMBER_ID))
-  }, fakeResponse(), () => { primary++; }, {
-    env: e, persist: async () => { throw new Error("QA unavailable"); }
-  }), /QA unavailable/);
-  assert.equal(primary, 0);
+  }, response, async (_request, res) => res.sendStatus(503), {
+    env: e, persist: async () => { auditCalls++; return { durable: true }; }
+  });
+  assert.equal(response.code, 503);
+  assert.equal(auditCalls, 0);
+});
+
+test("Neutro-only events never touch the QA database pool", async () => {
+  const e = env();
+  const response = fakeResponse();
+  let qaCalls = 0;
+  await dispatchDefaultWebhook({
+    body: batch(message(e.WHATSAPP_WABA_ID, e.WHATSAPP_PHONE_NUMBER_ID))
+  }, response, async (_request, res) => res.sendStatus(200), {
+    env: e, persist: async () => { qaCalls++; throw Error("should not run"); }
+  });
+  assert.equal(response.code, 200);
+  assert.equal(qaCalls, 0);
 });
 test("routing uses existing signed 2 MB parser and leaves original /webhook intact", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/createApp.js"), "utf8");
