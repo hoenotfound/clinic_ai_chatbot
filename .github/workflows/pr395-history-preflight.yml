@@ -1,0 +1,29 @@
+name: PR395 History Preflight
+
+on:
+  push:
+    branches:
+      - feature/whatsapp-complete-multinumber-integration-20261022
+
+permissions:
+  contents: read
+
+jobs:
+  history-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: History, once-only sync, onboarding and sender isolation
+        run: |
+          node --test \
+            test/whatsappCoexistenceHistoryService.test.js \
+            test/pr395CoexistenceSyncDispatcher.test.js \
+            test/whatsappCoexistenceSyncPlan.test.js \
+            test/whatsappCoexistenceSenderIdentity.test.js \
+            test/whatsappSecondaryInboxBoundary.test.js
