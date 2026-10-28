@@ -146,6 +146,10 @@ function partitionDefaultBatch(body, config) {
         }
         const suppliedPhone = value.phone_number;
         if (isPrimary) {
+          if (value.metadata?.phone_number_id != null &&
+              value.metadata.phone_number_id !== config.primaryPhoneId) {
+            throw new Error("Primary lifecycle phone ID mismatch");
+          }
           if (suppliedPhone != null &&
               (typeof suppliedPhone !== "string" ||
                digits(suppliedPhone) !== digits(config.primaryE164))) {
