@@ -76,3 +76,16 @@ test("QA operator report cannot call Meta, WhatsApp sends or production connecti
   assert.doesNotMatch(source,/graph.facebook.com|sendWhatsApp|fetch\(/);
   assert.match(source,/ssl:\{rejectUnauthorized:true\}/);
 });
+
+test("operator queue exposes possible truncation and never treats empty QA as live validation",async()=>{
+  const oneRow={async query(){return{rows:[row("account_alerts")]};}};
+  const truncated=await monitor.inspect({env:env(),database:oneRow,limit:1});
+  assert.equal(truncated.possiblyTruncated,true);
+  assert.equal(truncated.notifications[0].severity,"urgent");
+  const none={async query(){return{rows:[]};}};
+  const empty=await monitor.inspect({env:env(),database:none});
+  assert.equal(empty.returned,0);
+  assert.equal(empty.possiblyTruncated,false);
+  assert.deepEqual(empty.notifications,[]);
+  assert.equal(empty.source,"isolated-QA-only");
+});
