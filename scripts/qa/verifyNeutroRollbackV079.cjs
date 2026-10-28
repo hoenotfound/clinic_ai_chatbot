@@ -31,7 +31,7 @@ try {
   const releaseMigrations = git("ls-tree", "-r", "--name-only", "HEAD",
     "src/db/migrations").split("\n").filter(Boolean);
   const latest = Math.max(...releaseMigrations.map(file => {
-    const match = /\\/(\\d{3})_[a-z0-9_]+\\.sql$/.exec(file);
+    const match = /\/(\d{3})_[a-z0-9_]+\.sql$/.exec(file);
     return match ? Number(match[1]) : 0;
   }));
   assert.equal(latest, 79, "rollback candidate only supports production schema through 079");
