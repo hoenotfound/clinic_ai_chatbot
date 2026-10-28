@@ -141,10 +141,27 @@ test("signed real HTTP secondary capture persists, deduplicates, isolates and en
         assert.equal(response.status,200,field);
         assert.equal((await response.json()).inserted,1,field);
       }
+      // Meta's APP-DEFAULT callback (not the dedicated synthetic endpoint)
+      // must also be able to reach the exact pinned secondary QA capture.
+      const throughDefault=payload("messages","synthetic-default-route");
+      const defaultResponse=await fetch(base+"/whatsapp/default",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",
+          "X-Hub-Signature-256":signed(e.WHATSAPP_APP_SECRET,throughDefault)},
+        body:throughDefault
+      });
+      assert.equal(defaultResponse.status,200);
+      const defaultReplay=await fetch(base+"/whatsapp/default",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",
+          "X-Hub-Signature-256":signed(e.WHATSAPP_APP_SECRET,throughDefault)},
+        body:throughDefault
+      });
+      assert.equal(defaultReplay.status,200);
       const entries=(await pool.query(
         "SELECT event_field,fingerprint,ciphertext,nonce,auth_tag,payload_bytes " +
         "FROM whatsapp_secondary_qa_capture_events ORDER BY event_field")).rows;
-      assert.equal(entries.length,4);
+      assert.equal(entries.length,5);
       for(const entry of entries){
         const decipher=crypto.createDecipheriv("aes-256-gcm",
           Buffer.from(e.WHATSAPP_PAID_SECONDARY_QA_CAPTURE_KEY_B64,"base64"),entry.nonce);
@@ -152,7 +169,7 @@ test("signed real HTTP secondary capture persists, deduplicates, isolates and en
         decipher.setAuthTag(entry.auth_tag);
         const plain=Buffer.concat([decipher.update(entry.ciphertext),decipher.final()]);
         assert.equal(plain.length,entry.payload_bytes);
-        assert.match(plain.toString("utf8"),/synthetic-text-only/);
+        assert.match(plain.toString("utf8"),/synthetic-text-only|synthetic-default-route/);
         assert.doesNotMatch(entry.ciphertext.toString("utf8"),/synthetic-text-only/);
       }
       const foreign=JSON.parse(message);foreign.entry[0].id="777123";
@@ -161,7 +178,7 @@ test("signed real HTTP secondary capture persists, deduplicates, isolates and en
       const history=payload("history","consent-required");
       e.WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED="false";
       assert.equal((await post(history,signed(e.WHATSAPP_APP_SECRET,history))).status,503);
-      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM whatsapp_secondary_qa_capture_events")).rows[0].n,4);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM whatsapp_secondary_qa_capture_events")).rows[0].n,5);
       assert.equal(primaryCalled,0);
     });
   } finally {
