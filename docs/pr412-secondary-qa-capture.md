@@ -146,3 +146,34 @@ booted that tree against a restored database. Before deployment:
 
 Do not automatically promote the standalone QA capture or switch Meta
 callbacks on the strength of green unit/browser CI alone.
+
+## QA automatic expiry and signed HTTP integration (28 Oct 2026)
+
+- The new `scripts/qa/cleanupSecondaryQaExpiry.cjs` is a default-OFF,
+  independently pinned QA-only retention worker. It refuses unknown Neon
+  project/branch, production/QA host collisions, missing capture schema and
+  schema migration drift. A transaction selects a maximum of 100 (configurable,
+  never more than 250) expired fingerprints under `SKIP LOCKED`, deletes only
+  those rows and commits. It never reads or logs ciphertext.
+- The owner approved an hourly **ChatGPT automation** named
+  `Secondary QA Expiry Cleanup` (task ID
+  `6ae16d44f6688191a71ffb7951f6213a`). It checks exact project
+  `wandering-dream-82267835`, branch `br-late-sky-ao8xggam`,
+  database `neondb`, migration 104 and exact table identity, then runs a
+  bounded QA-only SQL deletion of at most 250 expired rows per execution.
+  The automated task is a separate service; editing this PR will not modify
+  the task. Its execution health must be monitored, especially if credentials
+  expire or the account disables tasks.
+- Because Neon `pg_cron` cannot reliably tick while scale-to-zero is active
+  and the configured cron database is `postgres` rather than `neondb`,
+  we did NOT change Neon compute settings or create a pg_cron job.
+- `test/whatsappSecondaryQaRealPostgresHttp.test.js` starts the actual
+  Express signed receiver on localhost using an isolated PostgreSQL 16
+  database. It tests HMAC rejection, signed acceptance, durable encrypted
+  inserts, decryption with a synthetic key, duplicate replay suppression,
+  foreign WABA rejection, history consent protection and isolation from the
+  primary Neutro AI handler. It creates and drops its test database; no Neon
+  or patient data is accessed.
+- Live Meta-signed delivery on the real QA Render URL remains unverified:
+  there is no safe secondary sender identity until approved onboarding.
+  No live callbacks, QR, feature flags or production deployments change.
