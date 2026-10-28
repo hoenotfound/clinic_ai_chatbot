@@ -161,8 +161,45 @@ async function importPassiveChange({accountId,change},{
  );
  return{enabled:true,imported,contacts,threads,declined};
 }
-// Webhook stage: one small signed-event INSERT per change, no contact/message
-// imports before ACK. Later worker retries by WAMID and source-event digest.
+// Meta may send thousands of historical messages in one signed webhook.
+// Split only the passive history content into small durable jobs; preserve the
+// original phase/progress metadata and WAMIDs. Never process a large chunk
+// inline or acknowledge a batch before every child job is stored.
+function splitHistoryChange(change,maxMessages=250){
+ if(change?.field!=="history" || !Array.isArray(change.value?.history))
+   return[change];
+ const pieces=[];
+ for(const part of change.value.history){
+   if(!Array.isArray(part?.threads) || part.threads.length===0){
+     pieces.push({...change,value:{...change.value,history:[part]}});
+     continue;
+   }
+   let threads=[],count=0;
+   const flush=()=>{
+     if(!threads.length)return;
+     pieces.push({...change,value:{...change.value,
+       history:[{...part,threads}]}});
+     threads=[];count=0;
+   };
+   for(const thread of part.threads){
+     if(!Array.isArray(thread?.messages) || thread.messages.length===0){
+       threads.push(thread);
+       continue;
+     }
+     for(let index=0;index<thread.messages.length;){
+       const take=Math.min(maxMessages-count,thread.messages.length-index);
+       threads.push({...thread,messages:thread.messages.slice(index,index+take)});
+       index+=take;count+=take;
+       if(count===maxMessages)flush();
+     }
+   }
+   flush();
+ }
+ return pieces.length?pieces:[change];
+}
+
+// Webhook stage: bounded durable events, no contact/message imports before ACK.
+// The worker retries by original WAMID and split-event digest.
 async function acceptPassiveSync(body,{database=pool,env=process.env}={}){
  if(!enabled(env))return{enabled:false,staged:0};
  let staged=0;
@@ -181,17 +218,20 @@ async function acceptPassiveSync(body,{database=pool,env=process.env}={}){
         env.WHATSAPP_SECONDARY_WABA_ID]
      );
      if(sender.rows?.length!==1)throw Error("Coexistence importer sender not verified.");
-     const raw=JSON.stringify({accountId:entry.id,change});
-     if(raw.length>4*1024*1024)throw Error("Coexistence sync chunk exceeds verified staging limit.");
-     const saved=await database.query(
-       `INSERT INTO whatsapp_sender_coexistence_import_jobs
-         (fingerprint,sender_id,event_field,payload)
-        VALUES($1,$2,$3,$4::jsonb)
-        ON CONFLICT(fingerprint) DO NOTHING
-        RETURNING fingerprint`,
-       [fingerprint(entry.id,change),sender.rows[0].id,change.field,raw]
-     );
-     if(saved.rowCount===1)staged++;
+     for(const child of splitHistoryChange(change)){
+       const raw=JSON.stringify({accountId:entry.id,change:child});
+       if(raw.length>4*1024*1024)
+         throw Error("Coexistence sync chunk exceeds verified staging limit.");
+       const saved=await database.query(
+         `INSERT INTO whatsapp_sender_coexistence_import_jobs
+           (fingerprint,sender_id,event_field,payload)
+          VALUES($1,$2,$3,$4::jsonb)
+          ON CONFLICT(fingerprint) DO NOTHING
+          RETURNING fingerprint`,
+         [fingerprint(entry.id,child),sender.rows[0].id,child.field,raw]
+       );
+       if(saved.rowCount===1)staged++;
+     }
    }
  }
  return{enabled:true,staged};
