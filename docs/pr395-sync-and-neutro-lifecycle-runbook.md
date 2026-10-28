@@ -22,6 +22,39 @@
 - `pr395LegacyLifecycleAlertService` optionally sends Telegram notifications from staging only, with durable pending/processing/sent/unknown status. Unknown Telegram delivery requires manual review to avoid duplicate alert storms.
 - IMPORTANT: Meta's app-default callback now points at the paid `/whatsapp/default` router (owner-confirmed 28 Oct). **Genuine Meta-origin lifecycle POST delivery and durable alert audit are still unverified.** Treat this as configuration readiness, not effective production disconnection monitoring. Never assume the draft's isolated staging relay is live.
 
+## Real clinic number preparation — 28 October 2026
+
+**Code-only preparation, NOT live permission or QR readiness.**
+The separately approved staging clinic mode is gated by
+`PR395_STAGING_REAL_CLINIC_ENABLED=true`,
+`PR395_STAGING_REAL_CLINIC_OPERATOR_APPROVED=true` and the exact private
+`PR395_STAGING_REAL_CLINIC_E164_PIN` corresponding to the intended second
+business number. The paid app-default QA audit similarly requires a separate
+three-way `WHATSAPP_PAID_REAL_CLINIC_*` approval and phone pin. These flags
+must remain OFF in all deployed services until a supervised, identity-verified
+rollout is separately approved. Never copy an old personal-QA account, token
+or phone ID; get the real WABA and phone ID from authenticated Meta onboarding.
+
+**Critical receiver handoff still incomplete:** The paid app-default path
+can encrypt and store signed secondary `history` and `smb_app_state_sync`
+events in `whatsapp_secondary_qa_capture_events`, but this is a holding
+queue, NOT the WhatsApp Inbox importer. The standalone history importer reads
+`whatsapp_sender_coexistence_import_jobs` and requires an active, verified
+sender. The capture path requires the sender to remain in state `testing`.
+There is no proven safe, idempotent, owner-consented capture-to-import bridge.
+Do not claim imported chats or start the one-time sync until that bridge (or
+a directly verified signed callback to the isolated importer) passes real
+HTTP-to-disposable-PostgreSQL tests, replay and outage tests, and strict
+Neutro/Messenger isolation.
+
+The separate rehearsal branch's local signed HTTP test (synthetic IDs, no
+Meta API call) verifies HMAC authentication, AES-GCM encrypted QA storage,
+duplicate rejection, consent refusal and unchanged Neutro routing. It does
+not prove real signed Meta POST delivery or transfer into Inbox history.
+The real clinic number must not be onboarded on the strength of this test
+alone. No Meta callback, production database or existing staging database
+is changed by the rehearsal branch.
+
 ## Before granting permission to scan the first QR
 
 1. Confirm PR head, all exact-head CI jobs and the new migrations; stage only to isolated Render/Neon, never Neutro.
