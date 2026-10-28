@@ -8,6 +8,7 @@ const { loadValidatedCredentialForSetup } =
 const { normalizedGraphVersion, DEFAULT_GRAPH_API_VERSION } =
   require("../provisioning/whatsappWebhookSubscription");
 
+const { clinicSecondNumberApproved } = require("./pr395StagingSafety");
 const TYPES = new Set(["smb_app_state_sync", "history"]);
 const SEND_SWITCHES = [
   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
@@ -40,7 +41,8 @@ function assertSafeCommand(input, env, now) {
   if (String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "") !==
       String(env.PR395_STAGING_APPROVED_TEST_PHONE_E164 || "") ||
       !/^\+[1-9]\d{7,14}$/.test(String(env.PR395_STAGING_APPROVED_TEST_PHONE_E164 || "")) ||
-      env.PR395_STAGING_APPROVED_TEST_PHONE_E164 === "+60174831336") {
+      (env.PR395_STAGING_APPROVED_TEST_PHONE_E164 === "+60174831336" &&
+        !clinicSecondNumberApproved(env))) {
     throw Error("QA E164 pin is missing, mismatched or is the excluded clinic number.");
   }
   // Both contacts and history require verified owner consent. History has
