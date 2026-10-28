@@ -28,7 +28,7 @@ function cleanPhone(value){
 function mediaPlaceholder(message){
  const type=String(message?.type||"");
  if(type==="text")return String(message?.text?.body||"").slice(0,4096);
- if(["image","video","audio","document","sticker"].includes(type))
+ if(["image","video","audio","document","sticker","media_placeholder"].includes(type))
    return "["+type+" from WhatsApp Business App history: media not imported]";
  return null;
 }
@@ -79,7 +79,7 @@ async function importPassiveChange({accountId,change},{
          const content=mediaPlaceholder(msg);
          const timestamp=Number(msg?.timestamp);
          const now=Date.now()/1000;
-         if(!/^wamid\.[A-Za-z0-9._:-]+$/.test(wamid) || content==null ||
+         if(!/^wamid\.[A-Za-z0-9._:/+=-]{6,480}$/.test(wamid) || content==null ||
             !Number.isFinite(timestamp) ||
             timestamp>now+60 || timestamp<now-366*86400)continue;
          const from=cleanPhone(msg.from);
