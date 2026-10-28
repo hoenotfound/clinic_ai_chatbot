@@ -526,3 +526,28 @@ test("replayed operational notification is idempotent and does not duplicate ale
     assert.equal(logs.length, 0);
   } finally { console.warn = originalWarn; }
 });
+
+test("same Neon host allowed only for explicitly pinned separate staging databases and roles",()=>{
+  const qahost = "ep-isolated.ap-southeast-1.aws.neon.tech";
+  const source = "postgresql://capture:source-password@"+qahost+"/neondb";
+  const target = "postgresql://forward:target-password@"+qahost+"/pr414_forward_qa";
+  const flags = {
+    PR395_STAGING_MODE:"true",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST:"true",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"neondb",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"pr414_forward_qa",
+    DATABASE_URL:target, WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL:source,
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:qahost
+  };
+  const valid = opts => assertQaConfiguration(configFromEnv(env({...flags,...opts})));
+  assert.doesNotThrow(()=>valid({}));
+  for (const invalid of [
+    { PR395_STAGING_MODE:"false" },
+    { WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST:"false" },
+    { WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"neondb" },
+    { WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"wrong" },
+    { DATABASE_URL:source },
+    { DATABASE_URL:"postgresql://capture:target-password@"+qahost+"/pr414_forward_qa" },
+    { DATABASE_URL:"postgresql://forward:source-password@"+qahost+"/pr414_forward_qa" }
+  ]) assert.throws(()=>valid(invalid),/separate/);
+});

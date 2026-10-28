@@ -34,6 +34,8 @@ function env(patch={}){
     WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED:"true",
     WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED:"true",
     WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_HOST:"ep-target.neon.tech",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"qa_inbox",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"capture",
     PR395_STAGING_MODE:"true",
     ...patch
   };
@@ -305,4 +307,26 @@ test("live messages/echoes never become a passive history job",async()=>{
   assert.equal(src.rows.some(r=>r.handoff_completed_at),false);
   assert.equal(dest.jobs.size,0);
   assert.equal(dest.messages.size,0);
+});
+
+test("handoff supports independently pinned QA databases on one Neon host",()=>{
+  const hostname="ep-qa.neon.tech";
+  const valid=env({
+    DATABASE_URL:"postgresql://inbox:target-password@"+hostname+"/pr414_forward_qa",
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL:
+      "postgresql://encrypted:source-password@"+hostname+"/neondb",
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:hostname,
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_HOST:hostname,
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"pr414_forward_qa",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"neondb",
+    WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST:"true"
+  });
+  assert.doesNotThrow(()=>handoff.configForHandoff(valid));
+  for (const patch of [
+    { PR395_STAGING_MODE:"false" },
+    { WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST:"false" },
+    { WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE:"neondb" },
+    { WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE:"other" },
+    { DATABASE_URL:valid.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL }
+  ]) assert.throws(()=>handoff.configForHandoff({...valid,...patch}),/separate|destination/);
 });

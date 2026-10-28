@@ -22,14 +22,27 @@ function configForHandoff(env = process.env) {
   const destinationHost = String(
     env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_HOST || ""
   ).trim().toLowerCase();
+  const pinnedTargetDatabase = String(
+    env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE || ""
+  ).trim();
+  const pinnedSourceDatabase = String(
+    env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE || ""
+  ).trim();
   let targetUrl, sourceUrl;
   try {
     targetUrl = new URL(env.DATABASE_URL);
     sourceUrl = new URL(source.qaDatabaseUrl);
   } catch (_) { throw Error("Missing verified handoff database URLs"); }
+  const targetDatabase = decodeURIComponent(targetUrl.pathname.slice(1));
+  const sourceDatabase = decodeURIComponent(sourceUrl.pathname.slice(1));
   if (!destinationHost.endsWith(".neon.tech") ||
       destinationHost !== targetUrl.hostname.toLowerCase() ||
-      destinationHost === sourceUrl.hostname.toLowerCase() ||
+      !/^[a-z][a-z0-9_]*$/.test(pinnedTargetDatabase) ||
+      !/^[a-z][a-z0-9_]*$/.test(pinnedSourceDatabase) ||
+      targetDatabase !== pinnedTargetDatabase ||
+      sourceDatabase !== pinnedSourceDatabase ||
+      (destinationHost === sourceUrl.hostname.toLowerCase() &&
+        targetDatabase === sourceDatabase) ||
       !["postgres:", "postgresql:"].includes(targetUrl.protocol) ||
       targetUrl.username.length === 0 || targetUrl.password.length === 0 ||
       (env.PR395_STAGING_MODE !== "true" &&
