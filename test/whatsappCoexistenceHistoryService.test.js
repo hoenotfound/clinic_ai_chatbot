@@ -212,3 +212,30 @@ test("Meta history preserves media placeholders and base64-padded WAMIDs",async(
  assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO follow_up")),false);
  assert.equal(f.calls.some(x=>x.sql?.includes("billing")),false);
 });
+
+test("large Meta history is durably split before webhook ACK without synchronous import",async()=>{
+ const f=make();
+ const stamp=String(Math.floor(Date.now()/1000)-3000);
+ const messages=Array.from({length:620},(_,i)=>({
+  id:"wamid.bulk-"+i,from:"60126662222",timestamp:stamp,
+  type:"text",text:{body:"Historical message "+i}
+ }));
+ const body={object:"whatsapp_business_account",entry:[{
+  id:env.WHATSAPP_SECONDARY_WABA_ID,changes:[{
+   field:"history",value:{
+    metadata:{phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},
+    history:[{metadata:{phase:1,chunk_order:3,progress:55},
+      threads:[{id:"60126662222",messages}]}]
+   }
+  }]
+ }]};
+ const result=await history.acceptPassiveSync(body,{database:f.database,env});
+ assert.equal(result.staged,3);
+ const inserts=f.calls.filter(x=>x.sql?.includes("INSERT INTO whatsapp_sender_coexistence_import_jobs"));
+ assert.equal(inserts.length,3);
+ const chunks=inserts.map(x=>JSON.parse(x.args[3]).change.value.history[0]);
+ assert.deepEqual(chunks.map(x=>x.threads[0].messages.length),[250,250,120]);
+ assert.ok(chunks.every(x=>x.metadata.phase===1&&x.metadata.progress===55));
+ assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO messages")),false);
+ assert.equal(f.calls.some(x=>x.claim),false);
+});
