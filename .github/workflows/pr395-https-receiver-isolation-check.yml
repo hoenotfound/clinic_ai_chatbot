@@ -67,6 +67,47 @@ jobs:
           test "$(printenv NODE_TLS_REJECT_UNAUTHORIZED || echo 1)" != "0"
           node --test scripts/qa/pr395HttpsRelayRehearsal.cjs
 
+      - name: Check deployed QA HTTPS fail closed (no secrets, no writes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGING="https://da-chatbot-pr395-staging.onrender.com"
+          RELAY="https://da-chatbot-pr395-default-relay-qa.onrender.com"
+          request_status() {
+            local url="$1" method="$2"
+            curl --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 20 --max-time 80 \
+              --output /dev/null --write-out "%{http_code}" \
+              --request "$method" \
+              --header "Content-Type: application/json" \
+              --header "X-Hub-Signature-256: sha256=0000000000000000000000000000000000000000000000000000000000000000" \
+              --data '{"object":"whatsapp_business_account","entry":[]}' \
+              "$url"
+          }
+          echo "Checking private QA receivers through publicly accessible HTTPS"
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 20 --max-time 80 "$STAGING/health/live" >/dev/null
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 20 --max-time 80 "$STAGING/health/ready" >/dev/null
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 20 --max-time 80 "$RELAY/health/live" >/dev/null
+          legacy=$(request_status "$STAGING/pr395-legacy-lifecycle-webhook" POST)
+          preid=$(request_status "$STAGING/pr395-preidentity-webhook" POST)
+          relpost=$(request_status "$RELAY/webhook" POST)
+          relget=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 20 --max-time 80 \
+            --output /dev/null --write-out "%{http_code}" \
+            "$RELAY/webhook?hub.mode=subscribe&hub.verify_token=pr395-deliberately-invalid&hub.challenge=no")
+          echo "QA audit invalid-HMAC response: $legacy"
+          echo "QA preidentity invalid-HMAC response: $preid"
+          echo "Relay PREPARATION POST response: $relpost"
+          echo "Relay PREPARATION verification response: $relget"
+          test "$legacy" = "403"
+          test "$preid" = "403"
+          test "$relpost" = "503"
+          test "$relget" = "503"
+          echo "PASS: publicly served QA HTTPS endpoints fail closed; no valid signature was sent"
+
       - name: Scope statement
         if: always()
         run: |
