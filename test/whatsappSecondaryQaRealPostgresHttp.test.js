@@ -201,7 +201,7 @@ test("signed real HTTP secondary capture persists, deduplicates, isolates and en
     });
   } finally {
     if(pool)await pool.end().catch(()=>{});
-    if(created)await admin.query("DROP DATABASE "+databaseName");
+    if(created)await admin.query("DROP DATABASE "+databaseName);
     await admin.end();
   }
 });
