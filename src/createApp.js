@@ -4,6 +4,7 @@ const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
 const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
+const secondaryQaCapture = require("./services/whatsappSecondaryQaCapture");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const metaMessaging = require("./services/metaMessagingService");
 const metaStaffEcho = require("./services/metaStaffEchoService");
@@ -252,6 +253,29 @@ function createApp({
       // Never return 200 for unknown accounts, undurable QA writes, or failed
       // primary processing. Meta may retry; database event keys deduplicate.
       console.error("[Paid default router] Rejected signed event:", error.message);
+      if (!res.headersSent) return res.sendStatus(503);
+    }
+  });
+
+  // Signed synthetic QA capture endpoint. Disabled by default and NOT the
+  // Meta app-default callback. No inbound Neutro route changes or sending.
+  app.post("/whatsapp/secondary-qa-capture", (req, res, next) => {
+    if (process.env.WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED !== "true") {
+      return res.sendStatus(503);
+    }
+    return next();
+  }, webhookJsonParser, async (req, res) => {
+    try {
+      const result = await secondaryQaCapture.captureSignedSecondaryBatch(
+        req.body, { signatureVerified: true }
+      );
+      return res.status(200).json({
+        durable: result.durable,
+        accepted: result.accepted,
+        inserted: result.inserted
+      });
+    } catch (error) {
+      console.error("[Secondary QA] Signed capture rejected:", error.code || "qa_capture_rejected");
       if (!res.headersSent) return res.sendStatus(503);
     }
   });
