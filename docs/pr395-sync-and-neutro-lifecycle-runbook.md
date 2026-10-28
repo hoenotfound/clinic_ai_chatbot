@@ -7,7 +7,7 @@
 - Personal Business App QA number: **privately pinned in Render; do not commit its E.164**. Its phone ID/WABA must be learned from Meta after authenticated onboarding; do not reuse the clinic test number's ID.
 - Existing Neutro WABA: `1593376338308612`; Neutro phone ID: `1408739622311791`.
 - DA CHATBOT app: `1029862536608134`. Embedded Signup config: `936687052431880`.
-- **Never change app-default** `https://clinic-ai-chatbot.onrender.com/webhook` without separate approval. Neutro's account override stays `https://neutrosense.dasmarketingsolution.com/webhook`.
+- **Updated 28 Oct 2026:** owner verified Meta app-default callback is `https://neutrosense.dasmarketingsolution.com/whatsapp/default` (paid Render), with all 13 fields preserved. Neutro's WABA and phone overrides remain `https://neutrosense.dasmarketingsolution.com/webhook`. This is a previously approved cutover, **not** QR authorization. Do not change either callback during QR; reconfirm current Meta configuration read-only before onboarding. The older `https://clinic-ai-chatbot.onrender.com/webhook` is a rollback candidate, not the current default.
 - Dedicated Render staging `srv-dbdgmnks728c73btahcg`: branch is PR #395, auto-deploy OFF. Isolated Neon `wandering-dream-82267835`. Confirm staging's actual connection, flags and fresh deployed commit before testing. Do not touch Neutro production Render/Neon.
 - Keep `PR395_STAGING_MODE=true`. All outbound sending/AI/follow-ups/retries remain disabled. `PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED` remains **OFF** during deploy and before owner's later explicit sync approval.
 - Pre-signup callback and legacy audit paths are not substitutes for a live signed provider receiver.
@@ -20,12 +20,12 @@
 - `scripts/pr395ManualCoexistenceSync.js` is a separate, manual command. It performs no send unless all readiness parameters, explicit `--execute`, staging environment approval phrase and the independent sync feature gate are supplied. **Do not use it before QR approval and subsequent explicit one-time sync approval.** Do not enable this command in a scheduled job.
 - `whatsapp_pr395_legacy_lifecycle_alerts` is populated in the *same transaction* as the signed legacy lifecycle audit. Critical removal/disconnects request operator intervention but NEVER disable or modify the legacy Neutro sender.
 - `pr395LegacyLifecycleAlertService` optionally sends Telegram notifications from staging only, with durable pending/processing/sent/unknown status. Unknown Telegram delivery requires manual review to avoid duplicate alert storms.
-- IMPORTANT: because Meta's app-default callback is **still** the old service, **real Neutro `account_update` events are not yet proven to reach the new durable alert audit**. Until the relay and signed legacy delivery are independently verified, this is code readiness, **not effective production disconnection monitoring**.
+- IMPORTANT: Meta's app-default callback now points at the paid `/whatsapp/default` router (owner-confirmed 28 Oct). **Genuine Meta-origin lifecycle POST delivery and durable alert audit are still unverified.** Treat this as configuration readiness, not effective production disconnection monitoring. Never assume the draft's isolated staging relay is live.
 
 ## Before granting permission to scan the first QR
 
 1. Confirm PR head, all exact-head CI jobs and the new migrations; stage only to isolated Render/Neon, never Neutro.
-2. Confirm with read-only Graph that Neutro's primary phone, WABA and account-specific webhook override still point to production. Confirm the app-default callback is unchanged.
+2. Confirm with read-only Graph that Neutro's primary phone, WABA and both overrides still point to production, and that app-default remains the owner-approved paid `/whatsapp/default` callback.
 3. Map every legacy WABA actually subscribed to app `1029862536608134` (complete pagination and delegated portfolios). Do not claim the one portfolio inventory is comprehensive.
 4. Independently rehearse the separate relay with signed realistic events: mixed Neutro/secondary batches, correct HMAC, strict routing, Neutro lifecycle durable commit and required acknowledgment headers, timeout and replay handling.
 5. Verify the owner personal Business App E.164 pin stored privately in staging. Confirm no old `tcm_wellness`/Ariel credentials, clinic phone ID or guessed account ID are reused. Pin new IDs **only when verified by the actual Meta signup**.
