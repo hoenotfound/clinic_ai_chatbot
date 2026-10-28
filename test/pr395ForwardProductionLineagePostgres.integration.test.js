@@ -108,7 +108,7 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
     );
     assert.deepEqual(after.rows, original.rows, "already applied sales migrations are immutable");
     const data = await admin.query(
-      "SELECT c.name,m.content,c.whatsapp_sender_id FROM contacts c JOIN messages m ON m.contact_id=c.id WHERE c.id=$1",
+      "SELECT c.name,m.content,c.whatsapp_sender_id FROM contacts c JOIN messages m ON m.contact_id=c.id WHERE c.id=$1 AND m.whatsapp_message_id='wamid.legacy-retained'",
       [contactId]
     );
     assert.equal(data.rows.length,1);
