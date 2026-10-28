@@ -46,5 +46,8 @@ jobs:
           node --test \
             test/pr395PreidentityReceiver.test.js \
             test/pr395LegacyLifecycleReceiver.test.js \
+            test/pr395StagingSafety.test.js \
+            test/pr395CoexistenceSyncDispatcher.test.js \
+            test/pr395RealClinicRoutingGuard.test.js \
             test/whatsappPaidDefaultHttp.test.js \
             test/whatsappCoexistenceHistoryService.test.js
