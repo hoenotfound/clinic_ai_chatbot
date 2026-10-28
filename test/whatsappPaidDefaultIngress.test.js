@@ -122,9 +122,11 @@ test("unknown WA account, missing phone, wrong WABA and unsupported fields fail 
   const missingLifecycle = batch(lifecycle("777123", null));
   const unknownField = batch(message(config.primaryWaba, config.primaryPhoneId, "message_template_status_update"));
   const mutatedAccount = batch(lifecycle(config.primaryWaba, "+60119998888"));
+  const wrongLifecyclePhoneId = lifecycle(config.primaryWaba, config.primaryE164);
+  wrongLifecyclePhoneId.changes[0].value.metadata = { phone_number_id: "555" };
   for (const input of [
     foreign, wrongPhone, missingPhone, wrongLifecycle, missingLifecycle,
-    unknownField, mutatedAccount, batch()
+    unknownField, mutatedAccount, batch(wrongLifecyclePhoneId), batch()
   ]) {
     assert.throws(() => partitionDefaultBatch(input, config));
   }
