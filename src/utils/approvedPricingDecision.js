@@ -9,6 +9,7 @@ const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const {
   relatedPricingConflict, unpricedRelatedPrimary, configuredServiceMention,
 } = require("./relatedServicePolicy");
+const { resolveIndependentRefusalPriceRequest } = require("./independentRefusalPriceRequest");
 
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -94,15 +95,38 @@ function resolveApprovedPricingAssessment({
     /^RM[1-9]\d{0,5}$/u.test(String(candidate.servicePrice || ""));
   if (!validPrices && !textOnly) return rejected("active_price_unverified");
 
-  const currentHistory = pricingConflictHistory({
+  // An independently verified new price question may follow a refusal of a
+  // DIFFERENT named treatment. Validate the exact two clauses again at the
+  // final commercial boundary before excluding the negated topic from conflict
+  // checks. The clinical, booking, human takeover and opt-out gates above
+  // continue to examine the full original message.
+  let effectiveText = customerText;
+  let effectiveHistory = pricingConflictHistory({
     candidate, conversationHistory, services, serviceAliases, now,
   });
+  if (candidate.scopedPriceText || candidate.scopedRefusedTreatment) {
+    const scoped = resolveIndependentRefusalPriceRequest({
+      customerText, services, serviceAliases,
+    });
+    if (!scoped || candidate.source !== "current_customer" ||
+        candidate.type !== "price" || scoped.treatment !== candidate.treatment ||
+        scoped.priceText !== candidate.scopedPriceText ||
+        scoped.refusedTreatment !== candidate.scopedRefusedTreatment) {
+      return rejected("mixed_price_scope_unverified");
+    }
+    effectiveText = scoped.priceText;
+    effectiveHistory = effectiveHistory.map((turn) =>
+      turn?.role === "user" && turn?.content === customerText
+        ? { ...turn, content: scoped.priceText } : turn
+    );
+  }
   if (relatedPricingConflict({
-    customerText, treatment: candidate.treatment, conversationHistory: currentHistory,
+    customerText: effectiveText, treatment: candidate.treatment,
+    conversationHistory: effectiveHistory,
     services, serviceAliases, resultMedia,
   })) return rejected("related_treatment_conflict");
   if (unpricedRelatedPrimary({
-    customerText, conversationHistory: currentHistory,
+    customerText: effectiveText, conversationHistory: effectiveHistory,
     services, serviceAliases, resultMedia,
   })) return rejected("unpriced_primary_treatment");
 

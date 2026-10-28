@@ -55,10 +55,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Only PR #411 has this one-time release gate. Every other PR keeps the
+      # existing CI behavior. The pinned rollback branch is never deployed.
+      - name: Verify original Neutro rollback source accepts schema v079
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 411 }}
+        run: node scripts/qa/verifyNeutroRollbackV079.cjs
       - name: Check backend JavaScript syntax
         shell: bash
         run: find src scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
       - run: npm test
+      # Only isolated PR #412; run after the other Postgres rehearsals, not
+      # concurrently with the v077->v079 temporary database test.
+      - name: Real signed secondary QA HTTP-to-PostgreSQL integration
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 412 }}
+        env:
+          RUN_SECONDARY_QA_HTTP_INTEGRATION: "true"
+        run: node --test test/whatsappSecondaryQaRealPostgresHttp.test.js
       - name: Audit production dependencies (retry registry errors)
         run: bash .github/scripts/npm-audit-retry.sh --omit=dev --audit-level=moderate
 
@@ -84,10 +96,10 @@ jobs:
   portal-playwright:
     name: playwright-${{ matrix.label }}
     runs-on: ubuntu-latest
-    # Ubuntu package mirrors stalled for >30 minutes installing WebKit's 181
-    # system packages. Pin Playwright's official browser/dependency image and
-    # run the same full E2E suite without a network-dependent apt installation.
-    # Match the container tag to the @playwright/test version installed below.
+    # Microsoft ships WebKit, Chromium and their Linux libraries preinstalled.
+    # Pin to the same version as @playwright/test below. This avoids the
+    # unexpectedly slow Ubuntu apt mirror that exhausted the 15-minute iPhone
+    # job timeout before tests could even start.
     container:
       image: mcr.microsoft.com/playwright:v1.55.0-noble
     timeout-minutes: 20
@@ -131,9 +143,12 @@ jobs:
       - run: npm ci
       - name: Install Playwright test runner
         run: npm install --no-save @playwright/test@1.55.0
-      # The pinned Playwright image already includes Chromium, WebKit and
-      # their Ubuntu runtime packages. Do not run playwright install --with-deps:
-      # apt mirror stalls caused the cancelled CI runs on GitHub-hosted VMs.
+      # The pinned Playwright container already includes matching browsers
+      # and OS dependencies; do NOT run apt-get / playwright install --with-deps.
+      - name: Confirm preinstalled Playwright browser
+        run: |
+          test -d /ms-playwright
+          node -e "const p=require('playwright-core'); const browser = '${{ matrix.browser }}'; const fs=require('fs'); const exe=p[browser].executablePath(); console.log(browser, exe); if(!fs.existsSync(exe))process.exit(1)"
       - name: Run Playwright smoke tests
         run: npx playwright test --project=${{ matrix.project }} ${{ matrix.shard_args }}
 

@@ -3,7 +3,7 @@ const { withoutExplicitMarketingRefusal } = require("./marketingRefusal");
 
 // Independent evidence from the CURRENT customer text. A model flag or Meta
 // attribution is not enough to send unsolicited promotions/result images.
-const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|rm\s*\d{2,})\b|\b(?:harga|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|几[多多]|优惠|優惠|折扣|促销|促銷|\b(?:(?:special|current|any|what|which)\s+offers?)\b)/iu;
+const PRICE_OR_PACKAGE = /(?:\b(?:price|pricing|cost|fees?|charges?|rate|rates|promo(?:tion)?s?|discounts?|vouchers?|rm\s*\d{2,})\b|\b(?:harga|promosi|diskaun|baucar|tawaran|ringgit|bayaran|kos|caj)\b|价[格錢钱]|費用|费用|收[费費]|多少[钱錢]|优惠|優惠|折扣|促销|促銷|\b(?:(?:special|current|any|what|which)\s+offers?)\b)/iu;
 
 
 // Naming a package is treatment interest, not by itself a request for its
@@ -17,11 +17,32 @@ const PACKAGE_OPTIONS_REQUEST = /(?:\b(?:do\s+you\s+have\s+(?:any\s+)?(?:a\s+)?p
 // evidence, unless the message separately contains an explicit money term.
 const ENGLISH_MONEY_QUESTION = /\bhow\s+much\b(?!\s+(?:time|long(?:er)?|duration|recovery|rest|downtime|pain|discomfort|swelling|water|weight|pressure|effort|sleep|exercise|work|energy|space|area|difference|improvement|notice|healing|waiting|treatment\s+time)\b|\s+(?:is|are|was|were)\s+(?:(?:the|my|your|a|an|this)\s+)?(?:recovery|healing|waiting|rest|downtime|treatment|appointment|procedure)\s+(?:time|duration|period)\b|\s+(?:does|do|did|will|would|should|can|could|must|need)\b[^?.!,;]{0,85}\b(?:take|last|hurt|heal|recover|rest|sleep|wait|waiting)\b)/iu;
 
-const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b)|\b(?:rm|ringgit)\s+berapa\b)/iu;
+const MALAY_MONEY_QUESTION = /(?:\bberapa\s+(?:(?:harga|bayaran|kos|caj|rm|ringgit)\b|(?:yang\s+)?(?:perlu\s+)?bayar\b|untuk\b|(?:satu|1)\s+sesi\b)|\b(?:rm|ringgit)\s+berapa\b)/iu;
 const MALAY_NON_PRICE_QUANTITY = /\bberapa\s+(?:lama|masa|hari|minggu|bulan|kali|sesi|jam|minit|orang|tahun|umur|kerap|banyak\s+sesi)\b/iu;
 // Malaysian colloquial price requests are not generic treatment or package
 // enquiries. "几钱" is different from "几次" or "几多疗程".
+// Bare "几多" is ambiguous and must not make a session-count question a price request.
 const LOCAL_MONETARY_QUESTION = /(?:几\s*[钱錢]|幾\s*[钱錢]|几\s*多\s*[钱錢]|幾\s*多\s*[钱錢]|多\s*[少幾几]\s*(?:块|塊|令吉)|(?:几|幾)\s*(?:块|塊)(?:钱|錢)?|(?:价\s*位|價\s*位)(?=\s*(?:[?？]|多少|如何|怎么|怎麼|什么|什麼|几|幾|$))|(?:(?:price|harga|kos|caj|rate|fee|rm)\s*(?:please|pls|plz|berapa|brp)|(?:pm|p\.?m\.?)\s*(?:(?:一下|下|我|me)\s*)?(?:价格|價錢|价钱|价位|價位|几钱|幾錢|harga|price)))/iu;
+
+// Malaysian Chinese WhatsApp users often omit 钱/price in shorthand such as
+// "3D 做一次要多少", "现在什么价", "first trial 几多", "RM几多",
+// or ask for a "quote". Be narrow: bare 多少/几多 alone must NOT unlock
+// prices or optional sales graphics; nor can duration/session-count questions.
+// The downstream service authority still requires a customer-verified treatment.
+const LOCAL_WHATSAPP_PRICE = new RegExp([
+  String.raw`(?:什么|什麼|啥)\s*(?:价|價)(?!值|值)(?:钱|錢|格|位)?`,
+  String.raw`|(?:报|報)\s*价(?=\s*(?:[?？!！。~]*$|吗|嗎|呢|一下|给我|給我|看看|发|發|send))`,
+  String.raw`|\b(?:quote|quotation)\b\s*(?:me\b|我|一下|给我|給我|[?？])`,
+  String.raw`|\b(?:can|could|may|please|pls|send|give|share|need|want)\b.{0,35}\b(?:quote|quotation)\b\s*(?:me\b|for\b|price\b|cost\b|[?？]|$)`,
+  String.raw`|\b(?:rm|myr)\s*(?:几|幾)\s*(?:多(?:钱|錢)?|钱|錢|块|塊)`,
+  String.raw`|(?:几|幾)\s*多\s*(?:rm|myr)\b`,
+  String.raw`|(?:价|價)\s*(?:是|要|大概|约|約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|(?:first[\s-]*trial|首次|初次|第一次)\s*(?:体验|體驗|护理|護理|疗程|療程)?\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|\b[39]\s*d\b\s*(?:这个|這個)?\s*(?:要|收|大概|大约|大約)?\s*(?:几多|幾多)(?=[\s?？!！。呢啊呀啦哦咯~]*$|[，,;；])`,
+  String.raw`|(?:体验|體驗|优惠|優惠|促销|促銷|试做|試做)\s*(?:价|價)(?:格|钱|錢)?(?=\s*(?:[?？!！。呢啊呀啦哦咯~]*$|(?:是|要|大概|多少|几多|幾多)))`,
+  String.raw`|\b(?:brp|brapa)\s*(?:rm|myr|harga|kos)\b`,
+].join(""), "iu");
 
 // The generic word "berapa" means "how many/how much", not necessarily price.
 const ADMIN_TOPIC = /(?:\b(?:contact(?:\s+(?:details?|information|info|number))?|phone(?:\s+number)?|tel(?:ephone)?|mobile(?:\s+number)?|whatsapp(?:\s+number)?|e-?mail|address|location|branches?|opening\s+(?:hours?|times?)|operating\s+hours?|working\s+hours?|business\s+hours?|parking|directions?|google\s+maps?|postal\s+code|opening\s+day|closing\s+time|appointment\s+(?:slots?|time|availability)|payment\s+method|payment\s+options?)\b|联络方式|聯絡方式|联系方式|聯繫方式|电话号码|電話號碼|电话|電話|地址|在哪里|在哪裡|营业时间|營業時間|几点开门|幾點開門|停车|停車|分行|分店|怎么去|怎麼去|停车位|停車位|\b(?:nombor\s+(?:telefon|whatsapp)|telefon|hubungi|alamat|lokasi|cawangan|waktu\s+operasi|tempat\s+letak\s+kereta|parking)\b)/iu;
@@ -32,7 +53,9 @@ const SPECIFIC_TREATMENT_TOPIC = /(?:\b(?:treatments?|rawatan|facial|pelvic|pelv
 
 const DECLINED_TREATMENT = /(?:\b(?:not\s+interested|no\s+interest|don['’]?t\s+want|do\s+not\s+want|not\s+looking\s+for)\b|不感兴趣|不感興趣|不想了解|不想做|不要这个|不要這個|没兴趣|沒興趣|tak\s+(?:berminat|mahu|nak))/iu;
 
-const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(?:ing)?\s+for)\s+(?:the\s+)?(?:price|pricing|package|promo)\b|(?:不[想要需]|不用|无需|不必)(?:知道|了解|问|問)?(?:价格|價錢|价钱|配套|套餐))/iu;
+const NON_REQUEST_PRICE_COMMENT = /(?:[预預]算|\bbudget\b).{0,25}(?:RM|MYR)\s*\d{2,}|(?:价格|價格|價錢|价钱|價位|价位|\b(?:price|pricing|harga)\b).{0,32}(?:不是问题|不是問題|没问题|沒問題|太贵|太貴|好贵|好貴|很贵|很貴|偏高|too\s+(?:high|expensive)|expensive|mahal)/iu;
+
+const DECLINED_PRICE = /(?:\b(?:no|not|don['’]?t|do\s+not)\s+(?:need|want|ask(?:ing)?\s+for)\s+(?:the\s+)?(?:price|pricing|package|promo)\b|(?:不[想要需]|不需要|不用|无需|不必)(?:知道|了解|问|問)?(?:价格|價錢|价钱|配套|套餐|报价|報價|quote|quotation))/iu;
 
 // Positive treatment-interest language, independent of Meta and AI labels.
 // Keep this deliberately conservative: absent evidence means no automatic media.
@@ -118,7 +141,12 @@ function stripFutureFollowUpPermission(customerText) {
 
 function hasFuturePromotionPermissionWithoutPrice(customerText) {
   const parsed = stripFutureFollowUpPermission(customerText);
+  // Permission for a FUTURE offer cannot override a separate current-price
+  // question, including Malaysian Chinese shorthand absent from PRICE_OR_PACKAGE.
+  // Reuse the same strict customer-authored monetary evidence as the quote
+  // gate rather than maintaining a divergent set of keywords here.
   return parsed.hasFuturePermission &&
+    !hasExplicitPriceRequest(parsed.text) &&
     !PRICE_OR_PACKAGE.test(parsed.text) &&
     !PACKAGE_OPTIONS_REQUEST.test(parsed.text) &&
     !ENGLISH_MONEY_QUESTION.test(parsed.text) &&
@@ -149,7 +177,19 @@ function hasCustomerPriceEnquiry(customerText) {
   // Declining one treatment must not suppress a separate, explicit CURRENT
   // pricing question about another treatment in the same customer message.
   // A standalone refusal still does not authorize promotional images.
-  if (DECLINED_PRICE.test(value)) return false;
+  if (DECLINED_PRICE.test(value)) {
+    // A refusal of one quote does not cancel a new, separate price question
+    // after an explicit contrast. Service ownership is verified downstream;
+    // this boolean alone NEVER authorizes a quote or promotion image.
+    const clauses = value.split(/[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu)
+      .map(x => x.trim()).filter(Boolean);
+    return clauses.length === 2 && DECLINED_PRICE.test(clauses[0]) &&
+      !DECLINED_PRICE.test(clauses[1]) &&
+      hasExplicitPriceRequest(clauses[1]);
+  }
+  // A price objection/budget opinion alone asks for neither a new amount nor
+  // a promotional graphic. Preserve any separate explicit price request.
+  if (NON_REQUEST_PRICE_COMMENT.test(value) && !hasExplicitPriceRequest(value)) return false;
   if (DECLINED_TREATMENT.test(value) &&
       !DIRECT_CURRENT_REQUEST.test(value) &&
       !/(?:多少[钱錢]|价格(?:是)?多少|價錢(?:是)?多少|价钱(?:是)?多少|\bhow\s+much\b)/iu.test(value)) {
@@ -162,7 +202,7 @@ function hasCustomerPriceEnquiry(customerText) {
     stripFutureFollowUpPermission(value).text
   );
   return PRICE_OR_PACKAGE.test(current) ||
-    LOCAL_MONETARY_QUESTION.test(current) ||
+    LOCAL_MONETARY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) ||
     PACKAGE_OPTIONS_REQUEST.test(current) ||
     ENGLISH_MONEY_QUESTION.test(current) ||
     (MALAY_MONEY_QUESTION.test(current) && !MALAY_NON_PRICE_QUANTITY.test(current));
@@ -183,7 +223,10 @@ function isFirstTrialAmountQuestion(customerText) {
 
 function isStandalonePriceQuestion(customerText) {
   const t = String(customerText || "").normalize("NFKC").trim();
-  return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t);
+  return /^(?:现在|現在|请问|請問|nak\s+tahu\s+)?\s*(?:多少钱|多少錢|几多钱|幾多錢|几钱|幾錢|价钱|價錢|价格|價[格位]|how\s+much|price|harga|berapa|brapa|brp|berapa\s+ya)[\s?.!！。？]*$/iu.test(t) ||
+    // A short session-amount question may refer to an already independently
+    // confirmed treatment. The context resolver enforces freshness and ownership.
+    /^(?:(?:请问|請問|这个|這個|这项|這項|那个|那個)\s*)?(?:做\s*)?(?:一|1)\s*(?:次|回|趟|(?:个|個)?\s*(?:session|set))\s*(?:要|需|需要|花|收|收费|收費|算|是|大概|大约|大約)?\s*(?:多少|几多|幾多)[\s?？!！。呢啊呀啦哦咯~]*$/iu.test(t);
 }
 
 function isContextualBarePriceQuestion(customerText, treatment = null) {
@@ -205,8 +248,16 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (!current) return false;
   if (isContextualBarePriceQuestion(current, treatment)) return true;
   // A customer refusing to discuss prices is not making a price request.
-  const declined = /(?:不用|不要|不想|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost)\b/iu.test(current);
-  if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) return false;
+  const declined = /(?:不用|不要|不想|不需要|无需|無需|别|別).{0,20}(?:价格|價錢|价钱|费用|費用|报价|報價)|\b(?:don't|do not|not|no)\b.{0,35}\b(?:price|pricing|cost|quote|quotation)\b/iu.test(current);
+  if (declined && !/(?:多少钱|多少錢|几多钱|幾多錢|how\s+much|(?:请问|請問|what(?:'s| is)).{0,20}(?:price|cost|价格|价钱|價錢))/iu.test(current)) {
+    const clauses = current.split(/[，,;；。\n]|(?:但(?:是)?|不过|不過|可是)|\bbut\b/iu)
+      .map(x => x.trim()).filter(Boolean);
+    if (clauses.length !== 2 || !/(?:不要|不用|不需要|不想|无需|無需|别|別|don't|do not|no)/iu.test(clauses[0]) ||
+        !hasExplicitPriceRequest(clauses[1])) return false;
+    // Only a distinct, configured requested service can authorize a quote.
+    // The pricing decision and final approval verify both service identities.
+    return true;
+  }
   // Mentioning a budget or saying prices are acceptable is not a request
   // for the clinic's actual treatment price. These statements used to bypass
   // the final no-unsolicited-prices check just because they contained RM/价钱.
@@ -214,7 +265,8 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   // A price adjective or affordability observation does not request another
   // quotation/graphic. A separate explicit question still takes precedence.
   const affordabilityOnly = /(?:价位|價位|价格|價格|价钱|價錢|\b(?:price|pricing|harga)\b).{0,30}(?:太高|偏高|太贵|太貴|好贵|好貴|有点贵|有點貴|很贵|很貴|贵了|貴了|超出预算|超出預算|too\s+(?:high|expensive)|expensive|mahal)|(?:超出预算|超出預算|负担不起|負擔不起|cannot\s+afford|can't\s+afford).{0,28}(?:价位|價位|价格|價格|价钱|價錢|\b(?:price|pricing|harga)\b)/iu.test(current);
-  const clearRequest = LOCAL_MONETARY_QUESTION.test(current) || /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
+  const clearRequest = LOCAL_MONETARY_QUESTION.test(current) ||
+    MALAY_MONEY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\bberapa\s+(?:harga|nak\s+bayar|bayar|untuk)\b|(?:请问|請問|想知道|想了解|告诉我|告訴我|可以告诉|可以告訴|\b(?:what|tell|send|share|show|could|can|may|please|nak\s+tahu|boleh\s+tahu)\b).{0,45}(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fees?|harga|rates?)\b))/iu.test(current);
   if ((nonRequest || affordabilityOnly) && !clearRequest) return false;
   // A money amount given as the customer's own budget does not ask what our
   // treatment costs. Bare RM amounts need a question/request to qualify.
@@ -226,7 +278,8 @@ function hasExplicitPriceRequest(customerText, { treatment = null } = {}) {
   if (/\bhow\s+much\b/iu.test(current) &&
       !ENGLISH_MONEY_QUESTION.test(current) &&
       !/(?:价格|價錢|价钱|費用|费用|\b(?:price|pricing|cost|fee|rm\s*\d+)\b)/iu.test(current)) return false;
-  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
+  return isFirstTrialAmountQuestion(current) || LOCAL_MONETARY_QUESTION.test(current) ||
+    MALAY_MONEY_QUESTION.test(current) || LOCAL_WHATSAPP_PRICE.test(current) || /(?:价[格钱錢]|價錢|費用|费用|收[费費]|多少[钱錢]|几多钱|幾多錢|(?:配套|套餐).{0,12}(?:几钱|幾錢|多少钱|多少錢)|\b(?:price|pricing|cost|fees?|charges?|rates?|how\s+much|harga|bayaran|berapa\s+(?:harga|bayar|ringgit|rm|kos|caj)|rm\s*\d{2,}|myr\s*\d{2,})\b)/iu.test(current);
 }
 
 function hasCustomerServiceEnquiry(customerText) {
@@ -239,4 +292,4 @@ function hasCustomerServiceEnquiry(customerText) {
   return hasCustomerPriceEnquiry(value) || SERVICE_ENQUIRY.test(value);
 }
 
-module.exports = { isFirstTrialAmountQuestion, LOCAL_MONETARY_QUESTION, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasExplicitPackageOptionsRequest, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };
+module.exports = { isFirstTrialAmountQuestion, LOCAL_MONETARY_QUESTION, LOCAL_WHATSAPP_PRICE, isStandalonePriceQuestion, isContextualBarePriceQuestion, hasExplicitPriceRequest, hasCustomerPriceEnquiry, hasExplicitPackageOptionsRequest, hasCustomerServiceEnquiry, isContextualAdServiceEnquiry, isFollowUpConsentEnquiry, hasFuturePromotionPermissionWithoutPrice, stripFutureFollowUpPermission };

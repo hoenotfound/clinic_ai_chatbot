@@ -13,6 +13,7 @@ import Settings from "./pages/Settings";
 import TeamAccess from "./pages/TeamAccess";
 import ToolsRoute from "./pages/ToolsRoute";
 import Pipeline from "./pages/Pipeline";
+import SalesFollowUp from "./pages/SalesFollowUp";
 import Analytics from "./pages/Analytics";
 import ConversationFlow from "./pages/ConversationFlow";
 import SetupStatus from "./pages/SetupStatus";
@@ -133,6 +134,7 @@ export default function App() {
             <Route path="/inbox" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><InboxPage /></ProtectedRoute>} />
             <Route path="/contacts" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Contacts /></ProtectedRoute>} />
             <Route path="/pipeline" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Pipeline /></ProtectedRoute>} />
+            <Route path="/sales-follow-up" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><SalesFollowUp /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
             <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />

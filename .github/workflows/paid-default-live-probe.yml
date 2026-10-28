@@ -1,0 +1,46 @@
+name: Paid Default Live Read-Only Probe
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paid-default-live-probe:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412 || github.event.pull_request.head.ref == 'fix-paid-live-probe-20261028'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check protected live callback and app-default GET challenge only
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST="https://da-chatbot-neutro-sense-tcm.onrender.com"
+          get_status() {
+            curl --connect-timeout 5 --max-time 15 --silent --show-error \
+              --output /dev/null --write-out "%{http_code}" "$1"
+          }
+          # Both are intentionally invalid Meta verification attempts.
+          # No real number, customer data, valid token or webhook body sent.
+          legacy="$(get_status "$HOST/webhook?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
+          default_get="$(get_status "$HOST/whatsapp/default")"
+          invalid_challenge="$(get_status "$HOST/whatsapp/default?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
+          printf 'Legacy invalid challenge: HTTP %s\n' "$legacy"
+          printf 'Default GET without challenge: HTTP %s\n' "$default_get"
+          printf 'Default GET invalid challenge: HTTP %s\n' "$invalid_challenge"
+          test "$legacy" = "403" || { echo "FAIL: original Neutro callback token guard changed"; exit 1; }
+          if [[ "$default_get" == "403" && "$invalid_challenge" == "403" ]]; then
+            echo "RESULT: new paid callback is ENABLED and rejects invalid challenges. Meta-signed delivery still unverified."
+          elif [[ "$default_get" == "503" && "$invalid_challenge" == "503" ]]; then
+            echo "RESULT: new paid callback remains DISABLED (safe default)."
+          else
+            echo "FAIL: unsafe or incomplete default GET callback configuration."
+            exit 1
+          fi
+          # An external invalid-HMAC POST is deliberately NOT attempted here:
+          # GitHub runner curl consistently failed with exit 23 (no status)
+          # against the disabled new endpoint. Do not infer POST acceptance
+          # or positive Meta delivery from these GET checks.

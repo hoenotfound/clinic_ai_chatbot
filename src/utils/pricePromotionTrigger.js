@@ -1,4 +1,7 @@
 const { hasExplicitPriceRequest, hasCustomerPriceEnquiry, isContextualBarePriceQuestion } = require("./customerEnquiryEvidence");
+const {
+  hasCustomerRefusedPriceQuote, resolveIndependentRefusalPriceRequest,
+} = require("./independentRefusalPriceRequest");
 const clinicConfig = require("../config/clinicConfig");
 const { relatedPricingConflict, unpricedRelatedPrimary } = require("./relatedServicePolicy");
 const { resolveContinuedTreatmentPriceService, resolveRecentFirstTreatmentPriceService } = require("./priceFollowUpContext");
@@ -89,6 +92,20 @@ async function resolvePricePromotionForReply({
     clinicConfig.automatedFollowUp?.complimentaryAssessmentExperienceEnabled === true,
     conversationHistory
   )) return skip("intro_assessment_fee");
+  // Legacy Off/Shadow sends may otherwise trust a model-selected treatment
+  // after a mixed refusal: "9D不要报价了，我想问3D多少钱？".
+  // A price-enquiry boolean is NOT permission to send a graphic for 9D.
+  // Only an independently verified, differently named current customer
+  // treatment may be selected. Ambiguous or same-treatment refusals fail
+  // closed even if the model says priceQuery=true.
+  if (!aiPricingEnabled && hasCustomerRefusedPriceQuote(customerText)) {
+    const scoped = resolveIndependentRefusalPriceRequest({
+      customerText, services, serviceAliases,
+    });
+    if (!scoped || scoped.treatment !== treatment) {
+      return skip("refused_or_mismatched_treatment_price_graphic");
+    }
+  }
   // Enabled mode uses one already-verified pricing result for both text and
   // media. Leave the old keyword-backed path intact for Off/Shadow clients.
   if (aiPricingEnabled && (

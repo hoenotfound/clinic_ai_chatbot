@@ -709,3 +709,266 @@ test("Neutro pelvic caption-only Package A RM388 and B RM288 stay scoped with bo
   }));
   assert.deepEqual(graphics?.packages?.map(p=>p.name),["Package A","Package B"]);
 });
+
+
+test("enabled pricing verifies Malaysian Chinese WhatsApp price shorthand even if Gemini misses priceQuery", async () => {
+  const phrases = [
+    "3D现在什么价？",
+    "3D啥价",
+    "3D报价?",
+    "3D quote me",
+    "3D RM几多?",
+    "3D 几多?",
+    "3D 做一次要多少？",
+    "3D 1 session 多少?",
+    "3D first trial 要多少？",
+    "3D brp RM?",
+  ];
+  for (const customerText of phrases) {
+    const h=[{role:"user",content:customerText}];
+    const d=decide({
+      priceQuery:false, customerText, conversationHistory:h,
+    });
+    assert.equal(d?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(d?.prices?.map(x=>x.price),["RM488"],customerText);
+  }
+  await inAssessmentFirst(async()=>{
+    const customerText="3D 做一次要多少？";
+    const h=[{role:"user",content:customerText}];
+    const decision=decide({priceQuery:false,customerText,conversationHistory:h});
+    const media=await resolvePricePromotionForReply(mediaArgs(decision,{
+      customerText,conversationHistory:h, contactId:702,
+    }));
+    assert.equal(media?.packages?.length,1);
+    assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl,
+      "the eligible single-treatment price request may send its configured graphic");
+  });
+});
+
+test("Malaysian Chinese quantity, budget and staff-only observations cannot authorize AI pricing",()=>{
+  for(const customerText of [
+    "3D几多次?", "3D一次多少分钟?",
+    "3D first trial 几多次?",
+    "3D 1 session 多少天恢复?",
+    "3D 我预算 RM300", "3D 价格不是问题",
+    "3D 我已经有报价了", "3D 不需要报价",
+  ]) {
+    const h=[{role:"user",content:customerText}];
+    assert.equal(decide({priceQuery:true,customerText,conversationHistory:h}),null,customerText);
+  }
+});
+
+
+test("what value and non-monetary quantities never authorize price or promotional media", async () => {
+  const { hasCurrentPriceAmountRequest } = require("../src/utils/aiPricingIntentDecision");
+  for (const customerText of [
+    "3D有什么价值？", "9D 有啥价值比其他项目好?",
+    "3D一次多少人一起?", "3D 一次多少个部位?",
+    "9D一次多少位可以做?", "Can you quote a customer's feedback about 3D?",
+  ]) {
+    const h=[{role:"user",content:customerText}];
+    assert.equal(hasCurrentPriceAmountRequest(customerText),false,customerText);
+    const decision=decide({priceQuery:true,customerText,conversationHistory:h});
+    assert.equal(decision,null,customerText);
+    assert.equal(await resolvePricePromotionForReply(mediaArgs(decision,{
+      customerText, conversationHistory:h, priceQuery:true,
+    })),null,customerText);
+  }
+});
+
+test("real 体验价/优惠价 questions can use only the verified current promotion", async () => {
+  const { hasCurrentPriceAmountRequest }=require("../src/utils/aiPricingIntentDecision");
+  for(const customerText of ["3D体验价？","3D優惠價?","3D体验价是多少?"]) {
+    assert.equal(hasCurrentPriceAmountRequest(customerText),true,customerText);
+    const h=[{role:"user",content:customerText}];
+    const d=decide({priceQuery:false,customerText,conversationHistory:h});
+    assert.equal(d?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(d?.prices?.map(x=>x.price),["RM488"],customerText);
+  }
+  const customerText="3D体验价？";
+  const h=[{role:"user",content:customerText}];
+  const d=decide({priceQuery:false,customerText,conversationHistory:h});
+  await inAssessmentFirst(async()=>{
+    const media=await resolvePricePromotionForReply(mediaArgs(d,{
+      customerText,conversationHistory:h,contactId:709,
+    }));
+    assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl);
+  });
+});
+
+test("one refused treatment does not override an independent price request for another", async () => {
+  const { resolveApprovedPricingAssessment }=require("../src/utils/approvedPricingDecision");
+  const { resolveShadowPriceException }=require("../src/utils/shadowPriceException");
+  const { resolveIndependentRefusalPriceRequest }=require("../src/utils/independentRefusalPriceRequest");
+  const cases=[
+    "9D不要报价了，我想问3D多少钱？",
+    "9D不需要报价，但3D优惠价多少？",
+  ];
+  for(const customerText of cases){
+    const evidence=resolveIndependentRefusalPriceRequest({customerText,services,serviceAliases:aliases});
+    assert.equal(evidence?.treatment,"3D 小颜术",customerText);
+    assert.equal(evidence?.refusedTreatment,"9D 逆龄抗衰",customerText);
+    const h=[{role:"user",content:customerText}];
+    const decision=decide({priceQuery:false,customerText,conversationHistory:h});
+    assert.equal(decision?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(decision?.prices?.map(x=>x.price),["RM488"],customerText);
+    const approved=resolveApprovedPricingAssessment({
+      mode:"enabled",aiDecision:decision,customerText,conversationHistory:h,
+      services,serviceAliases:aliases,resultMedia:[],
+    });
+    assert.equal(approved.decision?.treatment,"3D 小颜术",customerText+" "+approved.reason);
+    await inAssessmentFirst(async()=>{
+      const media=await resolvePricePromotionForReply(mediaArgs(approved.decision,{
+        customerText,conversationHistory:h,contactId:721,
+      }));
+      assert.equal(media?.packages?.[0]?.imageUrl,trial.imageUrl,customerText);
+    });
+    const ts=Date.now()-1000;
+    const timed=[{role:"user",content:customerText,pricingCreatedAtMs:ts}];
+    const shadow=resolveShadowPriceException({
+      customerText,conversationHistory:timed,services,serviceAliases:aliases,
+      promotions,
+    });
+    assert.equal(shadow?.treatment,"3D 小颜术",customerText);
+    const approvedShadow=resolveApprovedPricingAssessment({
+      mode:"shadow",shadowException:shadow,customerText,conversationHistory:timed,
+      services,serviceAliases:aliases,resultMedia:[],
+    });
+    assert.equal(approvedShadow.decision?.treatment,"3D 小颜术",customerText);
+  }
+  for(const customerText of [
+    "3D不要报价了，我想问3D多少钱？",
+    "9D不要报价了，我想问这个多少钱？",
+    "9D不要报价了，我想问3D多少钱？不要再联系",
+    "9D不要报价，3D多少钱，骨盆也多少钱",
+  ]){
+    assert.equal(resolveIndependentRefusalPriceRequest({
+      customerText,services,serviceAliases:aliases,
+    }),null,customerText);
+    assert.equal(decide({priceQuery:true,customerText,
+      conversationHistory:[{role:"user",content:customerText}]}),null,customerText);
+  }
+});
+
+test("session quantity and benefit questions never expose compact prices to the AI prompt",()=>{
+  const {buildConversationPromptContext}=require("../src/utils/conversationPromptContext");
+  const {buildSystemPrompt}=require("../src/utils/systemPrompt");
+  const original={
+    aiPricingIntentMode:config.aiPricingIntentMode,
+    services:config.services, promotions:config.promotions,
+    serviceAliases:config.serviceAliases,automatedFollowUp:config.automatedFollowUp,
+  };
+  try {
+    config.aiPricingIntentMode="enabled";
+    config.services=services;config.promotions=[trial];config.serviceAliases=aliases;
+    config.automatedFollowUp={...original.automatedFollowUp,assessmentFirstPricingEnabled:true};
+    for(const customerText of [
+      "3D做一次多少人一起？", "3D一次多少个部位？", "3D有什么价值？",
+    ]){
+      const context=buildConversationPromptContext([{role:"user",content:customerText}],
+        {services,aliases,promotions:[trial]});
+      const prompt=buildSystemPrompt({conversationContext:context});
+      assert.doesNotMatch(prompt,/VERIFIED PRICE REFERENCE/u,customerText);
+    }
+    const text="请问,做一次多少";
+    const context=buildConversationPromptContext([
+      {role:"user",content:"想了解3D小颜术"},
+      {role:"assistant",content:"可以先了解3D小颜术的护理"},
+      {role:"user",content:text},
+    ],{services,aliases,promotions:[trial]});
+    assert.match(buildSystemPrompt({conversationContext:context}),
+      /VERIFIED PRICE REFERENCE[\s\S]{0,350}RM488/u);
+  } finally {
+    Object.assign(config,original);
+  }
+});
+
+
+test("legacy media never sends refused 9D graphic when customer asks separately for 3D", async () => {
+  const nine = {
+    ...trial,
+    name:"9D First Trial", linkedService:"9D 逆龄抗衰",
+    imageUrl:"https://example.test/promo/9d",
+    caption:"9D First Trial 优惠",
+  };
+  const customerText="9D不要报价了，我想问3D多少钱？";
+  const h=[{role:"user",content:customerText}];
+  const original=config.automatedFollowUp;
+  config.automatedFollowUp={...original,assessmentFirstPricingEnabled:false};
+  try {
+    const base={
+      aiPricingEnabled:false,pricingDecision:null,
+      priceQuery:true,packageQuery:false,customerText,conversationHistory:h,
+      promotions:[trial,nine],services,serviceAliases:aliases,
+      contactId:1729,
+    };
+    let wrongReason=null;
+    const wrong=await resolvePricePromotionForReply(mediaArgs(null,{
+      ...base,treatment:"9D 逆龄抗衰",
+      verifiedServiceFromText:"9D 逆龄抗衰",
+      onSkip:(reason)=>{wrongReason=reason;},
+    }));
+    assert.equal(wrong,null,"wrong model-picked 9D cannot deliver its graphic");
+    assert.equal(wrongReason,"refused_or_mismatched_treatment_price_graphic");
+    const correct=await resolvePricePromotionForReply(mediaArgs(null,{
+      ...base,treatment:"3D 小颜术",
+      verifiedServiceFromText:"3D 小颜术",
+    }));
+    assert.deepEqual(correct?.packages?.map(p=>p.imageUrl),[trial.imageUrl],
+      "explicitly named 3D can receive only its own configured graphic");
+    for(const rejected of [
+      "3D不要报价了，我想问3D多少钱？",
+      "9D不要报价了，我想问这个多少钱？",
+      "9D不要报价了，我想问3D多少钱？不要再联系",
+      "9D不要报价，3D多少钱，骨盆也多少钱",
+    ]) {
+      let reason=null;
+      const media=await resolvePricePromotionForReply(mediaArgs(null,{
+        ...base,customerText:rejected,
+        conversationHistory:[{role:"user",content:rejected}],
+        treatment:"9D 逆龄抗衰",
+        verifiedServiceFromText:"9D 逆龄抗衰",
+        onSkip:x=>{reason=x;},
+      }));
+      assert.equal(media,null,rejected);
+      assert.equal(reason,"refused_or_mismatched_treatment_price_graphic",rejected);
+    }
+    // A normal non-refusal price question still uses the original legacy path.
+    const ordinary="9D多少钱？";
+    const legacy=await resolvePricePromotionForReply(mediaArgs(null,{
+      ...base,customerText:ordinary,conversationHistory:[{role:"user",content:ordinary}],
+      treatment:"9D 逆龄抗衰",verifiedServiceFromText:"9D 逆龄抗衰",
+    }));
+    assert.deepEqual(legacy?.packages?.map(p=>p.imageUrl),[nine.imageUrl]);
+  } finally {
+    config.automatedFollowUp=original;
+  }
+});
+
+test("current colloquial price request plus permission for future offers remains priced and media-eligible", async () => {
+  const { hasFuturePromotionPermissionWithoutPrice }=require("../src/utils/customerEnquiryEvidence");
+  for(const customerText of [
+    "3D什么价，之后有优惠可以发我",
+    "3D现在什么价，之后有优惠可以发我",
+    "3D RM几多，之后有优惠可以通知我",
+    "3D做一次要多少，之后有优惠可以发我",
+  ]) {
+    assert.equal(hasFuturePromotionPermissionWithoutPrice(customerText),false,customerText);
+    const h=[{role:"user",content:customerText}];
+    const decision=decide({priceQuery:false,customerText,conversationHistory:h});
+    assert.equal(decision?.treatment,"3D 小颜术",customerText);
+    assert.deepEqual(decision?.prices?.map(p=>p.price),["RM488"],customerText);
+    await inAssessmentFirst(async()=>{
+      const media=await resolvePricePromotionForReply(mediaArgs(decision,{
+        customerText,conversationHistory:h,contactId:1818,
+      }));
+      assert.deepEqual(media?.packages?.map(p=>p.imageUrl),[trial.imageUrl],customerText);
+    });
+  }
+  const futureOnly="3D之后有优惠可以通知我";
+  assert.equal(hasFuturePromotionPermissionWithoutPrice(futureOnly),true);
+  assert.equal(decide({
+    priceQuery:false,customerText:futureOnly,
+    conversationHistory:[{role:"user",content:futureOnly}],
+  }),null);
+});

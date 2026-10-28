@@ -215,6 +215,15 @@ const candidateSql = `
         AND recent_send.id IS DISTINCT FROM $5::integer
         AND recent_send.delivery_status IS DISTINCT FROM 'cancelled'
     )
+    -- Personal WhatsApp follow-ups do not produce Meta webhook echoes.
+    -- A staff-confirmed sales outcome therefore suppresses the remaining
+    -- extended AI marketing sequence for the same lead/session.
+    AND NOT EXISTS (
+      SELECT 1 FROM sales_follow_up_tasks manual
+      JOIN leads handled ON handled.id = manual.lead_id
+      WHERE handled.contact_id = c.id
+        AND manual.updated_at >= first_reply.created_at
+    )
     -- Staff interventions take precedence over automated marketing.
     AND NOT EXISTS (
       SELECT 1 FROM messages staff_reply

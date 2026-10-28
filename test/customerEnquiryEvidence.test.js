@@ -363,3 +363,141 @@ test("plain-language opt-outs never unlock immediate pricing media", () => {
     "No promotions please, but what is the price of pelvic treatment?",
   ]) assert.equal(hasCustomerPriceEnquiry(value), true, value);
 });
+
+
+test("Malaysian Chinese WhatsApp price phrasing is monetary across casual Chinese and code-mixing", () => {
+  const { hasExplicitPriceRequest, isStandalonePriceQuestion } =
+    require("../src/utils/customerEnquiryEvidence");
+  const messages = [
+    "3D现在什么价？",
+    "9D 什么价 ah?",
+    "3D啥价",
+    "请问3D报价",
+    "可以给我报价吗？",
+    "Can you quote me for 3D?",
+    "9D quote me",
+    "3D quote?",
+    "3D RM几多？",
+    "9D 幾多RM?",
+    "3D價多少？",
+    "3D 做一次要多少？",
+    "9D 一次多少啊",
+    "3D 1次大概多少?",
+    "3D 1 session 多少?",
+    "骨盆调理做一次几多？",
+    "3D first trial 要多少？",
+    "9D首次体验多少?",
+    "3D几多?",
+    "9D 幾多?",
+    "3D价格how much ah?",
+    "3D收费怎么算？",
+    "9D price pls",
+    "3D how much ya",
+    "3D berapa harga?",
+    "3D brp harga?",
+    "3D brp RM?",
+  ];
+  for (const message of messages) {
+    assert.equal(hasCustomerPriceEnquiry(message),true,message);
+    assert.equal(hasExplicitPriceRequest(message),true,message);
+  }
+  for (const message of ["做一次要多少？","一次几多？","这个做一次要多少？","1 session 大概多少?"]) {
+    assert.equal(isStandalonePriceQuestion(message),true,message);
+    assert.equal(hasExplicitPriceRequest(message),true,message);
+  }
+});
+
+test("Malaysian Chinese quantity, refusals, budgets and follow-up opt-ins cannot unlock price graphics", () => {
+  const { hasExplicitPriceRequest, isStandalonePriceQuestion } =
+    require("../src/utils/customerEnquiryEvidence");
+  const notPrices=[
+    "几多?", "幾多", "多少", "3D几多次?", "9D有几多种配套？",
+    "3D 一次多少分钟?", "9D 一次多少天恢复?",
+    "3D做一次多少个小时", "第一次体验多少分钟?",
+    "3D first trial 几多次?", "3D 1 session 多少分钟?",
+    "3D做一次需要多少次?", "我已经有报价了",
+    "Quotation already received, thanks", "3D 我预算 RM300",
+    "不需要价格", "不要报价", "我只想了解3D，不需要报价",
+    "3D 价格不是问题", "3D price too expensive",
+    "骨盆调理之后有优惠可以通知我",
+    "Can you tell me how many sessions 3D takes?",
+    "How much longer until I can do 9D?",
+    "Berapa sesi rawatan 3D diperlukan?",
+  ];
+  for (const message of notPrices) {
+    assert.equal(hasCustomerPriceEnquiry(message),false,message);
+    assert.equal(hasExplicitPriceRequest(message),false,message);
+  }
+  for (const message of ["几多?","3D几多次?","一次多少分钟?"]) {
+    assert.equal(isStandalonePriceQuestion(message),false,message);
+  }
+});
+
+
+test("Malaysian Chinese benefit/quotation-of-text requests never become monetary enquiries", () => {
+  const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
+  for (const message of [
+    "3D有什么价值？",
+    "9D有什麼價值？",
+    "3D什么价值比较高?",
+    "9D 有啥价值比其他项目好？",
+    "Can you quote a customer's feedback about 3D?",
+    "Please quote this customer's message for me",
+    "9D 一次多少人一起?",
+    "3D 一次多少个部位?",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(message), false, message);
+    assert.equal(hasExplicitPriceRequest(message), false, message);
+  }
+  for (const message of [
+    "3D 什么价？", "9D啥价", "3D体验价？",
+    "3D優惠價?", "9D优惠价？", "3D体验价是多少?",
+  ]) {
+    assert.equal(hasCustomerPriceEnquiry(message), true, message);
+    assert.equal(hasExplicitPriceRequest(message), true, message);
+  }
+});
+
+test("different-treatment quote refusals preserve only a separate customer price request", () => {
+  const { hasExplicitPriceRequest } = require("../src/utils/customerEnquiryEvidence");
+  const positives=[
+    "9D不要报价了，我想问3D多少钱？",
+    "9D不需要报价，但3D优惠价多少？",
+    "3D不要报价，9D多少钱?",
+  ];
+  for (const message of positives) {
+    assert.equal(hasCustomerPriceEnquiry(message), true, message);
+    assert.equal(hasExplicitPriceRequest(message), true, message);
+  }
+  for (const message of [
+    "3D不要报价", "9D不需要报价。",
+    "3D不要报价，9D的效果好不好？",
+    "9D不要报价，不过我想了解3D的效果",
+  ]) assert.equal(hasCustomerPriceEnquiry(message), false, message);
+});
+
+
+test("future-offer permission does not erase a current local-language price enquiry",()=>{
+  const {
+    hasFuturePromotionPermissionWithoutPrice, isFollowUpConsentEnquiry,
+    stripFutureFollowUpPermission, hasExplicitPriceRequest,
+  }=require("../src/utils/customerEnquiryEvidence");
+  const current=[
+    "3D什么价，之后有优惠可以发我",
+    "3D现在什么价，之后有优惠可以发我",
+    "3D RM几多，之后有优惠可以通知我",
+    "3D做一次要多少，之后有优惠可以发我",
+  ];
+  for(const text of current){
+    const parsed=stripFutureFollowUpPermission(text);
+    assert.equal(parsed.hasFuturePermission,true,text);
+    assert.equal(hasExplicitPriceRequest(parsed.text),true,text);
+    assert.equal(hasFuturePromotionPermissionWithoutPrice(text),false,text);
+    assert.equal(isFollowUpConsentEnquiry(text),false,text);
+    assert.equal(hasCustomerPriceEnquiry(text),true,text);
+  }
+  const justFuture="3D之后有优惠可以通知我";
+  assert.equal(hasFuturePromotionPermissionWithoutPrice(justFuture),true);
+  assert.equal(isFollowUpConsentEnquiry(justFuture),true);
+  assert.equal(hasCustomerPriceEnquiry(justFuture),false);
+});

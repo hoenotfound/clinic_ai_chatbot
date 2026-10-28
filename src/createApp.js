@@ -11,6 +11,9 @@ const {
 } = require("./services/whatsappCoexistenceAccountUpdateService");
 const { recordQuarantinedWhatsAppChanges } = require("./db/whatsappSenderQuarantineRepo");
 const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQuarantineAlert");
+const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
+const secondaryQaCapture = require("./services/whatsappSecondaryQaCapture");
+const secondaryQaBridge = require("./services/whatsappPaidDefaultSecondaryBridge");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const coexistenceSync = require("./services/whatsappCoexistenceHistoryService");
 const metaMessaging = require("./services/metaMessagingService");
@@ -54,6 +57,7 @@ const followUpPerformanceRoutes = require("./routes/followUpPerformance");
 const advancedConfigRoutes = require("./routes/advancedConfig");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
+const salesFollowUpRoutes = require("./routes/salesFollowUp");
 const setupStatusRoutes = require("./routes/setupStatus");
 const whatsappCoexistenceOnboardingRoutes = require("./routes/whatsappCoexistenceOnboarding");
 const goLiveRoutes = require("./routes/goLive");
@@ -67,6 +71,7 @@ function createApp({
   durablyClaimIncoming,
   scheduleDurableClaim,
   queueIncomingForReply,
+  captureSecondaryQaBatch = secondaryQaCapture.captureSignedSecondaryBatch,
 } = {}) {
   if (!sessionSecret) {
     throw new Error("createApp requires sessionSecret.");
@@ -186,7 +191,8 @@ function createApp({
     return res.sendStatus(403);
   });
 
-  app.post("/webhook", webhookJsonParser, stagingWebhookGuard, async (req, res) => {
+  let primaryWhatsappWebhookHandler;
+  app.post("/webhook", webhookJsonParser, stagingWebhookGuard, primaryWhatsappWebhookHandler = async (req, res) => {
     // The single-sender compatibility boundary runs only AFTER Meta signature
     // verification. It rejects explicitly foreign sender events before any
     // legacy customer lookups, AI cancellation, or receipt writes.
@@ -603,6 +609,77 @@ function createApp({
 
   });
 
+  // Dedicated Meta APP-DEFAULT callback on the existing paid Render process.
+  // The primary /webhook remains unchanged. This route is strictly default-OFF,
+  // signs with the existing Meta app secret and only records audit metadata for
+  // the personal WhatsApp Business App during preidentity bootstrap.
+  app.get("/whatsapp/default", (req, res) => {
+    if (!paidDefaultIngress.enabled()) return res.sendStatus(503);
+    let config;
+    try {
+      config = paidDefaultIngress.configFromEnv();
+    } catch (error) {
+      console.error("[Paid default router] Configuration unavailable:", error.message);
+      return res.sendStatus(503);
+    }
+    if (req.query["hub.mode"] === "subscribe" &&
+        verifyTokenMatches(req.query["hub.verify_token"], config.verifyToken) &&
+        typeof req.query["hub.challenge"] === "string") {
+      return res.status(200).send(req.query["hub.challenge"]);
+    }
+    return res.sendStatus(403);
+  });
+
+  app.post("/whatsapp/default", (req, res, next) => {
+    if (!paidDefaultIngress.enabled()) return res.sendStatus(503);
+    try {
+      paidDefaultIngress.configFromEnv();
+      return next();
+    } catch (error) {
+      console.error("[Paid default router] Configuration unavailable:", error.message);
+      return res.sendStatus(503);
+    }
+  }, webhookJsonParser, async (req, res) => {
+    try {
+      return await secondaryQaBridge.dispatchPaidDefaultWithSecondary(
+        req, res, primaryWhatsappWebhookHandler, {
+          captureSecondary: (body, opts) => captureSecondaryQaBatch(body, opts)
+        }
+      );
+    } catch (error) {
+      // Never return 200 for unknown accounts, undurable QA writes, or failed
+      // primary processing. Meta may retry; database event keys deduplicate.
+      console.error("[Paid default router] Rejected signed event:", error.message);
+      if (!res.headersSent) return res.sendStatus(503);
+    }
+  });
+
+  // Signed synthetic QA capture endpoint. Disabled by default and NOT the
+  // Meta app-default callback. No inbound Neutro route changes or sending.
+  app.post("/whatsapp/secondary-qa-capture", (req, res, next) => {
+    if (process.env.WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED !== "true") {
+      return res.sendStatus(503);
+    }
+    return next();
+  }, webhookJsonParser, async (req, res) => {
+    try {
+      // The same signed receiver is used in production staging and the
+      // disposable-Postgres HTTP integration test. Injection is only for
+      // isolated DB testing; the default never changes.
+      const result = await captureSecondaryQaBatch(
+        req.body, { signatureVerified: true }
+      );
+      return res.status(200).json({
+        durable: result.durable,
+        accepted: result.accepted,
+        inserted: result.inserted
+      });
+    } catch (error) {
+      console.error("[Secondary QA] Signed capture rejected:", error.code || "qa_capture_rejected");
+      if (!res.headersSent) return res.sendStatus(503);
+    }
+  });
+
   app.get("/meta-webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -767,6 +844,7 @@ function createApp({
   app.use("/api/advanced-config", requireAuth, advancedConfigRoutes);
   app.use("/api/contacts", requireAuth, contactsRoutes);
   app.use("/api/pipeline", requireAuth, pipelineRoutes);
+  app.use("/api/sales-follow-up", requireAuth, salesFollowUpRoutes);
   app.use("/api/setup-status", requireAuth, setupStatusRoutes);
   app.use(
     "/api/whatsapp-coexistence/onboarding",
