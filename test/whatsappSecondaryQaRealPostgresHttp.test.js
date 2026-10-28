@@ -176,13 +176,27 @@ test("signed real HTTP secondary capture persists, deduplicates, isolates and en
         assert.match(plain.toString("utf8"),/synthetic-text-only|synthetic-default-route/);
         assert.doesNotMatch(entry.ciphertext.toString("utf8"),/synthetic-text-only/);
       }
+      const largeMessages=Array.from({length:620},(_,i)=>({
+        id:"wamid.large-http-"+i,from:"60126662222",
+        timestamp:"1790000000",type:"text",text:{body:"H".repeat(3800)}
+      }));
+      const largeRaw=JSON.stringify({object:"whatsapp_business_account",entry:[{
+        id:"889900",changes:[{field:"history",value:{
+          metadata:{phone_number_id:"112233"},
+          history:[{threads:[{id:"60126662222",messages:largeMessages}]}]
+        }}]
+      }]});
+      assert.ok(Buffer.byteLength(largeRaw)>2*1024*1024);
+      const largeResponse=await post(largeRaw,signed(e.WHATSAPP_APP_SECRET,largeRaw));
+      assert.equal(largeResponse.status,200,"signed >2 MB clinic history must be captured");
+      assert.equal((await largeResponse.json()).accepted,7);
       const foreign=JSON.parse(message);foreign.entry[0].id="777123";
       const foreignRaw=JSON.stringify(foreign);
       assert.equal((await post(foreignRaw,signed(e.WHATSAPP_APP_SECRET,foreignRaw))).status,503);
       const history=payload("history","consent-required");
       e.WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED="false";
       assert.equal((await post(history,signed(e.WHATSAPP_APP_SECRET,history))).status,503);
-      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM whatsapp_secondary_qa_capture_events")).rows[0].n,5);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM whatsapp_secondary_qa_capture_events")).rows[0].n,12);
       assert.equal(primaryCalled,0);
     });
   } finally {

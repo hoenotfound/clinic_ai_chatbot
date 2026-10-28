@@ -99,14 +99,18 @@ function createApp({
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
   // validated against the exact bytes received.
-  const webhookJsonParser = createWebhookJsonParser((req, res, buf) => {
+  const verifySignedWhatsappBody = (req, res, buf) => {
     verifyWebhookSignature(req, res, buf);
     // Copy only for the explicitly enabled sender-specific receipt ingress.
     // The receipt service independently verifies HMAC against these bytes.
     if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
       req.whatsappSignedRawBody = Buffer.from(buf);
     }
-  });
+  };
+  const webhookJsonParser = createWebhookJsonParser(verifySignedWhatsappBody);
+  // Meta history chunks may exceed the normal inbound message size.
+  // The original Neutro /webhook remains signed and capped at 2 MB.
+  const paidDefaultHistoryJsonParser = createWebhookJsonParser(verifySignedWhatsappBody, "8mb");
   const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
   const portalJsonParser = createPortalJsonParser();
   const advancedConfigJsonParser = createAdvancedConfigJsonParser();
@@ -639,7 +643,7 @@ function createApp({
       console.error("[Paid default router] Configuration unavailable:", error.message);
       return res.sendStatus(503);
     }
-  }, webhookJsonParser, async (req, res) => {
+  }, paidDefaultHistoryJsonParser, async (req, res) => {
     try {
       return await secondaryQaBridge.dispatchPaidDefaultWithSecondary(
         req, res, primaryWhatsappWebhookHandler, {
@@ -661,7 +665,7 @@ function createApp({
       return res.sendStatus(503);
     }
     return next();
-  }, webhookJsonParser, async (req, res) => {
+  }, paidDefaultHistoryJsonParser, async (req, res) => {
     try {
       // The same signed receiver is used in production staging and the
       // disposable-Postgres HTTP integration test. Injection is only for

@@ -4,9 +4,9 @@ const WEBHOOK_JSON_LIMIT = "2mb";
 const PORTAL_JSON_LIMIT = "100kb";
 const ADVANCED_CONFIG_JSON_LIMIT = "512kb";
 
-function createWebhookJsonParser(verify) {
+function createWebhookJsonParser(verify, limit = WEBHOOK_JSON_LIMIT) {
   return bodyParser.json({
-    limit: WEBHOOK_JSON_LIMIT,
+    limit,
     ...(typeof verify === "function" ? { verify } : {}),
   });
 }
