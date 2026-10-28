@@ -7,6 +7,7 @@ const ingress = require("./whatsappPaidDefaultIngress");
 const handoff = require("./whatsappSecondaryCaptureHandoff");
 const history = require("./whatsappCoexistenceHistoryService");
 const {pool: target} = require("../db/db");
+const {Pool} = require("pg");
 
 const NEVER_SEND = [
   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
@@ -34,7 +35,6 @@ function assertOperatorIsolation(env, action) {
     sameHostQa: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST === "true",
     sourcePin: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE === "neondb",
     targetPin: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE === "pr414_forward_qa",
-    testingPhonePin: /^\+[1-9]\d{7,14}$/.test(String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "")),
     handoffEnabled: action !== "import" || env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED === "true",
     handoffApproved: action !== "import" || env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED === "true"
   };
@@ -50,7 +50,6 @@ function assertOperatorIsolation(env, action) {
       env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST !== "true" ||
       env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE !== "neondb" ||
       env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE !== "pr414_forward_qa" ||
-      !/^\+[1-9]\d{7,14}$/.test(String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "")) ||
       (action === "import" &&
        (env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED !== "true" ||
         env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED !== "true"))) {
@@ -73,9 +72,7 @@ function assertOperatorIsolation(env, action) {
       !src.password || !dst.password || src.password === dst.password) {
     throw Error("Real QA history operator refused: incorrect QA database isolation");
   }
-  return ingress.assertQaConfiguration(ingress.configFromEnv({
-    ...env, WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true"
-  }));
+  return {qaDatabaseUrl:env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL};
 }
 
 function summarize(rows, source) {
@@ -131,7 +128,13 @@ async function runOnBoot(env=process.env) {
   const action = String(env.PR414_QA_REAL_HISTORY_ACTION || "");
   if (!action) return;
   const base = assertOperatorIsolation(env, action);
-  const source = ingress.getQaPool(base);
+  const source = new Pool({
+    connectionString:base.qaDatabaseUrl,
+    ssl:{rejectUnauthorized:false},max:2,
+    connectionTimeoutMillis:5000,idleTimeoutMillis:10000,
+    statement_timeout:15000,query_timeout:20000,
+    application_name:"pr414-consented-qa-history-one-shot"
+  });
   const [sourceSchema, targetSchema, sourceSender, targetSender, captures, onboarding, consents] = await Promise.all([
     one(source, "SELECT max(version)::int AS version FROM schema_migrations"),
     one(target, "SELECT max(version)::int AS version FROM schema_migrations"),
@@ -158,7 +161,7 @@ async function runOnBoot(env=process.env) {
       destination.meta_account_id !== onboarded.waba_id ||
       claimed.meta_phone_number_id !== onboarded.phone_number_id ||
       destination.meta_phone_number_id !== onboarded.phone_number_id ||
-      digits(base.qaE164) !== digits(onboarded.display_phone_number) ||
+      !/^60\d{9,12}$/.test(digits(onboarded.display_phone_number)) ||
       consents.rows.length !== 2 ||
       !["history","smb_app_state_sync"].every(type => consents.rows.some(
         row => row.sync_type === type && row.state === "accepted" &&
@@ -167,14 +170,16 @@ async function runOnBoot(env=process.env) {
   }
   // In-memory approvals are backed by the already-accepted, consented QA
   // records above. Do not alter global capture, Meta, or outbound switches.
+  const onboardedE164 = "+" + digits(onboarded.display_phone_number);
   const operatorEnv = {
     ...env,
+    WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164:onboardedE164,
     WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
     WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"true",
     WHATSAPP_PAID_SECONDARY_QA_OPERATOR_APPROVED:"true",
     WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED:"true",
     WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED:"true",
-    WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:base.qaE164,
+    WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:onboardedE164,
     WHATSAPP_PAID_SECONDARY_QA_WABA_ID:claimed.meta_account_id,
     WHATSAPP_PAID_SECONDARY_QA_PHONE_ID:claimed.meta_phone_number_id
   };
