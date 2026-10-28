@@ -311,6 +311,7 @@ async function configureWhatsAppWebhook({
 
   const coexistenceFields = [
     "messages",
+    "account_update",
     "smb_message_echoes",
     "smb_app_state_sync",
     "history",

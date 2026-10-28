@@ -4,7 +4,9 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    # Temporary PR #395 full-CI verification. Remove the feature branch
+    # from this list after its merge; production/main behavior is unchanged.
+    branches: [main, feature/whatsapp-complete-multinumber-integration-20261022]
 
 # Replaced PR commits should cancel outdated checks, but each main push needs
 # an independent concurrency group so no pending main run is discarded.
@@ -118,10 +120,16 @@ jobs:
             project: ipad-landscape
             browser: webkit
             shard_args: "--shard=2/2"
-          - label: iphone-portrait
+          # Keep every iPhone test but avoid the monolithic 158-test run
+          # hitting the hosted-runner job timeout after slow WebKit apt setup.
+          - label: iphone-portrait-1-of-2
             project: iphone-portrait
             browser: webkit
-            shard_args: ""
+            shard_args: "--shard=1/2"
+          - label: iphone-portrait-2-of-2
+            project: iphone-portrait
+            browser: webkit
+            shard_args: "--shard=2/2"
     defaults:
       run:
         working-directory: portal-frontend
@@ -144,7 +152,8 @@ jobs:
       - name: Run Playwright smoke tests
         run: npx playwright test --project=${{ matrix.project }} ${{ matrix.shard_args }}
 
-  # Keep the existing required check name and enforce every browser result, including both iPad shards.
+  # Keep the existing required check name; every browser matrix result must
+  # pass, including both iPad shards and both iPhone shards.
   portal-checks:
     if: ${{ always() }}
     needs: [portal-static, portal-playwright]

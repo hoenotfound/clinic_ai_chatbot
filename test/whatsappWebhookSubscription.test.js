@@ -201,6 +201,7 @@ test("coexistence configuration subscribes the required message-path fields", as
   const baselineBody = JSON.parse(calls[1].options.body);
   assert.deepEqual(baselineBody.subscribed_fields, [
     "messages",
+    "account_update",
     "smb_message_echoes",
     "smb_app_state_sync",
     "history",

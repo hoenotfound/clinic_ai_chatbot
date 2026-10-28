@@ -433,7 +433,14 @@ async function processCandidate(candidate, requested, template, now = new Date()
   // guard is going to reject it. If another send is pending or the strict
   // 7-day billing evidence is absent, leave this slot eligible for a later
   // sweep. Final reserve() still locks and rechecks right before calling Meta.
-  const preflight = await zeroCostGuard.preflightTemplate(candidate.whatsapp_number, { now });
+  const senderGate = await require("./whatsappSenderDispatchGuard")
+    .checkWhatsAppDispatchContact({
+      id: candidate.contact_id,
+      channel: "whatsapp",
+      whatsapp_number: candidate.whatsapp_number,
+    });
+  if (senderGate) return "sender_not_ready";
+  const preflight = await zeroCostGuard.preflightTemplate(candidate.whatsapp_number, { now, contactId: candidate.contact_id });
   if (!preflight.allowed) {
     console.warn("[WhatsApp FEP] deferred before claim:", preflight.code);
     return "billing_preflight_deferred";

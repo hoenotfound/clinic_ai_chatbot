@@ -1,0 +1,58 @@
+name: PR395 Forward Migration and Signed Receiver QA
+
+on:
+  push:
+    branches: [pr395-forward-migration-rehearsal-20261028, pr395-history-handoff-20261028]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr395-forward-only-migrations-qa
+  cancel-in-progress: true
+
+jobs:
+  disposable-migration-and-signed-http:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clinic_ai_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clinic_ai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clinic_ai_test
+      PR395_DISPOSABLE_MIGRATION_REHEARSAL: "true"
+      FFMPEG_BIN: /tmp/clinic-ai-pr395-ci-ffmpeg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify executable SQL lineage on disposable PostgreSQL
+        run: node --test test/pr395ForwardProductionLineagePostgres.integration.test.js
+      - name: Verify signed HTTP and passive history boundaries (synthetic, NO Meta API)
+        run: |
+          node --test \
+            test/pr395PreidentityReceiver.test.js \
+            test/pr395LegacyLifecycleReceiver.test.js \
+            test/pr395StagingSafety.test.js \
+            test/pr395CoexistenceSyncDispatcher.test.js \
+            test/pr395RealClinicRoutingGuard.test.js \
+            test/whatsappPaidDefaultHttp.test.js \
+            test/whatsappCoexistenceHistoryService.test.js \
+            test/whatsappSecondaryCaptureHandoff.test.js
+      - name: Real signed HTTP clinic-history capture to disposable PostgreSQL
+        env:
+          RUN_SECONDARY_QA_HTTP_INTEGRATION: "true"
+        run: node --test test/whatsappSecondaryQaRealPostgresHttp.test.js

@@ -42,7 +42,7 @@ test("creates a canonical contact with a race-safe insert", async (t) => {
     }
 
     assert.equal(queryCount, 2);
-    assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO NOTHING/);
+    assert.match(sql, /ON CONFLICT DO NOTHING/);
     assert.deepEqual(params, ["60123456789", "Patient"]);
     return {
       rows: [{ id: 8, whatsapp_number: "60123456789", whatsapp_profile_name: "Patient" }],
@@ -93,7 +93,7 @@ test("keeps an existing canonical contact instead of destructively merging a leg
       return { rows: [] };
     }
     if (queryCount === 2) {
-      assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO NOTHING/);
+      assert.match(sql, /ON CONFLICT DO NOTHING/);
       return { rows: [] };
     }
     assert.equal(queryCount, 3);
@@ -499,4 +499,37 @@ test("delivery failures alert Telegram even when a higher-priority attention rea
     contactId: 12,
     reason: "Delivery failed: Meta rejected the message.",
   });
+});
+
+
+test("portal gives historical unbound Neutro contacts a display-only primary sender",()=>{
+  const keys=["WHATSAPP_MULTI_NUMBER_READ_ENABLED","WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED",
+    "WHATSAPP_PRIMARY_SENDER_KEY","WHATSAPP_PHONE_NUMBER_ID","WHATSAPP_WABA_ID"];
+  const prior=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  try{
+    Object.assign(process.env,{
+      WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+      WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+      WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+      WHATSAPP_PHONE_NUMBER_ID:"100000000000001",
+      WHATSAPP_WABA_ID:"200000000000001",
+    });
+    const legacy={id:10,contact_id:10,channel:"whatsapp",whatsapp_sender_id:null,
+      whatsapp_number:"60125550000"};
+    const presented=contactsRepo.presentPortalContact(legacy);
+    assert.equal(presented.whatsapp_sender_key,"neutro");
+    assert.equal(presented.whatsapp_sender_display_name,"Neutro Sense");
+    assert.equal(presented.whatsapp_is_secondary,false);
+    assert.equal(presented.whatsapp_sender_id,null);
+    const ariel={...legacy,id:11,whatsapp_sender_id:2,whatsapp_sender_key:"ariel",
+      whatsapp_sender_display_name:"Ariel Lee"};
+    assert.equal(contactsRepo.presentPortalContact(ariel).whatsapp_sender_key,"ariel");
+    process.env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED="false";
+    assert.equal(contactsRepo.presentPortalContact(legacy).whatsapp_sender_key,undefined);
+  }finally{
+    for(const key of keys){
+      if(prior[key]===undefined)delete process.env[key];
+      else process.env[key]=prior[key];
+    }
+  }
 });

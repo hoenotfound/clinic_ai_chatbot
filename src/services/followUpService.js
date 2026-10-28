@@ -1217,6 +1217,17 @@ async function deferPolicyCandidate(candidate, stepIndex, code) {
 }
 
 async function sendCandidate(candidate) {
+  // Before a follow-up is claimed, verify its persisted business sender.
+  // A disabled/unconfigured second number must not consume a Neutro billing
+  // reservation or follow-up slot through a bare scheduler candidate.
+  if (candidate?.channel === "whatsapp") {
+    const senderGate = await require("./whatsappSenderDispatchGuard")
+      .checkWhatsAppDispatchContact({
+        id: candidate.contact_id, channel: "whatsapp",
+        whatsapp_number: candidate.whatsapp_number,
+      });
+    if (senderGate) return;
+  }
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
   const settings = getActiveSettings();
@@ -1237,7 +1248,7 @@ async function sendCandidate(candidate) {
   // the ordinary service window instead.
   if (candidate.channel === "whatsapp" && whatsappZeroCostGuard.enabled() &&
       !whatsappZeroCostGuard.allow24hAutoFollowUps()) {
-    const eligible = await whatsappZeroCostGuard.preflightFreeform(candidate.whatsapp_number);
+    const eligible = await whatsappZeroCostGuard.preflightFreeform(candidate.whatsapp_number, { contactId: candidate.contact_id });
     if (!eligible.allowed) {
       await deferPolicyCandidate(candidate, stepIndex,
         POSTPONABLE_POLICY_CODES.has(eligible.code)

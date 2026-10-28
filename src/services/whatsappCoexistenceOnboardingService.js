@@ -6,6 +6,7 @@ const {
   normalizedGraphVersion,
 } = require("../provisioning/whatsappWebhookSubscription");
 
+const {credentialVaultReady} = require("./whatsappCoexistenceCredentialVault");
 const FINISH_EVENT = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
 const EMBEDDED_SIGNUP_TYPE = "WA_EMBEDDED_SIGNUP";
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -52,6 +53,89 @@ function graphVersion(env = process.env) {
   );
 }
 
+function secondaryTargetMode(env = process.env) {
+  return Boolean(clean(env.WHATSAPP_SECONDARY_SENDER_KEY) ||
+    clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) ||
+    clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID));
+}
+
+function normalizedPhone(value) {
+  return clean(value).replace(/[^0-9]/g, "");
+}
+
+function unassignedProtectedQaTarget(env = process.env) {
+  const pinned = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+  const approved = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
+  const primary = normalizedPhone(env.WHATSAPP_PHONE_NUMBER);
+  return env.PR395_STAGING_MODE === "true" &&
+    env.PR395_STAGING_APP_ONLY_SIGNUP_READY === "true" &&
+    env.PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED === "true" &&
+    env.PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED === "true" &&
+    env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED === "true" &&
+    env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED !== "true" &&
+    env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" &&
+    env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa" &&
+    !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_WABA_ID) &&
+    /^\+[1-9]\d{7,14}$/.test(pinned) &&
+    pinned === approved && pinned !== "+60174831336" &&
+    (!primary || normalizedPhone(pinned) !== primary);
+}
+
+function requireExpectedSecondaryPhone(env = process.env) {
+  if (!secondaryTargetMode(env)) return null;
+  // Business App-only phones do not expose their Cloud API phone ID before
+  // Meta Embedded Signup. Discover it *after* the signed completion and
+  // Graph WABA/phone ownership lookup, but only in locked-down staging.
+  if (unassignedProtectedQaTarget(env)) return null;
+  const expected = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
+  if (!/^\d+$/.test(expected)) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Pin the secondary phone number ID before authorizing a real WhatsApp Business App number.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_TARGET_UNPINNED", status: 409, retrySafe: false }
+    );
+  }
+  if (expected === clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "The selected secondary phone ID matches Neutro's primary phone ID. No authorization was accepted.",
+      { code: "WHATSAPP_COEXISTENCE_PRIMARY_PHONE_BLOCKED", status: 409, retrySafe: false }
+    );
+  }
+  return expected;
+}
+
+function assertExpectedSecondaryPhone(phone, env = process.env) {
+  const expectedId = requireExpectedSecondaryPhone(env);
+  if (!expectedId && !secondaryTargetMode(env)) return;
+  const metaId = clean(phone?.id);
+  // The account might have been authorized for the wrong Business App
+  // number. Even when no Meta phone ID was available pre-signup, verify the
+  // actual account-owned phone against the privately pinned E.164.
+  if (!/^\d+$/.test(metaId) ||
+      metaId === clean(env.WHATSAPP_PHONE_NUMBER_ID) ||
+      (unassignedProtectedQaTarget(env) && metaId === "1318355951360575")) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "The authorized phone ID is invalid, belongs to the primary account, or matches the excluded clinic test number.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH", status: 409, retrySafe: false }
+    );
+  }
+  if (expectedId && metaId !== expectedId) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Meta returned a different phone ID from the pinned secondary number. Verify the new phone ID manually before retrying.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH", status: 409, retrySafe: false }
+    );
+  }
+  const expectedE164 = normalizedPhone(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+  const actualE164 = normalizedPhone(phone?.displayPhoneNumber);
+  if (expectedE164 && (!actualE164 || expectedE164 !== actualE164)) {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Meta returned a display phone number that does not match the pinned second number.",
+      { code: "WHATSAPP_COEXISTENCE_SECONDARY_DISPLAY_MISMATCH", status: 409, retrySafe: false }
+    );
+  }
+}
+
 function publicConfig(env = process.env) {
   const values = {
     appId: appId(env),
@@ -63,6 +147,25 @@ function publicConfig(env = process.env) {
   if (!values.configId) missing.push("META_EMBEDDED_SIGNUP_CONFIG_ID");
   if (!appSecret(env)) missing.push("META_APP_SECRET");
   if (!clean(env.WHATSAPP_VERIFY_TOKEN)) missing.push("WHATSAPP_VERIFY_TOKEN");
+  const secondary = secondaryTargetMode(env);
+  // October 2026: old Embedded Signup configurations no longer support new
+  // onboarding. This is an operator confirmation of the Meta dashboard
+  // configuration, not something the API can infer from config_id.
+  if (secondary && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
+    missing.push("META_EMBEDDED_SIGNUP_V4_CONFIRMED");
+  }
+  if (secondary && env.PR395_STAGING_MODE === "true" &&
+      !credentialVaultReady(env)) {
+    missing.push("PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY");
+  }
+  if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID)) &&
+      !unassignedProtectedQaTarget(env)) {
+    missing.push("WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID or protected QA E.164 pin");
+  }
+  if (secondary && clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) ===
+      clean(env.WHATSAPP_PHONE_NUMBER_ID)) {
+    missing.push("A distinct secondary phone number ID");
+  }
 
   return {
     configured: missing.length === 0,
@@ -71,10 +174,14 @@ function publicConfig(env = process.env) {
     featureType: "whatsapp_business_app_onboarding",
     sessionInfoVersion: "3",
     runtime: {
+      targetMode: secondary ? "secondary" : "single-number",
       coexistenceEnabled:
         clean(env.WHATSAPP_COEXISTENCE_ENABLED).toLowerCase() === "true",
-      wabaId: clean(env.WHATSAPP_WABA_ID) || null,
-      phoneNumberId: clean(env.WHATSAPP_PHONE_NUMBER_ID) || null,
+      // In the dual-number rollout never compare an onboarding result with
+      // Neutro's primary sender or suggest replacing its working credentials.
+      wabaId: clean(secondary ? env.WHATSAPP_SECONDARY_WABA_ID : env.WHATSAPP_WABA_ID) || null,
+      phoneNumberId: clean(secondary ? env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID : env.WHATSAPP_PHONE_NUMBER_ID) || null,
+      expectedPhoneNumberId: secondary ? clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) || null : null,
     },
   };
 }
@@ -270,14 +377,28 @@ async function fetchPhoneNumbers({
   env = process.env,
   fetchImpl = global.fetch,
 }) {
-  const payload = await graphRequest({
-    path:
-      `${encodeURIComponent(wabaId)}/phone_numbers` +
-      "?fields=id,display_phone_number,verified_name&limit=100",
-    accessToken,
-    graphVersion: graphVersion(env),
-    fetchImpl,
-  });
+  let payload;
+  try {
+    payload = await graphRequest({
+      path:
+        `${encodeURIComponent(wabaId)}/phone_numbers` +
+        "?fields=id,display_phone_number,verified_name&limit=100",
+      accessToken,
+      graphVersion: graphVersion(env),
+      fetchImpl,
+    });
+  } catch (error) {
+    // Meta's 2026 WAAC / messaging-account separation can make a formerly
+    // assumed WABA ID the wrong Graph node type. Never fall back to the first
+    // phone on another account or treat a direct phone lookup as ownership proof.
+    if (/phone_numbers|nonexisting field/i.test(String(error?.message || ""))) {
+      throw new WhatsAppCoexistenceOnboardingError(
+        "Meta did not expose the phone_numbers edge for the authorized account. Confirm the account type and ID returned by Embedded Signup; this authorization is not verified.",
+        { code: "WHATSAPP_COEXISTENCE_ACCOUNT_TYPE_UNVERIFIED", status: 409, retrySafe: false }
+      );
+    }
+    throw error;
+  }
   const rows = Array.isArray(payload?.data) ? payload.data : [];
 
   return Promise.all(
@@ -354,8 +475,25 @@ async function completeEmbeddedSignup({
   sessionInfo,
   env = process.env,
   fetchImpl = global.fetch,
+  // Internal callback only. The Meta access token MUST NOT be returned to
+  // any frontend API response, log, onboarding audit column or exception.
+  onVerifiedCredential = null,
 }) {
   const finish = validateFinishSession(sessionInfo);
+  const expectedPhoneId = requireExpectedSecondaryPhone(env);
+  if (secondaryTargetMode(env) && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
+    throw new WhatsAppCoexistenceOnboardingError(
+      "Verify that the DA CHATBOT Facebook Login for Business configuration uses Embedded Signup v4 before connecting this Business App number.",
+      { code: "WHATSAPP_COEXISTENCE_V4_CONFIG_UNVERIFIED", status: 409, retrySafe: false }
+    );
+  }
+  // Reject the wrong selection BEFORE exchanging Meta's authorization code
+  // when the completion event explicitly supplies the phone ID.
+  if (expectedPhoneId && finish.phoneNumberId && finish.phoneNumberId !== expectedPhoneId) {
+    assertExpectedSecondaryPhone({ id: finish.phoneNumberId }, {
+      ...env, WHATSAPP_SECONDARY_EXPECTED_PHONE_E164: ""
+    });
+  }
   const exchanged = await exchangeCodeForToken({ code, env, fetchImpl });
   const token = await inspectToken({
     accessToken: exchanged.accessToken,
@@ -390,7 +528,32 @@ async function completeEmbeddedSignup({
   }
 
   const phone = choosePhoneNumber(phones, finish.phoneNumberId);
+  assertExpectedSecondaryPhone(phone, env);
   const runtime = publicConfig(env).runtime;
+  if (typeof onVerifiedCredential === "function") {
+    if (!token.scopes.includes("whatsapp_business_messaging")) {
+      throw new WhatsAppCoexistenceOnboardingError(
+        "The Meta authorization did not grant whatsapp_business_messaging.",
+        { code: "WHATSAPP_COEXISTENCE_MESSAGING_SCOPE_MISSING",status:409,retrySafe:false }
+      );
+    }
+    // debug_token expiry has precedence. OAuth expires_in is only a fallback.
+    // If neither is available, refuse to persist indefinite credentials.
+    const expiry=token.expiresAt || (
+      Number.isSafeInteger(exchanged.expiresIn) && exchanged.expiresIn>0
+        ? new Date(Date.now()+exchanged.expiresIn*1000).toISOString()
+        : null
+    );
+    await onVerifiedCredential({
+      accessToken:exchanged.accessToken,
+      wabaId:waba.id,phoneNumberId:phone.id,
+      displayPhoneNumber:phone.displayPhoneNumber,
+      verifiedName:phone.verifiedName,
+      coexistenceReady:phone.coexistenceReady,
+      eventVersion:finish.eventVersion,
+      tokenExpiresAt:expiry,
+    });
+  }
 
   return {
     event: FINISH_EVENT,
@@ -406,10 +569,13 @@ async function completeEmbeddedSignup({
       ...runtime,
       wabaMatches: runtime.wabaId === waba.id,
       phoneMatches: runtime.phoneNumberId === phone.id,
+      accountIdentityRequiresReview: runtime.targetMode === "secondary" &&
+        Boolean(runtime.wabaId) && runtime.wabaId !== waba.id,
     },
     activationRequired: true,
-    nextStep:
-      "Update the client runtime WABA/phone credentials, enable coexistence only after verification, then configure the coexistence webhook subscription.",
+    nextStep: runtime.targetMode === "secondary"
+      ? "Review and update only the isolated secondary sender account/phone credentials after independent Meta verification. Never replace Neutro's primary credentials, register the Business App phone, enable outbound sending or move the production webhook."
+      : "Verify account and phone ownership before changing any runtime credentials or webhook subscriptions.",
   };
 }
 
@@ -424,6 +590,11 @@ module.exports = {
   fetchWaba,
   inspectToken,
   publicConfig,
+  fetchPhoneNumbers,
+  secondaryTargetMode,
+  unassignedProtectedQaTarget,
+  requireExpectedSecondaryPhone,
+  assertExpectedSecondaryPhone,
   safeSessionInfo,
   validateFinishSession,
 };

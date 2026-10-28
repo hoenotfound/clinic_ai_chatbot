@@ -74,6 +74,9 @@ async function processClaimedBatch(
   repository = inboundProcessingRepo
 ) {
   if (!items?.length) return;
+  // Isolated PR395 signed-provider rehearsal is strictly ingest-only. A
+  // webhook may enqueue a claim, but must never run the AI/send processor.
+  if (process.env.PR395_STAGING_MODE === "true") return;
   try {
     await batchProcessor(items);
     await Promise.all(

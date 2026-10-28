@@ -65,7 +65,7 @@ test("secondary staging remains default OFF and has no route connected to Neutro
   assert.throws(()=>capture.captureConfig(env({WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"false"})),/disabled/);
   const app=fs.readFileSync(path.join(__dirname,"../src/createApp.js"),"utf8");
   assert.match(app, /app\.post\("\/whatsapp\/secondary-qa-capture"/);
-  assert.match(app, /webhookJsonParser, async \(req, res\) => \{/);
+  assert.match(app, /paidDefaultHistoryJsonParser, async \(req, res\) => \{/);
   assert.ok(app.indexOf('app.post("/webhook"') <
     app.indexOf('app.post("/whatsapp/secondary-qa-capture"'));
   const source=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryQaCapture.js"),"utf8");
@@ -147,4 +147,23 @@ test("the staging SQL is outside auto-run production migration discovery",()=>{
   const gitRunner=fs.readFileSync(path.join(__dirname,"../src/db/migrationRunner.js"),"utf8");
   assert.match(gitRunner,/MIGRATIONS_DIR/);
   assert.doesNotMatch(gitRunner,/ops\/qa-only/);
+});
+
+test("large one-time history is encrypted in bounded, replayable capture chunks",()=>{
+  const timestamp=String(Math.floor(Date.now()/1000)-3000);
+  const messages=Array.from({length:620},(_,i)=>({
+    id:"wamid.large-"+i,from:"60126662222",timestamp,
+    type:"text",text:{body:"H".repeat(3800)}
+  }));
+  const body=item("history","889900","112233",{
+    history:[{threads:[{id:"60126662222",messages}]}]
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(body))>2*1024*1024);
+  const jobs=capture.classify(body,capture.captureConfig(env()));
+  assert.deepEqual(jobs.map(j=>JSON.parse(j.raw.toString("utf8"))
+    .change.value.history[0].threads[0].messages.length),
+    [100,100,100,100,100,100,20]);
+  assert.ok(jobs.every(j=>j.raw.length<2*1024*1024));
+  assert.deepEqual(capture.classify(body,capture.captureConfig(env()))
+    .map(j=>j.fingerprint),jobs.map(j=>j.fingerprint));
 });

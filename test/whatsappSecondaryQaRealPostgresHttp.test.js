@@ -27,14 +27,18 @@ function env(){
     WHATSAPP_WABA_ID:"1593376338308612",
     WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
     WHATSAPP_PAID_DEFAULT_PRIMARY_PHONE_E164:"+601130535053",
-    WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164:"+60123334444",
+    WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164:"+60174831336",
+    // Special gated clinic rehearsal; IDs remain synthetic, never real Meta.
+    WHATSAPP_PAID_REAL_CLINIC_REHEARSAL_ENABLED:"true",
+    WHATSAPP_PAID_REAL_CLINIC_OPERATOR_APPROVED:"true",
+    WHATSAPP_PAID_REAL_CLINIC_E164_PIN:"+60174831336",
     WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL:
       "postgresql://qa:synthetic@ep-qa.ap-southeast-1.aws.neon.tech/neondb",
     WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:"ep-qa.ap-southeast-1.aws.neon.tech",
     DATABASE_URL:"postgresql://prod:synthetic@ep-prod.ap-southeast-1.aws.neon.tech/neondb",
     WHATSAPP_PAID_SECONDARY_QA_WABA_ID:"889900",
     WHATSAPP_PAID_SECONDARY_QA_PHONE_ID:"112233",
-    WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:"+60123334444",
+    WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:"+60174831336",
     WHATSAPP_PAID_SECONDARY_QA_OPERATOR_APPROVED:"true",
     WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED:"true",
     WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED:"true",
@@ -172,18 +176,32 @@ test("signed real HTTP secondary capture persists, deduplicates, isolates and en
         assert.match(plain.toString("utf8"),/synthetic-text-only|synthetic-default-route/);
         assert.doesNotMatch(entry.ciphertext.toString("utf8"),/synthetic-text-only/);
       }
+      const largeMessages=Array.from({length:620},(_,i)=>({
+        id:"wamid.large-http-"+i,from:"60126662222",
+        timestamp:"1790000000",type:"text",text:{body:"H".repeat(3800)}
+      }));
+      const largeRaw=JSON.stringify({object:"whatsapp_business_account",entry:[{
+        id:"889900",changes:[{field:"history",value:{
+          metadata:{phone_number_id:"112233"},
+          history:[{threads:[{id:"60126662222",messages:largeMessages}]}]
+        }}]
+      }]});
+      assert.ok(Buffer.byteLength(largeRaw)>2*1024*1024);
+      const largeResponse=await post(largeRaw,signed(e.WHATSAPP_APP_SECRET,largeRaw));
+      assert.equal(largeResponse.status,200,"signed >2 MB clinic history must be captured");
+      assert.equal((await largeResponse.json()).accepted,7);
       const foreign=JSON.parse(message);foreign.entry[0].id="777123";
       const foreignRaw=JSON.stringify(foreign);
       assert.equal((await post(foreignRaw,signed(e.WHATSAPP_APP_SECRET,foreignRaw))).status,503);
       const history=payload("history","consent-required");
       e.WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED="false";
       assert.equal((await post(history,signed(e.WHATSAPP_APP_SECRET,history))).status,503);
-      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM whatsapp_secondary_qa_capture_events")).rows[0].n,5);
+      assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM whatsapp_secondary_qa_capture_events")).rows[0].n,12);
       assert.equal(primaryCalled,0);
     });
   } finally {
     if(pool)await pool.end().catch(()=>{});
-    if(created)await admin.query("DROP DATABASE "+databaseName+" WITH (FORCE)");
+    if(created)await admin.query("DROP DATABASE "+databaseName);
     await admin.end();
   }
 });

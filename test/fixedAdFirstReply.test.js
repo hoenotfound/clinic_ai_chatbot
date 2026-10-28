@@ -236,7 +236,8 @@ test("actual server decision branch skips Gemini for valid first ad message and 
     ${source}
     return { aiReply, details, serviceQuery, serviceQuerySource, fixedAdFirstReply };
   })`, {
-    resolveFixedAdFirstReply,
+    // Pin the synthetic attribution clock so this test does not expire after 7 real days.
+    resolveFixedAdFirstReply: options => resolveFixedAdFirstReply({ ...options, now }),
     clinicConfig: { adFirstReply: config, services, serviceAliases: aliases },
     ai: { getReply: async () => { aiCalls++; return { text: "MODEL ANSWER" }; } },
     parseAiReplyResult: raw => raw,

@@ -5,6 +5,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
 const { start: startWhatsAppFreeEntryFollowUps } = require("./whatsappFreeEntryFollowUpService");
+const { start: startSecondaryFollowUps } = require("./whatsappSecondaryFollowUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
@@ -25,8 +26,14 @@ const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
+const { assertStoredSenderSafety } = require("./whatsappSenderActivationGate");
 const mediaStorage = require("./mediaStorageService");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
+const secondaryAiMediaQueue = require("./whatsappSecondaryAiMediaQueue");
+const coexistenceMediaQueue = require("./whatsappCoexistenceMediaService");
+const coexistenceMutations = require("./whatsappCoexistenceMutationService");
+const coexistenceHistory = require("./whatsappCoexistenceHistoryService");
+const legacyLifecycleAlerts = require("./pr395LegacyLifecycleAlertService");
 const {
   startCustomerDataLifecycle,
 } = require("./customerDataLifecycleService");
@@ -120,6 +127,16 @@ async function startApplication({
     await initSchema();
     console.log("[Startup] Database schema and migrations ready.");
 
+    // Before readiness or recovery workers, reject unverified primary identity
+    // and unsafe feature-flag rollback with persisted secondary contacts.
+    await assertStoredSenderSafety();
+
+    // Explicit QA-only, synthetic data, one-shot rehearsal. No Meta requests,
+    // real WhatsApp numbers, AI, outbound sends or production DB access.
+    if (process.env.PR414_QA_SYNTHETIC_REHEARSAL_ON_BOOT === "true") {
+      await require("./pr414SyntheticQaRehearsal").runOnBoot();
+    }
+
     console.log("[Startup] Loading client configuration...");
     await configRepo.loadConfig();
     console.log("[Startup] Client configuration loaded.");
@@ -139,6 +156,22 @@ async function startApplication({
     await bootstrapAdminUser();
     console.log("[Startup] Admin user bootstrap complete.");
 
+    if (process.env.PR395_STAGING_MODE === "true") {
+      // Optional Telegram-only legacy lifecycle alerts use isolated audit rows.
+      // They never process customer messages or mutate Neutro production.
+      legacyLifecycleAlerts.start();
+      // This public sandbox can be backed by a production-derived QA snapshot.
+      // Never run inherited reminder, AI, retry, media, pruning, outreach or
+      // customer-data lifecycle jobs against copied customer records.
+      if (require("./pr395StagingSafety").providerRehearsalEnabled(process.env)) {
+        // Only the consented one-time history/contact importer may run.
+        // No message/AI/retry/media/follow-up worker can start in QA.
+        coexistenceHistory.start();
+        console.log("[PR395 staging] Signed inbound rehearsal: history importer only; outbound/AI/follow-ups OFF.");
+      } else {
+        console.log("[PR395 staging] All customer/WhatsApp background workers disabled; optional isolated audit alerts only.");
+      }
+    } else {
     console.log("[Startup] Starting maintenance and recovery workers...");
     configRepo.pruneOrphanedPromoImages();
     setIntervalFn(
@@ -157,17 +190,25 @@ async function startApplication({
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
     whatsappResultMediaQueue.start();
+    secondaryAiMediaQueue.start();
+    coexistenceMediaQueue.start();
+    coexistenceMutations.start();
+    coexistenceHistory.start();
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
     startCustomerDataLifecycle({ setIntervalFn });
     startAutomatedFollowUps();
     startWhatsAppFreeEntryFollowUps();
+    // No Ariel followup scheduler starts unless explicitly enabled, and
+    // sender-specific rules have no default enabled entries.
+    startSecondaryFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
+    }
 
     startupReadiness.markReady();
     console.log(

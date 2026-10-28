@@ -77,10 +77,18 @@ function configFromEnv(env = process.env) {
   return Object.freeze({
     appSecret, verifyToken, primaryWaba, primaryPhoneId, primaryE164,
     qaE164,
+    realClinicQaApproved: env.WHATSAPP_PAID_REAL_CLINIC_REHEARSAL_ENABLED === "true" &&
+      env.WHATSAPP_PAID_REAL_CLINIC_OPERATOR_APPROVED === "true" &&
+      env.WHATSAPP_PAID_REAL_CLINIC_E164_PIN === "+60174831336" &&
+      qaE164 === "+60174831336",
     qaDatabaseUrl: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL || ""),
     pinnedQaHost: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST || "")
       .trim().toLowerCase(),
     primaryDatabaseUrl: String(env.DATABASE_URL || ""),
+    sameHostQaStagingApproved: env.PR395_STAGING_MODE === "true" &&
+      env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST === "true",
+    pinnedQaSourceDatabase: String(env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE || ""),
+    pinnedQaTargetDatabase: String(env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE || ""),
     secondarySendingEnabled: FORBIDDEN_SECONDARY_SENDS.some(key => env[key] === "true"),
     secondarySenderConfigured: Boolean(
       String(env.WHATSAPP_SECONDARY_WABA_ID || "").trim() ||
@@ -90,7 +98,11 @@ function configFromEnv(env = process.env) {
 }
 
 function assertQaConfiguration(config) {
-  if (!config.qaE164 || config.qaE164 === "+60174831336" ||
+  // The real clinic number is NEVER treated as a personal QA number.
+  // Explicit three-way approval is needed in the new rollout mode; the
+  // current production defaults and legacy personal-QA behavior stay intact.
+  if (!config.qaE164 ||
+      (config.qaE164 === "+60174831336" && config.realClinicQaApproved !== true) ||
       digits(config.qaE164) === digits(config.primaryE164)) {
     throw new Error("Secondary QA phone must be independently pinned");
   }
@@ -107,13 +119,26 @@ function assertQaConfiguration(config) {
   } catch (_) {
     throw new Error("Production and QA database connections must be configured");
   }
+  // A staging-only exception permits two separately owned DATABASES on the
+  // existing QA Neon compute. It never permits sharing the same database.
+  // Production and all other callers keep the original host isolation rule.
+  const sameHost = qaUrl.hostname.toLowerCase() === primaryUrl.hostname.toLowerCase();
+  const qaName = decodeURIComponent(qaUrl.pathname.slice(1));
+  const targetName = decodeURIComponent(primaryUrl.pathname.slice(1));
+  const allowSeparateQaDatabases = config.sameHostQaStagingApproved === true &&
+    /^[a-z][a-z0-9_]*$/.test(qaName) &&
+    /^[a-z][a-z0-9_]*$/.test(targetName) &&
+    qaName === config.pinnedQaSourceDatabase &&
+    targetName === config.pinnedQaTargetDatabase &&
+    qaName !== targetName && qaUrl.username !== primaryUrl.username &&
+    qaUrl.password !== primaryUrl.password;
   if (!["postgres:", "postgresql:"].includes(qaUrl.protocol) ||
       !["postgres:", "postgresql:"].includes(primaryUrl.protocol) ||
       !qaUrl.username || !qaUrl.password || !primaryUrl.hostname ||
       !config.pinnedQaHost ||
       qaUrl.hostname.toLowerCase() !== config.pinnedQaHost ||
       !config.pinnedQaHost.endsWith(".neon.tech") ||
-      qaUrl.hostname.toLowerCase() === primaryUrl.hostname.toLowerCase() ||
+      (sameHost && !allowSeparateQaDatabases) ||
       config.qaDatabaseUrl === config.primaryDatabaseUrl) {
     throw new Error("QA Neon host must be explicitly pinned and separate from production");
   }

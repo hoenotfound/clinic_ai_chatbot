@@ -5,6 +5,7 @@
 // but it cannot import chats, start AI, send messages or call Graph APIs.
 const crypto = require("node:crypto");
 const ingress = require("./whatsappPaidDefaultIngress");
+const passiveHistory = require("./whatsappCoexistenceHistoryService");
 
 const ALLOWED_FIELDS = new Set(["messages", "smb_message_echoes", "history", "smb_app_state_sync"]);
 const CONSENT_FIELDS = new Set(["history", "smb_app_state_sync"]);
@@ -78,13 +79,18 @@ function classify(body, config) {
       if (CONSENT_FIELDS.has(change.field) && !config.historyConsent) {
         throw Error("One-time sync requires separately verified history/contact consent");
       }
-      const raw = Buffer.from(JSON.stringify({ entryTime: entry.time ?? null, change }), "utf8");
-      if (raw.length > MAX_BYTES) throw Error("Secondary payload exceeds bounded capture limit");
-      // Digest includes account ID, exact device phone ID and event content.
-      // A Meta webhook retry with the same event is idempotent.
-      const fingerprint = crypto.createHash("sha256")
-        .update(config.waba + ":" + config.phoneId + ":").update(raw).digest("hex");
-      jobs.push({ fingerprint, field: change.field, raw });
+      // Split large one-time history BEFORE encrypting into QA's 2 MB column.
+      // The existing passive import logic uses the same chunk representation.
+      const parts = change.field === "history"
+        ? passiveHistory.splitHistoryChange(change, 100) : [change];
+      for (const part of parts) {
+        if (jobs.length >= MAX_CHANGES) throw Error("Excessive secondary history chunks");
+        const raw = Buffer.from(JSON.stringify({ entryTime: entry.time ?? null, change: part }), "utf8");
+        if (raw.length > MAX_BYTES) throw Error("Secondary payload exceeds bounded capture limit");
+        const fingerprint = crypto.createHash("sha256")
+          .update(config.waba + ":" + config.phoneId + ":").update(raw).digest("hex");
+        jobs.push({ fingerprint, field: part.field, raw });
+      }
     }
   }
   return jobs;

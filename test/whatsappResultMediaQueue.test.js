@@ -129,8 +129,10 @@ test("queued sends retain crash safety and no initial reply delay",()=>{
   const server=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   assert.match(service,/worker_interrupted_provider_outcome_unknown/);
   assert.match(service,/UNIQUE|ON CONFLICT\(inbound_message_id,sequence_no\)/);
-  assert.match(server,/await whatsappResultMediaQueue.enqueue/);
-  assert.ok(server.indexOf("await sendTrackedText(")<server.indexOf("await whatsappResultMediaQueue.enqueue("));
+  assert.match(server,/const enqueued = await queue.enqueue/);
+  assert.match(server,/secondaryAiConversation \? secondaryAiMediaQueue : whatsappResultMediaQueue/);
+  assert.match(server,/queuedPromotions \|\| secondaryAiConversation/);
+  assert.ok(server.indexOf("await sendTrackedText(")<server.indexOf("const enqueued = await queue.enqueue("));
 });
 
 test("price graphics precede result examples, sharing one sequence without duplicates",async t=>{

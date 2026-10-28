@@ -1009,6 +1009,7 @@ async function deleteUnsentAssistantMessage(messageId) {
 async function setWhatsappMessageId(messageId, whatsappMessageId, {
   database = pool,
   events = realtimeEvents,
+  preserveVerifiedSecondaryReceipt = false,
 } = {}) {
   const targetWhatsappMessageId = String(whatsappMessageId || "").trim();
   if (!targetWhatsappMessageId) return null;
@@ -1026,9 +1027,34 @@ async function setWhatsappMessageId(messageId, whatsappMessageId, {
     // row and leave a reaction pending forever.
     await lockWhatsappMessageId(client, targetWhatsappMessageId);
 
+    // A sender-specific signed Meta receipt can race the provider-acceptance
+    // WAMID save. On Ariel only, never regress a confirmed delivered/read
+    // state to pending. Primary Neutro retains its original SQL and semantics.
+    const preserve = preserveVerifiedSecondaryReceipt === true
+      ? `CASE WHEN EXISTS (
+           SELECT 1 FROM whatsapp_sender_status_receipts receipt
+           JOIN whatsapp_sender_billing_attempts attempt
+             ON attempt.reservation_id=receipt.reservation_id
+               AND attempt.sender_id=receipt.sender_id
+           WHERE attempt.message_id=messages.id
+             AND receipt.wamid=$2 AND receipt.matched=TRUE
+         ) AND delivery_status IN ('sent','delivered','read','failed')
+         THEN delivery_status ELSE 'pending' END`
+      : "'pending'";
+    const preserveError = preserveVerifiedSecondaryReceipt === true
+      ? `CASE WHEN delivery_status='failed' AND EXISTS(
+           SELECT 1 FROM whatsapp_sender_status_receipts receipt
+           JOIN whatsapp_sender_billing_attempts attempt
+             ON attempt.reservation_id=receipt.reservation_id
+               AND attempt.sender_id=receipt.sender_id
+           WHERE attempt.message_id=messages.id
+             AND receipt.wamid=$2 AND receipt.matched=TRUE
+         ) THEN delivery_error ELSE NULL END`
+      : "NULL";
     const result = await client.query(
       `UPDATE messages
-       SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL,
+       SET whatsapp_message_id = $2, delivery_status = ${preserve},
+           delivery_error = ${preserveError},
            whatsapp_accepted_at = CASE
              WHEN whatsapp_message_id IS DISTINCT FROM $2 OR whatsapp_accepted_at IS NULL
              THEN clock_timestamp() ELSE whatsapp_accepted_at END

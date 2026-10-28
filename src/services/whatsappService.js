@@ -1,4 +1,5 @@
 const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
+const { blockUnverifiedOutgoingSender } = require("./whatsappSenderOutgoingGuard");
 const GRAPH_API_VERSION = "v26.0";
 const DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS = 15 * 1000;
@@ -252,6 +253,8 @@ async function sendInteractiveButtonsUnchecked(to, body, buttons) {
 }
 
 async function sendInteractiveButtons(to,body,buttons,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
   return whatsappZeroCostGuard.perform(to,
     ()=>sendInteractiveButtonsUnchecked(to,body,buttons), {
       currentMessageId:options.currentMessageId,
@@ -315,6 +318,7 @@ async function sendImageUnchecked(to, imageUrl, caption, options = {}) {
  * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
  */
 async function uploadMedia(buffer, mimeType, filename = "upload", options = {}) {
+  if (blockUnverifiedOutgoingSender(null, options)) return null;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
@@ -599,8 +603,29 @@ async function sendVoiceByIdUnchecked(to, mediaId, options = {}) {
  * @param {string} mediaId
  * @returns {Promise<{buffer: Buffer, mimeType: string}|null>} null on any failure
  */
-async function downloadMedia(mediaId) {
-  const token = process.env.WHATSAPP_TOKEN;
+// Meta inbound media uses the token for the verified receiving business.
+// A secondary sender must never fall back to the existing Neutro token.
+function tokenForInboundMedia(incoming = {}, env = process.env) {
+  const phone=String(incoming?.businessPhoneNumberId||"").trim();
+  const account=String(incoming?.businessAccountId||"").trim();
+  const primary=String(env.WHATSAPP_PHONE_NUMBER_ID||"").trim();
+  const primaryAccount=String(env.WHATSAPP_WABA_ID||"").trim();
+  if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true" &&
+     (!phone || phone===primary))
+    return String(env.WHATSAPP_TOKEN||"").trim()||null;
+  if(phone && phone===primary && account===primaryAccount)
+    return String(env.WHATSAPP_TOKEN||"").trim()||null;
+  if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED==="true" &&
+     phone && phone===String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim() &&
+     account && account===String(env.WHATSAPP_SECONDARY_WABA_ID||"").trim()) {
+    return String(env.WHATSAPP_SECONDARY_TOKEN||"").trim()||null;
+  }
+  return null;
+}
+
+async function downloadMedia(mediaId,incoming={}) {
+  const token = tokenForInboundMedia(incoming);
+  if(!token) return null;
 
   try {
     const metaRes = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`, {
@@ -637,12 +662,31 @@ async function downloadMedia(mediaId) {
  * separate payload shape (value.statuses, no value.messages); see
  * parseStatusUpdates() below for those.
  */
+// Preserve Meta's receiving-business identity on normalized events. This is
+// provenance only: the live single-number sender remains unchanged until the
+// sender-aware contact, send, policy, and retry migration is complete.
+function senderMetadataForChange(entry, change) {
+  const phoneId = change?.value?.metadata?.phone_number_id;
+  if (typeof phoneId !== "string" || !phoneId.trim()) return {};
+  const accountId = entry?.id;
+  return {
+    businessPhoneNumberId: phoneId.trim(),
+    ...(typeof accountId === "string" && accountId.trim()
+      ? { businessAccountId: accountId.trim() }
+      : {}),
+  };
+}
+
 function parseIncomingMessages(body) {
   try {
     const parsed = [];
 
     for (const entry of body?.entry || []) {
       for (const change of entry?.changes || []) {
+        // A different Meta subscription must never be treated as a customer turn.
+        // Missing fields remain accepted by legacy direct-parser callers; the
+        // production webhook boundary rejects malformed actionable changes.
+        if (change?.field !== undefined && change.field !== "messages") continue;
         const value = change?.value;
         const contacts = value?.contacts || [];
 
@@ -673,6 +717,7 @@ function parseIncomingMessages(body) {
             id: message.id,
             from: message.from,
             profileName,
+            ...senderMetadataForChange(entry, change),
             ...(sourceTimestamp ? { timestamp: sourceTimestamp } : {}),
             ...(attribution ? { attribution } : {}),
             ...(replyToProviderMessageId ? { replyToProviderMessageId } : {}),
@@ -795,6 +840,7 @@ function parseBusinessAppEchoes(body) {
             id: message.id,
             from: message.from || null,
             to: message.to,
+            ...senderMetadataForChange(entry, change),
             timestamp: message.timestamp || null,
             type: message.type || "unknown",
             mediaId: null,
@@ -816,6 +862,18 @@ function parseBusinessAppEchoes(body) {
               ...base,
               text: message.video?.caption || null,
               mediaId: message.video?.id || null,
+            });
+          } else if (message.type === "document") {
+            parsed.push({ ...base, text: message.document?.caption || null,
+              mediaId: message.document?.id || null,
+              filename: message.document?.filename || null });
+          } else if (message.type === "sticker") {
+            parsed.push({ ...base, mediaId: message.sticker?.id || null });
+          } else if (message.type === "revoke" || message.type === "edit") {
+            parsed.push({ ...base,
+              originalMessageId: message[message.type]?.original_message_id ||
+                message.context?.id || null,
+              text: message.type === "edit" ? message.edit?.text?.body || null : null,
             });
           } else {
             parsed.push(base);
@@ -842,6 +900,10 @@ function parseReactionEvents(body) {
 
     for (const entry of body?.entry || []) {
       for (const change of entry?.changes || []) {
+        // A different Meta subscription must never be treated as a customer turn.
+        // Missing fields remain accepted by legacy direct-parser callers; the
+        // production webhook boundary rejects malformed actionable changes.
+        if (change?.field !== undefined && change.field !== "messages") continue;
         for (const message of change?.value?.messages || []) {
           if (
             !message?.id ||
@@ -862,6 +924,7 @@ function parseReactionEvents(body) {
             from: message.from,
             targetMessageId: message.reaction.message_id,
             emoji,
+            ...senderMetadataForChange(entry, change),
             timestamp: message.timestamp || null,
           });
         }
@@ -891,6 +954,10 @@ function parseStatusUpdates(body) {
 
     for (const entry of body?.entry || []) {
       for (const change of entry?.changes || []) {
+        // A different Meta subscription must never be treated as a customer turn.
+        // Missing fields remain accepted by legacy direct-parser callers; the
+        // production webhook boundary rejects malformed actionable changes.
+        if (change?.field !== undefined && change.field !== "messages") continue;
         for (const status of change?.value?.statuses || []) {
           if (!status?.id || !status?.status) continue;
           const firstError = status.errors?.[0] || null;
@@ -900,6 +967,7 @@ function parseStatusUpdates(body) {
             errorCode: firstError?.code ?? null,
             errorTitle: firstError?.title || null,
             errorMessage: firstError?.error_data?.details || firstError?.message || null,
+            ...senderMetadataForChange(entry, change),
             ...(status.pricing?.type || status.pricing?.billable === true ? {
               // Meta may send billable=true without a type/category. Keep
               // it as unknown pricing, never as a verified free response.
@@ -924,6 +992,8 @@ function parseStatusUpdates(body) {
  // The reservation lives across all Meta requests; a different worker cannot
  // send until a confirmed nonbillable pricing callback releases the account.
  async function sendMessage(to,text,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendMessageUnchecked(to,text,options), {
     currentMessageId: options.currentMessageId,
     messageKind: options.autoFollowUp === true ? "auto_followup_text" : "first_reply_text",
@@ -934,21 +1004,33 @@ function parseStatusUpdates(body) {
      messageKind: options.autoFollowUp === true ? "auto_followup_media" : options.staffMedia === true ? "staff_media" : "media" };
  }
  async function sendImage(to,url,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendImageUnchecked(to,url,caption,options), mediaGuardContext(options));
  }
  async function sendImageById(to,id,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendImageByIdUnchecked(to,id,caption,options), mediaGuardContext(options));
  }
  async function sendVideoById(to,id,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendVideoByIdUnchecked(to,id,caption,options), mediaGuardContext(options));
  }
  async function sendDocumentById(to,id,filename,caption,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendDocumentByIdUnchecked(to,id,filename,caption,options), mediaGuardContext(options));
  }
  async function sendStickerById(to,id,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendStickerByIdUnchecked(to,id,options), mediaGuardContext(options));
  }
  async function sendVoiceById(to,id,options={}) {
+  const senderBlocked = blockUnverifiedOutgoingSender(null, options);
+  if (senderBlocked) return senderBlocked;
    return whatsappZeroCostGuard.perform(to,()=>sendVoiceByIdUnchecked(to,id,options), mediaGuardContext(options));
  }
 
@@ -972,6 +1054,7 @@ module.exports = {
   sendStickerById,
   sendVoiceById,
   downloadMedia,
+  tokenForInboundMedia,
   parseIncomingMessages,
   parseReactionEvents,
   parseBusinessAppEchoes,

@@ -86,6 +86,8 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
   }
   if (exclude !== "channel" && filters.channel !== "all" &&
       (conversation.channel || "whatsapp") !== filters.channel) return false;
+  if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
+      conversation.whatsapp_sender_key !== filters.sender) return false;
   if (exclude !== "control" && filters.control !== "all" &&
       conversation.mode !== filters.control) return false;
   if (exclude !== "assignment" && canViewAllLeads &&
@@ -101,6 +103,7 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
     conversation.last_message,
     conversation.lead_owner_display_name,
     conversation.lead_owner_username,
+    conversation.whatsapp_sender_display_name,
   ].filter(Boolean).join(" ").toLowerCase().includes(query);
 }
 
@@ -1542,6 +1545,7 @@ function ConversationList({
   const [filters, setFilters] = useState({
     status: "all",
     channel: "all",
+    sender: "all",
     control: "all",
     assignment: "all",
     replyWindow: "all",
@@ -1557,6 +1561,19 @@ function ConversationList({
   }, []);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
+  // Only show business-number switching once the server has verified and
+  // linked more than one sender. Legacy single-number clients stay simple.
+  const senderOptions = useMemo(() => {
+    const found = new Map();
+    for (const item of conversationList) {
+      if (item.channel === "whatsapp" && item.whatsapp_sender_key) {
+        found.set(item.whatsapp_sender_key,
+          item.whatsapp_sender_display_name || item.whatsapp_sender_key);
+      }
+    }
+    return [...found.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [conversationList]);
+  const showSenderFilter = senderOptions.length > 1;
   const assignmentOptions = useMemo(
     () => buildLeadAssignmentFilterOptions(conversationList, currentUsername, {
       includeUnassigned: showUnassignedAssignment,
@@ -1613,6 +1630,7 @@ function ConversationList({
   const activeFilterCount =
     (filters.status !== "all" ? 1 : 0) +
     (filters.channel !== "all" ? 1 : 0) +
+    (filters.sender !== "all" ? 1 : 0) +
     (filters.control !== "all" ? 1 : 0) +
     (filters.replyWindow !== "all" ? 1 : 0) +
     (canViewAllLeads && filters.assignment !== "all" ? 1 : 0);
@@ -1628,6 +1646,10 @@ function ConversationList({
     if (canViewAllLeads && filters.assignment !== "all") {
       const label = assignmentOptions.find(([value]) => value === filters.assignment)?.[1];
       active.push({ key: "assignment", label: `Owner · ${label || "Selected"}` });
+    }
+    if (filters.sender !== "all") {
+      const label = senderOptions.find(([key]) => key === filters.sender)?.[1];
+      active.push({ key: "sender", label: "Number · " + (label || filters.sender) });
     }
     if (filters.channel !== "all") {
       const channelLabels = {
@@ -1650,7 +1672,7 @@ function ConversationList({
       });
     }
     return active;
-  }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control, filters.replyWindow, filters.status]);
+  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
 
   function updateFilter(key, value) {
     onExplicitFilterChange();
@@ -1663,6 +1685,7 @@ function ConversationList({
       ...current,
       status: "all",
       channel: "all",
+      sender: "all",
       control: "all",
       assignment: "all",
       replyWindow: "all",
@@ -1671,7 +1694,7 @@ function ConversationList({
 
   function clearFilters() {
     onExplicitFilterChange();
-    setFilters({ status: "all", channel: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
+    setFilters({ status: "all", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
   }
 
   return (
@@ -1736,6 +1759,26 @@ function ConversationList({
             />
           </button>
         </div>
+
+        {showSenderFilter && (
+          <div className="mt-2 flex gap-1 overflow-x-auto pb-0.5" aria-label="WhatsApp business number">
+            {[["all", "All"], ...senderOptions].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => updateFilter("sender", key)}
+                aria-pressed={filters.sender === key}
+                className={`min-h-9 max-w-[10rem] shrink-0 truncate rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  filters.sender === key
+                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {filtersOpen && (
           <div
@@ -1912,6 +1955,21 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
+                    {conversation.channel === "whatsapp" && conversation.whatsapp_sender_display_name && (
+                      <span
+                        title="Receiving WhatsApp business number"
+                        className="max-w-[8rem] truncate rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
+                      >
+                        {conversation.whatsapp_sender_display_name}
+                      </span>
+                    )}
+                    {conversation.whatsapp_is_secondary === true &&
+                      conversation.whatsapp_secondary_connection_state !== "connected" && (
+                      <span role="status" title="Secondary number disconnected; outgoing messages paused"
+                        className="rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                        Number suspended
+                      </span>
+                    )}
                     {messagingPolicyStatus(conversation, replyWindowNow).humanAgentAllowed && (
                       <span
                         title="Only a staff-written reply is permitted. AI replies and automatic follow-ups are not allowed."
@@ -2185,7 +2243,12 @@ function ThreadView({
 
   activeContactIdRef.current = contact?.contact_id;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
-  const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.manualReplyAllowed;
+  const secondarySenderSuspended = contact?.channel === "whatsapp" &&
+    contact?.whatsapp_is_secondary === true &&
+    (contact?.whatsapp_sender_state !== "active" ||
+      contact?.whatsapp_sender_coexistence_enabled !== true);
+  const policyBlocksComposer = secondarySenderSuspended ||
+    (messagingPolicy.applies && !messagingPolicy.manualReplyAllowed);
   const quietReplyAvailable =
     messagingPolicy.applies &&
     messagingPolicy.freeformAllowed &&
@@ -2193,6 +2256,7 @@ function ThreadView({
   const whatsappTemplateAvailable =
     canReplyToLeads &&
     messagingPolicy.channel === "whatsapp" &&
+    !secondarySenderSuspended &&
     !messagingPolicy.freeformAllowed;
   const whatsappTemplateOptInRecorded = Boolean(
     (contact?.whatsapp_opt_in_at || contact?.whatsappOptInAt) &&
@@ -2218,14 +2282,18 @@ function ThreadView({
         .replace(/^Reply available\s*·\s*/i, "")
         .replace(/\s+remaining$/i, "")
     : "";
-  const composerPlaceholder = policyBlocksComposer
+  const composerPlaceholder = secondarySenderSuspended
+    ? "Secondary WhatsApp disconnected. Sending paused."
+    : policyBlocksComposer
     ? `${messagingPolicy.channelLabel} reply unavailable`
     : imageFile || attachmentFile
     ? "Add a caption…"
     : contact?.mode === "human"
     ? "Message…"
     : "Reply…";
-  const composerLabel = policyBlocksComposer
+  const composerLabel = secondarySenderSuspended
+    ? "Secondary WhatsApp is suspended pending reconnection verification"
+    : policyBlocksComposer
     ? `${messagingPolicy.channelLabel} reply unavailable`
     : imageFile || attachmentFile
     ? "Add a caption to the selected attachment"
@@ -3080,6 +3148,20 @@ function ThreadView({
                 <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--color-text-muted)] sm:flex-none sm:text-[11px]">
                   {contactMeta(contact)}
                 </span>
+                {contact.channel === "whatsapp" && contact.whatsapp_sender_display_name && (
+                  <span
+                    className="min-w-0 max-w-[8rem] truncate rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--color-text-muted)]"
+                    title={"Reply from " + contact.whatsapp_sender_display_name}
+                  >
+                    via {contact.whatsapp_sender_display_name}
+                  </span>
+                )}
+                {secondarySenderSuspended && (
+                  <span role="status" title="WhatsApp account disconnected. Verify reconnection before sending."
+                    className="rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+                    Number suspended
+                  </span>
+                )}
                 <span
                   className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
                     contact.mode === "human"
@@ -3362,6 +3444,7 @@ function ThreadView({
               <MessageBubble
                 contactId={contact.contact_id}
                 channel={contact.channel}
+                isSecondaryWhatsApp={contact.whatsapp_is_secondary === true}
                 message={message}
                 onImageClick={setLightboxSrc}
                 onRetry={onRetryMessage}
@@ -4008,6 +4091,7 @@ function OnDemandInboxVideo({ src, uploading = false }) {
 function MessageBubble({
   contactId,
   channel,
+  isSecondaryWhatsApp = false,
   message,
   onImageClick,
   onRetry,
@@ -4325,7 +4409,7 @@ function MessageBubble({
               <span className="text-[10px] font-semibold">
                 {deliveryUnconfirmed ? "Delivery unconfirmed" : "Not delivered"}
               </span>
-              {!policyFailureExplanationText && (
+              {!policyFailureExplanationText && !isSecondaryWhatsApp && (
                 <button
                   type="button"
                   onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.(message) : onRetry?.(message.id)}
@@ -4337,6 +4421,11 @@ function MessageBubble({
                 </button>
               )}
             </div>
+            {isSecondaryWhatsApp && (
+              <p className="mt-1 text-[10px] leading-snug opacity-80">
+                secondary WhatsApp retry is disabled to prevent duplicate Meta sends and charges. Verify delivery and billing before composing a new message.
+              </p>
+            )}
             {message.whatsapp_template && !policyFailureExplanationText && (
               <p className="mt-1 text-[10px] leading-snug opacity-80">
                 A previous send may have reached the customer or incurred a charge. Check delivery before reviewing another template.

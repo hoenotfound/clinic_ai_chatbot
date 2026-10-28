@@ -60,7 +60,7 @@ test("application composition preserves security and readiness middleware orderi
 test("webhook parsers still verify raw signatures and portal routes stay protected", () => {
   assert.match(
     appSource,
-    /createWebhookJsonParser\(verifyWebhookSignature\)/
+    /const verifySignedWhatsappBody = \(req, res, buf\) => \{\s*verifyWebhookSignature\(req, res, buf\);/
   );
   assert.match(
     appSource,

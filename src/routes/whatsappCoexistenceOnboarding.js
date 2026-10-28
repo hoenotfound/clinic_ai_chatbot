@@ -6,7 +6,9 @@ const {
   completeEmbeddedSignup,
   publicConfig,
   safeSessionInfo,
+  secondaryTargetMode,
 } = require("../services/whatsappCoexistenceOnboardingService");
+const {credentialVaultReady} = require("../services/whatsappCoexistenceCredentialVault");
 
 const router = express.Router();
 const NONCE_BYTES = 24;
@@ -98,22 +100,43 @@ router.post("/complete", async (req, res) => {
   }
 
   try {
+    const secondary = secondaryTargetMode(process.env);
+    // Fail BEFORE using the one-time authorization code if a locked-down
+    // staging token vault is missing. Otherwise the code can be lost while
+    // the Business App has already been linked.
+    if (secondary && !credentialVaultReady(process.env)) {
+      throw new WhatsAppCoexistenceOnboardingError(
+        "Encrypted secondary credential storage is not ready. Do not approve the WhatsApp QR.",
+        {code:"WHATSAPP_COEXISTENCE_CREDENTIAL_VAULT_NOT_READY",
+          status:503,retrySafe:false}
+      );
+    }
+    let recorded = null;
     const result = await completeEmbeddedSignup({
       code,
       sessionInfo,
       env: process.env,
+      ...(secondary ? {onVerifiedCredential: async (verified) => {
+        recorded = await onboardingRepo.recordValidatedWithCredential({
+          ...verified,startedBy,
+        });
+      }} : {}),
     });
-
-    const recorded = await onboardingRepo.recordValidated({
-      wabaId: result.waba.id,
-      phoneNumberId: result.phone.id,
-      displayPhoneNumber: result.phone.displayPhoneNumber,
-      verifiedName: result.phone.verifiedName,
-      coexistenceReady: result.phone.coexistenceReady,
-      eventVersion: result.eventVersion,
-      tokenExpiresAt: result.tokenExpiresAt,
-      startedBy,
-    });
+    // Legacy single-number audit compatibility. For a secondary onboarding,
+    // never claim success unless both the audit and encrypted token committed.
+    if (!secondary) {
+      recorded = await onboardingRepo.recordValidated({
+        wabaId: result.waba.id,
+        phoneNumberId: result.phone.id,
+        displayPhoneNumber: result.phone.displayPhoneNumber,
+        verifiedName: result.phone.verifiedName,
+        coexistenceReady: result.phone.coexistenceReady,
+        eventVersion: result.eventVersion,
+        tokenExpiresAt: result.tokenExpiresAt,
+        startedBy,
+      });
+    }
+    if (!recorded?.id) throw new Error("Coexistence credential audit did not commit.");
 
     return res.json({
       ...result,

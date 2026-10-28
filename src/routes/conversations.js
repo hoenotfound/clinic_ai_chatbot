@@ -7,6 +7,7 @@ const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact } = require("../utils/accessControl");
+const { hasCapability } = require("../utils/permissions");
 const contactsRepo = require("../db/contactsRepo");
 const { pool } = require("../db/db");
 const messagesRepo = require("../db/messagesRepo");
@@ -17,6 +18,7 @@ const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
+const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService");
@@ -27,6 +29,7 @@ const { resolveAutomatedVoicePlayback } = require("../services/followUpVoicePlay
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
+const secondaryTemplate = require("../services/whatsappSecondaryTemplateService");
 const whatsappTemplateMedia = require("../services/whatsappTemplateMediaService");
 const whatsappTemplateBillingAdvisory = require("../services/whatsappTemplateBillingAdvisory");
 
@@ -41,6 +44,32 @@ const {
 } = require("../utils/socialDeliveryError");
 
 const router = express.Router();
+// All contact-specific routes share one server-side authorization boundary,
+// including message history, attachments, template sends, retries and forward.
+router.param("contactId", async (req,res,next,value) => {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return res.status(400).json({ error:"Invalid contact id." });
+  }
+  try {
+    if (!await canAccessContact(req.user,id)) {
+      return res.status(403).json({ error:"You cannot access this conversation." });
+    }
+    const routeParts = String(req.path || "").split("/").filter(Boolean).slice(1);
+    const sending = req.method === "POST" && (
+      (routeParts.length === 1 &&
+        ["messages","media","video","document","voice"].includes(routeParts[0])) ||
+      (routeParts.length === 2 && routeParts[0] === "whatsapp-templates" &&
+        routeParts[1] === "send") ||
+      (routeParts.length === 3 && routeParts[0] === "messages" &&
+        ["retry","forward"].includes(routeParts[2]))
+    );
+    if (sending && !hasCapability(req.user,"reply_to_assigned_leads")) {
+      return res.status(403).json({ error:"You cannot reply to this conversation." });
+    }
+    next();
+  } catch (err) { next(err); }
+});
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_PAGE_SIZE = 100;
@@ -546,7 +575,9 @@ async function persistSendOutcome(
 ) {
   let updated = null;
   if (sendResult.wamid) {
-    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid, {
+      preserveVerifiedSecondaryReceipt: sendResult.secondarySender === true,
+    });
   } else if (sendResult.externalMessageId && channel !== "whatsapp") {
     updated = await messagesRepo.setSocialProviderMessageId(
       savedMessage.id,
@@ -763,7 +794,24 @@ async function sendStoredMessage(contact, message, options = {}) {
 router.get("/", async (req, res) => {
   try {
     const conversations = await contactsRepo.listConversations();
-    res.json(conversations);
+    res.json(conversations.map(c => {
+      const secondary = c.channel === "whatsapp" &&
+        c.whatsapp_sender_id != null &&
+        Boolean(c.whatsapp_sender_phone_number_id) &&
+        String(c.whatsapp_sender_phone_number_id) !==
+          String(process.env.WHATSAPP_PHONE_NUMBER_ID || "");
+      return {
+        ...c,
+        whatsapp_is_secondary: secondary,
+        whatsapp_secondary_connection_state: secondary
+          ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
+            ? "connected" : "suspended") : null,
+        whatsapp_secondary_ai_enabled: secondary &&
+          c.whatsapp_sender_state === "active" &&
+          c.whatsapp_sender_coexistence_enabled === true &&
+          process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
+      };
+    }));
   } catch (err) {
     console.error("Failed to list conversations:", err);
     res.status(500).json({ error: "Something went wrong loading conversations." });
@@ -1165,6 +1213,14 @@ router.get("/:contactId/whatsapp-template-free-window", async (req, res) => {
       return res.status(400).json({ error: "WhatsApp only." });
     }
 
+    if (contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_phone_number_id !== process.env.WHATSAPP_PHONE_NUMBER_ID) {
+      res.set("Cache-Control","no-store");
+      return res.json({
+        verified:false,sendReady:false,
+        blockedReason:"secondary WhatsApp billing is sender-specific. Do not infer free Meta charges from Neutro's evidence.",
+      });
+    }
     // An ad label, ad click or opt-in alone is never sufficient proof.
     // The actual send still rechecks consent and billing restrictions.
     const advisory = await whatsappTemplateBillingAdvisory.getTemplateBillingAdvisory(contact.id);
@@ -1190,6 +1246,21 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     if ((contact.channel || "whatsapp") !== "whatsapp") {
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
+    }
+
+    // An secondary WhatsApp Inbox must never query Neutro's template catalog or
+    // legacy billing advisory. All approval and billing warnings are
+    // sender-scoped and independently verified.
+    if (contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      const catalog = await secondaryTemplate.listSecondaryApprovedTemplates(contact, {
+        staffUsername: req.session?.username,
+      });
+      if (!catalog.success) return res.status(503).json({
+        code: catalog.code, error: catalog.error,
+      });
+      res.set("Cache-Control","no-store");
+      return res.json(catalog);
     }
 
     let eligibility;
@@ -1351,6 +1422,133 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     if ((contact.channel || "whatsapp") !== "whatsapp") {
       return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
+    }
+
+    // Secondary templates must never fall through to Neutro's catalog,
+    // pricing, media-upload credentials or primary Meta send endpoint.
+    if (contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      // Media reuse is clinic-specific and not shared across senders. A fresh
+      // staff upload can go through the secondary sender's own verified media transport.
+      if (req.body?.mediaSelectionId) {
+        return res.status(409).json({
+          code:"secondary_template_media_reuse_disabled",
+          error:"Choose a new secondary WhatsApp-specific template media file.",
+        });
+      }
+      let mediaAttachment=null;
+      if(req.file) {
+        const mime=String(req.file.mimetype||"").toLowerCase();
+        if(WHATSAPP_IMAGE_MIME_TYPES.has(mime) &&
+           req.file.size>0 && req.file.size<=WHATSAPP_IMAGE_MAX_BYTES){
+          mediaAttachment={
+            buffer:await fs.readFile(req.file.path),
+            mimeType:mime,
+            filename:mime==="image/png"?"template-image.png":"template-image.jpg",
+          };
+        } else if(isAllowedInboxVideo(req.file) && req.file.size>0){
+          const video=await followUpVideoPreparation.prepareFollowUpVideoFile(
+            req.file.path,{
+              originalBytes:req.file.size,
+              ensureWhatsAppCompatible:true,
+            }
+          );
+          mediaAttachment={
+            buffer:video.buffer,mimeType:"video/mp4",
+            filename:"template-video.mp4",
+          };
+        } else {
+          return res.status(400).json({
+            code:"secondary_template_media_invalid",
+            error:"Choose a valid JPEG/PNG image or WhatsApp-compatible MP4 video.",
+          });
+        }
+      }
+      let values=req.body?.values||{};
+      if(typeof values==="string"){
+        try {values=JSON.parse(values);} catch {
+          return res.status(400).json({
+            code:"invalid_template_values",error:"Template variables must be valid JSON.",
+          });
+        }
+      }
+      const name=String(req.body?.templateName||"").trim();
+      const languageCode=String(req.body?.languageCode||"").trim();
+      const prepared=await secondaryTemplate.prepareSecondaryStaffTemplate(contact,{
+        name,languageCode,values,mediaAttachment,
+        billingAcknowledged:req.body?.billingAcknowledged===true ||
+          req.body?.billingAcknowledged==="true",
+        marketingConsentConfirmed:req.body?.marketingConsentConfirmed===true ||
+          req.body?.marketingConsentConfirmed==="true",
+      });
+      if(!prepared.success)return res.status(409).json({
+        code:prepared.code,error:prepared.error,
+      });
+      const review=whatsappTemplateBillingAdvisory.verifyReviewToken(
+        req.body?.billingReviewToken,contact.id,req.session?.username,{
+          templateName:name,languageCode,
+        }
+      );
+      if(!review || review.evidence!=="unknown" ||
+          (req.body?.billingAcknowledged!==true &&
+           req.body?.billingAcknowledged!=="true")){
+        return res.status(409).json({
+          code:"secondary_billing_review_expired",
+          error:"Review the possible Meta charge before sending this secondary WhatsApp template.",
+        });
+      }
+      const claimed=await whatsappTemplateBillingAdvisory.claimBillingReviewOnce(
+        contact.id,req.session?.username,req.body
+      );
+      if(!claimed.claimed)return res.status(409).json({
+        code:claimed.code||"secondary_billing_review_already_used",
+        error:"This template billing confirmation was already used. Check delivery first.",
+      });
+      const current=await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,async()=>{
+          const ready=await prepareStaffSend(contact,req.session.username);
+          const saved=await conversationStore.appendMessageForContact(
+            ready.id,"assistant",prepared.preview,null,
+            req.session.username,null,null,{
+              whatsappTemplate:{
+                name:prepared.template.name,language:prepared.template.language,
+                category:prepared.template.category,
+                components:prepared.components,values,
+                ...(mediaAttachment ? {mediaFormat:prepared.template.header?.format,
+                  mediaFilename:mediaAttachment.filename} : {}),
+                billingAcknowledged:true,billingReviewClaimHash:claimed.tokenHash,
+                templateSignature:prepared.signature,
+              },
+              initialDeliveryStatus:"unknown",
+              initialDeliveryError:"secondary WhatsApp template attempted; delivery is not yet verified.",
+              publish:false,
+            }
+          );
+          const final=await finalizeStaffSendState(ready.id,req.session.username);
+          return {ready:final||ready,saved};
+        }
+      );
+      const send=await secondaryTemplate.deliverSecondaryStaffTemplate(
+        current.ready,current.saved.id,prepared
+      );
+      const errorText=send.error||"secondary WhatsApp template acceptance could not be confirmed.";
+      const result=await persistSendOutcome(current.saved,send,errorText,"whatsapp");
+      if(send.success){
+        await reconcileAcceptedStaffReplyAttention(current.ready.id);
+        await markLeadContacted(current.ready.id,req.session.username,send);
+      }else{
+        await contactsRepo.setDeliveryAttention(current.ready.id,
+          "secondary WhatsApp template delivery unconfirmed: "+publicDeliveryError(errorText),
+          current.saved.id);
+      }
+      return res.status(201).json({
+        ...result,delivered:send.success===true,
+        delivery_error:publicDeliveryError(result.delivery_error),
+        whatsapp_template:current.saved.whatsapp_template||{
+          name,language:languageCode,category:prepared.template.category,
+        },
+        template:{name,language:languageCode,category:prepared.template.category},
+      });
     }
 
     let policy;
@@ -1822,6 +2020,18 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
     const contact = await contactsRepo.getContactById(contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    // The primary Inbox retry endpoint predates sender-qualified billing.
+    // It must never reuse the secondary sender's saved message, primary billing gate, token
+    // or temporary media URL, including known failed and unknown deliveries.
+    if (contact.channel === "whatsapp" &&
+        contact.whatsapp_sender_id != null &&
+        contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY) {
+      return res.status(409).json({
+        code: "secondary_sender_retry_requires_fresh_review",
+        error: "secondary WhatsApp messages cannot use the legacy retry path. Check Meta delivery and billing, then compose a new approved message if appropriate.",
+      });
+    }
 
     const message = await messagesRepo.getMessageForRetry(contactId, messageId);
     if (!message) return res.status(404).json({ error: "Message not found." });
@@ -2343,6 +2553,8 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
       return res.status(400).json({ error: "This message cannot be forwarded." });
     }
 
+    const sourceContact = await contactsRepo.getContactById(sourceContactId);
+    if (!sourceContact) return res.status(404).json({ error:"Source conversation not found." });
     const targetChecks = await Promise.all(
       targetContactIds.map(async (contactId) => {
         const allowed = await canAccessContact(req.user, contactId);
@@ -2367,6 +2579,16 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
 
     const targets = targetChecks.map((item) => item.target);
+    const sourceOwner = String(sourceContact.whatsapp_sender_id || "");
+    if (targets.some(target =>
+      (target.channel || "whatsapp") !== (sourceContact.channel || "whatsapp") ||
+      (sourceContact.channel === "whatsapp" &&
+        String(target.whatsapp_sender_id || "") !== sourceOwner))) {
+      return res.status(409).json({
+        code:"cross_business_forward_disallowed",
+        error:"Forwarding between business WhatsApp numbers is disabled to protect customer privacy.",
+      });
+    }
     if (
       sourceMessage.media_key &&
       isInboxDocumentMimeType(sourceMessage.media_mime_type)
@@ -2456,14 +2678,27 @@ router.post("/:contactId/messages", async (req, res) => {
     );
 
     const { preparedContact, saved } = prepared;
-    const sendResult = await channelMessaging.sendText(
-      preparedContact,
-      text.trim(),
-      socialProviderSendOptions(saved, preparedContact, {
-        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
-      })
-    );
+    // Sender-qualified staff text sends can never fall through to the
+    // primary Neutro WhatsApp Cloud API client. Unknown scoped senders are
+    // rejected by the separately gated secondary dispatcher.
+    const secondaryConversation = preparedContact.channel === "whatsapp" &&
+      preparedContact.whatsapp_sender_id != null &&
+      preparedContact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
+    const sendResult = secondaryConversation
+      ? await sendSecondaryStaffText({
+          contact: preparedContact,
+          messageId: saved.id,
+          text: text.trim(),
+          replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+        })
+      : await channelMessaging.sendText(
+          preparedContact,
+          text.trim(),
+          socialProviderSendOptions(saved, preparedContact, {
+            purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          })
+        );
     const errorText = deliveryErrorForSend(
       sendResult,
       sendResult.error || rejectedErrorFor(preparedContact)
