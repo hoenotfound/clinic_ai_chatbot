@@ -318,5 +318,5 @@ function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
  timer?.unref?.();return true;
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={enabled,cleanPhone,mediaPlaceholder,importPassiveChange,
+module.exports={enabled,fingerprint,splitHistoryChange,cleanPhone,mediaPlaceholder,importPassiveChange,
  acceptPassiveSync,runOnce,start,stop};

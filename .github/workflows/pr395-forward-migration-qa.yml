@@ -2,7 +2,7 @@ name: PR395 Forward Migration and Signed Receiver QA
 
 on:
   push:
-    branches: [pr395-forward-migration-rehearsal-20261028]
+    branches: [pr395-forward-migration-rehearsal-20261028, pr395-history-handoff-20261028]
 
 permissions:
   contents: read
@@ -50,7 +50,8 @@ jobs:
             test/pr395CoexistenceSyncDispatcher.test.js \
             test/pr395RealClinicRoutingGuard.test.js \
             test/whatsappPaidDefaultHttp.test.js \
-            test/whatsappCoexistenceHistoryService.test.js
+            test/whatsappCoexistenceHistoryService.test.js \
+            test/whatsappSecondaryCaptureHandoff.test.js
       - name: Real signed HTTP clinic-history capture to disposable PostgreSQL
         env:
           RUN_SECONDARY_QA_HTTP_INTEGRATION: "true"
