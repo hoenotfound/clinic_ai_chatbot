@@ -106,7 +106,7 @@ function encryptJob(job, key) {
 async function captureSignedSecondaryBatch(body, {
   env = process.env, database, signatureVerified = false
 } = {}) {
-  if (signatureVerified !== true) throw Error("Signed Meta webhook proof required");
+  if (signatureVerified !== true) throw Error("Signed Meta webhook signature proof required");
   const config = captureConfig(env);
   const jobs = classify(body, config);
   const pool = database || ingress.getQaPool(config);
