@@ -131,6 +131,12 @@ async function startApplication({
     // and unsafe feature-flag rollback with persisted secondary contacts.
     await assertStoredSenderSafety();
 
+    // Operator-gated real QA only. Inspect/import encrypted history in isolated
+    // staging databases; never request sync, contact Meta, or start senders.
+    if (process.env.PR414_QA_REAL_HISTORY_ACTION) {
+      await require("./pr414RealQaHistoryHandoff").runOnBoot();
+    }
+
     // Explicit QA-only, synthetic data, one-shot rehearsal. No Meta requests,
     // real WhatsApp numbers, AI, outbound sends or production DB access.
     if (process.env.PR414_QA_SYNTHETIC_REHEARSAL_ON_BOOT === "true") {
