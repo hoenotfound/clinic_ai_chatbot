@@ -17,6 +17,7 @@ jobs:
       - name: Check Neutro existing callback and disabled/new route, without real messages
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           HOST="https://da-chatbot-neutro-sense-tcm.onrender.com"
           get_status() {
