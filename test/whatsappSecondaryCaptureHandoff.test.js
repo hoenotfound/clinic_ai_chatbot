@@ -196,8 +196,9 @@ test("encrypted history reaches only second-number Inbox without billing or send
   assert.equal(dest.messages.size,2);
   assert.equal(dest.messages.get("wamid.synthetic-customer").role,"user");
   assert.equal(dest.messages.get("wamid.synthetic-staff").role,"assistant");
+  const original=handoff.decryptCapturedRow(src.rows[0],capture.captureConfig(env()));
   assert.equal(dest.messages.get("wamid.synthetic-customer").timestamp,
-    Number(timestamp()));
+    Number(original.change.value.history[0].threads[0].messages[0].timestamp));
   assert.equal(src.rows[0].handoff_completed_at,true);
   assert.equal(dest.calls.filter(c=>c.claim).length,1);
   assert.deepEqual(dest.calls.find(c=>c.claim).claim,{
