@@ -136,11 +136,51 @@ test("unknown WA account, missing phone, wrong WABA and unsupported fields fail 
     assert.throws(() => partitionDefaultBatch(input, config));
   }
 });
+test("mixed signed unfamiliar events are quarantined rather than blocking Neutro", async () => {
+  const config = configFromEnv(env());
+  const input = batch(
+    message(config.primaryWaba, config.primaryPhoneId),
+    message("777123", "999"),
+    message(config.primaryWaba, config.primaryPhoneId, "template_status_update")
+  );
+  const partition = partitionDefaultBatch(input, config);
+  assert.equal(partition.primary.entry.length, 1);
+  assert.equal(partition.primary.entry[0].id, config.primaryWaba);
+  assert.equal(partition.audits.length, 2);
+  assert.ok(partition.audits.every(a => a.kind === "quarantine"));
+  assert.deepEqual(partition.audits.map(a => a.reason),
+    ["different_business_account", "unsupported_whatsapp_event"]);
+  assert.ok(partition.audits.every(a => /^[a-f0-9]{64}$/.test(a.fingerprint)));
+  const db = mockDatabase();
+  const result = await recordAuditBatch(partition.audits, config, db);
+  assert.equal(result.inserted, 2);
+  assert.equal(db.queries.filter(q => q.sql.includes(
+    "INSERT INTO whatsapp_sender_quarantined_events")).length, 2);
+});
+
+test("foreign signed messages mixed with Neutro cannot create other-bot AI jobs", async () => {
+  const e = env();
+  const response = fakeResponse();
+  let primaryMessages = 0;
+  await dispatchDefaultWebhook({
+    body: batch(message("777123", "444"),
+      message(e.WHATSAPP_WABA_ID, e.WHATSAPP_PHONE_NUMBER_ID))
+  }, response, async (req, res) => {
+    primaryMessages += req.body.entry.reduce((acc, entry) =>
+      acc + entry.changes.reduce((sum, c) =>
+        sum + (c.value.messages?.length || 0), 0), 0);
+    assert.equal(req.body.entry.length, 1);
+    assert.equal(req.body.entry[0].id, e.WHATSAPP_WABA_ID);
+    res.sendStatus(200);
+  }, { env: e, persist: async () => ({ durable: true }) });
+  assert.equal(primaryMessages, 1);
+  assert.equal(response.code, 200);
+});
 test("malformed or excessive Meta batches cannot partially commit", () => {
   const config = configFromEnv(env());
   const input = batch(
     lifecycle("777123", config.qaE164),
-    { id: "999", changes: [{ field: "messages", value: {} }] }
+    { id: "999", changes: [{ field: "messages", value: null }] }
   );
   assert.throws(() => partitionDefaultBatch(input, config));
   assert.throws(() => partitionDefaultBatch(batch({
