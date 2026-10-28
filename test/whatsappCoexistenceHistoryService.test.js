@@ -185,3 +185,30 @@ test("historical incoming messages addressed to another number are skipped",asyn
  assert.equal(result.imported,0);
  assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO messages")),false);
 });
+
+test("Meta history preserves media placeholders and base64-padded WAMIDs",async()=>{
+ const f=make();
+ const ts=String(Math.floor(Date.now()/1000)-7200);
+ const change={field:"history",value:{
+  metadata:{phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},
+  history:[{metadata:{phase:1,chunk_order:1,progress:55},threads:[{
+   id:"60126662222",messages:[
+    {id:"wamid.HBgNNjAxMjY2NjIyMjI=",from:"60123008888",
+     timestamp:ts,type:"media_placeholder",history_context:{status:"READ"}},
+    {id:"wamid.HBgNNjAxMjY2NjIyMjI+=",from:"60126662222",
+     timestamp:ts,type:"text",text:{body:"Customer history"}}
+   ]
+  }]}]
+ }};
+ const result=await history.importPassiveChange({
+  accountId:env.WHATSAPP_SECONDARY_WABA_ID,change
+ },{...f,env});
+ assert.equal(result.imported,2);
+ const rows=f.calls.filter(x=>x.sql?.includes("INSERT INTO messages"));
+ assert.equal(rows.length,2);
+ assert.deepEqual(rows.map(x=>x.args[1]),["assistant","user"]);
+ assert.match(rows[0].args[2],/media_placeholder/);
+ assert.equal(rows[0].args[3],"wamid.HBgNNjAxMjY2NjIyMjI=");
+ assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO follow_up")),false);
+ assert.equal(f.calls.some(x=>x.sql?.includes("billing")),false);
+});
