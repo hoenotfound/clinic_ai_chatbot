@@ -34,6 +34,15 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
       [80, "whatsapp_sender_foundation"],
       [81, "whatsapp_sender_conversation_identity"],
     ]);
+    // Independently read from Neutro production schema_migrations on
+    // 2026-10-28. Compare schema fingerprints, never customer data.
+    const expectedAppliedChecksums = [
+      [77, "pricing_decision_audit", "6cc9ddfc8c83493b81d18a8a60ed0754bf7875acfaecef0cf285b53a023c9ead"],
+      [78, "sales_follow_up_tasks", "a1db084e690209564d1fd0a9bb0242bf8afb26cdbd72b835da7d368faa8d9bb9"],
+      [79, "sales_follow_up_corrections", "70e9341c731e9f8cf17a781247285bef15c3ed5f8779e00b9074c810f72d562b"],
+    ];
+    assert.deepEqual(migrations.slice(76,79).map(m=>[m.version,m.name,m.checksum]),
+      expectedAppliedChecksums, "source SQL must match Neutro's immutable applied migration ledger");
     const old = await runMigrations(pool, {
       quiet: true, migrations: migrations.slice(0, 79),
     });
