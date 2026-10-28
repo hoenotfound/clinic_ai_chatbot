@@ -1,6 +1,7 @@
 "use strict";
 const crypto = require("node:crypto");
 const {pool} = require("../db/db");
+const {clinicSecondNumberApproved} = require("./pr395StagingSafety");
 
 // This receiver is deliberately NOT a WhatsApp conversation handler.
 // It records only business-account lifecycle metadata, never customer data.
@@ -14,7 +15,7 @@ function enabled(env=process.env){
    env.WHATSAPP_SECONDARY_SENDER_KEY==="coexistence_qa" &&
    /^\+[1-9]\d{7,14}$/.test(target) &&
    target===env.PR395_STAGING_APPROVED_TEST_PHONE_E164 &&
-   target!=="+60174831336" &&
+   (target!=="+60174831336" || clinicSecondNumberApproved(env)) &&
    digits(target)!==digits(env.WHATSAPP_PHONE_NUMBER||"") &&
    !String(env.WHATSAPP_SECONDARY_WABA_ID||"").trim() &&
    !String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"").trim() &&
