@@ -364,7 +364,7 @@ test("routing uses existing signed 2 MB parser and leaves original /webhook inta
   assert.match(source, /app\.post\("\/webhook", webhookJsonParser, primaryWhatsappWebhookHandler/);
   assert.match(source, /app\.post\("\/whatsapp\/default",/);
   assert.match(source, /}, webhookJsonParser, async \(req, res\) => \{/);
-  assert.match(source, /dispatchDefaultWebhook\(\s*req, res, primaryWhatsappWebhookHandler/);
+  assert.match(source, /dispatchPaidDefaultWithSecondary\(\s*req, res, primaryWhatsappWebhookHandler/);
   assert.match(source, /app\.get\("\/whatsapp\/default"/);
   assert.ok(source.indexOf('app.post("/webhook"') <
             source.indexOf('app.post("/whatsapp/default"'));
