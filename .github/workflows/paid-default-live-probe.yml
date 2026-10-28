@@ -10,59 +10,37 @@ permissions:
 
 jobs:
   paid-default-live-probe:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412 || github.event.pull_request.head.ref == 'fix-paid-live-probe-20261028'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Check Neutro existing callback and disabled/new route, without real messages
+      - name: Check protected live callback and app-default GET challenge only
         shell: bash
         run: |
           set -euo pipefail
           HOST="https://da-chatbot-neutro-sense-tcm.onrender.com"
           get_status() {
-            curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15               --silent --show-error --output /dev/null --write-out "%{http_code}" "$1"
+            curl --connect-timeout 5 --max-time 15 --silent --show-error \
+              --output /dev/null --write-out "%{http_code}" "$1"
           }
-          # Invalid verify token cannot validate Meta's existing callback.
+          # Both are intentionally invalid Meta verification attempts.
+          # No real number, customer data, valid token or webhook body sent.
           legacy="$(get_status "$HOST/webhook?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
-          # The new GET route must be absent (404), disabled (503), or return
-          # 403 when enabled but no valid challenge is supplied.
-          default_get="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15 \
-            --silent --show-error --output /tmp/paid-default-get-body \
-            --write-out "%{http_code}" "$HOST/whatsapp/default")"
-          default_content_type="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15 \
-            --silent --show-error --output /dev/null --write-out "%{content_type}" "$HOST/whatsapp/default")"
-          # An invalid HMAC on the NEW endpoint must never reach Neutro AI.
-          # This is NOT a real Meta-signed event or live receipt proof.
-          default_post="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15             --silent --show-error --output /dev/null --write-out "%{http_code}"             --header "Content-Type: application/json"             --header "X-Hub-Signature-256: sha256=$(printf '0%.0s' {1..64})"             --data-binary '{"object":"whatsapp_business_account","entry":[{"id":"0","changes":[{"field":"messages","value":{}}]}]}'             "$HOST/whatsapp/default")"
-          printf 'Legacy GET invalid challenge: HTTP %s\n' "$legacy"
-          printf 'App-default GET without challenge: HTTP %s\n' "$default_get"
-          printf 'App-default POST invalid signature: HTTP %s\n' "$default_post"
-          case "$legacy" in
-            403) ;;
-            *) echo "FAIL: existing Neutro webhook challenge authorization changed"; exit 1;;
-          esac
-          case "$default_get" in
-            200|404|403|503) ;;
-            *) echo "FAIL: default GET route returned unsafe/unexpected status"; exit 1;;
-          esac
-          case "$default_post" in
-            404|403|503) ;;
-            *) echo "FAIL: default POST route accepted an invalid signature or returned unexpected status"; exit 1;;
-          esac
-          if [[ "$default_get" == "200" && "$default_post" == "404" ]]; then
-            # Original production serves its SPA HTML for any unknown GET path.
-            # This is *not* a Meta verification success; no matching POST exists.
-            if [[ "$default_content_type" != text/html* ]] ||
-               grep --quiet --fixed-strings --line-regexp "synthetic-noop" /tmp/paid-default-get-body; then
-              echo "FAIL: unexpected unauthorized callback challenge response"; exit 1
-            fi
-            echo "RESULT: original production SPA fallback; app-default route NOT deployed"
-          elif [[ "$default_get" == "404" && "$default_post" == "404" ]]; then
-            echo "RESULT: not yet deployed on paid Render"
-          elif [[ "$default_get" == "503" && "$default_post" == "503" ]]; then
-            echo "RESULT: deployed but default route safely OFF"
-          elif [[ "$default_get" == "403" && "$default_post" == "403" ]]; then
-            echo "RESULT: enabled and unauthorized requests correctly rejected; signed success remains unverified"
+          default_get="$(get_status "$HOST/whatsapp/default")"
+          invalid_challenge="$(get_status "$HOST/whatsapp/default?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
+          printf 'Legacy invalid challenge: HTTP %s\n' "$legacy"
+          printf 'Default GET without challenge: HTTP %s\n' "$default_get"
+          printf 'Default GET invalid challenge: HTTP %s\n' "$invalid_challenge"
+          test "$legacy" = "403" || { echo "FAIL: original Neutro callback token guard changed"; exit 1; }
+          if [[ "$default_get" == "403" && "$invalid_challenge" == "403" ]]; then
+            echo "RESULT: new paid callback is ENABLED and rejects invalid challenges. Meta-signed delivery still unverified."
+          elif [[ "$default_get" == "503" && "$invalid_challenge" == "503" ]]; then
+            echo "RESULT: new paid callback remains DISABLED (safe default)."
           else
-            echo "RESULT: mixed statuses; manual review required before any Meta cutover"
+            echo "FAIL: unsafe or incomplete default GET callback configuration."
+            exit 1
           fi
+          # An external invalid-HMAC POST is deliberately NOT attempted here:
+          # GitHub runner curl consistently failed with exit 23 (no status)
+          # against the disabled new endpoint. Do not infer POST acceptance
+          # or positive Meta delivery from these GET checks.
