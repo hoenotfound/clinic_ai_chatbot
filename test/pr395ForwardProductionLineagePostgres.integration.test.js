@@ -56,6 +56,47 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
       "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) VALUES($1,'user',$2,$3)",
       [contactId, "Existing Neutro chat stays intact", "wamid.legacy-retained"]
     );
+    // Read-only production inventory showed 233 contacts/2,985 messages,
+    // including 13 Messenger contacts. Rehearse a near-identical, fully
+    // synthetic load: 230 contacts, 2,936 messages and 230 lead references.
+    // No real phone numbers, names, or customer text are exported.
+    await admin.query(`
+      INSERT INTO contacts(whatsapp_number,name,channel,channel_user_id)
+      SELECT '6019' || lpad(n::text,8,'0'), 'Synthetic QA contact',
+             CASE WHEN n <= 216 THEN 'whatsapp' ELSE 'facebook' END,
+             CASE WHEN n > 216 THEN 'qa-fb-' || n::text ELSE NULL END
+      FROM generate_series(1,229) AS n
+    `);
+    await admin.query(`
+      INSERT INTO leads(contact_id)
+      SELECT id FROM contacts
+    `);
+    await admin.query(`
+      INSERT INTO messages(contact_id,role,content,whatsapp_message_id)
+      SELECT c.id,
+             CASE WHEN g.n % 2 = 0 THEN 'assistant' ELSE 'user' END,
+             'Synthetic historical item ' || g.n::text,
+             CASE WHEN c.channel='whatsapp'
+               THEN 'wamid.synthetic-' || g.n::text ELSE NULL END
+      FROM generate_series(1,2935) AS g(n)
+      JOIN (
+        SELECT id, channel, row_number() OVER(ORDER BY id) AS seq
+        FROM contacts
+      ) c ON ((g.n - 1) % 230) + 1 = c.seq
+    `);
+    const beforeCounts=(await admin.query(`
+      SELECT
+        (SELECT count(*)::int FROM contacts) AS contacts,
+        (SELECT count(*)::int FROM messages) AS messages,
+        (SELECT count(*)::int FROM leads) AS leads,
+        (SELECT count(*)::int FROM contacts WHERE channel='facebook') AS messenger,
+        (SELECT count(*)::int FROM contacts WHERE channel='whatsapp') AS whatsapp,
+        (SELECT count(*)::int FROM messages WHERE whatsapp_message_id IS NOT NULL) AS provider_ids
+    `)).rows[0];
+    assert.deepEqual(beforeCounts, {
+      contacts:230,messages:2936,leads:230,messenger:13,whatsapp:217,
+      provider_ids:2780,
+    });
     const original = await admin.query(
       "SELECT version,name,checksum FROM schema_migrations WHERE version IN (78,79) ORDER BY version"
     );
@@ -74,6 +115,28 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
     assert.equal(data.rows[0].name,"Existing Neutro contact");
     assert.equal(data.rows[0].content,"Existing Neutro chat stays intact");
     assert.equal(data.rows[0].whatsapp_sender_id,null);
+    const afterCounts=(await admin.query(`
+      SELECT
+        (SELECT count(*)::int FROM contacts) AS contacts,
+        (SELECT count(*)::int FROM messages) AS messages,
+        (SELECT count(*)::int FROM leads) AS leads,
+        (SELECT count(*)::int FROM contacts WHERE channel='facebook') AS messenger,
+        (SELECT count(*)::int FROM contacts WHERE channel='whatsapp') AS whatsapp,
+        (SELECT count(*)::int FROM messages WHERE whatsapp_message_id IS NOT NULL) AS provider_ids
+    `)).rows[0];
+    assert.deepEqual(afterCounts,beforeCounts,
+      "legacy WhatsApp, Messenger, leads and message IDs must survive");
+    const referential=(await admin.query(`
+      SELECT (SELECT count(*)::int FROM messages m LEFT JOIN contacts c
+                ON c.id=m.contact_id WHERE c.id IS NULL) AS orphan_messages,
+             (SELECT count(*)::int FROM leads l LEFT JOIN contacts c
+                ON c.id=l.contact_id WHERE c.id IS NULL) AS orphan_leads,
+             (SELECT count(*)::int FROM contacts
+                WHERE whatsapp_sender_id IS NOT NULL) AS unexpected_sender_bindings
+    `)).rows[0];
+    assert.deepEqual(referential,
+      {orphan_messages:0,orphan_leads:0,unexpected_sender_bindings:0});
+
     const protectedTables = await admin.query(
       "SELECT to_regclass('whatsapp_sender_accounts') AS sender, " +
       "to_regclass('whatsapp_sender_coexistence_import_jobs') AS imports, " +
@@ -87,6 +150,10 @@ test("Neutro v079 -> isolated multi-number v106 preserves legacy chats and sende
     assert.equal(state.rows[0].state,"disabled");
     assert.equal(state.rows[0].coexistence_enabled,false);
     const senderId = state.rows[0].id;
+    assert.equal((await admin.query(
+      "SELECT count(*)::int AS n FROM contacts WHERE channel='facebook'"
+    )).rows[0].n,13,"existing Messenger contacts remain isolated");
+
     await admin.query(
       "INSERT INTO contacts(whatsapp_number,whatsapp_sender_id) VALUES($1,$2)",
       ["60120000001",senderId]
