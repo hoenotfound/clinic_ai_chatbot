@@ -77,6 +77,10 @@ function configFromEnv(env = process.env) {
   return Object.freeze({
     appSecret, verifyToken, primaryWaba, primaryPhoneId, primaryE164,
     qaE164,
+    realClinicQaApproved: env.WHATSAPP_PAID_REAL_CLINIC_REHEARSAL_ENABLED === "true" &&
+      env.WHATSAPP_PAID_REAL_CLINIC_OPERATOR_APPROVED === "true" &&
+      env.WHATSAPP_PAID_REAL_CLINIC_E164_PIN === "+60174831336" &&
+      qaE164 === "+60174831336",
     qaDatabaseUrl: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL || ""),
     pinnedQaHost: String(env.WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST || "")
       .trim().toLowerCase(),
@@ -90,7 +94,11 @@ function configFromEnv(env = process.env) {
 }
 
 function assertQaConfiguration(config) {
-  if (!config.qaE164 || config.qaE164 === "+60174831336" ||
+  // The real clinic number is NEVER treated as a personal QA number.
+  // Explicit three-way approval is needed in the new rollout mode; the
+  // current production defaults and legacy personal-QA behavior stay intact.
+  if (!config.qaE164 ||
+      (config.qaE164 === "+60174831336" && config.realClinicQaApproved !== true) ||
       digits(config.qaE164) === digits(config.primaryE164)) {
     throw new Error("Secondary QA phone must be independently pinned");
   }
