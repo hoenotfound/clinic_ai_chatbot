@@ -4,7 +4,9 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    # Temporary PR #395 full-CI verification. Remove the feature branch
+    # from this list after its merge; production/main behavior is unchanged.
+    branches: [main, feature/whatsapp-complete-multinumber-integration-20261022]
 
 # Replaced PR commits should cancel outdated checks, but each main push needs
 # an independent concurrency group so no pending main run is discarded.
