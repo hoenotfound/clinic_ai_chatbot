@@ -282,17 +282,42 @@ async function dispatchDefaultWebhook(req, res, primaryHandler, {
   }
   const config = configFromEnv(env);
   const { primary, audits } = partitionDefaultBatch(req.body, config);
+  // Neutro MUST be handled first. A separate QA Neon outage must never
+  // delay the primary message's durable claim or HTTP acknowledgement.
+  if (primary) {
+    req.body = primary;
+    // Keep using the unchanged production message/status/AI handler.
+    const primaryResult = await primaryHandler(req, res);
+    if (audits.length && res.headersSent && res.statusCode === 200) {
+      // The primary response has already been acknowledged by its handler.
+      // Failure here is intentionally NOT an HTTP failure for Neutro.
+      // Audit-only batches below still fail closed so Meta can retry.
+      try {
+        const result = await persist(audits, config);
+        if (!result || result.durable !== true) {
+          throw new Error("QA lifecycle audit was not durable");
+        }
+      } catch (error) {
+        // Explicit degraded audit signal, without exposing patient content,
+        // private database URLs, tokens or raw webhook payloads.
+        console.error("[Paid default router] QA lifecycle audit failed AFTER " +
+          "Neutro HTTP 200. Manual audit reconciliation required.", {
+          errorCode: typeof error.code === "string" ? error.code : "QA_AUDIT_FAILURE",
+          fingerprints: audits.map(item => item.fingerprint)
+        });
+      }
+    }
+    return primaryResult;
+  }
+  // Without primary customer work, audit records are still a hard requirement.
+  // Never acknowledge an audit-only Meta event before the QA commit.
   if (audits.length) {
     const result = await persist(audits, config);
     if (!result || result.durable !== true) {
       throw new Error("QA lifecycle audit was not durable");
     }
   }
-  if (!primary) return res.sendStatus(200);
-  // Reuse the existing production message handler, with only verified Neutro
-  // changes. The original /webhook registration remains unchanged.
-  req.body = primary;
-  return primaryHandler(req, res);
+  return res.sendStatus(200);
 }
 
 module.exports = {
