@@ -29,7 +29,7 @@ test("CI PostgreSQL rehearses Neutro v077 -> v079 with immutable rollback histor
     const rehearsalUrl=new URL(ciConnection);
     rehearsalUrl.pathname="/"+name;
     pool=new Pool({connectionString:rehearsalUrl.toString(),max:1});
-    const all=loadMigrations();
+    const all=loadMigrations().filter(m=>m.version<=79);
     assert.equal(all.at(-1).version,79,
       "Production rollback candidate only supports migration 079");
     assert.equal(all[77].name,"sales_follow_up_tasks");

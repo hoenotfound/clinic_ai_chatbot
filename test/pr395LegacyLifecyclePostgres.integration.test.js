@@ -5,7 +5,7 @@ const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const {recordBatch}=require("../src/services/pr395LegacyLifecycleReceiver");
 const url=process.env.TEST_DATABASE_URL;
-test("PostgreSQL 103 accepts signed legacy lifecycle metadata only, idempotently and without touching Neutro data",{
+test("PostgreSQL 105 accepts signed legacy lifecycle metadata only, idempotently and without touching Neutro data",{
  skip:!url
 },async()=>{
  const root=new Client({connectionString:url});
@@ -22,7 +22,7 @@ test("PostgreSQL 103 accepts signed legacy lifecycle metadata only, idempotently
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    }
   };
-  assert.equal(loadMigrations().at(-1).version,104);
+  assert.equal(loadMigrations().at(-1).version,106);
   await runMigrations(database,{quiet:true});
   const env={
    PR395_STAGING_MODE:"true",

@@ -23,7 +23,7 @@ test(
       "utf8"
     );
     const provenanceSql = fs.readFileSync(
-      path.join(__dirname, "../src/db/migrations/082_whatsapp_delivery_sender_provenance.sql"),
+      path.join(__dirname, "../src/db/migrations/084_whatsapp_delivery_sender_provenance.sql"),
       "utf8"
     );
     const query = client.query.bind(client);

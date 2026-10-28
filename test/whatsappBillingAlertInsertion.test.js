@@ -68,7 +68,7 @@ test("Postgres: expected service charges exempt; marketing, unknown, conflicting
       "054_whatsapp_free_entry_followups.sql",
       "059_whatsapp_free_only_safety.sql",
       "070_whatsapp_24h_service_reply_exceptions.sql",
-      "082_whatsapp_delivery_sender_provenance.sql",
+      "084_whatsapp_delivery_sender_provenance.sql",
     ]) await db.query(fs.readFileSync(path.join(
       __dirname,"../src/db/migrations",name),"utf8"));
 
