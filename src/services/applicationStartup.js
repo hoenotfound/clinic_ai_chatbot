@@ -131,6 +131,12 @@ async function startApplication({
     // and unsafe feature-flag rollback with persisted secondary contacts.
     await assertStoredSenderSafety();
 
+    // Explicit QA-only, synthetic data, one-shot rehearsal. No Meta requests,
+    // real WhatsApp numbers, AI, outbound sends or production DB access.
+    if (process.env.PR414_QA_SYNTHETIC_REHEARSAL_ON_BOOT === "true") {
+      await require("./pr414SyntheticQaRehearsal").runOnBoot();
+    }
+
     console.log("[Startup] Loading client configuration...");
     await configRepo.loadConfig();
     console.log("[Startup] Client configuration loaded.");
