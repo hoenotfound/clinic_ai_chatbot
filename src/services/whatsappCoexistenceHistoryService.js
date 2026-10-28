@@ -63,6 +63,10 @@ async function importPassiveChange({accountId,change},{
      for(const thread of chunk.threads){
        const phone=cleanPhone(thread?.id);
        if(!phone||!Array.isArray(thread.messages))continue;
+       const businessPhone=cleanPhone(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
+       if(!businessPhone || businessPhone===phone) {
+         throw Error("Verified secondary business phone required for history import.");
+       }
        threads++;
        const contact=await conversations.claimSenderContact({
          accountId,phoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
@@ -80,13 +84,10 @@ async function importPassiveChange({accountId,change},{
             timestamp>now+60 || timestamp<now-366*86400)continue;
          const from=cleanPhone(msg.from);
          const to=msg.to == null ? null : cleanPhone(msg.to);
-         const businessPhone=cleanPhone(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
          // Meta history does not always include "to". Determine direction
          // only from the verified business number and thread participant.
-         // Never attribute an unrelated or ambiguous history message.
-         if(!businessPhone || businessPhone===phone) {
-           throw Error("Verified secondary business phone required for history import.");
-         }
+         // Never attribute an unrelated or malformed history message.
+         if(msg.to != null && !to)continue;
          const inbound=from===phone && (to===null || to===businessPhone);
          const outbound=from===businessPhone && (to===null || to===phone);
          if(inbound===outbound)continue;
