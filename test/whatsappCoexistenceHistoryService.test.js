@@ -12,6 +12,7 @@ const env={
  WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
  WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
  WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60123008888",
 };
 function make(){
  const calls=[],records=new Set();let count=100;
@@ -134,4 +135,53 @@ test("worker replays a staged sync only under the exact Ariel business identity"
  assert.equal(result.processed,1);
  assert.ok(f.calls.some(x=>x.sql?.includes("status='completed',payload=NULL")));
  assert.equal(f.calls.filter(x=>x.claim).length,1);
+});
+
+test("history without to imports only messages from verified secondary business phone",async()=>{
+ const f=make();
+ const ts=String(Math.floor(Date.now()/1000)-7200);
+ const change={field:"history",value:{
+  metadata:{phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},
+  history:[{threads:[{id:"60126662222",messages:[
+   {id:"wamid.no-to-outbound",from:"60123008888",timestamp:ts,type:"text",text:{body:"Old reply without recipient"}},
+   {id:"wamid.other-business",from:"60127778888",timestamp:ts,type:"text",text:{body:"Not our sender"}},
+   {id:"wamid.wrong-recipient",from:"60123008888",to:"60128889999",timestamp:ts,type:"text",text:{body:"Other recipient"}},
+   {id:"wamid.bad-recipient",from:"60123008888",to:"invalid",timestamp:ts,type:"text",text:{body:"Bad recipient"}},
+  ]}]}]
+ }};
+ const result=await history.importPassiveChange({
+  accountId:env.WHATSAPP_SECONDARY_WABA_ID,change,
+ },{...f,env});
+ assert.equal(result.imported,1);
+ const saved=f.calls.filter(x=>x.sql?.includes("INSERT INTO messages"));
+ assert.equal(saved.length,1);
+ assert.equal(saved[0].args[1],"assistant");
+ assert.equal(saved[0].args[3],"wamid.no-to-outbound");
+});
+
+test("missing verified secondary business phone refuses history before creating a contact",async()=>{
+ const f=make();
+ await assert.rejects(
+  history.importPassiveChange({
+   accountId:env.WHATSAPP_SECONDARY_WABA_ID,change:{field:"history",value}
+  },{...f,env:{...env,WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:""}}),
+  /Verified secondary business phone/
+ );
+ assert.equal(f.calls.some(x=>x.claim),false);
+ assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO messages")),false);
+});
+
+test("historical incoming messages addressed to another number are skipped",async()=>{
+ const f=make();
+ const ts=String(Math.floor(Date.now()/1000)-7200);
+ const change={field:"history",value:{
+  metadata:{phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID},
+  history:[{threads:[{id:"60126662222",messages:[{
+   id:"wamid.wrong-inbound",from:"60126662222",to:"60128889999",
+   timestamp:ts,type:"text",text:{body:"Not addressed to the second business"}
+  }]}]}]
+ }};
+ const result=await history.importPassiveChange({accountId:env.WHATSAPP_SECONDARY_WABA_ID,change},{...f,env});
+ assert.equal(result.imported,0);
+ assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO messages")),false);
 });
