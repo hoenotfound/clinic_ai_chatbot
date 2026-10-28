@@ -176,10 +176,14 @@ function publicConfig(env = process.env) {
         env.PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED === "true"],
       ["WHATSAPP_SECONDARY_SENDER_KEY must be coexistence_qa",
         env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa"],
-      ["QA phone pin must match privately approved test number",
-        /^\\+[1-9]\\d{7,14}$/.test(qaE164) && qaE164 === approvedE164 &&
-          qaE164 !== "+60174831336" &&
-          qaE164.replace(/\\D/g, "") !== clean(env.WHATSAPP_PHONE_NUMBER).replace(/\\D/g, "")],
+      ["WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 is not valid E.164",
+        /^\+[1-9]\d{7,14}$/.test(qaE164)],
+      ["PR395_STAGING_APPROVED_TEST_PHONE_E164 differs from QA number",
+        qaE164 === approvedE164],
+      ["QA number must not equal the excluded clinic number",
+        qaE164 !== "+60174831336"],
+      ["QA number equals primary WHATSAPP_PHONE_NUMBER; must be distinct",
+        qaE164.replace(/\D/g, "") !== clean(env.WHATSAPP_PHONE_NUMBER).replace(/\D/g, "")],
       ["Remove unverified WHATSAPP_SECONDARY_PHONE_NUMBER_ID and WHATSAPP_SECONDARY_WABA_ID",
         !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) && !clean(env.WHATSAPP_SECONDARY_WABA_ID)],
       ["Keep PR395_STAGING_PROVIDER_REHEARSAL_ENABLED and PR395_STAGING_ALLOW_PROVIDER_PROCESSING off",
