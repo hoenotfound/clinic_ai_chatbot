@@ -1,0 +1,43 @@
+name: PR395 temporary active relay HTTPS fail-closed probe
+on:
+  pull_request:
+    branches: [main]
+    paths: [".github/workflows/pr395-active-relay-probe.yml"]
+permissions:
+  contents: read
+jobs:
+  active-relay-public-https:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Verify configured active QA relay rejects unauthorized requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://da-chatbot-pr395-default-relay-qa.onrender.com"
+          code() {
+            curl --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 20 --max-time 75 \
+              --output /dev/null --write-out '%{http_code}' "$@"
+          }
+          live=$(code "$URL/health/live")
+          unknown=$(code "$URL/this-path-must-not-exist")
+          invalid_verify=$(code "$URL/webhook?hub.mode=subscribe&hub.verify_token=PR395-invalid-token-not-an-actual-secret&hub.challenge=qa")
+          invalid_post=$(code --request POST \
+            --header 'Content-Type: application/json' \
+            --header 'X-Hub-Signature-256: sha256=0000000000000000000000000000000000000000000000000000000000000000' \
+            --data '{"object":"whatsapp_business_account","entry":[]}' "$URL/webhook")
+          missing_hmac=$(code --request POST \
+            --header 'Content-Type: application/json' \
+            --data '{"object":"whatsapp_business_account","entry":[]}' "$URL/webhook")
+          echo "Active relay liveness: $live"
+          echo "Unknown path: $unknown"
+          echo "Invalid Meta verification token: $invalid_verify"
+          echo "Invalid HMAC: $invalid_post"
+          echo "Missing HMAC: $missing_hmac"
+          test "$live" = 200
+          test "$unknown" = 404
+          test "$invalid_verify" = 403
+          test "$invalid_post" = 403
+          test "$missing_hmac" = 403
+          echo 'PASS: active relay is live and rejects invalid Meta HTTP probes; no accepted signed events or database writes attempted'
