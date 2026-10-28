@@ -56,6 +56,7 @@ function createApp({
   durablyClaimIncoming,
   scheduleDurableClaim,
   queueIncomingForReply,
+  captureSecondaryQaBatch = secondaryQaCapture.captureSignedSecondaryBatch,
 } = {}) {
   if (!sessionSecret) {
     throw new Error("createApp requires sessionSecret.");
@@ -266,7 +267,10 @@ function createApp({
     return next();
   }, webhookJsonParser, async (req, res) => {
     try {
-      const result = await secondaryQaCapture.captureSignedSecondaryBatch(
+      // The same signed receiver is used in production staging and the
+      // disposable-Postgres HTTP integration test. Injection is only for
+      // isolated DB testing; the default never changes.
+      const result = await captureSecondaryQaBatch(
         req.body, { signatureVerified: true }
       );
       return res.status(200).json({
