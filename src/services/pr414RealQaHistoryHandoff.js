@@ -34,9 +34,7 @@ function assertOperatorIsolation(env, action) {
     sameHostQa: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST === "true",
     sourcePin: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE === "neondb",
     targetPin: env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE === "pr414_forward_qa",
-    historyConsent: env.WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED === "true",
-    processingConsent: env.WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED === "true",
-    realQaPhone: env.WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164 === "+60174831336",
+    testingPhonePin: /^\+[1-9]\d{7,14}$/.test(String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "")),
     handoffEnabled: action !== "import" || env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED === "true",
     handoffApproved: action !== "import" || env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED === "true"
   };
@@ -52,9 +50,7 @@ function assertOperatorIsolation(env, action) {
       env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ALLOW_SAME_QA_HOST !== "true" ||
       env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_SOURCE_DATABASE !== "neondb" ||
       env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_TARGET_DATABASE !== "pr414_forward_qa" ||
-      env.WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED !== "true" ||
-      env.WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED !== "true" ||
-      env.WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164 !== "+60174831336" ||
+      !/^\+[1-9]\d{7,14}$/.test(String(env.WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164 || "")) ||
       (action === "import" &&
        (env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED !== "true" ||
         env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_OPERATOR_APPROVED !== "true"))) {
@@ -77,7 +73,9 @@ function assertOperatorIsolation(env, action) {
       !src.password || !dst.password || src.password === dst.password) {
     throw Error("Real QA history operator refused: incorrect QA database isolation");
   }
-  return capture.captureConfig(env);
+  return ingress.assertQaConfiguration(ingress.configFromEnv({
+    ...env, WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true"
+  }));
 }
 
 function summarize(rows, source) {
@@ -132,14 +130,16 @@ async function one(db, sql, values=[]) {
 async function runOnBoot(env=process.env) {
   const action = String(env.PR414_QA_REAL_HISTORY_ACTION || "");
   if (!action) return;
-  const config = assertOperatorIsolation(env, action);
-  const source = ingress.getQaPool(config);
-  const [sourceSchema, targetSchema, sourceSender, targetSender, captures] = await Promise.all([
+  const base = assertOperatorIsolation(env, action);
+  const source = ingress.getQaPool(base);
+  const [sourceSchema, targetSchema, sourceSender, targetSender, captures, onboarding, consents] = await Promise.all([
     one(source, "SELECT max(version)::int AS version FROM schema_migrations"),
     one(target, "SELECT max(version)::int AS version FROM schema_migrations"),
-    source.query("SELECT id FROM whatsapp_sender_accounts WHERE sender_key='coexistence_qa' AND meta_account_id=$1 AND meta_phone_number_id=$2 AND state='testing' AND coexistence_enabled=TRUE", [config.waba, config.phoneId]),
-    target.query("SELECT id FROM whatsapp_sender_accounts WHERE sender_key='coexistence_qa' AND meta_account_id=$1 AND meta_phone_number_id=$2 AND state='active' AND coexistence_enabled=TRUE", [config.waba, config.phoneId]),
-    source.query("SELECT fingerprint,sender_id,event_field,ciphertext,nonce,auth_tag,payload_bytes,received_at,expires_at,handoff_completed_at FROM whatsapp_secondary_qa_capture_events WHERE event_field IN ('history','smb_app_state_sync') ORDER BY received_at,fingerprint LIMIT 501")
+    source.query("SELECT id,meta_account_id,meta_phone_number_id FROM whatsapp_sender_accounts WHERE sender_key='coexistence_qa' AND state='testing' AND coexistence_enabled=TRUE"),
+    target.query("SELECT id,meta_account_id,meta_phone_number_id FROM whatsapp_sender_accounts WHERE sender_key='coexistence_qa' AND state='active' AND coexistence_enabled=TRUE"),
+    source.query("SELECT fingerprint,sender_id,event_field,ciphertext,nonce,auth_tag,payload_bytes,received_at,expires_at,handoff_completed_at FROM whatsapp_secondary_qa_capture_events WHERE event_field IN ('history','smb_app_state_sync') ORDER BY received_at,fingerprint LIMIT 501"),
+    target.query("SELECT waba_id,phone_number_id,display_phone_number,status,coexistence_ready FROM whatsapp_coexistence_onboarding_attempts ORDER BY created_at DESC LIMIT 2"),
+    target.query("SELECT sync_type,state,consent_granted FROM whatsapp_coexistence_sync_dispatch_requests ORDER BY updated_at DESC LIMIT 4")
   ]);
   if (sourceSchema?.version !== 104 || targetSchema?.version !== 106 ||
       sourceSender.rows?.length !== 1 || targetSender.rows?.length !== 1 ||
@@ -147,6 +147,38 @@ async function runOnBoot(env=process.env) {
       captures.rows.some(r => String(r.sender_id) !== String(sourceSender.rows[0].id))) {
     throw Error("Real QA history refused: schema, verified sender, or capture row count mismatch");
   }
+  const claimed = sourceSender.rows[0];
+  const destination = targetSender.rows[0];
+  const onboarded = onboarding.rows?.[0];
+  const digits = s => String(s || "").replace(/\D/g, "");
+  if (onboarding.rows.length !== 1 || !onboarded ||
+      onboarded.status !== "validated" || onboarded.coexistence_ready !== true ||
+      !onboarded.waba_id || !onboarded.phone_number_id ||
+      claimed.meta_account_id !== onboarded.waba_id ||
+      destination.meta_account_id !== onboarded.waba_id ||
+      claimed.meta_phone_number_id !== onboarded.phone_number_id ||
+      destination.meta_phone_number_id !== onboarded.phone_number_id ||
+      digits(base.qaE164) !== digits(onboarded.display_phone_number) ||
+      consents.rows.length !== 2 ||
+      !["history","smb_app_state_sync"].every(type => consents.rows.some(
+        row => row.sync_type === type && row.state === "accepted" &&
+          row.consent_granted === true))) {
+    throw Error("Real QA history refused: onboarded testing number or durable opt-in mismatch");
+  }
+  // In-memory approvals are backed by the already-accepted, consented QA
+  // records above. Do not alter global capture, Meta, or outbound switches.
+  const operatorEnv = {
+    ...env,
+    WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
+    WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED:"true",
+    WHATSAPP_PAID_SECONDARY_QA_OPERATOR_APPROVED:"true",
+    WHATSAPP_PAID_SECONDARY_QA_PROCESSING_CONSENT_VERIFIED:"true",
+    WHATSAPP_PAID_SECONDARY_QA_HISTORY_CONSENT_VERIFIED:"true",
+    WHATSAPP_PAID_SECONDARY_QA_EXPECTED_E164:base.qaE164,
+    WHATSAPP_PAID_SECONDARY_QA_WABA_ID:claimed.meta_account_id,
+    WHATSAPP_PAID_SECONDARY_QA_PHONE_ID:claimed.meta_phone_number_id
+  };
+  const config = capture.captureConfig(operatorEnv);
   const report = summarize(captures.rows, config);
   const expired = captures.rows.filter(r => new Date(r.expires_at).getTime() <= Date.now()).length;
   const stats = { ...report, expired, action };
@@ -160,14 +192,14 @@ async function runOnBoot(env=process.env) {
   let transferred = 0;
   for (let i=0; i<maxPasses; i++) {
     const r = await handoff.handoffOnce({
-      env, sourceDatabase: source, targetDatabase: target,
+      env: operatorEnv, sourceDatabase: source, targetDatabase: target,
       maxEvents: 3, processInboxJobs: false
     });
     transferred += r.transferred;
     if (r.transferred === 0) break;
   }
   // Explicit bounded importer, without enabling the 60s background worker.
-  const {importEnv} = handoff.configForHandoff(env);
+  const {importEnv} = handoff.configForHandoff(operatorEnv);
   let processed = 0, failureSignals = 0;
   for (let i=0; i<180; i++) {
     const due = await one(target,
