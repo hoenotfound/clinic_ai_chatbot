@@ -70,7 +70,7 @@ test("CI PostgreSQL rehearses Neutro v077 -> v079 with immutable rollback histor
     );
   } finally {
     if(pool) await pool.end().catch(()=>{});
-    if(created) await admin.query("DROP DATABASE "+name+" WITH (FORCE)");
+    if(created) await admin.query("DROP DATABASE "+name");
     await admin.end();
   }
 });
