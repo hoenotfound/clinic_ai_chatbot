@@ -26,6 +26,15 @@ try {
   assert.equal(sha, ROLLBACK, "rollback source moved without a new review");
   assert.equal(git("merge-base", PROD, ROLLBACK), PROD,
     "rollback build must descend from the exact working Neutro commit");
+  // A future migration on main would invalidate this v079 rollback build.
+  // Refuse a green release check rather than silently giving false assurance.
+  const releaseMigrations = git("ls-tree", "-r", "--name-only", "HEAD",
+    "src/db/migrations").split("\n").filter(Boolean);
+  const latest = Math.max(...releaseMigrations.map(file => {
+    const match = /\\/(\\d{3})_[a-z0-9_]+\\.sql$/.exec(file);
+    return match ? Number(match[1]) : 0;
+  }));
+  assert.equal(latest, 79, "rollback candidate only supports production schema through 079");
   const changed = git("diff", "--name-only", PROD, ROLLBACK).split("\n").filter(Boolean);
   assert.deepEqual(changed, FILES,
     "rollback candidate must contain exactly the two additive migrations");
