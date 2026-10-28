@@ -4,8 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
-  enabled, configFromEnv, partitionDefaultBatch, recordAuditBatch,
-  dispatchDefaultWebhook
+  enabled, configFromEnv, assertQaConfiguration, partitionDefaultBatch,
+  recordAuditBatch, dispatchDefaultWebhook
 } = require("../src/services/whatsappPaidDefaultIngress");
 
 function env(overrides = {}) {
@@ -64,31 +64,55 @@ test("default router is OFF unless explicitly enabled", () => {
     WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED: "false"
   })), /disabled/);
 });
-test("QA Neon must have separate pinned host, correct app secret and zero outbound", () => {
+test("QA Neon stays independently pinned and secondary sending is always gated", () => {
   assert.equal(configFromEnv(env()).primaryWaba, "1593376338308612");
-  assert.throws(() => configFromEnv(env({
+  assert.doesNotThrow(() => assertQaConfiguration(configFromEnv(env())));
+  assert.throws(() => assertQaConfiguration(configFromEnv(env({
     WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST: "ep-unknown.neon.tech"
-  })), /pinned/);
-  assert.throws(() => configFromEnv(env({
+  }))), /pinned/);
+  assert.throws(() => assertQaConfiguration(configFromEnv(env({
     WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL: env().DATABASE_URL,
     WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST:
       "ep-production.ap-southeast-1.aws.neon.tech"
-  })), /separate/);
-  assert.throws(() => configFromEnv(env({
+  }))), /separate/);
+  assert.throws(() => assertQaConfiguration(configFromEnv(env({
     WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164: "+601130535053"
-  })), /independently pinned/);
-  assert.throws(() => configFromEnv(env({
+  }))), /independently pinned/);
+  assert.throws(() => assertQaConfiguration(configFromEnv(env({
     WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164: "+60174831336"
-  })), /independently pinned/);
+  }))), /independently pinned/);
   assert.throws(() => configFromEnv(env({
     META_APP_SECRET: "C".repeat(32)
   })), /verification/);
-  assert.throws(() => configFromEnv(env({
+  assert.throws(() => assertQaConfiguration(configFromEnv(env({
     WHATSAPP_SECONDARY_AI_SEND_ENABLED: "true"
-  })), /outbound/);
-  assert.throws(() => configFromEnv(env({
+  }))), /outbound/);
+  assert.throws(() => assertQaConfiguration(configFromEnv(env({
     WHATSAPP_SECONDARY_WABA_ID: "99123"
-  })), /Bootstrap-only/);
+  }))), /Bootstrap-only/);
+});
+
+test("valid Neutro-only events work with NO QA database credentials or secondary pin", async () => {
+  const e = env({
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_URL: "",
+    WHATSAPP_PAID_DEFAULT_QA_DATABASE_HOST: "",
+    WHATSAPP_PAID_DEFAULT_SECONDARY_PHONE_E164: "",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED: "true"
+  });
+  const cfg = configFromEnv(e);
+  assert.equal(cfg.qaE164, null);
+  assert.throws(() => assertQaConfiguration(cfg), /independently pinned/);
+  const response = fakeResponse();
+  let claims = 0, audits = 0;
+  await dispatchDefaultWebhook({
+    body: batch(message(e.WHATSAPP_WABA_ID, e.WHATSAPP_PHONE_NUMBER_ID))
+  }, response, async (_request, res) => {
+    claims++;
+    res.sendStatus(200);
+  }, { env: e, persist: async () => { audits++; throw Error("QA should not run"); } });
+  assert.equal(claims, 1);
+  assert.equal(audits, 0);
+  assert.equal(response.code, 200);
 });
 test("Neutro messages remain primary-only after verified WABA plus phone", () => {
   const config = configFromEnv(env());
