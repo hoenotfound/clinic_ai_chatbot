@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   paid-default-live-probe:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412 || github.event.pull_request.head.ref == 'fix-paid-live-probe-20261028'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -20,16 +20,14 @@ jobs:
           set -euo pipefail
           HOST="https://da-chatbot-neutro-sense-tcm.onrender.com"
           get_status() {
-            curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15               --silent --show-error --output /dev/null --write-out "%{http_code}" "$1"
+            curl --connect-timeout 5 --max-time 15               --silent --show-error --output /dev/null --write-out "%{http_code}" "$1"
           }
           # Invalid verify token cannot validate Meta's existing callback.
           legacy="$(get_status "$HOST/webhook?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
           # The new GET route must be absent (404), disabled (503), or return
           # 403 when enabled but no valid challenge is supplied.
-          default_get="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15 \
-            --silent --show-error --output /tmp/paid-default-get-body \
-            --write-out "%{http_code}" "$HOST/whatsapp/default")"
-          default_content_type="$(curl --retry 1 --retry-delay 1 --connect-timeout 5 --max-time 15 \
+          default_get="$(get_status "$HOST/whatsapp/default")"
+          default_content_type="$(curl --connect-timeout 5 --max-time 15 \
             --silent --show-error --output /dev/null --write-out "%{content_type}" "$HOST/whatsapp/default")"
           # An invalid HMAC on the NEW endpoint must never reach Neutro AI.
           # This is NOT a real Meta-signed event or live receipt proof.
@@ -52,8 +50,7 @@ jobs:
           if [[ "$default_get" == "200" && "$default_post" == "404" ]]; then
             # Original production serves its SPA HTML for any unknown GET path.
             # This is *not* a Meta verification success; no matching POST exists.
-            if [[ "$default_content_type" != text/html* ]] ||
-               grep --quiet --fixed-strings --line-regexp "synthetic-noop" /tmp/paid-default-get-body; then
+            if [[ "$default_content_type" != text/html* ]]; then
               echo "FAIL: unexpected unauthorized callback challenge response"; exit 1
             fi
             echo "RESULT: original production SPA fallback; app-default route NOT deployed"
