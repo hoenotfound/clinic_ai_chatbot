@@ -1700,6 +1700,7 @@ function ConversationList({
       return undefined;
     }
     let cancelled = false;
+    setDirectoryMatches([]);
     setDirectorySearching(true);
     const timer = setTimeout(() => {
       api.searchConversationDirectory(q)
@@ -2046,7 +2047,8 @@ function ConversationList({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
         {!conversations && <ConversationListSkeleton />}
 
-        {conversations && conversations.length === 0 && (
+        {conversations && conversations.length === 0 &&
+          !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title={canViewAllLeads ? "No conversations yet" : "No assigned conversations"}
             description={
@@ -2057,7 +2059,8 @@ function ConversationList({
           />
         )}
 
-        {conversations && conversations.length > 0 && filteredConversations.length === 0 && (
+        {conversations && conversations.length > 0 && filteredConversations.length === 0 &&
+          !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title="No matching conversations"
             description="Try changing your search or filters."
@@ -2178,6 +2181,11 @@ function ConversationList({
                 </span>
               </button>
             ))}
+            {directoryMatches.length >= 40 && (
+              <p className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
+                First 40 contact matches shown. Use a more specific name or number to narrow results.
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -3984,6 +3992,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
       return undefined;
     }
     let cancelled = false;
+    setDirectoryMatches([]);
     setDirectorySearching(true);
     const timer = setTimeout(() => {
       api.searchConversationDirectory(q)
