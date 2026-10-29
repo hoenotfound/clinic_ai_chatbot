@@ -9,7 +9,7 @@ const REQUIRED_FIELDS = new Set([
 const DEFAULT_GRAPH_VERSION = "v26.0";
 const APP_OBJECT = "whatsapp_business_account";
 
-function analyzeSubscriptions({appData,wabaData,appId,expectedNeutroCallback}) {
+function analyzeSubscriptions({appData,wabaData,phoneData=null,appId,expectedNeutroCallback,expectedPhoneId=null,expectedPaidAppCallback=null}) {
   if (!Array.isArray(appData?.data) || !Array.isArray(wabaData?.data)) {
     throw Error("Meta did not return both complete app and account subscription lists");
   }
@@ -28,6 +28,17 @@ function analyzeSubscriptions({appData,wabaData,appId,expectedNeutroCallback}) {
     appEntry[0].whatsapp_business_api_data?.override_callback_uri ?? null;
   const expected=String(expectedNeutroCallback||"");
   const accountOverrideVerified=Boolean(override && expected && override===expected);
+  const matches=Array.isArray(phoneData?.data) && expectedPhoneId
+    ? phoneData.data.filter(p=>String(p.id)===String(expectedPhoneId)) : [];
+  if(phoneData && matches.length!==1)
+    throw Error("Neutro primary phone ID missing or ambiguous in Graph phone inventory");
+  const phoneOverride=matches[0]?.webhook_configuration?.whatsapp_business_account||null;
+  const appPhoneCallback=matches[0]?.webhook_configuration?.application||null;
+  const phoneOverrideVerified=Boolean(phoneOverride && expected && phoneOverride===expected);
+  const appDefaultVerified=Boolean(expectedPaidAppCallback &&
+    sub.callback_url===expectedPaidAppCallback);
+  const appPhoneCallbackVerified=Boolean(expectedPaidAppCallback &&
+    appPhoneCallback===expectedPaidAppCallback);
   return {
     appWebhookConfigured:Boolean(sub.callback_url),
     appCallback:sub.callback_url||null,
@@ -37,8 +48,11 @@ function analyzeSubscriptions({appData,wabaData,appId,expectedNeutroCallback}) {
     accountSubscriptionFound:true,
     accountOverrideVerified,
     accountOverride:override,
-    phoneOverrideVerified:false,
-    phoneOverride:"not examined by this read-only script",
+    phoneOverrideVerified,
+    phoneOverride:phoneOverride||"not examined by this read-only script",
+    appDefaultVerified,
+    appPhoneCallbackVerified,
+    appPhoneCallback:appPhoneCallback||"not examined by this read-only script",
     cutoverReady:false
   };
 }
@@ -49,6 +63,8 @@ async function inspectMeta({env=process.env,fetchImpl=global.fetch}={}){
   const appToken=String(env.META_APP_ACCESS_TOKEN||"");
   const managementToken=String(env.META_READ_ONLY_MANAGEMENT_TOKEN||"");
   const expectedCallback=String(env.META_EXPECTED_NEUTRO_CALLBACK||"");
+  const expectedPhoneId=String(env.WHATSAPP_PHONE_NUMBER_ID||"");
+  const expectedPaidAppCallback=String(env.META_EXPECTED_PAID_APP_DEFAULT_CALLBACK||"");
   const version=String(env.META_GRAPH_API_VERSION||DEFAULT_GRAPH_VERSION);
   if(!/^\d+$/.test(appId)||!/^\d+$/.test(waba)||
      !/^v\d+\.\d+$/.test(version)||
@@ -70,15 +86,20 @@ async function inspectMeta({env=process.env,fetchImpl=global.fetch}={}){
   };
   const appData=await get(appId+"/subscriptions",appToken);
   const wabaData=await get(waba+"/subscribed_apps",managementToken);
-  return analyzeSubscriptions({appData,wabaData,appId,expectedNeutroCallback:expectedCallback});
+  const phoneData=/^\d+$/.test(expectedPhoneId)
+    ? await get(waba+"/phone_numbers?fields=id,display_phone_number,webhook_configuration&limit=100",managementToken)
+    : null;
+  return analyzeSubscriptions({appData,wabaData,phoneData,appId,
+    expectedNeutroCallback:expectedCallback,expectedPhoneId,expectedPaidAppCallback});
 }
 if(require.main===module){
   inspectMeta().then(report=>{
     console.log(JSON.stringify({...report,
       cutoverReady:false,
-      reason:"Phone-level override and live signed delivery still require independent verification"},null,2));
+      reason:"Read-only checks cannot prove live Meta-signed POST delivery"},null,2));
     process.exitCode=report.appActive&&report.missingRequiredFields.length===0&&
-      report.accountOverrideVerified?0:2;
+      report.accountOverrideVerified&&report.phoneOverrideVerified&&
+      report.appDefaultVerified&&report.appPhoneCallbackVerified?0:2;
   }).catch(err=>{
     console.error("Meta read-only configuration inspection unavailable:",err.message);
     process.exitCode=2;
