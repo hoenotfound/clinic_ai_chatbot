@@ -530,6 +530,45 @@ async function updateContact(id, { name, whatsappNumber }) {
   return updated;
 }
 
+// Search the full customer directory without fetching historical chats or
+// triggering Meta profile lookups. Consumers must apply server-side ownership
+// restrictions; this does not grant send permission or bypass sender isolation.
+async function searchConversationDirectory({ term, accessibleContactIds = null, limit = 40 } = {}) {
+  const text = String(term || "").trim().slice(0, 80);
+  if (text.length < 2 || accessibleContactIds?.length === 0) return [];
+  const escaped = text.replace(/[\\%_]/g, "\\async function listConversations({ contactId = null, includeEmptyCoexistenceContacts = false } = {}) {");
+  const normalizedPhone = text.replace(/[^0-9]/g, "");
+  const boundLimit = Math.max(1, Math.min(60, Number(limit) || 40));
+  const result = await pool.query(`
+    SELECT c.id AS contact_id, c.id, c.name, c.whatsapp_profile_name,
+           c.whatsapp_number, c.channel, c.photo_url, c.mode,
+           c.whatsapp_sender_id,
+           sa.sender_key AS whatsapp_sender_key,
+           sa.display_name AS whatsapp_sender_display_name,
+           sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
+           sa.meta_account_id AS whatsapp_sender_account_id,
+           sa.state AS whatsapp_sender_state,
+           sa.coexistence_enabled AS whatsapp_sender_coexistence_enabled,
+           c.needs_attention, c.is_unread, c.needs_follow_up,
+           c.created_at
+    FROM contacts c
+    LEFT JOIN whatsapp_sender_conversations sc
+      ON sc.contact_id = c.id AND sc.state = 'bound'
+    LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id
+    WHERE ($2::integer[] IS NULL OR c.id = ANY($2::integer[]))
+      AND (
+        c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1
+        OR c.whatsapp_number ILIKE $1
+        OR ($4::text <> '' AND c.whatsapp_number ILIKE $4)
+      )
+    ORDER BY c.updated_at DESC, c.id DESC
+    LIMIT $3`,
+    [`%${escaped}%`, accessibleContactIds, boundLimit,
+     normalizedPhone.length >= 2 ? `%${normalizedPhone}%` : ""]
+  );
+  return result.rows.map(row => presentPortalContact(row));
+}
+
 async function listConversations({ contactId = null, includeEmptyCoexistenceContacts = false } = {}) {
   // Inbox hides untouched contact-only Coexistence address-book imports; Contacts
   // retains them, and genuine history/live threads remain visible. This is a
@@ -1474,6 +1513,7 @@ module.exports = {
   getTcmReviewEvidence,
   updateContactName,
   listConversations,
+  searchConversationDirectory,
   listContacts,
   createContact,
   updateContact,
