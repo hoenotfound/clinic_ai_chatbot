@@ -14,6 +14,7 @@ const { notifyWhatsAppSenderQuarantine } = require("./services/whatsappSenderQua
 const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
 const secondaryQaCapture = require("./services/whatsappSecondaryQaCapture");
 const secondaryQaBridge = require("./services/whatsappPaidDefaultSecondaryBridge");
+const productionHistoryReceiver = require("./services/whatsappPaidProductionHistoryReceiver");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const coexistenceSync = require("./services/whatsappCoexistenceHistoryService");
 const metaMessaging = require("./services/metaMessagingService");
@@ -101,9 +102,10 @@ function createApp({
   // validated against the exact bytes received.
   const verifySignedWhatsappBody = (req, res, buf) => {
     verifyWebhookSignature(req, res, buf);
-    // Copy only for the explicitly enabled sender-specific receipt ingress.
-    // The receipt service independently verifies HMAC against these bytes.
-    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") {
+    // Preserve signed raw bytes for whichever explicitly enabled secondary
+    // sender bridge will independently verify the exact Meta HMAC.
+    if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" ||
+        process.env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true") {
       req.whatsappSignedRawBody = Buffer.from(buf);
     }
   };
@@ -645,6 +647,11 @@ function createApp({
     }
   }, paidDefaultHistoryJsonParser, async (req, res) => {
     try {
+      if (productionHistoryReceiver.configured(process.env)) {
+        return await productionHistoryReceiver.dispatch(
+          req, res, primaryWhatsappWebhookHandler
+        );
+      }
       return await secondaryQaBridge.dispatchPaidDefaultWithSecondary(
         req, res, primaryWhatsappWebhookHandler, {
           captureSecondary: (body, opts) => captureSecondaryQaBatch(body, opts)
