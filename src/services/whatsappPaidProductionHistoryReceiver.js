@@ -35,6 +35,32 @@ const DISALLOWED=[
 function configured(env=process.env){
   return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED==="true";
 }
+// After a completed once-only history import, the verified LIVE receiver can
+// support staff freeform TEXT without relaxing history-only/QA safeguards.
+// The live transition must be a single supervised config change; a partial
+// enablement is a 503, never a hidden fallback to the primary number.
+const STAFF_ONLY_LIVE_FLAGS=new Set([
+  "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+]);
+function safeLiveStaffPhase(env){
+  const enabled=DISALLOWED.filter(k=>env[k]==="true");
+  if(!enabled.length)return true; // Original inbox-only mode remains identical.
+  if(env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED==="true" ||
+     enabled.length!==STAFF_ONLY_LIVE_FLAGS.size ||
+     enabled.some(k=>!STAFF_ONLY_LIVE_FLAGS.has(k)) ||
+     [...STAFF_ONLY_LIVE_FLAGS].some(k=>env[k]!=="true") ||
+     env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED!=="true" ||
+     env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED!=="true" ||
+     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED!=="true" ||
+     env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED!=="true" ||
+     env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED!=="true")return false;
+  try{
+    require("./whatsappSenderActivationGate").assertSecondaryOperationalSafety(env);
+    return true;
+  }catch{return false;}
+}
 // The live Inbox bridge is independent of owner consent to export old chats.
 // A client may receive new messages while keeping history sync disabled.
 function liveConfigured(env=process.env){
@@ -65,7 +91,7 @@ function assertLiveConfig(env=process.env){
      primaryPhone===secondaryPhone || primaryAccount===secondaryAccount ||
      typeof secret!=="string" || secret.length<24 ||
      env.META_APP_SECRET!==secret ||
-     DISALLOWED.some(k=>env[k]==="true"))
+     !safeLiveStaffPhase(env))
     throw Error("Unverified Neutro second-number live receiver configuration");
   return {primaryAccount,primaryPhone,secondaryAccount,secondaryPhone,secret};
 }
