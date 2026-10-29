@@ -151,6 +151,12 @@ async function getContactInsights(contactId, query = pool.query.bind(pool)) {
        FROM lead_temperature_scores score_choice
        WHERE score_choice.lead_id = l.id
          AND score_choice.status = 'completed'
+         -- Historical-import scoring was unintended; retain the audit record
+         -- but never display an old-chat score as a new customer insight.
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_score
+           WHERE old_score.message_id = score_choice.through_message_id
+         )
        ORDER BY score_choice.through_message_id DESC, score_choice.id DESC
        LIMIT 1
      ) score ON true
