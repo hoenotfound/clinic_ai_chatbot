@@ -375,3 +375,53 @@ test("secondary Embedded Signup refuses a legacy or unverified Meta configuratio
   );
   assert.equal(called, false);
 });
+
+test("Meta expires_at=0 is explicit permanent-token proof, missing expiry is not",async()=>{
+  const {inspectToken}=require("../src/services/whatsappCoexistenceOnboardingService");
+  for(const [data,permanent] of [
+    [{app_id:"app-123",is_valid:true,expires_at:0,scopes:["whatsapp_business_management"]},true],
+    [{app_id:"app-123",is_valid:true,scopes:["whatsapp_business_management"]},false],
+    [{app_id:"app-123",is_valid:true,expires_at:1800000000,scopes:["whatsapp_business_management"]},false]
+  ]){
+    const proof=await inspectToken({accessToken:"synthetic-token",env:env(),fetchImpl:async()=>({
+      ok:true,status:200,json:async()=>({data})
+    })});
+    assert.equal(proof.nonExpiring,permanent);
+    assert.equal(proof.expiresAt===null,permanent || !Object.hasOwn(data,"expires_at"));
+  }
+});
+
+test("valid permanent Meta token reaches credential callback with no fabricated expiry",async()=>{
+  let verified=null;
+  const fetchImpl=async(url)=>{
+    const target=String(url);
+    if(target.endsWith("/oauth/access_token"))
+      return {ok:true,status:200,json:async()=>({access_token:"synthetic-permanent-token"})};
+    if(target.includes("/debug_token?"))
+      return {ok:true,status:200,json:async()=>({data:{
+        app_id:"app-123",is_valid:true,expires_at:0,
+        scopes:["whatsapp_business_management","whatsapp_business_messaging"]
+      }})};
+    if(target.includes("/waba-live?fields=id,name"))
+      return {ok:true,status:200,json:async()=>({id:"waba-live"})};
+    if(target.includes("/waba-live/phone_numbers?"))
+      return {ok:true,status:200,json:async()=>({data:[{
+        id:"phone-live",display_phone_number:"+60122972817"
+      }]})};
+    if(target.includes("/phone-live?fields=is_on_biz_app,platform_type"))
+      return {ok:true,status:200,json:async()=>({
+        id:"phone-live",is_on_biz_app:true,platform_type:"CLOUD_API"
+      })};
+    throw Error("Unexpected synthetic Meta request");
+  };
+  const result=await completeEmbeddedSignup({
+    code:"synthetic-code",sessionInfo:finish({phone_number_id:"phone-live"}),
+    env:env(),fetchImpl,onVerifiedCredential:async proof=>{verified=proof;}
+  });
+  assert.equal(result.tokenNonExpiring,true);
+  assert.equal(result.tokenExpiresAt,null);
+  assert.equal(verified.tokenNonExpiring,true);
+  assert.equal(verified.tokenExpiresAt,null);
+  assert.equal(verified.accessToken,"synthetic-permanent-token");
+  assert.equal(JSON.stringify(result).includes("synthetic-permanent-token"),false);
+});
