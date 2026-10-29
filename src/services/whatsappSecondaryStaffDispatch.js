@@ -10,6 +10,8 @@ const policy = require("./whatsappSecondaryPolicyService");
 const billing = require("../db/whatsappSenderBillingGateRepo");
 const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
+const { secondaryUsesPrimaryClinicContent } =
+  require("./whatsappSenderActivationGate");
 
 function block(code) {
   return {
@@ -43,20 +45,29 @@ async function sendSecondaryStaffText({
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
 } = {}) {
-  const authorizedOrigin = origin === "staff" ?
-    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" :
-    (["ai_reply","system_fallback"].includes(origin) &&
-      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true") ||
-    (origin === "ai_media" &&
-      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
-    (origin === "followup" &&
-      env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
+  const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED === "true";
+  const aiTextAuthorized = aiTextOnly &&
+    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED !== "true" &&
+    env.WHATSAPP_COEXISTENCE_ENABLED === "true" &&
+    secondaryUsesPrimaryClinicContent(env);
+  const authorizedOrigin = origin === "staff"
+    ? !aiTextOnly && env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true"
+    : (["ai_reply","system_fallback"].includes(origin) && aiTextAuthorized) ||
+      (!aiTextOnly && origin === "ai_media" &&
+        env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
+      (!aiTextOnly && origin === "followup" &&
+        env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
   if (!authorizedOrigin ||
       (templateRequest && (origin !== "staff" ||
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
