@@ -70,7 +70,7 @@ async function withSchema(run) {
   }
 }
 
-async function seededSend(db,database) {
+async function seededSend(db,database,{acceptedWamid="wamid.ariel-one"}={}) {
   const senders=(await db.query(
     "INSERT INTO whatsapp_sender_accounts " +
     "(sender_key,meta_phone_number_id,meta_account_id,display_name,state) VALUES " +
@@ -106,7 +106,7 @@ async function seededSend(db,database) {
   },{database,env});
   assert.equal(reservation.reserved,true);
   assert.equal((await billing.recordSecondaryProviderOutcome({
-    reservationId:reservation.reservationId,acceptedWamid:"wamid.ariel-one",
+    reservationId:reservation.reservationId,acceptedWamid,
   },{database,env})).state,"awaiting_pricing");
   return {ids,contacts,messages,reservation};
 }
@@ -178,6 +178,42 @@ test("signed Ariel callbacks are durable, idempotent, receiver-specific and do n
       assert.equal((await db.query(
         "SELECT COUNT(*)::int AS n FROM whatsapp_outbound_retries"
       )).rows[0].n,0,"Neutro outbound retry queue must remain unaffected");
+    });
+  });
+
+test("padded signed Meta receipt updates secondary only, with no send or unapproved billing release",
+  {skip:!connectionString},async()=>{
+    await withSchema(async({db,database})=>{
+      const wamid="wamid.HBgMNjAxMjY0OTk3MTgVAgABAA==";
+      const {ids,messages,reservation}=await seededSend(db,database,{acceptedWamid:wamid});
+      const packet=signed(st(wamid,{
+        pricing:{type:"free_customer_service",billable:false,category:"service"}
+      }));
+      const params={...packet,subsetFromVerifiedWebhook:true};
+      const result=await receipts.recordSignedSecondaryStatusBatch(params,{database,env});
+      assert.equal(result.accepted,true);
+      assert.equal(result.matched,1);
+      assert.equal(result.held,0);
+      const rows=(await db.query(
+        "SELECT id,delivery_status,whatsapp_message_id FROM messages WHERE id=ANY($1::integer[])",
+        [[messages[0].id,messages[1].id]]
+      )).rows;
+      const primary=rows.find(r=>r.id===messages[0].id);
+      const secondary=rows.find(r=>r.id===messages[1].id);
+      assert.equal(secondary.delivery_status,"delivered");
+      assert.equal(secondary.whatsapp_message_id,wamid);
+      assert.notEqual(primary.delivery_status,"delivered");
+      assert.equal((await db.query(
+        "SELECT state FROM whatsapp_sender_billing_attempts WHERE reservation_id=$1",
+        [reservation.reservationId])).rows[0].state,"awaiting_pricing");
+      const replay=await receipts.recordSignedSecondaryStatusBatch(params,{database,env});
+      assert.equal(replay.replayed,1);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_sender_status_receipts WHERE sender_id=$1",
+        [ids.ariel])).rows[0].n,1);
+      assert.equal((await db.query(
+        "SELECT COUNT(*)::int AS n FROM whatsapp_free_entry_pricing_evidence"
+      )).rows[0].n,0,"Primary Neutro billing evidence must be unchanged");
     });
   });
 
