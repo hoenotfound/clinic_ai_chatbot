@@ -252,7 +252,7 @@ test("single unbreakable oversized history fragment fails closed",()=>{
  assert.throws(()=>hold.splitForHold("222222222222222",bad),/oversized/);
 });
 
-test("expired early capture stops selecting receiver but never silently accepts expired holds",()=>{
+test("expired early capture stops selecting receiver but never silently accepts expired holds",async()=>{
   const beforeDeadline=new Date("2026-10-29T09:59:59Z");
   const afterDeadline=new Date("2026-10-29T10:00:01Z");
   assert.equal(hold.enabled(base,beforeDeadline),true);
@@ -262,5 +262,5 @@ test("expired early capture stops selecting receiver but never silently accepts 
   assert.throws(()=>hold.assertCaptureConfig(base,afterDeadline),/OFF or expired/);
   // Explicitly enabled receiver remains fail-closed for an expired event,
   // but the app router can fall through to its independent guarded handler.
-  assert.throws(()=>hold.stage(early(),{env:base,now:afterDeadline}),/OFF or expired/);
+  await assert.rejects(()=>hold.stage(early(),{env:base,now:afterDeadline}),/OFF or expired/);
 });
