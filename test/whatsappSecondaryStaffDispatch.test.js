@@ -251,9 +251,28 @@ test("staff Business App echo just before provider call still suppresses AI text
   },{...opts,env:aiOnlyEnv});
   assert.equal(checks,3);
   assert.equal(result.unknown,true);
-  assert.equal(result.cancelled,true);
+  // Once a billing reservation exists, leave durable AI attempt ambiguous
+  // rather than marking it cancelled and eligible for a new send.
+  assert.notEqual(result.cancelled,true);
   assert.equal(result.retryable,false);
   assert.equal(calls.reserved,1);
   assert.equal(calls.send.length,0);
   assert.deepEqual(calls.mark,[{reservationId}]);
+});
+
+test("Meta WAMID without durable secondary billing evidence remains ambiguous to AI",async()=>{
+  const {opts,calls}=setup({
+    providerResult:{success:true,wamid:"wamid.provider-accepted"},
+    recordResult:{recorded:false},
+  });
+  const result=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+    ...opts,env:aiOnlyEnv,
+  });
+  assert.equal(result.success,false);
+  assert.equal(result.wamid,"wamid.provider-accepted");
+  assert.equal(result.unknown,true);
+  assert.equal(result.ambiguous,true);
+  assert.equal(result.retryable,false);
+  assert.equal(calls.send.length,1);
+  assert.equal(calls.reserved,1);
 });
