@@ -199,6 +199,15 @@ async function sendSecondaryStaffText({
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
     }
+    // An app-originated staff echo can arrive during the final reservation
+    // check. Recheck the sender-qualified cancellation epoch at the last
+    // possible point before calling Meta. The consumed billing hold stays
+    // unknown even when cancellation prevents the provider call.
+    if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
+      await markUnknown();
+      return {...block("secondary_send_cancelled_before_provider"),
+        unknown:true, ambiguous:true, cancelled:true};
+    }
 
     const send = typeof dispatchTransport === "function"
       ? await dispatchTransport(transport)
