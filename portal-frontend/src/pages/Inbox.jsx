@@ -43,21 +43,19 @@ import {
   VideoIcon,
 } from "../components/InboxIcons";
 
-// Meta 131060 provides no readable content, including when the Inbox still
-// holds an older review with a malformed explanation. Display staff guidance
-// without altering the stored audit record.
-const UNAVAILABLE_WHATSAPP_REVIEW = "WhatsApp message unavailable (Meta 131060). Meta did not provide the content. Check the WhatsApp Business app; if missing there too, ask the customer to resend as text.";
-const WHATSAPP_RESEND_REQUEST =
-  "Hi～不好意思，我们暂时看不到你刚才发的 WhatsApp 信息 🙏 可以麻烦你用文字再发一次吗？谢谢你 😊\n\n" +
-  "Hi, sorry, we couldn't read your last WhatsApp message. Could you please resend it as text? Thank you!";
+// Meta 131060 has no readable Cloud API text/media. Display a clear
+// staff-only instruction for Coexistence; never offer an automatic send.
 function isUnavailableWhatsAppReview(summary) {
   return /\bMeta\s+131060\b/i.test(String(summary || ""));
 }
-function displayAiReviewSummary(summary) {
+function displayAiReviewSummary(summary, coexistence = false) {
   const text = String(summary || "");
   if (!isUnavailableWhatsAppReview(text)) return text;
   const marker = text.match(/^(\[#\d+\]\s*)/);
-  return (marker?.[1] || "") + UNAVAILABLE_WHATSAPP_REVIEW;
+  const detail = coexistence
+    ? "WhatsApp message unavailable (Meta 131060). Check this customer's original message in the WhatsApp Business app. The chatbot did not receive the content."
+    : "WhatsApp message unavailable (Meta 131060). Meta did not provide the content. Staff review required.";
+  return (marker?.[1] || "") + detail;
 }
 
 const MESSAGE_PAGE_SIZE = 50;
@@ -2319,17 +2317,6 @@ function ThreadView({
     : "Reply manually while AI stays on";
   const hasComposerPayload = Boolean(draft.trim() || imageFile || attachmentFile);
 
-  async function copyUnavailableResendRequest() {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(WHATSAPP_RESEND_REQUEST);
-      onToast("Resend request copied. Paste it once into the WhatsApp Business app if needed.", "success");
-    } catch {
-      onToast("Unable to copy. Please copy the suggested text manually.", "error");
-    }
-  }
-
-
   useEffect(() => {
     setPolicyNow(Date.now());
     const timer = setInterval(() => setPolicyNow(Date.now()), 60 * 1000);
@@ -3331,7 +3318,7 @@ function ThreadView({
                     ? "AI review requested:"
                     : (contact.attention_reason || "Flagged for staff review."),
                    "Pending questions:",
-                   contact.pending_review_summaries.split("\n").map(displayAiReviewSummary).join("\n")].join("\n")
+                   contact.pending_review_summaries.split("\n").map((summary) => displayAiReviewSummary(summary, contact.whatsapp_is_secondary === true)).join("\n")].join("\n")
                 : (contact.attention_reason || "Flagged for staff review.")}
             </span>
             <ChevronDownIcon
@@ -3347,29 +3334,10 @@ function ThreadView({
               <div key={review.id} className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-xs leading-5 text-[var(--color-text)]">
-                    <span className="font-semibold">Question #{review.messageId}: </span>
-                    {displayAiReviewSummary(review.summary)}
+                    <span className="font-semibold">{isUnavailableWhatsAppReview(review.summary) ? "Message" : "Question"} #{review.messageId}: </span>
+                    {displayAiReviewSummary(review.summary, contact.whatsapp_is_secondary === true)}
                   </p>
-                  {contact.channel === "whatsapp" && isUnavailableWhatsAppReview(review.summary) && (
-                    <div className="mt-2 space-y-2">
-                      <p className="text-xs leading-5 text-[var(--color-text-muted)]">
-                        Check the WhatsApp Business app first. If the message is not readable there, ask the customer to resend it as text.
-                      </p>
-                      <button type="button" onClick={copyUnavailableResendRequest}
-                        className="min-h-9 touch-manipulation rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-primary)]">
-                        Copy resend request
-                      </button>
-                      <details className="text-xs text-[var(--color-text-muted)]">
-                        <summary className="cursor-pointer underline">View suggested message</summary>
-                        <p className="mt-2 whitespace-pre-line break-words select-text" aria-label="Suggested resend request">
-                          {WHATSAPP_RESEND_REQUEST}
-                        </p>
-                      </details>
-                      <p className="text-[11px] leading-4 text-[var(--color-text-muted)]">
-                        Copy only. Nothing is sent and the AI setting is unchanged. Send manually only if needed.
-                      </p>
-                    </div>
-                  )}
+
                 </div>
                 <button type="button" disabled={!canManageLeads || actionPending || conversationStatePending}
                   onClick={() => onResolveReview(review.id)}
