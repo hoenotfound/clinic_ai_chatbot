@@ -17,7 +17,7 @@ test("migration 095 sender AI image queue enforces business identity and privacy
    await c.query("SET search_path TO "+schema);
    return{query:(...a)=>c.query(...a),release:()=>c.end()};
   }};
-  assert.equal(loadMigrations().at(-1).version,106);
+  assert.equal(loadMigrations().at(-1).version,107);
   await runMigrations(pool,{quiet:true});
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
