@@ -536,6 +536,11 @@ export default function Inbox() {
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
   const outboundQueueByContactRef = useRef(new Map());
+  const inboxRequestClockRef = useRef(0);
+  const latestFullRequestRef = useRef(0);
+  const lastAppliedFullRequestRef = useRef(0);
+  const latestSummaryByContactRef = useRef(new Map());
+  const lastCommittedSummaryStartRef = useRef(0);
 
   selectedIdRef.current = selectedId;
   acquisitionContextRef.current = acquisitionContext;
@@ -543,11 +548,12 @@ export default function Inbox() {
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   async function refreshConversations() {
+    const started = ++inboxRequestClockRef.current;
+    latestFullRequestRef.current = started;
     try {
       let data = await api.listConversations();
       // A staff deep link or explicitly open contact-only archive must remain
-      // reachable. Recheck permission on each refresh rather than pinning
-      // stale customer data in the browser.
+      // reachable. Recheck permission rather than pinning stale customer data.
       const pinnedId = selectedIdRef.current ?? requestedContactId;
       if (pinnedId != null && !data.some((item) =>
         Number(item.contact_id) === Number(pinnedId))) {
@@ -558,6 +564,14 @@ export default function Inbox() {
           // Access may have changed or the contact may have been deleted.
         }
       }
+      if (started !== latestFullRequestRef.current) return;
+      // A newer single-contact or local update committed while this full
+      // request was in flight. Requery instead of rolling the UI backwards.
+      if (lastCommittedSummaryStartRef.current > started) {
+        void refreshConversations();
+        return;
+      }
+      lastAppliedFullRequestRef.current = started;
       setConversations(data);
     } catch (err) {
       console.error("Failed to refresh conversations:", err);
@@ -565,16 +579,48 @@ export default function Inbox() {
   }
 
   async function refreshConversationSummary(contactId) {
+    const id = Number(contactId);
+    const started = ++inboxRequestClockRef.current;
+    latestSummaryByContactRef.current.set(id, started);
     // Authorization remains on the server; a missing or forbidden summary
     // triggers a full refresh so ownership changes and deletes are respected.
-    const summary = await api.getConversationSummary(contactId);
+    const summary = await api.getConversationSummary(id);
     if (!summary) throw new Error("Missing Inbox summary.");
+    if (latestSummaryByContactRef.current.get(id) !== started ||
+        lastAppliedFullRequestRef.current > started) return;
+    lastCommittedSummaryStartRef.current =
+      Math.max(lastCommittedSummaryStartRef.current, started);
     setConversations((current) => {
       if (!current) return current;
       const without = current.filter((item) =>
-        Number(item.contact_id) !== Number(contactId));
+        Number(item.contact_id) !== id);
       return orderInboxSummaries([...without, summary]);
     });
+  }
+
+  async function openArchivedConversation(contactId) {
+    try {
+      const summary = await api.getConversationSummary(contactId, true);
+      const id = Number(summary.contact_id);
+      if (!Number.isSafeInteger(id) || id <= 0) return;
+      // Keep in-flight full refreshes from overwriting the newly opened contact.
+      const started = ++inboxRequestClockRef.current;
+      lastCommittedSummaryStartRef.current = started;
+      setConversations((current) => orderInboxSummaries([
+        ...(current || []).filter((item) => Number(item.contact_id) !== id),
+        summary,
+      ]));
+      setKeepExplicitlyOpenedThread(true);
+      setSelectedId(id);
+      setSearchParams({ contact: String(id) }, { replace: true });
+      setMobileThreadOpen(true);
+      if (summary.is_unread) {
+        updateConversationLocally(id, { is_unread: false });
+        api.setReadState(id, false).catch(() => void refreshConversations());
+      }
+    } catch {
+      showToast("This contact is no longer available to your account.", "warning");
+    }
   }
 
   async function refreshAcquisitionContext(contactId) {
@@ -1078,6 +1124,8 @@ export default function Inbox() {
   }
 
   function updateConversationLocally(contactId, updates) {
+    // Staff actions must not be rolled back by older pending list requests.
+    lastCommittedSummaryStartRef.current = ++inboxRequestClockRef.current;
     setConversations((current) =>
       current?.map((conversation) =>
         conversation.contact_id === contactId ? { ...conversation, ...updates } : conversation
@@ -1491,6 +1539,7 @@ export default function Inbox() {
         conversations={conversations}
         selectedId={selectedId}
         onSelect={handleSelectConversation}
+        onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
         mobileThreadOpen={mobileThreadOpen}
@@ -1610,6 +1659,7 @@ function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
   mobileThreadOpen,
@@ -1629,6 +1679,8 @@ function ConversationList({
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [visibleRowCount, setVisibleRowCount] = useState(60);
+  const [directoryMatches, setDirectoryMatches] = useState([]);
+  const [directorySearching, setDirectorySearching] = useState(false);
   const [replyWindowNow, setReplyWindowNow] = useState(() => Date.now());
 
   // A conversation can expire without any new messages or server events.
@@ -1638,6 +1690,32 @@ function ConversationList({
   }, []);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
+  // A bounded server search allows staff to recover old, contact-only imports
+  // even after they are hidden from the default list. Search never sends messages.
+  useEffect(() => {
+    const q = filters.query.trim();
+    if (q.length < 2) {
+      setDirectoryMatches([]);
+      setDirectorySearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setDirectorySearching(true);
+    const timer = setTimeout(() => {
+      api.searchConversationDirectory(q)
+        .then((rows) => { if (!cancelled) setDirectoryMatches(rows || []); })
+        .catch(() => { if (!cancelled) setDirectoryMatches([]); })
+        .finally(() => { if (!cancelled) setDirectorySearching(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [filters.query]);
+  const externalMatches = useMemo(() => {
+    const existing = new Set(conversationList.map((item) => Number(item.contact_id)));
+    return directoryMatches.filter((item) =>
+      !existing.has(Number(item.contact_id)) &&
+      (filters.channel === "all" || (item.channel || "whatsapp") === filters.channel) &&
+      (filters.sender === "all" || item.whatsapp_sender_key === filters.sender));
+  }, [directoryMatches, conversationList, filters.channel, filters.sender]);
   // Only show business-number switching once the server has verified and
   // linked more than one sender. Legacy single-number clients stay simple.
   const senderOptions = useMemo(() => {
@@ -2080,6 +2158,27 @@ function ConversationList({
           >
             Show more conversations ({filteredConversations.length - visibleRowCount} remaining)
           </button>
+        )}
+        {filters.query.trim().length >= 2 && (directorySearching || externalMatches.length > 0) && (
+          <div className="mt-4 border-t border-[var(--color-border)] pt-2" aria-label="Other matching contacts">
+            <p className="px-3 py-2 text-xs font-semibold text-[var(--color-text-muted)]">
+              Other contacts · archived or not in your Inbox
+            </p>
+            {directorySearching && <p className="px-3 text-xs text-[var(--color-text-muted)]">Searching contacts…</p>}
+            {externalMatches.map((contact) => (
+              <button key={contact.contact_id} type="button"
+                onClick={() => onSelectArchived(contact.contact_id)}
+                className="mb-1 flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left hover:bg-[var(--color-bg)]">
+                <ContactAvatar src={contact.photo_url} channel={contact.channel} size={40} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{displayName(contact)}</span>
+                  <span className="block truncate text-xs text-[var(--color-text-muted)]">
+                    {contact.whatsapp_sender_display_name || contactMeta(contact)}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </aside>
