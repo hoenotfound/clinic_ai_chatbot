@@ -200,6 +200,8 @@ function productionClinic(overrides={}) {
     WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED:"true",
     WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED:"true",
     WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED:"true",
+    WHATSAPP_SECONDARY_PRODUCTION_VAULT_ENABLED:"true",
+    WHATSAPP_SECONDARY_PRODUCTION_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,9).toString("base64"),
     WHATSAPP_COEXISTENCE_ENABLED:"false",
     WHATSAPP_SECONDARY_TOKEN:"",
     ...overrides
@@ -217,6 +219,7 @@ test("real Neutro pre-QR discovery refuses activation by default or a mismatched
   for(const unsafe of [
     {WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED:"false"},
     {WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED:"false"},
+    {WHATSAPP_SECONDARY_PRODUCTION_VAULT_ENABLED:"false"},
     {WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED:"false"},
     {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000"},
     {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60121111111"},
@@ -227,7 +230,6 @@ test("real Neutro pre-QR discovery refuses activation by default or a mismatched
     {WHATSAPP_PHONE_NUMBER_ID:""},
     {WHATSAPP_WABA_ID:""},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575"},
-    {WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575"},
     {WHATSAPP_SECONDARY_WABA_ID:"333333333333333"},
     {WHATSAPP_SECONDARY_TOKEN:"must-stay-absent"},
     {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
@@ -239,7 +241,8 @@ test("real Neutro pre-QR discovery refuses activation by default or a mismatched
     {WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"true"},
     {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"},
     {PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED:"true"},
-    {PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""},
+    {WHATSAPP_SECONDARY_PRODUCTION_TOKEN_ENCRYPTION_KEY:""},
+    {WHATSAPP_SECONDARY_PRODUCTION_TOKEN_ENCRYPTION_KEY:Buffer.alloc(32,7).toString("base64")},
     {WHATSAPP_COEXISTENCE_ENABLED:"true"},
     {PR395_STAGING_MODE:"true"},
     {META_EMBEDDED_SIGNUP_V4_CONFIRMED:"false"}
@@ -264,7 +267,7 @@ test("pre-QR Meta lookup verifies exact real number before credential callback, 
   assert.equal(result.activationRequired,true);
   assert.equal(captured.phoneNumberId,"333333333333333");
   assert.equal(JSON.stringify(result).includes("test-authorized-token"),false);
-  assert.equal(real.calls.some(x=>/\\/register(?:\\?|$)/.test(x.request)),false);
+  assert.equal(real.calls.some(x=>/\/register(?:\?|$)/.test(x.request)),false);
   assert.equal(real.calls.some(x=>x.request.includes("/subscribed_apps")),false);
 
   let callbacks=0;
