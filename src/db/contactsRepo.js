@@ -530,7 +530,13 @@ async function updateContact(id, { name, whatsappNumber }) {
   return updated;
 }
 
-async function listConversations() {
+async function listConversations({ contactId = null, includeEmptyCoexistenceContacts = false } = {}) {
+  // Inbox hides untouched contact-only Coexistence address-book imports; Contacts
+  // retains them, and genuine history/live threads remain visible. This is a
+  // read filter, never a delete or a change to sender routing/follow-up policy.
+  const hideEmptyCoexistence = senderAwareInboxReadsEnabled() &&
+    !includeEmptyCoexistenceContacts &&
+    process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS !== "false";
   const result = await pool.query(
     `
     SELECT
@@ -554,6 +560,7 @@ ${senderAwareInboxReadsEnabled() ? `
       c.takeover_by,
       c.takeover_at,
       c.updated_at,
+      c.created_at,
       c.needs_attention,
       c.attention_reason,
       (SELECT COUNT(*)::integer FROM ai_review_items r
@@ -638,9 +645,20 @@ ${senderAwareInboxReadsEnabled() ? `
       ORDER BY COALESCE(source_created_at, created_at) DESC, id DESC
       LIMIT 1
     ) latest_customer ON true
-    WHERE m.created_at IS NOT NULL OR c.channel = 'whatsapp'
+    WHERE (m.created_at IS NOT NULL OR c.channel = 'whatsapp')
+    ${hideEmptyCoexistence ? `
+    AND (
+      c.whatsapp_sender_id IS NULL
+      OR sa.coexistence_enabled IS DISTINCT FROM TRUE
+      OR m.created_at IS NOT NULL
+      OR c.is_unread = TRUE OR c.needs_attention = TRUE OR c.needs_follow_up = TRUE
+      OR c.mode = 'human'
+      OR EXISTS (SELECT 1 FROM leads retained WHERE retained.contact_id = c.id)
+    )` : ""}
+    ${contactId == null ? "" : "AND c.id = $1"}
     ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
-    `
+    `,
+    contactId == null ? [] : [contactId]
   );
   const hydrated = await hydrateSocialContactRows(result.rows);
   return hydrated.map((row) => presentPortalContact(row));
