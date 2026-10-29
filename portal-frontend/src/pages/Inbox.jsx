@@ -1628,6 +1628,7 @@ function ConversationList({
     query: "",
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [visibleRowCount, setVisibleRowCount] = useState(60);
   const [replyWindowNow, setReplyWindowNow] = useState(() => Date.now());
 
   // A conversation can expire without any new messages or server events.
@@ -1690,6 +1691,15 @@ function ConversationList({
   }, [conversationList, filters, replyWindowNow, canViewAllLeads, currentUsername]);
 
   const { filtered: filteredConversations, statusCounts, replyWindowCounts } = contextualFilterMatches;
+  // Bound DOM size without changing search, filters or accurate badge totals.
+  const renderedConversations = useMemo(
+    () => filteredConversations.slice(0, visibleRowCount),
+    [filteredConversations, visibleRowCount]
+  );
+  useEffect(() => {
+    setVisibleRowCount(60);
+  }, [filters.status, filters.channel, filters.sender, filters.control,
+      filters.assignment, filters.replyWindow, filters.query]);
   const statusOptions = useMemo(() =>
     STATUS_FILTERS.map((filter) => [
       filter.key,
@@ -1985,7 +1995,7 @@ function ConversationList({
           />
         )}
 
-        {filteredConversations.map((conversation) => {
+        {renderedConversations.map((conversation) => {
           const selected = conversation.contact_id === selectedId;
           return (
             <button
@@ -2062,6 +2072,15 @@ function ConversationList({
             </button>
           );
         })}
+        {filteredConversations.length > visibleRowCount && (
+          <button
+            type="button"
+            onClick={() => setVisibleRowCount((current) => current + 60)}
+            className="my-3 w-full rounded-xl border border-[var(--color-border)] px-3 py-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+          >
+            Show more conversations ({filteredConversations.length - visibleRowCount} remaining)
+          </button>
+        )}
       </div>
     </aside>
   );
@@ -3842,13 +3861,19 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
   const [selectedIds, setSelectedIds] = useState([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [visibleChoices, setVisibleChoices] = useState(60);
 
   useEffect(() => {
     setQuery("");
     setSelectedIds([]);
     setSending(false);
     setError("");
+    setVisibleChoices(60);
   }, [message?.id]);
+
+  useEffect(() => {
+    setVisibleChoices(60);
+  }, [query]);
 
   useEffect(() => {
     if (!message) return undefined;
@@ -3959,7 +3984,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
         <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-2 py-2">
           {choices.length === 0 ? (
             <p className="px-3 py-10 text-center text-sm text-[var(--color-text-muted)]">No conversations found.</p>
-          ) : choices.map((item) => {
+          ) : choices.slice(0, visibleChoices).map((item) => {
             const id = Number(item.contact_id);
             const selected = selectedIds.includes(id);
             return (
@@ -3981,6 +4006,15 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
               </button>
             );
           })}
+          {choices.length > visibleChoices && (
+            <button
+              type="button"
+              className="my-2 w-full rounded-lg border border-[var(--color-border)] p-3 text-sm font-semibold text-[var(--color-primary)]"
+              onClick={() => setVisibleChoices((current) => current + 60)}
+            >
+              Show more recipients ({choices.length - visibleChoices} remaining)
+            </button>
+          )}
         </div>
         {error && <p className="mx-4 mb-2 shrink-0 rounded-lg bg-[var(--color-danger-light)] px-3 py-2.5 text-xs text-[var(--color-danger)]">{error}</p>}
         <div
