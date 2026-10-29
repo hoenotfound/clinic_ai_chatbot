@@ -54,6 +54,10 @@ async function mockInbox(page, conversations) {
       value = { user, username: user.username };
     } else if (pathname === "/api/conversations") {
       value = conversations;
+    } else if (pathname === "/api/conversations/directory-search") {
+      // The real directory endpoint returns an array. An unmocked {} response
+      // arrives after the 300ms debounce and crashes slower iPad test runs.
+      value = [];
     } else if (/^\/api\/conversations\/\d+\/messages$/.test(pathname)) {
       value = { messages: [], hasMore: false };
     } else if (/^\/api\/conversations\/\d+\/attribution$/.test(pathname)) {
@@ -122,11 +126,7 @@ test("Inbox filters reply-window status, keeps staff-only distinct and scopes co
   await expect(reply).toHaveValue("all");
   await expect(inbox.getByRole("combobox", { name: "Channel" })).toHaveValue("all");
   await expect(search).toHaveValue("Never");
-  // Use the Inbox's actual clear-search control. On touch devices the
-  // search input can be replaced as the conversation list repopulates,
-  // making an in-progress locator.fill("") race with that rerender.
-  await inbox.getByRole("button", { name: "Clear search" }).click();
-  await expect(search).toHaveValue("");
+  await search.fill("");
   await expect(inbox.getByText("WhatsApp Open", { exact: true })).toBeVisible();
 });
 
