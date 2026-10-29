@@ -67,7 +67,23 @@ function displayAiReviewSummary(summary, coexistence = false) {
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
 const DELIVERY_STATUS_BATCH_SIZE = 500;
-const REALTIME_DEBOUNCE_MS = 100;
+const REALTIME_DEBOUNCE_MS = 250;
+// Match the database's needs-attention/newest-message ordering after a single
+// realtime summary update, without re-fetching every imported customer.
+function orderInboxSummaries(rows) {
+  return [...rows].sort((a, b) => {
+    if (Boolean(a.needs_attention) !== Boolean(b.needs_attention)) {
+      return a.needs_attention ? -1 : 1;
+    }
+    const aTime = Date.parse(a.last_message_at || "") || 0;
+    const bTime = Date.parse(b.last_message_at || "") || 0;
+    if (aTime !== bTime) return bTime - aTime;
+    const aCreated = Date.parse(a.created_at || "") || 0;
+    const bCreated = Date.parse(b.created_at || "") || 0;
+    return bCreated - aCreated;
+  });
+}
+
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
@@ -528,11 +544,37 @@ export default function Inbox() {
 
   async function refreshConversations() {
     try {
-      const data = await api.listConversations();
+      let data = await api.listConversations();
+      // A staff deep link or explicitly open contact-only archive must remain
+      // reachable. Recheck permission on each refresh rather than pinning
+      // stale customer data in the browser.
+      const pinnedId = selectedIdRef.current ?? requestedContactId;
+      if (pinnedId != null && !data.some((item) =>
+        Number(item.contact_id) === Number(pinnedId))) {
+        try {
+          const archived = await api.getConversationSummary(pinnedId, true);
+          if (archived) data = [archived, ...data];
+        } catch {
+          // Access may have changed or the contact may have been deleted.
+        }
+      }
       setConversations(data);
     } catch (err) {
       console.error("Failed to refresh conversations:", err);
     }
+  }
+
+  async function refreshConversationSummary(contactId) {
+    // Authorization remains on the server; a missing or forbidden summary
+    // triggers a full refresh so ownership changes and deletes are respected.
+    const summary = await api.getConversationSummary(contactId);
+    if (!summary) throw new Error("Missing Inbox summary.");
+    setConversations((current) => {
+      if (!current) return current;
+      const without = current.filter((item) =>
+        Number(item.contact_id) !== Number(contactId));
+      return orderInboxSummaries([...without, summary]);
+    });
   }
 
   async function refreshAcquisitionContext(contactId) {
@@ -784,7 +826,19 @@ export default function Inbox() {
         pendingContactIds.clear();
         debounceTimer = null;
 
-        await refreshConversations();
+        // A single changed conversation needs just one small summary instead
+        // of the full Inbox response. Unknown/bulk events keep the existing
+        // full-refresh safety path (including restricted-staff SSE signals).
+        if (changedContacts.size === 1) {
+          const [changedId] = changedContacts;
+          try {
+            await refreshConversationSummary(changedId);
+          } catch {
+            await refreshConversations();
+          }
+        } else {
+          await refreshConversations();
+        }
 
         const currentId = selectedIdRef.current;
         if (
