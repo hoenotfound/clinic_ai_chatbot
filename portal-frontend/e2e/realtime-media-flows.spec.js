@@ -986,10 +986,12 @@ test("stale full Inbox responses cannot overwrite newer realtime contact states"
     last_message: "Newer customer state", needs_attention: true,
   });
   await emitRealtime(page, { contactId: 202, reason: "message" });
+  // On iPhone the conversation list is intentionally hidden behind an open
+  // thread. Reveal it before asserting the updated preview is visible.
+  if ((page.viewportSize()?.width ?? 0) < 1024) {
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+  }
   await expect(page.getByText("Newer customer state", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Newer customer state", { exact: true }).first()).toBeVisible({
-    timeout: 3000,
-  });
   await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeFull + 1);
   expectNoUnexpectedApi(apiState);
 });
@@ -1007,6 +1009,9 @@ test("out-of-order summaries cannot roll an Inbox conversation back", async ({ p
   await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(before);
   apiState.updateConversation(202, { last_message: "Newest summary" });
   await emitRealtime(page, { contactId: 202, reason: "message" });
+  if ((page.viewportSize()?.width ?? 0) < 1024) {
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+  }
   await expect(page.getByText("Newest summary", { exact: true }).first()).toBeVisible();
   await page.waitForTimeout(1100);
   await expect(page.getByText("Stale summary", { exact: true })).toHaveCount(0);
