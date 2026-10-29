@@ -211,13 +211,26 @@ function assertPr395StagingSafety(env = process.env) {
         throw new Error("Staging staff test requires receipt, billing and manual-reconciliation guards.");
       }
     }
+    // A verified QA sender must still be able to ingest signed delivery
+    // receipts after its one-time manual send test is switched OFF.
+    // Receipt-only mode has NO sending credential, no staff/API send and no
+    // automatic billing reconciliation. It only durably records Meta facts.
+    const receiptOnly = !staffTest &&
+      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED === "true" &&
+      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED !== "true" &&
+      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED !== "true" &&
+      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true" &&
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true" &&
+      !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim();
+    const onlyReceipt = key => key === "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED" && receiptOnly;
     if (env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" ||
         REHEARSAL_INGRESS_SWITCHES.some(key => env[key] !== "true") ||
         REHEARSAL_OUTBOUND_FORBIDDEN.some(key => env[key] === "true" &&
-          (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
+          !onlyReceipt(key) && (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
         OUTBOUND_SWITCHES.some(key => env[key] === "true" &&
           !REHEARSAL_INGRESS_SWITCHES.includes(key) &&
-          (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
+          !onlyReceipt(key) && (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
         // Inbound-only QA needs a signed Meta callback and verified sender,
         // not a usable Cloud API sending token. Staff-send QA still requires it.
         (staffTest && !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim()) ||

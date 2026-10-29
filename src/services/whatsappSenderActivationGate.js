@@ -82,6 +82,18 @@ function assertSecondaryOperationalSafety(env = process.env) {
   // Receipt settlement happens AFTER delivery. Never let an operator enable
   // any secondary outbound class without explicitly accepting possible charges.
   const sendingEnabled = staff || media || template || templateMedia || ai || aiMedia || followups;
+  // Signed receipt storage is allowed after the controlled QA sender test is
+  // disabled. It provides NO Graph credential and authorizes NO further send.
+  const isolatedReceiptOnly = receiptIngress && !sendingEnabled &&
+    !autoReconcile && !billedReview &&
+    env.PR395_STAGING_MODE === "true" &&
+    env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true";
   if (sendingEnabled &&
       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true") {
     throw new Error("Unsafe WhatsApp secondary operational activation: possible Meta service-message charges require explicit sender-specific acknowledgment.");
@@ -113,7 +125,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
       !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "")) ||
       !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID || "")) ||
       !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY || "")) ||
-      !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
+      (!String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() && !isolatedReceiptOnly) ||
       !String(env.WHATSAPP_APP_SECRET || "").trim() ||
       env.WHATSAPP_PHONE_NUMBER_ID === env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
       env.WHATSAPP_PRIMARY_SENDER_KEY === env.WHATSAPP_SECONDARY_SENDER_KEY) {

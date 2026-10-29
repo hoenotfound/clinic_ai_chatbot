@@ -177,6 +177,33 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
   assert.deepEqual(assertPr395StagingSafety({...verified,WHATSAPP_SECONDARY_TOKEN:""}), {
     staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
   });
+  // Recording signed Meta delivery statuses remains safe after a single
+  // staff reply test is disabled; this must never reopen sending or AI.
+  const receiptOnly={
+    ...verified,
+    WHATSAPP_SECONDARY_TOKEN:"",
+    WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+    WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+    WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"false",
+  };
+  assert.deepEqual(assertPr395StagingSafety(receiptOnly),{
+    staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
+  });
+  for(const bad of [
+    {WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_TOKEN:"a-Graph-send-token"},
+    {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"},
+    {WHATSAPP_SECONDARY_WABA_ID:"1852014482431209"},
+  ]) assert.throws(()=>assertPr395StagingSafety({...receiptOnly,...bad}),Error,
+    JSON.stringify(bad));
   for(const overrides of [
     {WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"1852014482431209"},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:""},
