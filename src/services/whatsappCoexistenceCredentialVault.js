@@ -9,7 +9,7 @@ const KEY_VERSION = "v1";
 // by production. The production vault is only for the independently verified
 // second Neutro Business App number and never grants sender activation.
 function productionVaultContext(env) {
-  const primary=String(env.WHATSAPP_PHONE_NUMBER || "").replace(/\\D/g,"");
+  const primary=String(env.WHATSAPP_PHONE_NUMBER || "").replace(/[^0-9]/g,"");
   return env.PR395_STAGING_MODE !== "true" &&
     env.WHATSAPP_SECONDARY_PRODUCTION_VAULT_ENABLED === "true" &&
     env.WHATSAPP_PRIMARY_SENDER_KEY === "neutro" &&
