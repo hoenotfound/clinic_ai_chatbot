@@ -38,7 +38,10 @@ async function main(){
     console.log("No automatic dispatch is configured. --execute requires separate explicit operator approval.");
     return;
   }
-  if(process.env.PR395_MANUAL_SYNC_APPROVAL!=="APPROVED_ONCE_ONLY_META_SYNC" ||
+  const approval = process.env.PR395_STAGING_MODE === "true"
+    ? process.env.PR395_MANUAL_SYNC_APPROVAL
+    : process.env.WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_APPROVAL;
+  if(approval!=="APPROVED_ONCE_ONLY_META_SYNC" ||
      f.confirm!=="IRREVERSIBLE_ONCE_ONLY"){
     throw Error("Manual execution confirmation missing. No Meta request sent.");
   }
@@ -46,4 +49,4 @@ async function main(){
   console.log(JSON.stringify(result));
   if(result.requiresManualReview)process.exitCode=2;
 }
-main().catch(()=>{console.error("One-time sync refused or uncertain. Inspect isolated staging ledger; never automatically retry.");process.exitCode=1;});
+main().catch(()=>{console.error("One-time sync refused or uncertain. Inspect sender-specific once-only ledger; never automatically retry.");process.exitCode=1;});
