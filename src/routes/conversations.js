@@ -810,7 +810,12 @@ router.get("/", async (req, res) => {
   const startedAt = process.hrtime.bigint();
   try {
     const conversations = await contactsRepo.listConversations();
-    const mapped = conversations.map(c => {
+    // Always enforce current staff scope on the server, not only in UI filters.
+    // Revoked assignments must disappear from the Inbox and fallback refresh.
+    const permittedIds = await getAccessibleContactIds(req.user);
+    const allowedSet = permittedIds === null ? null : new Set(permittedIds.map(Number));
+    const mapped = conversations.filter((c) =>
+      allowedSet === null || allowedSet.has(Number(c.contact_id))).map(c => {
       const secondary = c.channel === "whatsapp" &&
         c.whatsapp_sender_id != null &&
         Boolean(c.whatsapp_sender_phone_number_id) &&
