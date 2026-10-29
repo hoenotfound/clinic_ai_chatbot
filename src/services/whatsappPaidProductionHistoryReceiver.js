@@ -30,6 +30,40 @@ const DISALLOWED=[
 function configured(env=process.env){
   return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED==="true";
 }
+// The live Inbox bridge is independent of owner consent to export old chats.
+// A client may receive new messages while keeping history sync disabled.
+function liveConfigured(env=process.env){
+  return env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true";
+}
+function assertLiveConfig(env=process.env){
+  if(!liveConfigured(env))throw Error("Paid secondary live receiver disabled");
+  const primaryAccount=env.WHATSAPP_WABA_ID;
+  const primaryPhone=env.WHATSAPP_PHONE_NUMBER_ID;
+  const secondaryAccount=env.WHATSAPP_SECONDARY_WABA_ID;
+  const secondaryPhone=env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID;
+  const secret=env.WHATSAPP_APP_SECRET;
+  const id=x=>typeof x==="string" && /^[0-9]{1,32}$/.test(x);
+  if(env.PR395_STAGING_MODE==="true" ||
+     env.WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED!=="true" ||
+     env.WHATSAPP_PAID_SECONDARY_QA_CAPTURE_ENABLED==="true" ||
+     env.WHATSAPP_MULTI_NUMBER_READ_ENABLED!=="true" ||
+     env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED!=="true" ||
+     env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true" ||
+     env.WHATSAPP_SINGLE_SENDER_STRICT_METADATA!=="true" ||
+     env.WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED!=="true" ||
+     env.WHATSAPP_PRIMARY_SENDER_KEY!=="neutro" ||
+     env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
+     env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164!==TARGET ||
+     env.WHATSAPP_SECONDARY_EXPECTED_WABA_ID!==secondaryAccount ||
+     env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID!==secondaryPhone ||
+     !id(primaryPhone)||!id(primaryAccount)||!id(secondaryPhone)||!id(secondaryAccount) ||
+     primaryPhone===secondaryPhone || primaryAccount===secondaryAccount ||
+     typeof secret!=="string" || secret.length<24 ||
+     env.META_APP_SECRET!==secret ||
+     DISALLOWED.some(k=>env[k]==="true"))
+    throw Error("Unverified Neutro second-number live receiver configuration");
+  return {primaryAccount,primaryPhone,secondaryAccount,secondaryPhone,secret};
+}
 function assertConfig(env=process.env){
   if(!configured(env))throw Error("Paid production history receiver disabled");
   const id=s=>typeof s==="string" && /^[0-9]{1,32}$/.test(s);
@@ -140,12 +174,16 @@ async function dispatch(req,res,primaryHandler,{
   dispatchPrimary=paid.dispatchDefaultWebhook,
   stageHistory=history.acceptPassiveSync,
 }={}){
-  const config=assertConfig(env);
+  const historyMode=configured(env);
+  const config=historyMode?assertConfig(env):assertLiveConfig(env);
   assertSigned(req,config.secret);
   if(typeof primaryHandler!=="function")throw Error("Primary handler required");
   const {selected,live,remaining,selectedCount}=partition(req.body,config);
   // Reject unsafe mixed batches before staging or acknowledging any change.
   if(live)assertSafeLiveRemainder(remaining,config);
+  // History consent and import flags are separate from permission to receive
+  // NEW messages. Never acknowledge or drop an old-history event in live-only.
+  if(selected&&!historyMode)throw Error("Secondary history receiver not approved");
   if(selected){
     const result=await stageHistory(selected,{env});
     if(!result || result.enabled!==true || !Number.isSafeInteger(result.staged) ||
@@ -163,4 +201,4 @@ async function dispatch(req,res,primaryHandler,{
   if(remaining)return dispatchPrimary({...req,body:remaining},res,primaryHandler,{env});
   return res.sendStatus(200);
 }
-module.exports={configured,assertConfig,assertSigned,partition,dispatch,TARGET};
+module.exports={configured,liveConfigured,assertLiveConfig,assertConfig,assertSigned,partition,dispatch,TARGET};
