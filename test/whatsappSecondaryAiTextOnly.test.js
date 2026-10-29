@@ -11,7 +11,7 @@ const LIVE=Object.freeze({
   WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
   WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
   WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
-  WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
   WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED:"false",
   WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
   WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
@@ -74,7 +74,7 @@ test("AI-only signed live receiver and operational gate accept exact isolated id
 });
 test("AI-only refuses incomplete dependencies and ALL competing sender operation modes",()=>{
   const forbidden=[
-    ["WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED","false"],
+    ["WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED","false"],
     ["WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED","true"],
     ["WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED","false"],
     ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","true"],
@@ -113,12 +113,12 @@ test("AI-only refuses incomplete dependencies and ALL competing sender operation
 test("standalone AI flag never upgrades passive Inbox or guarded staff cutover",()=>{
   assert.throws(()=>receiver.assertLiveConfig({
     ...LIVE,
-    WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED:"false",
+    WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false",
     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
   }),/Unverified/);
   assert.throws(()=>receiver.assertLiveConfig({
     ...LIVE,
-    WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED:"true",
+    WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
     WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED:"true",
     WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
   }),/Unverified/);
