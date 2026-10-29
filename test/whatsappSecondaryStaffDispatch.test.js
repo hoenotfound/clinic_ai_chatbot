@@ -278,3 +278,15 @@ test("Meta WAMID without durable secondary billing evidence remains ambiguous to
   assert.equal(calls.send.length,1);
   assert.equal(calls.reserved,1);
 });
+
+test("text-only AI never accepts a non-text provider callback",async()=>{
+  for (const origin of ["ai_reply","system_fallback"]) {
+    const {opts,calls}=setup();
+    const result=await sendSecondaryStaffText({
+      ...data,origin,dispatchTransport:async()=>({success:true,wamid:"wamid.unsafe-non-text"}),
+    },{...opts,env:aiOnlyEnv});
+    assert.equal(result.code,"secondary_staff_send_disabled");
+    assert.equal(calls.reserved,0);
+    assert.equal(calls.send.length,0);
+  }
+});
