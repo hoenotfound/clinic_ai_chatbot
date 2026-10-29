@@ -2,6 +2,9 @@
 
 **GitHub only, draft. Do not activate or deploy.**
 
+This is a dependent PR on Phase A (#439). Its GitHub PR target is `main`
+only so the existing CI workflow runs. It must not be merged before Phase A.
+
 This adds no second Neutro AI engine, no second Render instance, no additional
 database tables, and no polling loop. The existing
 `whatsappSecondaryFollowUpService`, sender-specific rules and one-shot attempt
