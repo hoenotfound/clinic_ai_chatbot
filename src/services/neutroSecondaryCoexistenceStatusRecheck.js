@@ -7,8 +7,8 @@ const {loadValidatedCredentialForSetup}=require("../db/whatsappCoexistenceOnboar
 const {fetchPhoneNumbers}=require("./whatsappCoexistenceOnboardingService");
 
 const TARGET="+60174831336";
-const digits=value=>String(value||"").replace(/\\D/g,"");
-const numeric=value=>typeof value==="string" && /^\\d{1,32}$/.test(value);
+const digits=value=>String(value||"").replace(/\D/g,"");
+const numeric=value=>typeof value==="string" && /^\d{1,32}$/.test(value);
 function assertTarget({attemptId,wabaId,phoneNumberId},env){
   if(!Number.isSafeInteger(attemptId)||attemptId<1||
      !numeric(wabaId)||!numeric(phoneNumberId)||
