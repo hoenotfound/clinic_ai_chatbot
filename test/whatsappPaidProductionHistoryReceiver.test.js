@@ -47,6 +47,54 @@ test("disabled receiver cannot stage any history or alter default primary router
   assert.equal(receiver.configured({...env,WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false"}),false);
 });
 
+test("new signed secondary messages can be received without authorizing old-chat history",async()=>{
+  const liveEnv={...env,
+    WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+    WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false",
+    WHATSAPP_PAID_SECONDARY_HISTORY_OPERATOR_APPROVED:"false",
+    WHATSAPP_PAID_SECONDARY_HISTORY_OWNER_CONSENT_VERIFIED:"false",
+    WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+    WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+    WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+    WHATSAPP_SECONDARY_TOKEN:""
+  };
+  assert.equal(receiver.liveConfigured(liveEnv),true);
+  assert.equal(receiver.configured(liveEnv),false);
+  assert.equal(receiver.assertLiveConfig(liveEnv).secondaryPhone,
+    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+  let routed=0;
+  const response=res();
+  await receiver.dispatch(req(body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+    change("messages")))),response,(request,s)=>{
+      routed++;
+      assert.equal(request.body.entry[0].id,env.WHATSAPP_SECONDARY_WABA_ID);
+      return s.sendStatus(200);
+    },{
+      env:liveEnv,
+      stageHistory:async()=>{throw Error("History must remain off");},
+      dispatchPrimary:async()=>{throw Error("Live event must not be quarantined");}
+    });
+  assert.equal(response.statusCode,200);
+  assert.equal(routed,1);
+  await assert.rejects(receiver.dispatch(req(body(entry(
+    env.WHATSAPP_SECONDARY_WABA_ID,change("history")))),
+    res(),()=>{routed++;},{env:liveEnv,stageHistory:async()=>{throw Error("No staging");}}),
+    /Secondary history receiver not approved/);
+  assert.equal(routed,1);
+  for(const [key,value] of [
+    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AI_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_EXPECTED_WABA_ID","123"],
+    ["WHATSAPP_SINGLE_SENDER_STRICT_METADATA","false"],
+    ["WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED","false"]
+  ]){
+    assert.throws(()=>receiver.assertLiveConfig({...liveEnv,[key]:value}),/Unverified/);
+  }
+  assert.throws(()=>receiver.assertLiveConfig({
+    ...liveEnv,WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"false"
+  }),/disabled/);
+});
 test("production receiver validates exact isolated and approved sender, with all sending off",()=>{
   assert.equal(receiver.assertConfig(env).secondaryPhone,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
   const blocked=[
