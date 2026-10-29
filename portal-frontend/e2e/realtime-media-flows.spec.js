@@ -313,6 +313,7 @@ async function installRealtimeHarness(page) {
 
 async function installApi(page, {
   initialConversations = [conversation()],
+  archivedContactIds = [],
   initialMessagesByContact = new Map([[101, [inboundMessage()]]]),
   imageSendFailure = null,
   imageSendDelayMs = 0,
@@ -333,6 +334,9 @@ async function installApi(page, {
   const calls = [];
   const unexpected = [];
   const messageFetchCounts = new Map();
+  const hiddenFromInbox = new Set(archivedContactIds.map(Number));
+  let listFetches = 0;
+  let summaryFetches = 0;
   const mediaRequests = [];
   const documentRequests = [];
   const voiceRequests = [];
@@ -450,11 +454,14 @@ async function installApi(page, {
     }
 
     if (path === "/api/conversations" && method === "GET") {
-      return fulfill(route, conversations);
+      listFetches += 1;
+      return fulfill(route, conversations.filter((item) =>
+        !hiddenFromInbox.has(Number(item.contact_id))));
     }
 
     const summaryMatch = path.match(/^\/api\/conversations\/(\d+)\/summary$/);
     if (summaryMatch && method === "GET") {
+      summaryFetches += 1;
       const contact = conversations.find((item) =>
         Number(item.contact_id) === Number(summaryMatch[1]));
       return fulfill(route, contact || { error: "Conversation not found" }, contact ? 200 : 404);
@@ -652,6 +659,8 @@ async function installApi(page, {
     setDeliveryStatus,
     updateConversation,
     getMessageFetchCount: (contactId) => messageFetchCounts.get(Number(contactId)) || 0,
+    getListFetches: () => listFetches,
+    getSummaryFetches: () => summaryFetches,
     getMessages: (contactId) => messagesByContact.get(Number(contactId)) || [],
     getConversations: () => conversations,
   };
