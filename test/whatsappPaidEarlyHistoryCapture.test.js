@@ -149,3 +149,72 @@ test("mixed primary remains delegated only after durable early capture",async()=
   }});
  assert.equal(r.statusCode,200);assert.deepEqual(record,[base.WHATSAPP_WABA_ID]);
 });
+
+const verified={...base,
+ WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED:"false",
+ WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_HISTORY_OPERATOR_APPROVED:"true",
+ WHATSAPP_PAID_SECONDARY_HISTORY_OWNER_CONSENT_VERIFIED:"true",
+ WHATSAPP_PAID_SECONDARY_EARLY_HANDOFF_OPERATOR_APPROVED:"true",
+ WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
+ WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"333333333333333",
+ WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
+ WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"333333333333333",
+ WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+ WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true",
+ WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+ WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true"
+};
+function verifiedHoldDatabase() {
+ const cfg=hold.assertCaptureConfig(base,now);
+ const c=change(),sealed=hold.seal("222222222222222",c,cfg.key);
+ const record={fingerprint:sealed.fp,candidate_waba_id:"222222222222222",
+  candidate_phone_number_id:sealed.phone,event_field:"history",nonce:sealed.nonce,
+  ciphertext:sealed.ciphertext,auth_tag:sealed.tag,payload_bytes:sealed.ciphertext.length};
+ const state={record,started:0,committed:0,rolledBack:0,staged:0,deleted:0,authorized:true};
+ const client={release(){},async query(sql,params=[]) {
+  if(sql==="BEGIN"){state.started++;return {};}
+  if(sql==="COMMIT"){state.committed++;return {};}
+  if(sql==="ROLLBACK"){state.rolledBack++;return {};}
+  if(sql.includes("FROM whatsapp_coexistence_onboarding_attempts"))
+   return {rows:state.authorized?[{id:1}]:[]};
+  if(sql.startsWith("SELECT id FROM whatsapp_sender_accounts"))
+   return {rows:[{id:45}]};
+  if(sql.startsWith("SELECT fingerprint,candidate_waba_id"))
+   return {rows:state.deleted?[]:[record]};
+  if(sql.startsWith("SELECT COUNT(*)::int AS n FROM whatsapp_sender_coexistence_import_jobs"))
+   return {rows:[{n:state.staged}]};
+  if(sql.startsWith("DELETE FROM whatsapp_secondary_early_history_hold WHERE fingerprint=")){
+   state.deleted++;return {rowCount:1};
+  }
+  throw Error("Unknown SQL: "+sql);
+ }};
+ return {state,db:{connect:async()=>client}};
+}
+test("verified handoff refuses release before real authenticated signup, no send or contact mutation",async()=>{
+ const {state,db}=verifiedHoldDatabase();
+ state.authorized=false;
+ await assert.rejects(()=>hold.handoffOnce({env:verified,database:db}),/signup identity not verified/);
+ assert.equal(state.deleted,0);
+ assert.equal(state.rolledBack,1);
+ await assert.rejects(()=>hold.handoffOnce({env:{
+  ...verified,WHATSAPP_PAID_SECONDARY_EARLY_HANDOFF_OPERATOR_APPROVED:"false"
+ },database:db}),/not approved/);
+});
+test("verified handoff commits only after importer proof, and rolls back on failure",async()=>{
+ const {state,db}=verifiedHoldDatabase();
+ await assert.rejects(()=>hold.handoffOnce({env:verified,database:db,
+  stageHistory:async()=>{throw Error("synthetic importer unavailable")}
+ }),/synthetic importer unavailable/);
+ assert.equal(state.deleted,0);
+ assert.equal(state.rolledBack,1);
+ const result=await hold.handoffOnce({env:verified,database:db,stageHistory:async(packet)=>{
+  assert.equal(packet.entry[0].id,"222222222222222");
+  assert.equal(packet.entry[0].changes[0].field,"history");
+  state.staged=1;return {enabled:true,staged:1};
+ }});
+ assert.equal(result.transferred,1);
+ assert.equal(result.noMessagesSent,true);
+ assert.equal(state.deleted,1);
+ assert.equal(state.committed,2);
+});
