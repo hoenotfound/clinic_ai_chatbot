@@ -554,6 +554,112 @@ test("actionable sends release the shared contact lock before waiting for Telegr
   ]);
 });
 
+test("131060 worker defers later alert while first is pending without cancelling it", async () => {
+  const calls = [];
+  const repo = {
+    async markExhaustedStale() { return []; },
+    async claimReady() {
+      return [{
+        id: 202, contact_id: 12, alert_type: "ai_review",
+        event_key: "ai-review:12:3432",
+        message_text: "🔎 WhatsApp Message Unavailable (Meta 131060)\nReason: WhatsApp message unavailable (Meta 131060)",
+        attempts: 1, lease_token: "lease-202",
+      }];
+    },
+    async withContactAlertLock(contactId, action) {
+      assert.equal(contactId, 12);
+      return action(async () => ({ rows: [] }));
+    },
+    async unavailableReviewDeliveryDecision(alert) {
+      calls.push(["decision", alert.id]);
+      return "defer";
+    },
+    async deferUnavailableReviewAlert(id, lease) {
+      calls.push(["defer", id, lease]);
+      return { id, status: "pending" };
+    },
+    async markCancelled() { throw new Error("Never cancel a deferred alert"); },
+    async markSent() { throw new Error("Never send a deferred alert"); },
+    async markFailed() { throw new Error("Never fail a deferred alert"); },
+    async findNextDueAt() { return "2026-10-29T12:00:30Z"; },
+  };
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv,
+    repository: repo,
+    shouldSendAlert: async () => true,
+    sendMessage: () => { throw new Error("No Telegram send while earlier attempt pending"); },
+  });
+  const result = await run();
+  assert.equal(result.sentCount, 0);
+  assert.equal(result.failedCount, 0);
+  assert.deepEqual(calls, [["decision", 202], ["defer", 202, "lease-202"]]);
+});
+
+test("131060 worker cancels later alert only after prior alert was sent", async () => {
+  const calls = [];
+  const repo = {
+    async markExhaustedStale() { return []; },
+    async claimReady() {
+      return [{
+        id: 202, contact_id: 12, alert_type: "ai_review",
+        event_key: "ai-review:12:3432",
+        message_text: "🔎 WhatsApp Message Unavailable (Meta 131060)",
+        attempts: 1, lease_token: "lease-202",
+      }];
+    },
+    async withContactAlertLock(id, action) { return action(async () => ({ rows: [] })); },
+    async unavailableReviewDeliveryDecision() { return "suppress"; },
+    async markCancelled(id, lease, reason) {
+      calls.push([id, lease, reason]);
+      return { id, contact_id: 12, alert_type: "ai_review", status: "cancelled" };
+    },
+    async markSent() { throw new Error("Suppressed review cannot send"); },
+    async markFailed() { throw new Error("Suppressed review cannot fail"); },
+    async findNextDueAt() { return null; },
+  };
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv, repository: repo,
+    shouldSendAlert: async () => true,
+    sendMessage: () => { throw new Error("Already delivered earlier alert"); },
+  });
+  const result = await run();
+  assert.equal(result.sentCount, 0);
+  assert.equal(result.failedCount, 0);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][2], /delivered within 24 hours/);
+});
+
+test("131060 worker sends queued fallback after earlier attempt was cancelled", async () => {
+  const sent = [];
+  const repo = {
+    async markExhaustedStale() { return []; },
+    async claimReady() {
+      return [{
+        id: 202, contact_id: 12, alert_type: "ai_review",
+        event_key: "ai-review:12:3432",
+        message_text: "🔎 WhatsApp Message Unavailable (Meta 131060)",
+        attempts: 1, lease_token: "lease-202",
+      }];
+    },
+    async withContactAlertLock(id, action) { return action(async () => ({ rows: [] })); },
+    async unavailableReviewDeliveryDecision() { return "send"; },
+    async markSent(id, lease) {
+      assert.deepEqual([id, lease], [202, "lease-202"]);
+      return { id, contact_id: 12, alert_type: "ai_review", status: "sent" };
+    },
+    async markFailed() { throw new Error("Valid fallback should send"); },
+    async findNextDueAt() { return null; },
+  };
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv, repository: repo,
+    shouldSendAlert: async () => true,
+    sendMessage: async ({ text }) => { sent.push(text); return { message_id: 111 }; },
+  });
+  const result = await run();
+  assert.equal(result.sentCount, 1);
+  assert.deepEqual(sent, ["🔎 WhatsApp Message Unavailable (Meta 131060)"]);
+});
+
 test("Telegram timeout stays queued with backoff instead of being lost", async (t) => {
   const originalError = console.error;
   t.after(() => {
@@ -653,6 +759,46 @@ test("AI review uses a separate, uncapped event type and cannot consume urgent h
   assert.equal(queued[1].cooldownMinutes, HUMAN_ALERT_COOLDOWN_MINUTES);
   assert.match(queued[0].messageText, /Staff Question to Review.*AI Active/);
   assert.match(queued[1].messageText, /Human Intervention Required/);
+});
+
+test("Meta 131060 alone gets a 24-hour per-contact Telegram cooldown", async () => {
+  const queued = [];
+  const service = createTelegramImmediateAlertService({
+    env: enabledEnv,
+    getContext: async () => context,
+    repository: {
+      async queueAlert(input) {
+        queued.push(input);
+        return { id: 200 + queued.length };
+      },
+    },
+    wakeQueue() {},
+  });
+
+  const unavailable = await service.sendAiReviewAlert({
+    contactId: 12,
+    messageId: 3431,
+    reason: "AI review requested: [#3431] WhatsApp message unavailable (Meta 131060). Check the WhatsApp Business app.",
+  });
+  assert.equal(unavailable.status, "queued");
+  assert.equal(queued[0].eventKey, "ai-review:12:3431");
+  assert.equal(queued[0].cooldownMinutes, 1440);
+  assert.equal(queued[0].cooldownScope, "meta_131060");
+  assert.match(queued[0].messageText, /WhatsApp Message Unavailable \(Meta 131060\)/);
+
+  await service.sendAiReviewAlert({
+    contactId: 12, messageId: 3432,
+    reason: "AI review requested: [#3432] Is this treatment safe for pregnancy?",
+  });
+  assert.equal(queued[1].cooldownMinutes, 0);
+  assert.equal(queued[1].cooldownScope, undefined);
+  assert.match(queued[1].messageText, /Staff Question to Review/);
+
+  await service.sendHumanInterventionAlert({
+    contactId: 12, messageId: 3433, reason: "Urgent human help needed",
+  });
+  assert.equal(queued[2].cooldownMinutes, HUMAN_ALERT_COOLDOWN_MINUTES);
+  assert.equal(queued[2].cooldownScope, undefined);
 });
 
 test("review alerts are cancelled when the original question is no longer pending", async () => {

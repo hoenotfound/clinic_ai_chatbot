@@ -43,6 +43,27 @@ import {
   VideoIcon,
 } from "../components/InboxIcons";
 
+// Meta 131060 has no readable Cloud API text/media. Display a clear
+// staff-only instruction for Coexistence; never offer an automatic send.
+function isUnavailableWhatsAppReview(summary) {
+  return /\bMeta\s+131060\b/i.test(String(summary || ""));
+}
+function hasUnavailableReview(contact) {
+  return Array.isArray(contact?.pending_review_items) &&
+      contact.pending_review_items.some((review) => isUnavailableWhatsAppReview(review.summary)) ||
+    isUnavailableWhatsAppReview(contact?.pending_review_summaries);
+}
+
+function displayAiReviewSummary(summary, coexistence = false) {
+  const text = String(summary || "");
+  if (!isUnavailableWhatsAppReview(text)) return text;
+  const marker = text.match(/^(\[#\d+\]\s*)/);
+  const detail = coexistence
+    ? "WhatsApp message unavailable (Meta 131060). Check this customer's original message in the WhatsApp Business app. The chatbot did not receive the content."
+    : "WhatsApp message unavailable (Meta 131060). Meta did not provide the content. Staff review required.";
+  return (marker?.[1] || "") + detail;
+}
+
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
 const DELIVERY_STATUS_BATCH_SIZE = 500;
@@ -970,7 +991,8 @@ export default function Inbox() {
     const contactId = selectedId;
     const conversation = conversations?.find((item) => Number(item.contact_id) === Number(contactId));
     const unresolved = Number(conversation?.pending_review_count) || 0;
-    if (unresolved > 0 && !window.confirm(`Resolve all ${unresolved} pending review question${unresolved === 1 ? "" : "s"}? Please confirm that staff has checked the questions. Automated follow-ups may resume.`)) {
+    const reviewNoun = hasUnavailableReview(conversation) ? "review" : "review question";
+    if (unresolved > 0 && !window.confirm(`Resolve all ${unresolved} pending ${reviewNoun}${unresolved === 1 ? "" : "s"}? Please confirm that staff has checked the reviews. Automated follow-ups may resume.`)) {
       return;
     }
     setActionPending(true);
@@ -3265,7 +3287,7 @@ function ThreadView({
                   <ConversationActionItem
                     icon={AlertIcon}
                     label={Number(contact.pending_review_count) > 0
-                      ? `Resolve all ${contact.pending_review_count} review question${Number(contact.pending_review_count) === 1 ? "" : "s"}`
+                      ? `Resolve all ${contact.pending_review_count} ${hasUnavailableReview(contact) ? "review" : "review question"}${Number(contact.pending_review_count) === 1 ? "" : "s"}`
                       : "Dismiss attention"}
                     disabled={conversationStatePending}
                     tone="danger"
@@ -3295,15 +3317,15 @@ function ThreadView({
           >
             <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
             <span className="shrink-0 text-[11px] font-semibold">
-              Needs attention{Number(contact.pending_review_count) > 1 ? ` (${contact.pending_review_count} questions)` : ""}
+              Needs attention{Number(contact.pending_review_count) > 1 ? ` (${contact.pending_review_count} ${hasUnavailableReview(contact) ? "reviews" : "questions"})` : ""}
             </span>
             <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-pre-line" : "truncate"}`}>
               {Number(contact.pending_review_count) > 0 && contact.pending_review_summaries
                 ? [contact.attention_reason?.startsWith("AI review requested:")
                     ? "AI review requested:"
                     : (contact.attention_reason || "Flagged for staff review."),
-                   "Pending questions:",
-                   contact.pending_review_summaries].join("\n")
+                   hasUnavailableReview(contact) ? "Pending reviews:" : "Pending questions:",
+                   contact.pending_review_summaries.split("\n").map((summary) => displayAiReviewSummary(summary, contact.whatsapp_is_secondary === true)).join("\n")].join("\n")
                 : (contact.attention_reason || "Flagged for staff review.")}
             </span>
             <ChevronDownIcon
@@ -3314,17 +3336,21 @@ function ThreadView({
         {contact.needs_attention && attentionExpanded &&
           Array.isArray(contact.pending_review_items) && contact.pending_review_items.length > 0 && (
           <div className="max-h-64 space-y-2 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:px-5"
-            aria-label="Unresolved questions for staff">
+            aria-label={hasUnavailableReview(contact) ? "Unresolved reviews for staff" : "Unresolved questions for staff"}>
             {contact.pending_review_items.map((review) => (
               <div key={review.id} className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2">
-                <p className="min-w-0 flex-1 break-words text-xs leading-5 text-[var(--color-text)]">
-                  <span className="font-semibold">Question #{review.messageId}: </span>
-                  {review.summary}
-                </p>
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-xs leading-5 text-[var(--color-text)]">
+                    <span className="font-semibold">{isUnavailableWhatsAppReview(review.summary) ? "Message" : "Question"} #{review.messageId}: </span>
+                    {displayAiReviewSummary(review.summary, contact.whatsapp_is_secondary === true)}
+                  </p>
+                </div>
                 <button type="button" disabled={!canManageLeads || actionPending || conversationStatePending}
                   onClick={() => onResolveReview(review.id)}
                   className="min-h-9 shrink-0 rounded-lg border border-[var(--color-border)] px-2 text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50"
-                  aria-label={`Mark question ${review.messageId} resolved`}>Resolve</button>
+                  aria-label={isUnavailableWhatsAppReview(review.summary)
+                    ? `Mark message ${review.messageId} reviewed`
+                    : `Mark question ${review.messageId} resolved`}>Resolve</button>
               </div>
             ))}
             {Number(contact.pending_review_count) > contact.pending_review_items.length && (

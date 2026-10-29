@@ -120,3 +120,100 @@ test("Inbox remains AI while individual staff questions are resolved independent
   await expect.poll(() => resolvedIds).toEqual([10, 11]);
   await expect(thread.getByText("Needs attention", { exact: false })).toHaveCount(0);
 });
+
+
+test("Meta 131060 on Coexistence shows staff-only Business App instruction", async ({ page }) => {
+  await page.addInitScript(() => {
+    class StubEventSource {
+      addEventListener() {}
+      removeEventListener() {}
+      close() {}
+    }
+    window.EventSource = StubEventSource;
+  });
+
+  const contact = makeContact();
+  contact.whatsapp_is_secondary = true;
+  contact.pending_review_count = 1;
+  contact.pending_review_summaries =
+    "[#3431] Unsupported WhatsApp message (unsupported). Meta 131060. This message is cu e ly u available.";
+  contact.pending_review_items = [{
+    id: 26, messageId: 3431, category: "information",
+    summary: "Unsupported WhatsApp message (unsupported). Meta 131060. This message is cu e ly u available.",
+  }];
+  contact.last_message = "📎 [Customer sent a WhatsApp message that could not be displayed]";
+
+  let postCount = 0;
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() !== "GET") postCount += 1;
+    let data = {};
+    if (path === "/api/auth/branding") {
+      data = { clientName: "Test Clinic", clientLogoUrl: "" };
+    } else if (path === "/api/auth/me") {
+      data = { user: reviewer, username: reviewer.username };
+    } else if (path === "/api/conversations") {
+      data = [contact];
+    } else if (path === "/api/conversations/201/messages") {
+      data = { messages: [], hasMore: false };
+    } else if (path === "/api/conversations/201/attribution") {
+      data = { lead: null, attribution: null };
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
+  });
+
+  await page.goto("/inbox?contact=201");
+  const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
+  await expect(thread).toBeVisible();
+  await thread.getByRole("button", { name: "Needs attention" }).click();
+  await expect(thread.getByText("Pending reviews:")).toBeVisible();
+  const reviews = thread.getByLabel("Unresolved reviews for staff");
+  await expect(reviews.getByText(/Message #3431:/)).toBeVisible();
+  await expect(reviews.getByText(/WhatsApp message unavailable \(Meta 131060\)/)).toBeVisible();
+  await expect(reviews.getByText(/Check this customer's original message in the WhatsApp Business app/)).toBeVisible();
+  await expect(reviews.getByText(/cu e ly u available/)).toHaveCount(0);
+  await expect(reviews.getByRole("button", { name: "Mark message 3431 reviewed" })).toBeVisible();
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  await expect(thread.getByRole("menuitem", { name: "Resolve all 1 review" })).toBeVisible();
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  await expect(thread.getByRole("button", { name: /Copy resend|Resend request/i })).toHaveCount(0);
+  await expect(thread.getByText(/ask the customer to resend/i)).toHaveCount(0);
+  expect(postCount).toBe(0);
+  // Review remains pending until staff explicitly resolves it.
+  await expect(reviews.getByRole("button", { name: "Mark message 3431 reviewed" })).toBeVisible();
+});
+
+test("non-Coexistence Meta 131060 gives generic instructions, not Business App guidance", async ({ page }) => {
+  await page.addInitScript(() => {
+    class StubEventSource {
+      addEventListener() {}
+      removeEventListener() {}
+      close() {}
+    }
+    window.EventSource = StubEventSource;
+  });
+  const contact = makeContact();
+  contact.whatsapp_is_secondary = false;
+  contact.pending_review_count = 1;
+  contact.pending_review_summaries = "[#45] WhatsApp message unavailable (Meta 131060)";
+  contact.pending_review_items = [{
+    id: 45, messageId: 45, category: "information", summary: "WhatsApp message unavailable (Meta 131060)",
+  }];
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    let data = {};
+    if (path === "/api/auth/branding") data = { clientName: "Test Clinic", clientLogoUrl: "" };
+    else if (path === "/api/auth/me") data = { user: reviewer, username: reviewer.username };
+    else if (path === "/api/conversations") data = [contact];
+    else if (path === "/api/conversations/201/messages") data = { messages: [], hasMore: false };
+    else if (path === "/api/conversations/201/attribution") data = { lead: null, attribution: null };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
+  });
+  await page.goto("/inbox?contact=201");
+  const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
+  await thread.getByRole("button", { name: "Needs attention" }).click();
+  const reviews = thread.getByLabel("Unresolved reviews for staff");
+  await expect(reviews.getByText(/Staff review required/)).toBeVisible();
+  await expect(reviews.getByRole("button", { name: "Mark message 45 reviewed" })).toBeVisible();
+  await expect(reviews.getByText(/WhatsApp Business app/)).toHaveCount(0);
+});

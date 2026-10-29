@@ -19,6 +19,15 @@ const IMMEDIATE_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
 const HUMAN_ALERT_COOLDOWN_MINUTES = 30;
 const DELIVERY_ALERT_COOLDOWN_MINUTES = 15;
+// Only the routine Meta 131060 unavailability reviews receive this cooldown.
+// Clinical AI reviews, urgent staff alerts and delivery failures never share it.
+const UNAVAILABLE_WHATSAPP_ALERT_COOLDOWN_MINUTES = 24 * 60;
+
+function isMeta131060Review(reason, channel) {
+  const text = String(reason || "");
+  return channel === "whatsapp" && /\bMeta\s+131060\b/i.test(text) &&
+    /(?:WhatsApp message unavailable|Unsupported WhatsApp message)/i.test(text);
+}
 const IMMEDIATE_ALERT_RETRY_DELAYS_MS = Object.freeze([
   60 * 1000,
   2 * 60 * 1000,
@@ -235,6 +244,7 @@ function buildImmediateAlertMessage({
     /^Delivery unconfirmed:/i.test(String(reason || "").trim());
   const isBookingReady = type === "booking_ready";
   const isAiReview = type === "ai_review";
+  const isUnreadableWhatsApp = isAiReview && isMeta131060Review(reason, context.channel || "whatsapp");
   const conversion = getConversionProfile(config);
   const labels = getOperationalLabels(config);
   const platform = channelLabel(context.channel || "whatsapp");
@@ -243,7 +253,9 @@ function buildImmediateAlertMessage({
     : isBookingReady
       ? conversion.alertTitle
       : isAiReview
-        ? "🔎 Staff Question to Review (AI Active)"
+        ? (isUnreadableWhatsApp
+          ? "🔎 WhatsApp Message Unavailable (Meta 131060)"
+          : "🔎 Staff Question to Review (AI Active)")
         : "🚨 Human Intervention Required";
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
@@ -371,6 +383,26 @@ function createImmediateAlertQueueRunner({
               return false;
             }
 
+            if (alert.alert_type === "ai_review" &&
+                isMeta131060Review(alert.message_text, "whatsapp")) {
+              const decision = await repository.unavailableReviewDeliveryDecision(alert, query);
+              if (decision === "suppress") {
+                const cancelled = await repository.markCancelled(
+                  alert.id, alert.lease_token,
+                  "Another Meta 131060 review alert for this customer was delivered within 24 hours.",
+                  query
+                );
+                publishImmediateTerminalState(cancelled);
+                return false;
+              }
+              if (decision === "defer") {
+                // Do not cancel: if the earlier alert fails or is resolved,
+                // this alert must still be eligible for delivery.
+                await repository.deferUnavailableReviewAlert(alert.id, alert.lease_token, query);
+                return false;
+              }
+            }
+
             // Submit the Telegram request while the contact state is still
             // fenced, but do not wait for Telegram while holding the advisory
             // lock. Staff Inbox sends must never sit behind external network
@@ -480,6 +512,7 @@ function createTelegramImmediateAlertService({
     leadId = null,
     messageText,
     cooldownMinutes = 0,
+    cooldownScope = null,
   }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
@@ -490,6 +523,7 @@ function createTelegramImmediateAlertService({
       leadId,
       messageText,
       cooldownMinutes,
+      ...(cooldownScope ? { cooldownScope } : {}),
     };
     const retryableCodes = new Set(["55P03", "40P01", "40001"]);
     let queued;
@@ -531,6 +565,7 @@ function createTelegramImmediateAlertService({
 
     let eventKey;
     let cooldownMinutes = 0;
+    let cooldownScope = null;
 
     if (type === "ai_review") {
       const numericMessageId = Number(messageId);
@@ -538,6 +573,10 @@ function createTelegramImmediateAlertService({
         return { status: "skipped", reason: "missing-review-message-id" };
       }
       eventKey = `ai-review:${contactId}:${numericMessageId}`;
+      if (isMeta131060Review(reason, context.channel || "whatsapp")) {
+        cooldownMinutes = UNAVAILABLE_WHATSAPP_ALERT_COOLDOWN_MINUTES;
+        cooldownScope = "meta_131060";
+      }
     } else if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
       if (!eventKey) {
@@ -570,6 +609,7 @@ function createTelegramImmediateAlertService({
       leadId: context.lead_id,
       messageText,
       cooldownMinutes,
+      ...(cooldownScope ? { cooldownScope } : {}),
     };
 
     // Booking Ready normally acquires this per-contact advisory lock before it
@@ -614,6 +654,8 @@ const defaultService = createTelegramImmediateAlertService();
 module.exports = {
   DELIVERY_ALERT_COOLDOWN_MINUTES,
   HUMAN_ALERT_COOLDOWN_MINUTES,
+  UNAVAILABLE_WHATSAPP_ALERT_COOLDOWN_MINUTES,
+  isMeta131060Review,
   HUMAN_ALERT_LOCK_NAMESPACE: telegramImmediateAlertRepo.HUMAN_ALERT_LOCK_NAMESPACE,
   IMMEDIATE_ALERT_RETRY_DELAYS_MS,
   IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS,

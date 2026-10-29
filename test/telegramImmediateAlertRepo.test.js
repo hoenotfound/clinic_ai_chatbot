@@ -9,6 +9,8 @@ const {
   markExhaustedStale,
   markFailed,
   queueAlert,
+  unavailableReviewDeliveryDecision,
+  deferUnavailableReviewAlert,
   withContactAlertLock,
 } = require("../src/db/telegramImmediateAlertRepo");
 
@@ -83,6 +85,119 @@ test("delivery alerts use the same per-contact type cooldown without suppressing
   assert.equal(fake.calls[0].sql, "BEGIN");
   assert.match(fake.calls[2].sql, /alert_type = \$3/);
   assert.equal(fake.calls.at(-2).sql, "COMMIT");
+});
+
+test("131060 cooldown only checks delivered alerts, not pending or sending", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/FROM telegram_immediate_alerts/.test(sql) && /COALESCE\(sent_at, created_at\)/.test(sql)) {
+      assert.match(sql, /status IN \('sent'\)/);
+      assert.match(sql, /position\('Meta 131060' IN message_text\) > 0/);
+      assert.deepEqual(params, [12, 1440, "ai_review"]);
+      return { rows: [] };
+    }
+    if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
+      return { rows: [{ id: 101, status: "pending" }] };
+    }
+    return { rows: [] };
+  });
+  const queued = await queueAlert({
+    eventKey: "ai-review:12:3432", type: "ai_review", contactId: 12,
+    messageText: "WhatsApp message unavailable (Meta 131060)",
+    cooldownMinutes: 1440, cooldownScope: "meta_131060",
+  }, fake.database);
+  assert.equal(queued.id, 101);
+  assert.match(fake.calls[1].sql, /pg_advisory_xact_lock/);
+});
+
+test("131060 recently delivered Telegram alert suppresses only same contact and type", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/FROM telegram_immediate_alerts/.test(sql) && /COALESCE\(sent_at, created_at\)/.test(sql)) {
+      assert.match(sql, /status IN \('sent'\)/);
+      assert.deepEqual(params, [12, 1440, "ai_review"]);
+      return { rows: [{ id: 89 }] };
+    }
+    return { rows: [] };
+  });
+  const queued = await queueAlert({
+    eventKey: "ai-review:12:3432", type: "ai_review", contactId: 12,
+    messageText: "WhatsApp message unavailable (Meta 131060)",
+    cooldownMinutes: 1440, cooldownScope: "meta_131060",
+  }, fake.database);
+  assert.equal(queued, null);
+  assert.equal(fake.calls.some(({ sql }) => /INSERT INTO telegram_immediate_alerts/.test(sql)), false);
+});
+
+test("131060 cooldown allows another customer and unrelated clinical reviews", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/FROM telegram_immediate_alerts/.test(sql) && /COALESCE\(sent_at, created_at\)/.test(sql)) {
+      assert.deepEqual(params, [13, 1440, "ai_review"]);
+      return { rows: [] };
+    }
+    if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
+      return { rows: [{ id: 80, status: "pending" }] };
+    }
+    return { rows: [] };
+  });
+  const otherCustomer = await queueAlert({
+    eventKey: "ai-review:13:55", type: "ai_review", contactId: 13,
+    messageText: "WhatsApp message unavailable (Meta 131060)",
+    cooldownMinutes: 1440, cooldownScope: "meta_131060",
+  }, fake.database);
+  assert.equal(otherCustomer?.id, 80);
+  const clinicalReview = await queueAlert({
+    eventKey: "ai-review:12:56", type: "ai_review", contactId: 12,
+    messageText: "Clinical safety review", cooldownMinutes: 0,
+  }, fake.database);
+  assert.equal(clinicalReview?.id, 80);
+});
+
+test("send-time 131060 gate sends fallback after prior alert was cancelled", async () => {
+  const firstCancelled = await unavailableReviewDeliveryDecision(
+    { id: 22, contact_id: 12 },
+    async (sql, params) => {
+      assert.match(sql, /prior.status = 'sent'/);
+      assert.match(sql, /prior.status IN \('pending', 'sending'\)/);
+      assert.deepEqual(params, [12, 22]);
+      return { rows: [{ recently_sent: false, earlier_in_flight: false }] };
+    }
+  );
+  assert.equal(firstCancelled, "send");
+  const firstPending = await unavailableReviewDeliveryDecision(
+    { id: 22, contact_id: 12 },
+    async () => ({ rows: [{ recently_sent: false, earlier_in_flight: true }] })
+  );
+  assert.equal(firstPending, "defer");
+  const firstSent = await unavailableReviewDeliveryDecision(
+    { id: 22, contact_id: 12 },
+    async () => ({ rows: [{ recently_sent: true, earlier_in_flight: false }] })
+  );
+  assert.equal(firstSent, "suppress");
+});
+
+test("deferred 131060 alert retains original retry budget and requeues", async () => {
+  let captured;
+  const result = await deferUnavailableReviewAlert(22, "lease-22", async (sql, params) => {
+    captured = { sql, params };
+    return { rows: [{ id: 22, status: "pending", attempts: 0 }] };
+  });
+  assert.equal(result.status, "pending");
+  assert.match(captured.sql, /status = 'pending'/);
+  assert.match(captured.sql, /attempts = GREATEST\(0, attempts - 1\)/);
+  assert.match(captured.sql, /interval '30 seconds'/);
+  assert.match(captured.sql, /status = 'sending'/);
+  assert.deepEqual(captured.params, [22, "lease-22"]);
+});
+
+test("invalid cooldown scope cannot suppress unrelated alerts", async () => {
+  const fake = fakeDatabase(async () => ({ rows: [] }));
+  await assert.rejects(
+    queueAlert({
+      eventKey: "ai-review:12:77", type: "ai_review", contactId: 12,
+      messageText: "Clinical review", cooldownMinutes: 1440, cooldownScope: "meta_131060",
+    }, fake.database),
+    /Invalid Telegram alert cooldown scope/
+  );
+  assert.equal(fake.calls.length, 0);
 });
 
 test("new human immediate alert is committed as pending queue work", async () => {

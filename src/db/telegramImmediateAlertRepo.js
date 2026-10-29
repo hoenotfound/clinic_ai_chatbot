@@ -168,10 +168,23 @@ async function queueAlert(
     leadId = null,
     messageText,
     cooldownMinutes = 0,
+    cooldownScope = null,
   },
   database = pool
 ) {
   const safeCooldown = Math.max(0, Number(cooldownMinutes) || 0);
+  // A separate marker is required so an unavailable-media review cannot
+  // suppress an unrelated clinical or staff-safety AI review. This is an
+  // internal fixed-scope filter, never a caller-provided SQL predicate.
+  if (cooldownScope != null &&
+      (cooldownScope !== "meta_131060" || type !== "ai_review" ||
+       safeCooldown !== 24 * 60 ||
+       !String(messageText || "").includes("Meta 131060"))) {
+    throw new Error("Invalid Telegram alert cooldown scope.");
+  }
+  const scopedCooldownCondition = cooldownScope === "meta_131060"
+    ? " AND position('Meta 131060' IN message_text) > 0"
+    : "";
   const needsSerializedQueue =
     safeCooldown > 0 ||
     type === "booking_ready" ||
@@ -205,8 +218,11 @@ async function queueAlert(
          FROM telegram_immediate_alerts
          WHERE contact_id = $1
            AND alert_type = $3
-           AND status IN ('pending', 'sending', 'sent')
-           AND created_at > now() - ($2::integer * interval '1 minute')
+           AND status IN (${cooldownScope === "meta_131060" ? "'sent'" : "'pending', 'sending', 'sent'"})
+           AND ${cooldownScope === "meta_131060"
+             ? "COALESCE(sent_at, created_at)"
+             : "created_at"} > now() - ($2::integer * interval '1 minute')
+           ${scopedCooldownCondition}
          ORDER BY created_at DESC
          LIMIT 1`,
         [Number(contactId), Math.ceil(safeCooldown), String(type)]
@@ -230,6 +246,70 @@ async function queueAlert(
   } finally {
     client.release();
   }
+}
+
+// An unavailable review can be followed by another unreadable message while
+// its Telegram alert is pending or in flight. Keep that newer alert queued
+// until the earlier attempt either sends or is cancelled/failed. This avoids
+// losing the only notification when the original review is resolved before
+// Telegram could send it.
+async function unavailableReviewDeliveryDecision(
+  alert,
+  query = pool.query.bind(pool)
+) {
+  const contactId = Number(alert?.contact_id);
+  const alertId = Number(alert?.id);
+  if (!Number.isSafeInteger(contactId) || contactId <= 0 ||
+      !Number.isSafeInteger(alertId) || alertId <= 0) {
+    return "defer";
+  }
+  const result = await query(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM telegram_immediate_alerts prior
+         WHERE prior.contact_id = $1
+           AND prior.id <> $2
+           AND prior.alert_type = 'ai_review'
+           AND prior.status = 'sent'
+           AND position('Meta 131060' IN prior.message_text) > 0
+           AND COALESCE(prior.sent_at, prior.created_at) > now() - interval '24 hours'
+       ) AS recently_sent,
+       EXISTS (
+         SELECT 1 FROM telegram_immediate_alerts prior
+         WHERE prior.contact_id = $1
+           AND prior.id < $2
+           AND prior.alert_type = 'ai_review'
+           AND prior.status IN ('pending', 'sending')
+           AND prior.terminal_at IS NULL
+           AND position('Meta 131060' IN prior.message_text) > 0
+       ) AS earlier_in_flight`,
+    [contactId, alertId]
+  );
+  if (result.rows[0]?.recently_sent) return "suppress";
+  if (result.rows[0]?.earlier_in_flight) return "defer";
+  return "send";
+}
+
+async function deferUnavailableReviewAlert(
+  id, leaseToken, query = pool.query.bind(pool)
+) {
+  if (!leaseToken) return null;
+  const result = await query(
+    `UPDATE telegram_immediate_alerts
+     SET status = 'pending',
+         attempts = GREATEST(0, attempts - 1),
+         next_attempt_at = now() + interval '30 seconds',
+         claimed_at = NULL,
+         lease_token = NULL,
+         updated_at = now()
+     WHERE id = $1
+       AND lease_token = $2
+       AND status = 'sending'
+       AND terminal_at IS NULL
+     RETURNING *`,
+    [id, leaseToken]
+  );
+  return result.rows[0] || null;
 }
 
 async function claimReady(
@@ -450,6 +530,8 @@ module.exports = {
   cancelOlderPendingBookingReady,
   claimReady,
   findNextDueAt,
+  unavailableReviewDeliveryDecision,
+  deferUnavailableReviewAlert,
   insertAlert,
   lockContactAlertQueue,
   markCancelled,
