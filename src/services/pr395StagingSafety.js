@@ -226,8 +226,11 @@ function assertPr395StagingSafety(env = process.env) {
         String(env.WHATSAPP_APP_SECRET) !== String(env.META_APP_SECRET)) {
       throw new Error("PR395 provider rehearsal requires verified inbound configuration and forbids all outbound traffic.");
     }
-    return { staging: true, workersDisabled: true, providerProcessingDisabled: false,
-      historyImporterOnly: true, controlledStaffTest: staffTest };
+    return staffTest
+      ? { staging: true, workersDisabled: true, providerProcessingDisabled: false,
+          historyImporterOnly: true, controlledStaffTest: true }
+      : { staging: true, workersDisabled: true, providerProcessingDisabled: false,
+          historyImporterOnly: true };
   }
   if (OUTBOUND_SWITCHES.some(key => env[key] === "true") ||
       env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
