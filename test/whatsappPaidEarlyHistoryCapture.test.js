@@ -251,3 +251,16 @@ test("single unbreakable oversized history fragment fails closed",()=>{
    "synthetic oversized text"+"x".repeat(8*1024*1024);
  assert.throws(()=>hold.splitForHold("222222222222222",bad),/oversized/);
 });
+
+test("expired early capture stops selecting receiver but never silently accepts expired holds",()=>{
+  const beforeDeadline=new Date("2026-10-29T09:59:59Z");
+  const afterDeadline=new Date("2026-10-29T10:00:01Z");
+  assert.equal(hold.enabled(base,beforeDeadline),true);
+  assert.equal(hold.enabled(base,afterDeadline),false);
+  assert.equal(hold.enabled({...base,WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_UNTIL:"invalid"},now),false);
+  assert.equal(hold.enabled({...base,WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED:"false"},now),false);
+  assert.throws(()=>hold.assertCaptureConfig(base,afterDeadline),/OFF or expired/);
+  // Explicitly enabled receiver remains fail-closed for an expired event,
+  // but the app router can fall through to its independent guarded handler.
+  assert.throws(()=>hold.stage(early(),{env:base,now:afterDeadline}),/OFF or expired/);
+});
