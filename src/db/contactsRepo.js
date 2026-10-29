@@ -536,9 +536,30 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
   // read filter, never a delete or a change to sender routing/follow-up policy.
   const hideEmptyCoexistence = senderAwareInboxReadsEnabled() &&
     !includeEmptyCoexistenceContacts &&
-    process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS !== "false";
+    process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS === "true";
+  // Preselect eligible IDs before expensive lead/message review subqueries.
+  // The flag is strictly opt-in; a rollback changes only presentation.
+  const candidatesSql = hideEmptyCoexistence ? `
+    WITH eligible_inbox_contacts AS MATERIALIZED (
+      SELECT c.id FROM contacts c
+      WHERE NOT (
+        c.whatsapp_sender_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM whatsapp_sender_accounts account
+          WHERE account.id = c.whatsapp_sender_id
+            AND account.coexistence_enabled = TRUE
+        )
+        AND NOT EXISTS (SELECT 1 FROM messages any_message WHERE any_message.contact_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM leads existing_lead WHERE existing_lead.contact_id = c.id)
+        AND c.is_unread IS DISTINCT FROM TRUE
+        AND c.needs_attention IS DISTINCT FROM TRUE
+        AND c.needs_follow_up IS DISTINCT FROM TRUE
+        AND c.mode IS DISTINCT FROM 'human'
+      )
+    )` : "";
   const result = await pool.query(
     `
+    ${candidatesSql}
     SELECT
       c.id AS contact_id,
       c.whatsapp_number,
@@ -617,7 +638,9 @@ ${senderAwareInboxReadsEnabled() ? `
               AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
           )
       ) AS has_unreplied
-    FROM contacts c
+    FROM ${hideEmptyCoexistence
+      ? "eligible_inbox_contacts eligible JOIN contacts c ON c.id = eligible.id"
+      : "contacts c"}
 ${senderAwareInboxReadsEnabled() ? `
     LEFT JOIN whatsapp_sender_conversations sc
       ON sc.contact_id = c.id AND sc.state = 'bound'
@@ -646,16 +669,7 @@ ${senderAwareInboxReadsEnabled() ? `
       LIMIT 1
     ) latest_customer ON true
     WHERE (m.created_at IS NOT NULL OR c.channel = 'whatsapp')
-    ${hideEmptyCoexistence ? `
-    AND (
-      c.whatsapp_sender_id IS NULL
-      OR sa.coexistence_enabled IS DISTINCT FROM TRUE
-      OR m.created_at IS NOT NULL
-      OR c.is_unread = TRUE OR c.needs_attention = TRUE OR c.needs_follow_up = TRUE
-      OR c.mode = 'human'
-      OR EXISTS (SELECT 1 FROM leads retained WHERE retained.contact_id = c.id)
-    )` : ""}
-    ${contactId == null ? "" : "AND c.id = $1"}
+     ${contactId == null ? "" : "AND c.id = $1"}
     ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
     `,
     contactId == null ? [] : [contactId]
