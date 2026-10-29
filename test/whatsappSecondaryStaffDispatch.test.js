@@ -297,3 +297,15 @@ test("text followups reuse sender-owned transport, while media stays blocked",as
   assert.equal(mediaCase.calls.send.length,0);
   assert.equal(mediaCase.calls.reserved,0);
 });
+
+test("text-only AI never accepts a non-text provider callback",async()=>{
+  for (const origin of ["ai_reply","system_fallback"]) {
+    const {opts,calls}=setup();
+    const result=await sendSecondaryStaffText({
+      ...data,origin,dispatchTransport:async()=>({success:true,wamid:"wamid.unsafe-non-text"}),
+    },{...opts,env:aiOnlyEnv});
+    assert.equal(result.code,"secondary_staff_send_disabled");
+    assert.equal(calls.reserved,0);
+    assert.equal(calls.send.length,0);
+  }
+});
