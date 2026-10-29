@@ -176,14 +176,15 @@ async function stage(body,{env=process.env,database=pool,now=new Date()}={}) {
 }
 async function dispatch(req,res,primaryHandler,{
   env=process.env,database=pool,now=new Date(),
-  dispatchPrimary=paid.dispatchDefaultWebhook
+  dispatchPrimary=paid.dispatchDefaultWebhook,
+  stageEarlyHistory=stage
 }={}){
   const config=assertCaptureConfig(env,now);
   verifiedReceiver.assertSigned(req,config.secret);
   if(typeof primaryHandler!=="function")throw Error("Primary handler required");
   const {selected,remaining}=partition(req.body,config);
   if(!selected)return dispatchPrimary(req,res,primaryHandler,{env});
-  const result=await stage(selected,{database,env,now});
+  const result=await stageEarlyHistory(selected,{database,env,now});
   if(result?.durable!==true)throw Error("Early history was not durable");
   if(remaining)return dispatchPrimary({...req,body:remaining},res,primaryHandler,{env});
   return res.sendStatus(200);
