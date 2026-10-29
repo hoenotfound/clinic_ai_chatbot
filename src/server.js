@@ -75,6 +75,7 @@ const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { getOperationalLabels } = require("./utils/businessTerminology");
+const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
   deliveryErrorForSend,
   publicDeliveryError,
@@ -614,16 +615,16 @@ async function processIncomingMessage(
       : null;
 
     if (unsupportedType) {
-      // Meta diagnostics are kept for staff. No misleading customer reply.
+      // Meta diagnostics are staff-only. Never invent a customer response.
       const label = channelMessaging.labelForChannel(channel);
-      const detail = incoming.unsupportedErrors?.[0] || {};
-      const metaCode = Number.isInteger(detail.code) ? `Meta ${detail.code}` : "Meta code unavailable";
-      const explanation = String(detail.details || detail.title || detail.message || "")
-        .replace(/[\\r\\n\\t]+/g, " ").slice(0, 160);
       await contactsRepo.setAiReviewAttention(
         contact.id,
         savedInbound.id,
-        `Unsupported ${label} message (${unsupportedType}). ${metaCode}.${explanation ? ` ${explanation}` : ""}`,
+        formatUnsupportedReview({
+          channelLabel: label,
+          unsupportedType,
+          detail: incoming.unsupportedErrors?.[0] || {},
+        }),
         "information"
       );
       return { wasFirstMessage, keywordReason };
