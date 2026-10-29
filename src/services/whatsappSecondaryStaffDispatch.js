@@ -54,9 +54,9 @@ async function sendSecondaryStaffText({
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true" &&
-    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED !== "true" &&
+    (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true") ===
+      (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") &&
     env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" &&
-    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED !== "true" &&
     env.WHATSAPP_COEXISTENCE_ENABLED === "true" &&
     secondaryUsesPrimaryClinicContent(env);
   const authorizedOrigin = origin === "staff"
@@ -67,12 +67,17 @@ async function sendSecondaryStaffText({
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
-      (!aiTextOnly && origin === "followup" &&
+      (origin === "followup" &&
         env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
+        (!aiTextOnly || aiTextAuthorized) &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
   if (!authorizedOrigin ||
+      // Neither the existing follow-up sender nor an optional transport
+      // callback may upload/dispatch media while sender media is disabled.
+      (origin === "followup" && typeof dispatchTransport === "function" &&
+        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
       (templateRequest && (origin !== "staff" ||
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
         typeof dispatchTransport !== "function" ||
