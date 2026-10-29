@@ -276,3 +276,22 @@ test("Meta WAMID without durable secondary billing evidence remains ambiguous to
   assert.equal(calls.send.length,1);
   assert.equal(calls.reserved,1);
 });
+
+test("text followups reuse sender-owned transport, while media stays blocked",async()=>{
+  const followupEnv={...aiOnlyEnv,WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+    WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"};
+  // Existing staff/AI dispatcher is the only provider entry point for
+  // sender-specific text followups. No new transport is introduced.
+  const textCase=setup();
+  const accepted=await sendSecondaryStaffText({...data,origin:"followup"},
+    {...textCase.opts,env:followupEnv});
+  assert.equal(accepted.success,true);
+  assert.equal(textCase.calls.send.length,1);
+  const mediaCase=setup();
+  const denied=await sendSecondaryStaffText({
+    ...data,origin:"followup",dispatchTransport:async()=>({success:true,wamid:"wamid.unsafe"}),
+  },{...mediaCase.opts,env:followupEnv});
+  assert.equal(denied.success,false);
+  assert.equal(mediaCase.calls.send.length,0);
+  assert.equal(mediaCase.calls.reserved,0);
+});
