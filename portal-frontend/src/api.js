@@ -58,6 +58,8 @@ export const api = {
   listConversations: () => request("/conversations"),
   getConversationSummary: (contactId, includeArchived = false) =>
     request(`/conversations/${encodeURIComponent(contactId)}/summary${includeArchived ? "?includeArchived=true" : ""}`),
+  searchConversationDirectory: (term) =>
+    request(`/conversations/directory-search?q=${encodeURIComponent(term)}`),
   getSecondaryFollowUpRules: () => request("/whatsapp-secondary-followups"),
   getSecondaryMediaReview: () => request("/whatsapp-secondary-media-review"),
   saveSecondaryFollowUpRule: (slot,rule) =>
