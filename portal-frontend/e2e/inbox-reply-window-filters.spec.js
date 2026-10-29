@@ -122,7 +122,11 @@ test("Inbox filters reply-window status, keeps staff-only distinct and scopes co
   await expect(reply).toHaveValue("all");
   await expect(inbox.getByRole("combobox", { name: "Channel" })).toHaveValue("all");
   await expect(search).toHaveValue("Never");
-  await search.fill("");
+  // Use the Inbox's actual clear-search control. On touch devices the
+  // search input can be replaced as the conversation list repopulates,
+  // making an in-progress locator.fill("") race with that rerender.
+  await inbox.getByRole("button", { name: "Clear search" }).click();
+  await expect(search).toHaveValue("");
   await expect(inbox.getByText("WhatsApp Open", { exact: true })).toBeVisible();
 });
 
