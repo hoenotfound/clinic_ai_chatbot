@@ -169,11 +169,12 @@ test("Phase B stays OFF unless the same secondary paid automation mode is enable
   assert.equal(f.calls.length,0);
 });
 test("imported history is excluded from candidate selection and pre-send recheck",()=>{
-  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]) {
-    assert.match(sql,/whatsapp_sender_coexistence_history_messages/);
-    assert.match(sql,/h\.message_id=inbound\.id/);
-    assert.match(sql,/h\.sender_id=sa\.id/);
-  }
+  assert.match(worker.CANDIDATES_SQL,/whatsapp_sender_coexistence_history_messages/);
+  assert.match(worker.CANDIDATES_SQL,/h\.message_id=m\.id/);
+  assert.match(worker.CANDIDATES_SQL,/h\.sender_id=sa\.id/);
+  assert.match(worker.RECHECK_SQL,/whatsapp_sender_coexistence_history_messages/);
+  assert.match(worker.RECHECK_SQL,/h\.message_id=inbound\.id/);
+  assert.match(worker.RECHECK_SQL,/h\.sender_id=sa\.id/);
 });
 test("secondary video follow-up remains entirely passive when media is OFF",async()=>{
   const f=fake({rows:[{...candidate,media_key:"synthetic-video",
