@@ -131,8 +131,7 @@ test("foreign history, wrong phone, malformed batch, and mixed wrong-phone abort
     body(entry(env.WHATSAPP_SECONDARY_WABA_ID,{field:"history",value:null})),
     body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change("history")),
       entry(env.WHATSAPP_SECONDARY_WABA_ID,change("smb_app_state_sync","000"))),
-    body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change("history")),...Array.from(
-      {length:101},()=>entry("9999999",change("history")))),
+    body(...Array.from({length:101},()=>entry("9999999",change("history")))),
   ];
   let persisted=0;
   for(const packet of cases){
