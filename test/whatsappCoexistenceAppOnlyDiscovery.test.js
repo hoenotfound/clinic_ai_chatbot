@@ -223,6 +223,7 @@ test("real Neutro pre-QR discovery refuses activation by default or a mismatched
     {WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED:"false"},
     {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000"},
     {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60121111111"},
+    {WHATSAPP_PHONE_NUMBER:"+60174831336"},
     {WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa"},
     {WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
     {WHATSAPP_PRIMARY_SENDER_KEY:"other"},
@@ -281,4 +282,36 @@ test("pre-QR Meta lookup verifies exact real number before credential callback, 
   assert.throws(()=>assertExpectedSecondaryPhone({
     id:"111111111111111",displayPhoneNumber:"+60 17-483 1336"
   },productionClinic()),x=>x.code==="WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH");
+});
+
+test("separate production Coexistence vault encrypts only the pinned Neutro secondary token",()=>{
+  const {sealCredential,openCredential,credentialVaultReady}=
+    require("../src/services/whatsappCoexistenceCredentialVault");
+  const input={
+    attemptId:51,wabaId:"222222222222222",phoneNumberId:"333333333333333",
+    accessToken:"synthetic-neutro-secondary-long-token"
+  };
+  const env=productionClinic();
+  assert.equal(credentialVaultReady(env),true);
+  const sealed=sealCredential({...input,env});
+  assert.equal(openCredential({...sealed,attemptId:51,wabaId:input.wabaId,
+    phoneNumberId:input.phoneNumberId,env}),input.accessToken);
+  assert.throws(()=>openCredential({...sealed,attemptId:51,
+    wabaId:input.wabaId,phoneNumberId:input.phoneNumberId,env:qa()}));
+  for(const override of [
+    {WHATSAPP_SECONDARY_PRODUCTION_VAULT_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa"},
+    {WHATSAPP_PRIMARY_SENDER_KEY:"unexpected"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000"},
+    {WHATSAPP_PHONE_NUMBER:"+60174831336"},
+    {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"111111111111111"},
+    {WHATSAPP_SECONDARY_PRODUCTION_TOKEN_ENCRYPTION_KEY:""},
+    {WHATSAPP_SECONDARY_PRODUCTION_TOKEN_ENCRYPTION_KEY:env.PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY}
+  ]) {
+    const forbidden=productionClinic(override);
+    assert.equal(credentialVaultReady(forbidden),false,JSON.stringify(override));
+    assert.throws(()=>sealCredential({...input,env:forbidden}),undefined,
+      JSON.stringify(override));
+  }
 });
