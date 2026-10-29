@@ -166,10 +166,12 @@ test("provider timeout cannot be automatically retried",async()=>{
   assert.deepEqual(calls.mark,[{reservationId}]);
 });
 
-test("accepted provider WAMID is preserved even when billing evidence save fails",async()=>{
+test("accepted provider WAMID is preserved but AI outcome stays unresolved when billing evidence save fails",async()=>{
   const {opts}=setup({recordResult:{recorded:false}});
   const result=await sendSecondaryStaffText(data,opts);
-  assert.equal(result.success,true);
+  assert.equal(result.success,false);
+  assert.equal(result.ambiguous,true);
+  assert.equal(result.retryable,false);
   assert.equal(result.wamid,"wamid.ariel-ok");
   assert.equal(result.unknown,true);
   assert.equal(result.retryable,false);
