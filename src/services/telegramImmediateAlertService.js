@@ -383,6 +383,26 @@ function createImmediateAlertQueueRunner({
               return false;
             }
 
+            if (alert.alert_type === "ai_review" &&
+                isMeta131060Review(alert.message_text, "whatsapp")) {
+              const decision = await repository.unavailableReviewDeliveryDecision(alert, query);
+              if (decision === "suppress") {
+                const cancelled = await repository.markCancelled(
+                  alert.id, alert.lease_token,
+                  "Another Meta 131060 review alert for this customer was delivered within 24 hours.",
+                  query
+                );
+                publishImmediateTerminalState(cancelled);
+                return false;
+              }
+              if (decision === "defer") {
+                // Do not cancel: if the earlier alert fails or is resolved,
+                // this alert must still be eligible for delivery.
+                await repository.deferUnavailableReviewAlert(alert.id, alert.lease_token, query);
+                return false;
+              }
+            }
+
             // Submit the Telegram request while the contact state is still
             // fenced, but do not wait for Telegram while holding the advisory
             // lock. Staff Inbox sends must never sit behind external network
