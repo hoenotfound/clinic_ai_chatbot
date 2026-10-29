@@ -6,7 +6,7 @@ const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
-const { canAccessContact } = require("../utils/accessControl");
+const { canAccessContact, getAccessibleContactIds } = require("../utils/accessControl");
 const { hasCapability } = require("../utils/permissions");
 const contactsRepo = require("../db/contactsRepo");
 const { pool } = require("../db/db");
@@ -832,6 +832,25 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("Failed to list conversations:", err);
     res.status(500).json({ error: "Something went wrong loading conversations." });
+  }
+});
+
+// Search the complete customer directory, including archived contact-only
+// Coexistence imports, with a bounded result set and CURRENT staff ownership.
+// This endpoint returns only safe contact summaries, never messages or media.
+router.get("/directory-search", async (req, res) => {
+  const startedAt = process.hrtime.bigint();
+  try {
+    const query = String(req.query.q || "").trim();
+    if (query.length < 2) return res.json([]);
+    const access = await getAccessibleContactIds(req.user);
+    const matches = await contactsRepo.searchConversationDirectory({
+      term: query, accessibleContactIds: access, limit: 40,
+    });
+    sendMeasuredInboxJson(res, matches, startedAt, "directory-search");
+  } catch (err) {
+    console.error("Failed to search Inbox contact directory:", err);
+    res.status(500).json({ error: "Something went wrong searching contacts." });
   }
 });
 
