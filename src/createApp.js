@@ -116,7 +116,7 @@ function createApp({
   const webhookJsonParser = createWebhookJsonParser(verifySignedWhatsappBody);
   // Meta history chunks may exceed the normal inbound message size.
   // The original Neutro /webhook remains signed and capped at 2 MB.
-  const paidDefaultHistoryJsonParser = createWebhookJsonParser(verifySignedWhatsappBody, "8mb");
+  const paidDefaultHistoryJsonParser = createWebhookJsonParser(verifySignedWhatsappBody, "16mb");
   const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
   const portalJsonParser = createPortalJsonParser();
   const advancedConfigJsonParser = createAdvancedConfigJsonParser();
