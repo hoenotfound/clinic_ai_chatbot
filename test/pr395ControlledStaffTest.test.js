@@ -145,6 +145,15 @@ test("even an authorized staff send cannot target a different imported contact",
   const client=await createVerifiedSecondaryOutboundTransport(contact,{env,database});
   assert.equal(client.senderKey,"coexistence_qa");
   assert.equal(typeof client.sendText,"function");
+  for (const [method,args] of [
+    ["sendImageByUrl",["https://example.com/test.jpg"]],
+    ["sendTemplatePayload",[{type:"template",template:{name:"test"}}]],
+    ["sendInteractiveButtons",["test",[]]],
+    ["uploadMedia",[Buffer.from("test"),"image/png","test.png"]]
+  ]) {
+    await assert.rejects(client[method](...args),
+      error=>error?.code==="whatsapp_sender_not_ready");
+  }
   for (const invalid of [
     {contact:{...contact,whatsapp_number:"60129999999"}},
     {env:approved({PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED:"false"})},
