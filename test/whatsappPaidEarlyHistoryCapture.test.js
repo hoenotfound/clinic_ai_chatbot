@@ -86,7 +86,7 @@ test("default off and explicit short-lived approval, independent key and no send
   ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","true"],
   ["PR395_STAGING_MODE","true"],
   ["WHATSAPP_SECONDARY_PRODUCTION_TOKEN_ENCRYPTION_KEY","invalid-key"]
- ])assert.throws(()=>hold.assertCaptureConfig({...base,[field]:value},now),field);
+ ])assert.throws(()=>hold.assertCaptureConfig({...base,[field]:value},now),undefined,field);
 });
 test("only explicit secondary history/contact events are held; unknown foreign history blocks entire batch",()=>{
  const cfg=hold.assertCaptureConfig(base,now);
