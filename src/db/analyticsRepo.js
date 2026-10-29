@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { visibleSalesLeadSql } = require("./archivalImportedLeadVisibility");
 const {
   buildFunnelStages,
   getAnalyticsPipelineProfile,
@@ -95,6 +96,7 @@ WITH journey_window AS (
   JOIN contacts c ON c.id = l.contact_id
   JOIN pipeline_stages s ON s.id = l.stage_id
   LEFT JOIN messages start_message ON start_message.id = l.started_message_id
+  WHERE ${visibleSalesLeadSql("l")}
 ),
 journeys AS (
   SELECT * FROM journey_window
