@@ -594,7 +594,7 @@ async function processIncomingMessage(
     }
     const secondaryAiConversation = senderScoped &&
       contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
-      process.env.WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED === "true" &&
+      process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       // Recheck at dispatch as defense in depth. A runtime flag toggle must
       // not make secondary WhatsApp generate Neutro-branded replies without authorization.
