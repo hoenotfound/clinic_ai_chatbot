@@ -755,6 +755,49 @@ async function openInboxConversation(page, name = "Alex Customer") {
   ).toBeVisible();
 }
 
+test("large Inbox lists render bounded rows while searching every older active conversation", async ({ page }) => {
+  const extras = Array.from({ length: 139 }, (_, index) => conversation({
+    contactId: 1000 + index,
+    name: `Synthetic Customer ${String(index + 1).padStart(3, "0")}`,
+  }));
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), ...extras],
+  });
+  await page.goto("/inbox");
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  await expect(inbox.getByRole("button", { name: /Show more conversations/ })).toBeVisible();
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toHaveCount(0);
+
+  const search = inbox.getByRole("searchbox", { name: "Search by name, number, message, or assignee" });
+  await search.fill("Synthetic Customer 139");
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toBeVisible();
+  await expect(inbox.getByRole("button", { name: /Show more conversations/ })).toHaveCount(0);
+  await search.fill("");
+  await inbox.getByRole("button", { name: /Show more conversations/ }).click();
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 070/ })).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("deep links still open contact-only imported archives excluded from default Inbox", async ({ page }) => {
+  const archived = conversation({
+    contactId: 987,
+    name: "Imported Contact Only",
+    lastMessage: "",
+    lastMessageAt: null,
+    has_unreplied: false,
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), archived],
+    archivedContactIds: [987],
+  });
+  await page.goto("/inbox?contact=987");
+  await expect(page.getByRole("region", {
+    name: "Conversation with Imported Contact Only",
+  })).toBeVisible();
+  await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(0);
+  expectNoUnexpectedApi(apiState);
+});
+
 test("selected conversation receives a new customer message through realtime refresh", async ({ page }) => {
   const apiState = await installApi(page);
 
@@ -856,6 +899,8 @@ test("realtime event for another conversation updates its list item without repl
   await expect(selectedThread).toBeVisible();
 
   const fetchCountBefore = apiState.getMessageFetchCount(101);
+  const fullListCountBefore = apiState.getListFetches();
+  const summaryCountBefore = apiState.getSummaryFetches();
   const bellaMessage = inboundMessage({
     id: 21,
     content: "Bella realtime message",
@@ -873,6 +918,8 @@ test("realtime event for another conversation updates its list item without repl
   }
   await expect(page.getByText("Bella realtime message", { exact: true }).first()).toBeVisible();
   expect(apiState.getMessageFetchCount(101)).toBe(fetchCountBefore);
+  await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(summaryCountBefore);
+  expect(apiState.getListFetches()).toBe(fullListCountBefore);
   expectNoUnexpectedApi(apiState);
 });
 
@@ -1145,8 +1192,11 @@ test("document forward picker hides Messenger and Instagram conversations", asyn
     number: "ig-202",
     channel: "instagram",
   });
+  const manyWhatsApp = Array.from({ length: 78 }, (_, index) => conversation({
+    contactId: 1000 + index, name: `Forwardable Customer ${index + 1}`,
+  }));
   const apiState = await installApi(page, {
-    initialConversations: [conversation(), instagram],
+    initialConversations: [conversation(), instagram, ...manyWhatsApp],
     initialMessagesByContact: new Map([[101, [inboundMessage(), documentMessage]]]),
   });
 
@@ -1164,6 +1214,9 @@ test("document forward picker hides Messenger and Instagram conversations", asyn
   await expect(dialog.getByText("Documents can be forwarded to WhatsApp only", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Instagram Customer", { exact: false })).toHaveCount(0);
   await expect(dialog.getByText("Alex Customer", { exact: false })).toBeVisible();
+  await expect(dialog.getByText("Forwardable Customer 78", { exact: false })).toHaveCount(0);
+  await dialog.getByRole("textbox", { name: "Search conversations to forward" }).fill("Forwardable Customer 78");
+  await expect(dialog.getByText("Forwardable Customer 78", { exact: false })).toBeVisible();
 
   await dialog.getByRole("button", { name: "Close forward message" }).click();
   expectNoUnexpectedApi(apiState);
