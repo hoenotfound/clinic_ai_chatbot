@@ -31,6 +31,17 @@ function reject() {
 // The caller's contact is never the authority. Verify the bound contact,
 // sender row and customer phone together before resolving an API credential.
 async function resolveSecondaryOutboundBinding(contact, { database = pool, env = process.env } = {}) {
+  // A QA browser may contain many imported contacts. Even an authenticated
+  // operator cannot accidentally send from staging to any except the
+  // separately approved test recipient. The normal production transport
+  // remains unchanged.
+  if (env.PR395_STAGING_MODE === "true") {
+    let recipient;
+    try {
+      recipient = require("./pr395StagingSafety").approvedStaffTestRecipient(env);
+    } catch (_) { reject(); }
+    if (String(contact?.whatsapp_number || "") !== recipient.replace(/\\D/g, "")) reject();
+  }
   if (env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" ||
       env.WHATSAPP_MULTI_NUMBER_READ_ENABLED !== "true" ||
       env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED !== "true" ||
