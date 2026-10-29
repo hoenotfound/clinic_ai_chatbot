@@ -16,8 +16,14 @@ const FIELDS = new Set(["history", "smb_app_state_sync"]);
 const MAX_CHANGE_BYTES = 8 * 1024 * 1024;
 const MAX_CHANGES = 100;
 
-function enabled(env=process.env) {
-  return env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED === "true";
+// After the short-lived capture deadline, stop selecting this receiver.
+// Other signed app-default traffic should return to the existing guarded router
+// rather than be rejected by a now-expired capture configuration.
+function enabled(env=process.env,now=new Date()) {
+  if(env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED !== "true") return false;
+  const until=new Date(env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_UNTIL||"").getTime();
+  const at=new Date(now).getTime();
+  return Number.isFinite(until) && Number.isFinite(at) && until>at;
 }
 function digits(v) {
   if (typeof v !== "string" || !/^\+?[0-9\s().-]{8,28}$/.test(v)) return null;
@@ -25,7 +31,7 @@ function digits(v) {
 }
 function numeric(v) { return typeof v === "string" && /^\d{1,32}$/.test(v); }
 function assertCaptureConfig(env=process.env,now=new Date()) {
-  if (!enabled(env)) throw Error("Early capture is OFF");
+  if (!enabled(env,now)) throw Error("Early capture is OFF or expired");
   const until = new Date(env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_UNTIL || "");
   const nowMs = new Date(now).getTime();
   if (env.PR395_STAGING_MODE === "true" ||
