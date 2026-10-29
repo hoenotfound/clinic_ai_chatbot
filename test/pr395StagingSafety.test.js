@@ -173,6 +173,10 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
   assert.deepEqual(assertPr395StagingSafety(verified),{
     staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
   });
+  // HMAC verified inbound-only must never require a usable sending token.
+  assert.deepEqual(assertPr395StagingSafety({...verified,WHATSAPP_SECONDARY_TOKEN:""}), {
+    staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
+  });
   for(const overrides of [
     {WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"1852014482431209"},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:""},
