@@ -55,7 +55,9 @@ function isUnavailableWhatsAppReview(summary) {
 }
 function displayAiReviewSummary(summary) {
   const text = String(summary || "");
-  return isUnavailableWhatsAppReview(text) ? UNAVAILABLE_WHATSAPP_REVIEW : text;
+  if (!isUnavailableWhatsAppReview(text)) return text;
+  const marker = text.match(/^(\[#\d+\]\s*)/);
+  return (marker?.[1] || "") + UNAVAILABLE_WHATSAPP_REVIEW;
 }
 
 const MESSAGE_PAGE_SIZE = 50;
@@ -3357,6 +3359,12 @@ function ThreadView({
                         className="min-h-9 touch-manipulation rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-primary)]">
                         Copy resend request
                       </button>
+                      <details className="text-xs text-[var(--color-text-muted)]">
+                        <summary className="cursor-pointer underline">View suggested message</summary>
+                        <p className="mt-2 whitespace-pre-line break-words select-text" aria-label="Suggested resend request">
+                          {WHATSAPP_RESEND_REQUEST}
+                        </p>
+                      </details>
                       <p className="text-[11px] leading-4 text-[var(--color-text-muted)]">
                         Copy only. Nothing is sent and the AI setting is unchanged. Send manually only if needed.
                       </p>
