@@ -166,17 +166,21 @@ test("Meta 131060 on Coexistence shows staff-only Business App instruction", asy
   const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
   await expect(thread).toBeVisible();
   await thread.getByRole("button", { name: "Needs attention" }).click();
-  const reviews = thread.getByLabel("Unresolved questions for staff");
+  await expect(thread.getByText("Pending reviews:")).toBeVisible();
+  const reviews = thread.getByLabel("Unresolved reviews for staff");
   await expect(reviews.getByText(/Message #3431:/)).toBeVisible();
   await expect(reviews.getByText(/WhatsApp message unavailable \(Meta 131060\)/)).toBeVisible();
   await expect(reviews.getByText(/Check this customer's original message in the WhatsApp Business app/)).toBeVisible();
   await expect(reviews.getByText(/cu e ly u available/)).toHaveCount(0);
-  await expect(reviews.getByRole("button", { name: "Mark question 3431 resolved" })).toBeVisible();
+  await expect(reviews.getByRole("button", { name: "Mark message 3431 reviewed" })).toBeVisible();
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
+  await expect(thread.getByRole("menuitem", { name: "Resolve all 1 review" })).toBeVisible();
+  await thread.getByRole("button", { name: "Conversation actions" }).click();
   await expect(thread.getByRole("button", { name: /Copy resend|Resend request/i })).toHaveCount(0);
   await expect(thread.getByText(/ask the customer to resend/i)).toHaveCount(0);
   expect(postCount).toBe(0);
   // Review remains pending until staff explicitly resolves it.
-  await expect(reviews.getByRole("button", { name: "Mark question 3431 resolved" })).toBeVisible();
+  await expect(reviews.getByRole("button", { name: "Mark message 3431 reviewed" })).toBeVisible();
 });
 
 test("non-Coexistence Meta 131060 gives generic instructions, not Business App guidance", async ({ page }) => {
@@ -208,7 +212,8 @@ test("non-Coexistence Meta 131060 gives generic instructions, not Business App g
   await page.goto("/inbox?contact=201");
   const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
   await thread.getByRole("button", { name: "Needs attention" }).click();
-  const reviews = thread.getByLabel("Unresolved questions for staff");
+  const reviews = thread.getByLabel("Unresolved reviews for staff");
   await expect(reviews.getByText(/Staff review required/)).toBeVisible();
+  await expect(reviews.getByRole("button", { name: "Mark message 45 reviewed" })).toBeVisible();
   await expect(reviews.getByText(/WhatsApp Business app/)).toHaveCount(0);
 });
