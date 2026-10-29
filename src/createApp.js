@@ -651,7 +651,8 @@ function createApp({
     }
   }, paidDefaultHistoryJsonParser, async (req, res) => {
     try {
-      if (productionHistoryReceiver.configured(process.env)) {
+      if (productionHistoryReceiver.configured(process.env) ||
+          productionHistoryReceiver.liveConfigured(process.env)) {
         return await productionHistoryReceiver.dispatch(
           req, res, primaryWhatsappWebhookHandler, {
             stageHistory: (body, opts) => stagePaidSecondaryHistory(body, opts)
