@@ -74,6 +74,20 @@ function setup({ blockAt=null, ownerMismatch=false, billingDenied=false,
 }
 const data={contact,messageId:120,text:"Hello Ariel",
   replyToProviderMessageId:"wamid.original"};
+const aiOnlyEnv = {
+  ...env,
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+  WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+  WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+  WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+  WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
+  WHATSAPP_COEXISTENCE_ENABLED:"true",
+  WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+  WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
+  WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+};
 test("secondary staff dispatcher is OFF by default and cannot contact Meta",async()=>{
   const {opts,calls}=setup();
   const result=await sendSecondaryStaffText(data,{
@@ -152,10 +166,12 @@ test("provider timeout cannot be automatically retried",async()=>{
   assert.deepEqual(calls.mark,[{reservationId}]);
 });
 
-test("accepted provider WAMID is preserved even when billing evidence save fails",async()=>{
+test("accepted provider WAMID is preserved but AI outcome stays unresolved when billing evidence save fails",async()=>{
   const {opts}=setup({recordResult:{recorded:false}});
   const result=await sendSecondaryStaffText(data,opts);
-  assert.equal(result.success,true);
+  assert.equal(result.success,false);
+  assert.equal(result.ambiguous,true);
+  assert.equal(result.retryable,false);
   assert.equal(result.wamid,"wamid.ariel-ok");
   assert.equal(result.unknown,true);
   assert.equal(result.retryable,false);
@@ -166,10 +182,11 @@ test("AI text requires its own activation and does not inherit staff send permis
   const denied=await sendSecondaryStaffText({...data,origin:"ai_reply"},opts);
   assert.equal(denied.code,"secondary_staff_send_disabled");
   assert.equal(calls.send.length,0);
-  const activated={...opts,env:{
-    ...env,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
-    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
-  }};
+  const oldFlagOnly=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+    ...opts,env:{...aiOnlyEnv,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"},
+  });
+  assert.equal(oldFlagOnly.code,"secondary_staff_send_disabled");
+  const activated={...opts,env:aiOnlyEnv};
   const accepted=await sendSecondaryStaffText({...data,origin:"ai_reply"},activated);
   assert.equal(accepted.success,true);
   assert.equal(calls.send.length,1);
@@ -179,7 +196,7 @@ test("AI staff-takeover cancellation before reservation never calls Meta",async(
   const {opts,calls}=setup();
   const result=await sendSecondaryStaffText({
     ...data,origin:"system_fallback",preSendCheck:()=>false,
-  },{...opts,env:{...env,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}});
+  },{...opts,env:aiOnlyEnv});
   assert.equal(result.cancelled,true);
   assert.equal(calls.reserved,0);
   assert.equal(calls.send.length,0);
@@ -190,8 +207,86 @@ test("AI cancellation after billing reservation never reuses or frees ambiguous 
   let count=0;
   const result=await sendSecondaryStaffText({
     ...data,origin:"ai_reply",preSendCheck:()=>++count<2,
-  },{...opts,env:{...env,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"}});
+  },{...opts,env:aiOnlyEnv});
   assert.equal(result.ambiguous,true);
   assert.equal(calls.send.length,0);
   assert.deepEqual(calls.mark,[{reservationId}]);
+});
+
+test("AI-only transport blocks staff Inbox sends and every incomplete launch prerequisite",async()=>{
+  for(const [key,value] of [
+    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AI_SEND_ENABLED","false"],
+    ["WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED","false"],
+    ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED","false"],
+    ["WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED","false"],
+    ["WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE","other"],
+    ["WHATSAPP_COEXISTENCE_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AI_MEDIA_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED","true"],
+  ]) {
+    const {opts,calls}=setup();
+    const result=await sendSecondaryStaffText({...data,origin:"ai_reply"},
+      {...opts,env:{...aiOnlyEnv,[key]:value}});
+    assert.equal(result.code,"secondary_staff_send_disabled",key);
+    assert.equal(calls.reserved,0,key);
+    assert.equal(calls.send.length,0,key);
+  }
+  for(const origin of ["staff","followup","ai_media"]) {
+    const {opts,calls}=setup();
+    const result=await sendSecondaryStaffText({...data,origin},{...opts,env:aiOnlyEnv});
+    assert.equal(result.code,"secondary_staff_send_disabled",origin);
+    assert.equal(calls.reserved,0);
+    assert.equal(calls.send.length,0);
+  }
+});
+
+test("staff Business App echo just before provider call still suppresses AI text",async()=>{
+  const {opts,calls}=setup();
+  let checks=0;
+  const result=await sendSecondaryStaffText({
+    ...data,origin:"ai_reply",preSendCheck:()=>++checks<3,
+  },{...opts,env:aiOnlyEnv});
+  assert.equal(checks,3);
+  assert.equal(result.unknown,true);
+  // Once a billing reservation exists, leave durable AI attempt ambiguous
+  // rather than marking it cancelled and eligible for a new send.
+  assert.notEqual(result.cancelled,true);
+  assert.equal(result.retryable,false);
+  assert.equal(calls.reserved,1);
+  assert.equal(calls.send.length,0);
+  assert.deepEqual(calls.mark,[{reservationId}]);
+});
+
+test("Meta WAMID without durable secondary billing evidence remains ambiguous to AI",async()=>{
+  const {opts,calls}=setup({
+    providerResult:{success:true,wamid:"wamid.provider-accepted"},
+    recordResult:{recorded:false},
+  });
+  const result=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+    ...opts,env:aiOnlyEnv,
+  });
+  assert.equal(result.success,false);
+  assert.equal(result.wamid,"wamid.provider-accepted");
+  assert.equal(result.unknown,true);
+  assert.equal(result.ambiguous,true);
+  assert.equal(result.retryable,false);
+  assert.equal(calls.send.length,1);
+  assert.equal(calls.reserved,1);
+});
+
+test("text-only AI never accepts a non-text provider callback",async()=>{
+  for (const origin of ["ai_reply","system_fallback"]) {
+    const {opts,calls}=setup();
+    const result=await sendSecondaryStaffText({
+      ...data,origin,dispatchTransport:async()=>({success:true,wamid:"wamid.unsafe-non-text"}),
+    },{...opts,env:aiOnlyEnv});
+    assert.equal(result.code,"secondary_staff_send_disabled");
+    assert.equal(calls.reserved,0);
+    assert.equal(calls.send.length,0);
+  }
 });

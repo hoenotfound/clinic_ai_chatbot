@@ -10,6 +10,8 @@ const policy = require("./whatsappSecondaryPolicyService");
 const billing = require("../db/whatsappSenderBillingGateRepo");
 const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
+const { secondaryUsesPrimaryClinicContent } =
+  require("./whatsappSenderActivationGate");
 
 function block(code) {
   return {
@@ -43,21 +45,37 @@ async function sendSecondaryStaffText({
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
 } = {}) {
-  const authorizedOrigin = origin === "staff" ?
-    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" :
-    (["ai_reply","system_fallback"].includes(origin) &&
-      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true") ||
-    (origin === "ai_media" &&
-      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
-    (origin === "followup" &&
-      env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
+  const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
+  const aiTextAuthorized = aiTextOnly &&
+    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
+    env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
+    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED !== "true" &&
+    env.WHATSAPP_COEXISTENCE_ENABLED === "true" &&
+    secondaryUsesPrimaryClinicContent(env);
+  const authorizedOrigin = origin === "staff"
+    ? !aiTextOnly && env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true"
+    : (["ai_reply","system_fallback"].includes(origin) && aiTextAuthorized) ||
+      (!aiTextOnly && origin === "ai_media" &&
+        env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true") ||
+      (!aiTextOnly && origin === "followup" &&
+        env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
   if (!authorizedOrigin ||
+      // AI text-only and Phase B text follow-ups must not use a callback
+      // capable of uploading media or sending non-text Graph payloads.
+      (aiTextOnly && typeof dispatchTransport === "function") ||
       (templateRequest && (origin !== "staff" ||
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
         typeof dispatchTransport !== "function" ||
@@ -184,6 +202,16 @@ async function sendSecondaryStaffText({
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
     }
+    // An app-originated staff echo can arrive during the final reservation
+    // check. Recheck the sender-qualified cancellation epoch at the last
+    // possible point before calling Meta. The consumed billing hold stays
+    // unknown even when cancellation prevents the provider call.
+    if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
+      await markUnknown();
+      return {...block("secondary_send_cancelled_before_provider"),
+        unknown:true, ambiguous:true};
+
+    }
 
     const send = typeof dispatchTransport === "function"
       ? await dispatchTransport(transport)
@@ -198,7 +226,9 @@ async function sendSecondaryStaffText({
       // A provider may have accepted the message even though Neon could not
       // persist the billing transition; never advertise a safe retry.
       return {
-        success: accepted, wamid: accepted ? send.wamid : null,
+        // A Meta WAMID is not proof the sender-specific billing ledger
+        // committed. Do not tell the AI pipeline a completed send occurred.
+        success: false, wamid: accepted ? send.wamid : null,
         unknown: true, ambiguous: true, retryable: false,
         code: "secondary_staff_billing_outcome_unverified",
         error: "Provider outcome requires staff review; do not resend.",
