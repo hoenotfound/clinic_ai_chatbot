@@ -655,6 +655,46 @@ test("AI review uses a separate, uncapped event type and cannot consume urgent h
   assert.match(queued[1].messageText, /Human Intervention Required/);
 });
 
+test("Meta 131060 alone gets a 24-hour per-contact Telegram cooldown", async () => {
+  const queued = [];
+  const service = createTelegramImmediateAlertService({
+    env: enabledEnv,
+    getContext: async () => context,
+    repository: {
+      async queueAlert(input) {
+        queued.push(input);
+        return { id: 200 + queued.length };
+      },
+    },
+    wakeQueue() {},
+  });
+
+  const unavailable = await service.sendAiReviewAlert({
+    contactId: 12,
+    messageId: 3431,
+    reason: "AI review requested: [#3431] WhatsApp message unavailable (Meta 131060). Check the WhatsApp Business app.",
+  });
+  assert.equal(unavailable.status, "queued");
+  assert.equal(queued[0].eventKey, "ai-review:12:3431");
+  assert.equal(queued[0].cooldownMinutes, 1440);
+  assert.equal(queued[0].cooldownScope, "meta_131060");
+  assert.match(queued[0].messageText, /WhatsApp Message Unavailable \(Meta 131060\)/);
+
+  await service.sendAiReviewAlert({
+    contactId: 12, messageId: 3432,
+    reason: "AI review requested: [#3432] Is this treatment safe for pregnancy?",
+  });
+  assert.equal(queued[1].cooldownMinutes, 0);
+  assert.equal(queued[1].cooldownScope, undefined);
+  assert.match(queued[1].messageText, /Staff Question to Review/);
+
+  await service.sendHumanInterventionAlert({
+    contactId: 12, messageId: 3433, reason: "Urgent human help needed",
+  });
+  assert.equal(queued[2].cooldownMinutes, HUMAN_ALERT_COOLDOWN_MINUTES);
+  assert.equal(queued[2].cooldownScope, undefined);
+});
+
 test("review alerts are cancelled when the original question is no longer pending", async () => {
   const alert = { id: 8, contact_id: 12, alert_type: "ai_review", event_key: "ai-review:12:44" };
   let capturedSql = "";
