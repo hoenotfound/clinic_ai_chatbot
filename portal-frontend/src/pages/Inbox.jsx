@@ -540,6 +540,7 @@ export default function Inbox() {
   const latestFullRequestRef = useRef(0);
   const lastAppliedFullRequestRef = useRef(0);
   const latestSummaryByContactRef = useRef(new Map());
+  const latestLocalEditByContactRef = useRef(new Map());
   const lastCommittedSummaryStartRef = useRef(0);
 
   selectedIdRef.current = selectedId;
@@ -587,7 +588,8 @@ export default function Inbox() {
     const summary = await api.getConversationSummary(id);
     if (!summary) throw new Error("Missing Inbox summary.");
     if (latestSummaryByContactRef.current.get(id) !== started ||
-        lastAppliedFullRequestRef.current > started) return;
+        lastAppliedFullRequestRef.current > started ||
+        (latestLocalEditByContactRef.current.get(id) || 0) > started) return;
     lastCommittedSummaryStartRef.current =
       Math.max(lastCommittedSummaryStartRef.current, started);
     setConversations((current) => {
@@ -1124,8 +1126,10 @@ export default function Inbox() {
   }
 
   function updateConversationLocally(contactId, updates) {
-    // Staff actions must not be rolled back by older pending list requests.
-    lastCommittedSummaryStartRef.current = ++inboxRequestClockRef.current;
+    // Staff changes must win over older full-list AND single-contact reads.
+    const mutationVersion = ++inboxRequestClockRef.current;
+    lastCommittedSummaryStartRef.current = mutationVersion;
+    latestLocalEditByContactRef.current.set(Number(contactId), mutationVersion);
     setConversations((current) =>
       current?.map((conversation) =>
         conversation.contact_id === contactId ? { ...conversation, ...updates } : conversation
