@@ -77,7 +77,7 @@ const data={contact,messageId:120,text:"Hello Ariel",
 const aiOnlyEnv = {
   ...env,
   WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
-  WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
   WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
   WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
   WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
@@ -181,7 +181,7 @@ test("AI text requires its own activation and does not inherit staff send permis
   assert.equal(denied.code,"secondary_staff_send_disabled");
   assert.equal(calls.send.length,0);
   const oldFlagOnly=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
-    ...opts,env:{...aiOnlyEnv,WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED:"false"},
+    ...opts,env:{...aiOnlyEnv,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"},
   });
   assert.equal(oldFlagOnly.code,"secondary_staff_send_disabled");
   const activated={...opts,env:aiOnlyEnv};
