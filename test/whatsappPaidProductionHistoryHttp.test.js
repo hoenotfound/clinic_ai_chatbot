@@ -132,3 +132,92 @@ test("full HTTP production history receiver OFF remains fail-closed on secondary
     assert.equal(response.status,503);
   });
 });
+
+
+const liveOnlyConfig={
+  ...config,
+  WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+  WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+  WHATSAPP_PAID_SECONDARY_HISTORY_OPERATOR_APPROVED:"false",
+  WHATSAPP_PAID_SECONDARY_HISTORY_OWNER_CONSENT_VERIFIED:"false",
+  WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false",
+  WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED:"false",
+  WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false",
+  WHATSAPP_SECONDARY_TOKEN:"",
+  WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"false",
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+  WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",
+  WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"false",
+};
+function liveMessage(account,phone,id){
+  return JSON.stringify({object:"whatsapp_business_account",entry:[{
+    id:account,changes:[{field:"messages",value:{
+      messaging_product:"whatsapp",
+      metadata:{phone_number_id:phone,display_phone_number:"synthetic"},
+      messages:[{id,from:"60129990001",timestamp:"1793250000",
+        type:"text",text:{body:"Synthetic HTTP test only"}}]
+    }}]
+  }]});
+}
+function liveOnlyApp(onClaim){
+  return createApp({
+    sessionSecret:"synthetic-session-secret-for-live-only-http",
+    durablyClaimIncoming:onClaim,
+    scheduleDurableClaim:async()=>{},
+    queueIncomingForReply:async()=>{throw Error("No AI send during live-only webhook test");},
+  });
+}
+test("live-only signed HTTP accepts exact second sender with no outbound token, preserves primary /webhook",async t=>{
+  setEnv(t,liveOnlyConfig);readiness.markReady();
+  const claimed=[];
+  await serve(liveOnlyApp(async(key,incoming)=>{
+    claimed.push({key,account:incoming.businessAccountId,
+      phone:incoming.businessPhoneNumberId,wamid:incoming.id});
+    return {syntheticClaim:true};
+  }),async url=>{
+    const secondary=liveMessage(config.WHATSAPP_SECONDARY_WABA_ID,
+      config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,"wamid.synthetic-secondary-inbound");
+    const primary=liveMessage(config.WHATSAPP_WABA_ID,
+      config.WHATSAPP_PHONE_NUMBER_ID,"wamid.synthetic-primary-inbound");
+    assert.equal((await post(url,secondary)).status,200,
+      "signed secondary must be routed by real Express JSON parser and verified twice");
+    // Old production entry point is deliberately unchanged.
+    const signedPrimary="sha256="+crypto.createHmac("sha256",secret)
+      .update(primary).digest("hex");
+    const legacy=await fetch(url+"/webhook",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Hub-Signature-256":signedPrimary},
+      body:primary
+    });
+    assert.equal(legacy.status,200);
+    assert.equal(claimed.length,2);
+    assert.equal(claimed[0].account,config.WHATSAPP_SECONDARY_WABA_ID);
+    assert.equal(claimed[0].phone,config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+    assert.equal(claimed[0].key,
+      "whatsapp:"+config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID+":60129990001");
+    assert.equal(claimed[1].account,config.WHATSAPP_WABA_ID);
+    assert.equal(claimed[1].phone,config.WHATSAPP_PHONE_NUMBER_ID);
+  });
+});
+test("live-only signed HTTP fails closed for missing/forged HMAC, wrong phone, foreign WABA and history",async t=>{
+  setEnv(t,liveOnlyConfig);readiness.markReady();
+  let claims=0;
+  await serve(liveOnlyApp(async()=>{claims++;return {syntheticClaim:true};}),async url=>{
+    const correct=liveMessage(config.WHATSAPP_SECONDARY_WABA_ID,
+      config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,"wamid.synthetic-secondary-inbound");
+    const unsigned=await fetch(url+"/whatsapp/default",{
+      method:"POST",headers:{"Content-Type":"application/json"},body:correct
+    });
+    assert.equal(unsigned.status,403);
+    assert.equal((await post(url,correct,"sha256="+"0".repeat(64))).status,403);
+    const wrongPhone=liveMessage(config.WHATSAPP_SECONDARY_WABA_ID,
+      config.WHATSAPP_PHONE_NUMBER_ID,"wamid.synthetic-wrong-phone");
+    assert.equal((await post(url,wrongPhone)).status,503);
+    const foreign=liveMessage("999999999999999",
+      config.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,"wamid.synthetic-foreign");
+    assert.equal((await post(url,foreign)).status,503);
+    assert.equal((await post(url,payload())).status,503,
+      "historical import must remain OFF for live-only receiver");
+    assert.equal(claims,0);
+  });
+});
