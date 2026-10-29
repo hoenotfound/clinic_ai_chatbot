@@ -90,6 +90,11 @@ async function listPending({ username, canViewAll = false, leadId = null, querya
        AND l.temperature IN ('hot','warm')
        AND c.channel = 'whatsapp'
        AND last_inbound.created_at <= $5::timestamptz - interval '48 hours'
+       -- Old imported conversations are never actionable sales follow-ups.
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages archived
+         WHERE archived.message_id = last_inbound.id
+       )
        AND ($1::boolean OR l.owner_username = $2::text)
        AND ($4::integer IS NULL OR l.id = $4)
      ORDER BY last_inbound.created_at DESC, l.id DESC

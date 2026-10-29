@@ -34,6 +34,13 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     for (const file of files) {
       await client.query(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     }
+    // This isolated fixture predates WhatsApp coexistence. The production
+    // history table is created by migration 099; supply its lookup shape here.
+    await client.query(`
+      CREATE TABLE whatsapp_sender_coexistence_history_messages (
+        message_id INTEGER PRIMARY KEY
+      )
+    `);
     const contact = await client.query(
       "INSERT INTO contacts (whatsapp_number, name, whatsapp_opt_in_at, whatsapp_opt_in_source) VALUES ('60123456789','Example','2026-10-01T00:00:00Z','customer_request') RETURNING id"
     );
@@ -52,6 +59,17 @@ test("PostgreSQL follow-up selection respects 48h, ownership, saved outcome and 
     async function pending(username="sales-a") {
       return listPending({ username, queryable: client, now: NOW });
     }
+    assert.equal((await pending()).length, 1);
+    // Old WhatsApp Business App history is never eligible for sales outreach.
+    await client.query(
+      "INSERT INTO whatsapp_sender_coexistence_history_messages(message_id) VALUES ($1)",
+      [inbound.rows[0].id]
+    );
+    assert.equal((await pending()).length, 0);
+    await client.query(
+      "DELETE FROM whatsapp_sender_coexistence_history_messages WHERE message_id=$1",
+      [inbound.rows[0].id]
+    );
     assert.equal((await pending()).length, 1);
     assert.equal((await pending("other-salesperson")).length, 0);
     // A Sales account with view_all_leads can manage eligible unassigned
