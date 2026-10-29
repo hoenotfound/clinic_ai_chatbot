@@ -120,3 +120,69 @@ test("Inbox remains AI while individual staff questions are resolved independent
   await expect.poll(() => resolvedIds).toEqual([10, 11]);
   await expect(thread.getByText("Needs attention", { exact: false })).toHaveCount(0);
 });
+
+
+test("Meta 131060 review offers a copy-only resend request without sending", async ({ page }) => {
+  await page.addInitScript(() => {
+    class StubEventSource {
+      addEventListener() {}
+      removeEventListener() {}
+      close() {}
+    }
+    window.EventSource = StubEventSource;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => { window.__unavailableCopiedText = value; },
+      },
+    });
+  });
+
+  const contact = makeContact();
+  contact.pending_review_count = 1;
+  contact.pending_review_summaries =
+    "[#3431] Unsupported WhatsApp message (unsupported). Meta 131060. This message is cu e ly u available.";
+  contact.pending_review_items = [{
+    id: 26, messageId: 3431, category: "information",
+    summary: "Unsupported WhatsApp message (unsupported). Meta 131060. This message is cu e ly u available.",
+  }];
+  contact.last_message = "📎 [Customer sent a WhatsApp message that could not be displayed]";
+
+  let postCount = 0;
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() !== "GET") postCount += 1;
+    let data = {};
+    if (path === "/api/auth/branding") {
+      data = { clientName: "Test Clinic", clientLogoUrl: "" };
+    } else if (path === "/api/auth/me") {
+      data = { user: reviewer, username: reviewer.username };
+    } else if (path === "/api/conversations") {
+      data = [contact];
+    } else if (path === "/api/conversations/201/messages") {
+      data = { messages: [], hasMore: false };
+    } else if (path === "/api/conversations/201/attribution") {
+      data = { lead: null, attribution: null };
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
+  });
+
+  await page.goto("/inbox?contact=201");
+  const thread = page.locator('section[aria-label="Conversation with Review Customer"]');
+  await expect(thread).toBeVisible();
+  await thread.getByRole("button", { name: "Needs attention" }).click();
+  const reviews = thread.getByLabel("Unresolved questions for staff");
+  await expect(reviews.getByText(/WhatsApp message unavailable \(Meta 131060\)/)).toBeVisible();
+  await expect(reviews.getByText(/cu e ly u available/)).toHaveCount(0);
+  await expect(reviews.getByRole("button", { name: "Mark question 3431 resolved" })).toBeVisible();
+
+  await reviews.getByRole("button", { name: "Copy resend request" }).click();
+  const copied = await page.evaluate(() => window.__unavailableCopiedText);
+  expect(copied).toContain("用文字再发一次");
+  expect(copied).toContain("resend it as text");
+  expect(postCount).toBe(0);
+  await expect(reviews.getByRole("button", { name: "Mark question 3431 resolved" })).toBeVisible();
+
+  await reviews.getByText("View suggested message").click();
+  await expect(reviews.getByLabel("Suggested resend request")).toContainText("Hi, sorry");
+});
