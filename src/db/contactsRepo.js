@@ -536,7 +536,7 @@ async function updateContact(id, { name, whatsappNumber }) {
 async function searchConversationDirectory({ term, accessibleContactIds = null, limit = 40 } = {}) {
   const text = String(term || "").trim().slice(0, 80);
   if (text.length < 2 || accessibleContactIds?.length === 0) return [];
-  const escaped = text.replace(/[\\%_]/g, "\\async function listConversations({ contactId = null, includeEmptyCoexistenceContacts = false } = {}) {");
+  const escaped = text.replace(/[\\%_]/g, "\\$&");
   const normalizedPhone = text.replace(/[^0-9]/g, "");
   const boundLimit = Math.max(1, Math.min(60, Number(limit) || 40));
   const result = await pool.query(`
