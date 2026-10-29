@@ -806,6 +806,29 @@ test("deep links still open contact-only imported archives excluded from default
   expectNoUnexpectedApi(apiState);
 });
 
+test("search retrieves archived Coexistence address-book contacts and opens their chat", async ({ page }) => {
+  const archived = conversation({
+    contactId: 8987, name: "Archive Search Customer", number: "+60176661122",
+    lastMessage: "", lastMessageAt: null, has_unreplied: false,
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), archived],
+    archivedContactIds: [8987],
+  });
+  await page.goto("/inbox");
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  await expect(inbox.getByText("Archive Search Customer")).toHaveCount(0);
+  await inbox.getByRole("searchbox", { name: "Search by name, number, message, or assignee" })
+    .fill("Archive Search");
+  const otherContacts = inbox.getByLabel("Other matching contacts");
+  await expect(otherContacts.getByRole("button", { name: /Archive Search Customer/ })).toBeVisible();
+  await otherContacts.getByRole("button", { name: /Archive Search Customer/ }).click();
+  await expect(page.getByRole("region", {
+    name: "Conversation with Archive Search Customer",
+  })).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
 test("selected conversation receives a new customer message through realtime refresh", async ({ page }) => {
   const apiState = await installApi(page);
 
@@ -1203,8 +1226,17 @@ test("document forward picker hides Messenger and Instagram conversations", asyn
   const manyWhatsApp = Array.from({ length: 78 }, (_, index) => conversation({
     contactId: 1000 + index, name: `Forwardable Customer ${index + 1}`,
   }));
+  const archived = conversation({
+    contactId: 2040, name: "Archived Forward Recipient", number: "+60199884455",
+    lastMessage: "", lastMessageAt: null,
+  });
+  const otherSender = conversation({
+    contactId: 2041, name: "Other Number Recipient",
+    whatsapp_sender_id: 9999, whatsapp_sender_key: "other-number",
+  });
   const apiState = await installApi(page, {
-    initialConversations: [conversation(), instagram, ...manyWhatsApp],
+    initialConversations: [conversation(), instagram, ...manyWhatsApp, archived, otherSender],
+    archivedContactIds: [2040],
     initialMessagesByContact: new Map([[101, [inboundMessage(), documentMessage]]]),
   });
 
@@ -1225,6 +1257,12 @@ test("document forward picker hides Messenger and Instagram conversations", asyn
   await expect(dialog.getByText("Forwardable Customer 78", { exact: false })).toHaveCount(0);
   await dialog.getByRole("textbox", { name: "Search conversations to forward" }).fill("Forwardable Customer 78");
   await expect(dialog.getByText("Forwardable Customer 78", { exact: false })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Search conversations to forward" })
+    .fill("Archived Forward Recipient");
+  await expect(dialog.getByText("Archived Forward Recipient", { exact: false })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Search conversations to forward" })
+    .fill("Other Number Recipient");
+  await expect(dialog.getByText("Other Number Recipient", { exact: false })).toHaveCount(0);
 
   await dialog.getByRole("button", { name: "Close forward message" }).click();
   expectNoUnexpectedApi(apiState);
