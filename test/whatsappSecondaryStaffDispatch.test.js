@@ -242,3 +242,18 @@ test("AI-only transport blocks staff Inbox sends and every incomplete launch pre
     assert.equal(calls.send.length,0);
   }
 });
+
+test("staff Business App echo just before provider call still suppresses AI text",async()=>{
+  const {opts,calls}=setup();
+  let checks=0;
+  const result=await sendSecondaryStaffText({
+    ...data,origin:"ai_reply",preSendCheck:()=>++checks<3,
+  },{...opts,env:aiOnlyEnv});
+  assert.equal(checks,3);
+  assert.equal(result.unknown,true);
+  assert.equal(result.cancelled,true);
+  assert.equal(result.retryable,false);
+  assert.equal(calls.reserved,1);
+  assert.equal(calls.send.length,0);
+  assert.deepEqual(calls.mark,[{reservationId}]);
+});
