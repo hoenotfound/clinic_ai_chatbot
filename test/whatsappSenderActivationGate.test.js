@@ -268,3 +268,32 @@ test("secondary receiver cannot activate without exact E164 lifecycle pin",()=>{
    ...base,WHATSAPP_PHONE_NUMBER:"+60174831336"
  }),/lifecycle pin/);
 });
+
+
+test("isolated inbound-only QA needs no sending token but production and staff do",async()=>{
+  const trial={...safe,
+    WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"300300300",
+    WHATSAPP_SECONDARY_WABA_ID:"400400400",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000",
+    WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
+    WHATSAPP_SECONDARY_TOKEN:"",
+    PR395_STAGING_MODE:"true",
+    PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true"
+  };
+  const mock={query:async(sql)=>{
+    if(sql.includes("COUNT(*)"))return{rows:[{total:1,nonprimary:1}]};
+    if(sql.includes("SELECT sender_key,state"))return{rows:[{sender_key:"coexistence_qa",state:"active"}]};
+    return{rows:[{id:4,sender_key:"neutro",state:"active"}]};
+  }};
+  assert.equal((await assertStoredSenderSafety({env:trial,database:mock})).verified,true);
+  for(const change of [
+    {PR395_STAGING_MODE:"false"},
+    {PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"false"},
+    {PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"}
+  ]){
+    await assert.rejects(assertStoredSenderSafety({env:{...trial,...change},database:mock}),
+      /Secondary WhatsApp Inbox configuration is incomplete or unsafe/);
+  }
+});

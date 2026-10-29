@@ -150,7 +150,42 @@ async function assertStoredSenderSafety({
   if (!Number.isSafeInteger(total) || !Number.isSafeInteger(nonprimary)) {
     throw new Error("Cannot verify durable WhatsApp sender bindings at startup.");
   }
-  if (nonprimary > 0 && (!readEnabled || !ingressEnabled)) {
+  // QA archive viewing only: the protected staging webhook refuses inbound
+  // provider processing and all outbound workers are off. This exception is
+  // intentionally limited to already-imported, sender-qualified QA history.
+  // Production and any actual provider-enabled staging still require BOTH
+  // sender-aware reads and sender-scoped ingress as before.
+  const isolatedArchiveOnly =
+    env.PR395_STAGING_MODE === "true" &&
+    env.PR414_QA_HISTORY_ARCHIVE_VIEW_ENABLED === "true" &&
+    readEnabled && !ingressEnabled &&
+    env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED !== "true" &&
+    env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" &&
+    env.PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED !== "true" &&
+    env.WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED !== "true" &&
+    env.PR414_QA_REAL_HISTORY_ACTION !== "import" &&
+    env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED !== "true" &&
+    ![
+      "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+      "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+      "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
+      "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+      "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
+      "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+      "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+      "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
+      "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+      "WHATSAPP_FEP_FOLLOWUPS_ENABLED"
+    ].some(flag => env[flag] === "true") &&
+    (() => {
+      try {
+        const url = new URL(env.DATABASE_URL);
+        return url.hostname.endsWith(".neon.tech") &&
+          decodeURIComponent(url.pathname) === "/pr414_forward_qa" &&
+          url.hostname.toLowerCase() === String(env.PR395_STAGING_EXPECTED_DATABASE_HOST || "").toLowerCase();
+      } catch (_) { return false; }
+    })();
+  if (nonprimary > 0 && (!readEnabled || !ingressEnabled) && !isolatedArchiveOnly) {
     throw new Error("Unsafe WhatsApp rollback: secondary-number contacts are " +
       "bound; sender-aware reads AND sender-scoped ingress must remain enabled. " +
       "Disable secondary sends/workers instead, not the permanent identity boundary.");
@@ -160,7 +195,16 @@ async function assertStoredSenderSafety({
         !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"")) ||
         !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID||"")) ||
         !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY||"")) ||
-        !String(env.WHATSAPP_SECONDARY_TOKEN||'').trim() ||
+        // A strictly inbound-only, HMAC-verified QA trial must not require
+      // installing an outbound credential on the isolated staging service.
+      // Production and QA staff-send remain sender-token gated.
+      (!String(env.WHATSAPP_SECONDARY_TOKEN||'').trim() &&
+        !(env.PR395_STAGING_MODE === "true" &&
+          env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" &&
+          env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED !== "true" &&
+          env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
+          env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" &&
+          env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true")) ||
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID===phone ||
         env.WHATSAPP_SECONDARY_SENDER_KEY===key) {
       throw new Error("Secondary WhatsApp Inbox configuration is incomplete or unsafe.");

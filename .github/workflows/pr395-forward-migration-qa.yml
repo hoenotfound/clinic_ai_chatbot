@@ -52,6 +52,13 @@ jobs:
             test/whatsappPaidDefaultHttp.test.js \
             test/whatsappCoexistenceHistoryService.test.js \
             test/whatsappSecondaryCaptureHandoff.test.js
+      - name: Verify pre-QR and post-QR signup separation and fail-closed guards
+        run: |
+          node --test test/whatsappCoexistenceAppOnlyDiscovery.test.js test/whatsappCoexistenceEmbeddedSignupSafety.test.js test/pr395CoexistenceActivationReadiness.test.js
+      - name: Build staging signup portal
+        run: |
+          npm --prefix portal-frontend ci
+          npm --prefix portal-frontend run build
       - name: Real signed HTTP clinic-history capture to disposable PostgreSQL
         env:
           RUN_SECONDARY_QA_HTTP_INTEGRATION: "true"

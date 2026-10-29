@@ -102,3 +102,10 @@ ORDER BY recorded_at DESC LIMIT 30;
 **STOP conditions:** uncertain sync response, wrong Meta identity, any primary webhook change, incomplete HMAC/legacy acknowledgment, missing history consent, unknown charges, unexpected secondary sends, Neutro inbound/outbound interruption or unacknowledged critical lifecycle alert.
 
 **Explicitly prohibited without additional operator approval:** scanning QR, changing Meta app-default callback, modifying Neutro overrides/prod service/DB, activating new outbound sending, merging PR #395.
+
+
+## 28 Oct 2026 — pre-QR and post-QR evidence separation
+
+Before QR, the protected staging gate checks signed synthetic callback rehearsals and an isolated history importer rehearsal, independently attested using PRE_SIGNUP_CALLBACK_REHEARSED, APP_DEFAULT_LIFECYCLE_REHEARSED and HISTORY_IMPORT_TRANSITION_REHEARSED variables with the PR395_STAGING_ prefix. The older VERIFIED flags are not accepted as substitutes. PR395_STAGING_APP_ONLY_SIGNUP_READY remains separate explicit QR authorization; never set it from a passing test alone.
+
+After QR, verify the actual Meta-issued account and phone identity, Business App plus Cloud API status, sender-scoped token, callback override and real signed Meta delivery. Contact/history sync remains separately authorized, once-only, disabled by default, and never follows automatically from QR approval. Never enable sends, AI, billing or follow-ups as part of rehearsal. Existing production Meta callback/Neutro overrides remain untouched.

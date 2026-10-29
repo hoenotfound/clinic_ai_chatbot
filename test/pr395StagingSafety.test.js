@@ -173,6 +173,10 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
   assert.deepEqual(assertPr395StagingSafety(verified),{
     staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
   });
+  // HMAC verified inbound-only must never require a usable sending token.
+  assert.deepEqual(assertPr395StagingSafety({...verified,WHATSAPP_SECONDARY_TOKEN:""}), {
+    staging:true,workersDisabled:true,providerProcessingDisabled:false,historyImporterOnly:true
+  });
   for(const overrides of [
     {WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"1852014482431209"},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"",WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:""},
@@ -182,7 +186,6 @@ test("provider rehearsal needs verified secondary account pin and all inbound-on
     {PR395_STAGING_APPROVED_TEST_PHONE_E164:""},
     {WHATSAPP_SECONDARY_SENDER_KEY:"tcm_wellness"},
     {WHATSAPP_SECONDARY_WABA_ID:""},
-    {WHATSAPP_SECONDARY_TOKEN:""},
     {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
     {WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"},
     {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},

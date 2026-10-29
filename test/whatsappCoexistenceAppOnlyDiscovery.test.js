@@ -23,9 +23,9 @@ function qa(overrides = {}) {
     PR395_STAGING_MODE: "true",
     PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
     PR395_STAGING_APP_ONLY_SIGNUP_READY: "true",
-    PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED: "true",
-    PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED: "true",
-    PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED: "true",
+    PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED: "true",
+    PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED: "true",
+    PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED: "true",
     PR395_STAGING_PROVIDER_REHEARSAL_ENABLED: "false",
     PR395_STAGING_ALLOW_PROVIDER_PROCESSING: "false",
     WHATSAPP_PHONE_NUMBER_ID: "111111111111111",
@@ -67,6 +67,38 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
   const source = qa();
   assert.equal(unassignedProtectedQaTarget(source),true);
   assert.equal(publicConfig(source).configured,true);
+  assert.equal(publicConfig(source).onboardingPhases.beforeQr.ready,true);
+  assert.equal(publicConfig(source).onboardingPhases.afterQr.onceOnlyHistorySyncAutomatic,false);
+  assert.equal(publicConfig(source).onboardingPhases.afterQr.requiresSeparateOwnerHistoryConsent,true);
+  // Synthetic rehearsals never imply QR approval or live provider proof.
+  assert.equal(publicConfig(qa({PR395_STAGING_APP_ONLY_SIGNUP_READY:"false"})).configured,false);
+  for(const flag of [
+    "PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED",
+    "PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED",
+    "PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED"
+  ]){
+    const unsafe=qa({[flag]:"false"});
+    assert.equal(unassignedProtectedQaTarget(unsafe),false);
+    assert.equal(publicConfig(unsafe).configured,false);
+    assert.ok(publicConfig(unsafe).missing.some(x=>x.includes(flag)));
+  }
+  // Legacy VERIFIED cannot be substituted for separately attested rehearsals.
+  assert.equal(publicConfig(qa({
+    PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED:"false",
+    PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED:"true"
+  })).configured,false);
+  assert.equal(publicConfig(qa({
+    PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED:"false"
+  })).missing.some(x=>x.includes("PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED")),true);
+  assert.equal(publicConfig(qa({
+    PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED:"false"
+  })).missing.some(x=>x.includes("PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED")),true);
+  // A pre-signup personal Business App number has no assigned Meta phone ID.
+  // Both IDs being absent must not be mistaken for matching account IDs.
+  assert.equal(publicConfig(qa({WHATSAPP_PHONE_NUMBER_ID:""})).configured,true);
+  assert.equal(publicConfig(qa({WHATSAPP_PHONE_NUMBER_ID:""})).missing.includes("A distinct secondary phone number ID"),false);
+  // A real matching, nonempty phone ID must still fail closed.
+  assert.equal(publicConfig(qa({WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"111111111111111"})).configured,false);
   assert.equal(publicConfig(source).runtime.phoneNumberId,null);
   assert.equal(publicConfig(source).runtime.expectedPhoneNumberId,null);
   assert.equal(requireExpectedSecondaryPhone(source),null);
@@ -79,9 +111,9 @@ test("Business App-only personal QA target may open Embedded Signup without a gu
     PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""
   })).configured,false);
   for (const override of [
-    {PR395_STAGING_PRE_SIGNUP_CALLBACK_VERIFIED:"false"},
-    {PR395_STAGING_APP_DEFAULT_LIFECYCLE_VERIFIED:"false"},
-    {PR395_STAGING_HISTORY_IMPORT_TRANSITION_VERIFIED:"false"},
+    {PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED:"false"},
+    {PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED:"false"},
+    {PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED:"false"},
     {PR395_STAGING_APP_ONLY_SIGNUP_READY:"false"},
     {PR395_STAGING_APP_ONLY_SIGNUP_READY:""},
     {PR395_STAGING_MODE:"false"},
