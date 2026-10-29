@@ -276,7 +276,7 @@ test("secondary receiver cannot activate without exact E164 lifecycle pin",()=>{
 });
 
 
-test("isolated inbound-only QA needs no sending token but production and staff do",async()=>{
+test("signed inbound-only QA and production need no send token, outbound still does",async()=>{
   const trial={...safe,
     WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
     WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"300300300",
@@ -292,14 +292,22 @@ test("isolated inbound-only QA needs no sending token but production and staff d
     if(sql.includes("SELECT sender_key,state"))return{rows:[{sender_key:"coexistence_qa",state:"active"}]};
     return{rows:[{id:4,sender_key:"neutro",state:"active"}]};
   }};
-  assert.equal((await assertStoredSenderSafety({env:trial,database:mock})).verified,true);
+  // Neither the signed inbound handler nor the storage binding uses a
+  // sending token. This holds for both isolated QA and production.
+  for(const mode of [
+    trial,
+    {...trial,PR395_STAGING_MODE:"false"},
+    {...trial,PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"false"}
+  ]) {
+    assert.equal((await assertStoredSenderSafety({env:mode,database:mock})).verified,true);
+  }
   for(const change of [
-    {PR395_STAGING_MODE:"false"},
-    {PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"false"},
-    {PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED:"true"},
-    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"}
-  ]){
+    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true"}
+  ]) {
     await assert.rejects(assertStoredSenderSafety({env:{...trial,...change},database:mock}),
-      /Secondary WhatsApp Inbox configuration is incomplete or unsafe/);
+      /Unsafe WhatsApp secondary operational activation|Secondary WhatsApp Inbox configuration is incomplete or unsafe/);
   }
 });
