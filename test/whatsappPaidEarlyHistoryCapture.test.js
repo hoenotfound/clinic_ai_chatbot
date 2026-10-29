@@ -218,3 +218,49 @@ test("verified handoff commits only after importer proof, and rolls back on fail
  assert.equal(state.deleted,1);
  assert.equal(state.committed,2);
 });
+
+test("oversized valid history is deterministically split into encrypted holds before ACK",async()=>{
+ const oversized=change();
+ const original=Array.from({length:2500},(_,index)=>({
+   id:"wamid.synthetic."+String(index).padStart(7,"0"),
+   from:"60123456789",timestamp:"1761714000",type:"text",
+   text:{body:"synthetic history only "+String(index).padStart(5,"0")+"x".repeat(3600)}
+ }));
+ oversized.value.history[0].threads[0].messages=original;
+ const pieces=hold.splitForHold("222222222222222",oversized);
+ assert.ok(pieces.length>1);
+ assert.equal(pieces.reduce((n,x)=>n+x.value.history[0].threads[0].messages.length,0),original.length);
+ const ids=pieces.flatMap(x=>x.value.history[0].threads[0].messages.map(m=>m.id));
+ assert.deepEqual(ids,original.map(m=>m.id));
+ const db=fakeDb();
+ const packet=body(entry("222222222222222",oversized));
+ const first=await hold.stage(packet,{env:base,database:db,now});
+ assert.equal(first.inserted,pieces.length);
+ assert.equal(db.records.size,pieces.length);
+ for(const row of db.records.values()){
+   assert.ok(row.ciphertext.length<=8*1024*1024);
+   assert.equal(row.nonce.length,12);
+   assert.equal(row.auth_tag.length,16);
+ }
+ const replay=await hold.stage(packet,{env:base,database:db,now});
+ assert.equal(replay.inserted,0);
+ assert.equal(db.records.size,pieces.length);
+});
+test("single unbreakable oversized history fragment fails closed",()=>{
+ const bad=change();bad.value.history[0].threads[0].messages[0].text.body=
+   "synthetic oversized text"+"x".repeat(8*1024*1024);
+ assert.throws(()=>hold.splitForHold("222222222222222",bad),/oversized/);
+});
+
+test("expired early capture stops selecting receiver but never silently accepts expired holds",async()=>{
+  const beforeDeadline=new Date("2026-10-29T09:59:59Z");
+  const afterDeadline=new Date("2026-10-29T10:00:01Z");
+  assert.equal(hold.enabled(base,beforeDeadline),true);
+  assert.equal(hold.enabled(base,afterDeadline),false);
+  assert.equal(hold.enabled({...base,WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_UNTIL:"invalid"},now),false);
+  assert.equal(hold.enabled({...base,WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED:"false"},now),false);
+  assert.throws(()=>hold.assertCaptureConfig(base,afterDeadline),/OFF or expired/);
+  // Explicitly enabled receiver remains fail-closed for an expired event,
+  // but the app router can fall through to its independent guarded handler.
+  await assert.rejects(()=>hold.stage(early(),{env:base,now:afterDeadline}),/OFF or expired/);
+});

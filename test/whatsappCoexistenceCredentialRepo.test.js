@@ -97,3 +97,36 @@ test("vault refuses primary account, expired credential and missing independent 
   }
   assert.equal(db.state.statements.length,0);
 });
+
+test("explicitly Meta-attested non-expiring credential is securely vaulted and readable",async()=>{
+  const source=env(),db=fakeDb();
+  const token="synthetic-permanent-token-not-a-real-credential";
+  const record=await repo.recordValidatedWithCredential({
+    ...scope,accessToken:token,tokenExpiresAt:null,tokenNonExpiring:true,
+    coexistenceReady:false
+  },{database:db.database,env:source});
+  assert.equal(record.id,21);
+  assert.equal(db.state.credential.token_expires_at,"infinity");
+  assert.equal(db.state.audit.token_expires_at,"infinity");
+  const result=await repo.loadValidatedCredentialForSetup(scope,{
+    database:db.database,env:source,now:new Date(Date.now()+365*86400000)
+  });
+  assert.equal(result.accessToken,token);
+  assert.equal(JSON.stringify(db.state.audit).includes(token),false);
+});
+
+test("missing and conflicting expiry evidence cannot vault a credential",async()=>{
+  const source=env();
+  for(const data of [
+    {tokenExpiresAt:null},
+    {tokenExpiresAt:null,tokenNonExpiring:false},
+    {tokenExpiresAt:expiry,tokenNonExpiring:true},
+    {tokenExpiresAt:null,tokenNonExpiring:"true"}
+  ]){
+    const db=fakeDb();
+    await assert.rejects(repo.recordValidatedWithCredential({
+      ...scope,accessToken:"synthetic-not-a-token",...data
+    },{database:db.database,env:source}));
+    assert.equal(db.state.statements.length,0);
+  }
+});

@@ -16,8 +16,14 @@ const FIELDS = new Set(["history", "smb_app_state_sync"]);
 const MAX_CHANGE_BYTES = 8 * 1024 * 1024;
 const MAX_CHANGES = 100;
 
-function enabled(env=process.env) {
-  return env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED === "true";
+// After the short-lived capture deadline, stop selecting this receiver.
+// Other signed app-default traffic should return to the existing guarded router
+// rather than be rejected by a now-expired capture configuration.
+function enabled(env=process.env,now=new Date()) {
+  if(env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED !== "true") return false;
+  const until=new Date(env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_UNTIL||"").getTime();
+  const at=new Date(now).getTime();
+  return Number.isFinite(until) && Number.isFinite(at) && until>at;
 }
 function digits(v) {
   if (typeof v !== "string" || !/^\+?[0-9\s().-]{8,28}$/.test(v)) return null;
@@ -25,7 +31,7 @@ function digits(v) {
 }
 function numeric(v) { return typeof v === "string" && /^\d{1,32}$/.test(v); }
 function assertCaptureConfig(env=process.env,now=new Date()) {
-  if (!enabled(env)) throw Error("Early capture is OFF");
+  if (!enabled(env,now)) throw Error("Early capture is OFF or expired");
   const until = new Date(env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_UNTIL || "");
   const nowMs = new Date(now).getTime();
   if (env.PR395_STAGING_MODE === "true" ||
@@ -123,6 +129,50 @@ function seal(account,change,key) {
   json.fill(0);
   return {fp,nonce,ciphertext,tag:cipher.getAuthTag(),phone};
 }
+// Split large but valid Meta history/contact arrays into bounded encrypted
+// holds. Preserve every child and its identity/progress metadata; either all
+// rows commit before HTTP 200 or the transaction rolls back (Meta may retry).
+function divideForHold(change) {
+  const field=change.field==="history"?"history":
+    change.field==="smb_app_state_sync"?"state_sync":null;
+  const items=field&&change.value?.[field];
+  if(!Array.isArray(items)||!items.length)
+    throw Error("Oversized early history without splittable data");
+  let left,right;
+  if(items.length>1){
+    const pivot=Math.ceil(items.length/2);
+    left=items.slice(0,pivot);right=items.slice(pivot);
+  }else if(field==="history" && Array.isArray(items[0]?.threads)){
+    const part=items[0],threads=part.threads;
+    if(threads.length>1){
+      const pivot=Math.ceil(threads.length/2);
+      left=[{...part,threads:threads.slice(0,pivot)}];
+      right=[{...part,threads:threads.slice(pivot)}];
+    }else if(threads.length===1 && Array.isArray(threads[0]?.messages) &&
+             threads[0].messages.length>1){
+      const thread=threads[0],pivot=Math.ceil(thread.messages.length/2);
+      left=[{...part,threads:[{...thread,messages:thread.messages.slice(0,pivot)}]}];
+      right=[{...part,threads:[{...thread,messages:thread.messages.slice(pivot)}]}];
+    }
+  }
+  if(!left||!right)throw Error("Single oversized Meta history item cannot be safely split");
+  return [
+    {...change,value:{...change.value,[field]:left}},
+    {...change,value:{...change.value,[field]:right}}
+  ];
+}
+function splitForHold(account,change) {
+  const pending=[change],out=[];
+  while(pending.length){
+    if(pending.length+out.length>128)
+      throw Error("Too many early history fragments; refuse without ACK");
+    const part=pending.shift();
+    const bytes=Buffer.byteLength(JSON.stringify({accountId:account,change:part}),"utf8");
+    if(bytes>=1 && bytes<=MAX_CHANGE_BYTES){out.push(part);continue;}
+    pending.unshift(...divideForHold(part));
+  }
+  return out;
+}
 function unseal(row,key) {
   if(!/^[a-f0-9]{64}$/.test(row.fingerprint) ||
      !numeric(row.candidate_waba_id) || !numeric(row.candidate_phone_number_id) ||
@@ -156,8 +206,11 @@ async function stage(body,{env=process.env,database=pool,now=new Date()}={}) {
   try{
     await client.query("BEGIN");active=true;
     await client.query("DELETE FROM whatsapp_secondary_early_history_hold WHERE expires_at<=NOW()");
-    for(const entry of selected.entry)for(const change of entry.changes){
-      const sealed=seal(entry.id,change,config.key);
+    let fragments=0;
+    for(const entry of selected.entry)for(const change of entry.changes)
+    for(const piece of splitForHold(entry.id,change)){
+      if(++fragments>128)throw Error("Early history hold fragment limit exceeded");
+      const sealed=seal(entry.id,piece,config.key);
       const result=await client.query(
         "INSERT INTO whatsapp_secondary_early_history_hold " +
         "(fingerprint,candidate_waba_id,candidate_phone_number_id,event_field,nonce,ciphertext,auth_tag,payload_bytes) " +
@@ -275,4 +328,4 @@ async function purgeExpired({database=pool}={}) {
     "DELETE FROM whatsapp_secondary_early_history_hold WHERE expires_at<=NOW() RETURNING fingerprint"
   );
 }
-module.exports={enabled,assertCaptureConfig,partition,fingerprint,seal,unseal,stage,dispatch,handoffOnce,purgeExpired,TARGET};
+module.exports={enabled,assertCaptureConfig,partition,fingerprint,seal,unseal,splitForHold,stage,dispatch,handoffOnce,purgeExpired,TARGET};

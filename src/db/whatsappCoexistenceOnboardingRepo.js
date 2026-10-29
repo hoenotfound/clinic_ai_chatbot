@@ -43,7 +43,7 @@ async function recordValidated({
 async function recordValidatedWithCredential({
   wabaId,phoneNumberId,displayPhoneNumber=null,verifiedName=null,
   coexistenceReady=false,eventVersion=null,tokenExpiresAt=null,
-  startedBy=null,accessToken,
+  startedBy=null,accessToken,tokenNonExpiring=false,
 }={}, {database=pool,env=process.env}={}) {
   keyFromEnv(env);
   const waba=text(wabaId,128),phone=text(phoneNumberId,128);
@@ -52,10 +52,19 @@ async function recordValidatedWithCredential({
      phone===String(env.WHATSAPP_PHONE_NUMBER_ID||"")) {
     throw new Error("Refusing to vault an unverified, primary, or cross-account WhatsApp sender.");
   }
-  const expiry=new Date(tokenExpiresAt||"");
-  if(!Number.isFinite(expiry.getTime()) || expiry.getTime()<=Date.now()) {
+  // PostgreSQL's native timestamptz 'infinity' preserves the actual token
+  // semantics without inventing a future expiry date or changing schema 103.
+  // Only an explicitly Meta-attested expires_at=0 can request this path.
+  if(tokenNonExpiring!==true && tokenNonExpiring!==false)
+    throw new Error("Invalid Meta credential expiration proof.");
+  if(tokenNonExpiring && tokenExpiresAt!=null)
+    throw new Error("Conflicting permanent and expiring Meta credential proof.");
+  const expiry=tokenNonExpiring?null:new Date(tokenExpiresAt||"");
+  if(!tokenNonExpiring &&
+     (!Number.isFinite(expiry.getTime()) || expiry.getTime()<=Date.now())) {
     throw new Error("Valid future token expiry is required for Coexistence credentials.");
   }
+  const expiryValue=tokenNonExpiring?"infinity":expiry.toISOString();
   const client=await database.connect();
   let active=false;
   try {
@@ -68,7 +77,7 @@ async function recordValidatedWithCredential({
       [waba,phone,text(displayPhoneNumber,128),text(verifiedName,256),
         coexistenceReady===true,
         Number.isInteger(Number(eventVersion))?Number(eventVersion):null,
-        expiry.toISOString(),text(startedBy,128)]
+        expiryValue,text(startedBy,128)]
     );
     const attempt=saved.rows?.[0];
     if(!attempt?.id)throw new Error("Coexistence audit insert did not return an attempt.");
@@ -81,7 +90,7 @@ async function recordValidatedWithCredential({
         auth_tag,token_expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       [attempt.id,waba,phone,sealed.keyVersion,sealed.nonce,
-        sealed.ciphertext,sealed.authTag,expiry.toISOString()]
+        sealed.ciphertext,sealed.authTag,expiryValue]
     );
     await client.query("COMMIT");active=false;
     return attempt;
@@ -125,7 +134,9 @@ async function loadValidatedCredentialForSetup({
       keyVersion:row.key_version,env
     }),
     wabaId:waba,phoneNumberId:phone,
-    expiresAt:row.token_expires_at,
+    expiresAt:row.token_expires_at===Infinity || row.token_expires_at==="infinity"
+      ? null : row.token_expires_at,
+    nonExpiring:row.token_expires_at===Infinity || row.token_expires_at==="infinity",
   };
 }
 

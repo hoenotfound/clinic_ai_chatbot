@@ -455,13 +455,19 @@ async function inspectToken({
     );
   }
 
+  // An explicit Meta expires_at=0 means a non-expiring system-user token.
+  // Absence of expires_at is NOT proof of a permanent credential.
+  const nonExpiring = Object.prototype.hasOwnProperty.call(data, "expires_at") &&
+    (data.expires_at === 0 || data.expires_at === "0");
+  const timestamp = Number(data.expires_at);
   return {
     appId: clean(data.app_id),
     userId: clean(data.user_id) || null,
     expiresAt:
-      Number.isFinite(Number(data.expires_at)) && Number(data.expires_at) > 0
-        ? new Date(Number(data.expires_at) * 1000).toISOString()
+      !nonExpiring && Number.isFinite(timestamp) && timestamp > 0
+        ? new Date(timestamp * 1000).toISOString()
         : null,
+    nonExpiring,
     scopes: Array.isArray(data.scopes) ? data.scopes.map(clean).filter(Boolean) : [],
     granularScopes: Array.isArray(data.granular_scopes) ? data.granular_scopes : [],
   };
@@ -659,11 +665,11 @@ async function completeEmbeddedSignup({
     }
     // debug_token expiry has precedence. OAuth expires_in is only a fallback.
     // If neither is available, refuse to persist indefinite credentials.
-    const expiry=token.expiresAt || (
+    const expiry=token.nonExpiring ? null : (token.expiresAt || (
       Number.isSafeInteger(exchanged.expiresIn) && exchanged.expiresIn>0
         ? new Date(Date.now()+exchanged.expiresIn*1000).toISOString()
         : null
-    );
+    ));
     await onVerifiedCredential({
       accessToken:exchanged.accessToken,
       wabaId:waba.id,phoneNumberId:phone.id,
@@ -672,6 +678,7 @@ async function completeEmbeddedSignup({
       coexistenceReady:phone.coexistenceReady,
       eventVersion:finish.eventVersion,
       tokenExpiresAt:expiry,
+      tokenNonExpiring:token.nonExpiring===true,
     });
   }
 
@@ -685,6 +692,7 @@ async function completeEmbeddedSignup({
       whatsappBusinessMessaging: token.scopes.includes("whatsapp_business_messaging"),
     },
     tokenExpiresAt: token.expiresAt,
+    tokenNonExpiring:token.nonExpiring===true,
     runtime: {
       ...runtime,
       wabaMatches: runtime.wabaId === waba.id,
