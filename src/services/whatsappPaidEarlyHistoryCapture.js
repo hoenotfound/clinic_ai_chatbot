@@ -84,6 +84,8 @@ function partition(body,config) {
       const meta=change.value.metadata;
       const isTarget=FIELDS.has(change.field) &&
         digits(meta?.display_phone_number) === digits(TARGET);
+      if (FIELDS.has(change.field) && entry.id!==config.primaryWaba && !isTarget)
+        throw Error("Unattributed foreign history cannot be acknowledged");
       if (isTarget) {
         if(!numeric(meta?.phone_number_id) ||
            entry.id===config.primaryWaba ||
