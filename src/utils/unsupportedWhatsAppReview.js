@@ -9,8 +9,7 @@ function formatUnsupportedReview({ channelLabel, unsupportedType, detail = {} })
 
   if (label === "WhatsApp" && code === 131060) {
     return "WhatsApp message unavailable (Meta 131060). Meta did not provide the content. " +
-      "Check the WhatsApp Business app; if the message is unavailable there too, " +
-      "ask the customer to resend it as normal text.";
+      "For a Coexistence number, staff should check the original message in the WhatsApp Business app.";
   }
 
   const explanation = String(detail?.details || detail?.title || detail?.message || "")
