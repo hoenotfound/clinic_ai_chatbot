@@ -40,7 +40,7 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
     try {
       recipient = require("./pr395StagingSafety").approvedStaffTestRecipient(env);
     } catch (_) { reject(); }
-    if (String(contact?.whatsapp_number || "") !== recipient.replace(/\\D/g, "")) reject();
+    if (String(contact?.whatsapp_number || "") !== recipient.replace(/\D/g, "")) reject();
   }
   if (env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" ||
       env.WHATSAPP_MULTI_NUMBER_READ_ENABLED !== "true" ||
