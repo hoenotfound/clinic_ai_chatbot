@@ -13,6 +13,7 @@ test("ready Telegram summaries wait for inactivity and are invalidated only by a
   pool.query = async (sql, params) => {
     assert.match(sql, /latest\.created_at <= now\(\) - \(\$1::integer \* interval '1 minute'\)/);
     assert.match(sql, /a\.status IN \('pending', 'sending'\)/);
+    assert.match(sql, /historical\.message_id = a\.through_message_id/);
     assert.match(sql, /a\.attempts < 3/);
     assert.match(sql, /a\.attempts = 0/);
     assert.match(sql, /WHEN 1 THEN interval '1 minute'/);
@@ -45,6 +46,8 @@ test("claim rechecks inactivity and newer customer messages atomically", async (
 
   pool.query = async (sql, params) => {
     assert.match(sql, /UPDATE telegram_summary_alerts a/);
+    // Re-check at claim time, not just when listing queued summaries.
+    assert.match(sql, /historical\.message_id = a\.through_message_id/);
     assert.match(sql, /newer_customer\.role = 'user'/);
     assert.match(sql, /newer_customer\.id > a\.through_message_id/);
     assert.match(sql, /latest\.created_at/);

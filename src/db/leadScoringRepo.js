@@ -80,8 +80,16 @@ async function findCandidates({
          )
          AND m.id <= latest.id
          AND m.created_at >= $4::timestamptz
+         -- Imported WhatsApp Business App history is archival, not a new lead.
+         AND NOT EXISTS (
+           SELECT 1 FROM whatsapp_sender_coexistence_history_messages archival
+           WHERE archival.message_id = m.id
+         )
      ) segment ON segment.customer_message_count > 0
      WHERE l.is_closed = false
+       -- LEFT JOIN alone is insufficient: the inactivity OR below otherwise
+       -- selects an old imported chat even with zero eligible customer turns.
+       AND segment.customer_message_count > 0
        AND latest.id > COALESCE(last_score.through_message_id, 0)
        AND (
          latest.created_at <= now() - ($1::integer * interval '1 minute')
@@ -207,6 +215,11 @@ async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
      WHERE failed.status = 'failed'
        AND failed.attempts >= ${MAX_ATTEMPTS}
        AND l.is_closed = false
+       -- Never turn an archived imported snapshot into a Telegram fallback.
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages archival
+         WHERE archival.message_id = failed.through_message_id
+       )
        AND NOT EXISTS (
          SELECT 1
          FROM telegram_summary_alerts alert

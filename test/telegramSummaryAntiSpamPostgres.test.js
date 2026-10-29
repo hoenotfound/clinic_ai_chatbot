@@ -58,6 +58,12 @@ test(
           created_at TIMESTAMPTZ NOT NULL
         );
 
+        -- The archive table exists in production and must also exist in this
+        -- isolated test schema for sender-specific historical-message gating.
+        CREATE TABLE whatsapp_sender_coexistence_history_messages (
+          message_id INTEGER PRIMARY KEY
+        );
+
         CREATE TABLE telegram_summary_alerts (
           id INTEGER PRIMARY KEY,
           lead_id INTEGER NOT NULL REFERENCES leads(id),
@@ -225,6 +231,18 @@ test(
       assert.equal(laterLeadCandidates.length, 1);
       assert.equal(laterLeadCandidates[0].alert_id, 33);
       assert.equal(laterLeadCandidates[0].lead_id, 8);
+
+      // Importing that same older message as WhatsApp Business App history
+      // must prevent the Telegram alert both at selection and at claim time.
+      await client.query(
+        "INSERT INTO whatsapp_sender_coexistence_history_messages (message_id) VALUES (45)"
+      );
+      const historicalCandidates = await telegramAlertRepo.findReadySummaries({
+        inactivityMinutes: 10,
+        limit: 5,
+      });
+      assert.equal(historicalCandidates.length, 0);
+      assert.equal(await telegramAlertRepo.claimSummary(33, 10), null);
     } finally {
       pool.query = originalQuery;
       await client.query("SET search_path TO public").catch(() => {});

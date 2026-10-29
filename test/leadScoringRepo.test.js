@@ -27,6 +27,9 @@ test("candidate query applies activation, three limits, and completed-pass bound
 
   assert.match(captured.sql, /s\.status = 'completed'/);
   assert.match(captured.sql, /m\.created_at >= \$4::timestamptz/);
+  // Importing old WhatsApp chats must never kick off scoring at startup.
+  assert.match(captured.sql, /segment\.customer_message_count > 0/);
+  assert.match(captured.sql, /NOT EXISTS \(\s*SELECT 1 FROM whatsapp_sender_coexistence_history_messages archival\s+WHERE archival\.message_id = m\.id/);
   assert.match(captured.sql, /l\.created_at AS journey_started_at/);
   assert.match(captured.sql, /l\.started_message_id IS NOT NULL AND m\.id >= l\.started_message_id/);
   assert.match(captured.sql, /l\.started_message_id IS NULL AND m\.created_at >= l\.created_at/);
@@ -245,6 +248,7 @@ test("terminal failure recovery only selects current open unanswered snapshots w
   assert.match(captured.sql, /failed\.attempts >= 3/);
   assert.match(captured.sql, /l\.is_closed = false/);
   assert.match(captured.sql, /FROM telegram_summary_alerts alert/);
+  assert.match(captured.sql, /archival\.message_id = failed\.through_message_id/);
   assert.match(captured.sql, /newer_customer\.role = 'user'/);
   assert.match(captured.sql, /newer_score\.through_message_id > failed\.through_message_id/);
   assert.deepEqual(captured.params, [5]);

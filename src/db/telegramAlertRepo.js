@@ -87,6 +87,11 @@ async function findReadySummaries({
        LIMIT 1
      ) latest ON true
      WHERE a.status IN ('pending', 'sending')
+       -- Imported WhatsApp Business App history is archival, never a live lead alert.
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.message_id = a.through_message_id
+       )
        AND a.attempts < ${MAX_ATTEMPTS}
        AND (
          (
@@ -155,6 +160,11 @@ async function claimSummary(
      LEFT JOIN users u ON u.username = l.owner_username
      WHERE a.id = $1
        AND a.lead_id = l.id
+       -- Repeat at claim time to block race/restart delivery of archival alerts.
+       AND NOT EXISTS (
+         SELECT 1 FROM whatsapp_sender_coexistence_history_messages historical
+         WHERE historical.message_id = a.through_message_id
+       )
        AND a.attempts < ${MAX_ATTEMPTS}
        AND (
          (
