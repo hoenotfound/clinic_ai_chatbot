@@ -74,6 +74,9 @@ async function sendSecondaryStaffText({
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
   if (!authorizedOrigin ||
+      // AI text-only and Phase B text follow-ups must not use a callback
+      // capable of uploading media or sending non-text Graph payloads.
+      (aiTextOnly && typeof dispatchTransport === "function") ||
       // Neither the existing follow-up sender nor an optional transport
       // callback may upload/dispatch media while sender media is disabled.
       (origin === "followup" && typeof dispatchTransport === "function" &&
