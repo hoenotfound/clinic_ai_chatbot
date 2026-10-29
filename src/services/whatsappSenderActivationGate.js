@@ -195,7 +195,16 @@ async function assertStoredSenderSafety({
         !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID||"")) ||
         !/^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_WABA_ID||"")) ||
         !/^[a-z][a-z0-9_-]{0,63}$/.test(String(env.WHATSAPP_SECONDARY_SENDER_KEY||"")) ||
-        !String(env.WHATSAPP_SECONDARY_TOKEN||'').trim() ||
+        // A strictly inbound-only, HMAC-verified QA trial must not require
+      // installing an outbound credential on the isolated staging service.
+      // Production and QA staff-send remain sender-token gated.
+      (!String(env.WHATSAPP_SECONDARY_TOKEN||'').trim() &&
+        !(env.PR395_STAGING_MODE === "true" &&
+          env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" &&
+          env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED !== "true" &&
+          env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
+          env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED !== "true" &&
+          env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true")) ||
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID===phone ||
         env.WHATSAPP_SECONDARY_SENDER_KEY===key) {
       throw new Error("Secondary WhatsApp Inbox configuration is incomplete or unsafe.");
