@@ -9,6 +9,35 @@ function isPr395Staging(env = process.env) {
 function providerRehearsalEnabled(env = process.env) {
   return isPr395Staging(env) && env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true";
 }
+// Manual staff QA is deliberately a separate, recipient-pinned opt-in.
+// Never allow this in Neutro production or for unattended AI/marketing sends.
+function controlledStaffTestEnabled(env = process.env) {
+  return providerRehearsalEnabled(env) &&
+    env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED === "true";
+}
+const CONTROLLED_STAFF_FLAGS = [
+  "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+  "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED"
+];
+function approvedStaffTestRecipient(env = process.env) {
+  if (!controlledStaffTestEnabled(env) ||
+      env.PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED !== "true" ||
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true") {
+    throw new Error("Staging manual staff send requires explicit operator and charge approval.");
+  }
+  const recipient = String(env.PR395_STAGING_CONTROLLED_STAFF_TEST_RECIPIENT_E164 || "");
+  if (!/^\\+[1-9]\\d{7,14}$/.test(recipient) ||
+      recipient !== env.PR395_STAGING_APPROVED_TEST_RECIPIENT_E164 ||
+      recipient === env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 ||
+      recipient === env.WHATSAPP_PHONE_NUMBER ||
+      recipient === CLINIC_SECOND_NUMBER_E164) {
+    throw new Error("Staging staff test needs the independently pinned, distinct QA recipient.");
+  }
+  return recipient;
+}
 const REHEARSAL_INGRESS_SWITCHES = [
   "WHATSAPP_MULTI_NUMBER_READ_ENABLED",
   "WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED",
@@ -94,7 +123,9 @@ function assertPr395StagingSafety(env = process.env) {
         env.PR395_STAGING_LEGACY_LIFECYCLE_ENABLED === "true" ||
         env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true" ||
         env.PR395_STAGING_REAL_CLINIC_ENABLED === "true" ||
-        env.PR395_STAGING_REAL_CLINIC_OPERATOR_APPROVED === "true") {
+        env.PR395_STAGING_REAL_CLINIC_OPERATOR_APPROVED === "true" ||
+        env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED === "true" ||
+        env.PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED === "true") {
       throw new Error("Provider rehearsal must never run outside PR395's isolated staging mode.");
     }
     if (env.NODE_ENV === "staging" ||
@@ -165,13 +196,28 @@ function assertPr395StagingSafety(env = process.env) {
       throw new Error("PR395 preidentity receiver requires unassigned QA IDs, isolated database, verified app HMAC, and no provider sending.");
     }
   }
+  if (env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED === "true" &&
+      !providerRehearsalEnabled(env)) {
+    throw new Error("Controlled staff test requires isolated, signed provider rehearsal.");
+  }
   if (providerRehearsalEnabled(env)) {
     verifiedRehearsalTarget(env);
+    const staffTest = controlledStaffTestEnabled(env);
+    if (staffTest) {
+      approvedStaffTestRecipient(env);
+      if (CONTROLLED_STAFF_FLAGS.some(key => env[key] !== "true") ||
+          env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED !== "true" ||
+          env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true") {
+        throw new Error("Staging staff test requires receipt, billing and manual-reconciliation guards.");
+      }
+    }
     if (env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" ||
         REHEARSAL_INGRESS_SWITCHES.some(key => env[key] !== "true") ||
-        REHEARSAL_OUTBOUND_FORBIDDEN.some(key => env[key] === "true") ||
+        REHEARSAL_OUTBOUND_FORBIDDEN.some(key => env[key] === "true" &&
+          (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
         OUTBOUND_SWITCHES.some(key => env[key] === "true" &&
-          !REHEARSAL_INGRESS_SWITCHES.includes(key)) ||
+          !REHEARSAL_INGRESS_SWITCHES.includes(key) &&
+          (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
         !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
         // The staging binary must not possess production primary Cloud API
         // sending credentials. This is enforced even if the portal is accessed.
@@ -180,7 +226,8 @@ function assertPr395StagingSafety(env = process.env) {
         String(env.WHATSAPP_APP_SECRET) !== String(env.META_APP_SECRET)) {
       throw new Error("PR395 provider rehearsal requires verified inbound configuration and forbids all outbound traffic.");
     }
-    return { staging: true, workersDisabled: true, providerProcessingDisabled: false, historyImporterOnly: true };
+    return { staging: true, workersDisabled: true, providerProcessingDisabled: false,
+      historyImporterOnly: true, controlledStaffTest: staffTest };
   }
   if (OUTBOUND_SWITCHES.some(key => env[key] === "true") ||
       env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING === "true") {
@@ -206,7 +253,8 @@ function validProviderRehearsalEvent(body, path, env) {
       }
       return path === "/webhook" && regular.has(change.field) &&
         change.value.metadata?.phone_number_id === phone &&
-        !(change.field === "messages" && Array.isArray(change.value.statuses) && change.value.statuses.length > 0);
+        !(change.field === "messages" && Array.isArray(change.value.statuses) &&
+          change.value.statuses.length > 0 && !controlledStaffTestEnabled(env));
     })
   );
 }
@@ -225,4 +273,4 @@ function stagingWebhookGuard(req, res, next, env = process.env) {
   return next();
 }
 
-module.exports = { isPr395Staging, providerRehearsalEnabled, clinicSecondNumberApproved, verifiedRehearsalTarget, validProviderRehearsalEvent, assertPr395StagingSafety, stagingWebhookGuard, OUTBOUND_SWITCHES };
+module.exports = { isPr395Staging, providerRehearsalEnabled, controlledStaffTestEnabled, approvedStaffTestRecipient, clinicSecondNumberApproved, verifiedRehearsalTarget, validProviderRehearsalEvent, assertPr395StagingSafety, stagingWebhookGuard, OUTBOUND_SWITCHES };
