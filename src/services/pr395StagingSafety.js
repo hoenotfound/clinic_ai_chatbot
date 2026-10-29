@@ -218,7 +218,9 @@ function assertPr395StagingSafety(env = process.env) {
         OUTBOUND_SWITCHES.some(key => env[key] === "true" &&
           !REHEARSAL_INGRESS_SWITCHES.includes(key) &&
           (!staffTest || !CONTROLLED_STAFF_FLAGS.includes(key))) ||
-        !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() ||
+        // Inbound-only QA needs a signed Meta callback and verified sender,
+        // not a usable Cloud API sending token. Staff-send QA still requires it.
+        (staffTest && !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim()) ||
         // The staging binary must not possess production primary Cloud API
         // sending credentials. This is enforced even if the portal is accessed.
         (String(env.WHATSAPP_TOKEN || "").trim() &&
