@@ -5,6 +5,7 @@ const {
   publicConfig,
   requireExpectedSecondaryPhone,
   unassignedProtectedQaTarget,
+  unassignedProtectedProductionTarget,
   assertExpectedSecondaryPhone,
   completeEmbeddedSignup,
 } = require("../src/services/whatsappCoexistenceOnboardingService");
@@ -181,4 +182,100 @@ test("wrong phone never gives a credential to the internal vault callback",async
     onVerifiedCredential:async()=>{callbacks++;},
   }),error=>error.code==="WHATSAPP_COEXISTENCE_SECONDARY_DISPLAY_MISMATCH");
   assert.equal(callbacks,0);
+});
+
+function productionClinic(overrides={}) {
+  return qa({
+    PR395_STAGING_MODE:"false",
+    PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"false",
+    PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"false",
+    PR395_STAGING_APP_ONLY_SIGNUP_READY:"false",
+    PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED:"false",
+    PR395_STAGING_APP_DEFAULT_LIFECYCLE_REHEARSED:"false",
+    PR395_STAGING_HISTORY_IMPORT_TRANSITION_REHEARSED:"false",
+    WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+    WHATSAPP_WABA_ID:"999999999999999",
+    WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
+    WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED:"true",
+    WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED:"true",
+    WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED:"true",
+    WHATSAPP_COEXISTENCE_ENABLED:"false",
+    WHATSAPP_SECONDARY_TOKEN:"",
+    ...overrides
+  });
+}
+
+test("real Neutro pre-QR discovery refuses activation by default or a mismatched phone",()=>{
+  const prepared=productionClinic();
+  assert.equal(unassignedProtectedProductionTarget(prepared),true);
+  assert.equal(requireExpectedSecondaryPhone(prepared),null);
+  assert.equal(publicConfig(prepared).configured,true);
+  assert.equal(publicConfig(prepared).onboardingPhases.afterQr.onceOnlyHistorySyncAutomatic,false);
+  assert.equal(publicConfig(prepared).onboardingPhases.afterQr.requiresSeparateOwnerHistoryConsent,true);
+  assert.equal(publicConfig(productionClinic({WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED:"false"})).configured,false);
+  for(const unsafe of [
+    {WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED:"false"},
+    {WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED:"false"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60121111111"},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa"},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
+    {WHATSAPP_PRIMARY_SENDER_KEY:"other"},
+    {WHATSAPP_PHONE_NUMBER:"+60174831336"},
+    {WHATSAPP_PHONE_NUMBER_ID:""},
+    {WHATSAPP_WABA_ID:""},
+    {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575"},
+    {WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"1318355951360575"},
+    {WHATSAPP_SECONDARY_WABA_ID:"333333333333333"},
+    {WHATSAPP_SECONDARY_TOKEN:"must-stay-absent"},
+    {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"},
+    {PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED:"true"},
+    {PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY:""},
+    {WHATSAPP_COEXISTENCE_ENABLED:"true"},
+    {PR395_STAGING_MODE:"true"},
+    {META_EMBEDDED_SIGNUP_V4_CONFIRMED:"false"}
+  ]) {
+    const env=productionClinic(unsafe);
+    assert.equal(unassignedProtectedProductionTarget(env),false,JSON.stringify(unsafe));
+    assert.equal(publicConfig(env).configured,false,JSON.stringify(unsafe));
+  }
+});
+
+test("pre-QR Meta lookup verifies exact real number before credential callback, never sends",async()=>{
+  const real=metaFetch("+60 17-483 1336");
+  let captured=null;
+  const result=await completeEmbeddedSignup({
+    code:"single-use-code",sessionInfo:finish(),
+    env:productionClinic(),fetchImpl:real.fetch,
+    onVerifiedCredential:async value=>{captured=value;}
+  });
+  assert.equal(result.phone.displayPhoneNumber,"+60 17-483 1336");
+  assert.equal(result.runtime.targetMode,"secondary");
+  assert.equal(result.runtime.phoneNumberId,null);
+  assert.equal(result.activationRequired,true);
+  assert.equal(captured.phoneNumberId,"333333333333333");
+  assert.equal(JSON.stringify(result).includes("test-authorized-token"),false);
+  assert.equal(real.calls.some(x=>/\\/register(?:\\?|$)/.test(x.request)),false);
+  assert.equal(real.calls.some(x=>x.request.includes("/subscribed_apps")),false);
+
+  let callbacks=0;
+  const wrong=metaFetch("+60 12-000 0000");
+  await assert.rejects(completeEmbeddedSignup({
+    code:"single-use-code",sessionInfo:finish(),
+    env:productionClinic(),fetchImpl:wrong.fetch,
+    onVerifiedCredential:async()=>{callbacks++;}
+  }),x=>x.code==="WHATSAPP_COEXISTENCE_SECONDARY_DISPLAY_MISMATCH");
+  assert.equal(callbacks,0);
+  assert.throws(()=>assertExpectedSecondaryPhone({
+    id:"111111111111111",displayPhoneNumber:"+60 17-483 1336"
+  },productionClinic()),x=>x.code==="WHATSAPP_COEXISTENCE_SECONDARY_PHONE_MISMATCH");
 });
