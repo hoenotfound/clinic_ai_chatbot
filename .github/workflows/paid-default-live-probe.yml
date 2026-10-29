@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   paid-default-live-probe:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412 || github.event.pull_request.head.ref == 'fix-paid-live-probe-20261028'
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 412 || github.event.pull_request.head.ref == 'fix-paid-live-probe-20261028' || github.event.pull_request.head.ref == 'qa/neutro-readonly-prod-callback-20261029'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -25,6 +25,9 @@ jobs:
           }
           # Both are intentionally invalid Meta verification attempts.
           # No real number, customer data, valid token or webhook body sent.
+          health="$(get_status "$HOST/health/ready")"
+          printf 'Paid production readiness: HTTP %s\n' "$health"
+          test "$health" = "200" || { echo "FAIL: paid service readiness is not HTTP 200"; exit 1; }
           legacy="$(get_status "$HOST/webhook?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
           default_get="$(get_status "$HOST/whatsapp/default")"
           invalid_challenge="$(get_status "$HOST/whatsapp/default?hub.mode=subscribe&hub.verify_token=synthetic-INVALID-noop&hub.challenge=synthetic-noop")"
