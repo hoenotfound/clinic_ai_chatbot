@@ -45,7 +45,7 @@ async function sendSecondaryStaffText({
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
 } = {}) {
-  const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED === "true";
+  const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const aiTextAuthorized = aiTextOnly &&
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true" &&
