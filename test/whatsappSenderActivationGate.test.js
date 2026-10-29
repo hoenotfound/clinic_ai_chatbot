@@ -91,6 +91,36 @@ test("secondary inbox only requires active exact Meta registry identity",async()
 });
 
 
+test("QA receives signed delivery receipts with sender and outbound credentials disabled",()=>{
+  const receiptOnly={
+    ...safe,
+    PR395_STAGING_MODE:"true",
+    PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"true",
+    WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+    WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000",
+    WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
+    WHATSAPP_SECONDARY_TOKEN:"",
+    WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+  };
+  assert.doesNotThrow(()=>assertSenderIngressSafety(receiptOnly));
+  for(const blocked of [
+    {PR395_STAGING_MODE:"false"},
+    {PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"},
+  ]){
+    assert.throws(()=>assertSenderIngressSafety({...receiptOnly,...blocked}),
+      /Unsafe WhatsApp secondary operational activation/);
+  }
+});
+
 test("new secondary operational flags fail startup when only one feature is enabled",()=>{
   for(const flag of [
     "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
