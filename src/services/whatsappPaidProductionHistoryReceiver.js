@@ -43,53 +43,59 @@ const STAFF_TEXT_OPERATIONS=new Set([
   "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
   "WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED",
 ]);
-// Phase A: a separate default-OFF AI TEXT ONLY mode. Keep staff Inbox sends,
- // media, templates, follow-ups and automatic reconciliation disabled. The
- // signed live receiver must not be a shortcut around sender/billing safety.
- const AI_TEXT_OPERATIONS=new Set([
-   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
-   "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
-   "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
-   "WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED",
- ]);
- function liveOperationsAllowed(env){
-   const staffOnly=env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED==="true";
-   const aiTextOnly=env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true";
-   if(staffOnly && aiTextOnly)return false;
-   if(aiTextOnly){
-     return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
-       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
-       env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
-       env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
-       env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
-       typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
-       env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
-       !DISALLOWED.some(key=>!AI_TEXT_OPERATIONS.has(key) && env[key]==="true");
-   }
-   if(!staffOnly)return !DISALLOWED.some(key=>env[key]==="true");
-   // Existing guarded manual staff-only mode remains unchanged.
-   return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
-     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
-     env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
-     typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
-     env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
-     !DISALLOWED.some(key=>!STAFF_TEXT_OPERATIONS.has(key) && env[key]==="true");
- }
+// Shared Neutro AI on the second sender. One default-OFF paid live receiver
+// mode; AI-only uses the same mode with follow-ups OFF. Phase B may enable
+// text-only sender-specific follow-ups with automatic receipt reconciliation.
+// Manual Inbox sending, optional media and templates remain independently OFF.
+const AUTOMATION_OPERATIONS=new Set([
+  "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+  "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+  "WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED",
+  "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED",
+]);
+function liveOperationsAllowed(env){
+  const staffOnly=env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED==="true";
+  const automation=env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true";
+  if(staffOnly && automation)return false;
+  if(automation){
+    const followups=env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true";
+    const autoReconcile=env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true";
+    if(followups!==autoReconcile)return false;
+    return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
+      env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+      env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
+      env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
+      typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
+      env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
+      !DISALLOWED.some(key=>!AUTOMATION_OPERATIONS.has(key) && env[key]==="true");
+  }
+  if(!staffOnly)return !DISALLOWED.some(key=>env[key]==="true");
+  // Existing guarded manual staff-only mode remains unchanged.
+  return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
+    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+    typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
+    env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
+    !DISALLOWED.some(key=>!STAFF_TEXT_OPERATIONS.has(key) && env[key]==="true");
+}
 function configured(env=process.env){
   return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED==="true";
 }
