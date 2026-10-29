@@ -47,6 +47,10 @@ async function sendSecondaryStaffText({
 } = {}) {
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED === "true";
   const aiTextAuthorized = aiTextOnly &&
+    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
+    env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true" &&
