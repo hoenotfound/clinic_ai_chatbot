@@ -196,6 +196,8 @@ async function handoffOnce({
   stageHistory=history.acceptPassiveSync
 }={}){
   const exact=verifiedReceiver.assertConfig(env);
+  if(env.WHATSAPP_PAID_SECONDARY_EARLY_HANDOFF_OPERATOR_APPROVED!=="true")
+    throw Error("Manual encrypted early-history handoff is not approved");
   if(!Number.isInteger(maxEvents)||maxEvents<1||maxEvents>10)
     throw Error("Invalid bounded handoff size");
   const key=Buffer.from(crypto.hkdfSync("sha256",vault.keyFromEnv(env),
