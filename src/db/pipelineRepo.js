@@ -1,6 +1,7 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const clinicConfig = require("../config/clinicConfig");
+const { visibleSalesLeadSql } = require("./archivalImportedLeadVisibility");
 const { PipelineValidationError } = require("../utils/pipelineValidation");
 const {
   isAllowedRuleTemperatureTransition,
@@ -50,7 +51,8 @@ async function addActivity(client, leadId, activityType, description, actor, met
 async function listStages(queryable = pool) {
   const result = await queryable.query(
     `SELECT id, name, sort_order, color, stage_type, system_key,
-            (SELECT COUNT(*)::int FROM leads WHERE stage_id = pipeline_stages.id) AS lead_count
+            (SELECT COUNT(*)::int FROM leads l WHERE l.stage_id = pipeline_stages.id
+              AND ${visibleSalesLeadSql("l")}) AS lead_count
      FROM pipeline_stages
      ORDER BY sort_order ASC, id ASC`
   );
@@ -141,7 +143,7 @@ const LEAD_SELECT = `
 `;
 
 async function listLeads() {
-  const result = await pool.query(`${LEAD_SELECT} ORDER BY l.updated_at DESC, l.id DESC`);
+  const result = await pool.query(`${LEAD_SELECT} WHERE ${visibleSalesLeadSql("l")} ORDER BY l.updated_at DESC, l.id DESC`);
   return result.rows;
 }
 
