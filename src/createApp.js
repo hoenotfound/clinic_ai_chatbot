@@ -73,6 +73,7 @@ function createApp({
   scheduleDurableClaim,
   queueIncomingForReply,
   captureSecondaryQaBatch = secondaryQaCapture.captureSignedSecondaryBatch,
+  stagePaidSecondaryHistory = coexistenceSync.acceptPassiveSync,
 } = {}) {
   if (!sessionSecret) {
     throw new Error("createApp requires sessionSecret.");
@@ -649,7 +650,9 @@ function createApp({
     try {
       if (productionHistoryReceiver.configured(process.env)) {
         return await productionHistoryReceiver.dispatch(
-          req, res, primaryWhatsappWebhookHandler
+          req, res, primaryWhatsappWebhookHandler, {
+            stageHistory: (body, opts) => stagePaidSecondaryHistory(body, opts)
+          }
         );
       }
       return await secondaryQaBridge.dispatchPaidDefaultWithSecondary(
