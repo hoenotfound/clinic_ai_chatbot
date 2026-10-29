@@ -11,7 +11,8 @@ test("Meta 131060 gives clear staff guidance without an automated reply", () => 
   });
   assert.match(message, /WhatsApp message unavailable \(Meta 131060\)/);
   assert.match(message, /WhatsApp Business app/);
-  assert.match(message, /resend it as normal text/);
+  assert.match(message, /check the original message in the WhatsApp Business app/);
+  assert.doesNotMatch(message, /resend/i);
   assert.doesNotMatch(message, /AI is enabled|automatically send/i);
 });
 
