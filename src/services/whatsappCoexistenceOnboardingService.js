@@ -85,12 +85,63 @@ function unassignedProtectedQaTarget(env = process.env) {
     (!primary || normalizedPhone(pinned) !== primary);
 }
 
+// Existing Neutro clinic Business App may not have a Cloud API phone ID
+// before Embedded Signup. This is ONLY a separately attested, exact-phone
+// discovery exception; it never registers a sender or enables any processing.
+// Both the QR itself and subsequent history sharing require separate approval.
+const NEUTRO_SECONDARY_E164 = "+60174831336";
+const PRE_QR_SECONDARY_FORBIDDEN = [
+  "WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED",
+  "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+  "WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED",
+  "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
+  "WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED",
+  "WHATSAPP_SECONDARY_COEXISTENCE_MEDIA_SYNC_ENABLED",
+  "WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED",
+  "PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED",
+];
+function unassignedProtectedProductionTarget(env = process.env) {
+  const primaryPhoneId=clean(env.WHATSAPP_PHONE_NUMBER_ID);
+  const primaryAccountId=clean(env.WHATSAPP_WABA_ID);
+  const primaryNumber=normalizedPhone(env.WHATSAPP_PHONE_NUMBER);
+  return env.PR395_STAGING_MODE !== "true" &&
+    env.WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED === "true" &&
+    env.WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED === "true" &&
+    env.META_EMBEDDED_SIGNUP_V4_CONFIRMED === "true" &&
+    clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164) === NEUTRO_SECONDARY_E164 &&
+    env.WHATSAPP_PRIMARY_SENDER_KEY === "neutro" &&
+    env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary" &&
+    /^\d+$/.test(primaryPhoneId) && /^\d+$/.test(primaryAccountId) &&
+    primaryNumber && primaryNumber !== normalizedPhone(NEUTRO_SECONDARY_E164) &&
+    !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_WABA_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_EXPECTED_WABA_ID) &&
+    !clean(env.WHATSAPP_SECONDARY_TOKEN) &&
+    env.WHATSAPP_COEXISTENCE_ENABLED !== "true" &&
+    !PRE_QR_SECONDARY_FORBIDDEN.some(key => env[key] === "true") &&
+    credentialVaultReady(env);
+}
+
 function requireExpectedSecondaryPhone(env = process.env) {
   if (!secondaryTargetMode(env)) return null;
   // Business App-only phones do not expose their Cloud API phone ID before
-  // Meta Embedded Signup. Discover it *after* the signed completion and
-  // Graph WABA/phone ownership lookup, but only in locked-down staging.
-  if (unassignedProtectedQaTarget(env)) return null;
+  // Meta Embedded Signup. Discover it after the signed completion and
+  // Graph account/phone ownership lookup, only in verified QA or an
+  // explicitly approved, exact-phone production pre-QR flow.
+  if (unassignedProtectedQaTarget(env) || unassignedProtectedProductionTarget(env)) return null;
   const expected = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
   if (!/^\d+$/.test(expected)) {
     throw new WhatsAppCoexistenceOnboardingError(
@@ -156,18 +207,34 @@ function publicConfig(env = process.env) {
   if (secondary && env.META_EMBEDDED_SIGNUP_V4_CONFIRMED !== "true") {
     missing.push("META_EMBEDDED_SIGNUP_V4_CONFIRMED");
   }
-  if (secondary && env.PR395_STAGING_MODE === "true" &&
-      !credentialVaultReady(env)) {
+  if (secondary && (env.PR395_STAGING_MODE === "true" ||
+      unassignedProtectedProductionTarget(env)) && !credentialVaultReady(env)) {
     missing.push("PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY");
   }
   if (secondary && !/^\d+$/.test(clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID)) &&
-      !unassignedProtectedQaTarget(env)) {
+      !unassignedProtectedQaTarget(env) &&
+      !unassignedProtectedProductionTarget(env)) {
     // An existing Business App phone has no known Cloud API phone ID until
     // signup. Diagnose which independent safety proof is missing instead of
     // misleading the administrator into inventing a numeric Meta ID.
     const qaE164 = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164);
     const approvedE164 = clean(env.PR395_STAGING_APPROVED_TEST_PHONE_E164);
-    const blockers = env.PR395_STAGING_MODE !== "true" ? [] : [
+    const prodClinic=env.PR395_STAGING_MODE !== "true" &&
+      qaE164 === NEUTRO_SECONDARY_E164;
+    const blockers=prodClinic ? [
+      ["WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED",env.WHATSAPP_SECONDARY_PRE_QR_ID_DISCOVERY_ENABLED === "true"],
+      ["WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED",env.WHATSAPP_SECONDARY_PRE_QR_RECEIVER_REHEARSED === "true"],
+      ["WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED (QR requires separate explicit approval)",env.WHATSAPP_SECONDARY_PRE_QR_OWNER_APPROVED === "true"],
+      ["verified Neutro primary sender key",env.WHATSAPP_PRIMARY_SENDER_KEY === "neutro"],
+      ["isolated secondary sender key neutro_secondary",env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary"],
+      ["no pre-QR secondary IDs, token or activated workers",
+        !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
+        !clean(env.WHATSAPP_SECONDARY_WABA_ID) &&
+        !clean(env.WHATSAPP_SECONDARY_TOKEN) &&
+        !PRE_QR_SECONDARY_FORBIDDEN.some(key=>env[key]==="true")],
+      ["encrypted credential vault",credentialVaultReady(env)],
+    ].filter(([,ready])=>!ready).map(([label])=>label) :
+      env.PR395_STAGING_MODE !== "true" ? [] : [
       ["PR395_STAGING_APP_ONLY_SIGNUP_READY (explicit QR authorization still required)",
         env.PR395_STAGING_APP_ONLY_SIGNUP_READY === "true"],
       ["PR395_STAGING_PRE_SIGNUP_CALLBACK_REHEARSED (signed pre-QR receiver rehearsal missing)",
@@ -646,6 +713,7 @@ module.exports = {
   fetchPhoneNumbers,
   secondaryTargetMode,
   unassignedProtectedQaTarget,
+  unassignedProtectedProductionTarget,
   requireExpectedSecondaryPhone,
   assertExpectedSecondaryPhone,
   safeSessionInfo,
