@@ -98,12 +98,29 @@ async function resolveSecondaryOutboundBinding(contact, { database = pool, env =
         contact.whatsapp_sender_phone_number_id !== row.meta_phone_number_id) ||
       (contact.whatsapp_sender_account_id &&
         contact.whatsapp_sender_account_id !== row.meta_account_id)) reject();
+  // Resolve the already-validated Coexistence token in memory. No plaintext
+  // credential is stored in Render or returned to the caller/front end.
+  let selectedToken = clean(env.WHATSAPP_SECONDARY_TOKEN);
+  if (selectedToken === "pr395-vault-backed-staff-only") {
+    if (env.PR395_STAGING_MODE !== "true" ||
+        env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED !== "true" ||
+        env.PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED !== "true" ||
+        row.sender_key !== "coexistence_qa") reject();
+    try {
+      const credential = await require("../db/whatsappCoexistenceOnboardingRepo")
+        .loadValidatedCredentialForSetup({
+          wabaId: row.meta_account_id, phoneNumberId: row.meta_phone_number_id,
+        }, { database, env });
+      selectedToken = clean(credential.accessToken);
+    } catch (_) { reject(); }
+    if (!selectedToken) reject();
+  }
   return Object.freeze({
     senderKey: row.sender_key,
     phoneNumberId: row.meta_phone_number_id,
     accountId: row.meta_account_id,
     // Never serialize, log, or return this object to an HTTP endpoint.
-    token: clean(env.WHATSAPP_SECONDARY_TOKEN),
+    token: selectedToken,
     recipient: row.customer_wa_id,
   });
 }
