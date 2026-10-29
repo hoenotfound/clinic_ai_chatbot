@@ -288,6 +288,14 @@ async function installApi(page, {
       return fulfill(route, conversations);
     }
 
+    if (path === "/api/conversations/directory-search" && method === "GET") {
+      const query = (url.searchParams.get("q") || "").trim().toLowerCase();
+      const matched = conversations.filter((item) => [
+        item.name, item.whatsapp_profile_name, item.whatsapp_number,
+      ].filter(Boolean).join(" ").toLowerCase().includes(query)).slice(0, 40);
+      return fulfill(route, matched);
+    }
+
     const summaryMatch = path.match(/^\/api\/conversations\/(\d+)\/summary$/);
     if (summaryMatch && method === "GET") {
       const contact = conversations.find((item) =>
