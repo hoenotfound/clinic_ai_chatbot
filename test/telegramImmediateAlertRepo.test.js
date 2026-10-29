@@ -85,6 +85,65 @@ test("delivery alerts use the same per-contact type cooldown without suppressing
   assert.equal(fake.calls.at(-2).sql, "COMMIT");
 });
 
+test("Meta 131060 per-contact cooldown checks only unavailable-message alerts", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
+      assert.match(sql, /position\('Meta 131060' IN message_text\) > 0/);
+      assert.deepEqual(params, [12, 1440, "ai_review"]);
+      return { rows: [{ id: 55 }] };
+    }
+    return { rows: [] };
+  });
+  const result = await queueAlert({
+    eventKey: "ai-review:12:3432", type: "ai_review",
+    contactId: 12, messageText: "WhatsApp message unavailable (Meta 131060)",
+    cooldownMinutes: 1440, cooldownScope: "meta_131060",
+  }, fake.database);
+
+  assert.equal(result, null);
+  assert.match(fake.calls[1].sql, /pg_advisory_xact_lock/);
+  assert.equal(fake.calls.some(({ sql }) => /INSERT INTO telegram_immediate_alerts/.test(sql)), false);
+});
+
+test("Meta 131060 cooldown does not block unrelated AI reviews or a different customer", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
+      assert.match(sql, /position\('Meta 131060' IN message_text\) > 0/);
+      assert.deepEqual(params, [13, 1440, "ai_review"]);
+      return { rows: [] };
+    }
+    if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
+      return { rows: [{ id: 80, status: "pending" }] };
+    }
+    return { rows: [] };
+  });
+  const newCustomer = await queueAlert({
+    eventKey: "ai-review:13:55", type: "ai_review",
+    contactId: 13, messageText: "WhatsApp message unavailable (Meta 131060)",
+    cooldownMinutes: 1440, cooldownScope: "meta_131060",
+  }, fake.database);
+  assert.equal(newCustomer?.id, 80);
+
+  const urgentReview = await queueAlert({
+    eventKey: "ai-review:12:56", type: "ai_review",
+    contactId: 12, messageText: "Clinical safety review",
+    cooldownMinutes: 0,
+  }, fake.database);
+  assert.equal(urgentReview?.id, 80);
+});
+
+test("invalid cooldown scope cannot suppress unrelated alerts", async () => {
+  const fake = fakeDatabase(async () => ({ rows: [] }));
+  await assert.rejects(
+    queueAlert({
+      eventKey: "ai-review:12:77", type: "ai_review", contactId: 12,
+      messageText: "Clinical review", cooldownMinutes: 1440, cooldownScope: "meta_131060",
+    }, fake.database),
+    /Invalid Telegram alert cooldown scope/
+  );
+  assert.equal(fake.calls.length, 0);
+});
+
 test("new human immediate alert is committed as pending queue work", async () => {
   const fake = fakeDatabase(async (sql, params) => {
     if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
