@@ -42,9 +42,6 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
    m.whatsapp_template->>'templateSignature' AS template_signature,
    m.whatsapp_template->>'billingReviewClaimHash' AS billing_review_claim_hash,
    (m.whatsapp_template IS NULL OR (
-     -- A sender-owned automated follow-up is a freeform service message,
-     -- NOT a Meta template. Its internal tracking metadata must not trigger
-     -- the staff-only approved-template billing gate.
      m.is_automated_follow_up = TRUE
      AND m.whatsapp_template->>'automatedSecondaryFollowup' = 'true'
      AND m.whatsapp_template->>'senderKey' = sa.sender_key
