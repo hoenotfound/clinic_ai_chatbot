@@ -3961,6 +3961,8 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [visibleChoices, setVisibleChoices] = useState(60);
+  const [directoryMatches, setDirectoryMatches] = useState([]);
+  const [directorySearching, setDirectorySearching] = useState(false);
 
   useEffect(() => {
     setQuery("");
@@ -3973,6 +3975,24 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
   useEffect(() => {
     setVisibleChoices(60);
   }, [query]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!message || q.length < 2) {
+      setDirectoryMatches([]);
+      setDirectorySearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setDirectorySearching(true);
+    const timer = setTimeout(() => {
+      api.searchConversationDirectory(q)
+        .then((rows) => { if (!cancelled) setDirectoryMatches(rows || []); })
+        .catch(() => { if (!cancelled) setDirectoryMatches([]); })
+        .finally(() => { if (!cancelled) setDirectorySearching(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query, message?.id]);
 
   useEffect(() => {
     if (!message) return undefined;
@@ -3999,18 +4019,34 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     !forwardMimeType.startsWith("audio/") &&
     !forwardMimeType.startsWith("video/")
   );
-  const choices = (conversations || []).filter((item) => {
-    if (forwardingDocument && (item.channel || "whatsapp") !== "whatsapp") return false;
+  const source = (conversations || []).find((item) =>
+    Number(item.contact_id) === Number(currentContactId));
+  const combined = [...(conversations || [])];
+  const knownIds = new Set(combined.map((item) => Number(item.contact_id)));
+  if (normalizedQuery.length >= 2) {
+    for (const match of directoryMatches) {
+      if (!knownIds.has(Number(match.contact_id))) {
+        combined.push(match);
+        knownIds.add(Number(match.contact_id));
+      }
+    }
+  }
+  const choices = combined.filter((item) => {
+    // Match the backend's cross-business forward guard, rather than offering
+    // targets that will be rejected because they belong to another sender.
+    const channel = item.channel || "whatsapp";
+    if (source && channel !== (source.channel || "whatsapp")) return false;
+    if (source && channel === "whatsapp" &&
+        String(item.whatsapp_sender_id || "") !== String(source.whatsapp_sender_id || "")) {
+      return false;
+    }
+    if (forwardingDocument && channel !== "whatsapp") return false;
     if (!normalizedQuery) return true;
     return [
       displayName(item),
       item.whatsapp_number,
       item.last_message,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedQuery);
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
   });
 
   function toggleContact(contactId) {
@@ -4105,6 +4141,9 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
               </button>
             );
           })}
+          {directorySearching && normalizedQuery.length >= 2 && (
+            <p className="px-3 py-2 text-xs text-[var(--color-text-muted)]">Searching all contacts…</p>
+          )}
           {choices.length > visibleChoices && (
             <button
               type="button"
