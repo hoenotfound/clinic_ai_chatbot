@@ -254,6 +254,20 @@ function assertPr395StagingSafety(env = process.env) {
   return { staging: true, workersDisabled: true, providerProcessingDisabled: true };
 }
 
+// Meta may deliver signed statuses after the one approved staff reply has
+// ended. This is evidence-only: never restore a sender token or send ability.
+function receiptOnlyWebhookEnabled(env) {
+  return providerRehearsalEnabled(env) &&
+    !controlledStaffTestEnabled(env) &&
+    env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+    !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim() &&
+    env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED !== "true" &&
+    !REHEARSAL_OUTBOUND_FORBIDDEN.some(key =>
+      key !== "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED" &&
+      env[key] === "true");
+}
 function validProviderRehearsalEvent(body, path, env) {
   const { waba, phone, e164 } = verifiedRehearsalTarget(env);
   if (body?.object !== "whatsapp_business_account" ||
@@ -272,7 +286,8 @@ function validProviderRehearsalEvent(body, path, env) {
       return path === "/webhook" && regular.has(change.field) &&
         change.value.metadata?.phone_number_id === phone &&
         !(change.field === "messages" && Array.isArray(change.value.statuses) &&
-          change.value.statuses.length > 0 && !controlledStaffTestEnabled(env));
+          change.value.statuses.length > 0 &&
+          !controlledStaffTestEnabled(env) && !receiptOnlyWebhookEnabled(env));
     })
   );
 }

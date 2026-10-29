@@ -116,6 +116,40 @@ test("signed receiver test only accepts pinned QA traffic; statuses require staf
   assert.equal(validProviderRehearsalEvent(statuses, "/webhook", approved({
     PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED: "false"
   })), false);
+  // A signed Meta status may arrive AFTER staff reply mode was disabled.
+  // Evidence-only receipt ingress must accept it with zero send credentials.
+  const receiptOnly=approved({
+    PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED:"false",
+    PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED:"false",
+    WHATSAPP_SECONDARY_TOKEN:"",
+    WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+    WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"false",
+    WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"false",
+    WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"false",
+    WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"false",
+    WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"false",
+    WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+  });
+  assert.doesNotThrow(()=>assertPr395StagingSafety(receiptOnly));
+  assert.equal(validProviderRehearsalEvent(statuses,"/webhook",receiptOnly),true);
+  assert.equal(validProviderRehearsalEvent(inbound,"/webhook",receiptOnly),true);
+  for(const extra of [
+    {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_TOKEN:"unexpected-outbound-token"},
+    {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"},
+  ]) {
+    assert.equal(validProviderRehearsalEvent(statuses,"/webhook",
+      {...receiptOnly,...extra}),false,JSON.stringify(extra));
+  }
+  assert.equal(validProviderRehearsalEvent({...statuses,entry:[{
+    ...statuses.entry[0],id:"200200200"
+  }]},"/webhook",receiptOnly),false);
   assert.equal(validProviderRehearsalEvent(inbound, "/meta-webhook", env), false);
   assert.equal(validProviderRehearsalEvent({...inbound, entry:[{
     ...inbound.entry[0],id:"200200200"
