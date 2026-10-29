@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { visibleSalesLeadSql } = require("./archivalImportedLeadVisibility");
 
 async function getUnassignedCounts(queryable = pool) {
   const result = await queryable.query(
@@ -15,8 +16,8 @@ async function getUnassignedCounts(queryable = pool) {
          WHERE owner_username IS NULL
            AND owner_assignment_source = 'manual'
        )::int AS manual_unassigned_count
-     FROM leads
-     WHERE is_closed = false`
+     FROM leads l
+     WHERE is_closed = false AND ${visibleSalesLeadSql("l")}`
   );
   const row = result.rows[0] || {};
   return {
