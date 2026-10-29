@@ -160,3 +160,35 @@ test("shared WABA callbacks still distinguish sender by verified phone ID",()=>{
   assert.equal(updates[0].wamid,"wamid.ariel-one");
   assert.equal(updates[0].phoneId,shared.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
 });
+
+// Real Meta receipt regression: the original QA delivery WAMID was padded.
+// Signature, exact secondary identity, and malformed-ID rejection stay strict.
+test("genuine padded Meta WAMIDs are accepted only with signed secondary identity",()=>{
+  const valid = [
+    "wamid.HBgMNjAxMjY0OTk3MTgVAgABAA==",
+    "wamid.AB+/cd_:-09=",
+    "wamid."+"a".repeat(448)+"=="
+  ];
+  for (const id of valid) {
+    const packet=signed(body([status({id})]));
+    const original=receipt.normalizedSignedEvents(packet.rawBody,env);
+    const subset=receipt.normalizedSecondarySubsetEvents(packet.rawBody,env);
+    assert.equal(original?.length,1,id);
+    assert.equal(subset?.length,1,id);
+    assert.equal(original[0].wamid,id);
+    assert.equal(subset[0].wamid,id);
+    assert.equal(receipt.validateMetaSignature(packet.rawBody,packet.signatureHeader,env.WHATSAPP_APP_SECRET),true);
+    assert.equal(receipt.validateMetaSignature(
+      Buffer.from(packet.rawBody.toString().replace("delivered","failed")),
+      packet.signatureHeader,env.WHATSAPP_APP_SECRET),false);
+  }
+  for (const id of [
+    "wamid.A=B","wamid.A===B","wamid.abc===",
+    "wamid.abc?","wamid.abc\\nvalue","wamid."+"a".repeat(449)+"=="
+  ]) {
+    assert.equal(receipt.normalizedSignedEvents(signed(body([status({id})])).rawBody,env),null,id);
+  }
+  const wrong=body([status({id:valid[0]})]);
+  wrong.entry[0].changes[0].value.metadata.phone_number_id=env.WHATSAPP_PHONE_NUMBER_ID;
+  assert.equal(receipt.normalizedSecondarySubsetEvents(signed(wrong).rawBody,env),null);
+});
