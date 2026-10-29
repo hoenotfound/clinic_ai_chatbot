@@ -160,3 +160,34 @@ test("shared WABA callbacks still distinguish sender by verified phone ID",()=>{
   assert.equal(updates[0].wamid,"wamid.ariel-one");
   assert.equal(updates[0].phoneId,shared.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
 });
+
+test("Meta-padded WAMIDs survive signed status and mixed-webhook normalization",()=>{
+  // Real Cloud API IDs can end in Base64 padding. Earlier QA rejects
+  // these with secondary_receipt_batch_invalid even after Meta delivery.
+  const ids=[
+    "wamid."+ "HBgLNjAxMjY0OTk3MTgVAgA".repeat(2)+"=",
+    "wamid.HBgMNjAxMjY0OTk3MTgVAgABAA==",
+    "wamid.AB+/cd_:-09="
+  ];
+  for(const id of ids){
+    const packet=signed(body([status({id,status:"delivered"})]));
+    const direct=receipt.normalizedSignedEvents(packet.rawBody,env);
+    const subset=receipt.normalizedSecondarySubsetEvents(packet.rawBody,env);
+    assert.equal(direct?.length,1,id);
+    assert.equal(direct[0].wamid,id);
+    assert.equal(subset?.length,1,id);
+    assert.equal(subset[0].wamid,id);
+    assert.equal(receipt.validateMetaSignature(
+      packet.rawBody,packet.signatureHeader,env.WHATSAPP_APP_SECRET),true);
+    assert.equal(receipt.validateMetaSignature(
+      Buffer.from(packet.rawBody.toString().replace("delivered","read")),
+      packet.signatureHeader,env.WHATSAPP_APP_SECRET),false);
+  }
+  for(const id of [
+    "wamid.A=B","wamid.A===B","wamid.abc===","wamid.abc="+"=".repeat(3),
+    "wamid.abc?","wamid.abc\\nvalue","wamid."+ "a".repeat(449)+"==",
+  ]){
+    assert.equal(receipt.normalizedSignedEvents(
+      signed(body([status({id})])).rawBody,env),null,id);
+  }
+});
