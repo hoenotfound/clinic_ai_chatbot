@@ -67,7 +67,23 @@ function displayAiReviewSummary(summary, coexistence = false) {
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
 const DELIVERY_STATUS_BATCH_SIZE = 500;
-const REALTIME_DEBOUNCE_MS = 100;
+const REALTIME_DEBOUNCE_MS = 250;
+// Match the database's needs-attention/newest-message ordering after a single
+// realtime summary update, without re-fetching every imported customer.
+function orderInboxSummaries(rows) {
+  return [...rows].sort((a, b) => {
+    if (Boolean(a.needs_attention) !== Boolean(b.needs_attention)) {
+      return a.needs_attention ? -1 : 1;
+    }
+    const aTime = Date.parse(a.last_message_at || "") || 0;
+    const bTime = Date.parse(b.last_message_at || "") || 0;
+    if (aTime !== bTime) return bTime - aTime;
+    const aCreated = Date.parse(a.created_at || "") || 0;
+    const bCreated = Date.parse(b.created_at || "") || 0;
+    return bCreated - aCreated;
+  });
+}
+
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
@@ -520,6 +536,12 @@ export default function Inbox() {
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
   const outboundQueueByContactRef = useRef(new Map());
+  const inboxRequestClockRef = useRef(0);
+  const latestFullRequestRef = useRef(0);
+  const lastAppliedFullRequestRef = useRef(0);
+  const latestSummaryByContactRef = useRef(new Map());
+  const latestLocalEditByContactRef = useRef(new Map());
+  const lastCommittedSummaryStartRef = useRef(0);
 
   selectedIdRef.current = selectedId;
   acquisitionContextRef.current = acquisitionContext;
@@ -527,11 +549,79 @@ export default function Inbox() {
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   async function refreshConversations() {
+    const started = ++inboxRequestClockRef.current;
+    latestFullRequestRef.current = started;
     try {
-      const data = await api.listConversations();
+      let data = await api.listConversations();
+      // A staff deep link or explicitly open contact-only archive must remain
+      // reachable. Recheck permission rather than pinning stale customer data.
+      const pinnedId = selectedIdRef.current ?? requestedContactId;
+      if (pinnedId != null && !data.some((item) =>
+        Number(item.contact_id) === Number(pinnedId))) {
+        try {
+          const archived = await api.getConversationSummary(pinnedId, true);
+          if (archived) data = [archived, ...data];
+        } catch {
+          // Access may have changed or the contact may have been deleted.
+        }
+      }
+      if (started !== latestFullRequestRef.current) return;
+      // A newer single-contact or local update committed while this full
+      // request was in flight. Requery instead of rolling the UI backwards.
+      if (lastCommittedSummaryStartRef.current > started) {
+        void refreshConversations();
+        return;
+      }
+      lastAppliedFullRequestRef.current = started;
       setConversations(data);
     } catch (err) {
       console.error("Failed to refresh conversations:", err);
+    }
+  }
+
+  async function refreshConversationSummary(contactId) {
+    const id = Number(contactId);
+    const started = ++inboxRequestClockRef.current;
+    latestSummaryByContactRef.current.set(id, started);
+    // Authorization remains on the server; a missing or forbidden summary
+    // triggers a full refresh so ownership changes and deletes are respected.
+    const summary = await api.getConversationSummary(id);
+    if (!summary) throw new Error("Missing Inbox summary.");
+    if (latestSummaryByContactRef.current.get(id) !== started ||
+        lastAppliedFullRequestRef.current > started ||
+        (latestLocalEditByContactRef.current.get(id) || 0) > started) return;
+    lastCommittedSummaryStartRef.current =
+      Math.max(lastCommittedSummaryStartRef.current, started);
+    setConversations((current) => {
+      if (!current) return current;
+      const without = current.filter((item) =>
+        Number(item.contact_id) !== id);
+      return orderInboxSummaries([...without, summary]);
+    });
+  }
+
+  async function openArchivedConversation(contactId) {
+    try {
+      const summary = await api.getConversationSummary(contactId, true);
+      const id = Number(summary.contact_id);
+      if (!Number.isSafeInteger(id) || id <= 0) return;
+      // Keep in-flight full refreshes from overwriting the newly opened contact.
+      const started = ++inboxRequestClockRef.current;
+      lastCommittedSummaryStartRef.current = started;
+      setConversations((current) => orderInboxSummaries([
+        ...(current || []).filter((item) => Number(item.contact_id) !== id),
+        summary,
+      ]));
+      setKeepExplicitlyOpenedThread(true);
+      setSelectedId(id);
+      setSearchParams({ contact: String(id) }, { replace: true });
+      setMobileThreadOpen(true);
+      if (summary.is_unread) {
+        updateConversationLocally(id, { is_unread: false });
+        api.setReadState(id, false).catch(() => void refreshConversations());
+      }
+    } catch {
+      showToast("This contact is no longer available to your account.", "warning");
     }
   }
 
@@ -784,7 +874,19 @@ export default function Inbox() {
         pendingContactIds.clear();
         debounceTimer = null;
 
-        await refreshConversations();
+        // A single changed conversation needs just one small summary instead
+        // of the full Inbox response. Unknown/bulk events keep the existing
+        // full-refresh safety path (including restricted-staff SSE signals).
+        if (changedContacts.size === 1) {
+          const [changedId] = changedContacts;
+          try {
+            await refreshConversationSummary(changedId);
+          } catch {
+            await refreshConversations();
+          }
+        } else {
+          await refreshConversations();
+        }
 
         const currentId = selectedIdRef.current;
         if (
@@ -1024,6 +1126,10 @@ export default function Inbox() {
   }
 
   function updateConversationLocally(contactId, updates) {
+    // Staff changes must win over older full-list AND single-contact reads.
+    const mutationVersion = ++inboxRequestClockRef.current;
+    lastCommittedSummaryStartRef.current = mutationVersion;
+    latestLocalEditByContactRef.current.set(Number(contactId), mutationVersion);
     setConversations((current) =>
       current?.map((conversation) =>
         conversation.contact_id === contactId ? { ...conversation, ...updates } : conversation
@@ -1437,6 +1543,7 @@ export default function Inbox() {
         conversations={conversations}
         selectedId={selectedId}
         onSelect={handleSelectConversation}
+        onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
         mobileThreadOpen={mobileThreadOpen}
@@ -1556,6 +1663,7 @@ function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
   mobileThreadOpen,
@@ -1574,6 +1682,9 @@ function ConversationList({
     query: "",
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [visibleRowCount, setVisibleRowCount] = useState(60);
+  const [directoryMatches, setDirectoryMatches] = useState([]);
+  const [directorySearching, setDirectorySearching] = useState(false);
   const [replyWindowNow, setReplyWindowNow] = useState(() => Date.now());
 
   // A conversation can expire without any new messages or server events.
@@ -1583,6 +1694,33 @@ function ConversationList({
   }, []);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
+  // A bounded server search allows staff to recover old, contact-only imports
+  // even after they are hidden from the default list. Search never sends messages.
+  useEffect(() => {
+    const q = filters.query.trim();
+    if (q.length < 2) {
+      setDirectoryMatches([]);
+      setDirectorySearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setDirectoryMatches([]);
+    setDirectorySearching(true);
+    const timer = setTimeout(() => {
+      api.searchConversationDirectory(q)
+        .then((rows) => { if (!cancelled) setDirectoryMatches(rows || []); })
+        .catch(() => { if (!cancelled) setDirectoryMatches([]); })
+        .finally(() => { if (!cancelled) setDirectorySearching(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [filters.query]);
+  const externalMatches = useMemo(() => {
+    const existing = new Set(conversationList.map((item) => Number(item.contact_id)));
+    return directoryMatches.filter((item) =>
+      !existing.has(Number(item.contact_id)) &&
+      (filters.channel === "all" || (item.channel || "whatsapp") === filters.channel) &&
+      (filters.sender === "all" || item.whatsapp_sender_key === filters.sender));
+  }, [directoryMatches, conversationList, filters.channel, filters.sender]);
   // Only show business-number switching once the server has verified and
   // linked more than one sender. Legacy single-number clients stay simple.
   const senderOptions = useMemo(() => {
@@ -1636,6 +1774,15 @@ function ConversationList({
   }, [conversationList, filters, replyWindowNow, canViewAllLeads, currentUsername]);
 
   const { filtered: filteredConversations, statusCounts, replyWindowCounts } = contextualFilterMatches;
+  // Bound DOM size without changing search, filters or accurate badge totals.
+  const renderedConversations = useMemo(
+    () => filteredConversations.slice(0, visibleRowCount),
+    [filteredConversations, visibleRowCount]
+  );
+  useEffect(() => {
+    setVisibleRowCount(60);
+  }, [filters.status, filters.channel, filters.sender, filters.control,
+      filters.assignment, filters.replyWindow, filters.query]);
   const statusOptions = useMemo(() =>
     STATUS_FILTERS.map((filter) => [
       filter.key,
@@ -1904,7 +2051,8 @@ function ConversationList({
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
         {!conversations && <ConversationListSkeleton />}
 
-        {conversations && conversations.length === 0 && (
+        {conversations && conversations.length === 0 &&
+          !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title={canViewAllLeads ? "No conversations yet" : "No assigned conversations"}
             description={
@@ -1915,7 +2063,8 @@ function ConversationList({
           />
         )}
 
-        {conversations && conversations.length > 0 && filteredConversations.length === 0 && (
+        {conversations && conversations.length > 0 && filteredConversations.length === 0 &&
+          !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
             title="No matching conversations"
             description="Try changing your search or filters."
@@ -1931,7 +2080,7 @@ function ConversationList({
           />
         )}
 
-        {filteredConversations.map((conversation) => {
+        {renderedConversations.map((conversation) => {
           const selected = conversation.contact_id === selectedId;
           return (
             <button
@@ -2008,6 +2157,41 @@ function ConversationList({
             </button>
           );
         })}
+        {filteredConversations.length > visibleRowCount && (
+          <button
+            type="button"
+            onClick={() => setVisibleRowCount((current) => current + 60)}
+            className="my-3 w-full rounded-xl border border-[var(--color-border)] px-3 py-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+          >
+            Show more conversations ({filteredConversations.length - visibleRowCount} remaining)
+          </button>
+        )}
+        {filters.query.trim().length >= 2 && (directorySearching || externalMatches.length > 0) && (
+          <div className="mt-4 border-t border-[var(--color-border)] pt-2" aria-label="Other matching contacts">
+            <p className="px-3 py-2 text-xs font-semibold text-[var(--color-text-muted)]">
+              Other contacts · archived or not in your Inbox
+            </p>
+            {directorySearching && <p className="px-3 text-xs text-[var(--color-text-muted)]">Searching contacts…</p>}
+            {externalMatches.map((contact) => (
+              <button key={contact.contact_id} type="button"
+                onClick={() => onSelectArchived(contact.contact_id)}
+                className="mb-1 flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left hover:bg-[var(--color-bg)]">
+                <ContactAvatar src={contact.photo_url} channel={contact.channel} size={40} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">{displayName(contact)}</span>
+                  <span className="block truncate text-xs text-[var(--color-text-muted)]">
+                    {contact.whatsapp_sender_display_name || contactMeta(contact)}
+                  </span>
+                </span>
+              </button>
+            ))}
+            {directoryMatches.length >= 40 && (
+              <p className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
+                First 40 contact matches shown. Use a more specific name or number to narrow results.
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );
@@ -3788,13 +3972,40 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
   const [selectedIds, setSelectedIds] = useState([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [visibleChoices, setVisibleChoices] = useState(60);
+  const [directoryMatches, setDirectoryMatches] = useState([]);
+  const [directorySearching, setDirectorySearching] = useState(false);
 
   useEffect(() => {
     setQuery("");
     setSelectedIds([]);
     setSending(false);
     setError("");
+    setVisibleChoices(60);
   }, [message?.id]);
+
+  useEffect(() => {
+    setVisibleChoices(60);
+  }, [query]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!message || q.length < 2) {
+      setDirectoryMatches([]);
+      setDirectorySearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setDirectoryMatches([]);
+    setDirectorySearching(true);
+    const timer = setTimeout(() => {
+      api.searchConversationDirectory(q)
+        .then((rows) => { if (!cancelled) setDirectoryMatches(rows || []); })
+        .catch(() => { if (!cancelled) setDirectoryMatches([]); })
+        .finally(() => { if (!cancelled) setDirectorySearching(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query, message?.id]);
 
   useEffect(() => {
     if (!message) return undefined;
@@ -3821,18 +4032,34 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     !forwardMimeType.startsWith("audio/") &&
     !forwardMimeType.startsWith("video/")
   );
-  const choices = (conversations || []).filter((item) => {
-    if (forwardingDocument && (item.channel || "whatsapp") !== "whatsapp") return false;
+  const source = (conversations || []).find((item) =>
+    Number(item.contact_id) === Number(currentContactId));
+  const combined = [...(conversations || [])];
+  const knownIds = new Set(combined.map((item) => Number(item.contact_id)));
+  if (normalizedQuery.length >= 2) {
+    for (const match of directoryMatches) {
+      if (!knownIds.has(Number(match.contact_id))) {
+        combined.push(match);
+        knownIds.add(Number(match.contact_id));
+      }
+    }
+  }
+  const choices = combined.filter((item) => {
+    // Match the backend's cross-business forward guard, rather than offering
+    // targets that will be rejected because they belong to another sender.
+    const channel = item.channel || "whatsapp";
+    if (source && channel !== (source.channel || "whatsapp")) return false;
+    if (source && channel === "whatsapp" &&
+        String(item.whatsapp_sender_id || "") !== String(source.whatsapp_sender_id || "")) {
+      return false;
+    }
+    if (forwardingDocument && channel !== "whatsapp") return false;
     if (!normalizedQuery) return true;
     return [
       displayName(item),
       item.whatsapp_number,
       item.last_message,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedQuery);
+    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
   });
 
   function toggleContact(contactId) {
@@ -3905,7 +4132,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
         <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-2 py-2">
           {choices.length === 0 ? (
             <p className="px-3 py-10 text-center text-sm text-[var(--color-text-muted)]">No conversations found.</p>
-          ) : choices.map((item) => {
+          ) : choices.slice(0, visibleChoices).map((item) => {
             const id = Number(item.contact_id);
             const selected = selectedIds.includes(id);
             return (
@@ -3927,6 +4154,18 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
               </button>
             );
           })}
+          {directorySearching && normalizedQuery.length >= 2 && (
+            <p className="px-3 py-2 text-xs text-[var(--color-text-muted)]">Searching all contacts…</p>
+          )}
+          {choices.length > visibleChoices && (
+            <button
+              type="button"
+              className="my-2 w-full rounded-lg border border-[var(--color-border)] p-3 text-sm font-semibold text-[var(--color-primary)]"
+              onClick={() => setVisibleChoices((current) => current + 60)}
+            >
+              Show more recipients ({choices.length - visibleChoices} remaining)
+            </button>
+          )}
         </div>
         {error && <p className="mx-4 mb-2 shrink-0 rounded-lg bg-[var(--color-danger-light)] px-3 py-2.5 text-xs text-[var(--color-danger)]">{error}</p>}
         <div

@@ -313,6 +313,7 @@ async function installRealtimeHarness(page) {
 
 async function installApi(page, {
   initialConversations = [conversation()],
+  archivedContactIds = [],
   initialMessagesByContact = new Map([[101, [inboundMessage()]]]),
   imageSendFailure = null,
   imageSendDelayMs = 0,
@@ -333,6 +334,11 @@ async function installApi(page, {
   const calls = [];
   const unexpected = [];
   const messageFetchCounts = new Map();
+  const hiddenFromInbox = new Set(archivedContactIds.map(Number));
+  let listFetches = 0;
+  let summaryFetches = 0;
+  const delayedFullReplies = [];
+  const delayedSummaryReplies = [];
   const mediaRequests = [];
   const documentRequests = [];
   const voiceRequests = [];
@@ -450,7 +456,35 @@ async function installApi(page, {
     }
 
     if (path === "/api/conversations" && method === "GET") {
-      return fulfill(route, conversations);
+      listFetches += 1;
+      const delayed = delayedFullReplies.shift();
+      if (delayed) {
+        await new Promise((resolve) => setTimeout(resolve, delayed.ms));
+        return fulfill(route, delayed.snapshot);
+      }
+      return fulfill(route, conversations.filter((item) =>
+        !hiddenFromInbox.has(Number(item.contact_id))));
+    }
+
+    if (path === "/api/conversations/directory-search" && method === "GET") {
+      const query = (url.searchParams.get("q") || "").trim().toLowerCase();
+      const matched = conversations.filter((item) => [
+        item.name, item.whatsapp_profile_name, item.whatsapp_number,
+      ].filter(Boolean).join(" ").toLowerCase().includes(query)).slice(0, 40);
+      return fulfill(route, matched);
+    }
+
+    const summaryMatch = path.match(/^\/api\/conversations\/(\d+)\/summary$/);
+    if (summaryMatch && method === "GET") {
+      summaryFetches += 1;
+      const delayed = delayedSummaryReplies.shift();
+      if (delayed) {
+        await new Promise((resolve) => setTimeout(resolve, delayed.ms));
+        return fulfill(route, delayed.snapshot);
+      }
+      const contact = conversations.find((item) =>
+        Number(item.contact_id) === Number(summaryMatch[1]));
+      return fulfill(route, contact || { error: "Conversation not found" }, contact ? 200 : 404);
     }
 
     const freeWindowMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-template-free-window$/);
@@ -645,6 +679,10 @@ async function installApi(page, {
     setDeliveryStatus,
     updateConversation,
     getMessageFetchCount: (contactId) => messageFetchCounts.get(Number(contactId)) || 0,
+    getListFetches: () => listFetches,
+    getSummaryFetches: () => summaryFetches,
+    queueDelayedList: (snapshot, ms) => delayedFullReplies.push({ snapshot, ms }),
+    queueDelayedSummary: (snapshot, ms) => delayedSummaryReplies.push({ snapshot, ms }),
     getMessages: (contactId) => messagesByContact.get(Number(contactId)) || [],
     getConversations: () => conversations,
   };
@@ -738,6 +776,72 @@ async function openInboxConversation(page, name = "Alex Customer") {
     page.locator(`section[aria-label="Conversation with ${name}"]`)
   ).toBeVisible();
 }
+
+test("large Inbox lists render bounded rows while searching every older active conversation", async ({ page }) => {
+  const extras = Array.from({ length: 139 }, (_, index) => conversation({
+    contactId: 1000 + index,
+    name: `Synthetic Customer ${String(index + 1).padStart(3, "0")}`,
+  }));
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), ...extras],
+  });
+  await page.goto("/inbox");
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  await expect(inbox.getByRole("button", { name: /Show more conversations/ })).toBeVisible();
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toHaveCount(0);
+
+  const search = inbox.getByRole("searchbox", { name: "Search by name, number, message, or assignee" });
+  await search.fill("Synthetic Customer 139");
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 139/ })).toBeVisible();
+  await expect(inbox.getByRole("button", { name: /Show more conversations/ })).toHaveCount(0);
+  await search.fill("");
+  await inbox.getByRole("button", { name: /Show more conversations/ }).click();
+  await expect(inbox.getByRole("button", { name: /Synthetic Customer 070/ })).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("deep links still open contact-only imported archives excluded from default Inbox", async ({ page }) => {
+  const archived = conversation({
+    contactId: 987,
+    name: "Imported Contact Only",
+    lastMessage: "",
+    lastMessageAt: null,
+    has_unreplied: false,
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), archived],
+    archivedContactIds: [987],
+  });
+  await page.goto("/inbox?contact=987");
+  await expect(page.getByRole("region", {
+    name: "Conversation with Imported Contact Only",
+  })).toBeVisible();
+  await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(0);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("search retrieves archived Coexistence address-book contacts and opens their chat", async ({ page }) => {
+  const archived = conversation({
+    contactId: 8987, name: "Archive Search Customer", number: "+60176661122",
+    lastMessage: "", lastMessageAt: null, has_unreplied: false,
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), archived],
+    archivedContactIds: [8987],
+  });
+  await page.goto("/inbox");
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  await expect(inbox.getByText("Archive Search Customer")).toHaveCount(0);
+  await inbox.getByRole("searchbox", { name: "Search by name, number, message, or assignee" })
+    .fill("Archive Search");
+  const otherContacts = inbox.getByLabel("Other matching contacts");
+  await expect(otherContacts.getByRole("button", { name: /Archive Search Customer/ })).toBeVisible();
+  await otherContacts.getByRole("button", { name: /Archive Search Customer/ }).click();
+  await expect(page.getByRole("region", {
+    name: "Conversation with Archive Search Customer",
+  })).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
 
 test("selected conversation receives a new customer message through realtime refresh", async ({ page }) => {
   const apiState = await installApi(page);
@@ -840,6 +944,8 @@ test("realtime event for another conversation updates its list item without repl
   await expect(selectedThread).toBeVisible();
 
   const fetchCountBefore = apiState.getMessageFetchCount(101);
+  const fullListCountBefore = apiState.getListFetches();
+  const summaryCountBefore = apiState.getSummaryFetches();
   const bellaMessage = inboundMessage({
     id: 21,
     content: "Bella realtime message",
@@ -857,6 +963,58 @@ test("realtime event for another conversation updates its list item without repl
   }
   await expect(page.getByText("Bella realtime message", { exact: true }).first()).toBeVisible();
   expect(apiState.getMessageFetchCount(101)).toBe(fetchCountBefore);
+  await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(summaryCountBefore);
+  expect(apiState.getListFetches()).toBe(fullListCountBefore);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("stale full Inbox responses cannot overwrite newer realtime contact states", async ({ page }) => {
+  const second = conversation({
+    contactId: 202, name: "Bella Customer", lastMessage: "Old preview",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), second],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const beforeFull = apiState.getListFetches();
+  apiState.queueDelayedList(apiState.getConversations().map(item => ({ ...item })), 1100);
+  await page.evaluate(() => window.__realtimeMediaTest.emit("conversation_changed", {}));
+  await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeFull);
+
+  apiState.updateConversation(202, {
+    last_message: "Newer customer state", needs_attention: true,
+  });
+  await emitRealtime(page, { contactId: 202, reason: "message" });
+  // On iPhone the conversation list is intentionally hidden behind an open
+  // thread. Reveal it before asserting the updated preview is visible.
+  if ((page.viewportSize()?.width ?? 0) < 1024) {
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await expect(page.getByText("Newer customer state", { exact: true }).first()).toBeVisible();
+  await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeFull + 1);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("out-of-order summaries cannot roll an Inbox conversation back", async ({ page }) => {
+  const second = conversation({ contactId: 202, name: "Bella Customer" });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), second],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const before = apiState.getSummaryFetches();
+  apiState.queueDelayedSummary({ ...second, last_message: "Stale summary" }, 900);
+  await emitRealtime(page, { contactId: 202, reason: "message" });
+  await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(before);
+  apiState.updateConversation(202, { last_message: "Newest summary" });
+  await emitRealtime(page, { contactId: 202, reason: "message" });
+  if ((page.viewportSize()?.width ?? 0) < 1024) {
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await expect(page.getByText("Newest summary", { exact: true }).first()).toBeVisible();
+  await page.waitForTimeout(1100);
+  await expect(page.getByText("Stale summary", { exact: true })).toHaveCount(0);
   expectNoUnexpectedApi(apiState);
 });
 
@@ -1129,8 +1287,20 @@ test("document forward picker hides Messenger and Instagram conversations", asyn
     number: "ig-202",
     channel: "instagram",
   });
+  const manyWhatsApp = Array.from({ length: 78 }, (_, index) => conversation({
+    contactId: 1000 + index, name: `Forwardable Customer ${index + 1}`,
+  }));
+  const archived = conversation({
+    contactId: 2040, name: "Archived Forward Recipient", number: "+60199884455",
+    lastMessage: "", lastMessageAt: null,
+  });
+  const otherSender = conversation({
+    contactId: 2041, name: "Other Number Recipient",
+    whatsapp_sender_id: 9999, whatsapp_sender_key: "other-number",
+  });
   const apiState = await installApi(page, {
-    initialConversations: [conversation(), instagram],
+    initialConversations: [conversation(), instagram, ...manyWhatsApp, archived, otherSender],
+    archivedContactIds: [2040],
     initialMessagesByContact: new Map([[101, [inboundMessage(), documentMessage]]]),
   });
 
@@ -1148,6 +1318,15 @@ test("document forward picker hides Messenger and Instagram conversations", asyn
   await expect(dialog.getByText("Documents can be forwarded to WhatsApp only", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Instagram Customer", { exact: false })).toHaveCount(0);
   await expect(dialog.getByText("Alex Customer", { exact: false })).toBeVisible();
+  await expect(dialog.getByText("Forwardable Customer 78", { exact: false })).toHaveCount(0);
+  await dialog.getByRole("textbox", { name: "Search conversations to forward" }).fill("Forwardable Customer 78");
+  await expect(dialog.getByText("Forwardable Customer 78", { exact: false })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Search conversations to forward" })
+    .fill("Archived Forward Recipient");
+  await expect(dialog.getByText("Archived Forward Recipient", { exact: false })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Search conversations to forward" })
+    .fill("Other Number Recipient");
+  await expect(dialog.getByText("Other Number Recipient", { exact: false })).toHaveCount(0);
 
   await dialog.getByRole("button", { name: "Close forward message" }).click();
   expectNoUnexpectedApi(apiState);

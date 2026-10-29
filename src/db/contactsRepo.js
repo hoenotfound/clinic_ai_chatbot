@@ -530,9 +530,75 @@ async function updateContact(id, { name, whatsappNumber }) {
   return updated;
 }
 
-async function listConversations() {
+// Search the full customer directory without fetching historical chats or
+// triggering Meta profile lookups. Consumers must apply server-side ownership
+// restrictions; this does not grant send permission or bypass sender isolation.
+async function searchConversationDirectory({ term, accessibleContactIds = null, limit = 40 } = {}) {
+  const text = String(term || "").trim().slice(0, 80);
+  if (text.length < 2 || accessibleContactIds?.length === 0) return [];
+  const escaped = text.replace(/[\\%_]/g, "\\$&");
+  const normalizedPhone = text.replace(/[^0-9]/g, "");
+  const boundLimit = Math.max(1, Math.min(60, Number(limit) || 40));
+  const result = await pool.query(`
+    SELECT c.id AS contact_id, c.id, c.name, c.whatsapp_profile_name,
+           c.whatsapp_number, c.channel, c.photo_url, c.mode,
+           c.whatsapp_sender_id,
+           sa.sender_key AS whatsapp_sender_key,
+           sa.display_name AS whatsapp_sender_display_name,
+           sa.meta_phone_number_id AS whatsapp_sender_phone_number_id,
+           sa.meta_account_id AS whatsapp_sender_account_id,
+           sa.state AS whatsapp_sender_state,
+           sa.coexistence_enabled AS whatsapp_sender_coexistence_enabled,
+           c.needs_attention, c.is_unread, c.needs_follow_up,
+           c.created_at
+    FROM contacts c
+    LEFT JOIN whatsapp_sender_conversations sc
+      ON sc.contact_id = c.id AND sc.state = 'bound'
+    LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id
+    WHERE ($2::integer[] IS NULL OR c.id = ANY($2::integer[]))
+      AND (
+        c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1
+        OR c.whatsapp_number ILIKE $1
+        OR ($4::text <> '' AND c.whatsapp_number ILIKE $4)
+      )
+    ORDER BY c.updated_at DESC, c.id DESC
+    LIMIT $3`,
+    [`%${escaped}%`, accessibleContactIds, boundLimit,
+     normalizedPhone.length >= 2 ? `%${normalizedPhone}%` : ""]
+  );
+  return result.rows.map(row => presentPortalContact(row));
+}
+
+async function listConversations({ contactId = null, includeEmptyCoexistenceContacts = false } = {}) {
+  // Inbox hides untouched contact-only Coexistence address-book imports; Contacts
+  // retains them, and genuine history/live threads remain visible. This is a
+  // read filter, never a delete or a change to sender routing/follow-up policy.
+  const hideEmptyCoexistence = senderAwareInboxReadsEnabled() &&
+    !includeEmptyCoexistenceContacts &&
+    process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS === "true";
+  // Preselect eligible IDs before expensive lead/message review subqueries.
+  // The flag is strictly opt-in; a rollback changes only presentation.
+  const candidatesSql = hideEmptyCoexistence ? `
+    WITH eligible_inbox_contacts AS MATERIALIZED (
+      SELECT c.id FROM contacts c
+      WHERE NOT (
+        c.whatsapp_sender_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM whatsapp_sender_accounts account
+          WHERE account.id = c.whatsapp_sender_id
+            AND account.coexistence_enabled = TRUE
+        )
+        AND NOT EXISTS (SELECT 1 FROM messages any_message WHERE any_message.contact_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM leads existing_lead WHERE existing_lead.contact_id = c.id)
+        AND c.is_unread IS DISTINCT FROM TRUE
+        AND c.needs_attention IS DISTINCT FROM TRUE
+        AND c.needs_follow_up IS DISTINCT FROM TRUE
+        AND c.mode IS DISTINCT FROM 'human'
+      )
+    )` : "";
   const result = await pool.query(
     `
+    ${candidatesSql}
     SELECT
       c.id AS contact_id,
       c.whatsapp_number,
@@ -554,6 +620,7 @@ ${senderAwareInboxReadsEnabled() ? `
       c.takeover_by,
       c.takeover_at,
       c.updated_at,
+      c.created_at,
       c.needs_attention,
       c.attention_reason,
       (SELECT COUNT(*)::integer FROM ai_review_items r
@@ -610,7 +677,9 @@ ${senderAwareInboxReadsEnabled() ? `
               AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
           )
       ) AS has_unreplied
-    FROM contacts c
+    FROM ${hideEmptyCoexistence
+      ? "eligible_inbox_contacts eligible JOIN contacts c ON c.id = eligible.id"
+      : "contacts c"}
 ${senderAwareInboxReadsEnabled() ? `
     LEFT JOIN whatsapp_sender_conversations sc
       ON sc.contact_id = c.id AND sc.state = 'bound'
@@ -638,9 +707,11 @@ ${senderAwareInboxReadsEnabled() ? `
       ORDER BY COALESCE(source_created_at, created_at) DESC, id DESC
       LIMIT 1
     ) latest_customer ON true
-    WHERE m.created_at IS NOT NULL OR c.channel = 'whatsapp'
+    WHERE (m.created_at IS NOT NULL OR c.channel = 'whatsapp')
+     ${contactId == null ? "" : "AND c.id = $1"}
     ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
-    `
+    `,
+    contactId == null ? [] : [contactId]
   );
   const hydrated = await hydrateSocialContactRows(result.rows);
   return hydrated.map((row) => presentPortalContact(row));
@@ -1442,6 +1513,7 @@ module.exports = {
   getTcmReviewEvidence,
   updateContactName,
   listConversations,
+  searchConversationDirectory,
   listContacts,
   createContact,
   updateContact,
