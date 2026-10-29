@@ -337,6 +337,8 @@ async function installApi(page, {
   const hiddenFromInbox = new Set(archivedContactIds.map(Number));
   let listFetches = 0;
   let summaryFetches = 0;
+  const delayedFullReplies = [];
+  const delayedSummaryReplies = [];
   const mediaRequests = [];
   const documentRequests = [];
   const voiceRequests = [];
@@ -455,6 +457,11 @@ async function installApi(page, {
 
     if (path === "/api/conversations" && method === "GET") {
       listFetches += 1;
+      const delayed = delayedFullReplies.shift();
+      if (delayed) {
+        await new Promise((resolve) => setTimeout(resolve, delayed.ms));
+        return fulfill(route, delayed.snapshot);
+      }
       return fulfill(route, conversations.filter((item) =>
         !hiddenFromInbox.has(Number(item.contact_id))));
     }
@@ -470,6 +477,11 @@ async function installApi(page, {
     const summaryMatch = path.match(/^\/api\/conversations\/(\d+)\/summary$/);
     if (summaryMatch && method === "GET") {
       summaryFetches += 1;
+      const delayed = delayedSummaryReplies.shift();
+      if (delayed) {
+        await new Promise((resolve) => setTimeout(resolve, delayed.ms));
+        return fulfill(route, delayed.snapshot);
+      }
       const contact = conversations.find((item) =>
         Number(item.contact_id) === Number(summaryMatch[1]));
       return fulfill(route, contact || { error: "Conversation not found" }, contact ? 200 : 404);
@@ -669,6 +681,8 @@ async function installApi(page, {
     getMessageFetchCount: (contactId) => messageFetchCounts.get(Number(contactId)) || 0,
     getListFetches: () => listFetches,
     getSummaryFetches: () => summaryFetches,
+    queueDelayedList: (snapshot, ms) => delayedFullReplies.push({ snapshot, ms }),
+    queueDelayedSummary: (snapshot, ms) => delayedSummaryReplies.push({ snapshot, ms }),
     getMessages: (contactId) => messagesByContact.get(Number(contactId)) || [],
     getConversations: () => conversations,
   };
@@ -951,6 +965,51 @@ test("realtime event for another conversation updates its list item without repl
   expect(apiState.getMessageFetchCount(101)).toBe(fetchCountBefore);
   await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(summaryCountBefore);
   expect(apiState.getListFetches()).toBe(fullListCountBefore);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("stale full Inbox responses cannot overwrite newer realtime contact states", async ({ page }) => {
+  const second = conversation({
+    contactId: 202, name: "Bella Customer", lastMessage: "Old preview",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), second],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const beforeFull = apiState.getListFetches();
+  apiState.queueDelayedList(apiState.getConversations().map(item => ({ ...item })), 1100);
+  await page.evaluate(() => window.__realtimeMediaTest.emit("conversation_changed", {}));
+  await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeFull);
+
+  apiState.updateConversation(202, {
+    last_message: "Newer customer state", needs_attention: true,
+  });
+  await emitRealtime(page, { contactId: 202, reason: "message" });
+  await expect(page.getByText("Newer customer state", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Newer customer state", { exact: true }).first()).toBeVisible({
+    timeout: 3000,
+  });
+  await expect.poll(() => apiState.getListFetches()).toBeGreaterThan(beforeFull + 1);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("out-of-order summaries cannot roll an Inbox conversation back", async ({ page }) => {
+  const second = conversation({ contactId: 202, name: "Bella Customer" });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), second],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const before = apiState.getSummaryFetches();
+  apiState.queueDelayedSummary({ ...second, last_message: "Stale summary" }, 900);
+  await emitRealtime(page, { contactId: 202, reason: "message" });
+  await expect.poll(() => apiState.getSummaryFetches()).toBeGreaterThan(before);
+  apiState.updateConversation(202, { last_message: "Newest summary" });
+  await emitRealtime(page, { contactId: 202, reason: "message" });
+  await expect(page.getByText("Newest summary", { exact: true }).first()).toBeVisible();
+  await page.waitForTimeout(1100);
+  await expect(page.getByText("Stale summary", { exact: true })).toHaveCount(0);
   expectNoUnexpectedApi(apiState);
 });
 
