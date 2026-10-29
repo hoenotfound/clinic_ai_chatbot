@@ -27,6 +27,9 @@ function db(){
  return{requests,queries,set failFinalize(v){failFinalize=v},
  async query(sql,params=[]){
   queries.push({sql,params});
+  if(sql.startsWith("SELECT id FROM whatsapp_sender_accounts")) {
+   return {rows: [{id: 71}]};
+  }
   if(sql.startsWith("INSERT INTO whatsapp_coexistence_sync_dispatch_requests")){
    let key=params[1]+":"+params[2]+":"+params[3];
    if(requests.has(key))return{rows:[]};
@@ -128,4 +131,83 @@ test("stale claim quarantine is review-only, never POST",async()=>{
  }};
  const result=await quarantineStaleClaims({database,olderThanMinutes:3});
  assert.deepEqual(result.rows,[{id:4}]);
+});
+
+const prodEnv={
+ ...env,
+ PR395_STAGING_MODE:"false",
+ PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED:"false",
+ PR395_STAGING_ALLOW_PROVIDER_PROCESSING:"false",
+ WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_OPERATOR_APPROVED:"true",
+ WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_HISTORY_OPERATOR_APPROVED:"true",
+ WHATSAPP_PAID_SECONDARY_HISTORY_OWNER_CONSENT_VERIFIED:"true",
+ WHATSAPP_APP_SECRET:"synthetic-only-not-a-real-meta-secret-123456",
+ META_APP_SECRET:"synthetic-only-not-a-real-meta-secret-123456",
+ WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+ WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+ WHATSAPP_WABA_ID:"1593376338308612",
+ WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
+ WHATSAPP_SECONDARY_WABA_ID:"222222222222222",
+ WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"333333333333333",
+ WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"222222222222222",
+ WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"333333333333333",
+ WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336",
+ WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+ WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true",
+ WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
+ WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true"
+};
+const prodInput={...input,wabaId:prodEnv.WHATSAPP_SECONDARY_WABA_ID,
+ phoneNumberId:prodEnv.WHATSAPP_SECONDARY_PHONE_NUMBER_ID};
+test("production once-only sync stays OFF until signed history receiver and distinct manual gate are ready",()=>{
+ assert.doesNotThrow(()=>assertSafeCommand(prodInput,prodEnv,now));
+ for(const [key,value] of [
+  ["WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_ENABLED","false"],
+  ["WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_OPERATOR_APPROVED","false"],
+  ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","false"],
+  ["WHATSAPP_PAID_SECONDARY_HISTORY_OWNER_CONSENT_VERIFIED","false"],
+  ["WHATSAPP_SECONDARY_EXPECTED_PHONE_E164","+60189990000"],
+  ["WHATSAPP_SECONDARY_WABA_ID",prodEnv.WHATSAPP_WABA_ID],
+  ["WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED","true"],
+  ["WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED","true"],
+  ["WHATSAPP_SECONDARY_AI_MEDIA_ENABLED","true"],
+  ["WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED","true"],
+  ["PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED","true"]
+ ])assert.throws(()=>assertSafeCommand(prodInput,{...prodEnv,[key]:value},now),key);
+ assert.throws(()=>assertSafeCommand({...prodInput,historyConsent:false},prodEnv,now),/consent/);
+ assert.throws(()=>assertSafeCommand({...prodInput,phoneNumberId:prodEnv.WHATSAPP_PHONE_NUMBER_ID},prodEnv,now),/pinned/);
+});
+test("production sender must be active before a one-time claim or external call",async()=>{
+ let calls=0;
+ const database={async query(sql){
+  assert.match(sql,/SELECT id FROM whatsapp_sender_accounts/);
+  return {rows:[]};
+ }};
+ await assert.rejects(()=>dispatchOnce(prodInput,{env:prodEnv,database,now,
+  loadCredential:async()=>({accessToken:"synthetic",wabaId:prodInput.wabaId,phoneNumberId:prodInput.phoneNumberId}),
+  fetchImpl:async()=>{calls++;throw Error("should not call Meta");}
+ }),/not verified and registered/);
+ assert.equal(calls,0);
+});
+test("production exact sender sends only explicitly approved one-time history request",async()=>{
+ const database=db();let calls=0;
+ const prodToken=async()=>({accessToken:"synthetic",wabaId:prodInput.wabaId,
+  phoneNumberId:prodInput.phoneNumberId});
+ const options={database,env:prodEnv,now,loadCredential:prodToken,
+  fetchImpl:async(url,opts)=>{
+   calls++;
+   assert.match(url,/\/333333333333333\/smb_app_data$/);
+   assert.equal(opts.method,"POST");
+   assert.equal(JSON.parse(opts.body).sync_type,"history");
+   return response(200,{messaging_product:"whatsapp",request_id:"fake-request-id"});
+  }};
+ const result=await dispatchOnce(prodInput,options);
+ assert.equal(result.state,"accepted");
+ assert.equal(calls,1);
+ assert.equal(database.queries.filter(q=>q.sql.startsWith("SELECT id FROM whatsapp_sender_accounts")).length,1);
+ await assert.rejects(()=>dispatchOnce(prodInput,options),/already reserved/);
+ assert.equal(calls,1);
 });

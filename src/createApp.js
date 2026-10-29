@@ -15,6 +15,7 @@ const paidDefaultIngress = require("./services/whatsappPaidDefaultIngress");
 const secondaryQaCapture = require("./services/whatsappSecondaryQaCapture");
 const secondaryQaBridge = require("./services/whatsappPaidDefaultSecondaryBridge");
 const productionHistoryReceiver = require("./services/whatsappPaidProductionHistoryReceiver");
+const earlyHistoryCapture = require("./services/whatsappPaidEarlyHistoryCapture");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const coexistenceSync = require("./services/whatsappCoexistenceHistoryService");
 const metaMessaging = require("./services/metaMessagingService");
@@ -74,6 +75,7 @@ function createApp({
   queueIncomingForReply,
   captureSecondaryQaBatch = secondaryQaCapture.captureSignedSecondaryBatch,
   stagePaidSecondaryHistory = coexistenceSync.acceptPassiveSync,
+  stagePaidEarlyHistory = earlyHistoryCapture.stage,
 } = {}) {
   if (!sessionSecret) {
     throw new Error("createApp requires sessionSecret.");
@@ -106,7 +108,8 @@ function createApp({
     // Preserve signed raw bytes for whichever explicitly enabled secondary
     // sender bridge will independently verify the exact Meta HMAC.
     if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" ||
-        process.env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true") {
+        process.env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true" ||
+        process.env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED === "true") {
       req.whatsappSignedRawBody = Buffer.from(buf);
     }
   };
@@ -654,6 +657,11 @@ function createApp({
             stageHistory: (body, opts) => stagePaidSecondaryHistory(body, opts)
           }
         );
+      }
+      if (earlyHistoryCapture.enabled(process.env)) {
+        return await earlyHistoryCapture.dispatch(req,res,primaryWhatsappWebhookHandler,{
+          stageEarlyHistory: (body, opts) => stagePaidEarlyHistory(body, opts)
+        });
       }
       return await secondaryQaBridge.dispatchPaidDefaultWithSecondary(
         req, res, primaryWhatsappWebhookHandler, {

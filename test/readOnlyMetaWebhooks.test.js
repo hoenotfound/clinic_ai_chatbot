@@ -63,3 +63,56 @@ test("pagination and insufficient app ownership never produce a false verified r
   assert.throws(()=>analyzeSubscriptions(sub({wabaData:{data:[]}})),
     /one app subscription/);
 });
+
+test("Neutro exact primary phone callback and Meta app-default agree on both Graph surfaces",async()=>{
+  const args=sub();
+  args.appData.data[0].callback_url="https://neutrosense.dasmarketingsolution.com/whatsapp/default";
+  args.expectedPhoneId="1408739622311791";
+  args.expectedPaidAppCallback=args.appData.data[0].callback_url;
+  args.phoneData={data:[{id:args.expectedPhoneId,
+    display_phone_number:"+60 11-3053 5053",
+    webhook_configuration:{
+      whatsapp_business_account:args.expectedNeutroCallback,
+      application:args.expectedPaidAppCallback
+    }}]};
+  const report=analyzeSubscriptions(args);
+  assert.equal(report.accountOverrideVerified,true);
+  assert.equal(report.phoneOverrideVerified,true);
+  assert.equal(report.appDefaultVerified,true);
+  assert.equal(report.appPhoneCallbackVerified,true);
+  assert.equal(report.cutoverReady,false);
+  assert.equal(analyzeSubscriptions({...args,
+    phoneData:{data:[{...args.phoneData.data[0],webhook_configuration:{
+      ...args.phoneData.data[0].webhook_configuration,whatsapp_business_account:"https://other.example/webhook"}}]}}).phoneOverrideVerified,false);
+  assert.throws(()=>analyzeSubscriptions({...args,
+    phoneData:{data:[{...args.phoneData.data[0],id:"99999999999"}]}}),/missing or ambiguous/);
+});
+test("primary phone-level Graph verification is read-only with no token in query string",async()=>{
+ const inp=sub();
+ inp.appData.data[0].callback_url="https://neutrosense.dasmarketingsolution.com/whatsapp/default";
+ const calls=[];
+ const token="private-meta-management-token";
+ const appToken="private-meta-app-token";
+ const env={META_APP_ID:inp.appId,WHATSAPP_WABA_ID:"1593376338308612",
+  WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
+  META_APP_ACCESS_TOKEN:appToken,META_READ_ONLY_MANAGEMENT_TOKEN:token,
+  META_EXPECTED_NEUTRO_CALLBACK:inp.expectedNeutroCallback,
+  META_EXPECTED_PAID_APP_DEFAULT_CALLBACK:inp.appData.data[0].callback_url};
+ const report=await inspectMeta({env,fetchImpl:async(url,options)=>{
+   calls.push({url,options});
+   const responses=[inp.appData,inp.wabaData,{data:[{
+     id:env.WHATSAPP_PHONE_NUMBER_ID,
+     webhook_configuration:{
+       whatsapp_business_account:env.META_EXPECTED_NEUTRO_CALLBACK,
+       application:env.META_EXPECTED_PAID_APP_DEFAULT_CALLBACK
+     }
+   }]}];
+   return {ok:true,json:async()=>responses[calls.length-1]};
+ }});
+ assert.equal(report.phoneOverrideVerified,true);
+ assert.equal(report.appPhoneCallbackVerified,true);
+ assert.equal(calls.length,3);
+ assert.ok(calls.every(c=>c.options.method==="GET" &&
+   !c.url.includes(token) && !c.url.includes(appToken)));
+ assert.match(calls[2].url,/phone_numbers\?fields=/);
+});

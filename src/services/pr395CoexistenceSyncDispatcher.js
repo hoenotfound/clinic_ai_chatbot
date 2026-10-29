@@ -9,19 +9,41 @@ const { normalizedGraphVersion, DEFAULT_GRAPH_API_VERSION } =
   require("../provisioning/whatsappWebhookSubscription");
 
 const { clinicSecondNumberApproved } = require("./pr395StagingSafety");
+const productionHistoryReceiver = require("./whatsappPaidProductionHistoryReceiver");
 const TYPES = new Set(["smb_app_state_sync", "history"]);
 const SEND_SWITCHES = [
   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
   "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED",
   "WHATSAPP_SECONDARY_AI_SEND_ENABLED",
-  "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED"
+  "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
+  "WHATSAPP_CAPTURE_TO_INBOX_HANDOFF_ENABLED"
 ];
 function digits(s) { return /^\d+$/.test(String(s || "")) ? String(s) : null; }
+function productionTarget(env) {
+  return env.PR395_STAGING_MODE !== "true";
+}
 function assertSafeCommand(input, env, now) {
-  if (env.PR395_STAGING_MODE !== "true" ||
-      env.PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED !== "true" ||
-      env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true" ||
-      SEND_SWITCHES.some(name => env[name] === "true")) {
+  if (SEND_SWITCHES.some(name => env[name] === "true")) {
+    throw Error("One-time sync requires zero secondary outbound, AI, billing and follow-ups.");
+  }
+  if (productionTarget(env)) {
+    // The production path is separate from the staging switch, always OFF
+    // unless explicitly authorized. Do not allow QA sender credentials here.
+    if (env.WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_ENABLED !== "true" ||
+        env.WHATSAPP_PAID_SECONDARY_MANUAL_SYNC_OPERATOR_APPROVED !== "true" ||
+        env.PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED === "true") {
+      throw Error("Neutro production one-time sync is disabled or not approved.");
+    }
+    productionHistoryReceiver.assertConfig(env);
+  } else if (env.PR395_COEXISTENCE_SYNC_DISPATCH_ENABLED !== "true" ||
+             env.PR395_STAGING_ALLOW_PROVIDER_PROCESSING !== "true") {
     throw Error("One-time sync requires separately authorized isolated QA, provider receiver and zero outbound sends.");
   }
   if (input.operatorApproved !== true || input.receiverReady !== true ||
@@ -38,11 +60,12 @@ function assertSafeCommand(input, env, now) {
       String(input.phoneNumberId) === String(env.WHATSAPP_PHONE_NUMBER_ID || "")) {
     throw Error("Only the exact pinned, authorized secondary WABA/phone/attempt is eligible.");
   }
-  if (String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "") !==
-      String(env.PR395_STAGING_APPROVED_TEST_PHONE_E164 || "") ||
-      !/^\+[1-9]\d{7,14}$/.test(String(env.PR395_STAGING_APPROVED_TEST_PHONE_E164 || "")) ||
-      (env.PR395_STAGING_APPROVED_TEST_PHONE_E164 === "+60174831336" &&
-        !clinicSecondNumberApproved(env))) {
+  if (!productionTarget(env) &&
+      (String(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 || "") !==
+       String(env.PR395_STAGING_APPROVED_TEST_PHONE_E164 || "") ||
+       !/^\+[1-9]\d{7,14}$/.test(String(env.PR395_STAGING_APPROVED_TEST_PHONE_E164 || "")) ||
+       (env.PR395_STAGING_APPROVED_TEST_PHONE_E164 === "+60174831336" &&
+        !clinicSecondNumberApproved(env)))) {
     throw Error("QA E164 pin is missing, mismatched or is the excluded clinic number.");
   }
   // Both contacts and history require verified owner consent. History has
@@ -65,6 +88,18 @@ function assertSafeCommand(input, env, now) {
 async function reserveOnce(input, { database = pool, env = process.env, now = new Date() } = {}) {
   const completed = assertSafeCommand(input, env, now);
   const approvedAt = new Date(now).toISOString();
+  if (productionTarget(env)) {
+    // A signed callback and a verified onboarding token are insufficient by
+    // themselves: the exact sender must already be registered and active.
+    const sender = await database.query(
+      "SELECT id FROM whatsapp_sender_accounts WHERE sender_key=$1 " +
+      "AND meta_account_id=$2 AND meta_phone_number_id=$3 " +
+      "AND state='active' AND coexistence_enabled=TRUE",
+      ["neutro_secondary", input.wabaId, input.phoneNumberId]
+    );
+    if (sender.rows?.length !== 1)
+      throw Error("Neutro secondary sender not verified and registered.");
+  }
   const result = await database.query(
     "INSERT INTO whatsapp_coexistence_sync_dispatch_requests " +
     "(onboarding_attempt_id,waba_id,phone_number_id,sync_type,onboarding_completed_at," +
