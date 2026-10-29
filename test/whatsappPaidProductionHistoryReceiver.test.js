@@ -95,6 +95,68 @@ test("new signed secondary messages can be received without authorizing old-chat
     ...liveEnv,WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"false"
   }),/disabled/);
 });
+test("staff TEXT may use signed LIVE-only receiver only with full separate-sender billing and receipt gates",async()=>{
+  const live={...env,
+    WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+    WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+    WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false",
+    WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+    WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+    WHATSAPP_SECONDARY_TOKEN:"synthetic-secondary-token-not-a-real-credential",
+    WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
+    WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"true",
+    WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
+    WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+    WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+    WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
+  };
+  assert.equal(receiver.assertLiveConfig(live).secondaryPhone,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+  const response=res();
+  let forwarded=0;
+  await receiver.dispatch(req(body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+    change("messages")))),response,(request,result)=>{
+      forwarded++;
+      assert.equal(request.body.entry[0].id,env.WHATSAPP_SECONDARY_WABA_ID);
+      return result.sendStatus(200);
+  },{env:live});
+  assert.equal(response.statusCode,200);
+  assert.equal(forwarded,1);
+  // No fresh history may be acknowledged on the live-only receiver.
+  await assert.rejects(receiver.dispatch(req(body(entry(
+    env.WHATSAPP_SECONDARY_WABA_ID,change("history")))),res(),()=>{},
+    {env:live}),/Secondary history receiver not approved/);
+  const rejected=[
+    ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_TOKEN",""],
+    ["WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED","false"],
+    ["WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_AI_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID","wrong"],
+    ["WHATSAPP_SECONDARY_SENDER_KEY","neutro"],
+  ];
+  for(const [name,value] of rejected){
+    assert.throws(()=>receiver.assertLiveConfig({...live,[name]:value}),/Unverified/,
+      "unsafe partial staff activation must be blocked: "+name);
+  }
+  // History-only mode never inherits permission for new outbound traffic.
+  assert.throws(()=>receiver.assertConfig({...live,
+    WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"true",
+    WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"true",
+  }),/Unverified/);
+});
+
 test("production receiver validates exact isolated and approved sender, with all sending off",()=>{
   assert.equal(receiver.assertConfig(env).secondaryPhone,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
   const blocked=[
