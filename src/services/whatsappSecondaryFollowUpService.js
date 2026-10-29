@@ -115,7 +115,8 @@ const CANDIDATES_SQL=`
 `;
 
 function enabled(env) {
- return env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
+ return env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
+   env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true" &&
@@ -208,6 +209,9 @@ async function runOnce({
   for(const candidate of items) {
     const slot=Number(candidate.slot_hours);
     if(!SLOTS.has(slot) || !Number.isSafeInteger(Number(candidate.contact_id)))continue;
+    // Do not consume a one-shot follow-up attempt or send media from a
+    // configured 2h/6h rule until secondary media has independent approval.
+    if(candidate.media_key && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
       `INSERT INTO whatsapp_sender_followup_attempts

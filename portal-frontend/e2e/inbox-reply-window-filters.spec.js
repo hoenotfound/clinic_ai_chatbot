@@ -54,6 +54,10 @@ async function mockInbox(page, conversations) {
       value = { user, username: user.username };
     } else if (pathname === "/api/conversations") {
       value = conversations;
+    } else if (pathname === "/api/conversations/directory-search") {
+      // The real directory endpoint returns an array. An unmocked {} response
+      // arrives after the 300ms debounce and crashes slower iPad test runs.
+      value = [];
     } else if (/^\/api\/conversations\/\d+\/messages$/.test(pathname)) {
       value = { messages: [], hasMore: false };
     } else if (/^\/api\/conversations\/\d+\/attribution$/.test(pathname)) {

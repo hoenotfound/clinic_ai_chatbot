@@ -41,7 +41,14 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
     )) AS has_staff_template_billing_review,
    m.whatsapp_template->>'templateSignature' AS template_signature,
    m.whatsapp_template->>'billingReviewClaimHash' AS billing_review_claim_hash,
-   m.whatsapp_template IS NULL AS is_freeform_service
+   (m.whatsapp_template IS NULL OR (
+     m.is_automated_follow_up = TRUE
+     AND m.whatsapp_template->>'automatedSecondaryFollowup' = 'true'
+     AND m.whatsapp_template->>'senderKey' = sa.sender_key
+     AND m.whatsapp_template->>'slotHours' IN ('2','6','20')
+     AND m.whatsapp_template->>'anchorMessageId' ~ '^[0-9]+$'
+     AND m.whatsapp_template->>'name' IS NULL
+   )) AS is_freeform_service
  FROM messages m
  JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'
  JOIN whatsapp_sender_conversations sc ON sc.contact_id=c.id

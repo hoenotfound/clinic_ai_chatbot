@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { Client } = require("pg");
 const { loadMigrations, runMigrations } = require("../src/db/migrationRunner");
 const { sendSecondaryStaffText } = require("../src/services/whatsappSecondaryStaffDispatch");
+const { OWNED_SECONDARY_OUTBOUND_SQL, reserveSecondaryBillingAttempt } = require("../src/db/whatsappSenderBillingGateRepo");
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const env = {
@@ -129,6 +130,64 @@ test("real PostgreSQL sender-qualified Ariel staff send never borrows Neutro win
     assert.equal((await db.query(
       "SELECT COUNT(*)::int AS total FROM whatsapp_outbound_retries"
     )).rows[0].total,0,"Neutro queue unchanged");
+    // Billing integration regression: text follow-up tracking is NOT a Meta
+    // template. It must be eligible for separately authorized service billing
+    // without bypassing the real template's one-use staff review.
+    const newContact=(await db.query(
+      "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id) " +
+      "VALUES('whatsapp','60125550111',$1) RETURNING id",[ids.ariel]
+    )).rows[0];
+    const newConversation=(await db.query(
+      "INSERT INTO whatsapp_sender_conversations(sender_id,customer_wa_id,contact_id,state) " +
+      "VALUES($1,'60125550111',$2,'bound') RETURNING id",
+      [ids.ariel,newContact.id]
+    )).rows[0];
+    const original=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) " +
+      "VALUES($1,'user','new confirmed enquiry','wamid.secondary-fu-inbound') RETURNING id",
+      [newContact.id]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [original,newConversation.id]
+    );
+    const metadata={automatedSecondaryFollowup:true,senderKey:"ariel",
+      slotHours:20,anchorMessageId:original};
+    const followup=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_template,is_automated_follow_up) " +
+      "VALUES($1,'assistant','Follow-up assessment invitation',$2::jsonb,TRUE) RETURNING id",
+      [newContact.id,JSON.stringify(metadata)]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [followup,newConversation.id]
+    );
+    const args=[newContact.id,followup,"ariel",
+      env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID];
+    const owner=(await db.query(OWNED_SECONDARY_OUTBOUND_SQL,args)).rows[0];
+    assert.equal(owner.is_freeform_service,true);
+    assert.equal(owner.has_staff_template_billing_review,false);
+    const authorized=await reserveSecondaryBillingAttempt({
+      contactId:newContact.id,messageId:followup,billableAuthorized:true,
+    },{database,env:{...env,WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true"}});
+    assert.equal(authorized.reserved,true,
+      "Sender-verified follow-up text should use the normal service billing reservation");
+    const forged=(await db.query(
+      "INSERT INTO messages(contact_id,role,content,whatsapp_template,is_automated_follow_up) " +
+      "VALUES($1,'assistant','Not an approved template',$2::jsonb,TRUE) RETURNING id",
+      [newContact.id,JSON.stringify({...metadata,name:"not_approved"})]
+    )).rows[0].id;
+    await db.query(
+      "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+      [forged,newConversation.id]
+    );
+    const fakeOwner=(await db.query(OWNED_SECONDARY_OUTBOUND_SQL,[
+      newContact.id,forged,"ariel",
+      env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
+    ])).rows[0];
+    assert.equal(fakeOwner.is_freeform_service,false,
+      "Actual Meta template names cannot bypass staff template billing review");
+
   } finally {
     await db.query("SET search_path TO public").catch(()=>{});
     await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
