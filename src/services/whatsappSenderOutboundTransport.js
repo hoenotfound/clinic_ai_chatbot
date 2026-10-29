@@ -235,6 +235,9 @@ async function createVerifiedSecondaryOutboundTransport(contact, options = {}) {
   const wrapped = { senderKey: transport.senderKey };
   for (const method of methods) {
     wrapped[method] = async (...args) => {
+      // A manual staging test is text-only even if a different caller tries
+      // to reuse the verified transport for media, buttons or templates.
+      if (options.env?.PR395_STAGING_MODE === "true" && method !== "sendText") reject();
       await revalidate();
       return transport[method](...args);
     };
