@@ -55,7 +55,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
   // Phase A must not silently become staff sending, media or follow-ups.
   // Keep automatic reconciliation separately gated pending live receipt proof.
   if (aiTextOnly && (!ai || staff || media || template || templateMedia ||
-      aiMedia || followups || autoReconcile || billedReview ||
+      aiMedia || billedReview || (followups !== autoReconcile) ||
       env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED === "true" ||
       env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true" ||
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED !== "true")) {
