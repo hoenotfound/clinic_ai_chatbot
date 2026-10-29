@@ -102,6 +102,9 @@ test("QA receives signed delivery receipts with sender and outbound credentials 
     WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60120000000",
     WHATSAPP_SECONDARY_SENDER_KEY:"coexistence_qa",
     WHATSAPP_SECONDARY_TOKEN:"",
+    // Real staging already has a Meta app secret; the synthetic QA fixture
+    // must also supply it so HMAC-verification stays fail-closed.
+    WHATSAPP_APP_SECRET:"qa-only-meta-hmac-test-secret",
     WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
     WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
   };
@@ -109,6 +112,7 @@ test("QA receives signed delivery receipts with sender and outbound credentials 
   for(const blocked of [
     {PR395_STAGING_MODE:"false"},
     {PR395_STAGING_PROVIDER_REHEARSAL_ENABLED:"false"},
+    {WHATSAPP_APP_SECRET:""},
     {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
     {WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true"},
     {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
