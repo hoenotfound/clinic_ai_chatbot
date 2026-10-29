@@ -432,6 +432,28 @@ test("only explicit, fully guarded staff-text cutover can use signed paid LIVE r
   },{env:live,dispatchPrimary:()=>{throw Error("Wrong router");}});
   assert.equal(result.statusCode,200);
   assert.equal(routed,1);
+
+  // Regression: Node's IncomingMessage exposes headers through a prototype
+  // getter. Object spreading the signed request silently loses the header,
+  // causing the secondary receipt worker to throw and Meta to retry HTTP 503.
+  const signedPacket=body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change("messages")));
+  const original=req(signedPacket);
+  const originalSignature=original.headers["x-hub-signature-256"];
+  delete original.headers;
+  const incoming=Object.create(Object.defineProperty({}, "headers", {
+    get(){return {"x-hub-signature-256":originalSignature};},
+    enumerable:false,
+  }));
+  Object.assign(incoming,original);
+  const routedResult=res();
+  await receiver.dispatch(incoming,routedResult,(forwarded,response)=>{
+    assert.equal(forwarded.headers["x-hub-signature-256"],originalSignature);
+    assert.equal(forwarded.whatsappSignedRawBody,incoming.whatsappSignedRawBody);
+    assert.deepEqual(forwarded.body,signedPacket);
+    assert.equal(incoming.body,signedPacket);
+    return response.sendStatus(200);
+  },{env:live});
+  assert.equal(routedResult.statusCode,200);
   // The history receiver remains OFF; a late old-history callback must 503
   // (not acknowledge as delivered or secretly import anything).
   await assert.rejects(receiver.dispatch(req(body(

@@ -236,14 +236,24 @@ async function dispatch(req,res,primaryHandler,{
       throw Error("Secondary history could not be durably staged");
     }
   }
+  // Express IncomingMessage.headers is a prototype accessor, not an own
+  // enumerable property. Spreading req drops it, causing status ingestion to
+  // throw while reading x-hub-signature-256 and returning retryable HTTP 503.
+  // Keep the original verified raw body and HTTP request intact, changing
+  // only the routed parsed body. Never mutate the original signed request.
+  const withRoutedBody = (body) => {
+    const forwarded = Object.create(req);
+    forwarded.body = body;
+    return forwarded;
+  };
   if(live){
     // The same verified primary /webhook function already handles distinct
     // sender IDs, staff echoes and secondary no-AI Inbox-only behavior.
     // Preserve the signed original req; never issue an outbound send here.
     const entries=[...(remaining?.entry||[]),...live.entry];
-    return primaryHandler({...req,body:{object:req.body.object,entry:entries}},res);
+    return primaryHandler(withRoutedBody({object:req.body.object,entry:entries}),res);
   }
-  if(remaining)return dispatchPrimary({...req,body:remaining},res,primaryHandler,{env});
+  if(remaining)return dispatchPrimary(withRoutedBody(remaining),res,primaryHandler,{env});
   return res.sendStatus(200);
 }
 module.exports={configured,liveConfigured,assertLiveConfig,assertConfig,assertSigned,partition,dispatch,TARGET};
