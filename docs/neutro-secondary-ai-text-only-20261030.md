@@ -13,7 +13,7 @@ The paid **signed live receiver** now has a third, mutually exclusive mode:
 
 - Passive Inbox only (existing default, no outbound).
 - Guarded staff text only (existing, currently OFF in production).
-- **AI text only** via `WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED=true`
+- **AI text only** via `WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED=true`
   *and* `WHATSAPP_SECONDARY_AI_SEND_ENABLED=true`, both default OFF.
 
 AI text-only requires the verified live receiver, distinct pinned WABA and
