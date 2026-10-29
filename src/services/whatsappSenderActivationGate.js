@@ -51,7 +51,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const ai = env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true";
   const aiMedia = env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true";
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
-  const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AI_TEXT_MODE_ENABLED === "true";
+  const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   // Phase A must not silently become staff sending, media or follow-ups.
   // Keep automatic reconciliation separately gated pending live receipt proof.
   if (aiTextOnly && (!ai || staff || media || template || templateMedia ||
