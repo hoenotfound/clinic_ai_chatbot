@@ -6,6 +6,8 @@ const crypto = require("node:crypto");
 const { pool } = require("../db/db");
 const realtimeEvents = require("../utils/realtimeEvents");
 
+// Meta-issued WhatsApp WAMIDs can end with one or two Base64 padding "=" chars.
+// Keep anchoring and strict length; never accept embedded padding or arbitrary text.
 const DELIVERY_STATUSES = new Set(["sent", "delivered", "read", "failed"]);
 const MAX_EVENTS = 100;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -60,7 +62,7 @@ function normalizedSignedEvents(rawBody, env) {
           !Array.isArray(change.value.statuses) ||
           !change.value.statuses.length) return null;
       for (const item of change.value.statuses) {
-        if (!item || !/^wamid\.[A-Za-z0-9._:-]{1,450}$/.test(clean(item.id)) ||
+        if (!item || !/^wamid\.[A-Za-z0-9._:+/-]{1,448}={0,2}$/.test(clean(item.id)) ||
             !DELIVERY_STATUSES.has(item.status) ||
             !/^[0-9]{8,15}$/.test(clean(item.recipient_id)) ||
             (item.timestamp !== undefined && !numeric(item.timestamp)) ||
