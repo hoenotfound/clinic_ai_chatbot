@@ -168,10 +168,23 @@ async function queueAlert(
     leadId = null,
     messageText,
     cooldownMinutes = 0,
+    cooldownScope = null,
   },
   database = pool
 ) {
   const safeCooldown = Math.max(0, Number(cooldownMinutes) || 0);
+  // A separate marker is required so an unavailable-media review cannot
+  // suppress an unrelated clinical or staff-safety AI review. This is an
+  // internal fixed-scope filter, never a caller-provided SQL predicate.
+  if (cooldownScope != null &&
+      (cooldownScope !== "meta_131060" || type !== "ai_review" ||
+       safeCooldown !== 24 * 60 ||
+       !String(messageText || "").includes("Meta 131060"))) {
+    throw new Error("Invalid Telegram alert cooldown scope.");
+  }
+  const scopedCooldownCondition = cooldownScope === "meta_131060"
+    ? " AND position('Meta 131060' IN message_text) > 0"
+    : "";
   const needsSerializedQueue =
     safeCooldown > 0 ||
     type === "booking_ready" ||
@@ -207,6 +220,7 @@ async function queueAlert(
            AND alert_type = $3
            AND status IN ('pending', 'sending', 'sent')
            AND created_at > now() - ($2::integer * interval '1 minute')
+           ${scopedCooldownCondition}
          ORDER BY created_at DESC
          LIMIT 1`,
         [Number(contactId), Math.ceil(safeCooldown), String(type)]
