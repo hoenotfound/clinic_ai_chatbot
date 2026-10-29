@@ -29,7 +29,7 @@ function approvedStaffTestRecipient(env = process.env) {
     throw new Error("Staging manual staff send requires explicit operator and charge approval.");
   }
   const recipient = String(env.PR395_STAGING_CONTROLLED_STAFF_TEST_RECIPIENT_E164 || "");
-  if (!/^\\+[1-9]\\d{7,14}$/.test(recipient) ||
+  if (!/^\+[1-9]\d{7,14}$/.test(recipient) ||
       recipient !== env.PR395_STAGING_APPROVED_TEST_RECIPIENT_E164 ||
       recipient === env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164 ||
       recipient === env.WHATSAPP_PHONE_NUMBER ||
