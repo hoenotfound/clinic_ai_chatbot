@@ -153,3 +153,25 @@ test("old imported history never enters AI through live-only route",async()=>{
   }),/Secondary history receiver not approved/);
   assert.equal(sent,0);
 });
+
+test("Phase B permits only consented sender-qualified text followups with receipt reconciliation",()=>{
+  const followups={...LIVE,
+    WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+    WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+  };
+  assert.doesNotThrow(()=>receiver.assertLiveConfig(followups));
+  assert.doesNotThrow(()=>assertSenderIngressSafety(followups));
+  for(const [key,value] of [
+    ["WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_AI_SEND_ENABLED","false"],
+    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AI_MEDIA_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED","true"],
+    ["WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED","false"],
+  ]) {
+    assert.throws(()=>receiver.assertLiveConfig({...followups,[key]:value}),
+      /Unverified/,key+" must not enable sender automation");
+  }
+});
