@@ -791,10 +791,26 @@ async function sendStoredMessage(contact, message, options = {}) {
   return { success: false, wamid: null, error: "This message has no retryable content." };
 }
 
+// Aggregate diagnostics only: no patient names, phone numbers, tokens, URLs or message text.
+function sendMeasuredInboxJson(res, payload, startedAt, kind) {
+  const serialized = JSON.stringify(payload);
+  const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6);
+  const responseBytes = Buffer.byteLength(serialized, "utf8");
+  res.set("Server-Timing", `inbox-${kind};dur=${durationMs}`);
+  res.type("json").send(serialized);
+  if (durationMs >= 750 || responseBytes >= 250000) {
+    console.info("[Inbox response metrics]", {
+      kind, durationMs, responseBytes,
+      rows: Array.isArray(payload) ? payload.length : (payload ? 1 : 0),
+    });
+  }
+}
+
 router.get("/", async (req, res) => {
+  const startedAt = process.hrtime.bigint();
   try {
     const conversations = await contactsRepo.listConversations();
-    res.json(conversations.map(c => {
+    const mapped = conversations.map(c => {
       const secondary = c.channel === "whatsapp" &&
         c.whatsapp_sender_id != null &&
         Boolean(c.whatsapp_sender_phone_number_id) &&
@@ -811,10 +827,43 @@ router.get("/", async (req, res) => {
           c.whatsapp_sender_coexistence_enabled === true &&
           process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
       };
-    }));
+    });
+    sendMeasuredInboxJson(res, mapped, startedAt, "list");
   } catch (err) {
     console.error("Failed to list conversations:", err);
     res.status(500).json({ error: "Something went wrong loading conversations." });
+  }
+});
+
+// Single-contact refresh keeps active Inbox SSE updates from re-downloading
+// every conversation. The shared contactId middleware checks staff access.
+router.get("/:contactId/summary", async (req, res) => {
+  const startedAt = process.hrtime.bigint();
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+    const rows = await contactsRepo.listConversations({ contactId });
+    if (!rows.length) return res.status(404).json({ error: "Conversation not in active Inbox." });
+    const c = rows[0];
+    const secondary = c.channel === "whatsapp" &&
+      c.whatsapp_sender_id != null &&
+      Boolean(c.whatsapp_sender_phone_number_id) &&
+      String(c.whatsapp_sender_phone_number_id) !==
+        String(process.env.WHATSAPP_PHONE_NUMBER_ID || "");
+    sendMeasuredInboxJson(res, {
+      ...c,
+      whatsapp_is_secondary: secondary,
+      whatsapp_secondary_connection_state: secondary
+        ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
+          ? "connected" : "suspended") : null,
+      whatsapp_secondary_ai_enabled: secondary &&
+        c.whatsapp_sender_state === "active" &&
+        c.whatsapp_sender_coexistence_enabled === true &&
+        process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
+    }, startedAt, "summary");
+  } catch (err) {
+    console.error("Failed to load Inbox conversation summary:", err);
+    res.status(500).json({ error: "Something went wrong loading conversation summary." });
   }
 });
 
