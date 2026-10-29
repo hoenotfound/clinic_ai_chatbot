@@ -251,6 +251,13 @@ async function installOperationalApi(page, {
       return fulfill(route, conversations);
     }
 
+    const summaryMatch = path.match(/^\/api\/conversations\/(\d+)\/summary$/);
+    if (summaryMatch && method === "GET") {
+      const contact = conversations.find((item) =>
+        Number(item.contact_id) === Number(summaryMatch[1]));
+      return fulfill(route, contact || { error: "Conversation not found" }, contact ? 200 : 404);
+    }
+
     const freeWindowMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-template-free-window$/);
     if (freeWindowMatch && method === "GET") {
       return fulfill(route, { verified: false });
