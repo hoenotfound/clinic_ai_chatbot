@@ -138,8 +138,9 @@ function unassignedProtectedProductionTarget(env = process.env) {
 function requireExpectedSecondaryPhone(env = process.env) {
   if (!secondaryTargetMode(env)) return null;
   // Business App-only phones do not expose their Cloud API phone ID before
-  // Meta Embedded Signup. Discover it *after* the signed completion and
-  // Graph WABA/phone ownership lookup, but only in locked-down staging.
+  // Meta Embedded Signup. Discover it after the signed completion and
+  // Graph account/phone ownership lookup, only in verified QA or an
+  // explicitly approved, exact-phone production pre-QR flow.
   if (unassignedProtectedQaTarget(env) || unassignedProtectedProductionTarget(env)) return null;
   const expected = clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID);
   if (!/^\d+$/.test(expected)) {
