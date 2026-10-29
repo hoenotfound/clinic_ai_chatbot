@@ -842,7 +842,9 @@ router.get("/:contactId/summary", async (req, res) => {
   try {
     const contactId = parsePositiveInt(req.params.contactId);
     if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
-    const rows = await contactsRepo.listConversations({ contactId });
+    const rows = await contactsRepo.listConversations({
+      contactId, includeEmptyCoexistenceContacts: req.query.includeArchived === "true",
+    });
     if (!rows.length) return res.status(404).json({ error: "Conversation not in active Inbox." });
     const c = rows[0];
     const secondary = c.channel === "whatsapp" &&
