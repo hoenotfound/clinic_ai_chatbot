@@ -164,3 +164,66 @@ test("even an authorized staff send cannot target a different imported contact",
       error=>error?.code==="whatsapp_sender_not_ready");
   }
 });
+
+
+test("approved QA staff reply retrieves only its own sealed credential in memory", async () => {
+  const {sealCredential} = require("../src/services/whatsappCoexistenceCredentialVault");
+  const {assertStoredSenderSafety,assertSenderIngressSafety} =
+    require("../src/services/whatsappSenderActivationGate");
+  const secret = "fixture-secondary-verified-qa-credential";
+  const env = approved({
+    PR395_COEXISTENCE_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 81).toString("base64"),
+    WHATSAPP_SECONDARY_TOKEN: "pr395-vault-backed-staff-only",
+  });
+  const sealed = sealCredential({
+    attemptId:42,wabaId:env.WHATSAPP_SECONDARY_WABA_ID,
+    phoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+    accessToken:secret,env,
+  });
+  const customer = "60125550000";
+  const bound = {
+    whatsapp_number:customer,whatsapp_sender_id:"3",bound_sender_id:"3",
+    customer_wa_id:customer,binding_state:"bound",sender_key:"coexistence_qa",
+    meta_phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+    meta_account_id:env.WHATSAPP_SECONDARY_WABA_ID,
+    sender_state:"active",sender_coexistence_enabled:true,
+  };
+  const database = {query:async(sql) => {
+    if(sql.includes("COUNT(*)"))return{rows:[{total:1,nonprimary:1}]};
+    if(sql.includes("SELECT sender_key,state"))return{rows:[{sender_key:"coexistence_qa",state:"active"}]};
+    if(sql.includes("SELECT id, sender_key, state"))return{rows:[{id:4,sender_key:"neutro",state:"active"}]};
+    if(sql.includes("SELECT c.attempt_id"))return{rows:[{
+      attempt_id:42,waba_id:env.WHATSAPP_SECONDARY_WABA_ID,
+      phone_number_id:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+      key_version:sealed.keyVersion,nonce:sealed.nonce,
+      ciphertext:sealed.ciphertext,auth_tag:sealed.authTag,
+      token_expires_at:new Date(Date.now()+86400000)
+    }]};
+    if(sql.includes("sc.sender_id AS bound_sender_id"))return{rows:[bound]};
+    throw new Error("Unexpected query");
+  }};
+  assert.deepEqual(assertPr395StagingSafety(env),{
+    staging:true,workersDisabled:true,providerProcessingDisabled:false,
+    historyImporterOnly:true,controlledStaffTest:true
+  });
+  assert.equal((await assertStoredSenderSafety({env,database})).verified,true);
+  const client=await createVerifiedSecondaryOutboundTransport({
+    id:5,channel:"whatsapp",whatsapp_number:customer
+  },{env,database});
+  assert.equal(client.senderKey,"coexistence_qa");
+  for(const override of [
+    {PR395_STAGING_MODE:"false"},
+    {PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"},
+    {WHATSAPP_SECONDARY_SENDER_KEY:"neutro"}
+  ]) assert.throws(()=>assertSenderIngressSafety({...env,...override}));
+  await assert.rejects(createVerifiedSecondaryOutboundTransport({
+    id:5,channel:"whatsapp",whatsapp_number:"60123334444"
+  },{env,database}),error=>error?.code==="whatsapp_sender_not_ready");
+  const absent={query:async(sql)=>{
+    if(sql.includes("SELECT c.attempt_id"))return {rows:[]};
+    return database.query(sql);
+  }};
+  await assert.rejects(assertStoredSenderSafety({env,database:absent}),
+    /No valid unexpired authorized credential/);
+});

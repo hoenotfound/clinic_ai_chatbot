@@ -39,6 +39,19 @@ function assertSecondaryLifecyclePin(env = process.env) {
   }
 }
 function assertSecondaryOperationalSafety(env = process.env) {
+  // A marker is NOT a Graph credential. It may only request the already-sealed
+  // QA onboarding credential for one explicitly approved staging staff test.
+  if (env.WHATSAPP_SECONDARY_TOKEN === "pr395-vault-backed-staff-only" &&
+      !(env.PR395_STAGING_MODE === "true" &&
+        env.PR395_STAGING_PROVIDER_REHEARSAL_ENABLED === "true" &&
+        env.PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED === "true" &&
+        env.PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED === "true" &&
+        env.WHATSAPP_SECONDARY_SENDER_KEY === "coexistence_qa" &&
+        env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true" &&
+        env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED !== "true")) {
+    throw new Error("A vaulted QA credential marker can only be used for an approved staging staff test.");
+  }
   assertExpectedSecondaryTarget(env);
   assertSecondaryLifecyclePin(env);
   const receiptIngress = env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true";
@@ -234,6 +247,19 @@ async function assertStoredSenderSafety({
     if (!sender || sender.state !== "active" || sender.sender_key !== key) {
       throw new Error("Unsafe WhatsApp activation: primary sender does not " +
         "match an active persisted Neutro account and business phone.");
+    }
+  }
+  // Refuse readiness unless the exact QA-only encrypted token can be opened,
+  // is still current and belongs to the verified Meta WABA + phone. Never
+  // serialize or log it and never copy it into a Render environment variable.
+  if (env.WHATSAPP_SECONDARY_TOKEN === "pr395-vault-backed-staff-only") {
+    const sealed = await require("./../db/whatsappCoexistenceOnboardingRepo")
+      .loadValidatedCredentialForSetup({
+        wabaId: env.WHATSAPP_SECONDARY_WABA_ID,
+        phoneNumberId: env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+      }, { database, env });
+    if (!sealed?.accessToken) {
+      throw new Error("The approved QA sender has no usable vaulted Meta credential.");
     }
   }
   return { verified: true, scopedContacts: total, nonprimaryContacts: nonprimary };
