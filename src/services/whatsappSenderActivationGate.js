@@ -201,7 +201,8 @@ async function assertStoredSenderSafety({
         // by assertSecondaryOperationalSafety unless its own token exists.
         // Inbound media remains unavailable until a secondary credential is
         // explicitly wired to the media fetcher (never fall back to primary).
-
+        (env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED === "true" &&
+          !String(env.WHATSAPP_SECONDARY_TOKEN || "").trim()) ||
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID===phone ||
         env.WHATSAPP_SECONDARY_SENDER_KEY===key) {
       throw new Error("Secondary WhatsApp Inbox configuration is incomplete or unsafe.");
