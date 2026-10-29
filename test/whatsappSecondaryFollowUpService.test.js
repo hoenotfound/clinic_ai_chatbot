@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const worker=require("../src/services/whatsappSecondaryFollowUpService");
 
 const env={
+  WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
   WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
   WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
   WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
@@ -138,7 +139,8 @@ test("media followup uploads only through verified Ariel transport",async()=>{
   const f=fake({rows:[row]});
   let uploads=0, actualSends=0;
   const result=await worker.runOnce({
-    ...f,env,storage:{downloadMedia:async()=>{
+    ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+    storage:{downloadMedia:async()=>{
       uploads++;return Buffer.from("video-bytes");
     }},
     sendText:async(payload)=>{
@@ -157,4 +159,27 @@ test("media followup uploads only through verified Ariel transport",async()=>{
   assert.equal(uploads,1);
   assert.equal(actualSends,1);
   assert.equal(f.calls.filter(x=>x.persist).length,1);
+});
+
+test("Phase B stays OFF unless the same secondary paid automation mode is enabled",async()=>{
+  assert.equal(worker.enabled({...env,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"}),false);
+  const f=fake();
+  const result=await worker.runOnce({...f,env:{...env,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"}});
+  assert.deepEqual(result,{disabled:true,attempted:0,accepted:0});
+  assert.equal(f.calls.length,0);
+});
+test("imported history is excluded from candidate selection and pre-send recheck",()=>{
+  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]) {
+    assert.match(sql,/whatsapp_sender_coexistence_history_messages/);
+    assert.match(sql,/h\.message_id=inbound\.id/);
+    assert.match(sql,/h\.sender_id=sa\.id/);
+  }
+});
+test("secondary video follow-up remains entirely passive when media is OFF",async()=>{
+  const f=fake({rows:[{...candidate,media_key:"synthetic-video",
+    media_type:"video",media_mime_type:"video/mp4",media_filename:"demo.mp4"}]});
+  const result=await worker.runOnce({...f,env});
+  assert.deepEqual(result,{disabled:false,attempted:0,accepted:0});
+  assert.equal(f.sends,0);
+  assert.equal(f.calls.some(c=>c.sql?.includes("INSERT INTO whatsapp_sender_followup_attempts")),false);
 });
