@@ -123,7 +123,7 @@ function unassignedProtectedProductionTarget(env = process.env) {
     clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_E164) === NEUTRO_SECONDARY_E164 &&
     env.WHATSAPP_PRIMARY_SENDER_KEY === "neutro" &&
     env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary" &&
-    /^\\d+$/.test(primaryPhoneId) && /^\\d+$/.test(primaryAccountId) &&
+    /^\d+$/.test(primaryPhoneId) && /^\d+$/.test(primaryAccountId) &&
     primaryNumber && primaryNumber !== normalizedPhone(NEUTRO_SECONDARY_E164) &&
     !clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) &&
     !clean(env.WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID) &&
