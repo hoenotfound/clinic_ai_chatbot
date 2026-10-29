@@ -108,6 +108,7 @@ function createApp({
     // Preserve signed raw bytes for whichever explicitly enabled secondary
     // sender bridge will independently verify the exact Meta HMAC.
     if (process.env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" ||
+        process.env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" ||
         process.env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true" ||
         process.env.WHATSAPP_PAID_SECONDARY_EARLY_CAPTURE_ENABLED === "true") {
       req.whatsappSignedRawBody = Buffer.from(buf);

@@ -335,3 +335,67 @@ test("foreign and unsupported secondary notifications still go to paid router; n
   assert.equal(staged,0);
   assert.equal(primary,2);
 });
+
+
+test("account-level lifecycle without E164 is accepted only for pinned WABA and known events",async()=>{
+  const cases=[
+    {event:"PARTNER_REMOVED"},
+    {event:"ACCOUNT_OFFBOARDED"},
+    {event:"ACCOUNT_RECONNECTED"},
+  ];
+  for(const value of cases){
+    const packet=body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+      {field:"account_update",value}));
+    const response=res();
+    let received=0;
+    await receiver.dispatch(req(packet),response,(request,s)=>{
+      received++;
+      assert.equal(request.body.entry[0].id,env.WHATSAPP_SECONDARY_WABA_ID);
+      assert.equal(request.body.entry[0].changes[0].value.event,value.event);
+      return s.sendStatus(200);
+    },{env});
+    assert.equal(response.statusCode,200);
+    assert.equal(received,1);
+  }
+  const denied=[
+    {event:"PARTNER_REMOVED",phone_number:"+601130535053"},
+    {event:"PARTNER_REMOVED",phone_number:null},
+    {event:"PARTNER_REMOVED",metadata:{phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID}},
+    {event:"UNRECOGNIZED_EVENT"},
+  ];
+  for(const value of denied){
+    let reached=0;
+    await assert.rejects(receiver.dispatch(req(body(entry(
+      env.WHATSAPP_SECONDARY_WABA_ID,
+      {field:"account_update",value}
+    ))),res(),()=>{reached++;},{env}),/Signed live sender identity mismatch/);
+    assert.equal(reached,0);
+  }
+  const wrongWaba=body(entry("999999999999999",{
+    field:"account_update",value:{event:"PARTNER_REMOVED"}
+  }));
+  const response=res();let accepted=0;
+  await receiver.dispatch(req(wrongWaba),response,()=>{accepted++;},{
+    env,dispatchPrimary:(r,s)=>s.sendStatus(503)
+  });
+  assert.equal(response.statusCode,503);
+  assert.equal(accepted,0);
+});
+
+test("live messages and staff echoes still require exact secondary phone metadata",async()=>{
+  const liveEnv={...env,WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+    WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false",
+    WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+    WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+    WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true"};
+  for(const field of ["messages","smb_message_echoes"]){
+    for(const value of [{messages:[]},{metadata:{phone_number_id:env.WHATSAPP_PHONE_NUMBER_ID}}]){
+      let forwarded=0;
+      await assert.rejects(receiver.dispatch(req(body(entry(
+        env.WHATSAPP_SECONDARY_WABA_ID,{field,value}
+      ))),res(),()=>{forwarded++;},{env:liveEnv}),
+      /Signed live sender identity mismatch/);
+      assert.equal(forwarded,0);
+    }
+  }
+});

@@ -12,6 +12,11 @@ const FIELDS=new Set(["history","smb_app_state_sync"]);
 // Only receiver-specific events are forwarded to the existing signed /webhook
 // handler, which already enforces sender-scoped conversation and AI boundaries.
 const LIVE_FIELDS=new Set(["messages","smb_message_echoes","account_update"]);
+// Meta's account-level lifecycle notifications can omit the E164. Only these
+// already-supported disconnect/reconnect events can use WABA-only identity.
+const ACCOUNT_LIFECYCLE_EVENTS=new Set([
+  "PARTNER_REMOVED","ACCOUNT_OFFBOARDED","ACCOUNT_RECONNECTED"
+]);
 const DISALLOWED=[
   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
   "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
@@ -130,14 +135,24 @@ function partition(body,config){
         keep.push(change);selectedCount++;
       } else if(entry.id===config.secondaryAccount && LIVE_FIELDS.has(change.field)){
         if(change.field==="account_update"){
-          // Lifecycle notifications sometimes have no phone ID. Require the
-          // independently verified E164 before forwarding a disconnect.
+          // Never forward a lifecycle event naming another business phone.
+          // Only known lifecycle events can omit E164 when Meta sends an
+          // account-level update for the independently pinned secondary WABA.
           const e164=change.value.phone_number;
-          if(typeof e164!=="string" ||
-             e164.replace(/\D/g,"")!==TARGET.replace(/\D/g,""))
-            throw Error("Signed live sender identity mismatch");
+          const phoneId=change.value.metadata?.phone_number_id;
+          if(phoneId!==undefined && phoneId!==config.secondaryPhone)
+            throw Error("Signed live sender identity mismatch (account_update: different phone ID)");
+          if(e164!==undefined && (typeof e164!=="string" ||
+             e164.replace(/\D/g,"")!==TARGET.replace(/\D/g,"")))
+            throw Error("Signed live sender identity mismatch (account_update: different E164)");
+          if(e164===undefined && !ACCOUNT_LIFECYCLE_EVENTS.has(change.value.event))
+            throw Error("Signed live sender identity mismatch (account_update: unverified account-only event)");
         } else if(change.value.metadata?.phone_number_id!==config.secondaryPhone){
-          throw Error("Signed live sender identity mismatch");
+          // Safe diagnostic categories only: no real account IDs or customer
+          // content are ever written to application logs.
+          throw Error("Signed live sender identity mismatch ("+change.field+": "+
+            (change.value.metadata?.phone_number_id==null?"missing":"different")+
+            " phone ID)");
         }
         forward.push(change);
       } else other.push(change);
