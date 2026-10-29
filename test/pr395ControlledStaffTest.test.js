@@ -6,7 +6,7 @@ const {
   validProviderRehearsalEvent, stagingWebhookGuard
 } = require("../src/services/pr395StagingSafety");
 const {
-  resolveSecondaryOutboundBinding
+  createVerifiedSecondaryOutboundTransport
 } = require("../src/services/whatsappSenderOutboundTransport");
 
 const strong = "pr395-staging-strong-secret-value-0123456789";
@@ -142,15 +142,15 @@ test("even an authorized staff send cannot target a different imported contact",
     sender_state:"active",sender_coexistence_enabled:true
   };
   const database={query:async()=>({rows:[row]})};
-  const binding=await resolveSecondaryOutboundBinding(contact,{env,database});
-  assert.equal(binding.phoneNumberId,"300300300");
-  assert.equal(binding.recipient,customer);
+  const client=await createVerifiedSecondaryOutboundTransport(contact,{env,database});
+  assert.equal(client.senderKey,"coexistence_qa");
+  assert.equal(typeof client.sendText,"function");
   for (const invalid of [
     {contact:{...contact,whatsapp_number:"60129999999"}},
     {env:approved({PR395_STAGING_CONTROLLED_STAFF_TEST_OPERATOR_APPROVED:"false"})},
     {env:approved({PR395_STAGING_CONTROLLED_STAFF_TEST_ENABLED:"false"})}
   ]) {
-    await assert.rejects(resolveSecondaryOutboundBinding(
+    await assert.rejects(createVerifiedSecondaryOutboundTransport(
       invalid.contact||contact,{env:invalid.env||env,database}),
       error=>error?.code==="whatsapp_sender_not_ready");
   }
