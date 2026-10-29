@@ -69,7 +69,7 @@ test("secondary inbox only requires active exact Meta registry identity",async()
    WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"110552088553929",
    WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
    WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
-   WHATSAPP_SECONDARY_TOKEN:"synthetic-fixture",
+   WHATSAPP_SECONDARY_TOKEN:"",
    WHATSAPP_SECONDARY_EXPECTED_PHONE_E164:"+60174831336"
  };
  const good={query:async(sql)=>{
@@ -79,6 +79,12 @@ test("secondary inbox only requires active exact Meta registry identity",async()
    return{rows:[{id:1,sender_key:"neutro",state:"active"}]};
  }};
  assert.equal((await assertStoredSenderSafety({env,database:good})).verified,true);
+ // Production inbound-only does not require a usable outbound bearer token.
+ // The separately verified sender registration and signed Meta ingress remain mandatory.
+ assert.doesNotThrow(()=>assertSenderIngressSafety(env));
+ assert.throws(()=>assertSenderIngressSafety({...env,
+   WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"
+ }),/Unsafe WhatsApp secondary operational activation/);
  for(const bad of [
    {...env,WHATSAPP_SECONDARY_PHONE_NUMBER_ID:env.WHATSAPP_PHONE_NUMBER_ID},
    {...env,WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
