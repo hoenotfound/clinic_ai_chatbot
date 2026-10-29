@@ -237,7 +237,7 @@ async function createVerifiedSecondaryOutboundTransport(contact, options = {}) {
     wrapped[method] = async (...args) => {
       // A manual staging test is text-only even if a different caller tries
       // to reuse the verified transport for media, buttons or templates.
-      if (options.env?.PR395_STAGING_MODE === "true" && method !== "sendText") reject();
+      if ((options.env || process.env).PR395_STAGING_MODE === "true" && method !== "sendText") reject();
       await revalidate();
       return transport[method](...args);
     };
