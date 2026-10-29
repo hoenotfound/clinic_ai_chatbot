@@ -47,6 +47,54 @@ test("disabled receiver cannot stage any history or alter default primary router
   assert.equal(receiver.configured({...env,WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false"}),false);
 });
 
+test("new signed secondary messages can be received without authorizing old-chat history",async()=>{
+  const liveEnv={...env,
+    WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+    WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false",
+    WHATSAPP_PAID_SECONDARY_HISTORY_OPERATOR_APPROVED:"false",
+    WHATSAPP_PAID_SECONDARY_HISTORY_OWNER_CONSENT_VERIFIED:"false",
+    WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+    WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+    WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+    WHATSAPP_SECONDARY_TOKEN:""
+  };
+  assert.equal(receiver.liveConfigured(liveEnv),true);
+  assert.equal(receiver.configured(liveEnv),false);
+  assert.equal(receiver.assertLiveConfig(liveEnv).secondaryPhone,
+    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
+  let routed=0;
+  const response=res();
+  await receiver.dispatch(req(body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+    change("messages")))),response,(request,s)=>{
+      routed++;
+      assert.equal(request.body.entry[0].id,env.WHATSAPP_SECONDARY_WABA_ID);
+      return s.sendStatus(200);
+    },{
+      env:liveEnv,
+      stageHistory:async()=>{throw Error("History must remain off");},
+      dispatchPrimary:async()=>{throw Error("Live event must not be quarantined");}
+    });
+  assert.equal(response.statusCode,200);
+  assert.equal(routed,1);
+  await assert.rejects(receiver.dispatch(req(body(entry(
+    env.WHATSAPP_SECONDARY_WABA_ID,change("history")))),
+    res(),()=>{routed++;},{env:liveEnv,stageHistory:async()=>{throw Error("No staging");}}),
+    /Secondary history receiver not approved/);
+  assert.equal(routed,1);
+  for(const [key,value] of [
+    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_AI_SEND_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED","true"],
+    ["WHATSAPP_SECONDARY_EXPECTED_WABA_ID","123"],
+    ["WHATSAPP_SINGLE_SENDER_STRICT_METADATA","false"],
+    ["WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED","false"]
+  ]){
+    assert.throws(()=>receiver.assertLiveConfig({...liveEnv,[key]:value}),/Unverified/);
+  }
+  assert.throws(()=>receiver.assertLiveConfig({
+    ...liveEnv,WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"false"
+  }),/disabled/);
+});
 test("production receiver validates exact isolated and approved sender, with all sending off",()=>{
   assert.equal(receiver.assertConfig(env).secondaryPhone,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID);
   const blocked=[
@@ -179,10 +227,101 @@ test("database failure or disabled importer cannot return successful ACK or disp
   }
   assert.equal(primary,0);
 });
-test("foreign or second-number non-history callback is not silently ACKed as imported history",async()=>{
+test("signed secondary live messages and Business App echoes route through existing Inbox handler",async()=>{
+  for(const field of ["messages","smb_message_echoes"]){
+    const packet=body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change(field)));
+    let routed=0;const response=res();
+    await receiver.dispatch(req(packet),response,(request,s)=>{
+      routed++;
+      assert.equal(request.body.entry.length,1);
+      assert.equal(request.body.entry[0].id,env.WHATSAPP_SECONDARY_WABA_ID);
+      assert.equal(request.body.entry[0].changes[0].field,field);
+      return s.sendStatus(200);
+    },{
+      env,stageHistory:async()=>{throw Error("No passive history in live event");},
+      dispatchPrimary:()=>{throw Error("Paid primary router must not reject secondary live");}
+    });
+    assert.equal(response.statusCode,200);
+    assert.equal(routed,1);
+  }
+});
+test("mixed signed history plus secondary live is staged before Inbox ACK",async()=>{
+  const packet=body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+    change("history"),change("messages")));
+  const order=[];const response=res();
+  await receiver.dispatch(req(packet),response,(request,s)=>{
+    order.push("inbox");
+    assert.deepEqual(request.body.entry[0].changes.map(c=>c.field),["messages"]);
+    return s.sendStatus(200);
+  },{
+    env,stageHistory:async request=>{
+      order.push("stage");
+      assert.deepEqual(request.entry[0].changes.map(c=>c.field),["history"]);
+      return{enabled:true,staged:1};
+    },dispatchPrimary:()=>{throw Error("Incorrect default route");}
+  });
+  assert.deepEqual(order,["stage","inbox"]);
+  assert.equal(response.statusCode,200);
+});
+test("mixed primary and secondary live forwards only the two verified senders",async()=>{
+  const packet=body(
+    entry(env.WHATSAPP_WABA_ID,change("messages",env.WHATSAPP_PHONE_NUMBER_ID)),
+    entry(env.WHATSAPP_SECONDARY_WABA_ID,change("messages"))
+  );
+  let seen=0;const response=res();
+  await receiver.dispatch(req(packet),response,(request,s)=>{
+    seen++;
+    assert.deepEqual(request.body.entry.map(e=>e.id),
+      [env.WHATSAPP_WABA_ID,env.WHATSAPP_SECONDARY_WABA_ID]);
+    return s.sendStatus(200);
+  },{env,dispatchPrimary:()=>{throw Error("Wrong handler");}});
+  assert.equal(response.statusCode,200);
+  assert.equal(seen,1);
+});
+test("signed secondary account disconnect requires exact E164 and uses existing lifecycle handler",async()=>{
+  const life=number=>({field:"account_update",value:{
+    phone_number:number,event:"PARTNER_REMOVED"
+  }});
+  let seen=0;const good=body(entry(env.WHATSAPP_SECONDARY_WABA_ID,life("+60174831336")));
+  const response=res();
+  await receiver.dispatch(req(good),response,(request,s)=>{
+    seen++;
+    assert.equal(request.body.entry[0].changes[0].value.event,"PARTNER_REMOVED");
+    return s.sendStatus(200);
+  },{env,dispatchPrimary:()=>{throw Error("Wrong lifecycle handler");}});
+  assert.equal(response.statusCode,200);
+  assert.equal(seen,1);
+  for(const number of ["+601130535053","+60178888888"]){
+    await assert.rejects(receiver.dispatch(
+      req(body(entry(env.WHATSAPP_SECONDARY_WABA_ID,life(number)))),
+      res(),()=>{seen++;},{env}),/Signed live sender identity mismatch/);
+  }
+  assert.equal(seen,1);
+});
+test("wrong live phone and foreign mixed batches fail closed without history staging",async()=>{
+  const cases=[
+    body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+      change("messages",env.WHATSAPP_PHONE_NUMBER_ID))),
+    body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change("messages")),
+      entry("99999999999",change("messages",env.WHATSAPP_PHONE_NUMBER_ID))),
+    body(entry(env.WHATSAPP_SECONDARY_WABA_ID,
+      change("history"),change("messages")),
+      entry("99999999999",change("history",env.WHATSAPP_PHONE_NUMBER_ID)))
+  ];
+  let sideEffects=0;
+  for(const packet of cases){
+    await assert.rejects(receiver.dispatch(req(packet),res(),()=>{
+      sideEffects++;
+    },{env,stageHistory:async()=>{sideEffects++;return{enabled:true,staged:1};},
+       dispatchPrimary:async()=>{sideEffects++;}}),
+      /Signed live sender identity mismatch|Unsafe mixed WhatsApp live batch/);
+  }
+  assert.equal(sideEffects,0);
+});
+test("foreign and unsupported secondary notifications still go to paid router; no false history ACK",async()=>{
   const packets=[
-    body(entry("99999999999",change("history","333333333333333"))),
-    body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change("messages")))
+    body(entry("99999999999",change("history",env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID))),
+    body(entry(env.WHATSAPP_SECONDARY_WABA_ID,change("unsupported")))
   ];
   let staged=0,primary=0;
   for(const packet of packets){
@@ -193,5 +332,6 @@ test("foreign or second-number non-history callback is not silently ACKed as imp
     });
     assert.equal(response.statusCode,503);
   }
-  assert.equal(staged,0);assert.equal(primary,2);
+  assert.equal(staged,0);
+  assert.equal(primary,2);
 });
