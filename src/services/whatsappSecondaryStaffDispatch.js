@@ -206,7 +206,8 @@ async function sendSecondaryStaffText({
     if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
       await markUnknown();
       return {...block("secondary_send_cancelled_before_provider"),
-        unknown:true, ambiguous:true, cancelled:true};
+        unknown:true, ambiguous:true};
+
     }
 
     const send = typeof dispatchTransport === "function"
@@ -222,7 +223,9 @@ async function sendSecondaryStaffText({
       // A provider may have accepted the message even though Neon could not
       // persist the billing transition; never advertise a safe retry.
       return {
-        success: accepted, wamid: accepted ? send.wamid : null,
+        // A Meta WAMID is not proof the sender-specific billing ledger
+        // committed. Do not tell the AI pipeline a completed send occurred.
+        success: false, wamid: accepted ? send.wamid : null,
         unknown: true, ambiguous: true, retryable: false,
         code: "secondary_staff_billing_outcome_unverified",
         error: "Provider outcome requires staff review; do not resend.",
