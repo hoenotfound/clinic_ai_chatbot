@@ -102,6 +102,10 @@ async function eligibleSecondaryAdsOnlyContactIds(ids, {
   const result=new Set();
   const cutoff=adsOnlyActivation(env);
   if (!cutoff || env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
+      // Avoid an indexed ad/referral scan on every Inbox refresh when
+      // automated secondary replies are still disabled.
+      env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED!=="true" ||
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED!=="true" ||
       !Array.isArray(ids) || ids.length===0)return result;
   const valid=[...new Set(ids.map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))];
   if (!valid.length)return result;
