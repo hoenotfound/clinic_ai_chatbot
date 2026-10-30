@@ -4,8 +4,9 @@
 // Node heap and container usage to distinguish JS retention from large buffers
 // or native allocations. No request body, contact, phone or message is logged.
 const { readFileSync } = require("node:fs");
+const { takeWorkerActivity } = require("../utils/workerActivityMetrics");
 
-const INTERVAL_MS = 5 * 60 * 1000;
+const INTERVAL_MS = 60 * 1000;
 const MIB = 1024 * 1024;
 let timer = null;
 
@@ -17,6 +18,19 @@ function readCgroupBytes(file, readFile = readFileSync) {
     return Number.isSafeInteger(parsed) ? parsed : null;
   } catch (_) {
     return null;
+  }
+}
+
+function readCgroupMemoryStat(readFile = readFileSync) {
+  try {
+    const values = new Map();
+    for (const line of String(readFile("/sys/fs/cgroup/memory.stat", "utf8")).split("\n")) {
+      const match = /^([a-z_]+) (\d+)$/.exec(line);
+      if (match) values.set(match[1], Number(match[2]));
+    }
+    return values;
+  } catch (_) {
+    return new Map();
   }
 }
 
@@ -32,6 +46,7 @@ function sampleMemory({
   readFile = readFileSync,
 } = {}) {
   const usage = memoryUsage();
+  const stat = readCgroupMemoryStat(readFile);
   return {
     rssMiB: mib(usage.rss),
     heapUsedMiB: mib(usage.heapUsed),
@@ -40,6 +55,10 @@ function sampleMemory({
     arrayBuffersMiB: mib(usage.arrayBuffers),
     containerUsedMiB: mib(readCgroupBytes("/sys/fs/cgroup/memory.current", readFile)),
     containerLimitMiB: mib(readCgroupBytes("/sys/fs/cgroup/memory.max", readFile)),
+    containerAnonMiB: mib(stat.get("anon")),
+    containerFileMiB: mib(stat.get("file")),
+    containerShmemMiB: mib(stat.get("shmem")),
+    containerSlabMiB: mib(stat.get("slab")),
     uptimeSeconds: Math.floor(uptime()),
   };
 }
@@ -54,7 +73,7 @@ function startMemoryDiagnostics({
   if (!env.RENDER_SERVICE_ID && env.DA_MEMORY_DIAGNOSTICS_ENABLED !== "true") return null;
   const log = () => {
     try {
-      logger.info?.("[Memory diagnostics]", sample());
+      logger.info?.("[Memory diagnostics]", { ...sample(), workers: takeWorkerActivity() });
     } catch (error) {
       // Diagnostics never interrupt primary WhatsApp or other service workers.
       logger.warn?.("[Memory diagnostics] sample unavailable");
@@ -66,4 +85,4 @@ function startMemoryDiagnostics({
   return timer;
 }
 
-module.exports = { INTERVAL_MS, mib, readCgroupBytes, sampleMemory, startMemoryDiagnostics };
+module.exports = { INTERVAL_MS, mib, readCgroupBytes, readCgroupMemoryStat, sampleMemory, startMemoryDiagnostics };
