@@ -26,7 +26,7 @@ test("migration 080 allows two contact identities for the same customer while re
           return { query: (...args) => client.query(...args), release: () => client.end() };
         },
       };
-      assert.equal(loadMigrations().at(-1).version,109);
+      assert.equal(loadMigrations().at(-1).version,110);
       await runMigrations(scoped, { quiet: true });
       await db.query(
         "INSERT INTO whatsapp_sender_accounts (sender_key,meta_phone_number_id,meta_account_id,display_name,state) " +
@@ -304,7 +304,7 @@ test("upgrade from migration 077 retains existing Neutro conversations and migra
         },
       };
       const all=loadMigrations();
-      assert.equal(all.at(-1).version,109);
+      assert.equal(all.at(-1).version,110);
       const first=await runMigrations(scoped,{
         quiet:true,migrations:all.filter(m=>m.version<=77)
       });
