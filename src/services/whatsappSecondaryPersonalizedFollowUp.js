@@ -39,6 +39,10 @@ const CONTEXT_SQL=`
 `;
 function clean(v){return typeof v==="string"?v.trim():"";}
 function allowedMessage(text,context){
+ // A literal duplicate is never useful even if a historical assistant row
+ // lacks delivery metadata required by the semantic duplicate detector.
+ if(context.some(row=>row.role==="assistant" &&
+   clean(row.content).toLocaleLowerCase()===text.toLocaleLowerCase()))return false;
  return text.length>=12 && text.length<=1024 &&
    !hasTreatmentPriceContent(text) &&
    !generator.hasUnsafeClinicalFollowUpClaim(text) &&
