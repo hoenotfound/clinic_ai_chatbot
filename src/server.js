@@ -810,9 +810,9 @@ async function processIncomingMessage(
     // Preserve incoming secondary media before handing the turn to staff.
     // Do not enter any AI response, promotion, or auto-follow-up path.
     if (secondaryInboxOnly) {
-      await contactsRepo.setAttention(contact.id, true,
-        "New secondary WhatsApp message. Reply manually in WhatsApp Business App.",
-        { notifyWebPush: false });
+      // The inbound preparation already marked the message unread. Do not
+      // manufacture a human-intervention/AI-review flag for ordinary manual
+      // Business App conversations: setAttention also sends Telegram alerts.
       return { wasFirstMessage, keywordReason };
     }
 
