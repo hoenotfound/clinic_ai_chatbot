@@ -20,7 +20,7 @@ test("migration 109 compiles second-account 48/72h consent, history, staff and o
    await c.query("SET search_path TO "+schema);
    return{query:(...args)=>c.query(...args),release:()=>c.end()};
   }};
-  assert.equal(loadMigrations().at(-1).version,109);
+  assert.equal(loadMigrations().at(-1).version,110);
   await runMigrations(pool,{quiet:true});
   assert.equal((await db.query("SELECT count(*)::int n FROM whatsapp_sender_marketing_followup_rules")).rows[0].n,0);
   assert.equal((await db.query("SELECT count(*)::int n FROM whatsapp_sender_marketing_followup_attempts")).rows[0].n,0);
