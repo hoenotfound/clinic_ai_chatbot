@@ -55,7 +55,7 @@ async function postNotice(items, {
       ? ["delivery", item.accountId || "", item.phoneNumberId || ""].join(":")
       : eventKey(item, category);
     if (key && (pending.has(key) || (recentlySent.get(key) || 0) > now ||
-                keys.has(key))) continue;
+                (category !== "delivery" && keys.has(key)))) continue;
     selected.push(item);
     if (key) keys.add(key);
   }
