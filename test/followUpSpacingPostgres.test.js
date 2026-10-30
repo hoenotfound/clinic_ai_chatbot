@@ -32,6 +32,8 @@ test(
           channel TEXT NOT NULL,
           whatsapp_number TEXT,
           whatsapp_sender_id INTEGER,
+          whatsapp_opt_out_at TIMESTAMPTZ, whatsapp_marketing_opt_out_at TIMESTAMPTZ,
+          social_opt_out_at TIMESTAMPTZ, social_marketing_opt_out_at TIMESTAMPTZ,
           channel_user_id TEXT,
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,

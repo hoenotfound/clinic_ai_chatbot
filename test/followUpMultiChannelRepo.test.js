@@ -73,6 +73,40 @@ test("atomic follow-up claim rechecks that the contact still has a valid recipie
   assert.match(capturedSql, /ON CONFLICT DO NOTHING/);
 });
 
+test("all five automated follow-up eligibility gates exclude opted-out contacts", async () => {
+  const sqlStatements = [];
+  pool.query = async (sql) => {
+    sqlStatements.push(sql);
+    return { rows: [] };
+  };
+  const input = {
+    delayMinutes: 120,
+    triggerMode: "all",
+    activatedAt: "2026-08-28T00:00:00.000Z",
+  };
+  await followUpRepo.findCandidates({ ...input, limit: 25 });
+  await followUpRepo.getNextCandidateDueAt(input);
+  await followUpRepo.saveIfStillEligible({
+    contactId: 7, triggerMessageId: 55, content: "Still interested?", ...input,
+  });
+  await followUpRepo.recordAiDecisionIfStillEligible({
+    contactId: 7, triggerMessageId: 55, stepIndex: 1,
+    action: "skip", reason: "no_followup", ...input,
+  });
+  await followUpRepo.isClaimStillEligible({ messageId: 100, contactId: 7 });
+  assert.equal(sqlStatements.length, 5);
+  for (const sql of sqlStatements) {
+    for (const column of [
+      "c.whatsapp_opt_out_at",
+      "c.whatsapp_marketing_opt_out_at",
+      "c.social_opt_out_at",
+      "c.social_marketing_opt_out_at",
+    ]) {
+      assert.ok(sql.includes(`${column} IS NULL`), `missing ${column} consent check`);
+    }
+  }
+});
+
 test("social follow-up graphics are stored as separate automated messages under the conversation lock", async () => {
   let capturedSql = null;
   let capturedParams = null;

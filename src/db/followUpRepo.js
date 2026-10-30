@@ -30,6 +30,18 @@ function skipNonPricingChannel(column) {
 // coexistence sender uses its own independently gated, sender-scoped follow-up
 // worker; never let the legacy worker repeatedly select a sender it cannot send
 // for. Match primary by verified phone + WABA, not a business-specific key.
+// Do not even queue AI work for a contact who withdrew messaging consent.
+// These checks run again when a claim is saved and immediately before send.
+// A later inbound service question never silently restores follow-up consent.
+function automatedFollowUpConsentSql(alias = "c") {
+  return `((${alias}.channel = 'whatsapp'
+      AND ${alias}.whatsapp_opt_out_at IS NULL
+      AND ${alias}.whatsapp_marketing_opt_out_at IS NULL)
+    OR (${alias}.channel IN ('facebook','instagram')
+      AND ${alias}.social_opt_out_at IS NULL
+      AND ${alias}.social_marketing_opt_out_at IS NULL))`;
+}
+
 function primaryFollowUpSenderSql(phoneParam, accountParam) {
   return `(c.channel <> 'whatsapp' OR c.whatsapp_sender_id IS NULL OR EXISTS (
     SELECT 1 FROM whatsapp_sender_accounts primary_sender
@@ -281,6 +293,7 @@ async function findCandidates({
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND ${primaryFollowUpSenderSql('$7', '$8')}
          AND ${followUpAttentionAllowedSql("c")}
+          AND ${automatedFollowUpConsentSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -491,6 +504,7 @@ async function getNextCandidateDueAt({
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND ${primaryFollowUpSenderSql('$6', '$7')}
          AND ${followUpAttentionAllowedSql("c")}
+          AND ${automatedFollowUpConsentSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -734,6 +748,7 @@ async function saveIfStillEligible({
      ) latest_lead ON true
      WHERE c.id = $1
        AND ${followUpAttentionAllowedSql("c")}
+          AND ${automatedFollowUpConsentSql("c")}
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
@@ -1021,6 +1036,7 @@ async function recordAiDecisionIfStillEligible({
        LEFT JOIN latest_lead ON true
        WHERE c.id = $1
          AND ${followUpAttentionAllowedSql("c")}
+          AND ${automatedFollowUpConsentSql("c")}
          AND anchor.id = $2
          AND ${acceptedNormalOutboundSql('anchor')}
          AND (
@@ -1167,6 +1183,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
          LIMIT 1
        ) latest_lead ON true
        WHERE ${followUpAttentionAllowedSql("c")}
+          AND ${automatedFollowUpConsentSql("c")}
          AND ${acceptedNormalOutboundSql('anchor')}
          AND NOT EXISTS (
            SELECT 1
