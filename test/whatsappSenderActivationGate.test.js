@@ -53,23 +53,23 @@ test("scope can activate only with an active, verified primary registration",asy
 });
 test("primary sender verification rejects a phone or WABA mismatch without trusting a key alone",async()=>{
   const registry = new Map([
-    ["correctPhone:correctWaba", {id:1,sender_key:"neutro",state:"active"}],
+    ["100000000001:200000000001", {id:1,sender_key:"neutro",state:"active"}],
   ]);
   const database={query:async(sql,args)=>{
     if(sql.includes("COUNT(*)"))return {rows:[{total:12,nonprimary:0}]};
     const sender=registry.get(args.join(":"));
     return {rows:sender?[sender]:[]};
   }};
-  const good={...safe,WHATSAPP_PHONE_NUMBER_ID:"correctPhone",
-    WHATSAPP_WABA_ID:"correctWaba"};
+  const good={...safe,WHATSAPP_PHONE_NUMBER_ID:"100000000001",
+    WHATSAPP_WABA_ID:"200000000001"};
   assert.equal((await assertStoredSenderSafety({database,env:good}))
     .primaryRegistrationVerified,true);
   await assert.rejects(
-    assertStoredSenderSafety({database,env:{...good,WHATSAPP_PHONE_NUMBER_ID:"otherPhone"}}),
+    assertStoredSenderSafety({database,env:{...good,WHATSAPP_PHONE_NUMBER_ID:"100000000002"}}),
     /primary sender does not match/
   );
   await assert.rejects(
-    assertStoredSenderSafety({database,env:{...good,WHATSAPP_WABA_ID:"otherWaba"}}),
+    assertStoredSenderSafety({database,env:{...good,WHATSAPP_WABA_ID:"200000000002"}}),
     /primary sender does not match/
   );
 });
