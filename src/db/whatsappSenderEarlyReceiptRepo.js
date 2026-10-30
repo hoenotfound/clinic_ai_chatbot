@@ -82,7 +82,15 @@ async function applyStagedSecondaryReceipts({
     billingInfo.billing_authorization_source === 'operator_acknowledged_service' &&
     priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
       r.pricing_category==='service');
+  const approvedMarketingTemplate = paid &&
+    billingInfo?.billable_authorized===true &&
+    billingInfo.billing_authorization_source==='operator_approved_marketing_template' &&
+    env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED==='true' &&
+    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true' &&
+    priced.every(r=>r.pricing_billable===true &&
+      r.pricing_type==='regular' && r.pricing_category==='marketing');
   const paidPermitted = paid && billingInfo?.billable_authorized===true && (
+    approvedMarketingTemplate ||
     (billingInfo.billing_authorization_source==='staff_template_billing_review' &&
      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true' &&
      priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
@@ -146,6 +154,7 @@ async function applyStagedSecondaryReceipts({
     [reservationId,senderId,
       verified.find(r=>r.pricing_type===evidence.pricing_type && r.pricing_billable===evidence.pricing_billable).fingerprint,
       paid ? (operatorServiceCharge ? 'signed_meta_operator_authorized_service_charge'
+        : approvedMarketingTemplate ? 'signed_meta_operator_approved_marketing_template'
         : 'signed_meta_staff_authorized_charge') :
         evidence.pricing_type==='free_customer_service' ?
           'signed_meta_nonbillable_customer_service' : 'signed_meta_nonbillable_free_entry',
