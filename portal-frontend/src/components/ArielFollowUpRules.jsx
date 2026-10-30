@@ -57,7 +57,8 @@ export default function ArielFollowUpRules(){
   }
   async function saveMarketing(slot){
     const row=marketing[slot];
-    if(!row?.name || !row?.language)return setError("Select an approved marketing template.");
+    if(row?.enabled && (!row?.name || !row?.language))
+      return setError("Select an approved marketing template.");
     setBusy(slot);setError("");setSaved(null);
     try{
       const data=await api.saveSecondaryMarketingFollowUpRule(slot,{
@@ -65,7 +66,7 @@ export default function ArielFollowUpRules(){
         operatorBillingApproved:row.enabled && row.approved===true,
       });
       setMarketing(prev=>({...prev,[slot]:{
-        ...prev[slot],enabled:data.rule.enabled,approved:false,
+        ...prev[slot],enabled:data.rule?.enabled===true,approved:false,
       }}));
       setSaved(slot);
     }catch(e){setError(e.message||"Unable to save the verified secondary template.");}
@@ -179,7 +180,7 @@ export default function ArielFollowUpRules(){
                 </label>
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={row.enabled}
-                    disabled={!selected || !config.marketingCatalogAvailable}
+                    disabled={!selected && !row.enabled}
                     onChange={e=>setMarketing(p=>({...p,[slot]:{
                       ...p[slot],enabled:e.target.checked,approved:false,
                     }}))}/>
@@ -220,7 +221,7 @@ export default function ArielFollowUpRules(){
                     config.marketingWorkerEnabled?"Worker enabled":"Worker OFF"}
                 </span>
                 <button type="button" onClick={()=>saveMarketing(slot)}
-                  disabled={busy!==null||!selected||(row.enabled&&!row.approved)}
+                  disabled={busy!==null||(row.enabled && (!selected || !row.approved))}
                   className="rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                   {busy===slot?"Saving…":"Save template rule"}
                 </button>
