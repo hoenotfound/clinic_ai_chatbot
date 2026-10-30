@@ -20,6 +20,7 @@ const INTERVAL_MS=60*1000;
 let timer=null;
 function enabled(env=process.env){
   return Boolean(adsOnlyActivation(env)) &&
+    env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
     secondaryUsesPrimaryClinicContent(env) &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" &&
