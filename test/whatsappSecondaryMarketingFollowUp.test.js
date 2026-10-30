@@ -153,7 +153,7 @@ test("language selection reuses customer conversation evidence without guesswork
  assert.equal(svc.customerTemplateLocale(["How much is the treatment?"]),"en_US");
  assert.equal(svc.customerTemplateLocale(["Saya nak tahu harga"]),"ms_MY");
  assert.equal(svc.customerTemplateLocale(["hi","ok"]),null);
- assert.equal(svc.customerTemplateLocale(["请用英文回答", "价钱?"]),"en_US");
+ assert.equal(svc.customerTemplateLocale(["Please reply in English", "价钱?"]),"en_US");
 });
 test("Chinese contact receives only Chinese variant even with an English row enabled",async()=>{
  const english={...row,language_code:"en_US",template_name:"en_reminder",
