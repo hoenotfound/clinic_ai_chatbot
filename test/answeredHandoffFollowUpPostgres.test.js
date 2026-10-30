@@ -24,12 +24,16 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
     await client.query(`
       CREATE TABLE contacts (
         id integer PRIMARY KEY, channel text NOT NULL, whatsapp_number text,
+        whatsapp_sender_id integer,
         channel_user_id text, mode text NOT NULL DEFAULT 'ai',
         takeover_by text, takeover_at timestamptz,
         needs_attention boolean NOT NULL DEFAULT false, attention_reason text,
         delivery_attention_dismissed_at timestamptz,
         delivery_attention_message_id integer,
         is_unread boolean DEFAULT false, updated_at timestamptz DEFAULT now()
+      );
+      CREATE TABLE whatsapp_sender_accounts (
+        id integer PRIMARY KEY, meta_phone_number_id text, meta_account_id text
       );
       CREATE TABLE messages (
         id integer PRIMARY KEY, contact_id integer NOT NULL REFERENCES contacts(id),
@@ -110,6 +114,32 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
     assert.equal(restored.needs_attention, false);
     assert.deepEqual(await candidateIds(), [1102],
       "FU1 should qualify from the confirmed staff response, not the cancelled AI anchor");
+
+    // A verified primary sender must remain eligible, whereas an explicitly
+    // secondary-tagged contact must never be selected by the legacy worker.
+    // Test the actual SQL query rather than just its generated text.
+    const previousPrimaryPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const previousPrimaryWaba = process.env.WHATSAPP_WABA_ID;
+    try {
+      process.env.WHATSAPP_PHONE_NUMBER_ID = "test-primary-phone";
+      process.env.WHATSAPP_WABA_ID = "test-primary-waba";
+      await client.query(`INSERT INTO whatsapp_sender_accounts
+        (id, meta_phone_number_id, meta_account_id) VALUES
+        (1, 'test-primary-phone', 'test-primary-waba'),
+        (2, 'test-secondary-phone', 'test-secondary-waba')`);
+      await client.query("UPDATE contacts SET whatsapp_sender_id=1 WHERE id=330");
+      assert.deepEqual(await candidateIds(), [1102],
+        "verified primary sender must retain normal follow-up eligibility");
+      await client.query("UPDATE contacts SET whatsapp_sender_id=2 WHERE id=330");
+      assert.deepEqual(await candidateIds(), [],
+        "secondary sender must be excluded from the legacy follow-up scheduler");
+    } finally {
+      await client.query("UPDATE contacts SET whatsapp_sender_id=NULL WHERE id=330");
+      if (previousPrimaryPhone === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+      else process.env.WHATSAPP_PHONE_NUMBER_ID = previousPrimaryPhone;
+      if (previousPrimaryWaba === undefined) delete process.env.WHATSAPP_WABA_ID;
+      else process.env.WHATSAPP_WABA_ID = previousPrimaryWaba;
+    }
 
     // Provider acceptance is the actual send boundary. An unknown outcome or
     // unsubmitted staff draft cannot trigger the worker, even when Attention
