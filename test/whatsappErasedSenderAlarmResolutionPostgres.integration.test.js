@@ -84,7 +84,7 @@ test("UNKNOWN/UNKNOWN risk acceptance never fabricates provider facts",()=>{
 
 test("disposable PostgreSQL: exact purged alarm releases once, records evidence, never sends",
  {skip:!process.env.TEST_DATABASE_URL},async()=>{
- const schema="erased_alarm_"+process.pid+"_"+Date.now();
+ const schema="erased_alarm_"+process.pid+"_"+Date.now()+"_"+crypto.randomBytes(3).toString("hex");
  const db=new Client({connectionString:process.env.TEST_DATABASE_URL});
  await db.connect();
  try {
@@ -129,6 +129,79 @@ test("disposable PostgreSQL: exact purged alarm releases once, records evidence,
   const replay=await svc.releaseReviewedErasedSecondaryAlarm(evidence,{database,env});
   assert.equal(replay.released,false);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_erased_alarm_resolutions")).rows[0].n,1);
+ }finally{
+  await db.query("SET search_path TO public").catch(()=>{});
+  await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+  await db.end();
+ }
+});
+
+
+test("disposable PostgreSQL: UNKNOWN stays UNKNOWN after audited risk release; future alarms still block",
+ {skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const schema="risk_alarm_"+process.pid+"_"+Date.now()+"_"+crypto.randomBytes(3).toString("hex");
+ const db=new Client({connectionString:process.env.TEST_DATABASE_URL});
+ await db.connect();
+ try{
+  await db.query("CREATE SCHEMA "+schema);
+  await db.query("SET search_path TO "+schema);
+  const database={
+   async connect(){
+    const c=new Client({connectionString:process.env.TEST_DATABASE_URL});
+    await c.connect();await c.query("SET search_path TO "+schema);
+    return{query:(...a)=>c.query(...a),release:()=>c.end()};
+   },query:(...a)=>db.query(...a),
+  };
+  await runMigrations(database,{quiet:true});
+  const sender=(await db.query(
+   "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
+   "VALUES('neutro_secondary',$1,$2,'Secondary','active') RETURNING id",
+   [env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+  )).rows[0].id;
+  await db.query(
+   "INSERT INTO whatsapp_sender_erased_billing_audit"+
+   "(reservation_sha256,sender_id,previous_state,staff_charge_approved,billable_receipt_seen)"+
+   "VALUES($1,$2,'unknown',TRUE,FALSE)",[reservation,sender]
+  );
+  await db.query(
+   "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reservation_id,reason,latest_wamid_hash)"+
+   "VALUES($1,NULL,'purged_unresolved_reservation',$2)",[sender,reservation]
+  );
+  const blocked=await svc.releaseReviewedErasedSecondaryAlarm(
+   {...acceptedUnknown,signedReceiptIngressManuallyVerified:false},{database,env});
+  assert.equal(blocked.released,false);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_billing_alarms")).rows[0].n,1);
+  const result=await svc.releaseReviewedErasedSecondaryAlarm(acceptedUnknown,{database,env});
+  assert.deepEqual(result,{released:true,sendAuthorized:false,retryAuthorized:false});
+  const audit=(await db.query(
+   "SELECT outcome,charge_outcome,risk_accepted,business_app_evidence_sha256,"+
+   "meta_billing_evidence_sha256,signed_receipt_ingress_verified,"+
+   "secondary_payment_method_verified,original_retry_prohibited "+
+   "FROM whatsapp_sender_erased_alarm_resolutions WHERE sender_id=$1",[sender]
+  )).rows[0];
+  assert.equal(audit.outcome,"unknown");
+  assert.equal(audit.charge_outcome,"unknown");
+  assert.equal(audit.risk_accepted,true);
+  assert.equal(audit.business_app_evidence_sha256,null);
+  assert.equal(audit.meta_billing_evidence_sha256,null);
+  assert.equal(audit.signed_receipt_ingress_verified,true);
+  assert.equal(audit.secondary_payment_method_verified,true);
+  assert.equal(audit.original_retry_prohibited,true);
+  assert.equal((await db.query("SELECT previous_state FROM whatsapp_sender_erased_billing_audit")).rows[0].previous_state,"unknown");
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_billing_attempts")).rows[0].n,0);
+  const replay=await svc.releaseReviewedErasedSecondaryAlarm(acceptedUnknown,{database,env});
+  assert.equal(replay.released,false);
+  // A later unmatched charge must create a NEW hold; the exception is
+  // specific to the old erased reservation, not a global future bypass.
+  await db.query(
+   "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reservation_id,reason,latest_wamid_hash) "+
+   "VALUES($1,NULL,'unmatched_provider_billable',$2)",[sender,hash("late-unmatched-provider-charge")]
+  );
+  const adverse=await svc.releaseReviewedErasedSecondaryAlarm(acceptedUnknown,{database,env});
+  assert.equal(adverse.released,false);
+  assert.equal((await db.query(
+   "SELECT reason FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",[sender]
+  )).rows[0].reason,"unmatched_provider_billable");
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
