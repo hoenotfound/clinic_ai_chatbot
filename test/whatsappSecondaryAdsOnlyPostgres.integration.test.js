@@ -32,9 +32,9 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
       WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:cutoff,
     };
     let n=0;
-    async function createContact({old=false}={}){
+    async function createContact({old=false,phone:providedPhone=null}={}){
       n++;
-      const phone="6012300"+String(n).padStart(5,"0");
+      const phone=providedPhone || ("6012300"+String(n).padStart(5,"0"));
       const row=(await db.query(
         "INSERT INTO contacts(channel,whatsapp_number,whatsapp_sender_id,created_at) "+
         "VALUES('whatsapp',$1,$2,$3::timestamptz) RETURNING id",
@@ -70,6 +70,23 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     const qualify=id=>isSecondaryAdsOnlyEligible(id,{database:db,env});
     const newAd=await createContact(); await inbound(newAd,{ad:true});
     assert.equal(await qualify(newAd.id),true,"new first message verified Meta ad qualifies");
+    // A previously known Neutro primary contact (both E.164 and the
+    // legacy local 01x representation) must never be upgraded by a new
+    // secondary-number CTWA click. Primary contacts remain untouched.
+    for (const [suffix,primaryStored] of [
+      ["89123","60123889123"],["89124","0123889124"]
+    ]) {
+      const secondaryPhone="601238"+suffix;
+      await db.query(
+        "INSERT INTO contacts(whatsapp_number,created_at) "+
+        "VALUES($1,$2::timestamptz)",
+        [primaryStored,new Date(Date.now()-86400000).toISOString()]
+      );
+      const knownPatient=await createContact({providedPhone:secondaryPhone});
+      await inbound(knownPatient,{ad:true});
+      assert.equal(await qualify(knownPatient.id),false,
+        "older primary-number patient remains manual even on first secondary ad click");
+    }
     const direct=await createContact(); await inbound(direct);
     assert.equal(await qualify(direct.id),false,"new direct message remains manual");
     await inbound(direct,{ad:true});
