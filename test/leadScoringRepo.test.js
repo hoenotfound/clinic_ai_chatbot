@@ -40,7 +40,7 @@ test("candidate query applies activation, three limits, and completed-pass bound
   assert.deepEqual(captured.params, [10, 60, 40, "2026-08-28T00:00:00.000Z", 5,
     process.env.WHATSAPP_SECONDARY_SENDER_KEY || "neutro_secondary", null]);
   assert.match(captured.sql, /whatsapp_free_entry_referrals ads_ref/);
-  assert.match(captured.sql, /ads_sender.sender_key IS DISTINCT FROM \\$6/);
+  assert.match(captured.sql, /ads_sender.sender_key IS DISTINCT FROM \$6/);
 });
 
 test("transcript is limited to the current lead journey", async (t) => {
