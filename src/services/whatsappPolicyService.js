@@ -53,12 +53,13 @@ function classifyOptOutText(value) {
   // This is a marketing/follow-up opt-out, not a ban on answering a later
   // customer-initiated service question. Do not match 'don't stop ...'.
   const explicitlyKeepAutomation = /\b(?:don['’]?t|do not|never)\s+stop\b/i.test(text);
-  const refuseAutomatedMessages = !explicitlyKeepAutomation &&
+  const refersToFollowUpAppointment = /\bfollow[\s-]?up\s+(?:appointment|session|visit|consultation|treatment)\b/i.test(text);
+  const refuseAutomatedMessages = !explicitlyKeepAutomation && !refersToFollowUpAppointment &&
     /\b(?:stop|don['’]?t|do not|no more|unsubscribe|opt out|cancel)\b.{0,75}\b(?:auto(?:mated|matic)?\s+(?:messages?|massages?|msgs?|texts?|replies)|follow[\s-]?ups?|repeated?\s+(?:messages?|texts?)|spam(?:ming)?)\b/i.test(text);
   if (refuseAutomatedMessages) return "marketing";
   // Explicit Chinese requests to stop repeated contact must take precedence
   // over soft 'let me consider' language in the same message.
-  if (/(?:不要|别|別|停止|禁止|取消|不需要|不要再|别再|別再).{0,24}(?:发|發|发送|發送|传|傳)(?:给我|給我|我)?(?:消息|信息|訊息|短信|简讯)/u.test(text)) return "all";
+  if (/(?:不要|别|別|停止|禁止|取消|不需要|不要再|别再|別再).{0,24}(?:发|發|发送|發送|传|傳)(?:给我|給我|我)?(?:消息|信息|訊息|短信|简讯)(?:给我|給我|我)?/u.test(text)) return "all";
   // Polite requests to stop *all* messages, not just offers.
   if (/^(?:(?:pls|please|plz|kindly|can you|could you)\s+){0,3}(?:stop|don['’]?t|do not|no more)\s+(?:(?:to\s+)?(?:send(?:ing)?|text(?:ing)?|message(?:ing)?)\s+(?:me\s+)?(?:any\s+)?(?:more\s+)?(?:the\s+)?)?(?:messages?|msgs?|texts?|whatsapps?)\b/i.test(text)) return "all";
   if (/(?:jangan|tak nak|tak mahu|tidak mahu|henti(?:kan)?|berhenti).{0,80}(?:auto(?:mated)?\s+(?:message|mesej)|mesej\s+(?:auto|berulang)|follow[\s-]?up)/i.test(text)) return "marketing";
