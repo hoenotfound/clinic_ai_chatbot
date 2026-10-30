@@ -41,7 +41,7 @@ test("fresh v099 SQL isolates sender-owned coexistence history, media echoes and
     return {query:(...args)=>c.query(...args),release:()=>c.end()};
    },
   };
-  assert.equal(loadMigrations().at(-1).version,109);
+  assert.equal(loadMigrations().at(-1).version,110);
   await runMigrations(database,{quiet:true});
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,"+
