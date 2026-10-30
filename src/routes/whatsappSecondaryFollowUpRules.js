@@ -2,6 +2,8 @@
 const express=require("express");
 const {pool}=require("../db/db");
 const configRepo=require("../db/configRepo");
+const {listApprovedSecondaryMarketingTemplates}=require("../services/whatsappSecondaryMarketingTemplateCatalog");
+const {enabled:marketingWorkerEnabled}=require("../services/whatsappSecondaryMarketingFollowUpService");
 const {verifyApprovedVideo,listApprovedClinicVideos}=require("../services/whatsappSecondaryFollowUpVideoApproval");
 const {hasCapability}=require("../utils/permissions");
 const router=express.Router();
@@ -43,6 +45,12 @@ router.get("/",async(req,res)=>{
       "FROM whatsapp_sender_followup_rules WHERE sender_id=$1 ORDER BY slot_hours",
       [identity.id]
     );
+    const marketing=await pool.query(
+      "SELECT slot_hours,enabled,template_name,language_code,operator_billing_approved,updated_at "+
+      "FROM whatsapp_sender_marketing_followup_rules WHERE sender_id=$1 ORDER BY slot_hours",
+      [identity.id]);
+    const templates=await listApprovedSecondaryMarketingTemplates({env:process.env})
+      .catch(()=>null);
     return res.json({
       configured:true,senderDisplayName:identity.display_name,
       workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true",
@@ -53,6 +61,9 @@ router.get("/",async(req,res)=>{
         env:process.env,clinicConfig:configRepo.getConfig(),
       }),
       rules:rules.rows,
+      marketingRules:marketing.rows,
+      marketingWorkerEnabled:marketingWorkerEnabled(process.env),
+      marketingTemplates:templates||[],marketingCatalogAvailable:templates!==null,
     });
   }catch(err){
     console.error("Sender-specific followup config failed:",err);
@@ -114,5 +125,53 @@ router.put("/:slot",async(req,res)=>{
     console.error("Unable to save Secondary WhatsApp follow-up rule:",err);
     return res.status(503).json({error:"Could not save the verified Secondary WhatsApp follow-up configuration."});
   }
+});
+// Explicit approval of a secondary-account Meta template and its charge
+// occurs only here, under the same manage_tools permission as other rules.
+// The scheduler is independently OFF even after a rule is saved as enabled.
+router.put("/marketing/:slot",async(req,res)=>{
+ try{
+  const slot=Number(req.params.slot);
+  if(![48,72].includes(slot))
+   return res.status(400).json({error:"Only 48h and 72h marketing templates are supported."});
+  const enabled=req.body?.enabled;
+  const name=String(req.body?.templateName||"").trim();
+  const languageCode=String(req.body?.languageCode||"").trim();
+  if(typeof enabled!=="boolean" || !/^[a-z0-9_]{1,128}$/.test(name) ||
+     !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(languageCode))
+   return res.status(400).json({error:"Select an approved secondary-number marketing template."});
+  if(enabled && req.body?.operatorBillingApproved!==true)
+   return res.status(409).json({code:"secondary_marketing_charge_review_required",
+    error:"Explicitly approve paid marketing-template charges for this secondary number."});
+  const identity=await sender(pool,process.env);
+  if(!identity)return res.status(409).json({code:"secondary_sender_not_activated"});
+  const available=await listApprovedSecondaryMarketingTemplates({env:process.env});
+  const approved=available.find(t=>t.name===name && t.languageCode===languageCode);
+  if(!approved)return res.status(409).json({
+   code:"secondary_marketing_template_not_approved",
+   error:"The selected text-only marketing template is not APPROVED on the second account.",
+  });
+  const saved=await pool.query(
+   `INSERT INTO whatsapp_sender_marketing_followup_rules
+      (sender_id,slot_hours,enabled,template_name,language_code,
+       template_signature,operator_billing_approved,updated_at)
+     VALUES($1,$2,$3,$4,$5,$6,$7,NOW())
+     ON CONFLICT(sender_id,slot_hours) DO UPDATE SET
+       enabled=EXCLUDED.enabled,template_name=EXCLUDED.template_name,
+       language_code=EXCLUDED.language_code,
+       template_signature=EXCLUDED.template_signature,
+       operator_billing_approved=EXCLUDED.operator_billing_approved,
+       updated_at=NOW()
+     RETURNING slot_hours,enabled,template_name,language_code,operator_billing_approved,updated_at`,
+   [identity.id,slot,enabled,name,languageCode,approved.signature,
+    enabled && req.body.operatorBillingApproved===true]);
+  res.set("Cache-Control","no-store");
+  return res.json({saved:true,rule:saved.rows[0],
+   marketingWorkerEnabled:marketingWorkerEnabled(process.env)});
+ }catch{
+  return res.status(503).json({
+   error:"Second-number template approval or rule configuration could not be verified.",
+  });
+ }
 });
 module.exports=router;
