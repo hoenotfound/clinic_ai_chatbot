@@ -46,12 +46,12 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
       )).rows[0].id;
       return {id:row.id,conv};
     }
-    async function inbound(contact,{ad=false,imported=false}={}){
+    async function inbound(contact,{ad=false,imported=false,sourceTime=new Date().toISOString()}={}){
       n++;
       const m=(await db.query(
-        "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) "+
-        "VALUES($1,'user','Hi',$2) RETURNING id",
-        [contact.id,"wamid.secondary-ads-only-"+n]
+        "INSERT INTO messages(contact_id,role,content,whatsapp_message_id,source_created_at) "+
+        "VALUES($1,'user','Hi',$2,$3::timestamptz) RETURNING id",
+        [contact.id,"wamid.secondary-ads-only-"+n,sourceTime]
       )).rows[0].id;
       await db.query(
         "INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
@@ -76,6 +76,13 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     assert.equal(await qualify(direct.id),false,"later ad must not upgrade a direct chat");
     const history=await createContact(); await inbound(history,{ad:true,imported:true});
     assert.equal(await qualify(history.id),false,"imported history must never qualify");
+    const contactOnly=await createContact();
+    await db.query("UPDATE contacts SET whatsapp_coexistence_imported_at=NOW() WHERE id=$1",[contactOnly.id]);
+    await inbound(contactOnly,{ad:true});
+    assert.equal(await qualify(contactOnly.id),false,"contact-only Business App import stays manual");
+    const delayed=await createContact();
+    await inbound(delayed,{ad:true,sourceTime:new Date(Date.now()-86400000).toISOString()});
+    assert.equal(await qualify(delayed.id),false,"old provider timestamp cannot become fresh ad");
     const oldContact=await createContact({old:true}); await inbound(oldContact,{ad:true});
     assert.equal(await qualify(oldContact.id),false,"old contact must remain manual even on a new ad click");
     const missing=await createContact();await inbound(missing);
