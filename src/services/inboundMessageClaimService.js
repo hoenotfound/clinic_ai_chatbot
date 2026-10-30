@@ -239,7 +239,8 @@ function createInboundMessageClaimService({
       // re-engagement. The legitimate first ad click is recorded later in
       // this claim, so a new ad lead can qualify from its NEXT message.
       const secondary = channel === "whatsapp" &&
-        contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
+        process.env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary" &&
+        contact.whatsapp_sender_key === "neutro_secondary";
       if (!secondary || await isSecondaryAdsOnlyEligible(contact.id, {
         database, env: process.env,
       })) {
