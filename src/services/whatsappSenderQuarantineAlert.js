@@ -101,7 +101,7 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
         "⚠️ WhatsApp webhook quarantine audit failed\n" +
         events.length + " callback event(s) were not recorded successfully.\n" +
         "Reasons: " + [...new Set(events.map(item => item.reason))].sort().join(", ") + "\n" +
-        "Review Render errors and the callback response. Do not automatically resend customer messages.",
+        "The quarantine database write did not complete. Review Render errors and the callback response. Do not automatically resend customer messages.",
     });
   }
 
