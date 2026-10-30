@@ -169,7 +169,7 @@ test("quarantine database failure escalates even an otherwise routine status", a
   assert.equal(sent, true);
   assert.equal(calls.messages.length, 1);
   assert.match(calls.messages[0], /quarantine audit failed/);
-  assert.match(calls.messages[0], /database write did not complete/);
+  assert.match(calls.messages[0], /were not recorded successfully/);
   assert.equal(calls.warnings.length, 1);
 });
 
