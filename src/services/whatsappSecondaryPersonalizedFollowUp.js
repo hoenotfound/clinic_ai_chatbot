@@ -18,9 +18,8 @@ const CONTEXT_SQL=`
  ),
  latest_lead AS (
    SELECT l.id,l.treatment_interest,l.appointment_status,
-     stage.name AS stage_name,b.name AS branch_name
+     stage.name AS stage_name,l.branch_name
    FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
-   LEFT JOIN branches b ON b.id=l.branch_id
    WHERE l.contact_id=$1 ORDER BY l.created_at DESC,l.id DESC LIMIT 1
  )
  SELECT m.id,m.role,m.content,m.created_at,m.sent_by_username,
