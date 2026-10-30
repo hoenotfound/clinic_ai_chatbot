@@ -29,6 +29,8 @@ test("legacy startup with no sender bindings remains available",async()=>{
     database:{query:async(sql,args)=>{calls.push(sql);return{rows:[{total:0,nonprimary:0}]}}}
   });
   assert.equal(answer.verified,true);
+  assert.equal(answer.primaryRegistrationVerified,false,
+    "legacy deployments without scoped ingress must not claim verified sender registration");
   assert.equal(calls.length,1);
 });
 test("scope can activate only with an active, verified primary registration",async()=>{
@@ -36,7 +38,10 @@ test("scope can activate only with an active, verified primary registration",asy
     if(sql.includes("COUNT(*)"))return {rows:[{total:0,nonprimary:0}]};
     return {rows:[{id:1,sender_key:"neutro",state:"active"}]};
   }};
-  assert.equal((await assertStoredSenderSafety({env:safe,database:db})).verified,true);
+  const verified = await assertStoredSenderSafety({env:safe,database:db});
+  assert.equal(verified.verified,true);
+  assert.equal(verified.primaryRegistrationVerified,true,
+    "scoped ingress verifies the primary phone, WABA, key and active state before workers start");
   for(const account of [
     null,{id:1,sender_key:"ariel",state:"active"},
     {id:1,sender_key:"neutro",state:"disabled"}
@@ -46,6 +51,29 @@ test("scope can activate only with an active, verified primary registration",asy
     await assert.rejects(assertStoredSenderSafety({env:safe,database:denied}),/active persisted/);
   }
 });
+test("primary sender verification rejects a phone or WABA mismatch without trusting a key alone",async()=>{
+  const registry = new Map([
+    ["correctPhone:correctWaba", {id:1,sender_key:"neutro",state:"active"}],
+  ]);
+  const database={query:async(sql,args)=>{
+    if(sql.includes("COUNT(*)"))return {rows:[{total:12,nonprimary:0}]};
+    const sender=registry.get(args.join(":"));
+    return {rows:sender?[sender]:[]};
+  }};
+  const good={...safe,WHATSAPP_PHONE_NUMBER_ID:"correctPhone",
+    WHATSAPP_WABA_ID:"correctWaba"};
+  assert.equal((await assertStoredSenderSafety({database,env:good}))
+    .primaryRegistrationVerified,true);
+  await assert.rejects(
+    assertStoredSenderSafety({database,env:{...good,WHATSAPP_PHONE_NUMBER_ID:"otherPhone"}}),
+    /primary sender does not match/
+  );
+  await assert.rejects(
+    assertStoredSenderSafety({database,env:{...good,WHATSAPP_WABA_ID:"otherWaba"}}),
+    /primary sender does not match/
+  );
+});
+
 test("rollback never turns off sender lookups with live secondary contacts",async()=>{
   let db={query:async()=>({rows:[{total:4,nonprimary:2}]})};
   await assert.rejects(assertStoredSenderSafety({
