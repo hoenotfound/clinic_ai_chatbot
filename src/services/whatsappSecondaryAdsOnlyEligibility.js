@@ -9,7 +9,7 @@ const { pool } = require("../db/db");
 function adsOnlyActivation(env = process.env) {
   if (env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "ads_only") return null;
   const raw = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
-  if (!/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$/.test(raw)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw)) return null;
   const parsed = new Date(raw);
   return Number.isFinite(parsed.getTime()) && parsed.getTime() > 0
     ? parsed.toISOString() : null;
