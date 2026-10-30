@@ -8,6 +8,8 @@ const {pool}=require("../db/db");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
+const configRepo=require("../db/configRepo");
+const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 
 const SLOTS=new Set([2,6,20]);
@@ -197,6 +199,8 @@ async function runOnce({
   now=new Date(),limit=10,
   sendText=sendSecondaryStaffText,
   store=messagesRepo,storage=mediaStorage,contacts=contactsRepo,
+ getConfig=()=>configRepo.getConfig(),
+ videoApproved=isCurrentApprovedFollowUpVideo,
 }={}) {
   if (!enabled(env))return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
@@ -242,6 +246,16 @@ async function runOnce({
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       const key=candidate.media_key;
+      // Never inherit approval forever from the saved rule. The source
+      // clinic may remove/replace a video after rule creation.
+      const liveVideoApproval=()=>{
+        try{return videoApproved({
+          slot,mediaKey:key,env,clinicConfig:getConfig(),storage:mediaStorage,
+        })===true;}catch{return false;}
+      };
+      if(key && (candidate.media_type!=="video" || !liveVideoApproval())){
+        await fail("sender_followup_video_approval_revoked");continue;
+      }
       let bytes=null;
       if(key){
         const mime=candidate.media_mime_type;
@@ -281,12 +295,14 @@ async function runOnce({
         contact,messageId,text:candidate.message_text,
         origin:"followup",preSendCheck,
         ...(bytes?{dispatchTransport:async transport=>{
+          if(!liveVideoApproval() || !await preSendCheck())
+            return {success:false,unknown:true,ambiguous:true,retryable:false};
           const uploaded=await transport.uploadMedia(bytes,
             candidate.media_mime_type,candidate.media_filename);
           if(!uploaded?.success || !uploaded.mediaId)return{
             success:false,ambiguous:true,retryable:false,
           };
-          if(!await preSendCheck())return{
+          if(!liveVideoApproval() || !await preSendCheck())return{
             success:false,ambiguous:true,retryable:false,
           };
           return transport.sendMediaById(candidate.media_type,
