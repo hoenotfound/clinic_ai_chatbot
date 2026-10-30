@@ -13,19 +13,27 @@ const at = offsetMs => new Date(NOW + offsetMs).toISOString();
 
 test("past due non-actionable hints back off to one minute", () => {
   assert.equal(delayUntilNextFollowUp({
-    enabled: true, candidateCount: 0, recoveredCount: 0,
+    enabled: true, candidateCount: 0, progressedCount: 0, recoveredCount: 0,
     nextDueAt: at(-600000), nextRecoveryAt: null,
   }, NOW), OVERDUE_IDLE_RECHECK_MS);
 
   assert.equal(delayUntilNextFollowUp({
-    enabled: false, candidateCount: 0, nextDueAt: at(-1000),
+    enabled: false, candidateCount: 0, progressedCount: 0, nextDueAt: at(-1000),
     nextRecoveryAt: at(-30000),
   }, NOW), OVERDUE_IDLE_RECHECK_MS);
 });
 
-test("overdue actionable batch retries within ten seconds", () => {
+test("blocked candidates do not cause a ten-second retry loop", () => {
   assert.equal(delayUntilNextFollowUp({
-    enabled: true, candidateCount: 2, nextDueAt: at(-1000),
+    enabled: true, candidateCount: 2, progressedCount: 0,
+    nextDueAt: at(-1000),
+  }, NOW), OVERDUE_IDLE_RECHECK_MS);
+});
+
+test("durable follow-up progress gets a short retry for remaining eligible work", () => {
+  assert.equal(delayUntilNextFollowUp({
+    enabled: true, candidateCount: 2, progressedCount: 1,
+    nextDueAt: at(-1000),
   }, NOW), OVERDUE_ACTIVE_RECHECK_MS);
   assert.equal(delayUntilNextFollowUp({
     enabled: false, recoveredCount: 1, nextRecoveryAt: at(-1000),
