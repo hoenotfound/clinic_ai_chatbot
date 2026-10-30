@@ -1,6 +1,8 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
@@ -101,4 +103,17 @@ test("automated send to manual existing contact is stopped before policy or bill
   });
   assert.equal(result.code,"secondary_ads_only_contact_ineligible");
   assert.equal(providerCalls,0);
+});
+
+// The secondary manual-audio path must remain a terminal staff-only path.
+// Without this guard the voice placeholder would be overwritten as "🎤 null".
+test("manual secondary voice messages retain the staff label and bypass AI transcription",()=>{
+  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const voice=source.slice(source.indexOf('if (mediaType === "audio")'),
+    source.indexOf('if (mediaType === "image")'));
+  assert.ok(voice.includes('secondaryInboxOnly ? null : transcribeAudio('));
+  const manual=voice.slice(voice.indexOf('if (secondaryInboxOnly) {'),
+    voice.indexOf('} else if (!transcript)'));
+  assert.ok(manual.includes('"🎤 [Voice message for staff]"'));
+  assert.match(manual,/return\s+\{\s*wasFirstMessage,\s*keywordReason\s*\}/);
 });
