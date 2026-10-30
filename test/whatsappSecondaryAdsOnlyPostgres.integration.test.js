@@ -84,8 +84,16 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
       );
       const knownPatient=await createContact({providedPhone:secondaryPhone});
       await inbound(knownPatient,{ad:true});
-      assert.equal(await qualify(knownPatient.id),false,
-        "older primary-number patient remains manual even on first secondary ad click");
+      const eligibility=await qualify(knownPatient.id);
+      if (eligibility !== false) {
+        const debug=(await db.query(
+          "SELECT id,whatsapp_number,whatsapp_sender_id,channel,created_at " +
+          "FROM contacts WHERE whatsapp_number IN ($1,$2) ORDER BY created_at",
+          [secondaryPhone,primaryStored]
+        )).rows;
+        assert.fail("older primary patient unexpectedly qualified: " +
+          JSON.stringify({secondaryPhone,primaryStored,debug}));
+      }
     }
     const direct=await createContact(); await inbound(direct);
     assert.equal(await qualify(direct.id),false,"new direct message remains manual");
