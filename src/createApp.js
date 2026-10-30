@@ -314,7 +314,7 @@ function createApp({
         await recordQuarantinedWhatsAppChanges(isolated.quarantined);
       } catch (error) {
         console.error("Could not durably quarantine WhatsApp callback:", error);
-        void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+        void notifyWhatsAppSenderQuarantine(isolated.quarantined, { auditFailed: true });
         return res.sendStatus(503);
       }
       void notifyWhatsAppSenderQuarantine(isolated.quarantined);
@@ -602,12 +602,14 @@ function createApp({
     // Existing events are already durable when we ACK; the rejected-event
     // audit is best effort in mixed batches, with an operator notification.
     if (isolated.quarantined.length && !quarantineOnly) {
+      let auditFailed = false;
       void recordQuarantinedWhatsAppChanges(isolated.quarantined)
         .catch((err) => {
+          auditFailed = true;
           console.error("WhatsApp quarantine audit failed after valid work was accepted:", err);
         })
         .finally(() => {
-          void notifyWhatsAppSenderQuarantine(isolated.quarantined);
+          void notifyWhatsAppSenderQuarantine(isolated.quarantined, { auditFailed });
         });
     }
 
