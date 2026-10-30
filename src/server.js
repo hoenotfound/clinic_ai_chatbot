@@ -661,6 +661,9 @@ async function processIncomingMessage(
           contact.id, savedInbound.id, "🎤 [Voice message for staff]",
           mediaAttachment
         );
+        // Manual-only secondary contacts must never overwrite this with a
+        // null transcript or proceed into any AI/lead-scoring path.
+        return { wasFirstMessage, keywordReason };
       } else if (!transcript) {
         await conversationStore.updateInboundMessage(
           contact.id,
