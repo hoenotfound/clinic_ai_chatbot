@@ -52,7 +52,8 @@ function partitionSecondaryInboxWebhook(body,{
           const routineStatuses=change.value.statuses.every(status=>
             status && typeof status==="object" &&
             ["sent","delivered","read"].includes(status.status) &&
-            (!Array.isArray(status.errors) || status.errors.length===0)
+            (status.errors === undefined ||
+              (Array.isArray(status.errors) && status.errors.length===0))
           );
           deferredStatuses.push(Object.freeze({
             fingerprint:digest,reason:"unsupported_whatsapp_event",
