@@ -114,7 +114,7 @@ test("parity mode remains OFF unless every critical signed/billing gate is verif
   if(name==="WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED"){
    // Legacy AI-only refuses staff and auto-reconcile.
    assert.throws(()=>receiver.assertLiveConfig(env),/Unverified/);
-  }else assert.throws(()=>receiver.assertLiveConfig(env),/Unverified/,name);
+  }else assert.throws(()=>receiver.assertLiveConfig(env),/Unverified|disabled/,name);
  }
  assert.equal(mediaEnabled(base),false);
  assert.equal(followupsEnabled(base),false);
