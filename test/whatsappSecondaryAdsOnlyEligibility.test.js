@@ -3,6 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
   eligibleSecondaryAdsOnlyContactIds,
@@ -13,6 +14,8 @@ const media = require("../src/services/whatsappSecondaryAiMediaQueue");
 
 const env = {
   WHATSAPP_SECONDARY_SENDER_KEY: "neutro_secondary",
+  WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED: "true",
+  WHATSAPP_SECONDARY_AI_SEND_ENABLED: "true",
   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE: "ads_only",
   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT: "2026-10-30T03:00:00Z",
 };
@@ -150,11 +153,137 @@ test("Inbox batch does not query Neon unless secondary ads-only AI is operationa
     assert.deepEqual(args,[[11,12],"2026-10-30T03:00:00.000Z"]);
     return {rows:[{id:11}]};
   }};
-  const off=await eligibleSecondaryAdsOnlyContactIds([11,12],{database,env});
+  const off=await eligibleSecondaryAdsOnlyContactIds([11,12],{
+    database,env:{...env,WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false"}
+  });
   assert.deepEqual([...off],[]);
   assert.equal(queries,0);
   const enabled={...env,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
     WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"};
   assert.deepEqual([...await eligibleSecondaryAdsOnlyContactIds([11,12],{database,env:enabled})],[11]);
   assert.equal(queries,1,"one batched lookup, never one query per contact");
+});
+
+test("single-contact audience checks do not query Neon until both secondary AI gates open",async()=>{
+  let calls=0;
+  const database={query:async()=>{calls++;return {rows:[{eligible:true}]};}};
+  for(const flags of [
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false"},
+    {WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"},
+    {WHATSAPP_SECONDARY_AI_SEND_ENABLED:"false",WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"}
+  ]){
+    assert.equal(await isSecondaryAdsOnlyEligible(14,{database,env:{...env,...flags}}),false);
+  }
+  assert.equal(calls,0,"no per-message eligibility SQL for disabled automation");
+  assert.equal(await isSecondaryAdsOnlyEligible(14,{database,env}),true);
+  assert.equal(calls,1);
+});
+
+// Exercise the real server.js incoming-message handler with isolated external
+// dependencies. This executes the actual catch branch, rather than merely
+// checking source text for the presence of a conditional.
+function realIncomingHandlerForManualMedia({
+  senderKey="neutro_secondary",mediaType="image",operation="store",
+  aiEnabled=false,
+}={}){
+  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const start=source.indexOf("async function processIncomingMessage(");
+  const stop=source.indexOf("// Runtime secret checks",start);
+  assert.ok(start>0 && stop>start);
+  const results={reviews:[],temporaryReviews:[],stored:0,eligibilityQueries:0,
+    outbound:0,errors:[],downloads:0};
+  const context={
+    console:{error:(...parts)=>results.errors.push(parts.join(" ")),warn:()=>{},log:()=>{}},
+    process:{env:{
+      WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
+      WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
+      WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+      WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:aiEnabled?"true":"false",
+      WHATSAPP_SECONDARY_AI_SEND_ENABLED:aiEnabled?"true":"false",
+    }},
+    Buffer,clinicConfig:{},getOperationalLabels:()=>({
+      customerLabel:"customer",customerSingular:"customer"
+    }),
+    secondaryUsesPrimaryClinicContent:()=>true,
+    isSecondaryAdsOnlyEligible:async()=>{results.eligibilityQueries++;return false;},
+    aiReplyCancellation:{
+      keyForWhatsAppNumber:()=> "test-sender-key",
+      snapshot:()=>0,
+      safeToSend:()=>true,
+    },
+    channelMessaging:{
+      downloadIncomingMedia:async()=>{
+        results.downloads++;
+        if(operation==="download")throw Error("simulated provider media download failure");
+        return {mimeType:mediaType==="audio"?"audio/ogg":"image/jpeg",
+          buffer:Buffer.from("test-media")};
+      },
+    },
+    convertToMp3:async()=>null,
+    transcribeAudio:async()=>{throw Error("manual audio must not transcribe");},
+    conversationStore:{
+      updateInboundMessage:async()=>{
+        results.stored++;
+        if(operation==="store")throw Error("simulated R2 media upload failure");
+      }
+    },
+    contactsRepo:{
+      setAiReviewAttention:async(...args)=>{results.reviews.push(args);},
+      setTemporaryAiAttention:async(...args)=>{results.temporaryReviews.push(args);},
+    },
+    ai:{isRecoverableAiReplyFailure:()=>false},
+  };
+  const receive=vm.runInNewContext(source.slice(start,stop)+"\nprocessIncomingMessage;",context,{
+    filename:"src/server.js"
+  });
+  const item={
+    incoming:{id:"wamid.manual-media-1",from:"60120009999",channel:"whatsapp",
+      mediaType,mediaId:"meta-media-1",text:"Please check this"},
+    contact:{id:41,mode:"ai",channel:"whatsapp",whatsapp_number:"60120009999",
+      whatsapp_sender_key:senderKey,whatsapp_sender_id:senderKey==="neutro_secondary"?2:1},
+    savedInbound:{id:55,contact_id:41,role:"user",content:"durable placeholder"},
+    processingJobId:77,
+  };
+  return {results,run:()=>receive(item)};
+}
+
+test("real manual secondary image storage failure stays Inbox-only and never creates AI/Telegram review",async()=>{
+  const {run,results}=realIncomingHandlerForManualMedia({mediaType:"image"});
+  await run();
+  assert.equal(results.stored,1,"the real media storage failure was exercised");
+  assert.equal(results.downloads,1);
+  assert.equal(results.eligibilityQueries,0,"secondary AI OFF means no eligibility SQL path");
+  assert.equal(results.reviews.length,0);
+  assert.equal(results.temporaryReviews.length,0);
+  assert.equal(results.outbound,0);
+  assert.match(results.errors.join(" " ),/simulated R2 media upload failure/);
+});
+
+test("real manual secondary voice and provider download exceptions never enter AI attention",async()=>{
+  for(const variant of [
+    {mediaType:"audio",operation:"store"},
+    {mediaType:"image",operation:"download"}
+  ]){
+    const {run,results}=realIncomingHandlerForManualMedia(variant);
+    await run();
+    assert.equal(results.reviews.length,0,JSON.stringify(variant));
+    assert.equal(results.temporaryReviews.length,0,JSON.stringify(variant));
+    assert.equal(results.eligibilityQueries,0,JSON.stringify(variant));
+    assert.ok(results.errors.length>0,JSON.stringify(variant));
+  }
+});
+
+test("existing primary WhatsApp media failure still produces staff AI-review attention",async()=>{
+  const {run,results}=realIncomingHandlerForManualMedia({senderKey:"neutro",mediaType:"image"});
+  await run();
+  assert.equal(results.stored,1);
+  assert.equal(results.reviews.length,1,"primary handling must not be muted");
+  assert.equal(results.eligibilityQueries,0);
+});
+
+test("enabled secondary audience still verifies eligibility, but ineligible contacts stay manual",async()=>{
+  const {run,results}=realIncomingHandlerForManualMedia({aiEnabled:true});
+  await run();
+  assert.equal(results.eligibilityQueries,1);
+  assert.equal(results.reviews.length,0);
 });

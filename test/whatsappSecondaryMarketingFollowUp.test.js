@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const svc=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const templateTools=require("../src/services/whatsappTemplateService");
-const raw={id:"5566",name:"neutro_review_invite",language:"zh",status:"APPROVED",category:"MARKETING",
+const raw={id:"5566",name:"neutro_review_invite",language:"zh_CN",status:"APPROVED",category:"MARKETING",
  components:[{type:"BODY",text:"欢迎预约一对一体态评估。若不想收到提醒，请回复停止。"}]};
 const definition=templateTools.normalizeTemplate(raw);
 const signature=templateTools.templateSignature(definition);
@@ -13,7 +13,8 @@ const row={
  whatsapp_sender_phone_number_id:"1318355951360575",
  whatsapp_sender_account_id:"1852014482431209",
  sender_id:5,conversation_id:44,inbound_id:99,slot_hours:48,
- template_name:raw.name,language_code:"zh",template_signature:signature,
+ template_name:raw.name,language_code:"zh_CN",template_signature:signature,
+ customer_messages:["我想了解骨盆调理，价格是多少？"],
  rule_updated_at:new Date("2026-10-01T02:00:00Z"),treatment_interest:"骨盆",
 };
 const env={
@@ -131,6 +132,7 @@ test("one 48h secondary send claims first and checks current provider approval t
  assert.equal(f.calls[sent].send.templateRequest.billingConfirmed,true);
  assert.equal(f.calls[sent].send.templateRequest.treatmentInterest,"骨盆");
  assert.ok(f.calls.filter(x=>x.preview).length>=1);
+ assert.equal(f.calls[sent].send.templateRequest.languageCode,"zh_CN");
 });
 test("no template send without current approval, after a failed claim, or after uncertain Meta response",async()=>{
  for(const testCase of [
@@ -144,4 +146,46 @@ test("no template send without current approval, after a failed claim, or after 
   if(testCase.input.claimed!==false)assert.ok(f.calls.some(x=>
    x.sql?.includes("status='unknown'")));
  }
+});
+
+test("language selection reuses customer conversation evidence without guesswork",()=>{
+ assert.equal(svc.customerTemplateLocale(["Hi", "我想了解这个护理"]),"zh_CN");
+ assert.equal(svc.customerTemplateLocale(["How much is the treatment?"]),"en_US");
+ assert.equal(svc.customerTemplateLocale(["Saya nak tahu harga"]),"ms_MY");
+ assert.equal(svc.customerTemplateLocale(["hi","ok"]),null);
+ assert.equal(svc.customerTemplateLocale(["Please reply in English", "价钱?"]),"en_US");
+});
+test("Chinese contact receives only Chinese variant even with an English row enabled",async()=>{
+ const english={...row,language_code:"en_US",template_name:"en_reminder",
+  template_signature:"b".repeat(64)};
+ const f=fake({candidates:[english,row]});
+ const result=await svc.runOnce({...f,env});
+ assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
+ assert.equal(f.calls.filter(x=>x.sql?.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts")).length,1);
+ assert.equal(f.calls.filter(x=>x.send).length,1);
+ assert.equal(f.calls.find(x=>x.send).send.templateRequest.languageCode,"zh_CN");
+});
+test("unrecognized or Malay language does not send Chinese or English templates",async()=>{
+ for(const text of ["hi","Saya nak tahu harga"]){
+  const f=fake({candidates:[{...row,customer_messages:[text]}]});
+  const result=await svc.runOnce({...f,env});
+  assert.deepEqual(result,{disabled:false,attempted:0,accepted:0});
+  assert.equal(f.calls.filter(x=>x.sql?.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts")).length,0);
+  assert.equal(f.calls.filter(x=>x.send).length,0);
+ }
+});
+test("recheck rejects a changed customer language without sending to Meta",async()=>{
+ const f=fake();
+ let rechecks=0;
+ const original=f.database.query;
+ f.database.query=async(sql,args)=>{
+  const result=await original(sql,args);
+  if(sql===svc.RECHECK_SQL && ++rechecks>=1)
+   return {rows:[{...row,customer_messages:["Please reply in English"]}]};
+  return result;
+ };
+ const result=await svc.runOnce({...f,env});
+ assert.deepEqual(result,{disabled:false,attempted:1,accepted:0});
+ assert.equal(f.calls.filter(x=>x.send).length,0);
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='unknown'")));
 });

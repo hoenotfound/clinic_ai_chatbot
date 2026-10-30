@@ -570,6 +570,9 @@ async function processIncomingMessage(
   let savedInbound = preclaimed?.savedInbound || null;
   let processingJobId = preclaimed?.processingJobId || null;
   let responseAttempted = false;
+  // Track the sender's verified manual-only ownership across the outer
+  // handler catch. A failed R2 upload must not become an AI-review alert.
+  let secondaryInboxOnly = false;
   let wasFirstMessage = Boolean(preclaimed?.wasFirstMessage);
   let keywordReason = inheritedKeywordReason;
 
@@ -597,16 +600,18 @@ async function processIncomingMessage(
       contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
     // An ad click by an existing/imported/direct customer never promotes the
     // conversation into AI. Check persisted FIRST inbound, not lead source labels.
-    const secondaryAudienceEligible = secondaryContact
-      ? await isSecondaryAdsOnlyEligible(contact.id) : false;
-    const secondaryAiConversation = secondaryContact &&
-      secondaryAudienceEligible &&
+    // Check the no-send gates first. Avoid even calling the eligibility
+    // helper on every incoming manual chat when secondary AI is OFF.
+    const secondaryAiReady = secondaryContact &&
       process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       secondaryUsesPrimaryClinicContent(process.env);
+    const secondaryAudienceEligible = secondaryAiReady
+      ? await isSecondaryAdsOnlyEligible(contact.id) : false;
+    const secondaryAiConversation = secondaryAiReady && secondaryAudienceEligible;
     // All other secondary conversations stay in staff-managed Inbox, even
     // when a global AI switch is ON or the sender's contact mode says "ai".
-    const secondaryInboxOnly = secondaryContact && !secondaryAiConversation;
+    secondaryInboxOnly = secondaryContact && !secondaryAiConversation;
     aiCancellationKey = channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(
           from, senderScoped ? contact.whatsapp_sender_key : null
@@ -717,9 +722,21 @@ async function processIncomingMessage(
       }
 
       text = incoming.text ? `📷 ${incoming.text}` : `📷 [${customerLabel} sent a photo]`;
-      await conversationStore.updateInboundMessage(
-        contact.id, savedInbound.id, text, mediaAttachment
-      );
+      try {
+        await conversationStore.updateInboundMessage(
+          contact.id, savedInbound.id, text, mediaAttachment
+        );
+      } catch (imageStorageErr) {
+        // The inbound was committed before this optional R2 upload.
+        // Manual-only secondary chats retain the original unread placeholder,
+        // with no AI review, takeover, Telegram alert or automatic reply.
+        if (!secondaryInboxOnly) throw imageStorageErr;
+        console.error(
+          `Failed to store WhatsApp photo media for ${channel}:${from}; keeping the durable Inbox placeholder:`,
+          imageStorageErr
+        );
+        mediaAttachment = null;
+      }
     }
 
     if (mediaType === "video") {
@@ -2431,6 +2448,12 @@ async function processIncomingMessage(
     return { wasFirstMessage, keywordReason };
   } catch (err) {
     console.error(`Error handling incoming ${channel} message ${id || "without id"}:`, err);
+
+    // A manual secondary message may fail at any Inbox-media/storage stage,
+    // including voice, image, video or an unexpected persistence error.
+    // It was durably stored and marked unread by the inbound claim. Never
+    // turn those storage failures into AI review/Telegram notifications.
+    if (secondaryInboxOnly) return { wasFirstMessage, keywordReason };
 
     if (contact && savedInbound) {
       try {
