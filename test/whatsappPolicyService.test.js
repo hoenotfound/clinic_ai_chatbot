@@ -45,6 +45,22 @@ test("detects common WhatsApp opt-out requests in supported chat languages", () 
   }
 });
 
+test("recognizes natural opt-out requests that were missed in live Neutro conversations", () => {
+  for (const [message, expected] of [
+    ["考虑先 请禁止一直发信息 谢谢", "all"],
+    ["请不要再发信息给我，谢谢", "all"],
+    ["别再给我发消息了", "all"],
+    ["Pls stop to send auto massage ya", "marketing"],
+    ["Pls stop to send auto message ya", "marketing"],
+    ["Please stop sending automated messages", "marketing"],
+    ["Please stop the follow-ups", "marketing"],
+    ["Jangan hantar mesej auto lagi ya", "marketing"],
+    ["Please don't send me messages again", "all"],
+  ]) {
+    assert.equal(policy.classifyOptOutText(message), expected, message);
+  }
+});
+
 test("does not treat normal customer messages as opt-out requests", () => {
   const normalMessages = [
     "what is the price?",
@@ -56,6 +72,11 @@ test("does not treat normal customer messages as opt-out requests", () => {
     "Do you still have promotions?",
     "我想了解优惠配套",
     "Does the promotion stop today?",
+    "Don't stop automated messages",
+    "Please stop by tomorrow",
+    "Can you explain how automated follow-ups work?",
+    "Does the automated message stop after one day?",
+    "I want to stop my follow-up appointment",
   ];
 
   for (const text of normalMessages) {
