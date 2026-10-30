@@ -23,6 +23,8 @@ const base=Object.freeze({
  WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
  WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
  WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+ WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+ WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-10-30T03:00:00Z",
  WHATSAPP_WABA_ID:"1593376338308612",
  WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
  WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
@@ -61,6 +63,7 @@ function fake(){
  const calls={sends:[],reservations:[],outcomes:[],policy:0,db:[]};
  const opts={
   env:base,
+  audienceEligible:async()=>true,
   database:{query:async(sql,args)=>{calls.db.push({sql,args});return{rows:[{reservation_id:reservationId}]}}},
   policyService:{
    previewSecondaryFreeformPolicy:async()=>{calls.policy++;return{policyAllowed:true}},
