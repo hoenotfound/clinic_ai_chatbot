@@ -99,6 +99,7 @@ async function bindExistingContact(conversationId, existingContactId, database =
 // Nothing calls this on the legacy webhook until sender routing is verified.
 async function claimSenderContact({
   accountId, phoneNumberId, customerPhone, profileName = null,
+  coexistenceHistoryImport = null,
 }, database = pool, env = process.env) {
   const account = digits(accountId, "Meta WhatsApp account ID");
   const phone = digits(phoneNumberId, "Meta receiving phone ID");
@@ -156,12 +157,14 @@ async function claimSenderContact({
       )).rows[0];
     }
 
+    let createdByThisClaim=false;
     if (!contact) {
       contact = (await client.query(
         "INSERT INTO contacts (whatsapp_number, whatsapp_profile_name, whatsapp_sender_id) " +
         "VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING *",
         [customer, typeof profileName === "string" ? profileName.trim() || null : null, sender.id]
       )).rows[0];
+      createdByThisClaim=Boolean(contact);
       if (!contact) {
         contact = (await client.query(
           "SELECT * FROM contacts WHERE channel='whatsapp' " +
@@ -171,6 +174,20 @@ async function claimSenderContact({
       }
     }
     if (!contact) throw new Error("Could not claim sender-scoped contact.");
+    // Historical threads always exclude a contact. Contact-only sync marks
+    // only NEW records: a later Business App echo must never revoke an
+    // already verified first-ad lead. Both use the same atomic claim.
+    if (coexistenceHistoryImport==="history" ||
+        (coexistenceHistoryImport==="contact_sync" && createdByThisClaim)) {
+      contact = (await client.query(
+        "UPDATE contacts SET whatsapp_coexistence_imported_at=" +
+        "COALESCE(whatsapp_coexistence_imported_at,NOW()) " +
+        "WHERE id=$1 AND whatsapp_sender_id=$2 RETURNING *",
+        [contact.id,sender.id]
+      )).rows[0];
+      if (!contact) throw new Error("Coexistence import ownership changed.");
+    }
+
 
     const bound = (await client.query(
       "INSERT INTO whatsapp_sender_conversations " +

@@ -12,6 +12,7 @@ const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
+const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
@@ -60,6 +61,7 @@ const CANDIDATES_SQL=`
  ) lead ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
+   AND ${adsOnlyEligibleSql('c','$6')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -118,7 +120,8 @@ const CANDIDATES_SQL=`
 `;
 
 function enabled(env) {
- return env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
+ return Boolean(adsOnlyActivation(env)) &&
+   env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
@@ -151,6 +154,7 @@ const RECHECK_SQL=`
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND rule.updated_at=$7::timestamptz
+   AND ${adsOnlyEligibleSql('c','$8')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -203,12 +207,13 @@ async function runOnce({
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
 }={}) {
-  if (!enabled(env))return{disabled:true,attempted:0,accepted:0};
+  const cutoff=adsOnlyActivation(env);
+  if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
   const items=(await database.query(CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-    env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,
+    env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
   ])).rows||[];
   let attempted=0,accepted=0;
   for(const candidate of items) {
@@ -240,7 +245,7 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_SENDER_KEY,
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID,
-        candidate.rule_updated_at,
+        candidate.rule_updated_at,cutoff,
       ]);
       return result.rows?.[0]?.allowed===true;
     };

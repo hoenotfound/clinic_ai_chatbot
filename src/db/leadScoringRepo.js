@@ -2,6 +2,7 @@ const { pool } = require("./db");
 const { lockConversation } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { cleanScoredTreatmentInterest } = require("../utils/serviceInterest");
+const { adsOnlyActivation, adsOnlyEligibleSql } = require("../services/whatsappSecondaryAdsOnlyEligibility");
 
 const PROCESSING_STALE_MINUTES = 10;
 const FAILED_RETRY_MINUTES = 2;
@@ -33,6 +34,7 @@ async function findCandidates({
     `SELECT
        l.id AS lead_id,
        l.contact_id,
+       ads_sender.sender_key AS whatsapp_sender_key,
        l.temperature,
        l.temperature_source,
        l.temperature_locked,
@@ -50,6 +52,8 @@ async function findCandidates({
          ELSE 'inactivity'
        END AS trigger_type
      FROM leads l
+     JOIN contacts ads_contact ON ads_contact.id=l.contact_id
+     LEFT JOIN whatsapp_sender_accounts ads_sender ON ads_sender.id=ads_contact.whatsapp_sender_id
      JOIN LATERAL (
        SELECT m.id, m.created_at
        FROM messages m
@@ -87,6 +91,11 @@ async function findCandidates({
          )
      ) segment ON segment.customer_message_count > 0
      WHERE l.is_closed = false
+       -- Primary WhatsApp/Messenger/Instagram remain unchanged. The second
+       -- WhatsApp must have a newly created contact and genuine FIRST inbound
+       -- ad referral after activation, even for background summary workers.
+       AND (ads_sender.sender_key IS DISTINCT FROM $6
+         OR ${adsOnlyEligibleSql("ads_contact", "$7")})
        -- LEFT JOIN alone is insufficient: the inactivity OR below otherwise
        -- selects an old imported chat even with zero eligible customer turns.
        AND segment.customer_message_count > 0
@@ -127,6 +136,8 @@ async function findCandidates({
       maxMessages,
       activatedAt,
       limit,
+      process.env.WHATSAPP_SECONDARY_SENDER_KEY || "neutro_secondary",
+      adsOnlyActivation(process.env),
     ]
   );
   return result.rows;
@@ -212,7 +223,11 @@ async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
        failed.error_text
      FROM lead_temperature_scores failed
      JOIN leads l ON l.id = failed.lead_id
+     JOIN contacts recovery_contact ON recovery_contact.id=l.contact_id
+     LEFT JOIN whatsapp_sender_accounts recovery_sender ON recovery_sender.id=recovery_contact.whatsapp_sender_id
      WHERE failed.status = 'failed'
+       AND (recovery_sender.sender_key IS DISTINCT FROM 'neutro_secondary'
+         OR ${adsOnlyEligibleSql('recovery_contact','$2')})
        AND failed.attempts >= ${MAX_ATTEMPTS}
        AND l.is_closed = false
        -- Never turn an archived imported snapshot into a Telegram fallback.
@@ -241,7 +256,7 @@ async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
        )
      ORDER BY failed.updated_at ASC, failed.id ASC
      LIMIT $1`,
-    [limit]
+    [limit,adsOnlyActivation(process.env)]
   );
   return result.rows;
 }

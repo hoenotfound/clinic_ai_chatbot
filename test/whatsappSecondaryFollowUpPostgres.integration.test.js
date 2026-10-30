@@ -23,23 +23,23 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
        return{query:(...args)=>c.query(...args),release:()=>c.end()};
      },
    };
-   assert.equal(loadMigrations().at(-1).version,109);
+   assert.equal(loadMigrations().at(-1).version,110);
    await runMigrations(database,{quiet:true});
    assert.equal((await db.query(
      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_followup_rules"
    )).rows[0].n,0,"No Ariel followup rules may be enabled by schema migration");
    await db.query(
-     "PREPARE sender_followup_candidates(text,text,text,timestamptz,integer) AS "+CANDIDATES_SQL
+     "PREPARE sender_followup_candidates(text,text,text,timestamptz,integer,timestamptz) AS "+CANDIDATES_SQL
    );
    await db.query(
-     "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,timestamptz) AS "+RECHECK_SQL
+     "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,timestamptz,timestamptz) AS "+RECHECK_SQL
    );
    const c=await db.query(
-     "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10)"
+     "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW())"
    );
    assert.deepEqual(c.rows,[]);
    const status=await db.query(
-     "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW())"
+     "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW(),NOW())"
    );
    assert.equal(status.rows?.[0]?.allowed,false);
    await db.query("DEALLOCATE sender_followup_candidates");

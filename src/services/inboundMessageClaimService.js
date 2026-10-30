@@ -14,6 +14,7 @@ const whatsappPolicy = require("./whatsappPolicyService");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 const leadReengagementAlertService = require("./leadReengagementAlertService");
+const { isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 function initialInboundText(incoming, config = clinicConfig) {
   const { customerLabel } = getOperationalLabels(config);
@@ -234,11 +235,21 @@ function createInboundMessageClaimService({
     // customer-reply critical path. The stable current-message event key makes
     // this safe to repeat during inbound recovery after a Render restart.
     try {
-      await reengagement.notifyIfReengaged({
-        contactId: contact.id,
-        currentMessageId: savedInbound.id,
-        leadId: lead?.id || null,
-      });
+      // Imported/direct secondary contacts are manual, including Telegram
+      // re-engagement. The legitimate first ad click is recorded later in
+      // this claim, so a new ad lead can qualify from its NEXT message.
+      const secondary = channel === "whatsapp" &&
+        process.env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary" &&
+        contact.whatsapp_sender_key === "neutro_secondary";
+      if (!secondary || await isSecondaryAdsOnlyEligible(contact.id, {
+        database, env: process.env,
+      })) {
+        await reengagement.notifyIfReengaged({
+          contactId: contact.id,
+          currentMessageId: savedInbound.id,
+          leadId: lead?.id || null,
+        });
+      }
     } catch (err) {
       console.error(
         `Failed to evaluate Telegram lead re-engagement for contact ${contact.id}:`,

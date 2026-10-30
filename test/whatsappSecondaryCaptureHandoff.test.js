@@ -204,7 +204,8 @@ test("encrypted history reaches only second-number Inbox without billing or send
   assert.equal(src.rows[0].handoff_completed_at,true);
   assert.equal(dest.calls.filter(c=>c.claim).length,1);
   assert.deepEqual(dest.calls.find(c=>c.claim).claim,{
-    accountId:"889900",phoneNumberId:"112233",customerPhone:"60126662222"
+    accountId:"889900",phoneNumberId:"112233",customerPhone:"60126662222",
+    coexistenceHistoryImport:"history"
   });
   assert.ok(!dest.calls.some(c=>/INSERT INTO (?:follow|whatsapp_sender_billing|scheduled)/i.test(c.sql||"")));
   const again=await handoff.handoffOnce({

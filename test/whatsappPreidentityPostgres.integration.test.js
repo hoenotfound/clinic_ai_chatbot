@@ -24,7 +24,7 @@ test("Postgres v102 durably audits only pinned preidentity account_update withou
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    }
   };
-  assert.equal(loadMigrations().at(-1).version,109);
+  assert.equal(loadMigrations().at(-1).version,110);
   await runMigrations(database,{quiet:true});
   const env={
    PR395_STAGING_MODE:"true",

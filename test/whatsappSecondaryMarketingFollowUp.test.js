@@ -42,6 +42,8 @@ const env={
  WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
  WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
  WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+ WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+ WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-10-30T03:00:00Z",
  WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
  WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
 };
@@ -52,8 +54,16 @@ function fake({candidates=[row],claimed=true,approved=true,
  calls,
  database:{query:async(sql,args)=>{
   calls.push({sql,args});
-  if(sql===svc.CANDIDATES_SQL)return{rows:candidates};
-  if(sql===svc.RECHECK_SQL)return{rows:candidates};
+  if(sql===svc.CANDIDATES_SQL){
+   assert.equal(args.length,6,"candidate selection binds the ads-only cutoff");
+   assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
+   return{rows:candidates};
+  }
+  if(sql===svc.RECHECK_SQL){
+   assert.equal(args.length,6,"pre-send recheck must bind the same ads-only cutoff");
+   assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
+   return{rows:candidates};
+  }
   if(sql.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts"))
    return{rows:claimed?[{id:555}]:[]};
   return{rows:[],rowCount:1};
@@ -94,6 +104,8 @@ test("no marketing sends or database reads without all independent authorization
  assert.match(svc.CANDIDATES_SQL,/appointment_status/);
  assert.match(svc.CANDIDATES_SQL,/BETWEEN 7 AND 23/);
  assert.match(svc.RECHECK_SQL,/attempted\.status='claimed'/);
+ assert.match(svc.CANDIDATES_SQL,/whatsapp_free_entry_referrals ads_ref/);
+ assert.match(svc.RECHECK_SQL,/whatsapp_coexistence_imported_at IS NULL/);
 });
 test("only static secondary account APPROVED MARKETING templates are accepted",()=>{
  assert.ok(svc.approvedStaticMarketingTemplate(raw,signature));

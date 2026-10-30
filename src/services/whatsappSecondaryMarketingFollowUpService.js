@@ -7,11 +7,13 @@ const messagesRepo=require("../db/messagesRepo");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
+const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
 
 const INTERVAL=5*60*1000;
 const SLOTS=new Set([48,72]);
 function enabled(env=process.env){
- return env.PR395_STAGING_MODE!=="true" &&
+ return Boolean(adsOnlyActivation(env)) &&
+   env.PR395_STAGING_MODE!=="true" &&
    env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
    env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
@@ -72,6 +74,7 @@ const CANDIDATES_SQL=`
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,72)
+   AND ${adsOnlyEligibleSql("c","$6")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -162,10 +165,11 @@ async function runOnce({
  contacts=contactsRepo,store=messagesRepo,templatePolicy=policy,
  send=sendSecondaryStaffText,fetchImpl=global.fetch,
 }={}){
- if(!enabled(env))return{disabled:true,attempted:0,accepted:0};
+ const cutoff=adsOnlyActivation(env);
+ if(!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
  const params=[env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
-   now,Math.max(1,Math.min(20,Number(limit)||10))];
+   now,Math.max(1,Math.min(20,Number(limit)||10)),cutoff];
  const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
  let attempted=0,accepted=0;
  for(const candidate of candidates){
@@ -184,7 +188,7 @@ async function runOnce({
    [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   const current=async()=>{
    const result=await database.query(RECHECK_SQL,[
-    params[0],params[1],params[2],new Date(),1000]);
+    params[0],params[1],params[2],new Date(),1000,cutoff]);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
     Number(x.inbound_id)===Number(candidate.inbound_id) &&

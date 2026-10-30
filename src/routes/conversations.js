@@ -19,6 +19,20 @@ const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
+const {eligibleSecondaryAdsOnlyContactIds}=require("../services/whatsappSecondaryAdsOnlyEligibility");
+const {secondaryUsesPrimaryClinicContent}=require("../services/whatsappSenderActivationGate");
+function secondaryAiForContact(c, eligibleIds) {
+  return c.channel==="whatsapp" &&
+    c.whatsapp_sender_key==="neutro_secondary" &&
+    c.whatsapp_sender_state==="active" &&
+    c.whatsapp_sender_coexistence_enabled===true &&
+    c.mode==="ai" && c.needs_attention!==true &&
+    process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
+    process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
+    secondaryUsesPrimaryClinicContent(process.env) &&
+    eligibleIds.has(Number(c.contact_id));
+}
+
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { tryDirectInboxVideo } = require("../services/inboxDirectR2VideoService");
@@ -814,6 +828,11 @@ router.get("/", async (req, res) => {
     // Revoked assignments must disappear from the Inbox and fallback refresh.
     const permittedIds = await getAccessibleContactIds(req.user);
     const allowedSet = permittedIds === null ? null : new Set(permittedIds.map(Number));
+    const eligibleIds=await eligibleSecondaryAdsOnlyContactIds(
+      conversations.filter(c=>c.whatsapp_sender_key==="neutro_secondary" &&
+        c.mode==="ai" && c.needs_attention!==true)
+        .map(c=>Number(c.contact_id))
+    );
     const mapped = conversations.filter((c) =>
       allowedSet === null || allowedSet.has(Number(c.contact_id))).map(c => {
       const secondary = c.channel === "whatsapp" &&
@@ -827,10 +846,7 @@ router.get("/", async (req, res) => {
         whatsapp_secondary_connection_state: secondary
           ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
             ? "connected" : "suspended") : null,
-        whatsapp_secondary_ai_enabled: secondary &&
-          c.whatsapp_sender_state === "active" &&
-          c.whatsapp_sender_coexistence_enabled === true &&
-          process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
+        whatsapp_secondary_ai_enabled: secondary && secondaryAiForContact(c,eligibleIds),
       };
     });
     sendMeasuredInboxJson(res, mapped, startedAt, "list");
@@ -871,6 +887,7 @@ router.get("/:contactId/summary", async (req, res) => {
     });
     if (!rows.length) return res.status(404).json({ error: "Conversation not in active Inbox." });
     const c = rows[0];
+    const eligibleIds=await eligibleSecondaryAdsOnlyContactIds([Number(c.contact_id)]);
     const secondary = c.channel === "whatsapp" &&
       c.whatsapp_sender_id != null &&
       Boolean(c.whatsapp_sender_phone_number_id) &&
@@ -882,10 +899,7 @@ router.get("/:contactId/summary", async (req, res) => {
       whatsapp_secondary_connection_state: secondary
         ? (c.whatsapp_sender_state === "active" && c.whatsapp_sender_coexistence_enabled === true
           ? "connected" : "suspended") : null,
-      whatsapp_secondary_ai_enabled: secondary &&
-        c.whatsapp_sender_state === "active" &&
-        c.whatsapp_sender_coexistence_enabled === true &&
-        process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true",
+      whatsapp_secondary_ai_enabled: secondary && secondaryAiForContact(c,eligibleIds),
     }, startedAt, "summary");
   } catch (err) {
     console.error("Failed to load Inbox conversation summary:", err);

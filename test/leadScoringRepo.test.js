@@ -37,7 +37,10 @@ test("candidate query applies activation, three limits, and completed-pass bound
   assert.match(captured.sql, /segment\.started_at <= now\(\) - \(\$2::integer/);
   assert.match(captured.sql, /latest\.created_at <= now\(\) - \(\$1::integer/);
   assert.match(captured.sql, /existing\.attempts >= 3/);
-  assert.deepEqual(captured.params, [10, 60, 40, "2026-08-28T00:00:00.000Z", 5]);
+  assert.deepEqual(captured.params, [10, 60, 40, "2026-08-28T00:00:00.000Z", 5,
+    process.env.WHATSAPP_SECONDARY_SENDER_KEY || "neutro_secondary", null]);
+  assert.match(captured.sql, /whatsapp_free_entry_referrals ads_ref/);
+  assert.match(captured.sql, /ads_sender.sender_key IS DISTINCT FROM \$6/);
 });
 
 test("transcript is limited to the current lead journey", async (t) => {
@@ -251,5 +254,7 @@ test("terminal failure recovery only selects current open unanswered snapshots w
   assert.match(captured.sql, /archival\.message_id = failed\.through_message_id/);
   assert.match(captured.sql, /newer_customer\.role = 'user'/);
   assert.match(captured.sql, /newer_score\.through_message_id > failed\.through_message_id/);
-  assert.deepEqual(captured.params, [5]);
+  assert.deepEqual(captured.params, [5, null]);
+  assert.match(captured.sql, /recovery_sender.sender_key IS DISTINCT FROM 'neutro_secondary'/);
+  assert.match(captured.sql, /ads_first.source_created_at/);
 });

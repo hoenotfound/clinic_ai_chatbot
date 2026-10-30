@@ -74,6 +74,7 @@ const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = requi
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
+const { isSecondaryAdsOnlyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
@@ -592,17 +593,20 @@ async function processIncomingMessage(
     if (senderScoped && !contact?.whatsapp_sender_key) {
       throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
     }
-    const secondaryAiConversation = senderScoped &&
-      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
+    const secondaryContact = senderScoped &&
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
+    // An ad click by an existing/imported/direct customer never promotes the
+    // conversation into AI. Check persisted FIRST inbound, not lead source labels.
+    const secondaryAudienceEligible = secondaryContact
+      ? await isSecondaryAdsOnlyEligible(contact.id) : false;
+    const secondaryAiConversation = secondaryContact &&
+      secondaryAudienceEligible &&
       process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
-      // Recheck at dispatch as defense in depth. A runtime flag toggle must
-      // not make secondary WhatsApp generate Neutro-branded replies without authorization.
       secondaryUsesPrimaryClinicContent(process.env);
-    const secondaryInboxOnly = senderScoped &&
-      process.env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
-      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
-      !secondaryAiConversation;
+    // All other secondary conversations stay in staff-managed Inbox, even
+    // when a global AI switch is ON or the sender's contact mode says "ai".
+    const secondaryInboxOnly = secondaryContact && !secondaryAiConversation;
     aiCancellationKey = channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(
           from, senderScoped ? contact.whatsapp_sender_key : null
@@ -638,7 +642,7 @@ async function processIncomingMessage(
       const media = await channelMessaging.downloadIncomingMedia(incoming);
       const [transcript, mp3] = media
         ? await Promise.all([
-            transcribeAudio(media.buffer, media.mimeType, { contactId: contact.id }),
+            secondaryInboxOnly ? null : transcribeAudio(media.buffer, media.mimeType, { contactId: contact.id }),
             convertToMp3(media.buffer),
           ])
         : [null, null];
@@ -652,7 +656,15 @@ async function processIncomingMessage(
             };
       }
 
-      if (!transcript) {
+      if (secondaryInboxOnly) {
+        await conversationStore.updateInboundMessage(
+          contact.id, savedInbound.id, "🎤 [Voice message for staff]",
+          mediaAttachment
+        );
+        // Manual-only secondary contacts must never overwrite this with a
+        // null transcript or proceed into any AI/lead-scoring path.
+        return { wasFirstMessage, keywordReason };
+      } else if (!transcript) {
         await conversationStore.updateInboundMessage(
           contact.id,
           savedInbound.id,
@@ -801,10 +813,9 @@ async function processIncomingMessage(
     // Preserve incoming secondary media before handing the turn to staff.
     // Do not enter any AI response, promotion, or auto-follow-up path.
     if (secondaryInboxOnly) {
-      await contactsRepo.setAiReviewAttention(contact.id, savedInbound.id,
-        "Secondary WhatsApp Inbox: reply using the linked Business App. " +
-        "Cloud API sending for this number is not yet enabled.",
-        "information");
+      // The inbound preparation already marked the message unread. Do not
+      // manufacture a human-intervention/AI-review flag for ordinary manual
+      // Business App conversations: setAttention also sends Telegram alerts.
       return { wasFirstMessage, keywordReason };
     }
 

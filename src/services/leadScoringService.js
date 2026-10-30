@@ -5,6 +5,7 @@ const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecovery
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { scoreLeadConversation, nextLeadScoringModelRetryAt, restoreLeadScoringModelCooldowns } = require("./leadScoringAiService");
+const { isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 const telegramAlerts = require("./telegramAlertService");
 
 // Retained for compatibility and short failure retries. The worker no longer
@@ -292,6 +293,12 @@ function createLeadScoringRunner({
           break;
         }
 
+        // The selector and final write both need to respect the audience
+        // boundary if a sender/contact changes while the scoring queue runs.
+        const secondaryCandidate = candidate.whatsapp_sender_key ===
+          (process.env.WHATSAPP_SECONDARY_SENDER_KEY || "neutro_secondary");
+        if (secondaryCandidate &&
+            !await isSecondaryAdsOnlyEligible(candidate.contact_id)) continue;
         const claim = await repository.claimCandidate(candidate);
         if (!claim) continue;
 
@@ -327,6 +334,11 @@ function createLeadScoringRunner({
             continue;
           }
 
+          if (secondaryCandidate &&
+              !await isSecondaryAdsOnlyEligible(candidate.contact_id)) {
+            await repository.markScoreCancelled(claim.id);
+            continue;
+          }
           const completion = await repository.completeScore({
             scoreId: claim.id,
             leadId: candidate.lead_id,
@@ -384,7 +396,9 @@ function createLeadScoringRunner({
           // alert for the same transcript boundary. It uses the normal inactivity
           // and newer-customer-message checks, but deliberately contains no AI
           // summary or AI temperature assessment.
-          if (failure?.terminal) {
+          if (failure?.terminal &&
+              (!secondaryCandidate ||
+               await isSecondaryAdsOnlyEligible(candidate.contact_id))) {
             try {
               await queueScoringFailureFallback({
                 failure,
