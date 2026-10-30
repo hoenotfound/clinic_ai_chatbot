@@ -45,6 +45,29 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
       AND ${contactSql}.channel='whatsapp'
       AND ${contactSql}.created_at >= ${cutoffSql}::timestamptz
       AND ${contactSql}.whatsapp_coexistence_imported_at IS NULL
+      -- Only genuinely new Neutro patients may enter secondary AI.
+      -- Look up older primary contacts by indexed E.164 or legacy local 01x.
+      -- Never modify those contacts or their existing conversations.
+      AND NOT EXISTS (
+        SELECT 1 FROM contacts earlier_clinic_contact
+        WHERE earlier_clinic_contact.id <> ${contactSql}.id
+          AND earlier_clinic_contact.channel='whatsapp'
+          AND earlier_clinic_contact.created_at < ${contactSql}.created_at
+          AND earlier_clinic_contact.whatsapp_number IN (
+            ${contactSql}.whatsapp_number,
+            CASE WHEN ${contactSql}.whatsapp_number ~ '^601[0-9]{8,9}$'
+              THEN '0' || SUBSTRING(${contactSql}.whatsapp_number FROM 3)
+              ELSE NULL END
+          )
+          AND (
+            earlier_clinic_contact.whatsapp_sender_id IS NULL
+            OR EXISTS (
+              SELECT 1 FROM whatsapp_sender_accounts primary_sender
+              WHERE primary_sender.id=earlier_clinic_contact.whatsapp_sender_id
+                AND primary_sender.sender_key='neutro'
+            )
+          )
+      )
       AND ads_first.created_at >= ${cutoffSql}::timestamptz
       AND ads_first.source_created_at IS NOT NULL
       AND ads_first.source_created_at >= ${cutoffSql}::timestamptz
@@ -90,6 +113,9 @@ async function eligibleSecondaryAdsOnlyContactIds(ids, {
   const result=new Set();
   const cutoff=adsOnlyActivation(env);
   if (!cutoff || env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
+      // Nothing to query on each Inbox refresh while secondary AI is OFF.
+      env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED!=="true" ||
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED!=="true" ||
       !Array.isArray(ids) || ids.length===0)return result;
   const valid=[...new Set(ids.map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))];
   if (!valid.length)return result;
