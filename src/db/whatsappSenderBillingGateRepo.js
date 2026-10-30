@@ -39,6 +39,36 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
         AND claim.language_code=m.whatsapp_template->>'language'
         AND claim.claimed_at>=NOW()-INTERVAL '10 minutes'
     )) AS has_staff_template_billing_review,
+   (m.is_automated_follow_up=TRUE
+     AND m.sent_by_username IS NULL
+     AND m.whatsapp_template->>'automatedSecondaryMarketingFollowup'='true'
+     AND m.whatsapp_template->>'senderKey'=sa.sender_key
+     AND m.whatsapp_template->>'slotHours' IN ('48','72')
+     AND m.whatsapp_template->>'name' ~ '^[a-z0-9_]+$'
+     AND EXISTS (
+       SELECT 1 FROM whatsapp_sender_marketing_followup_attempts att
+       JOIN whatsapp_sender_marketing_followup_rules rule
+         ON rule.sender_id=att.sender_id AND rule.slot_hours=att.slot_hours
+         AND rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
+       JOIN messages inbound ON inbound.id=att.anchor_message_id
+         AND inbound.contact_id=m.contact_id
+         AND inbound.role='user' AND inbound.whatsapp_message_id IS NOT NULL
+       JOIN whatsapp_sender_message_context inbound_mc
+         ON inbound_mc.message_id=inbound.id
+         AND inbound_mc.conversation_id=sc.id
+       WHERE att.sender_id=sa.id AND att.contact_id=m.contact_id
+         AND att.message_id=m.id AND att.status='claimed'
+         AND att.slot_hours::text=m.whatsapp_template->>'slotHours'
+         AND att.anchor_message_id::text=m.whatsapp_template->>'anchorMessageId'
+         AND rule.template_name=m.whatsapp_template->>'name'
+         AND rule.language_code=m.whatsapp_template->>'language'
+         AND rule.template_signature=m.whatsapp_template->>'templateSignature'
+         AND NOT EXISTS(
+           SELECT 1 FROM whatsapp_sender_coexistence_history_messages h
+           WHERE h.sender_id=sa.id AND h.message_id=inbound.id
+         )
+     )
+   ) AS has_automated_marketing_billing_approval,
    m.whatsapp_template->>'templateSignature' AS template_signature,
    m.whatsapp_template->>'billingReviewClaimHash' AS billing_review_claim_hash,
    (m.whatsapp_template IS NULL OR (
@@ -48,6 +78,31 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
      AND m.whatsapp_template->>'slotHours' IN ('2','6','20')
      AND m.whatsapp_template->>'anchorMessageId' ~ '^[0-9]+$'
      AND m.whatsapp_template->>'name' IS NULL
+   ) OR (
+     -- A queued AI graphic is freeform only when the one-shot claimed job
+     -- matches sender, original signed inbound and this outbound row.
+     m.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND m.sent_by_username IS NULL
+     AND m.whatsapp_template->>'automatedSecondaryAiMedia' = 'true'
+     AND m.whatsapp_template->>'senderKey' = sa.sender_key
+     AND m.whatsapp_template->>'name' IS NULL
+     AND m.whatsapp_template->>'anchorMessageId' ~ '^[0-9]+$'
+     AND EXISTS (
+       SELECT 1 FROM whatsapp_sender_ai_media_jobs job
+       JOIN messages inbound ON inbound.id=job.inbound_message_id
+         AND inbound.contact_id=m.contact_id
+         AND inbound.role='user'
+         AND inbound.whatsapp_message_id IS NOT NULL
+       JOIN whatsapp_sender_message_context inbound_ctx
+         ON inbound_ctx.message_id=inbound.id
+         AND inbound_ctx.conversation_id=sc.id
+       WHERE job.sender_id=sa.id AND job.contact_id=m.contact_id
+         AND job.outbound_message_id=m.id
+         AND job.state='claimed' AND job.expires_at>NOW()
+         AND job.media_kind IN ('promotion','result')
+         AND job.image_url=m.media_url
+         AND m.whatsapp_template->>'anchorMessageId'=job.inbound_message_id::text
+     )
    )) AS is_freeform_service
  FROM messages m
  JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'
@@ -101,7 +156,14 @@ async function reserveSecondaryBillingAttempt({
       owner.rows[0].has_staff_template_billing_review === true &&
       /^[a-f0-9]{64}$/.test(clean(expectedTemplateSignature)) &&
       owner.rows[0].template_signature === expectedTemplateSignature;
-    if (billableAuthorized === true && !serviceApproved && !templateApproved) {
+    const automatedMarketingApproved = billableAuthorized === true &&
+      owner.rows[0].has_automated_marketing_billing_approval === true &&
+      env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
+      env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
+      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+      /^[a-f0-9]{64}$/.test(clean(expectedTemplateSignature)) &&
+      owner.rows[0].template_signature === expectedTemplateSignature;
+    if (billableAuthorized === true && !serviceApproved && !templateApproved && !automatedMarketingApproved) {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_billing_template_review_unverified");
     }
@@ -143,7 +205,8 @@ async function reserveSecondaryBillingAttempt({
       [reservationId,senderId,cid,mid,
         billableAuthorized === true,
         serviceApproved ? "operator_acknowledged_service" :
-          templateApproved ? "staff_template_billing_review" : null,
+          templateApproved ? "staff_template_billing_review" :
+            automatedMarketingApproved ? "operator_approved_marketing_template" : null,
         templateApproved ? owner.rows[0].billing_review_claim_hash : null]
     );
     await client.query(

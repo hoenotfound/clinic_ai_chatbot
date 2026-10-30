@@ -6,6 +6,8 @@ const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
 const { start: startWhatsAppFreeEntryFollowUps } = require("./whatsappFreeEntryFollowUpService");
 const { start: startSecondaryFollowUps } = require("./whatsappSecondaryFollowUpService");
+const { start: startSecondaryMarketingFollowUps } =
+  require("./whatsappSecondaryMarketingFollowUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
@@ -132,8 +134,7 @@ async function startApplication({
     // and unsafe feature-flag rollback with persisted secondary contacts.
     const senderSafety = await assertStoredSenderSafety();
     if (senderSafety.primaryRegistrationVerified) {
-      // Existing startup safety query confirms env phone + WABA + sender key
-      // against the active registered primary sender. Never log identifiers.
+      // The existing startup query confirms the active primary phone, account and key.
       console.info("[Startup] Primary WhatsApp sender registration verified; follow-up sender scope ready.");
     }
 
@@ -215,12 +216,16 @@ async function startApplication({
     // No Ariel followup scheduler starts unless explicitly enabled, and
     // sender-specific rules have no default enabled entries.
     startSecondaryFollowUps();
+    // All outbound flags remain independent/default-OFF. Only verified
+    // secondary account + explicit operator marketing charge authorization
+    // may start this separate 48h/72h post-window template worker.
+    startSecondaryMarketingFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
-    // Read-only memory tracking; never alters requests, workers or customer data.
+    // Read-only memory diagnostics; no change to message traffic or worker behavior.
     startMemoryDiagnostics();
     }
 

@@ -52,9 +52,18 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const aiMedia = env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true";
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
+  const parity = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
+  // Parity is a separate explicitly enabled mode; an AI-only deployment
+  // must not silently inherit manual/media/template authorizations.
+  if (parity && (!aiTextOnly || !ai || !staff || !autoReconcile || !receiptIngress ||
+      env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED === "true" ||
+      env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED !== "true" ||
+      env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true")) {
+    throw new Error("Unsafe WhatsApp secondary parity activation: verified AI, staff, signed receipts and automatic settlement are required.");
+  }
   // Phase A must not silently become staff sending, media or follow-ups.
   // Keep automatic reconciliation separately gated pending live receipt proof.
-  if (aiTextOnly && (!ai || staff || media || template || templateMedia ||
+  if (aiTextOnly && !parity && (!ai || staff || media || template || templateMedia ||
       aiMedia || billedReview || (followups !== autoReconcile) ||
       env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED === "true" ||
       env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true" ||

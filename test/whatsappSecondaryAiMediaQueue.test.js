@@ -19,13 +19,13 @@ const approved={
 };
 const job={id:2,sender_id:9,contact_id:21,whatsapp_number:"60125550000",
   inbound_message_id:41,sequence_no:0,caption:"Neutro approved promotion",
-  image_url:"https://example.test/neutro-promo.jpg",
+  media_kind:"promotion",image_url:"https://example.test/neutro-promo.jpg",
 };
-function mocks({result={success:true,wamid:"wamid.ariel-media"},ready=true}={}){
+function mocks({result={success:true,wamid:"wamid.ariel-media"},ready=true,jobImageUrl=job.image_url}={}){
   const calls=[];
   const database={query:async(sql,args)=>{
     calls.push({sql,args});
-    if(sql===worker.READY_SQL)return{rows:[job]};
+    if(sql===worker.READY_SQL)return{rows:[{...job,image_url:jobImageUrl}]};
     if(sql===worker.STILL_VALID_SQL)return{rows:[{allowed:ready}]};
     if(sql.includes("state='claimed'")&&sql.includes("RETURNING id"))return{rowCount:1,rows:[{id:2}]};
     return{rowCount:1,rows:[]};
@@ -47,14 +47,24 @@ function mocks({result={success:true,wamid:"wamid.ariel-media"},ready=true}={}){
     assert.equal(payload.contact.whatsapp_sender_key,"ariel");
     const provider=await payload.dispatchTransport({
       sendImageByUrl:async(url,caption)=>{
-        assert.equal(url,job.image_url);assert.equal(caption,job.caption);
+        assert.equal(url,jobImageUrl);assert.equal(caption,job.caption);
+        return result;
+      },
+      uploadMedia:async(buffer,mimeType,filename)=>{
+        calls.push({upload:{buffer,mimeType,filename}});
+        return{success:true,mediaId:"77777"};
+      },
+      sendMediaById:async(type,id,options)=>{
+        calls.push({sendMediaById:{type,id,options}});
         return result;
       },
     });
     return provider;
   };
   const policy={previewSecondaryFreeformPolicy:async()=>({policyAllowed:true})};
-  return{database,contacts,store,messageRepo:messages,policy,send,calls};
+  return{database,contacts,store,messageRepo:messages,policy,send,calls,
+    getConfig:()=>({promotions:[{imageUrl:jobImageUrl,validFrom:"2020-01-01",validUntil:"2099-12-31"}]}),
+  };
 }
 test("Ariel graphics disabled by default and missing clinic/billing authorization",async()=>{
   assert.equal(worker.enabled({}),false);
@@ -85,6 +95,57 @@ test("accepted Ariel graphics use own transport once and retain verified receipt
   assert.equal(args.calls.filter(x=>x.wamid).length,1);
   assert.ok(args.calls.some(x=>x.sql?.includes("state='accepted'")));
   assert.equal(args.calls.some(x=>x.sql?.includes("whatsapp_result_media_queue")),false);
+});
+test("private before/after image loads trusted DB bytes and uploads through secondary transport",async()=>{
+ const url="/api/config/result-media/image/78";
+ const args=mocks({jobImageUrl:url});
+ args.loadClinicImage=async x=>{
+  assert.equal(x,url);
+  return{buffer:Buffer.from("image-bytes"),mimeType:"image/png",filename:"clinic-result.png"};
+ };
+ const result=await worker.runOnce({...args,env:approved});
+ assert.equal(result.accepted,1);
+ assert.equal(args.calls.filter(c=>c.upload).length,1);
+ const request=args.calls.find(c=>c.sendMediaById).sendMediaById;
+ assert.deepEqual(request,{type:"image",id:"77777",options:{caption:job.caption}});
+ assert.equal(args.calls.filter(c=>c.wamid).length,1);
+});
+test("missing private image never falls back to private HTTP URL or sends a Graph message",async()=>{
+ const url="/api/config/result-media/image/78";
+ const args=mocks({jobImageUrl:url});
+ args.loadClinicImage=async()=>null;
+ const result=await worker.runOnce({...args,env:approved});
+ assert.equal(result.accepted,0);
+ assert.equal(args.calls.filter(c=>c.upload || c.sendMediaById).length,0);
+ assert.ok(args.calls.some(c=>c.sql?.includes("state=$2")&&c.args?.[1]==="unknown"));
+});
+test("removed promotion is cancelled without reserving a billable message",async()=>{
+  const args=mocks();
+  args.getConfig=()=>({promotions:[]});
+  const result=await worker.runOnce({...args,env:approved});
+  assert.equal(result.accepted,0);
+  assert.equal(args.calls.filter(x=>x.send).length,0);
+  assert.equal(args.calls.filter(x=>x.appended).length,0);
+  assert.ok(args.calls.some(x=>x.sql?.includes("state=$2")&&x.args?.[1]==="expired"));
+});
+test("revoked private result after upload is NOT sent to Meta",async()=>{
+  const url="/api/config/result-media/image/78";
+  const args=mocks({jobImageUrl:url});
+  let allowed=true, providerSends=0, uploads=0;
+  args.getConfig=()=>({resultMedia:[{enabled:true,triggerMode:"service_enquiry",items:[{imageUrl:url}]}]});
+  args.isAuthorizedImage=()=>allowed;
+  args.loadClinicImage=async()=>({buffer:Buffer.from("fake-image"),mimeType:"image/png",filename:"x.png"});
+  args.send=async payload=>{
+    const outcome=await payload.dispatchTransport({
+      uploadMedia:async()=>{uploads++;allowed=false;return{success:true,mediaId:"1234"}},
+      sendMediaById:async()=>{providerSends++;return{success:true,wamid:"wamid.should-not-send"}},
+    });
+    return outcome;
+  };
+  const result=await worker.runOnce({...args,env:approved});
+  assert.equal(uploads,1);
+  assert.equal(providerSends,0);
+  assert.equal(result.accepted,0);
 });
 test("uncertain Ariel media never automatically resends",async()=>{
   const args=mocks({result:{success:false,unknown:true,code:"secondary_staff_unconfirmed"}});

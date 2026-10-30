@@ -8,7 +8,10 @@ const {pool}=require("../db/db");
 const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
+const configRepo=require("../db/configRepo");
+const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
+const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
@@ -197,6 +200,8 @@ async function runOnce({
   now=new Date(),limit=10,
   sendText=sendSecondaryStaffText,
   store=messagesRepo,storage=mediaStorage,contacts=contactsRepo,
+ getConfig=()=>configRepo.getConfig(),
+ videoApproved=isCurrentApprovedFollowUpVideo,
 }={}) {
   if (!enabled(env))return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
@@ -242,6 +247,16 @@ async function runOnce({
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       const key=candidate.media_key;
+      // Never inherit approval forever from the saved rule. The source
+      // clinic may remove/replace a video after rule creation.
+      const liveVideoApproval=()=>{
+        try{return videoApproved({
+          slot,mediaKey:key,env,clinicConfig:getConfig(),storage:mediaStorage,
+        })===true;}catch{return false;}
+      };
+      if(key && (candidate.media_type!=="video" || !liveVideoApproval())){
+        await fail("sender_followup_video_approval_revoked");continue;
+      }
       let bytes=null;
       if(key){
         const mime=candidate.media_mime_type;
@@ -256,13 +271,29 @@ async function runOnce({
           await fail("sender_followup_media_unavailable");continue;
         }
       }
+      // This is the PRIMARY Neutro follow-up AI generator, using only
+      // sender-bound SECONDARY customer history. Generate after the one-shot
+      // claim, and never send a static substitute when AI mode is explicitly on.
+      let outboundText=candidate.message_text;
+      let aiMode=null;
+      if(slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+        const personalized=await personalize20h({candidate,database,env});
+        if(!personalized?.ok){
+          await fail(personalized?.code||"secondary_20h_ai_unavailable");continue;
+        }
+        outboundText=personalized.message;
+        aiMode=personalized.mode;
+      }
+      if(!await preSendCheck()){
+        await fail("secondary_followup_policy_changed_after_ai");continue;
+      }
       const contact=await contacts.getContactById(candidate.contact_id);
       if(contact?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
          String(contact.whatsapp_sender_id)!==String(candidate.sender_id)){
         await fail("sender_followup_owner_changed");continue;
       }
       const saved=await store.saveMessage(candidate.contact_id,
-        "assistant",candidate.message_text,null,null,null,null,
+        "assistant",outboundText,null,null,null,null,
         key?candidate.media_mime_type:null,{
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -278,15 +309,17 @@ async function runOnce({
         [id,messageId]
       );
       const result=await sendText({
-        contact,messageId,text:candidate.message_text,
+        contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,
         ...(bytes?{dispatchTransport:async transport=>{
+          if(!liveVideoApproval() || !await preSendCheck())
+            return {success:false,unknown:true,ambiguous:true,retryable:false};
           const uploaded=await transport.uploadMedia(bytes,
             candidate.media_mime_type,candidate.media_filename);
           if(!uploaded?.success || !uploaded.mediaId)return{
             success:false,ambiguous:true,retryable:false,
           };
-          if(!await preSendCheck())return{
+          if(!liveVideoApproval() || !await preSendCheck())return{
             success:false,ambiguous:true,retryable:false,
           };
           return transport.sendMediaById(candidate.media_type,
