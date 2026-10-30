@@ -48,7 +48,6 @@ async function sendSecondaryStaffText({
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
   const parity = aiTextOnly && parityRequested &&
-    env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
   const aiTextAuthorized = aiTextOnly &&
