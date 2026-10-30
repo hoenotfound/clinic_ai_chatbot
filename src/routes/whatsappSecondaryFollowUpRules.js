@@ -145,6 +145,19 @@ router.put("/marketing/:slot",async(req,res)=>{
     error:"Explicitly approve paid marketing-template charges for this secondary number."});
   const identity=await sender(pool,process.env);
   if(!identity)return res.status(409).json({code:"secondary_sender_not_activated"});
+  // Disabling an existing rule must NEVER require Graph availability, charge
+  // approval, or a still-approved Meta template.
+  if(!enabled){
+    const disabled=await pool.query(
+      "UPDATE whatsapp_sender_marketing_followup_rules " +
+      "SET enabled=FALSE,operator_billing_approved=FALSE,updated_at=NOW() " +
+      "WHERE sender_id=$1 AND slot_hours=$2 RETURNING slot_hours,enabled," +
+      "template_name,language_code,operator_billing_approved,updated_at",
+      [identity.id,slot]);
+    res.set("Cache-Control","no-store");
+    return res.json({saved:true,rule:disabled.rows?.[0]||null,
+      marketingWorkerEnabled:marketingWorkerEnabled(process.env)});
+  }
   const available=await listApprovedSecondaryMarketingTemplates({env:process.env});
   const approved=available.find(t=>t.name===name && t.languageCode===languageCode);
   if(!approved)return res.status(409).json({
