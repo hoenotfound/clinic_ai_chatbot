@@ -6,6 +6,8 @@ const { initSchema } = require("../db/db");
 const { startAutomatedFollowUps } = require("./followUpService");
 const { start: startWhatsAppFreeEntryFollowUps } = require("./whatsappFreeEntryFollowUpService");
 const { start: startSecondaryFollowUps } = require("./whatsappSecondaryFollowUpService");
+const { start: startSecondaryMarketingFollowUps } =
+  require("./whatsappSecondaryMarketingFollowUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
@@ -209,6 +211,10 @@ async function startApplication({
     // No Ariel followup scheduler starts unless explicitly enabled, and
     // sender-specific rules have no default enabled entries.
     startSecondaryFollowUps();
+    // All outbound flags remain independent/default-OFF. Only verified
+    // secondary account + explicit operator marketing charge authorization
+    // may start this separate 48h/72h post-window template worker.
+    startSecondaryMarketingFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();

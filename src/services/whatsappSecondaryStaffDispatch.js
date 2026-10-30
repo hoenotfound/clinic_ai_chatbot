@@ -12,7 +12,6 @@ const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
 const { secondaryUsesPrimaryClinicContent } =
   require("./whatsappSenderActivationGate");
-const { isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 function block(code) {
   return {
@@ -45,7 +44,6 @@ async function sendSecondaryStaffText({
   createTransport = createVerifiedSecondaryOutboundTransport,
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
-  audienceEligible = isSecondaryAdsOnlyEligible,
 } = {}) {
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
@@ -79,7 +77,13 @@ async function sendSecondaryStaffText({
         (!aiTextOnly || aiTextAuthorized) &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") ||
+      (origin === "marketing_followup" && parity && aiTextAuthorized &&
+        env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" &&
+        templateRequest?.automatedMarketingApproved === true);
   if ((parityRequested && !parity) ||
       !authorizedOrigin ||
       // AI text-only and Phase B text follow-ups must not use a callback
@@ -90,12 +94,12 @@ async function sendSecondaryStaffText({
          (origin === "followup" && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
          (origin === "staff" && !templateRequest &&
            env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED !== "true") ||
-         !["staff","ai_media","followup"].includes(origin))) ||
+         !["staff","ai_media","followup","marketing_followup"].includes(origin))) ||
       // Neither the existing follow-up sender nor an optional transport
       // callback may upload/dispatch media while sender media is disabled.
       (origin === "followup" && typeof dispatchTransport === "function" &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
-      (templateRequest && (origin !== "staff" ||
+      (templateRequest && (!["staff","marketing_followup"].includes(origin) ||
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
         typeof dispatchTransport !== "function" ||
         templateRequest.billingConfirmed !== true)) ||
@@ -117,10 +121,6 @@ async function sendSecondaryStaffText({
        !/^wamid\.[A-Za-z0-9._:-]{1,450}$/.test(replyToProviderMessageId))) {
     return block("secondary_staff_send_invalid_input");
   }
-  const automatedOrigin = ["ai_reply","system_fallback","ai_media","followup"].includes(origin);
-  const stillEligible = async () => !automatedOrigin ||
-    await audienceEligible(cid, { database, env });
-  if (!await stillEligible()) return block("secondary_ads_only_contact_ineligible");
 
   if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
     return { ...block("secondary_send_cancelled"), cancelled: true };
@@ -183,7 +183,6 @@ async function sendSecondaryStaffText({
   }
 
   const justBefore = await preview();
-  if (!await stillEligible()) return block("secondary_ads_only_contact_ineligible");
   if (justBefore.policyAllowed !== true) return block(justBefore.code || "secondary_staff_policy_blocked");
 
   const reserved = await billingRepo.reserveSecondaryBillingAttempt({
@@ -225,11 +224,6 @@ async function sendSecondaryStaffText({
     if (state.rows?.length !== 1) {
       await markUnknown();
       return block("secondary_staff_reservation_unverified");
-    }
-    if (!await stillEligible()) {
-      await markUnknown();
-      return { ...block("secondary_ads_only_contact_ineligible"),
-        unknown: true, ambiguous: true };
     }
     // An app-originated staff echo can arrive during the final reservation
     // check. Recheck the sender-qualified cancellation epoch at the last

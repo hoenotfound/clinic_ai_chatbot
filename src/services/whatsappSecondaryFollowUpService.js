@@ -11,7 +11,7 @@ const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const { adsOnlyActivation, adsOnlyEligibleSql } = require("./whatsappSecondaryAdsOnlyEligibility");
+const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
@@ -60,7 +60,6 @@ const CANDIDATES_SQL=`
  ) lead ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
-   AND ${adsOnlyEligibleSql("c", "$6")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -119,8 +118,7 @@ const CANDIDATES_SQL=`
 `;
 
 function enabled(env) {
- return Boolean(adsOnlyActivation(env)) &&
-   env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
+ return env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
@@ -153,7 +151,6 @@ const RECHECK_SQL=`
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND rule.updated_at=$7::timestamptz
-   AND ${adsOnlyEligibleSql("c", "$8")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -206,13 +203,12 @@ async function runOnce({
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
 }={}) {
-  const adsCutoff = adsOnlyActivation(env);
-  if (!enabled(env) || !adsCutoff)return{disabled:true,attempted:0,accepted:0};
+  if (!enabled(env))return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
   const items=(await database.query(CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-    env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,adsCutoff,
+    env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,
   ])).rows||[];
   let attempted=0,accepted=0;
   for(const candidate of items) {
@@ -244,7 +240,7 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_SENDER_KEY,
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID,
-        candidate.rule_updated_at,adsCutoff,
+        candidate.rule_updated_at,
       ]);
       return result.rows?.[0]?.allowed===true;
     };
@@ -275,13 +271,29 @@ async function runOnce({
           await fail("sender_followup_media_unavailable");continue;
         }
       }
+      // This is the PRIMARY Neutro follow-up AI generator, using only
+      // sender-bound SECONDARY customer history. Generate after the one-shot
+      // claim, and never send a static substitute when AI mode is explicitly on.
+      let outboundText=candidate.message_text;
+      let aiMode=null;
+      if(slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+        const personalized=await personalize20h({candidate,database,env});
+        if(!personalized?.ok){
+          await fail(personalized?.code||"secondary_20h_ai_unavailable");continue;
+        }
+        outboundText=personalized.message;
+        aiMode=personalized.mode;
+      }
+      if(!await preSendCheck()){
+        await fail("secondary_followup_policy_changed_after_ai");continue;
+      }
       const contact=await contacts.getContactById(candidate.contact_id);
       if(contact?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
          String(contact.whatsapp_sender_id)!==String(candidate.sender_id)){
         await fail("sender_followup_owner_changed");continue;
       }
       const saved=await store.saveMessage(candidate.contact_id,
-        "assistant",candidate.message_text,null,null,null,null,
+        "assistant",outboundText,null,null,null,null,
         key?candidate.media_mime_type:null,{
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -297,7 +309,7 @@ async function runOnce({
         [id,messageId]
       );
       const result=await sendText({
-        contact,messageId,text:candidate.message_text,
+        contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,
         ...(bytes?{dispatchTransport:async transport=>{
           if(!liveVideoApproval() || !await preSendCheck())
@@ -337,7 +349,7 @@ async function runOnce({
 
 let timer=null;
 function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}) {
- if(!enabled(env)||!adsOnlyActivation(env)||timer)return false;
+ if(!enabled(env)||timer)return false;
  timer=setIntervalFn(()=>run({env}).catch(e=>
    console.error("[secondary WhatsApp followups] Sender-scoped worker error:",e?.message)
  ),INTERVAL);
