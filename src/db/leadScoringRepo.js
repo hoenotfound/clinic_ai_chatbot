@@ -223,7 +223,11 @@ async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
        failed.error_text
      FROM lead_temperature_scores failed
      JOIN leads l ON l.id = failed.lead_id
+     JOIN contacts recovery_contact ON recovery_contact.id=l.contact_id
+     LEFT JOIN whatsapp_sender_accounts recovery_sender ON recovery_sender.id=recovery_contact.whatsapp_sender_id
      WHERE failed.status = 'failed'
+       AND (recovery_sender.sender_key IS DISTINCT FROM 'neutro_secondary'
+         OR ${adsOnlyEligibleSql('recovery_contact','$2')})
        AND failed.attempts >= ${MAX_ATTEMPTS}
        AND l.is_closed = false
        -- Never turn an archived imported snapshot into a Telegram fallback.
@@ -252,7 +256,7 @@ async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
        )
      ORDER BY failed.updated_at ASC, failed.id ASC
      LIMIT $1`,
-    [limit]
+    [limit,adsOnlyActivation(process.env)]
   );
   return result.rows;
 }
