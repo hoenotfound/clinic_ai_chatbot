@@ -25,6 +25,8 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
       CREATE TABLE contacts (
         id integer PRIMARY KEY, channel text NOT NULL, whatsapp_number text,
         whatsapp_sender_id integer,
+        whatsapp_opt_out_at timestamptz, whatsapp_marketing_opt_out_at timestamptz,
+        social_opt_out_at timestamptz, social_marketing_opt_out_at timestamptz,
         channel_user_id text, mode text NOT NULL DEFAULT 'ai',
         takeover_by text, takeover_at timestamptz,
         needs_attention boolean NOT NULL DEFAULT false, attention_reason text,
