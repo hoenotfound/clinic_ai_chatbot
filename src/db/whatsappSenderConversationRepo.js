@@ -99,6 +99,7 @@ async function bindExistingContact(conversationId, existingContactId, database =
 // Nothing calls this on the legacy webhook until sender routing is verified.
 async function claimSenderContact({
   accountId, phoneNumberId, customerPhone, profileName = null,
+  coexistenceHistoryImport = false,
 }, database = pool, env = process.env) {
   const account = digits(accountId, "Meta WhatsApp account ID");
   const phone = digits(phoneNumberId, "Meta receiving phone ID");
@@ -171,6 +172,18 @@ async function claimSenderContact({
       }
     }
     if (!contact) throw new Error("Could not claim sender-scoped contact.");
+    // Contact-only imports have no archival messages; mark atomically in the
+    // same sender claim before any customer can become ad-eligible.
+    if (coexistenceHistoryImport === true) {
+      contact = (await client.query(
+        "UPDATE contacts SET whatsapp_coexistence_imported_at=" +
+        "COALESCE(whatsapp_coexistence_imported_at,NOW()) " +
+        "WHERE id=$1 AND whatsapp_sender_id=$2 RETURNING *",
+        [contact.id,sender.id]
+      )).rows[0];
+      if (!contact) throw new Error("Coexistence import ownership changed.");
+    }
+
 
     const bound = (await client.query(
       "INSERT INTO whatsapp_sender_conversations " +
