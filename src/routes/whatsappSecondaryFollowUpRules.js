@@ -130,60 +130,102 @@ router.put("/:slot",async(req,res)=>{
 // occurs only here, under the same manage_tools permission as other rules.
 // The scheduler is independently OFF even after a rule is saved as enabled.
 router.put("/marketing/:slot",async(req,res)=>{
- try{
+ try {
   const slot=Number(req.params.slot);
   if(![48,72].includes(slot))
    return res.status(400).json({error:"Only 48h and 72h marketing templates are supported."});
   const enabled=req.body?.enabled;
-  const name=String(req.body?.templateName||"").trim();
-  const languageCode=String(req.body?.languageCode||"").trim();
-  if(typeof enabled!=="boolean" || !/^[a-z0-9_]{1,128}$/.test(name) ||
-     !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(languageCode))
-   return res.status(400).json({error:"Select an approved secondary-number marketing template."});
-  if(enabled && req.body?.operatorBillingApproved!==true)
-   return res.status(409).json({code:"secondary_marketing_charge_review_required",
-    error:"Explicitly approve paid marketing-template charges for this secondary number."});
+  if(typeof enabled!=="boolean")
+   return res.status(400).json({error:"A valid enabled setting is required."});
   const identity=await sender(pool,process.env);
   if(!identity)return res.status(409).json({code:"secondary_sender_not_activated"});
-  // Disabling an existing rule must NEVER require Graph availability, charge
-  // approval, or a still-approved Meta template.
+
+  // Always permit disabling all variants without a valid Meta token, a
+  // working template catalog or a fresh operator billing authorization.
   if(!enabled){
-    const disabled=await pool.query(
-      "UPDATE whatsapp_sender_marketing_followup_rules " +
-      "SET enabled=FALSE,operator_billing_approved=FALSE,updated_at=NOW() " +
-      "WHERE sender_id=$1 AND slot_hours=$2 RETURNING slot_hours,enabled," +
-      "template_name,language_code,operator_billing_approved,updated_at",
-      [identity.id,slot]);
-    res.set("Cache-Control","no-store");
-    return res.json({saved:true,rule:disabled.rows?.[0]||null,
-      marketingWorkerEnabled:marketingWorkerEnabled(process.env)});
+   const disabled=await pool.query(
+     "UPDATE whatsapp_sender_marketing_followup_rules "+
+     "SET enabled=FALSE,operator_billing_approved=FALSE,updated_at=NOW() "+
+     "WHERE sender_id=$1 AND slot_hours=$2 RETURNING slot_hours,enabled,"+
+     "template_name,language_code,operator_billing_approved,updated_at",
+     [identity.id,slot]);
+   res.set("Cache-Control","no-store");
+   return res.json({saved:true,rules:disabled.rows||[],rule:disabled.rows?.[0]||null,
+    marketingWorkerEnabled:marketingWorkerEnabled(process.env)});
   }
+  if(req.body?.operatorBillingApproved!==true)
+   return res.status(409).json({code:"secondary_marketing_charge_review_required",
+    error:"Approve paid MARKETING template charges for each selected language on this secondary account."});
+
+  // Backward-compatible single-template payload; new UI submits all approved
+  // variants in one atomic operation, with a separate verified Meta signature.
+  const requested=Array.isArray(req.body?.variants)?req.body.variants:[{
+    name:req.body?.templateName,languageCode:req.body?.languageCode,
+  }];
+  const languages=new Set();
+  if(!requested.length || requested.length>3 || requested.some(t=>{
+    const name=String(t?.name||"").trim();
+    const language=String(t?.languageCode||"").trim();
+    if(!/^[a-z0-9_]{1,128}$/.test(name) ||
+       !["zh_CN","en_US","ms_MY"].includes(language) || languages.has(language))
+      return true;
+    languages.add(language);
+    return false;
+  }))return res.status(400).json({
+   error:"Choose one valid secondary-account template for each intended language."});
+
   const available=await listApprovedSecondaryMarketingTemplates({env:process.env});
-  const approved=available.find(t=>t.name===name && t.languageCode===languageCode);
-  if(!approved)return res.status(409).json({
+  const verified=requested.map(t=>available.find(a=>
+    a.name===t.name && a.languageCode===t.languageCode));
+  if(verified.some(v=>!v))return res.status(409).json({
    code:"secondary_marketing_template_not_approved",
-   error:"The selected text-only marketing template is not APPROVED on the second account.",
+   error:"Every selected language must have its own currently APPROVED second-account text template.",
   });
-  const saved=await pool.query(
-   `INSERT INTO whatsapp_sender_marketing_followup_rules
-      (sender_id,slot_hours,enabled,template_name,language_code,
-       template_signature,operator_billing_approved,updated_at)
-     VALUES($1,$2,$3,$4,$5,$6,$7,NOW())
-     ON CONFLICT(sender_id,slot_hours) DO UPDATE SET
-       enabled=EXCLUDED.enabled,template_name=EXCLUDED.template_name,
-       language_code=EXCLUDED.language_code,
-       template_signature=EXCLUDED.template_signature,
-       operator_billing_approved=EXCLUDED.operator_billing_approved,
-       updated_at=NOW()
-     RETURNING slot_hours,enabled,template_name,language_code,operator_billing_approved,updated_at`,
-   [identity.id,slot,enabled,name,languageCode,approved.signature,
-    enabled && req.body.operatorBillingApproved===true]);
+
+  // One transaction prevents mixed/partially approved language settings.
+  const client=await pool.connect();
+  let rows=[];
+  try {
+   await client.query("BEGIN");
+   for(const item of verified){
+    await client.query(
+     `INSERT INTO whatsapp_sender_marketing_followup_rules
+        (sender_id,slot_hours,enabled,template_name,language_code,
+         template_signature,operator_billing_approved,updated_at)
+       VALUES($1,$2,TRUE,$3,$4,$5,TRUE,NOW())
+       ON CONFLICT(sender_id,slot_hours,language_code) DO UPDATE SET
+         enabled=TRUE,template_name=EXCLUDED.template_name,
+         template_signature=EXCLUDED.template_signature,
+         operator_billing_approved=TRUE,updated_at=NOW()`,
+     [identity.id,slot,item.name,item.languageCode,item.signature]);
+   }
+   // Removed languages fail closed. Their historical attempt records stay
+   // untouched, preserving ambiguous-send and no-retry evidence.
+   await client.query(
+    "UPDATE whatsapp_sender_marketing_followup_rules "+
+    "SET enabled=FALSE,operator_billing_approved=FALSE,updated_at=NOW() "+
+    "WHERE sender_id=$1 AND slot_hours=$2 "+
+    "AND NOT (language_code=ANY($3::text[]))",
+    [identity.id,slot,verified.map(v=>v.languageCode)]);
+   rows=(await client.query(
+    "SELECT slot_hours,enabled,template_name,language_code,operator_billing_approved,updated_at "+
+    "FROM whatsapp_sender_marketing_followup_rules "+
+    "WHERE sender_id=$1 AND slot_hours=$2 ORDER BY language_code",
+    [identity.id,slot])).rows||[];
+   await client.query("COMMIT");
+  }catch(e){
+   await client.query("ROLLBACK").catch(()=>{});
+   throw e;
+  }finally{
+   client.release();
+  }
   res.set("Cache-Control","no-store");
-  return res.json({saved:true,rule:saved.rows[0],
+  return res.json({saved:true,rules:rows,rule:rows.find(r=>r.enabled)||null,
    marketingWorkerEnabled:marketingWorkerEnabled(process.env)});
- }catch{
+ }catch(err){
+  console.error("Secondary multilingual marketing configuration failed:",err?.message);
   return res.status(503).json({
-   error:"Second-number template approval or rule configuration could not be verified.",
+   error:"Second-number templates or language-specific approval could not be verified.",
   });
  }
 });
