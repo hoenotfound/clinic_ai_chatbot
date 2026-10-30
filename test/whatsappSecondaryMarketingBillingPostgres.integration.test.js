@@ -37,7 +37,7 @@ test("migration 109 requires approved secondary MARKETING attempt for billable 4
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    },query:(...args)=>db.query(...args),
   };
-  assert.equal(loadMigrations().at(-1).version,109);
+  assert.equal(loadMigrations().at(-1).version,110);
   await runMigrations(pool,{quiet:true});
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
