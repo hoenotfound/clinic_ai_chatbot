@@ -173,6 +173,37 @@ test("staff media and templates must be opted in independently; AI text cannot u
   templateRequest:{billingConfirmed:true,name:"sample",languageCode:"en_US"}});
  assert.equal(badTemplate.result.code,"secondary_staff_send_disabled");
 });
+test("DA CHATBOT staff takeover cancels the pending secondary AI send without double charging",async()=>{
+ const f=fake();
+ const ai=await sendSecondaryStaffText({
+  contact,messageId:42,text:"AI response",origin:"ai_reply",
+  preSendCheck:()=>false,
+ },f.opts);
+ assert.equal(ai.cancelled,true);
+ assert.equal(f.calls.reservations.length,0);
+ assert.equal(f.calls.sends.length,0);
+ const staff=await sendSecondaryStaffText({
+  contact,messageId:43,text:"Staff response",origin:"staff",
+ },f.opts);
+ assert.equal(staff.success,true);
+ assert.equal(f.calls.reservations.length,1);
+ assert.deepEqual(f.calls.sends,["text"]);
+});
+test("ambiguous secondary Meta acceptance cannot become an automatic retry in parity mode",async()=>{
+ const f=fake();
+ f.opts.billingRepo.recordSecondaryProviderOutcome=async()=>{
+  throw Error("synthetic interrupted billing record");
+ };
+ const r=await sendSecondaryStaffText({
+  contact,messageId:42,text:"AI response",origin:"ai_reply",
+ },f.opts);
+ assert.equal(r.success,false);
+ assert.equal(r.unknown,true);
+ assert.equal(r.ambiguous,true);
+ assert.equal(r.retryable,false);
+ assert.equal(f.calls.sends.length,1);
+ assert.equal(f.calls.reservations.length,1);
+});
 test("wrong sender, missing consent and unknown Meta outcomes still never bypass guard",async()=>{
  const f=fake();
  const mismatched={...contact,whatsapp_sender_key:"neutro"};
