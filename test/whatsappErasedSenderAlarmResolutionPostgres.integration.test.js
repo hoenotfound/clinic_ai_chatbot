@@ -30,20 +30,56 @@ const evidence={
  reviewReason:"Independently confirmed an app send and reconciled the specific Meta billing outcome.",
  businessAppManuallyReviewed:true,metaBillingManuallyReviewed:true,
  operatorExplicitlyAuthorized:true,
+ signedReceiptIngressManuallyVerified:true,
+ secondaryPaymentMethodManuallyVerified:true,
 };
 test("release stays OFF, rejects active sends and incomplete evidence",async()=>{
  assert.equal(svc.enabled({}),false);
- assert.equal((await svc.releaseVerifiedErasedSecondaryAlarm(evidence,{env:{}})).released,false);
+ assert.equal((await svc.releaseReviewedErasedSecondaryAlarm(evidence,{env:{}})).released,false);
  for(const flag of svc.OUTBOUND_FLAGS)assert.equal(svc.enabled({...env,[flag]:"true"}),false,flag);
  assert.equal(svc.enabled({...env,WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"wrong"}),false);
  for(const bad of [
-  {operatorExplicitlyAuthorized:false},{businessAppManuallyReviewed:false},
+  {operatorExplicitlyAuthorized:false},
+  {signedReceiptIngressManuallyVerified:false},
+  {secondaryPaymentMethodManuallyVerified:false},
+  {businessAppManuallyReviewed:false},
   {metaBillingManuallyReviewed:false},{reviewer:"operator.two"},
   {metaBillingEvidenceSha256:evidence.businessAppEvidenceSha256},
   {outcome:"confirmed_not_sent",chargeOutcome:"charge_accounted"},
   {reservationSha256:"bad"},{reviewReason:"unverified"},
  ])assert.equal(svc.validateEvidence({...evidence,...bad}),null,JSON.stringify(bad));
  assert.equal(svc.validateEvidence(evidence).reservation,reservation);
+});
+
+const acceptedUnknown={
+ ...evidence,
+ outcome:"unknown",chargeOutcome:"unknown",
+ businessAppEvidenceSha256:undefined,metaBillingEvidenceSha256:undefined,
+ businessAppManuallyReviewed:false,metaBillingManuallyReviewed:false,
+ acceptsUnresolvedDeliveryAndCharge:true,
+ acceptsPossibleLaterMetaCharge:true,
+ originalMessageWillNeverBeRetried:true,
+ reviewReason:"The owner and independent reviewer accept that delivery and charges may remain unknown permanently; do not retry the erased message.",
+};
+test("UNKNOWN/UNKNOWN risk acceptance never fabricates provider facts",()=>{
+ const risk=svc.validateEvidence(acceptedUnknown);
+ assert.equal(risk.outcome,"unknown");
+ assert.equal(risk.charge,"unknown");
+ assert.equal(risk.appHash,null);
+ assert.equal(risk.billingHash,null);
+ assert.equal(risk.riskAccepted,true);
+ for(const bad of [
+  {acceptsUnresolvedDeliveryAndCharge:false},
+  {acceptsPossibleLaterMetaCharge:false},
+  {originalMessageWillNeverBeRetried:false},
+  {secondaryPaymentMethodManuallyVerified:false},
+  {signedReceiptIngressManuallyVerified:false},
+  {metaBillingEvidenceSha256:hash("fake-provider-evidence")},
+  {businessAppManuallyReviewed:true},
+  {outcome:"confirmed_sent",chargeOutcome:"unknown"},
+  {outcome:"unknown",chargeOutcome:"charge_accounted"},
+  {reviewer:"operator.two"},
+ ])assert.equal(svc.validateEvidence({...acceptedUnknown,...bad}),null,JSON.stringify(bad));
 });
 
 test("disposable PostgreSQL: exact purged alarm releases once, records evidence, never sends",
@@ -77,10 +113,10 @@ test("disposable PostgreSQL: exact purged alarm releases once, records evidence,
    "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reservation_id,reason,latest_wamid_hash)"+
    "VALUES($1,NULL,'purged_unresolved_reservation',$2)",[sender,reservation]
   );
-  const wrong=await svc.releaseVerifiedErasedSecondaryAlarm(
+  const wrong=await svc.releaseReviewedErasedSecondaryAlarm(
    {...evidence,metaBillingManuallyReviewed:false},{database,env});
   assert.equal(wrong.released,false);
-  const result=await svc.releaseVerifiedErasedSecondaryAlarm(evidence,{database,env});
+  const result=await svc.releaseReviewedErasedSecondaryAlarm(evidence,{database,env});
   assert.deepEqual(result,{released:true,sendAuthorized:false,retryAuthorized:false});
   const resolution=(await db.query(
    "SELECT * FROM whatsapp_sender_erased_alarm_resolutions")).rows;
@@ -90,7 +126,7 @@ test("disposable PostgreSQL: exact purged alarm releases once, records evidence,
   assert.equal(resolution[0].independent_approver,"operator.two");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_billing_alarms")).rows[0].n,0);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_erased_billing_audit")).rows[0].n,1);
-  const replay=await svc.releaseVerifiedErasedSecondaryAlarm(evidence,{database,env});
+  const replay=await svc.releaseReviewedErasedSecondaryAlarm(evidence,{database,env});
   assert.equal(replay.released,false);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_erased_alarm_resolutions")).rows[0].n,1);
  }finally{
