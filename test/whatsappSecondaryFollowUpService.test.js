@@ -143,6 +143,7 @@ test("media followup uploads only through verified Ariel transport",async()=>{
     storage:{downloadMedia:async()=>{
       uploads++;return Buffer.from("video-bytes");
     }},
+    videoApproved:()=>true,
     sendText:async(payload)=>{
       assert.equal(payload.origin,"followup");
       const got=await payload.dispatchTransport({
@@ -161,6 +162,38 @@ test("media followup uploads only through verified Ariel transport",async()=>{
   assert.equal(f.calls.filter(x=>x.persist).length,1);
 });
 
+test("secondary video removed from primary config cannot create an outbound or upload",async()=>{
+ const f=fake({rows:[{...candidate,media_key:"approved-then-removed-video",
+  media_type:"video",media_mime_type:"video/mp4",media_filename:"clip.mp4"}]});
+ const result=await worker.runOnce({...f,env:{
+  ...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+ },videoApproved:()=>false,storage:{
+  downloadMedia:async()=>assert.fail("Do not download revoked R2 video"),
+ }});
+ assert.equal(result.attempted,1);
+ assert.equal(result.accepted,0);
+ assert.equal(f.sends,0);
+ assert.equal(f.calls.filter(x=>x.save).length,0);
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='unknown'")));
+});
+test("secondary video revoked while uploading is never submitted to WhatsApp",async()=>{
+ const f=fake({rows:[{...candidate,media_key:"approved-video",
+  media_type:"video",media_mime_type:"video/mp4",media_filename:"clip.mp4"}]});
+ let approved=true,uploads=0,sends=0;
+ const result=await worker.runOnce({...f,env:{
+  ...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+ },videoApproved:()=>approved,
+ storage:{downloadMedia:async()=>Buffer.from("video")},
+ sendText:async payload=>payload.dispatchTransport({
+  uploadMedia:async()=>{uploads++;approved=false;return{success:true,mediaId:"42"}},
+  sendMediaById:async()=>{sends++;return{success:true,wamid:"wamid.unexpected"}},
+ }),
+ });
+ assert.equal(uploads,1);
+ assert.equal(sends,0);
+ assert.equal(result.accepted,0);
+ assert.ok(f.calls.some(x=>x.sql?.includes("status='unknown'")));
+});
 test("Phase B stays OFF unless the same secondary paid automation mode is enabled",async()=>{
   assert.equal(worker.enabled({...env,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"false"}),false);
   const f=fake();
