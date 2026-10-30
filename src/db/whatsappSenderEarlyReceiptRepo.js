@@ -82,13 +82,17 @@ async function applyStagedSecondaryReceipts({
     billingInfo.billing_authorization_source === 'operator_acknowledged_service' &&
     priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
       r.pricing_category==='service');
-  const approvedMarketingTemplate = paid &&
+  // Authorization is a durable one-shot billing record. Disabling the
+  // marketing worker later must not flag a legitimate in-flight Meta receipt
+  // as an unexpected sender-wide charge. With settlement OFF, hold only the
+  // specific contact for staff reconciliation.
+  const authorizedMarketingTemplate = paid &&
     billingInfo?.billable_authorized===true &&
     billingInfo.billing_authorization_source==='operator_approved_marketing_template' &&
-    env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED==='true' &&
-    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true' &&
     priced.every(r=>r.pricing_billable===true &&
       r.pricing_type==='regular' && r.pricing_category==='marketing');
+  const approvedMarketingTemplate = authorizedMarketingTemplate &&
+    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true';
   const paidPermitted = paid && billingInfo?.billable_authorized===true && (
     approvedMarketingTemplate ||
     (billingInfo.billing_authorization_source==='staff_template_billing_review' &&
@@ -103,7 +107,7 @@ async function applyStagedSecondaryReceipts({
 
   // An operator-approved service charge without auto-reconciliation requires
   // manual review for this contact, not a false sender-wide billing incident.
-  if (paid && unexpectedPaid && !operatorServiceCharge) {
+  if (paid && unexpectedPaid && !operatorServiceCharge && !authorizedMarketingTemplate) {
     await client.query(
       `INSERT INTO whatsapp_sender_billing_alarms
           (sender_id,reservation_id,reason,latest_wamid_hash)
