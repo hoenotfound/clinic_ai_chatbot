@@ -2,7 +2,7 @@
 const express=require("express");
 const {pool}=require("../db/db");
 const configRepo=require("../db/configRepo");
-const mediaStorage=require("../services/mediaStorageService");
+const {verifyApprovedVideo}=require("../services/whatsappSecondaryFollowUpVideoApproval");
 const {hasCapability}=require("../utils/permissions");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
@@ -71,32 +71,16 @@ router.put("/:slot",async(req,res)=>{
     const wantsMedia=Boolean(req.body?.mediaKey || req.body?.mediaType);
     let mediaKey=null;
     if(wantsMedia){
-      const key=String(req.body?.mediaKey||"").trim();
-      const approved=process.env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
-        process.env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" &&
-        process.env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
-        process.env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
-        req.body?.confirmClinicVideoReuse===true &&
-        (slot===2 || slot===6) &&
-        req.body.mediaType==="video" &&
-        mediaStorage.isReferencedClinicFollowUpMediaKey(
-          key,configRepo.getConfig(),process.env);
-      if(!approved)return res.status(409).json({
-        code:"secondary_followup_media_not_authorized",
-        error:"Choose an existing approved clinic follow-up video and explicitly approve its use on the second WhatsApp.",
+      const approval=await verifyApprovedVideo({
+        slot,mediaKey:req.body?.mediaKey,mediaType:req.body?.mediaType,
+        confirmClinicVideoReuse:req.body?.confirmClinicVideoReuse,
+        env:process.env,clinicConfig:configRepo.getConfig(),
       });
-      try{
-        const info=await mediaStorage.getSharedFollowUpMediaInfo(key);
-        if(info.mimeType!=="video/mp4" || !Number.isSafeInteger(info.bytes) ||
-           info.bytes<=0 || info.bytes>16*1024*1024) {
-          return res.status(409).json({code:"secondary_followup_video_invalid",
-            error:"Approved clinic video must be an existing MP4 under 16 MB."});
-        }
-      }catch{
-        return res.status(409).json({code:"secondary_followup_video_unavailable",
-          error:"Approved clinic video is not available in storage."});
-      }
-      mediaKey=key;
+      if(!approval.approved)return res.status(409).json({
+        code:approval.code,
+        error:"This video is not an available, explicitly approved clinic follow-up asset for the secondary sender.",
+      });
+      mediaKey=approval.key;
     }
     const identity=await sender(pool,process.env);
     if(!identity)return res.status(409).json({
