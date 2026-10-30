@@ -221,7 +221,8 @@ async function claimSummary(
        l.appointment_status, l.owner_username,
        u.display_name AS owner_display_name, s.name AS stage_name,
        c.whatsapp_number, c.name, c.whatsapp_profile_name,
-       c.channel, c.channel_user_id`,
+       c.channel, c.channel_user_id,
+       (SELECT sa.sender_key FROM whatsapp_sender_accounts sa WHERE sa.id=c.whatsapp_sender_id) AS whatsapp_sender_key`,
     [alertId, inactivityMinutes, suppressionMinutes]
   );
   return result.rows[0] || null;
