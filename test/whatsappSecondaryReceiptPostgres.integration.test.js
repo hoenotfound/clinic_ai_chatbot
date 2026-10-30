@@ -981,3 +981,80 @@ test("operator-approved service charge is isolated, auto-settles, and late recei
       [ids.ariel])).rows[0].n,1);
   });
 });
+
+test("automated secondary MARKETING template settles only matching signed marketing charge and late consistent receipt",{
+ skip:!connectionString,
+},async()=>{
+ await withSchema(async({db,database})=>{
+  const {ids,contacts}=await seededSend(db,database);
+  const paidEnv={
+   ...env,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"true",
+   WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED:"true",
+   WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"true",
+  };
+  assert.equal((await receipts.recordSignedSecondaryStatusBatch(
+   signed(st("wamid.ariel-one")),{database,env:paidEnv})).autoReconciled,1);
+  const contact=contacts[1].id,conv=(await db.query(
+   "SELECT id FROM whatsapp_sender_conversations WHERE contact_id=$1",[contact]
+  )).rows[0].id;
+  const inbound=(await db.query(
+   "INSERT INTO messages(contact_id,role,content,whatsapp_message_id) "+
+   "VALUES($1,'user','Yes, marketing for this service','wamid.customer-opt-in') RETURNING id",
+   [contact])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+   [inbound,conv]);
+  const sig="e".repeat(64),name="neutro_48_marketing";
+  await db.query(
+   "INSERT INTO whatsapp_sender_marketing_followup_rules "+
+   "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
+   "VALUES($1,48,TRUE,$2,'zh',$3,TRUE)",[ids.ariel,name,sig]);
+  const meta={automatedSecondaryMarketingFollowup:true,senderKey:"ariel",
+   slotHours:48,anchorMessageId:inbound,templateSignature:sig,name,language:"zh"};
+  const outbound=(await db.query(
+   "INSERT INTO messages(contact_id,role,content,whatsapp_template,is_automated_follow_up) "+
+   "VALUES($1,'assistant','Approved marketing',$2::jsonb,TRUE) RETURNING id",
+   [contact,JSON.stringify(meta)])).rows[0].id;
+  await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
+   [outbound,conv]);
+  await db.query(
+   "INSERT INTO whatsapp_sender_marketing_followup_attempts "+
+   "(sender_id,contact_id,anchor_message_id,slot_hours,message_id,status) "+
+   "VALUES($1,$2,$3,48,$4,'claimed')",
+   [ids.ariel,contact,inbound,outbound]);
+  const reserved=await billing.reserveSecondaryBillingAttempt({
+   contactId:contact,messageId:outbound,
+   billableAuthorized:true,expectedTemplateSignature:sig,
+  },{database,env:paidEnv});
+  assert.equal(reserved.reserved,true);
+  const wamid="wamid.verified-secondary-marketing-48";
+  assert.equal((await billing.recordSecondaryProviderOutcome({
+   reservationId:reserved.reservationId,acceptedWamid:wamid,
+  },{database,env:paidEnv})).state,"awaiting_pricing");
+  const response=await receipts.recordSignedSecondaryStatusBatch(signed(st(wamid,{
+   status:"sent",pricing:{type:"regular",billable:true,category:"marketing"},
+  })),{database,env:paidEnv});
+  assert.equal(response.autoReconciled,1);
+  assert.equal(response.held,0);
+  const aud=(await db.query(
+   "SELECT method,pricing_billable FROM whatsapp_sender_auto_reconciliations "+
+   "WHERE reservation_id=$1",[reserved.reservationId])).rows[0];
+  assert.equal(aud.method,"signed_meta_operator_approved_marketing_template");
+  assert.equal(aud.pricing_billable,true);
+  const later=await receipts.recordSignedSecondaryStatusBatch(signed(st(wamid,{
+   status:"read",pricing:{type:"regular",billable:true,category:"marketing"},
+  })),{database,env:paidEnv});
+  assert.equal(later.held,0);
+  assert.equal((await db.query(
+   "SELECT count(*)::int n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+   [ids.ariel])).rows[0].n,0);
+  const contradictory=await receipts.recordSignedSecondaryStatusBatch(signed(st(wamid,{
+   status:"delivered",pricing:{type:"regular",billable:true,category:"utility"},
+  })),{database,env:paidEnv});
+  assert.equal(contradictory.held,1,
+   "Changed billing category is an unexpected Meta charge and must not settle");
+  assert.equal((await db.query(
+   "SELECT count(*)::int n FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+   [ids.ariel])).rows[0].n,1);
+ });
+});
