@@ -124,8 +124,10 @@ test("sends and records one claimed automated follow-up", async () => {
   };
   realtimeEvents.publish = (event, payload) => published.push({ event, payload });
 
-  await runAutomatedFollowUps();
+  const result = await runAutomatedFollowUps();
 
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.progressedCount, 1, "a durably accepted follow-up advances the scheduler");
   assert.equal(sendCount, 1);
   assert.equal(published.length, 2);
   assert.equal(published[0].payload.reason, "message");
@@ -1896,6 +1898,28 @@ test("final pre-send check cancels a package follow-up if that exact package off
 
   assert.equal(sendCalls, 0);
   assert.equal(discarded, true);
+});
+
+test("overdue candidate rejected before any claim does not count as progress", async () => {
+  enableTool();
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 99001,
+    channel: "facebook",
+    channel_user_id: "psid-99001",
+    trigger_message_id: 99002,
+    next_follow_up_step: 4, // Outside the configured steps; no claim or provider call.
+  }];
+  followUpRepo.getNextCandidateDueAt = async () =>
+    new Date(Date.now() - 60_000).toISOString();
+
+  const result = await runAutomatedFollowUps();
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.progressedCount, 0);
+  assert.equal(
+    require("../src/services/followUpService").delayUntilNextFollowUp(result),
+    require("../src/services/followUpService").OVERDUE_IDLE_RECHECK_MS,
+    "a blocked candidate must not keep waking the worker every ten seconds"
+  );
 });
 
 test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
