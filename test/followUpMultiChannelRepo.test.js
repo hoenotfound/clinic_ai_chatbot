@@ -102,7 +102,7 @@ test("all five automated follow-up eligibility gates exclude opted-out contacts"
       "c.social_opt_out_at",
       "c.social_marketing_opt_out_at",
     ]) {
-      assert.match(sql, new RegExp(column.replace(".", "\\\\.") + " IS NULL"));
+      assert.ok(sql.includes(`${column} IS NULL`), `missing ${column} consent check`);
     }
   }
 });
