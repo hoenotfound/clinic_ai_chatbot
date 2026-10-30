@@ -152,6 +152,8 @@ test("automated follow-up discovery excludes conversations already waiting for s
       25,
       ["after_reply"],
       [120],
+      process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+      process.env.WHATSAPP_WABA_ID || "",
     ]);
     return { rows: [] };
   };
@@ -178,6 +180,8 @@ test("pre-expiry timing uses the shared deadline and current customer inbound", 
     assert.deepEqual(params, [
       [1320], "all", "2026-10-07T00:00:00.000Z", 25,
       ["before_window_expiry"], [120],
+      process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+      process.env.WHATSAPP_WABA_ID || "",
     ]);
     return { rows: [] };
   };

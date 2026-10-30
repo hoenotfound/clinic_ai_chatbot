@@ -28,6 +28,7 @@ const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
+const { startMemoryDiagnostics } = require("./memoryDiagnosticsService");
 const { assertStoredSenderSafety } = require("./whatsappSenderActivationGate");
 const mediaStorage = require("./mediaStorageService");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
@@ -131,7 +132,11 @@ async function startApplication({
 
     // Before readiness or recovery workers, reject unverified primary identity
     // and unsafe feature-flag rollback with persisted secondary contacts.
-    await assertStoredSenderSafety();
+    const senderSafety = await assertStoredSenderSafety();
+    if (senderSafety.primaryRegistrationVerified) {
+      // The existing startup query confirms the active primary phone, account and key.
+      console.info("[Startup] Primary WhatsApp sender registration verified; follow-up sender scope ready.");
+    }
 
     // Operator-gated real QA only. Inspect/import encrypted history in isolated
     // staging databases; never request sync, contact Meta, or start senders.
@@ -220,6 +225,8 @@ async function startApplication({
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
+    // Read-only memory diagnostics; no change to message traffic or worker behavior.
+    startMemoryDiagnostics();
     }
 
     startupReadiness.markReady();

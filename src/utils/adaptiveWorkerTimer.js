@@ -1,4 +1,5 @@
 const { withDatabaseActivitySource } = require("./databaseActivityContext");
+const { recordWorkerRun } = require("./workerActivityMetrics");
 
 function normalizeDelay(delayMs) {
   if (delayMs === null || delayMs === undefined) return null;
@@ -78,6 +79,7 @@ function createAdaptiveWorkerTimer({
 
     running = true;
     runCount += 1;
+    const startedAtMs = Date.now();
     let result;
     let failed = false;
 
@@ -87,6 +89,8 @@ function createAdaptiveWorkerTimer({
       failed = true;
       logger.error?.(`${label} failed:`, err);
     } finally {
+      // Diagnostics are deliberately outside the worker's success/failure path.
+      try { recordWorkerRun(label, Date.now() - startedAtMs, failed); } catch (_) {}
       running = false;
       if (stopped) return;
 
