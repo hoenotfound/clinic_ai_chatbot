@@ -45,10 +45,23 @@ function partitionSecondaryInboxWebhook(body,{
         // Never let Ariel status/pricing receipts enter Neutro's durable billing
         // gate, retry workers or delivery-attention updates.
         if(change.value.statuses?.length) {
+          // Routine receipts are still durably audited while receipt ingress
+          // is disabled. Failed, malformed or unfamiliar status types require
+          // separate operator review, not a generic routing-error warning.
+          // Preserve the original audit reason, field and fingerprint.
+          const routineStatuses=change.value.statuses.every(status=>
+            status && typeof status==="object" &&
+            ["sent","delivered","read"].includes(status.status) &&
+            (status.errors === undefined ||
+              (Array.isArray(status.errors) && status.errors.length===0))
+          );
           deferredStatuses.push(Object.freeze({
             fingerprint:digest,reason:"unsupported_whatsapp_event",
             field:"messages",accountId:entry.id,
             phoneNumberId:actualPhone,
+            // Alert-only metadata, deliberately omitted by the audit writer.
+            expectedSecondaryStatus:routineStatuses,
+            secondaryStatusRequiresReview:!routineStatuses,
           }));
         }
         if(!change.value.messages?.length)continue;
