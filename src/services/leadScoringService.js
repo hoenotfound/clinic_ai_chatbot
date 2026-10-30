@@ -396,7 +396,9 @@ function createLeadScoringRunner({
           // alert for the same transcript boundary. It uses the normal inactivity
           // and newer-customer-message checks, but deliberately contains no AI
           // summary or AI temperature assessment.
-          if (failure?.terminal) {
+          if (failure?.terminal &&
+              (!secondaryCandidate ||
+               await isSecondaryAdsOnlyEligible(candidate.contact_id))) {
             try {
               await queueScoringFailureFallback({
                 failure,
