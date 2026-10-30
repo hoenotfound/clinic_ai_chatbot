@@ -54,8 +54,16 @@ function fake({candidates=[row],claimed=true,approved=true,
  calls,
  database:{query:async(sql,args)=>{
   calls.push({sql,args});
-  if(sql===svc.CANDIDATES_SQL)return{rows:candidates};
-  if(sql===svc.RECHECK_SQL)return{rows:candidates};
+  if(sql===svc.CANDIDATES_SQL){
+   assert.equal(args.length,6,"candidate selection binds the ads-only cutoff");
+   assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
+   return{rows:candidates};
+  }
+  if(sql===svc.RECHECK_SQL){
+   assert.equal(args.length,6,"pre-send recheck must bind the same ads-only cutoff");
+   assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
+   return{rows:candidates};
+  }
   if(sql.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts"))
    return{rows:claimed?[{id:555}]:[]};
   return{rows:[],rowCount:1};
