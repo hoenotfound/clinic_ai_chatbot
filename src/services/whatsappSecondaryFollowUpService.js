@@ -119,7 +119,8 @@ const CANDIDATES_SQL=`
 `;
 
 function enabled(env) {
- return env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
+ return Boolean(adsOnlyActivation(env)) &&
+   env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
