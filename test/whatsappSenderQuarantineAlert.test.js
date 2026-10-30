@@ -156,3 +156,16 @@ test("primary delivery statuses are still routed without quarantine", () => {
   assert.equal(result.acceptedActionable, 1);
   assert.equal(result.acceptedBody.entry[0].changes[0].value.statuses.length, 1);
 });
+
+
+test("quarantine database failure escalates even an otherwise routine status", async () => {
+  const calls = capture();
+  const sent = await notifyWhatsAppSenderQuarantine([secondaryStatus()], {
+    env, auditFailed: true, now: 2000000720000, ...calls,
+  });
+  assert.equal(sent, true);
+  assert.equal(calls.messages.length, 1);
+  assert.match(calls.messages[0], /quarantine audit failed/);
+  assert.match(calls.messages[0], /database write did not complete/);
+  assert.equal(calls.warnings.length, 1);
+});
