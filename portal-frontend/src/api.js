@@ -66,6 +66,10 @@ export const api = {
     request(`/whatsapp-secondary-followups/${slot}`, {
       method:"PUT",body:JSON.stringify(rule),
     }),
+  saveSecondaryMarketingFollowUpRule: (slot,rule) =>
+    request(`/whatsapp-secondary-followups/marketing/${slot}`, {
+      method:"PUT",body:JSON.stringify(rule),
+    }),
   resolveAiReview: (contactId, reviewId) =>
     request(`/conversations/${contactId}/reviews/${reviewId}/resolve`, { method: "PATCH" }),
   getConversationAttribution: (contactId) =>

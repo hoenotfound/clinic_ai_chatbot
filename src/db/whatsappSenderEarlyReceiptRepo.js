@@ -82,7 +82,19 @@ async function applyStagedSecondaryReceipts({
     billingInfo.billing_authorization_source === 'operator_acknowledged_service' &&
     priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
       r.pricing_category==='service');
+  // Authorization is a durable one-shot billing record. Disabling the
+  // marketing worker later must not flag a legitimate in-flight Meta receipt
+  // as an unexpected sender-wide charge. With settlement OFF, hold only the
+  // specific contact for staff reconciliation.
+  const authorizedMarketingTemplate = paid &&
+    billingInfo?.billable_authorized===true &&
+    billingInfo.billing_authorization_source==='operator_approved_marketing_template' &&
+    priced.every(r=>r.pricing_billable===true &&
+      r.pricing_type==='regular' && r.pricing_category==='marketing');
+  const approvedMarketingTemplate = authorizedMarketingTemplate &&
+    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true';
   const paidPermitted = paid && billingInfo?.billable_authorized===true && (
+    approvedMarketingTemplate ||
     (billingInfo.billing_authorization_source==='staff_template_billing_review' &&
      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==='true' &&
      priced.every(r=>r.pricing_billable===true && r.pricing_type==='regular' &&
@@ -95,7 +107,7 @@ async function applyStagedSecondaryReceipts({
 
   // An operator-approved service charge without auto-reconciliation requires
   // manual review for this contact, not a false sender-wide billing incident.
-  if (paid && unexpectedPaid && !operatorServiceCharge) {
+  if (paid && unexpectedPaid && !operatorServiceCharge && !authorizedMarketingTemplate) {
     await client.query(
       `INSERT INTO whatsapp_sender_billing_alarms
           (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -146,6 +158,7 @@ async function applyStagedSecondaryReceipts({
     [reservationId,senderId,
       verified.find(r=>r.pricing_type===evidence.pricing_type && r.pricing_billable===evidence.pricing_billable).fingerprint,
       paid ? (operatorServiceCharge ? 'signed_meta_operator_authorized_service_charge'
+        : approvedMarketingTemplate ? 'signed_meta_operator_approved_marketing_template'
         : 'signed_meta_staff_authorized_charge') :
         evidence.pricing_type==='free_customer_service' ?
           'signed_meta_nonbillable_customer_service' : 'signed_meta_nonbillable_free_entry',

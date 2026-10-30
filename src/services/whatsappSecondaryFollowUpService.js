@@ -11,6 +11,7 @@ const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
+const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
@@ -270,13 +271,29 @@ async function runOnce({
           await fail("sender_followup_media_unavailable");continue;
         }
       }
+      // This is the PRIMARY Neutro follow-up AI generator, using only
+      // sender-bound SECONDARY customer history. Generate after the one-shot
+      // claim, and never send a static substitute when AI mode is explicitly on.
+      let outboundText=candidate.message_text;
+      let aiMode=null;
+      if(slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+        const personalized=await personalize20h({candidate,database,env});
+        if(!personalized?.ok){
+          await fail(personalized?.code||"secondary_20h_ai_unavailable");continue;
+        }
+        outboundText=personalized.message;
+        aiMode=personalized.mode;
+      }
+      if(!await preSendCheck()){
+        await fail("secondary_followup_policy_changed_after_ai");continue;
+      }
       const contact=await contacts.getContactById(candidate.contact_id);
       if(contact?.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
          String(contact.whatsapp_sender_id)!==String(candidate.sender_id)){
         await fail("sender_followup_owner_changed");continue;
       }
       const saved=await store.saveMessage(candidate.contact_id,
-        "assistant",candidate.message_text,null,null,null,null,
+        "assistant",outboundText,null,null,null,null,
         key?candidate.media_mime_type:null,{
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
@@ -292,7 +309,7 @@ async function runOnce({
         [id,messageId]
       );
       const result=await sendText({
-        contact,messageId,text:candidate.message_text,
+        contact,messageId,text:outboundText,
         origin:"followup",preSendCheck,
         ...(bytes?{dispatchTransport:async transport=>{
           if(!liveVideoApproval() || !await preSendCheck())
