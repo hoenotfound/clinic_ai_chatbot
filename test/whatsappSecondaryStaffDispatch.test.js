@@ -27,7 +27,7 @@ function setup({ blockAt=null, ownerMismatch=false, billingDenied=false,
   recordResult={recorded:true}, throwProvider=false }={}) {
   const calls={policy:0,db:[],send:[],mark:[],reserved:0,verify:0};
   return {calls,opts:{
-    env,database:{query:async(sql,args)=>{
+    env,audienceEligible:async()=>true,database:{query:async(sql,args)=>{
       calls.db.push({sql,args});
       return {rows:gateDenied?[]:[{reservation_id:reservationId}]};
     }},
