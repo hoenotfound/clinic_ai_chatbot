@@ -28,4 +28,30 @@ async function verifyApprovedVideo({
    return denied("secondary_followup_video_invalid");
  return {approved:true,key,mimeType:"video/mp4",filename:"clinic-followup.mp4"};
 }
-module.exports={verifyApprovedVideo};
+function listApprovedClinicVideos({
+ env=process.env,clinicConfig,storage=mediaStorage,
+}={}){
+ if(env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED!=="true" ||
+    env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE!=="primary" ||
+    !clinicConfig?.automatedFollowUp)return[];
+ const first=clinicConfig.automatedFollowUp;
+ const steps=[first,...(Array.isArray(first.additionalSteps)?first.additionalSteps:[])];
+ const candidates=steps.flatMap((step,i)=>{
+  const entries=[{videoKey:step?.videoKey,videoFilename:step?.videoFilename,
+    label:"Clinic follow-up video "+(i+1)},
+   ...(Array.isArray(step?.serviceOverrides)?step.serviceOverrides.map(override=>({
+    videoKey:override.videoKey,videoFilename:override.videoFilename,
+    label:"Treatment: "+String(override.serviceName||"clinic video").slice(0,100),
+   })):[])];
+  return entries;
+ });
+ const seen=new Set();
+ return candidates.filter(item=>{
+  const key=String(item.videoKey||"").trim();
+  if(!key||seen.has(key)||
+     !storage.isReferencedClinicFollowUpMediaKey(key,clinicConfig,env))
+    return false;
+  seen.add(key);return true;
+ }).map(item=>({key:item.videoKey,label:item.label}));
+}
+module.exports={verifyApprovedVideo,listApprovedClinicVideos};
