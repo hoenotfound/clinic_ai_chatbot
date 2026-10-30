@@ -130,7 +130,12 @@ async function startApplication({
 
     // Before readiness or recovery workers, reject unverified primary identity
     // and unsafe feature-flag rollback with persisted secondary contacts.
-    await assertStoredSenderSafety();
+    const senderSafety = await assertStoredSenderSafety();
+    if (senderSafety.primaryRegistrationVerified) {
+      // Existing startup safety query confirms env phone + WABA + sender key
+      // against the active registered primary sender. Never log identifiers.
+      console.info("[Startup] Primary WhatsApp sender registration verified; follow-up sender scope ready.");
+    }
 
     // Operator-gated real QA only. Inspect/import encrypted history in isolated
     // staging databases; never request sync, contact Meta, or start senders.
