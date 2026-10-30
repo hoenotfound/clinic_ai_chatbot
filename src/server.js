@@ -600,13 +600,15 @@ async function processIncomingMessage(
       contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
     // An ad click by an existing/imported/direct customer never promotes the
     // conversation into AI. Check persisted FIRST inbound, not lead source labels.
-    const secondaryAudienceEligible = secondaryContact
-      ? await isSecondaryAdsOnlyEligible(contact.id) : false;
-    const secondaryAiConversation = secondaryContact &&
-      secondaryAudienceEligible &&
+    // Check the no-send gates first. Avoid even calling the eligibility
+    // helper on every incoming manual chat when secondary AI is OFF.
+    const secondaryAiReady = secondaryContact &&
       process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       secondaryUsesPrimaryClinicContent(process.env);
+    const secondaryAudienceEligible = secondaryAiReady
+      ? await isSecondaryAdsOnlyEligible(contact.id) : false;
+    const secondaryAiConversation = secondaryAiReady && secondaryAudienceEligible;
     // All other secondary conversations stay in staff-managed Inbox, even
     // when a global AI switch is ON or the sender's contact mode says "ai".
     secondaryInboxOnly = secondaryContact && !secondaryAiConversation;
