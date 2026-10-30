@@ -35,7 +35,7 @@ export default function ArielFollowUpRules(){
   async function save(slot){
     setBusy(slot);setError("");setSaved(null);
     try{
-      const selected=slot===20?"":videos[slot];
+      const selected=(slot===20||!config?.mediaEnabled)?"":videos[slot];
       if(selected && !mediaApproved[slot])throw Error("Approve this exact clinic video before saving.");
       const data=await api.saveSecondaryFollowUpRule(slot,{
         messageText:rules[slot],enabled:enabled[slot],
@@ -118,7 +118,7 @@ export default function ArielFollowUpRules(){
               </span>
               <button type="button" onClick={()=>save(slot)}
                 disabled={busy!==null||rules[slot].trim().length<3||
-                  ((slot===2||slot===6)&&Boolean(videos[slot])&&!mediaApproved[slot])}
+                  ((slot===2||slot===6)&&config?.mediaEnabled&&Boolean(videos[slot])&&!mediaApproved[slot])}
                 className="rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                 {busy===slot?"Saving…":"Save secondary rule"}
               </button>
