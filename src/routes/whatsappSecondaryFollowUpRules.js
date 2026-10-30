@@ -2,7 +2,7 @@
 const express=require("express");
 const {pool}=require("../db/db");
 const configRepo=require("../db/configRepo");
-const {verifyApprovedVideo}=require("../services/whatsappSecondaryFollowUpVideoApproval");
+const {verifyApprovedVideo,listApprovedClinicVideos}=require("../services/whatsappSecondaryFollowUpVideoApproval");
 const {hasCapability}=require("../utils/permissions");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
@@ -39,7 +39,7 @@ router.get("/",async(req,res)=>{
     if(!identity)return res.json({configured:false,workerEnabled:false,
       rules:[],quietHours:{start:"00:00",end:"07:00"}});
     const rules=await pool.query(
-      "SELECT slot_hours,enabled,message_text,media_key IS NOT NULL AS has_media,media_type,media_filename,updated_at " +
+      "SELECT slot_hours,enabled,message_text,media_key,media_key IS NOT NULL AS has_media,media_type,media_filename,updated_at " +
       "FROM whatsapp_sender_followup_rules WHERE sender_id=$1 ORDER BY slot_hours",
       [identity.id]
     );
@@ -47,6 +47,11 @@ router.get("/",async(req,res)=>{
       configured:true,senderDisplayName:identity.display_name,
       workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true",
       quietHours:{start:"00:00",end:"07:00"},
+      mediaEnabled:process.env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+        process.env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true",
+      availableClinicVideos:listApprovedClinicVideos({
+        env:process.env,clinicConfig:configRepo.getConfig(),
+      }),
       rules:rules.rows,
     });
   }catch(err){
