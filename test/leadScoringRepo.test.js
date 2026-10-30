@@ -254,5 +254,7 @@ test("terminal failure recovery only selects current open unanswered snapshots w
   assert.match(captured.sql, /archival\.message_id = failed\.through_message_id/);
   assert.match(captured.sql, /newer_customer\.role = 'user'/);
   assert.match(captured.sql, /newer_score\.through_message_id > failed\.through_message_id/);
-  assert.deepEqual(captured.params, [5]);
+  assert.deepEqual(captured.params, [5, null]);
+  assert.match(captured.sql, /recovery_sender.sender_key IS DISTINCT FROM 'neutro_secondary'/);
+  assert.match(captured.sql, /ads_first.source_created_at/);
 });
