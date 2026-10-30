@@ -10,6 +10,8 @@ const secondaryPolicy=require("./whatsappSecondaryPolicyService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGate");
 const clinicImage=require("./whatsappSecondaryClinicImage");
+const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
+const configRepo=require("../db/configRepo");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
@@ -199,6 +201,8 @@ async function runOnce({
  contacts=contactsRepo,store=conversationStore,
  send=sendSecondaryStaffText,policy=secondaryPolicy,
  messageRepo=messagesRepo,loadClinicImage=clinicImage.loadOwnedClinicImage,
+ getConfig=()=>configRepo.getConfig(),
+ isAuthorizedImage=mediaApproval.isCurrentApprovedClinicImage,
  limit=5,
 }={}){
  if(!enabled(env))return{disabled:true,accepted:0,pending:0};
@@ -257,7 +261,17 @@ async function runOnce({
        });
        return preview?.policyAllowed===true;
      };
-     if(!await preSendCheck()){await update("expired");continue;}
+     // The operator can revoke an image after the inbound AI selected it.
+     // Revalidate source config before an outbound row or billing claim exists.
+     const imageApproved=()=>{
+       try{return isAuthorizedImage({
+         imageUrl:job.image_url,kind:job.media_kind,config:getConfig(),
+         now:new Date(),
+       })===true;}catch{return false;}
+     };
+     if(!imageApproved() || !await preSendCheck()){
+       await update("expired");continue;
+     }
      let messageId=job.outbound_message_id;
      if(!messageId){
        const saved=await store.appendMessageForContact(
@@ -279,6 +293,8 @@ async function runOnce({
        contact,messageId,text:job.caption||"[automatic image]",
        origin:"ai_media",preSendCheck,
        dispatchTransport:async(transport)=>{
+         if(!imageApproved() || !await preSendCheck())
+           return {success:false,unknown:true,ambiguous:true,retryable:false};
          if(clinicImage.storedClinicImageRef(job.image_url)){
            // Never pass a private before/after preview URL to Meta.
            // Download only a matching-purpose configured image from Neon,
@@ -289,10 +305,12 @@ async function runOnce({
              image.buffer,image.mimeType,image.filename);
            if(!uploaded?.success || !/^[0-9]+$/.test(String(uploaded.mediaId||"")))
              return {success:false,unknown:true,ambiguous:true,retryable:false};
-           if(!await preSendCheck())
+           if(!imageApproved() || !await preSendCheck())
              return {success:false,unknown:true,ambiguous:true,retryable:false};
            return transport.sendMediaById("image",uploaded.mediaId,{caption:job.caption});
          }
+         if(!imageApproved() || !await preSendCheck())
+           return {success:false,unknown:true,ambiguous:true,retryable:false};
          return transport.sendImageByUrl(job.image_url,job.caption);
        },
      },{env,database});

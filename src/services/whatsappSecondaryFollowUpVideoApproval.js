@@ -28,6 +28,17 @@ async function verifyApprovedVideo({
    return denied("secondary_followup_video_invalid");
  return {approved:true,key,mimeType:"video/mp4",filename:"clinic-followup.mp4"};
 }
+function isCurrentApprovedFollowUpVideo({
+  slot,mediaKey,env=process.env,clinicConfig,storage=mediaStorage,
+}={}){
+  return (slot===2 || slot===6) &&
+    env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
+    env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
+    typeof mediaKey==="string" && mediaKey.length>0 &&
+    storage.isReferencedClinicFollowUpMediaKey(mediaKey,clinicConfig,env)===true;
+}
 function listApprovedClinicVideos({
  env=process.env,clinicConfig,storage=mediaStorage,
 }={}){
@@ -54,4 +65,4 @@ function listApprovedClinicVideos({
   seen.add(key);return true;
  }).map(item=>({key:item.videoKey,label:item.label}));
 }
-module.exports={verifyApprovedVideo,listApprovedClinicVideos};
+module.exports={verifyApprovedVideo,listApprovedClinicVideos,isCurrentApprovedFollowUpVideo};

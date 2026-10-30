@@ -48,6 +48,31 @@ const OWNED_SECONDARY_OUTBOUND_SQL = `
      AND m.whatsapp_template->>'slotHours' IN ('2','6','20')
      AND m.whatsapp_template->>'anchorMessageId' ~ '^[0-9]+$'
      AND m.whatsapp_template->>'name' IS NULL
+   ) OR (
+     -- A queued AI graphic is freeform only when the one-shot claimed job
+     -- matches sender, original signed inbound and this outbound row.
+     m.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND m.sent_by_username IS NULL
+     AND m.whatsapp_template->>'automatedSecondaryAiMedia' = 'true'
+     AND m.whatsapp_template->>'senderKey' = sa.sender_key
+     AND m.whatsapp_template->>'name' IS NULL
+     AND m.whatsapp_template->>'anchorMessageId' ~ '^[0-9]+$'
+     AND EXISTS (
+       SELECT 1 FROM whatsapp_sender_ai_media_jobs job
+       JOIN messages inbound ON inbound.id=job.inbound_message_id
+         AND inbound.contact_id=m.contact_id
+         AND inbound.role='user'
+         AND inbound.whatsapp_message_id IS NOT NULL
+       JOIN whatsapp_sender_message_context inbound_ctx
+         ON inbound_ctx.message_id=inbound.id
+         AND inbound_ctx.conversation_id=sc.id
+       WHERE job.sender_id=sa.id AND job.contact_id=m.contact_id
+         AND job.outbound_message_id=m.id
+         AND job.state='claimed' AND job.expires_at>NOW()
+         AND job.media_kind IN ('promotion','result')
+         AND job.image_url=m.media_url
+         AND m.whatsapp_template->>'anchorMessageId'=job.inbound_message_id::text
+     )
    )) AS is_freeform_service
  FROM messages m
  JOIN contacts c ON c.id=m.contact_id AND c.channel='whatsapp'
