@@ -49,6 +49,10 @@ function partitionSecondaryInboxWebhook(body,{
             fingerprint:digest,reason:"unsupported_whatsapp_event",
             field:"messages",accountId:entry.id,
             phoneNumberId:actualPhone,
+            // Internal-only marker: this was a verified second-number delivery
+            // status intentionally kept out of the primary billing path.
+            // The existing quarantine record stays unchanged for audit.
+            expectedSecondaryStatus:true,
           }));
         }
         if(!change.value.messages?.length)continue;
