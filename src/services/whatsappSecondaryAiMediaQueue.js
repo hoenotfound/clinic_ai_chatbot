@@ -12,13 +12,15 @@ const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGat
 const clinicImage=require("./whatsappSecondaryClinicImage");
 const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
 const configRepo=require("../db/configRepo");
+const { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
 const INTERVAL_MS=60*1000;
 let timer=null;
 function enabled(env=process.env){
-  return secondaryUsesPrimaryClinicContent(env) &&
+  return Boolean(adsOnlyActivation(env)) &&
+    secondaryUsesPrimaryClinicContent(env) &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
@@ -47,6 +49,7 @@ async function enqueue({
      !Number.isSafeInteger(sequenceOffset)||sequenceOffset<0||
      !Array.isArray(items)||!items.length||items.length+sequenceOffset>MAX_ITEMS||
      !items.every(validItem))return false;
+  if (!await isSecondaryAdsOnlyEligible(contactId, {database,env})) return false;
   const client=await database.connect();
   try{
     await client.query("BEGIN");
@@ -61,13 +64,15 @@ async function enqueue({
          JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
            AND mc.conversation_id=sc.id
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
+          AND ${adsOnlyEligibleSql("c", "$6")}
           AND c.needs_attention=FALSE
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND sa.state='active' AND sa.sender_key=$3
           AND sa.meta_phone_number_id=$4 AND sa.meta_account_id=$5`,
       [contactId,inboundMessageId,env.WHATSAPP_SECONDARY_SENDER_KEY,
-        env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+        env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
+        adsOnlyActivation(env)]
     );
     if(owner.rowCount!==1){await client.query("ROLLBACK");return false;}
     for(let i=0;i<items.length;i++){
@@ -105,6 +110,7 @@ const READY_SQL=`
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
+   AND ${adsOnlyEligibleSql("c", "$5")}
    AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -141,6 +147,7 @@ const STILL_VALID_SQL=`
    JOIN messages inbound ON inbound.id=job.inbound_message_id
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
+     AND ${adsOnlyEligibleSql("c", "$5")}
      AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -214,6 +221,7 @@ async function runOnce({
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    Math.max(1,Math.min(10,Number(limit)||5)),
+   adsOnlyActivation(env),
  ]);
  let accepted=0,pending=0;
  for(const job of list.rows||[]){
@@ -250,6 +258,7 @@ async function runOnce({
        const check=await database.query(STILL_VALID_SQL,[
          job.id,env.WHATSAPP_SECONDARY_SENDER_KEY,
          env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
+         adsOnlyActivation(env),
        ]);
        if(check.rows?.[0]?.allowed!==true)return false;
        const current=await contacts.getContactById(job.contact_id);
