@@ -77,7 +77,13 @@ async function sendSecondaryStaffText({
         (!aiTextOnly || aiTextAuthorized) &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") ||
+      (origin === "marketing_followup" && parity && aiTextAuthorized &&
+        env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
+        env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" &&
+        templateRequest?.automatedMarketingApproved === true);
   if ((parityRequested && !parity) ||
       !authorizedOrigin ||
       // AI text-only and Phase B text follow-ups must not use a callback
@@ -88,12 +94,12 @@ async function sendSecondaryStaffText({
          (origin === "followup" && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
          (origin === "staff" && !templateRequest &&
            env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED !== "true") ||
-         !["staff","ai_media","followup"].includes(origin))) ||
+         !["staff","ai_media","followup","marketing_followup"].includes(origin))) ||
       // Neither the existing follow-up sender nor an optional transport
       // callback may upload/dispatch media while sender media is disabled.
       (origin === "followup" && typeof dispatchTransport === "function" &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
-      (templateRequest && (origin !== "staff" ||
+      (templateRequest && (!["staff","marketing_followup"].includes(origin) ||
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
         typeof dispatchTransport !== "function" ||
         templateRequest.billingConfirmed !== true)) ||
