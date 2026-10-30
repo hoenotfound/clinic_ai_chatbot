@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {verifyApprovedVideo}=require("../src/services/whatsappSecondaryFollowUpVideoApproval");
+const {verifyApprovedVideo,isCurrentApprovedFollowUpVideo}=require("../src/services/whatsappSecondaryFollowUpVideoApproval");
 const env={
  WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"true",
  WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
@@ -71,4 +71,23 @@ test("missing or oversized R2 video is rejected without saving a rule",async()=>
  const m=mock();
  m.storage.getSharedFollowUpMediaInfo=async()=>{throw Error("R2 not available")};
  assert.equal((await verifyApprovedVideo({...input,storage:m.storage})).approved,false);
+});
+
+test("queued second-number video loses authorization when clinic removes, changes or disables original asset",()=>{
+ const m=mock();
+ assert.equal(isCurrentApprovedFollowUpVideo({
+  slot:2,mediaKey:input.mediaKey,env,clinicConfig:input.clinicConfig,storage:m.storage,
+ }),true);
+ assert.equal(isCurrentApprovedFollowUpVideo({
+  slot:2,mediaKey:input.mediaKey,env,
+  clinicConfig:{automatedFollowUp:{videoKey:"clients/neutro/messages/follow-up-config/new.mp4"}},
+  storage:m.storage,
+ }),false);
+ assert.equal(isCurrentApprovedFollowUpVideo({
+  slot:2,mediaKey:input.mediaKey,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"false"},
+  clinicConfig:input.clinicConfig,storage:m.storage,
+ }),false);
+ assert.equal(isCurrentApprovedFollowUpVideo({
+  slot:20,mediaKey:input.mediaKey,env,clinicConfig:input.clinicConfig,storage:m.storage,
+ }),false);
 });
