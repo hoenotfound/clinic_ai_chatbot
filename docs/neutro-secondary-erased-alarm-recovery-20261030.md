@@ -1,8 +1,9 @@
 # Neutro second WhatsApp: erased billing-alarm recovery (draft)
 
-Status: **code prepared for review only**. Do not merge, deploy, invoke the
-release function, delete the production alarm, or activate secondary outbound
-without a separate, supervised operational authorization.
+Status: **feature disabled by default**. Review and merge are source-control
+preparation only, not approval to deploy, invoke the release function, delete
+the production alarm, or activate secondary outbound. Those operations each
+require separate supervision and evidence.
 
 ## Why this is necessary
 
@@ -33,7 +34,10 @@ Both require an explicit release authorization at execution, a minimal
 privacy-safe review reason, and manual confirmation that a **real signed
 Meta status webhook is working on the newly deployed code** and the
 **secondary account's payment method is active**. These declarations are
-human attestations, not independent API proof. Unknown acceptance does NOT
+human attestations, not independent API proof. The standalone function checks
+that two different reviewer identifiers are supplied, but it cannot validate
+their real-world identities. The executing operator must independently verify
+both reviewers' identities and authority outside this service. Unknown acceptance does NOT
 remove the financial uncertainty or prevent future Meta charges.
 
 Release remains disabled by default with
@@ -51,7 +55,9 @@ gates/attempts, later provider receipts, multiple or changed alarms, a
 previous release, wrong identity, or any enabled secondary outbound flags.
 
 On success it records only the old reservation hash, the truthful review
-outcome, risk acceptance, readiness attestations and reviewer identities.
+outcome, risk acceptance, readiness attestations and reviewer identifiers.
+The audit table rejects later UPDATE/DELETE attempts through a database
+trigger (a database administrator retains the ability to administer schema).
 It then removes **only** that exact global purged hold in the same
 transaction. The **original erased audit still says unknown**, and no
 customer record, message, attempt or send is restored. No provider request
