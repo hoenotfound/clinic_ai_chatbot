@@ -97,7 +97,7 @@ test("a foreign routing failure still alerts when mixed with expected statuses",
   assert.ok(serious);
   const calls = capture();
   const sent = await notifyWhatsAppSenderQuarantine(result.quarantined, {
-    env, now: 2000000120000, ...calls,
+    env, now: 2000000720000, ...calls,
   });
   assert.equal(sent, true);
   assert.equal(calls.messages.length, 1);
@@ -111,7 +111,7 @@ test("sender metadata alone cannot suppress an unmarked unsupported event", asyn
   const { expectedSecondaryStatus, ...unmarked } = secondaryStatus();
   const calls = capture();
   const sent = await notifyWhatsAppSenderQuarantine([unmarked], {
-    env, now: 2000000240000, ...calls,
+    env, now: 2000001440000, ...calls,
   });
   assert.equal(sent, true);
   assert.match(calls.messages[0], /unsupported_whatsapp_event/);
@@ -121,7 +121,7 @@ test("a forged internal marker with a different business number still alerts", a
   const item = { ...secondaryStatus(), phoneNumberId: "199999999999999" };
   const calls = capture();
   assert.equal(await notifyWhatsAppSenderQuarantine([item], {
-    env, now: 2000000360000, ...calls,
+    env, now: 2000002160000, ...calls,
   }), true);
   assert.equal(calls.messages.length, 1);
 });
@@ -130,7 +130,7 @@ test("a deferred receipt still alerts if receipt ingestion is active", async () 
   const calls = capture();
   assert.equal(await notifyWhatsAppSenderQuarantine([secondaryStatus()], {
     env: { ...env, WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED: "true" },
-    now: 2000000480000, ...calls,
+    now: 2000002880000, ...calls,
   }), true);
   assert.equal(calls.messages.length, 1);
 });
@@ -139,7 +139,7 @@ test("no silencing when secondary Inbox-only routing is disabled", async () => {
   const calls = capture();
   assert.equal(await notifyWhatsAppSenderQuarantine([secondaryStatus()], {
     env: { ...env, WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED: "false" },
-    now: 2000000600000, ...calls,
+    now: 2000003600000, ...calls,
   }), true);
   assert.equal(calls.messages.length, 1);
 });
@@ -161,7 +161,7 @@ test("primary delivery statuses are still routed without quarantine", () => {
 test("quarantine database failure escalates even an otherwise routine status", async () => {
   const calls = capture();
   const sent = await notifyWhatsAppSenderQuarantine([secondaryStatus()], {
-    env, auditFailed: true, now: 2000000720000, ...calls,
+    env, auditFailed: true, now: 2000004320000, ...calls,
   });
   assert.equal(sent, true);
   assert.equal(calls.messages.length, 1);
