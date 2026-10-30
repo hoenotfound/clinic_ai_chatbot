@@ -26,6 +26,7 @@ const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
+const { startMemoryDiagnostics } = require("./memoryDiagnosticsService");
 const { assertStoredSenderSafety } = require("./whatsappSenderActivationGate");
 const mediaStorage = require("./mediaStorageService");
 const whatsappResultMediaQueue = require("./whatsappResultMediaQueue");
@@ -214,6 +215,8 @@ async function startApplication({
     metaCommentAutomation.startRecovery();
     startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
+    // Read-only memory tracking; never alters requests, workers or customer data.
+    startMemoryDiagnostics();
     }
 
     startupReadiness.markReady();
