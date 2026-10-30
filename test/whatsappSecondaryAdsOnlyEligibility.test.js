@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
+  eligibleSecondaryAdsOnlyContactIds,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const { sendSecondaryStaffText } = require("../src/services/whatsappSecondaryStaffDispatch");
 const followups = require("../src/services/whatsappSecondaryFollowUpService");
@@ -139,4 +140,21 @@ test("manual secondary unsupported, failed image/video stay unread without AI-re
     "// Photos/videos without captions and stickers");
   assert.match(handoff,/if \(secondaryInboxOnly\) \{[\s\S]*?return \{ wasFirstMessage, keywordReason \}/);
   assert.doesNotMatch(handoff,/setAttention\(|setAiReviewAttention\(/);
+});
+
+test("Inbox batch does not query Neon unless secondary ads-only AI is operational",async()=>{
+  let queries=0;
+  const database={query:async(sql,args)=>{
+    queries++;
+    assert.match(sql,/earlier_clinic_contact/);
+    assert.deepEqual(args,[[11,12],"2026-10-30T03:00:00.000Z"]);
+    return {rows:[{id:11}]};
+  }};
+  const off=await eligibleSecondaryAdsOnlyContactIds([11,12],{database,env});
+  assert.deepEqual([...off],[]);
+  assert.equal(queries,0);
+  const enabled={...env,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"};
+  assert.deepEqual([...await eligibleSecondaryAdsOnlyContactIds([11,12],{database,env:enabled})],[11]);
+  assert.equal(queries,1,"one batched lookup, never one query per contact");
 });
