@@ -1,5 +1,6 @@
 const https = require("https");
 const telegramAlertRepo = require("../db/telegramAlertRepo");
+const {isSecondaryAdsOnlyEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
@@ -338,6 +339,13 @@ function createTelegramAlertService({
           const outcome = await withContactAlertLock(
             claim.contact_id,
             async () => {
+              // Old/queued secondary summaries and recovered failures must
+              // never reach Telegram if this is not a new CTWA ad contact.
+              if (claim.whatsapp_sender_key==="neutro_secondary" &&
+                  !await isSecondaryAdsOnlyEligible(claim.contact_id,{env})) {
+                await repository.markSuperseded(claim.alert_id);
+                return "superseded";
+              }
               if (typeof repository.findActionableCoverage === "function") {
                 const coverage = await repository.findActionableCoverage(
                   claim.alert_id,
