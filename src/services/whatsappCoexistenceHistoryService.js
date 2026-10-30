@@ -71,7 +71,7 @@ async function importPassiveChange({accountId,change},{
        const contact=await conversations.claimSenderContact({
          accountId,phoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
          customerPhone:phone,
-         coexistenceHistoryImport:true,
+         coexistenceHistoryImport:"history",
        },database,env);
        if(!contact?.whatsapp_sender_conversation_id)throw Error("History conversation not bound.");
        for(const msg of thread.messages){
@@ -144,7 +144,7 @@ async function importPassiveChange({accountId,change},{
      const contact=await conversations.claimSenderContact({
        accountId,phoneNumberId:env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
        customerPhone:phone,
-       coexistenceHistoryImport:true,
+       coexistenceHistoryImport:"contact_sync",
      },database,env);
      if(name)await database.query(
        "UPDATE contacts SET whatsapp_profile_name=COALESCE(NULLIF(whatsapp_profile_name,''),$2) "+
