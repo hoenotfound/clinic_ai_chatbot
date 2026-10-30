@@ -10,8 +10,10 @@ export default function ArielFollowUpRules(){
   const [videos,setVideos]=useState({2:"",6:""});
   const [mediaApproved,setMediaApproved]=useState({2:false,6:false});
   const [config,setConfig]=useState(null);
-  const [marketing,setMarketing]=useState({48:{name:"",language:"",enabled:false,approved:false},
-    72:{name:"",language:"",enabled:false,approved:false}});
+  const [marketing,setMarketing]=useState({
+    48:{templates:{zh_CN:"",en_US:""},enabled:false,approved:false},
+    72:{templates:{zh_CN:"",en_US:""},enabled:false,approved:false},
+  });
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(null);
   const [saved,setSaved]=useState(null);
@@ -32,9 +34,13 @@ export default function ArielFollowUpRules(){
       ])));
       setMediaApproved({2:false,6:false});
       setMarketing(Object.fromEntries([48,72].map(slot=>{
-        const saved=data.marketingRules?.find(r=>Number(r.slot_hours)===slot);
-        return [slot,{name:saved?.template_name||"",language:saved?.language_code||"",
-          enabled:saved?.enabled===true,approved:false}];
+        const saved=(data.marketingRules||[]).filter(r=>Number(r.slot_hours)===slot);
+        return [slot,{
+          templates:Object.fromEntries(["zh_CN","en_US"].map(lang=>[
+            lang,saved.find(r=>r.language_code===lang)?.template_name||"",
+          ])),
+          enabled:saved.some(r=>r.enabled===true),approved:false,
+        }];
       })));
     }).catch(e=>{if(active)setError(e.message||"Could not load secondary WhatsApp settings.");});
     return()=>{active=false;};
@@ -57,19 +63,23 @@ export default function ArielFollowUpRules(){
   }
   async function saveMarketing(slot){
     const row=marketing[slot];
-    if(row?.enabled && (!row?.name || !row?.language))
-      return setError("Select an approved marketing template.");
+    const variants=Object.entries(row.templates).filter(([,name])=>Boolean(name))
+      .map(([languageCode,name])=>({name,languageCode}));
+    if(row.enabled && (!variants.length || !row.approved))
+      return setError("Choose and approve each intended marketing language.");
     setBusy(slot);setError("");setSaved(null);
     try{
       const data=await api.saveSecondaryMarketingFollowUpRule(slot,{
-        templateName:row.name,languageCode:row.language,enabled:row.enabled,
+        variants,enabled:row.enabled,
         operatorBillingApproved:row.enabled && row.approved===true,
       });
       setMarketing(prev=>({...prev,[slot]:{
-        ...prev[slot],enabled:data.rule?.enabled===true,approved:false,
+        ...prev[slot],
+        enabled:(data.rules||[]).some(r=>r.enabled===true),
+        approved:false,
       }}));
       setSaved(slot);
-    }catch(e){setError(e.message||"Unable to save the verified secondary template.");}
+    }catch(e){setError(e.message||"Unable to save the verified secondary templates.");}
     finally{setBusy(null);}
   }
   const senderName=config?.senderDisplayName || "Secondary WhatsApp";
@@ -171,48 +181,60 @@ export default function ArielFollowUpRules(){
           {[48,72].map(slot=>{
             const row=marketing[slot];
             const choices=config.marketingTemplates||[];
-            const selected=choices.find(x=>x.name===row.name&&x.languageCode===row.language);
+            const languages=[["zh_CN","Chinese"],["en_US","English"]];
+            const selected=languages.map(([locale])=>choices.find(t=>
+              t.languageCode===locale&&t.name===row.templates[locale])).filter(Boolean);
+            const selectedCount=languages.filter(([locale])=>Boolean(row.templates[locale])).length;
+            const validSelection=selectedCount>0&&selected.length===selectedCount;
             return <div key={slot}
               className="mt-3 rounded-lg border border-[var(--color-border)] p-3">
               <div className="flex items-center justify-between gap-2">
-                <label className="text-xs font-semibold" htmlFor={`secondary-marketing-${slot}`}>
-                  After {slot} hours
-                </label>
+                <span className="text-xs font-semibold">After {slot} hours</span>
                 <label className="flex items-center gap-2 text-xs">
                   <input type="checkbox" checked={row.enabled}
-                    disabled={!selected && !row.enabled}
+                    disabled={!row.enabled&&(!config.marketingCatalogAvailable||!validSelection)}
                     onChange={e=>setMarketing(p=>({...p,[slot]:{
                       ...p[slot],enabled:e.target.checked,approved:false,
                     }}))}/>
                   Enabled
                 </label>
               </div>
-              <select id={`secondary-marketing-${slot}`} value={selected?
-                `${row.name}::${row.language}`:""}
-                disabled={!choices.length}
-                onChange={e=>{
-                  const t=choices.find(t=>`${t.name}::${t.languageCode}`===e.target.value);
-                  setMarketing(p=>({...p,[slot]:{
-                    name:t?.name||"",language:t?.languageCode||"",enabled:false,approved:false,
-                  }}));
-                }}
-                className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs">
-                <option value="">Select a secondary-account APPROVED template</option>
-                {choices.map(t=><option key={`${t.name}::${t.languageCode}`}
-                  value={`${t.name}::${t.languageCode}`}>
-                  {t.name} ({t.languageCode})
-                </option>)}
-              </select>
-              {selected&&<p className="mt-2 text-xs text-[var(--color-text-muted)]">
-                Approved message: {selected.body}
-              </p>}
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                Assign an independently approved template per customer language.
+                Unconfigured or unclear language is skipped, never translated automatically.
+              </p>
+              {languages.map(([locale,label])=>{
+                const choice=selected.find(t=>t.languageCode===locale);
+                return <div key={locale} className="mt-3">
+                  <label htmlFor={`secondary-marketing-${slot}-${locale}`}
+                    className="block text-xs font-medium">{label} ({locale})</label>
+                  <select id={`secondary-marketing-${slot}-${locale}`}
+                    value={choice?.name||""}
+                    disabled={!config.marketingCatalogAvailable}
+                    onChange={e=>setMarketing(p=>({...p,[slot]:{
+                      ...p[slot],templates:{...p[slot].templates,[locale]:e.target.value},
+                      enabled:false,approved:false,
+                    }}))}
+                    className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs">
+                    <option value="">No automatic send for {label}</option>
+                    {choices.filter(t=>t.languageCode===locale).map(t=>
+                      <option key={`${t.name}::${t.languageCode}`} value={t.name}>
+                        {t.name} ({t.languageCode})
+                      </option>)}
+                  </select>
+                  {choice&&<p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Approved message: {choice.body}
+                  </p>}
+                </div>;
+              })}
               {row.enabled&&<label className="mt-3 flex items-start gap-2 text-xs">
                 <input type="checkbox" checked={row.approved}
                   onChange={e=>setMarketing(p=>({...p,[slot]:{
                     ...p[slot],approved:e.target.checked,
                   }}))}/>
-                <span>I approve potential MARKETING template charges on this
-                  secondary WhatsApp account, subject to each customer's verified opt-in.
+                <span>I approve potential MARKETING charges for each selected,
+                  independently Meta-approved language on this secondary WhatsApp.
+                  Every recipient still needs explicit treatment-specific marketing consent.
                 </span>
               </label>}
               <div className="mt-2 flex justify-between gap-2">
@@ -221,9 +243,10 @@ export default function ArielFollowUpRules(){
                     config.marketingWorkerEnabled?"Worker enabled":"Worker OFF"}
                 </span>
                 <button type="button" onClick={()=>saveMarketing(slot)}
-                  disabled={busy!==null||(row.enabled && (!selected || !row.approved))}
+                  disabled={busy!==null||(row.enabled&&
+                    (!config.marketingCatalogAvailable||!validSelection||!row.approved))}
                   className="rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                  {busy===slot?"Saving…":"Save template rule"}
+                  {busy===slot?"Saving…":"Save template languages"}
                 </button>
               </div>
             </div>;
