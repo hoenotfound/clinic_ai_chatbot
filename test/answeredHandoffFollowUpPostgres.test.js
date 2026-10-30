@@ -143,6 +143,19 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
       else process.env.WHATSAPP_WABA_ID = previousPrimaryWaba;
     }
 
+    // A previously accepted primary follow-up anchor cannot override an
+    // explicit marketing-only or global STOP, even if it remains within 24h.
+    await client.query("UPDATE contacts SET whatsapp_marketing_opt_out_at=now() WHERE id=330");
+    assert.deepEqual(await candidateIds(), [],
+      "marketing-only opt-out must exclude otherwise eligible primary follow-ups");
+    await client.query(`UPDATE contacts SET whatsapp_marketing_opt_out_at=NULL,
+      whatsapp_opt_out_at=now() WHERE id=330`);
+    assert.deepEqual(await candidateIds(), [],
+      "global opt-out must exclude otherwise eligible primary follow-ups");
+    await client.query("UPDATE contacts SET whatsapp_opt_out_at=NULL WHERE id=330");
+    assert.deepEqual(await candidateIds(), [1102],
+      "restoring consent in isolated test fixture restores normal primary candidate selection");
+
     // Provider acceptance is the actual send boundary. An unknown outcome or
     // unsubmitted staff draft cannot trigger the worker, even when Attention
     // has been cleared and FU1 is already due.
