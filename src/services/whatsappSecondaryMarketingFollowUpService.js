@@ -78,8 +78,10 @@ const CANDIDATES_SQL=`
    AND c.whatsapp_opt_out_at IS NULL AND c.whatsapp_marketing_opt_out_at IS NULL
    AND lead.marketing_consent='opted_in' AND lead.is_closed=FALSE
    AND NULLIF(BTRIM(lead.treatment_interest),'') IS NOT NULL
-   AND COALESCE(lead.appointment_status,'none') NOT IN('set','visited')
-   AND COALESCE(lead.stage_key,'') NOT IN('appointment_set','visited')
+   AND COALESCE(lead.appointment_status,'none')
+     NOT IN('set','visited','confirmed','booked','completed')
+   AND COALESCE(lead.stage_key,'')
+     NOT IN('appointment_set','visited','confirmed','booked','completed')
    -- Only explicit, message-linked marketing opt-in belonging to this
    -- sender conversation; imported history or CTWA prefill alone is NOT proof.
    AND EXISTS (
