@@ -7,6 +7,8 @@ const fallback={2:"",6:"",20:""};
 export default function ArielFollowUpRules(){
   const [rules,setRules]=useState(fallback);
   const [enabled,setEnabled]=useState({2:false,6:false,20:false});
+  const [videos,setVideos]=useState({2:"",6:""});
+  const [mediaApproved,setMediaApproved]=useState({2:false,6:false});
   const [config,setConfig]=useState(null);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(null);
@@ -23,16 +25,25 @@ export default function ArielFollowUpRules(){
       setEnabled(Object.fromEntries(SLOTS.map(slot=>[
         slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.enabled===true,
       ])));
+      setVideos(Object.fromEntries([2,6].map(slot=>[
+        slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.media_key||"",
+      ])));
+      setMediaApproved({2:false,6:false});
     }).catch(e=>{if(active)setError(e.message||"Could not load secondary WhatsApp settings.");});
     return()=>{active=false;};
   },[]);
   async function save(slot){
     setBusy(slot);setError("");setSaved(null);
     try{
+      const selected=(slot===20||!config?.mediaEnabled)?"":videos[slot];
+      if(selected && !mediaApproved[slot])throw Error("Approve this exact clinic video before saving.");
       const data=await api.saveSecondaryFollowUpRule(slot,{
         messageText:rules[slot],enabled:enabled[slot],
+        ...(selected?{mediaKey:selected,mediaType:"video",
+          confirmClinicVideoReuse:true}:{}),
       });
       setEnabled(prev=>({...prev,[slot]:data.rule.enabled}));
+      if(slot!==20)setMediaApproved(prev=>({...prev,[slot]:false}));
       setSaved(slot);
     }catch(e){setError(e.message||"Unable to save secondary follow-up.");}
     finally{setBusy(null);}
@@ -76,12 +87,38 @@ export default function ArielFollowUpRules(){
               value={rules[slot]} onChange={e=>setRules(prev=>({...prev,[slot]:e.target.value}))}
               placeholder="Write and approve the exact message for this phone number"
               className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-xs" />
+            {(slot===2||slot===6)&&config?.mediaEnabled&&
+              <div className="mt-3 rounded-lg border border-[var(--color-border)] p-2">
+                <label htmlFor={`secondary-video-${slot}`} className="block text-xs font-semibold">
+                  Optional clinic follow-up video
+                </label>
+                <select id={`secondary-video-${slot}`} value={videos[slot]||""}
+                  onChange={e=>{
+                    setVideos(prev=>({...prev,[slot]:e.target.value}));
+                    setMediaApproved(prev=>({...prev,[slot]:false}));
+                  }}
+                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-xs">
+                  <option value="">Text only (no video)</option>
+                  {(config.availableClinicVideos||[]).map(item=>
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  )}
+                </select>
+                {videos[slot]&&
+                  <label className="mt-2 flex items-start gap-2 text-xs">
+                    <input type="checkbox" checked={mediaApproved[slot]||false}
+                      onChange={e=>setMediaApproved(prev=>({...prev,[slot]:e.target.checked}))}/>
+                    <span>I approve this clinic-owned video for opted-in customers on the second WhatsApp.</span>
+                  </label>}
+              </div>}
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-[11px] text-[var(--color-text-muted)]">
-                {saved===slot?"Saved to secondary number only":"Text-only rule; media must be separately sender-approved"}
+                {saved===slot?"Saved to secondary number only":
+                  videos[slot]?"Video requires explicit approval and separate Meta receipts":
+                    "Text-only; no media is sent"}
               </span>
               <button type="button" onClick={()=>save(slot)}
-                disabled={busy!==null||rules[slot].trim().length<3}
+                disabled={busy!==null||rules[slot].trim().length<3||
+                  ((slot===2||slot===6)&&config?.mediaEnabled&&Boolean(videos[slot])&&!mediaApproved[slot])}
                 className="rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                 {busy===slot?"Saving…":"Save secondary rule"}
               </button>

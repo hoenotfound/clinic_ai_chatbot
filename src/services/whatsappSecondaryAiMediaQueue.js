@@ -9,6 +9,7 @@ const messagesRepo=require("../db/messagesRepo");
 const secondaryPolicy=require("./whatsappSecondaryPolicyService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGate");
+const clinicImage=require("./whatsappSecondaryClinicImage");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
@@ -27,6 +28,7 @@ function enabled(env=process.env){
 function validItem(item){
   if(!item || typeof item.imageUrl!=="string" || typeof item.caption!=="string" ||
      item.imageUrl.length>2048 || item.caption.length>1024) return false;
+  if(clinicImage.storedClinicImageRef(item.imageUrl))return true;
   try{
     const url=new URL(item.imageUrl);
     return url.protocol==="https:" && Boolean(url.hostname) &&
@@ -196,7 +198,7 @@ async function runOnce({
  database=pool,env=process.env,
  contacts=contactsRepo,store=conversationStore,
  send=sendSecondaryStaffText,policy=secondaryPolicy,
- messageRepo=messagesRepo,
+ messageRepo=messagesRepo,loadClinicImage=clinicImage.loadOwnedClinicImage,
  limit=5,
 }={}){
  if(!enabled(env))return{disabled:true,accepted:0,pending:0};
@@ -276,7 +278,23 @@ async function runOnce({
      const result=await send({
        contact,messageId,text:job.caption||"[automatic image]",
        origin:"ai_media",preSendCheck,
-       dispatchTransport:(transport)=>transport.sendImageByUrl(job.image_url,job.caption),
+       dispatchTransport:async(transport)=>{
+         if(clinicImage.storedClinicImageRef(job.image_url)){
+           // Never pass a private before/after preview URL to Meta.
+           // Download only a matching-purpose configured image from Neon,
+           // then upload it using the SECONDARY phone's Graph transport.
+           const image=await loadClinicImage(job.image_url);
+           if(!image)return {success:false,unknown:true,ambiguous:true,retryable:false};
+           const uploaded=await transport.uploadMedia(
+             image.buffer,image.mimeType,image.filename);
+           if(!uploaded?.success || !/^[0-9]+$/.test(String(uploaded.mediaId||"")))
+             return {success:false,unknown:true,ambiguous:true,retryable:false};
+           if(!await preSendCheck())
+             return {success:false,unknown:true,ambiguous:true,retryable:false};
+           return transport.sendMediaById("image",uploaded.mediaId,{caption:job.caption});
+         }
+         return transport.sendImageByUrl(job.image_url,job.caption);
+       },
      },{env,database});
      if(result?.success===true && result?.unknown!==true &&
         /^wamid\./.test(String(result.wamid||""))){

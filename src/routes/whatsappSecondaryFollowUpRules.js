@@ -1,6 +1,8 @@
 "use strict";
 const express=require("express");
 const {pool}=require("../db/db");
+const configRepo=require("../db/configRepo");
+const {verifyApprovedVideo,listApprovedClinicVideos}=require("../services/whatsappSecondaryFollowUpVideoApproval");
 const {hasCapability}=require("../utils/permissions");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
@@ -37,7 +39,7 @@ router.get("/",async(req,res)=>{
     if(!identity)return res.json({configured:false,workerEnabled:false,
       rules:[],quietHours:{start:"00:00",end:"07:00"}});
     const rules=await pool.query(
-      "SELECT slot_hours,enabled,message_text,media_type,media_filename,updated_at " +
+      "SELECT slot_hours,enabled,message_text,media_key,media_key IS NOT NULL AS has_media,media_type,media_filename,updated_at " +
       "FROM whatsapp_sender_followup_rules WHERE sender_id=$1 ORDER BY slot_hours",
       [identity.id]
     );
@@ -45,6 +47,11 @@ router.get("/",async(req,res)=>{
       configured:true,senderDisplayName:identity.display_name,
       workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true",
       quietHours:{start:"00:00",end:"07:00"},
+      mediaEnabled:process.env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+        process.env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true",
+      availableClinicVideos:listApprovedClinicVideos({
+        env:process.env,clinicConfig:configRepo.getConfig(),
+      }),
       rules:rules.rows,
     });
   }catch(err){
@@ -62,11 +69,23 @@ router.put("/:slot",async(req,res)=>{
       /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) {
       return res.status(400).json({error:"Provide a reviewed message of 3–1024 characters and a valid enabled setting."});
     }
-    if(req.body?.mediaKey||req.body?.mediaType){
-      return res.status(409).json({
-        code:"secondary_followup_media_configuration_not_available",
-        error:"Secondary WhatsApp follow-up media cannot reuse Neutro assets. Use a sender-approved attachment flow.",
+    // Reuse only a pre-existing Neutro-clinic follow-up video object,
+    // never a customer attachment or a primary Meta media ID. Both numbers
+    // may share approved clinic creative content, but NOT provider credentials,
+    // provider media IDs, billing or recipient identity.
+    const wantsMedia=Boolean(req.body?.mediaKey || req.body?.mediaType);
+    let mediaKey=null;
+    if(wantsMedia){
+      const approval=await verifyApprovedVideo({
+        slot,mediaKey:req.body?.mediaKey,mediaType:req.body?.mediaType,
+        confirmClinicVideoReuse:req.body?.confirmClinicVideoReuse,
+        env:process.env,clinicConfig:configRepo.getConfig(),
       });
+      if(!approval.approved)return res.status(409).json({
+        code:approval.code,
+        error:"This video is not an available, explicitly approved clinic follow-up asset for the secondary sender.",
+      });
+      mediaKey=approval.key;
     }
     const identity=await sender(pool,process.env);
     if(!identity)return res.status(409).json({
@@ -75,14 +94,18 @@ router.put("/:slot",async(req,res)=>{
     });
     const updated=await pool.query(
       `INSERT INTO whatsapp_sender_followup_rules
-         (sender_id,slot_hours,enabled,message_text,updated_at)
-       VALUES($1,$2,$3,$4,NOW())
+         (sender_id,slot_hours,enabled,message_text,
+          media_key,media_type,media_mime_type,media_filename,updated_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())
        ON CONFLICT(sender_id,slot_hours) DO UPDATE SET
          enabled=EXCLUDED.enabled,message_text=EXCLUDED.message_text,
-         media_key=NULL,media_type=NULL,media_mime_type=NULL,media_filename=NULL,
-         updated_at=NOW()
-       RETURNING slot_hours,enabled,message_text,updated_at`,
-      [identity.id,slot,enabled,text]
+         media_key=EXCLUDED.media_key,media_type=EXCLUDED.media_type,
+         media_mime_type=EXCLUDED.media_mime_type,
+         media_filename=EXCLUDED.media_filename,updated_at=NOW()
+       RETURNING slot_hours,enabled,message_text,
+          media_key IS NOT NULL AS has_media,media_type,media_filename,updated_at`,
+      [identity.id,slot,enabled,text,mediaKey,mediaKey?"video":null,
+       mediaKey?"video/mp4":null,mediaKey?"clinic-followup.mp4":null]
     );
     res.set("Cache-Control","no-store");
     return res.json({saved:true,rule:updated.rows[0],
