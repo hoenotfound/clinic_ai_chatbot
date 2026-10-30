@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
+  eligibleSecondaryAdsOnlyContactIds,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const { sendSecondaryStaffText } = require("../src/services/whatsappSecondaryStaffDispatch");
 const followups = require("../src/services/whatsappSecondaryFollowUpService");
@@ -37,6 +38,9 @@ test("eligibility relies on sender-bound first provider inbound with actual Meta
     "ads_first.whatsapp_message_id IS NOT NULL",
     "c.created_at >= $2::timestamptz",
     "ads_first.created_at >= $2::timestamptz",
+    "earlier_clinic_contact.created_at < c.created_at",
+    "earlier_clinic_contact.whatsapp_number IN",
+    "primary_sender.sender_key='neutro'",
     "FROM messages ads_prior",
     "whatsapp_sender_coexistence_history_messages ads_import",
   ]) assert.ok(expected.includes(match), match);
@@ -116,4 +120,41 @@ test("manual secondary voice messages retain the staff label and bypass AI trans
     voice.indexOf('} else if (!transcript)'));
   assert.ok(manual.includes('"🎤 [Voice message for staff]"'));
   assert.match(manual,/return\s+\{\s*wasFirstMessage,\s*keywordReason\s*\}/);
+});
+
+
+test("manual secondary unsupported, failed image/video stay unread without AI-review Telegram",()=>{
+  const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
+  const block=(from,to)=>source.slice(source.indexOf(from),source.indexOf(to));
+  const unsupported=block("if (unsupportedType) {","let text = incoming.text");
+  assert.match(unsupported,/if \(!secondaryInboxOnly\) \{[\s\S]*?setAiReviewAttention/);
+  assert.match(unsupported,/return \{ wasFirstMessage, keywordReason \}/);
+  for(const [from,to] of [
+    ['if (mediaType === "image")','if (mediaType === "video")'],
+    ['if (mediaType === "video")','if (mediaType === "sticker")']
+  ]){
+    const media=block(from,to);
+    assert.match(media,/if \(!secondaryInboxOnly\) \{\s*await contactsRepo\.setAiReviewAttention/);
+  }
+  const handoff=block("// Preserve incoming secondary media before handing the turn to staff.",
+    "// Photos/videos without captions and stickers");
+  assert.match(handoff,/if \(secondaryInboxOnly\) \{[\s\S]*?return \{ wasFirstMessage, keywordReason \}/);
+  assert.doesNotMatch(handoff,/setAttention\(|setAiReviewAttention\(/);
+});
+
+test("Inbox batch does not query Neon unless secondary ads-only AI is operational",async()=>{
+  let queries=0;
+  const database={query:async(sql,args)=>{
+    queries++;
+    assert.match(sql,/earlier_clinic_contact/);
+    assert.deepEqual(args,[[11,12],"2026-10-30T03:00:00.000Z"]);
+    return {rows:[{id:11}]};
+  }};
+  const off=await eligibleSecondaryAdsOnlyContactIds([11,12],{database,env});
+  assert.deepEqual([...off],[]);
+  assert.equal(queries,0);
+  const enabled={...env,WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true"};
+  assert.deepEqual([...await eligibleSecondaryAdsOnlyContactIds([11,12],{database,env:enabled})],[11]);
+  assert.equal(queries,1,"one batched lookup, never one query per contact");
 });
