@@ -318,6 +318,19 @@ async function recordSignedSecondaryStatusBatch({
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         attempt.billing_authorization_source === "staff_template_billing_review" &&
         ["service","utility","marketing"].includes(event.pricingCategory);
+      // The exact marketing-template charge was independently approved
+      // and durably reserved before Meta send. A later operator kill switch
+      // must not turn a valid delayed pricing receipt into a sender-wide
+      // incident. With auto-settlement OFF, hold only this contact for review.
+      const authorizedMarketingCharge =
+        attempt.billable_authorized === true &&
+        attempt.billing_authorization_source ===
+          "operator_approved_marketing_template" &&
+        event.pricingBillable === true &&
+        event.pricingType === "regular" &&
+        event.pricingCategory === "marketing";
+      const paidMarketingEligible = authorizedMarketingCharge &&
+        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true";
       const paidServiceEligible =
         env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
@@ -330,7 +343,7 @@ async function recordSignedSecondaryStatusBatch({
         Boolean(attempt.live_reservation_id) &&
         event.pricingBillable === true &&
         event.pricingType === "regular" &&
-        (paidTemplateEligible || paidServiceEligible) &&
+        (paidTemplateEligible || paidServiceEligible || paidMarketingEligible) &&
         ["sent","delivered","read"].includes(event.deliveryStatus);
       const authorizedServiceCharge =
         event.pricingBillable === true && event.pricingType === "regular" &&
@@ -352,7 +365,8 @@ async function recordSignedSecondaryStatusBatch({
               ON initial.fingerprint=a.provider_receipt_fingerprint
             WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
               AND a.method IN ('signed_meta_staff_authorized_charge',
-                               'signed_meta_operator_authorized_service_charge')
+                               'signed_meta_operator_authorized_service_charge',
+                               'signed_meta_operator_approved_marketing_template')
               AND a.pricing_billable=TRUE
               AND initial.pricing_type=$3 AND initial.pricing_category=$4
               AND initial.pricing_billable=TRUE`,
@@ -370,7 +384,8 @@ async function recordSignedSecondaryStatusBatch({
         // unexpected charges or identity incidents suspend the sender.
         // An operator-approved service charge awaiting manual reconciliation
         // holds only this contact; other secondary WhatsApp conversations may continue.
-        if (event.pricingBillable === true && !authorizedServiceCharge) {
+        if (event.pricingBillable === true &&
+            !authorizedServiceCharge && !authorizedMarketingCharge) {
           await client.query(
             `INSERT INTO whatsapp_sender_billing_alarms
                (sender_id,reservation_id,reason,latest_wamid_hash)
@@ -444,6 +459,7 @@ async function recordSignedSecondaryStatusBatch({
             [attempt.reservation_id,attempt.sender_id,event.fingerprint,
               paidEligible
                 ? (paidServiceEligible ? "signed_meta_operator_authorized_service_charge"
+                  : paidMarketingEligible ? "signed_meta_operator_approved_marketing_template"
                   : "signed_meta_staff_authorized_charge")
                 : event.pricingType === "free_customer_service"
                   ? "signed_meta_nonbillable_customer_service"
