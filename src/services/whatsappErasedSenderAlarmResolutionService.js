@@ -40,6 +40,12 @@ function enabled(env = process.env) {
     env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED === "true" &&
     env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true" &&
     env.WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED === "true" &&
+    // A prior manual inspection does not substitute for enabled signed
+    // receipt ingestion on the actively deployed paid webhook route.
+    env.WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED === "true" &&
+    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true" &&
     /^[a-z][a-z0-9_-]{0,63}$/.test(key) &&
     key !== env.WHATSAPP_PRIMARY_SENDER_KEY &&
@@ -53,6 +59,7 @@ function enabled(env = process.env) {
 }
 
 function validateEvidence(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const reservation = String(input.reservationSha256 || "");
   const appHash = input.businessAppEvidenceSha256 ?? null;
   const billingHash = input.metaBillingEvidenceSha256 ?? null;
