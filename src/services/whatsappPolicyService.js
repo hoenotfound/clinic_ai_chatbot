@@ -56,7 +56,21 @@ function classifyOptOutText(value) {
   const refersToFollowUpAppointment = /\bfollow[\s-]?up\s+(?:appointment|session|visit|consultation|treatment)\b/i.test(text);
   const refuseAutomatedMessages = !explicitlyKeepAutomation && !refersToFollowUpAppointment &&
     /\b(?:stop|don['’]?t|do not|no more|unsubscribe|opt out|cancel)\b.{0,75}\b(?:auto(?:mated|matic)?\s+(?:messages?|massages?|msgs?|texts?|replies)|follow[\s-]?ups?|repeated?\s+(?:messages?|texts?)|spam(?:ming)?)\b/i.test(text);
-  if (refuseAutomatedMessages) return "marketing";
+  const refuseAutomatedDelivery = !explicitlyKeepAutomation &&
+    !refersToFollowUpAppointment && (
+      /\b(?:don['’]?t|do not|never)\s+(?:send|keep\s+sending)\b.{0,75}\b(?:automated?|automatic|auto)\s+(?:messages?|msgs?|texts?|replies|reminders?)\b/i.test(text) ||
+      /\b(?:i\s+)?(?:don['’]?t|do not)\s+want\s+(?:any\s+)?(?:more\s+)?(?:automated?|automatic|auto)\s+(?:messages?|msgs?|texts?|replies|reminders?)\b/i.test(text)
+    );
+  if (refuseAutomatedMessages || refuseAutomatedDelivery) return "marketing";
+  // A request to keep contact must never be mistaken for a request to stop.
+  const explicitlyKeepContact =
+    /\b(?:don['’]?t|do not|never)\s+stop\s+(?:contacting|messaging|texting)\s+me\b/i.test(text);
+  if (!explicitlyKeepContact && (
+      /(?:不要再|别再|別再|请勿|請勿|不要|别|別).{0,12}(?:联系|聯繫|聯絡|联络|打扰|打擾)我/u.test(text) ||
+      /\b(?:don['’]?t|do not|never)\s+(?:contact|message|text|whatsapp)\s+me\b/i.test(text) ||
+      /\bstop\s+(?:contacting|messaging|texting)\s+me\b/i.test(text) ||
+      /\b(?:tolong\s+)?jangan\s+(?:mesej|hubungi)\s+saya\s+lagi\b/i.test(text)
+  )) return "all";
   // Explicit Chinese requests to stop repeated contact must take precedence
   // over soft 'let me consider' language in the same message.
   if (/(?:不要|别|別|停止|禁止|取消|不需要|不要再|别再|別再).{0,24}(?:发|發|发送|發送|传|傳)(?:给我|給我|我)?(?:消息|信息|訊息|短信|简讯)(?:给我|給我|我)?/u.test(text)) return "all";
