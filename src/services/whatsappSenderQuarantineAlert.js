@@ -32,7 +32,7 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
     /^[0-9]+$/.test(String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || "")) &&
     item.accountId === env.WHATSAPP_SECONDARY_WABA_ID &&
     item.phoneNumberId === env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID
-  )));
+  ));
   // The caller has already recorded every quarantined event in the durable
   // audit; filtering here only affects operator warnings and Telegram.
   if (!reportable.length) return false;
