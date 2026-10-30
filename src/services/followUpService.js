@@ -1250,10 +1250,10 @@ async function sendCandidate(candidate) {
       !whatsappZeroCostGuard.allow24hAutoFollowUps()) {
     const eligible = await whatsappZeroCostGuard.preflightFreeform(candidate.whatsapp_number, { contactId: candidate.contact_id });
     if (!eligible.allowed) {
-      await deferPolicyCandidate(candidate, stepIndex,
+      const retryAt = await deferPolicyCandidate(candidate, stepIndex,
         POSTPONABLE_POLICY_CODES.has(eligible.code)
           ? eligible.code : "zero_cost_preflight_unavailable");
-      return;
+      return Boolean(retryAt);
     }
   }
 
@@ -1473,7 +1473,7 @@ async function sendCandidate(candidate) {
                   );
                 }
               }
-              return;
+              return true; // A durable AI decision advanced this step.
             }
           } else if (targetedMediaService &&
               clinicConfig.automatedFollowUp?.videoAiCaptionsEnabled !== true) {
@@ -1668,8 +1668,9 @@ async function sendCandidate(candidate) {
     const copyDecision = normalizeFollowUpDecision({
       action: "skip", reason: copyViolation,
     });
+    let recordedCopyDecision = null;
     try {
-      await followUpRepo.recordAiDecisionIfStillEligible({
+      recordedCopyDecision = await followUpRepo.recordAiDecisionIfStillEligible({
         contactId: candidate.contact_id,
         triggerMessageId: candidate.trigger_message_id,
         stepIndex, action: copyDecision.action, reason: copyDecision.reason,
@@ -1695,7 +1696,7 @@ async function sendCandidate(candidate) {
     }
     console.info("[Follow-up] Skipped unsafe/repeated copy: " + copyViolation +
       " contact=" + candidate.contact_id + " step=" + stepIndex);
-    return;
+    return Boolean(recordedCopyDecision);
   }
 
   // Only the transcript of the actual selected recording belongs to a voice
@@ -1907,9 +1908,9 @@ async function sendCandidate(candidate) {
       messageId: saved.id, contactId: candidate.contact_id,
     });
     if (discarded) {
-      await deferPolicyCandidate(candidate,stepIndex,sendResult.policyCode);
+      const retryAt = await deferPolicyCandidate(candidate,stepIndex,sendResult.policyCode);
       publishConversationChange(discarded, "message_cancelled");
-      return;
+      return Boolean(retryAt);
     }
   }
 
@@ -1921,7 +1922,7 @@ async function sendCandidate(candidate) {
       contactId: candidate.contact_id,
     });
     if (discarded) publishConversationChange(discarded, "message_cancelled");
-    return;
+    return false;
   }
 
   const uncertainSend =
@@ -1962,7 +1963,8 @@ async function sendCandidate(candidate) {
       `${uncertainSend ? "Delivery unconfirmed" : "Delivery failed"}: Automated follow-up #${saved.id} (step ${stepIndex}, ${durableVoiceKey ? "voice" : durableVideoKey ? "video" : effectiveImageUrl ? "image" : "text"}): ${deliveryError}`,
       saved.id
     );
-    return;
+    return true; // Delivery outcome is durably retained for staff review.
+
   }
 
   // Clear any prior temporary hold only AFTER provider acceptance.
@@ -1996,6 +1998,7 @@ async function sendCandidate(candidate) {
       settings.quietHours
     );
   }
+  return true; // Provider-accepted follow-up is recorded.
 }
 
 async function recoverInterruptedFollowUps() {
@@ -2081,9 +2084,10 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
       limit: FOLLOW_UP_BATCH_SIZE,
     });
 
+    let progressedCount = 0;
     for (const candidate of candidates) {
       try {
-        await sendCandidate(candidate);
+        if (await sendCandidate(candidate) === true) progressedCount += 1;
       } catch (err) {
         console.error(
           `Failed to process automated follow-up for contact ${candidate.contact_id}:`,
@@ -2113,6 +2117,7 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
     return {
       enabled: Boolean(liveSettings),
       candidateCount: candidates.length,
+      progressedCount,
       recoveredCount,
       nextDueAt: (() => {
         const times = [nextDueAt, pricingNextDueAt, consentNextDueAt]
@@ -2146,7 +2151,9 @@ function delayUntilNextFollowUp(result, nowMs = Date.now()) {
   const timestamps = times.map(value => Date.parse(value));
   if (timestamps.some(value => !Number.isFinite(value))) return FOLLOW_UP_CHECK_INTERVAL_MS;
 
-  const hasActionableWork = Number(result?.candidateCount || 0) > 0
+  // Finding a candidate is not progress: sender guards, expired windows and
+  // concurrent claims can decline it without changing the database.
+  const hasActionableWork = Number(result?.progressedCount || 0) > 0
     || Number(result?.recoveredCount || 0) > 0;
   const overdueDelay = timestamps.some(value => value <= nowMs)
     ? (hasActionableWork ? OVERDUE_ACTIVE_RECHECK_MS : OVERDUE_IDLE_RECHECK_MS)
