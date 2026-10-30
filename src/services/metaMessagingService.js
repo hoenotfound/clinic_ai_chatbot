@@ -8,10 +8,13 @@ const PROFILE_FETCH_TIMEOUT_MS = 5000;
 const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PROFILE_NOT_FOUND_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_PROFILE_CACHE_ENTRIES = 512;
+const MAX_COMMENT_CONTEXT_CACHE_ENTRIES = 128;
 const COMMENT_CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000;
 const { normalizeSocialReferral } = require("../utils/leadAttribution");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
+const { putBoundedExpiringCache } = require("../utils/boundedExpiringCache");
 
 const profileCache = new Map();
 const profileRequests = new Map();
@@ -174,11 +177,11 @@ async function fetchUserProfile(channel, userId) {
   profileRequests.set(key, request);
   try {
     const profile = await request;
-    profileCache.set(key, {
-      value: profile,
-      expiresAt:
-        Date.now() + (profile ? PROFILE_CACHE_TTL_MS : failureCacheTtlMs),
-    });
+    putBoundedExpiringCache(
+      profileCache, key, profile,
+      profile ? PROFILE_CACHE_TTL_MS : failureCacheTtlMs,
+      MAX_PROFILE_CACHE_ENTRIES
+    );
     return profile;
   } finally {
     profileRequests.delete(key);
@@ -559,10 +562,10 @@ async function fetchCommentSourceContext(channel, source = {}) {
           `[${channelLabel(channel)}] Failed to fetch comment source context ${sourceId}: ` +
             extractErrorText(data, raw || `HTTP ${response.status}`)
         );
-        commentContextCache.set(key, {
-          value: null,
-          expiresAt: Date.now() + PROFILE_FAILURE_CACHE_TTL_MS,
-        });
+        putBoundedExpiringCache(
+          commentContextCache, key, null,
+          PROFILE_FAILURE_CACHE_TTL_MS, MAX_COMMENT_CONTEXT_CACHE_ENTRIES
+        );
         return null;
       }
 
@@ -577,10 +580,10 @@ async function fetchCommentSourceContext(channel, source = {}) {
           2000
         ),
       };
-      commentContextCache.set(key, {
-        value,
-        expiresAt: Date.now() + COMMENT_CONTEXT_CACHE_TTL_MS,
-      });
+      putBoundedExpiringCache(
+        commentContextCache, key, value,
+        COMMENT_CONTEXT_CACHE_TTL_MS, MAX_COMMENT_CONTEXT_CACHE_ENTRIES
+      );
       return value;
     } catch (err) {
       console.warn(
