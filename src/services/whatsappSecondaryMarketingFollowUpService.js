@@ -8,6 +8,14 @@ const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {detectConversationLanguage}=require("../utils/chatLanguage");
+
+// Select a locale only from actual sender-owned customer text. Do not infer
+// Malay from Latin characters or silently send English to an unknown speaker.
+function customerTemplateLocale(messages){
+ const detected=detectConversationLanguage(Array.isArray(messages)?messages:[],null);
+ return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms_MY":null;
+}
 
 const INTERVAL=5*60*1000;
 const SLOTS=new Set([48,72]);
@@ -46,6 +54,7 @@ const CANDIDATES_SQL=`
    sa.meta_account_id AS whatsapp_sender_account_id,
    sc.id AS conversation_id,sa.id AS sender_id,
    inbound.id AS inbound_id,inbound.created_at AS inbound_at,
+   inbound.customer_messages,
    rule.slot_hours,rule.template_name,rule.language_code,
    rule.template_signature,rule.updated_at AS rule_updated_at,
    lead.treatment_interest
@@ -58,7 +67,16 @@ const CANDIDATES_SQL=`
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL(
-   SELECT m.id,m.created_at FROM messages m
+   SELECT m.id,m.created_at, ARRAY(
+     SELECT LEFT(recent.content,500) FROM messages recent
+     JOIN whatsapp_sender_message_context recent_ctx
+       ON recent_ctx.message_id=recent.id AND recent_ctx.conversation_id=sc.id
+     WHERE recent.contact_id=c.id AND recent.role='user'
+       AND recent.whatsapp_message_id IS NOT NULL
+       AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+         WHERE imported.sender_id=sa.id AND imported.message_id=recent.id)
+     ORDER BY recent.created_at DESC,recent.id DESC LIMIT 8
+   ) AS customer_messages FROM messages m
    JOIN whatsapp_sender_message_context mc ON mc.message_id=m.id
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user' AND m.whatsapp_message_id IS NOT NULL
@@ -110,6 +128,7 @@ const CANDIDATES_SQL=`
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_rules newer
      WHERE newer.sender_id=rule.sender_id AND newer.enabled=TRUE
+       AND newer.language_code=rule.language_code
        AND newer.slot_hours>rule.slot_hours
        AND inbound.created_at+newer.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
    )
@@ -130,7 +149,7 @@ const CANDIDATES_SQL=`
        AND attempted.anchor_message_id=inbound.id
        AND attempted.slot_hours=rule.slot_hours
    )
- ORDER BY inbound.created_at,c.id,rule.slot_hours LIMIT $5
+ ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5
 `;
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
@@ -167,14 +186,19 @@ async function runOnce({
 }={}){
  const cutoff=adsOnlyActivation(env);
  if(!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
+ const maxAttempts=Math.max(1,Math.min(20,Number(limit)||10));
+ // A customer can have several configured languages but is only eligible
+ // for ONE. Allow up to three candidate rows per slot, not extra attempts.
  const params=[env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
-   now,Math.max(1,Math.min(20,Number(limit)||10)),cutoff];
+   now,maxAttempts*3,cutoff];
  const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
  let attempted=0,accepted=0;
  for(const candidate of candidates){
+  if(attempted>=maxAttempts)break;
   const slot=Number(candidate.slot_hours);
-  if(!SLOTS.has(slot))continue;
+  if(!SLOTS.has(slot) ||
+     customerTemplateLocale(candidate.customer_messages)!==candidate.language_code)continue;
   const claimed=await database.query(
    `INSERT INTO whatsapp_sender_marketing_followup_attempts
      (sender_id,contact_id,anchor_message_id,slot_hours)
@@ -194,7 +218,10 @@ async function runOnce({
     Number(x.inbound_id)===Number(candidate.inbound_id) &&
     Number(x.slot_hours)===slot &&
     String(x.rule_updated_at)===String(candidate.rule_updated_at) &&
-    x.template_signature===candidate.template_signature)===true;
+    x.template_signature===candidate.template_signature &&
+    x.template_name===candidate.template_name &&
+    x.language_code===candidate.language_code &&
+    customerTemplateLocale(x.customer_messages)===candidate.language_code)===true;
   };
   try{
    if(!await current()){await fail("secondary_marketing_policy_changed");continue;}
@@ -270,4 +297,4 @@ function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
  return true;
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={CANDIDATES_SQL,RECHECK_SQL,enabled,approvedStaticMarketingTemplate,runOnce,start,stop};
+module.exports={CANDIDATES_SQL,RECHECK_SQL,enabled,customerTemplateLocale,approvedStaticMarketingTemplate,runOnce,start,stop};

@@ -110,7 +110,7 @@ test("disposable PostgreSQL: exact purged alarm releases once, records evidence,
    },query:(...a)=>db.query(...a),
   };
   await runMigrations(database,{quiet:true});
-  assert.equal((await db.query("SELECT MAX(version)::integer AS v FROM schema_migrations")).rows[0].v,110);
+  assert.equal((await db.query("SELECT MAX(version)::integer AS v FROM schema_migrations")).rows[0].v,111);
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
    "VALUES('neutro_secondary',$1,$2,'Secondary','active') RETURNING id",
