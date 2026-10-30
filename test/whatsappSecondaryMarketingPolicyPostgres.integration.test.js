@@ -34,6 +34,32 @@ test("migration 109 compiles second-account 48/72h consent, history, staff and o
   assert.deepEqual(checks.rows,[]);
   await db.query("DEALLOCATE secondary_marketing_candidates");
   await db.query("DEALLOCATE secondary_marketing_recheck");
+  // Two approved languages coexist in the SAME slot; one attempt is still
+  // unique per sender+contact+inbound+slot regardless of language.
+  const sender=(await db.query(
+   "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
+   "VALUES('neutro_secondary','100000000000002','200000000000002','Secondary','active') RETURNING id"
+  )).rows[0].id;
+  for(const [name,lang,hash] of [
+    ["ns_48h_choice_v2","zh_CN","a".repeat(64)],
+    ["ns_48h_choice_v2","en_US","b".repeat(64)],
+    ["ns_66h_assessment_v2","zh_CN","c".repeat(64)],
+    ["ns_66h_assessment_v2","en_US","d".repeat(64)],
+  ])await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_rules "+
+    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
+    "VALUES($1,$2,TRUE,$3,$4,$5,TRUE)",
+    [sender,name.startsWith("ns_48h")?48:72,name,lang,hash]
+  );
+  assert.equal((await db.query(
+   "SELECT COUNT(*)::int n FROM whatsapp_sender_marketing_followup_rules WHERE sender_id=$1",
+   [sender])).rows[0].n,4,"two language-specific rules per marketing slot");
+  await assert.rejects(db.query(
+   "INSERT INTO whatsapp_sender_marketing_followup_rules "+
+   "(sender_id,slot_hours,template_name,language_code,template_signature) "+
+   "VALUES($1,48,'duplicate','zh_CN',$2)",[sender,"f".repeat(64)]
+  ),e=>e.code==="23505","same sender, slot and language cannot be duplicated");
+
  }finally{
   await db.query("SET search_path TO public").catch(()=>{});
   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
