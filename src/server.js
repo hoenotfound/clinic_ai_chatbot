@@ -620,18 +620,22 @@ async function processIncomingMessage(
       : null;
 
     if (unsupportedType) {
-      // Meta diagnostics are staff-only. Never invent a customer response.
-      const label = channelMessaging.labelForChannel(channel);
-      await contactsRepo.setAiReviewAttention(
-        contact.id,
-        savedInbound.id,
-        formatUnsupportedReview({
-          channelLabel: label,
-          unsupportedType,
-          detail: incoming.unsupportedErrors?.[0] || {},
-        }),
-        "information"
-      );
+      // Unsupported provider payloads are already durable/unread in Inbox.
+      // A manual-only secondary contact must not enter the AI-review pipeline:
+      // that path also emits a Telegram AI-review notification.
+      if (!secondaryInboxOnly) {
+        const label = channelMessaging.labelForChannel(channel);
+        await contactsRepo.setAiReviewAttention(
+          contact.id,
+          savedInbound.id,
+          formatUnsupportedReview({
+            channelLabel: label,
+            unsupportedType,
+            detail: incoming.unsupportedErrors?.[0] || {},
+          }),
+          "information"
+        );
+      }
       return { wasFirstMessage, keywordReason };
     }
 
@@ -693,11 +697,15 @@ async function processIncomingMessage(
     if (mediaType === "image") {
       const media = await channelMessaging.downloadIncomingMedia(incoming);
       if (!media) {
-        await contactsRepo.setAiReviewAttention(
-          contact.id, savedInbound.id,
-          `A ${customerSingular} photo could not be downloaded.`,
-          "information"
-        );
+        // Manual chats keep the inbound media placeholder and stay unread,
+        // without generating AI-review alerts or Telegram notifications.
+        if (!secondaryInboxOnly) {
+          await contactsRepo.setAiReviewAttention(
+            contact.id, savedInbound.id,
+            `A ${customerSingular} photo could not be downloaded.`,
+            "information"
+          );
+        }
         // A photo can have a valid text caption. Staff reviews the missing
         // picture, but the caption must still be handled as an ordinary
         // customer question, not silently discarded.
@@ -746,22 +754,26 @@ async function processIncomingMessage(
             `Failed to store WhatsApp video media for ${channel}:${from}; keeping the durable placeholder:`,
             videoStorageErr
           );
-          await contactsRepo.setAiReviewAttention(
-            contact.id, savedInbound.id,
-            `A ${customerSingular} video could not be stored.`,
-            "information"
-          );
+          if (!secondaryInboxOnly) {
+            await contactsRepo.setAiReviewAttention(
+              contact.id, savedInbound.id,
+              `A ${customerSingular} video could not be stored.`,
+              "information"
+            );
+          }
           mediaAttachment = null;
         }
       } else {
         console.warn(
           `Could not download WhatsApp video ${incoming.mediaId || id || "without media id"} for ${from}; keeping the durable placeholder.`
         );
-        await contactsRepo.setAiReviewAttention(
-          contact.id, savedInbound.id,
-          `A ${customerSingular} video could not be downloaded.`,
-          "information"
-        );
+        if (!secondaryInboxOnly) {
+          await contactsRepo.setAiReviewAttention(
+            contact.id, savedInbound.id,
+            `A ${customerSingular} video could not be downloaded.`,
+            "information"
+          );
+        }
       }
     }
 
