@@ -83,4 +83,33 @@ async function isSecondaryAdsOnlyEligible(contactId, {
   }
 }
 
-module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible };
+
+async function eligibleSecondaryAdsOnlyContactIds(ids, {
+  database=pool,env=process.env,
+}={}) {
+  const result=new Set();
+  const cutoff=adsOnlyActivation(env);
+  if (!cutoff || env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
+      !Array.isArray(ids) || ids.length===0)return result;
+  const valid=[...new Set(ids.map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))];
+  if (!valid.length)return result;
+  try {
+    // Drive the list from ad referrals, not thousands of imported contacts.
+    // One indexed batch query per Inbox refresh, never one per conversation.
+    const rows=await database.query(
+      `SELECT DISTINCT c.id
+       FROM whatsapp_free_entry_referrals ads_candidate
+       JOIN contacts c ON c.id=ads_candidate.contact_id
+       WHERE c.id=ANY($1::integer[])
+         AND ads_candidate.recorded_at >= $2::timestamptz
+         AND ${adsOnlyEligibleSql("c","$2")}`,
+      [valid,cutoff]
+    );
+    for(const row of rows.rows||[])result.add(Number(row.id));
+  }catch(err){
+    console.error("[secondary ads-only] Inbox eligibility unavailable:",err?.message);
+  }
+  return result;
+}
+module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
+  eligibleSecondaryAdsOnlyContactIds };
