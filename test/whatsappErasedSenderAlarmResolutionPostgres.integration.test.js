@@ -12,6 +12,10 @@ const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
  WHATSAPP_SENDER_SCOPED_INGRESS_ENABLED:"true",
  WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+ WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+ WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+ WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
  WHATSAPP_PRIMARY_SENDER_KEY:"neutro",
  WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
  WHATSAPP_PHONE_NUMBER_ID:"1408739622311791",
@@ -37,6 +41,14 @@ test("release stays OFF, rejects active sends and incomplete evidence",async()=>
  assert.equal(svc.enabled({}),false);
  assert.equal((await svc.releaseReviewedErasedSecondaryAlarm(evidence,{env:{}})).released,false);
  for(const flag of svc.OUTBOUND_FLAGS)assert.equal(svc.enabled({...env,[flag]:"true"}),false,flag);
+ for(const flag of [
+  "WHATSAPP_PAID_DEFAULT_ROUTER_ENABLED",
+  "WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED",
+  "WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED",
+  "WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED",
+ ])assert.equal(svc.enabled({...env,[flag]:"false"}),false,flag);
+ assert.equal(svc.validateEvidence(null),null);
+ assert.equal(svc.validateEvidence([]),null);
  assert.equal(svc.enabled({...env,WHATSAPP_SECONDARY_EXPECTED_WABA_ID:"wrong"}),false);
  for(const bad of [
   {operatorExplicitlyAuthorized:false},
@@ -167,6 +179,19 @@ test("disposable PostgreSQL: UNKNOWN stays UNKNOWN after audited risk release; f
    "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reservation_id,reason,latest_wamid_hash)"+
    "VALUES($1,NULL,'purged_unresolved_reservation',$2)",[sender,reservation]
   );
+  // The release must not proceed for mismatched or conflicting old ledgers.
+  const badHash=await svc.releaseReviewedErasedSecondaryAlarm(
+   {...acceptedUnknown,reservationSha256:hash("unrelated-reservation")},{database,env});
+  assert.equal(badHash.released,false);
+  await db.query("UPDATE whatsapp_sender_billing_alarms SET observed_count=2 WHERE sender_id=$1",[sender]);
+  const multiAlarm=await svc.releaseReviewedErasedSecondaryAlarm(acceptedUnknown,{database,env});
+  assert.equal(multiAlarm.released,false);
+  await db.query("UPDATE whatsapp_sender_billing_alarms SET observed_count=1 WHERE sender_id=$1",[sender]);
+  await db.query("UPDATE whatsapp_sender_erased_billing_audit SET previous_state='rejected' WHERE sender_id=$1",[sender]);
+  const otherState=await svc.releaseReviewedErasedSecondaryAlarm(acceptedUnknown,{database,env});
+  assert.equal(otherState.released,false);
+  await db.query("UPDATE whatsapp_sender_erased_billing_audit SET previous_state='unknown' WHERE sender_id=$1",[sender]);
+
   const blocked=await svc.releaseReviewedErasedSecondaryAlarm(
    {...acceptedUnknown,signedReceiptIngressManuallyVerified:false},{database,env});
   assert.equal(blocked.released,false);
@@ -187,6 +212,15 @@ test("disposable PostgreSQL: UNKNOWN stays UNKNOWN after audited risk release; f
   assert.equal(audit.signed_receipt_ingress_verified,true);
   assert.equal(audit.secondary_payment_method_verified,true);
   assert.equal(audit.original_retry_prohibited,true);
+  // This is an append-only audit: neither reviewer nor operator may
+  // rewrite the UNKNOWN status after a successful release.
+  await assert.rejects(db.query(
+   "UPDATE whatsapp_sender_erased_alarm_resolutions SET outcome='confirmed_sent' WHERE sender_id=$1",
+   [sender]
+  ),/append-only/);
+  await assert.rejects(db.query(
+   "DELETE FROM whatsapp_sender_erased_alarm_resolutions WHERE sender_id=$1",[sender]
+  ),/append-only/);
   assert.equal((await db.query("SELECT previous_state FROM whatsapp_sender_erased_billing_audit")).rows[0].previous_state,"unknown");
   assert.equal((await db.query("SELECT count(*)::int AS n FROM whatsapp_sender_billing_attempts")).rows[0].n,0);
   const replay=await svc.releaseReviewedErasedSecondaryAlarm(acceptedUnknown,{database,env});
