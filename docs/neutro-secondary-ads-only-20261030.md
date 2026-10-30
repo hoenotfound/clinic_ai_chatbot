@@ -8,10 +8,10 @@ For sender `neutro_secondary` (中医养生馆), allow AI and automation **only*
 - Secondary sender's active WABA/phone-bound conversation and contact.
 - Contact creation and FIRST customer message both on or after the immutable UTC activation cutoff.
 - FIRST saved provider customer message has an actual Meta ad referral record (`whatsapp_free_entry_referrals`, source_type=ad, with `ctwa_clid` or `meta_ad_id`), joined through the exact sender conversation.
-- No earlier message at all and no imported coexistence history tied to the contact. A later ad click **never** qualifies an old contact.
+- No earlier message at all, no imported coexistence history, no permanent Business App import marker, and the original Meta message timestamp after the launch cutoff. A later ad click **never** qualifies an old contact.
 - Unavailable database, invalid UTC cutoff, disabled audience, or mismatched sender: fail closed.
 
-Implementation reuses the existing referral table, sender context and receipt/billing gates. No schema migrations, new service, background polling, or new outbound permissions.
+Implementation reuses the existing referral table, sender context and receipt/billing gates. A forward-only schema migration (#110) marks Business App imported contacts permanently manual, including contact-only sync with no historical message. No new service, background polling, or outbound permissions.
 
 ## Applied safeguards
 - Inbound message processing: manual Inbox for nonqualifying contacts; no AI reply, temperature classifier, transcription, pricing/result selection or automated handoff for those contacts.
@@ -28,6 +28,6 @@ Implementation reuses the existing referral table, sender context and receipt/bi
 4. After explicit live-send approval and independent sender billing/consent checks, enable only the previously reviewed secondary AI feature flags. Confirm one NEW CTWA contact gets one text reply and signed billing/delivery receipt. Confirm preexisting, imported, organic and ambiguous-source contacts get zero AI replies.
 5. Extend follow-ups, media and templates one at a time, with separate approvals. Marketing templates still require independent Meta APPROVED status, exact scoped marketing consent and paid message authorization.
 
-**Important:** Draft PR #446's future 48h/72h marketing-template worker is NOT covered until it is rebased and given the same selection, pre-claim and pre-provider ad eligibility checks. Do not deploy/enable it beforehand.
+**Important:** PR #446 merged into main on 2026-10-30. PR #447 now integrates and gates its 20h personalization and 48h/72h marketing-template worker with the same first-ad rule, including the paid marketing dispatch origin. Post-24h sends still require exact approved templates, explicit consent, receipts and independent billing authorization.
 
-The UI selector was a proposed design. This PR implements the safer backend rule as deployment-time settings first; there is no live clickable audience selector in Tools yet.
+The Inbox list/detail now reports per-contact secondary AI enabled only for qualifying new ad contacts, with a single batched eligibility query for the list. The Tools UI audience selector itself is still not implemented: activation requires explicit Render deployment-time settings.
