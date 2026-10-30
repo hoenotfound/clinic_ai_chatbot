@@ -188,7 +188,7 @@ async function runOnce({
    [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   const current=async()=>{
    const result=await database.query(RECHECK_SQL,[
-    params[0],params[1],params[2],new Date(),1000]);
+    params[0],params[1],params[2],new Date(),1000,cutoff]);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
     Number(x.inbound_id)===Number(candidate.inbound_id) &&
