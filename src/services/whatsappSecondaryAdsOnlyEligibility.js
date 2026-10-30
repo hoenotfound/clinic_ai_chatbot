@@ -44,7 +44,10 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
       AND ads_sa.state='active'
       AND ${contactSql}.channel='whatsapp'
       AND ${contactSql}.created_at >= ${cutoffSql}::timestamptz
+      AND ${contactSql}.whatsapp_coexistence_imported_at IS NULL
       AND ads_first.created_at >= ${cutoffSql}::timestamptz
+      AND ads_first.source_created_at IS NOT NULL
+      AND ads_first.source_created_at >= ${cutoffSql}::timestamptz
       AND NOT EXISTS (
         SELECT 1 FROM messages ads_prior
         WHERE ads_prior.contact_id=${contactSql}.id
