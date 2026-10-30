@@ -14,6 +14,7 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
   now = Date.now(),
   post = postTelegramMessage,
   logger = console,
+  auditFailed = false,
 } = {}) {
   if (!Array.isArray(quarantined) || !quarantined.length) return false;
 
@@ -22,7 +23,7 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
   // Those expected receipts must not generate a customer-routing alarm.
   // Require an internal marker AND exact sender identity; an unsupported
   // event with only matching metadata is never enough to suppress an alert.
-  const reportable = quarantined.filter(item => !(
+  const reportable = auditFailed ? quarantined : quarantined.filter(item => !(
     item.expectedSecondaryStatus === true &&
     item.reason === "unsupported_whatsapp_event" &&
     item.field === "messages" &&
@@ -37,10 +38,11 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
   // audit; filtering here only affects operator warnings and Telegram.
   if (!reportable.length) return false;
   const reasons = [...new Set(reportable.map(item => item.reason))].sort();
-  const key = reasons.join(",");
+  const key = `${auditFailed ? "audit_failed:" : ""}${reasons.join(",")}`;
   logger.warn(
-    `[WhatsApp sender quarantine] ${reportable.length} event(s) isolated; reasons=${key}. `
-    + "Investigate account callback overrides; affected events did not enter the Inbox."
+    `[WhatsApp sender quarantine] ${reportable.length} event(s) isolated; reasons=${reasons.join(",")}. `
+    + (auditFailed ? "Quarantine database audit write failed." :
+      "Investigate account callback overrides; affected events did not enter the Inbox.")
   );
   if (!isTelegramEnabled(env)) return false;
   if ((lastNotified.get(key) || 0) + NOTIFY_COOLDOWN_MS > now) return false;
@@ -50,12 +52,15 @@ async function notifyWhatsAppSenderQuarantine(quarantined, {
     await post({
       token: env.TELEGRAM_BOT_TOKEN,
       chatId: env.TELEGRAM_CHAT_ID,
-      text: `⚠️ WhatsApp business-number routing alert\n`
+      text: (auditFailed ? `⚠️ WhatsApp webhook quarantine audit failed\n` :
+        `⚠️ WhatsApp business-number routing alert\n`)
         + `${reportable.length} callback event(s) were isolated.\n`
         + `Reasons: ${reasons.join(", ")}\n`
-        + "Review Meta's account-specific webhook override and the quarantined-event audit. "
-        + "The events were NOT delivered to an Inbox; after correcting the route, "
-        + "ask the customer to send a new message if needed.",
+        + (auditFailed
+          ? "The quarantine database write did not complete. Review Render errors and the callback response; do not automatically resend customer messages."
+          : "Review Meta's account-specific webhook override and the quarantined-event audit. "
+          + "The events were NOT delivered to an Inbox; after correcting the route, "
+          + "ask the customer to send a new message if needed."),
     });
     return true;
   } catch (error) {
