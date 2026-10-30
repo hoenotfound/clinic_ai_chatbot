@@ -48,3 +48,16 @@ CREATE TABLE IF NOT EXISTS whatsapp_sender_erased_alarm_resolutions (
 );
 COMMENT ON TABLE whatsapp_sender_erased_alarm_resolutions IS
   'Immutable audit of single erased-reservation alarm release. UNKNOWN/UNKNOWN with risk acceptance is never proof of delivery or of price; never re-send the erased message. No customer IDs, numbers, WAMIDs, or message content.';
+-- Prevent application-level amendment or deletion of a resolved audit.
+-- A database owner can still administer schema; this is an append-only
+-- business-record safeguard, not a cryptographic tamper-proof ledger.
+CREATE OR REPLACE FUNCTION reject_erased_alarm_resolution_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'whatsapp_sender_erased_alarm_resolutions is append-only'
+    USING ERRCODE = '23514';
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_erased_alarm_resolution_append_only
+  BEFORE UPDATE OR DELETE ON whatsapp_sender_erased_alarm_resolutions
+  FOR EACH ROW EXECUTE FUNCTION reject_erased_alarm_resolution_mutation();
