@@ -46,7 +46,8 @@ async function sendSecondaryStaffText({
   now = () => new Date(),
 } = {}) {
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
-  const parity = aiTextOnly &&
+  const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
+  const parity = aiTextOnly && parityRequested &&
     env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
@@ -78,7 +79,8 @@ async function sendSecondaryStaffText({
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true");
-  if (!authorizedOrigin ||
+  if ((parityRequested && !parity) ||
+      !authorizedOrigin ||
       // AI text-only and Phase B text follow-ups must not use a callback
       // capable of uploading media or sending non-text Graph payloads.
       (aiTextOnly && typeof dispatchTransport === "function" &&
