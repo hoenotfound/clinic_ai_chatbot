@@ -241,6 +241,7 @@ async function assertStoredSenderSafety({
     // paths fail closed on the disabled sender state.
     // Never accept 'testing' as a substitute for authorized activation.
   }
+  let primaryRegistrationVerified = false;
   if (ingressEnabled) {
     const registered = await database.query(
       "SELECT id, sender_key, state FROM whatsapp_sender_accounts " +
@@ -252,8 +253,14 @@ async function assertStoredSenderSafety({
       throw new Error("Unsafe WhatsApp activation: primary sender does not " +
         "match an active persisted Neutro account and business phone.");
     }
+    primaryRegistrationVerified = true;
   }
-  return { verified: true, scopedContacts: total, nonprimaryContacts: nonprimary };
+  return {
+    verified: true,
+    scopedContacts: total,
+    nonprimaryContacts: nonprimary,
+    primaryRegistrationVerified,
+  };
 }
 
 module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent, assertExpectedSecondaryTarget, assertSecondaryLifecyclePin };

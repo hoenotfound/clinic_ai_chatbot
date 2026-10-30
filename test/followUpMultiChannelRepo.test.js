@@ -33,6 +33,8 @@ test("candidate discovery covers all supported messaging channels inside the saf
   assert.match(capturedSql, /is_automated_follow_up = false/);
   assert.match(capturedSql, /automated_follow_up_for_message_id = anchor\.id/);
   assert.match(capturedSql, /next_follow_up_step/);
+  assert.match(capturedSql, /c\.whatsapp_sender_id IS NULL/);
+  assert.match(capturedSql, /primary_sender\.meta_phone_number_id=\$7::text/);
   assert.deepEqual(capturedParams, [
     [120],
     "all",
@@ -40,6 +42,8 @@ test("candidate discovery covers all supported messaging channels inside the saf
     25,
     ["after_reply"],
     [120],
+    process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+    process.env.WHATSAPP_WABA_ID || "",
   ]);
 });
 

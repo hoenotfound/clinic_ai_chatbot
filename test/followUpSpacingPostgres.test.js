@@ -31,6 +31,7 @@ test(
           id INTEGER PRIMARY KEY,
           channel TEXT NOT NULL,
           whatsapp_number TEXT,
+          whatsapp_sender_id INTEGER,
           channel_user_id TEXT,
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,
@@ -39,6 +40,12 @@ test(
           takeover_by TEXT,
           takeover_at TIMESTAMPTZ,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE whatsapp_sender_accounts (
+          id INTEGER PRIMARY KEY,
+          meta_phone_number_id TEXT,
+          meta_account_id TEXT
         );
 
         CREATE TABLE ai_review_items (id BIGSERIAL PRIMARY KEY, contact_id INTEGER, inbound_message_id INTEGER, summary TEXT, created_at TIMESTAMPTZ DEFAULT now(), status TEXT, category TEXT);

@@ -26,6 +26,19 @@ function skipNonPricingChannel(column) {
 }
 
 
+// Legacy follow-ups run only for primary/untagged contacts. A secondary
+// coexistence sender uses its own independently gated, sender-scoped follow-up
+// worker; never let the legacy worker repeatedly select a sender it cannot send
+// for. Match primary by verified phone + WABA, not a business-specific key.
+function primaryFollowUpSenderSql(phoneParam, accountParam) {
+  return `(c.channel <> 'whatsapp' OR c.whatsapp_sender_id IS NULL OR EXISTS (
+    SELECT 1 FROM whatsapp_sender_accounts primary_sender
+    WHERE primary_sender.id=c.whatsapp_sender_id
+      AND primary_sender.meta_phone_number_id=${phoneParam}::text
+      AND primary_sender.meta_account_id=${accountParam}::text
+  ))`;
+}
+
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
 const FOLLOW_UP_MESSAGE_MODES = new Set(["fixed", "ai_personalized", "ai_fallback"]);
@@ -266,6 +279,7 @@ async function findCandidates({
          LIMIT 1
        ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+         AND ${primaryFollowUpSenderSql('$7', '$8')}
          AND ${followUpAttentionAllowedSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
@@ -356,7 +370,8 @@ async function findCandidates({
            END ASC,
        contact_id ASC
      LIMIT $4`,
-    [delays, triggerMode, activatedAt, limit, modes, expiryOffsets]
+    [delays, triggerMode, activatedAt, limit, modes, expiryOffsets,
+      process.env.WHATSAPP_PHONE_NUMBER_ID || "", process.env.WHATSAPP_WABA_ID || ""]
   );
   return result.rows;
 }
@@ -474,6 +489,7 @@ async function getNextCandidateDueAt({
          LIMIT 1
        ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+         AND ${primaryFollowUpSenderSql('$6', '$7')}
          AND ${followUpAttentionAllowedSql("c")}
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
@@ -539,7 +555,8 @@ async function getNextCandidateDueAt({
        AND ${reserveFinalPricingWindow()
          ? `(next_follow_up_step <> 3 OR ${skipNonPricingChannel("channel")} OR now() < latest_inbound_created_at + interval '23 hours 35 minutes')`
          : "TRUE"}`,
-    [delays, triggerMode, activatedAt, modes, expiryOffsets]
+    [delays, triggerMode, activatedAt, modes, expiryOffsets,
+      process.env.WHATSAPP_PHONE_NUMBER_ID || "", process.env.WHATSAPP_WABA_ID || ""]
   );
   return result.rows[0]?.due_at || null;
 }
@@ -1435,6 +1452,7 @@ async function markStaleClaimsUnconfirmed({ olderThanMinutes, limit = 25 }) {
 
 module.exports = {
   MAX_FOLLOW_UP_STEPS,
+  primaryFollowUpSenderSql,
   findCandidates,
   getNextCandidateDueAt,
   getNextStaleClaimDueAt,
