@@ -1,6 +1,7 @@
 const https = require("https");
 const telegramAlertRepo = require("../db/telegramAlertRepo");
 const {isSecondaryAdsOnlyEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {pool}=require("../db/db");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
@@ -341,7 +342,20 @@ function createTelegramAlertService({
             async () => {
               // Old/queued secondary summaries and recovered failures must
               // never reach Telegram if this is not a new CTWA ad contact.
-              if (claim.whatsapp_sender_key==="neutro_secondary" &&
+              let secondary=claim.whatsapp_sender_key==="neutro_secondary";
+              if (!secondary &&
+                  env.WHATSAPP_SECONDARY_SENDER_KEY==="neutro_secondary") {
+                // Only Neutro's multi-sender deployment needs this lookup.
+                // Other clinics and minimal legacy test schemas stay unchanged.
+                const owner=await pool.query(
+                  "SELECT EXISTS (SELECT 1 FROM contacts c " +
+                  "JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id " +
+                  "WHERE c.id=$1 AND sa.sender_key='neutro_secondary') AS secondary",
+                  [claim.contact_id]
+                );
+                secondary=owner.rows?.[0]?.secondary===true;
+              }
+              if (secondary &&
                   !await isSecondaryAdsOnlyEligible(claim.contact_id,{env})) {
                 await repository.markSuperseded(claim.alert_id);
                 return "superseded";
