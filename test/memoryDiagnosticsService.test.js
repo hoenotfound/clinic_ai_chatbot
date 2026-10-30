@@ -15,6 +15,7 @@ test("memory sampling reports heap and container usage without any customer data
   const files = {
     "/sys/fs/cgroup/memory.current": String(210 * 1024 * 1024),
     "/sys/fs/cgroup/memory.max": String(512 * 1024 * 1024),
+    "/sys/fs/cgroup/memory.stat": "anon 104857600\nfile 73400320\nshmem 10485760\nslab 5242880\n",
   };
   const result = memory.sampleMemory({
     memoryUsage: mockMemoryUsage,
@@ -29,6 +30,10 @@ test("memory sampling reports heap and container usage without any customer data
     arrayBuffersMiB: 20,
     containerUsedMiB: 210,
     containerLimitMiB: 512,
+    containerAnonMiB: 100,
+    containerFileMiB: 70,
+    containerShmemMiB: 10,
+    containerSlabMiB: 5,
     uptimeSeconds: 101,
   });
   assert.ok(Object.keys(result).every(key => key.endsWith("MiB") || key === "uptimeSeconds"));
