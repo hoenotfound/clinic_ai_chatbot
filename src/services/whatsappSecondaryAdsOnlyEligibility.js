@@ -91,8 +91,13 @@ async function isSecondaryAdsOnlyEligible(contactId, {
 } = {}) {
   const cutoff = adsOnlyActivation(env);
   const id = Number(contactId);
+  // The same operational gates as Inbox batching: secondary AI OFF means
+  // no per-message audience queries, including during inbound preparation,
+  // lead scoring, Telegram filtering and media enqueue checks.
   if (!cutoff || !Number.isSafeInteger(id) || id <= 0 ||
-      env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary") return false;
+      env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
+      env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return false;
   try {
     const result = await database.query(
       `SELECT ${adsOnlyEligibleSql("c", "$2")} AS eligible

@@ -28,6 +28,8 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     const cutoff=new Date(Date.now()-60*1000).toISOString();
     const env={
       WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+      WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+      WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
       WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
       WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:cutoff,
     };
