@@ -11,6 +11,7 @@ const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
+const { adsOnlyActivation, adsOnlyEligibleSql } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
@@ -59,6 +60,7 @@ const CANDIDATES_SQL=`
  ) lead ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
+   AND ${adsOnlyEligibleSql("c", "$6")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -150,6 +152,7 @@ const RECHECK_SQL=`
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND rule.updated_at=$7::timestamptz
+   AND ${adsOnlyEligibleSql("c", "$8")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -202,12 +205,13 @@ async function runOnce({
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
 }={}) {
-  if (!enabled(env))return{disabled:true,attempted:0,accepted:0};
+  const adsCutoff = adsOnlyActivation(env);
+  if (!enabled(env) || !adsCutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
   const items=(await database.query(CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-    env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,
+    env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,adsCutoff,
   ])).rows||[];
   let attempted=0,accepted=0;
   for(const candidate of items) {
@@ -239,7 +243,7 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_SENDER_KEY,
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID,
-        candidate.rule_updated_at,
+        candidate.rule_updated_at,adsCutoff,
       ]);
       return result.rows?.[0]?.allowed===true;
     };
@@ -332,7 +336,7 @@ async function runOnce({
 
 let timer=null;
 function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}) {
- if(!enabled(env)||timer)return false;
+ if(!enabled(env)||!adsOnlyActivation(env)||timer)return false;
  timer=setIntervalFn(()=>run({env}).catch(e=>
    console.error("[secondary WhatsApp followups] Sender-scoped worker error:",e?.message)
  ),INTERVAL);
