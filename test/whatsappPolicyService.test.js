@@ -56,6 +56,12 @@ test("recognizes natural opt-out requests that were missed in live Neutro conver
     ["Please stop the follow-ups", "marketing"],
     ["Jangan hantar mesej auto lagi ya", "marketing"],
     ["Please don't send me messages again", "all"],
+    ["Please don't send me automated messages", "marketing"],
+    ["I don't want any more automatic messages", "marketing"],
+    ["请不要再联系我", "all"],
+    ["别再打扰我了", "all"],
+    ["Please don't contact me again", "all"],
+    ["Tolong jangan mesej saya lagi", "all"],
   ]) {
     assert.equal(policy.classifyOptOutText(message), expected, message);
   }
@@ -77,6 +83,9 @@ test("does not treat normal customer messages as opt-out requests", () => {
     "Can you explain how automated follow-ups work?",
     "Does the automated message stop after one day?",
     "I want to stop my follow-up appointment",
+    "Please don't stop messaging me",
+    "Don't stop contacting me",
+    "Don't send me automated service pricing",
   ];
 
   for (const text of normalMessages) {
