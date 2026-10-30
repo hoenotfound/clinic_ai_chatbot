@@ -320,3 +320,27 @@ test("mixed secondary customer text and failed status stays sender-scoped", () =
   assert.equal(Object.hasOwn(change.value, "statuses"), false,
     "secondary status never enters primary status or billing handlers");
 });
+
+
+test("malformed errors property is not mistaken for a routine success", async () => {
+  const item = secondaryStatus("delivered", { code: 131000 });
+  assert.equal(item.expectedSecondaryStatus, false);
+  assert.equal(item.secondaryStatusRequiresReview, true);
+  const calls = capture();
+  assert.equal(await notifyWhatsAppSenderQuarantine([item], {
+    env, now: 2000023000000, ...calls,
+  }), true);
+  assert.match(calls.messages[0], /delivery status needs review/);
+});
+
+test("one callback with multiple failures produces one summary with actual count", async () => {
+  const a = secondaryStatus("failed");
+  const b = secondaryStatus("failed");
+  const calls = capture();
+  assert.equal(await notifyWhatsAppSenderQuarantine([a, b], {
+    env, now: 2000024000000, ...calls,
+  }), true);
+  assert.equal(calls.messages.length, 1);
+  assert.match(calls.messages[0], /2 failed or unrecognized delivery-status event\(s\)/);
+  assert.match(calls.warnings[0], /2 failed\/unrecognized receipt event\(s\)/);
+});
