@@ -2131,27 +2131,33 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
   }
 }
 
-function earliestTimestamp(...values) {
-  let earliest = null;
-  for (const value of values) {
-    if (!value) continue;
-    const timestamp = Date.parse(value);
-    if (Number.isNaN(timestamp)) return NaN;
-    if (earliest === null || timestamp < earliest) earliest = timestamp;
-  }
-  return earliest;
-}
+// A due-time hint is not a guarantee that an outbound follow-up can proceed.
+// A permanently overdue hint must not run expensive DB sweeps every second.
+const OVERDUE_IDLE_RECHECK_MS = 60 * 1000;
+const OVERDUE_ACTIVE_RECHECK_MS = 10 * 1000;
 
-function delayUntilNextFollowUp(result) {
-  const timestamp = earliestTimestamp(
+function delayUntilNextFollowUp(result, nowMs = Date.now()) {
+  const times = [
     result?.enabled ? result.nextDueAt : null,
-    result?.nextRecoveryAt
-  );
-  if (timestamp === null) return null;
-  if (Number.isNaN(timestamp)) return FOLLOW_UP_CHECK_INTERVAL_MS;
-  // Avoid a zero-delay spin if another instance wins a race between candidate
-  // discovery/recovery and the atomic claim.
-  return Math.max(1000, timestamp - Date.now());
+    result?.nextRecoveryAt,
+  ].filter(Boolean);
+  if (!times.length) return null;
+
+  const timestamps = times.map(value => Date.parse(value));
+  if (timestamps.some(value => !Number.isFinite(value))) return FOLLOW_UP_CHECK_INTERVAL_MS;
+
+  const hasActionableWork = Number(result?.candidateCount || 0) > 0
+    || Number(result?.recoveredCount || 0) > 0;
+  const overdueDelay = timestamps.some(value => value <= nowMs)
+    ? (hasActionableWork ? OVERDUE_ACTIVE_RECHECK_MS : OVERDUE_IDLE_RECHECK_MS)
+    : Infinity;
+  const upcomingDelays = timestamps
+    .filter(value => value > nowMs)
+    .map(value => Math.max(1000, value - nowMs));
+
+  // A genuinely new due time wins over the backoff. Conversation/pipeline
+  // events still wake the worker immediately through wakeAutomatedFollowUps(0).
+  return Math.min(overdueDelay, ...upcomingDelays);
 }
 
 function wakeAutomatedFollowUps(delayMs = 0) {
@@ -2202,6 +2208,9 @@ module.exports = {
   isConfiguredPromotionPriceGraphic,
   enforceAssessmentFirstFollowUpCopy,
   FOLLOW_UP_CHECK_INTERVAL_MS,
+  OVERDUE_IDLE_RECHECK_MS,
+  OVERDUE_ACTIVE_RECHECK_MS,
+  delayUntilNextFollowUp,
   STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,
   startAutomatedFollowUps,
