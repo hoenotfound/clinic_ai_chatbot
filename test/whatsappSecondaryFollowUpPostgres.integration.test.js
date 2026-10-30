@@ -23,7 +23,7 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
        return{query:(...args)=>c.query(...args),release:()=>c.end()};
      },
    };
-   assert.equal(loadMigrations().at(-1).version,109);
+   assert.equal(loadMigrations().at(-1).version,110);
    await runMigrations(database,{quiet:true});
    assert.equal((await db.query(
      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_followup_rules"
