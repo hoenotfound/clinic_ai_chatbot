@@ -9,6 +9,7 @@ const HASH = /^[a-f0-9]{64}$/;
 const ACTOR = /^[A-Za-z0-9._@-]{3,120}$/;
 const OUTCOMES = new Set(["confirmed_sent", "confirmed_not_sent"]);
 const CHARGES = new Set(["charge_accounted", "no_charge_verified"]);
+// Unknown delivery AND unknown charge is risk acceptance, not reconciliation.
 const OUTBOUND_FLAGS = [
   "WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED",
   "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
@@ -53,36 +54,66 @@ function enabled(env = process.env) {
 
 function validateEvidence(input = {}) {
   const reservation = String(input.reservationSha256 || "");
-  const appHash = String(input.businessAppEvidenceSha256 || "");
-  const billingHash = String(input.metaBillingEvidenceSha256 || "");
+  const appHash = input.businessAppEvidenceSha256 ?? null;
+  const billingHash = input.metaBillingEvidenceSha256 ?? null;
   const reviewer = String(input.reviewer || "").trim();
   const approver = String(input.independentApprover || "").trim();
   const reason = String(input.reviewReason || "").trim();
   const outcome = input.outcome;
   const charge = input.chargeOutcome;
+  const unknownRisk = outcome === "unknown" && charge === "unknown";
+
+  // Attestations are NOT proof that Meta sent/charged the old message. A
+  // signed callback on the deployed code and payment readiness MUST be
+  // independently checked before any sender-wide hold may be lifted.
   if (input.operatorExplicitlyAuthorized !== true ||
-      input.businessAppManuallyReviewed !== true ||
-      input.metaBillingManuallyReviewed !== true ||
-      !HASH.test(reservation) || !HASH.test(appHash) || !HASH.test(billingHash) ||
-      reservation === appHash || reservation === billingHash || appHash === billingHash ||
+      input.signedReceiptIngressManuallyVerified !== true ||
+      input.secondaryPaymentMethodManuallyVerified !== true ||
+      !HASH.test(reservation) ||
       !ACTOR.test(reviewer) || !ACTOR.test(approver) ||
       reviewer.toLowerCase() === approver.toLowerCase() ||
-      reason.length < 40 || reason.length > 800 ||
+      reason.length < 40 || reason.length > 800) {
+    return null;
+  }
+
+  if (unknownRisk) {
+    // No fake status, fake no-charge conclusion, or fake evidence.
+    if (input.acceptsUnresolvedDeliveryAndCharge !== true ||
+        input.acceptsPossibleLaterMetaCharge !== true ||
+        input.originalMessageWillNeverBeRetried !== true ||
+        appHash != null || billingHash != null ||
+        input.businessAppManuallyReviewed === true ||
+        input.metaBillingManuallyReviewed === true) {
+      return null;
+    }
+    return {
+      reservation, appHash:null, billingHash:null, reviewer, approver,
+      reason, outcome:"unknown", charge:"unknown", riskAccepted:true,
+    };
+  }
+  if (input.businessAppManuallyReviewed !== true ||
+      input.metaBillingManuallyReviewed !== true ||
       !OUTCOMES.has(outcome) || !CHARGES.has(charge) ||
+      !HASH.test(appHash) || !HASH.test(billingHash) ||
+      appHash === billingHash || reservation === appHash ||
+      reservation === billingHash ||
       (outcome === "confirmed_not_sent" && charge !== "no_charge_verified")) {
     return null;
   }
-  return { reservation, appHash, billingHash, reviewer, approver, reason, outcome, charge };
+  return {
+    reservation, appHash, billingHash, reviewer, approver,
+    reason, outcome, charge, riskAccepted:false,
+  };
 }
 
-async function releaseVerifiedErasedSecondaryAlarm(input, {
+async function releaseReviewedErasedSecondaryAlarm(input, {
   database = pool,
   env = process.env,
 } = {}) {
   if (!enabled(env)) return deny("secondary_erased_alarm_release_disabled");
   const evidence = validateEvidence(input);
   if (!evidence || typeof database?.connect !== "function") {
-    return deny("secondary_erased_alarm_independent_evidence_required");
+    return deny("secondary_erased_alarm_authorized_review_required");
   }
   let client, inTransaction = false;
   try {
@@ -149,17 +180,21 @@ async function releaseVerifiedErasedSecondaryAlarm(input, {
       return deny("secondary_erased_alarm_new_evidence_or_open_attempt");
     }
 
-    // This records only the hashes of external evidence, not erased customer
-    // identifiers, chats, WAMIDs, phone numbers or billing screenshot content.
+    // Verified outcomes store only hashes of actual external evidence. A
+    // risk-accepted UNKNOWN/UNKNOWN outcome stores NULL hashes; neither is
+    // a provider receipt. The erased attempt and hashed purge audit remain
+    // unchanged, and no service retry can target deleted message context.
     await client.query(
       "INSERT INTO whatsapp_sender_erased_alarm_resolutions " +
       "(sender_id,reservation_sha256,outcome,charge_outcome," +
       "business_app_evidence_sha256,meta_billing_evidence_sha256," +
+      "risk_accepted,signed_receipt_ingress_verified," +
+      "secondary_payment_method_verified,original_retry_prohibited," +
       "reviewer,independent_approver,review_reason) " +
-      "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      "VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,TRUE,$8,$9,$10)",
       [senderId,evidence.reservation,evidence.outcome,evidence.charge,
-        evidence.appHash,evidence.billingHash,evidence.reviewer,
-        evidence.approver,evidence.reason]
+        evidence.appHash,evidence.billingHash,evidence.riskAccepted,
+        evidence.reviewer,evidence.approver,evidence.reason]
     );
     const removed = await client.query(
       "DELETE FROM whatsapp_sender_billing_alarms WHERE sender_id=$1 " +
@@ -171,8 +206,11 @@ async function releaseVerifiedErasedSecondaryAlarm(input, {
       throw new Error("Alarm changed during authorized reconciliation.");
     }
     await client.query("COMMIT"); inTransaction = false;
-    // This release does NOT authorize a send, retry, message restoration or
-    // any secondary automation mode. Those need separate explicit approvals.
+    // Even if the legacy sender-wide alarm is released, old delivery AND
+    // charging remain UNKNOWN when riskAccepted. The original erased
+    // reservation cannot be re-sent. New sends still need their own
+    // sender-specific billing, receipt and activation gates.
+    // This does NOT authorize any send, retry, or automation flag.
     return { released: true, sendAuthorized: false, retryAuthorized: false };
   } catch {
     if (inTransaction && client) await client.query("ROLLBACK").catch(() => {});
@@ -186,5 +224,5 @@ module.exports = {
   OUTBOUND_FLAGS,
   enabled,
   validateEvidence,
-  releaseVerifiedErasedSecondaryAlarm,
+  releaseReviewedErasedSecondaryAlarm,
 };
