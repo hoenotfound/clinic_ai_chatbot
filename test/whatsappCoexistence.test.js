@@ -50,6 +50,59 @@ test("Business App text echo is parsed as outbound staff work, not customer inbo
   }]);
 });
 
+test("Business App edited text uses the nested Meta message shape, never inbound AI", () => {
+  const body = echoPayload({
+    from: "60122972817", to: "60135550000",
+    id: "wamid.HBgLZWRpdC1ldmVudAA=",
+    type: "edit",
+    edit: {
+      original_message_id: "wamid.HBgLb3JpZ2luYWw=",
+      message: { type: "text", text: { body: "Corrected staff reply" } },
+    },
+  });
+  assert.deepEqual(whatsapp.parseIncomingMessages(body), []);
+  const [event] = whatsapp.parseBusinessAppEchoes(body);
+  assert.equal(event.type, "edit");
+  assert.equal(event.originalMessageId, "wamid.HBgLb3JpZ2luYWw=");
+  assert.equal(event.text, "Corrected staff reply");
+  assert.equal(event.businessPhoneNumberId, "110552088553929");
+  assert.equal(event.businessAccountId, "waba-1");
+});
+
+test("Business App edits support caption updates and preserve legacy text", () => {
+  const media = echoPayload({
+    id: "wamid.caption=", to: "60135550000", type: "edit",
+    edit: {
+      original_message_id: "wamid.old+media/=",
+      message: { type: "image", image: { caption: "Updated caption" } },
+    },
+  });
+  assert.equal(whatsapp.parseBusinessAppEchoes(media)[0].text, "Updated caption");
+
+  const legacy = echoPayload({
+    id: "wamid.legacy=", to: "60135550000", type: "edit",
+    edit: { original_message_id: "wamid.old=", text: { body: "Legacy edit" } },
+  });
+  assert.equal(whatsapp.parseBusinessAppEchoes(legacy)[0].text, "Legacy edit");
+
+  const unsupported = echoPayload({
+    id: "wamid.unsupported=", to: "60135550000", type: "edit",
+    edit: { original_message_id: "wamid.old=", message: { type: "audio" } },
+  });
+  assert.equal(whatsapp.parseBusinessAppEchoes(unsupported)[0].text, null);
+});
+
+test("Business App revocations retain padded provider IDs without creating an inbound turn", () => {
+  const body = echoPayload({
+    id: "wamid.revoke=", to: "60135550000", type: "revoke",
+    revoke: { original_message_id: "wamid.original/+=" },
+  });
+  assert.deepEqual(whatsapp.parseIncomingMessages(body), []);
+  const [event] = whatsapp.parseBusinessAppEchoes(body);
+  assert.equal(event.originalMessageId, "wamid.original/+=");
+  assert.equal(event.text, null);
+});
+
 test("Business App echo cancellation invalidates an in-flight AI token", () => {
   const key = aiReplyCancellation.keyForWhatsAppNumber("60135550000");
   const token = aiReplyCancellation.snapshot(key);
