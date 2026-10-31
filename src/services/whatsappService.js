@@ -870,10 +870,26 @@ function parseBusinessAppEchoes(body) {
           } else if (message.type === "sticker") {
             parsed.push({ ...base, mediaId: message.sticker?.id || null });
           } else if (message.type === "revoke" || message.type === "edit") {
+            // Meta nests edited content under edit.message. Retain the legacy
+            // edit.text.body format, but never interpret unsupported media
+            // changes as a new staff message or an empty text edit.
+            const edited = message.edit?.message;
+            let editedText = null;
+            if (message.type === "edit") {
+              if (edited?.type === "text" &&
+                  typeof edited.text?.body === "string") {
+                editedText = edited.text.body;
+              } else if (["image", "video", "document"].includes(edited?.type) &&
+                         typeof edited[edited.type]?.caption === "string") {
+                editedText = edited[edited.type].caption;
+              } else if (typeof message.edit?.text?.body === "string") {
+                editedText = message.edit.text.body;
+              }
+            }
             parsed.push({ ...base,
               originalMessageId: message[message.type]?.original_message_id ||
                 message.context?.id || null,
-              text: message.type === "edit" ? message.edit?.text?.body || null : null,
+              text: editedText,
             });
           } else {
             parsed.push(base);
