@@ -66,6 +66,34 @@ test("replayed or out-of-order echo mutations never create duplicate messages",a
  assert.equal(pending.pending,true);
  assert.equal(delayed.calls.filter(x=>x.sql.startsWith("UPDATE messages")).length,0);
 });
+test("Meta-padded WAMIDs are valid for sender-scoped edit and revoke operations",async()=>{
+ const f=make();
+ const padded={...echo,id:"wamid.HBgLZWRpdA==",originalMessageId:"wamid.HBgL+L29yaWdpbmFs/="};
+ const edit=await service.record(padded,contact,{...f,env});
+ assert.equal(edit.isNew,true);
+ assert.equal(edit.messageId,55);
+ assert.equal(f.calls.filter(x=>x.sql.startsWith("UPDATE messages")).length,1);
+
+ const revoke=await service.record({...padded,id:"wamid.HBgLcmV2b2tl=",type:"revoke",text:null},
+   contact,{...make(),env});
+ assert.equal(revoke.isNew,true);
+});
+
+test("invalid IDs and unrenderable edits fail closed without touching messages",async()=>{
+ const f=make();
+ for(const unsafe of [
+   {...echo,id:"wamid.unsafe?"},
+   {...echo,originalMessageId:"wamid.bad#target"},
+   {...echo,text:null},
+   {...echo,text:"  "},
+   {...echo,text:"x".repeat(4097)},
+ ]) {
+   await assert.rejects(service.record(unsafe,contact,{...f,env}),
+     /Unsupported WhatsApp Business App/);
+ }
+ assert.equal(f.calls.length,0);
+});
+
 test("malformed, cross-number, and ungrounded mutation targets fail closed",async()=>{
  const f=make();
  await assert.rejects(service.record({...echo,originalMessageId:""},contact,
