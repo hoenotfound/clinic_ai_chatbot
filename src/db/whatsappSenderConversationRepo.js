@@ -94,6 +94,30 @@ async function bindExistingContact(conversationId, existingContactId, database =
   return result.rows[0] || null;
 }
 
+// Mutation-only Business App echoes may update an EXISTING conversation, but
+// must never create, bind or adopt a contact. Both the sender and contact
+// ownership are checked in this read-only query.
+async function findBoundContactForSender({accountId,phoneNumberId,customerPhone},database=pool) {
+  const account=digits(accountId,"Meta WhatsApp account ID");
+  const phone=digits(phoneNumberId,"Meta receiving phone ID");
+  const customer=customerId(customerPhone);
+  const result=await database.query(
+    "SELECT c.*, sc.id AS whatsapp_sender_conversation_id, " +
+    "sa.sender_key AS whatsapp_sender_key, " +
+    "sa.display_name AS whatsapp_sender_display_name, " +
+    "sa.meta_phone_number_id AS whatsapp_sender_phone_number_id, " +
+    "sa.meta_account_id AS whatsapp_sender_account_id " +
+    "FROM whatsapp_sender_conversations sc " +
+    "JOIN whatsapp_sender_accounts sa ON sa.id=sc.sender_id AND sa.state='active' " +
+    "JOIN contacts c ON c.id=sc.contact_id AND c.channel='whatsapp' " +
+    "AND c.whatsapp_sender_id=sc.sender_id AND c.whatsapp_number=sc.customer_wa_id " +
+    "WHERE sa.meta_account_id=$1 AND sa.meta_phone_number_id=$2 " +
+    "AND sc.customer_wa_id=$3 AND sc.state='bound' LIMIT 1",
+    [account,phone,customer]
+  );
+  return result.rows[0]||null;
+}
+
 // Atomic, sender-qualified contact claim. A customer contacting two business
 // numbers owns two contacts and two independent AI/pipeline/opt-out histories.
 // Nothing calls this on the legacy webhook until sender routing is verified.
@@ -260,6 +284,7 @@ module.exports = {
   reservePendingConversation,
   claimSenderContact,
   findConversationBySender,
+  findBoundContactForSender,
   bindExistingContact,
   senderForContact,
   attachMessageContext,

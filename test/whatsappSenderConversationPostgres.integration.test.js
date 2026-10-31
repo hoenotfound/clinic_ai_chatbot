@@ -107,6 +107,25 @@ test("migration 080 allows two contact identities for the same customer while re
         phoneNumberId: "100000000000002",
         customerPhone: "60123001234",
       }, scoped);
+      // Mutation-only events may look up an existing sender-owned contact,
+      // but an unknown customer, unbound conversation or other sender must
+      // never create/adopt a contact in this read-only path.
+      const existingMutationContact=await repo.findBoundContactForSender({
+        accountId:"200000000000002",phoneNumberId:"100000000000002",
+        customerPhone:"60123001234",
+      },db);
+      assert.equal(existingMutationContact.id,ariel.id);
+      assert.equal(existingMutationContact.whatsapp_sender_conversation_id,
+        ariel.whatsapp_sender_conversation_id);
+      assert.equal(await repo.findBoundContactForSender({
+        accountId:"200000000000001",phoneNumberId:"100000000000002",
+        customerPhone:"60123001234",
+      },db),null,"Different account must not access secondary contact");
+      assert.equal(await repo.findBoundContactForSender({
+        accountId:"200000000000002",phoneNumberId:"100000000000002",
+        customerPhone:"60127776666",
+      },db),null,"Mutation-only activity must not create a contact");
+      assert.equal((await db.query("SELECT COUNT(*)::int AS n FROM contacts")).rows[0].n,2);
       assert.notEqual(ariel.id, oldContact);
       assert.equal(ariel.whatsapp_number, primary.whatsapp_number);
       assert.equal(ariel.whatsapp_sender_key, "ariel");

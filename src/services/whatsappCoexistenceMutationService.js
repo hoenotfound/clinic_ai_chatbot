@@ -50,14 +50,17 @@ async function applyPending({id,senderId},{
  }catch(e){await client.query("ROLLBACK").catch(()=>{});throw e;}
  finally{client.release();}
 }
+// Meta WAMIDs use base64-like segments and may include +, / and = padding.
+// Still require a bounded, provider-formatted ID before updating any message.
+const VALID_WAMID=/^wamid\.[A-Za-z0-9._:+/=-]{1,512}$/;
 async function record(echo,contact,{
  database=pool,env=process.env,conversations=senderRepo,
 }={}){
  if(!["edit","revoke"].includes(echo?.type))return null;
- if(!/^wamid\.[A-Za-z0-9._:-]+$/.test(String(echo?.id||"")) ||
-    !/^wamid\.[A-Za-z0-9._:-]+$/.test(String(echo?.originalMessageId||"")) ||
-    (echo.type==="edit" && (!String(echo.text||"").trim() ||
-      String(echo.text).length>4096))) {
+ if(!VALID_WAMID.test(String(echo?.id||"")) ||
+    !VALID_WAMID.test(String(echo?.originalMessageId||"")) ||
+    (echo.type==="edit" && (typeof echo.text!=="string" ||
+      !echo.text.trim() || echo.text.length>4096))) {
    throw Error("Unsupported WhatsApp Business App edit/revoke payload.");
  }
  const owner=await conversations.senderForContact(contact.id,database);

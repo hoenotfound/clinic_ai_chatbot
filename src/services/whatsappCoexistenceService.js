@@ -71,6 +71,9 @@ function cancellationKeyForEcho(echo) {
 }
 
 function beginPendingAiForEcho(echo) {
+  // Edits/deletions of old staff messages are not new staff replies.
+  // Never stall or cancel an unrelated in-flight AI response for them.
+  if (echo?.type==="edit" || echo?.type==="revoke") return false;
   return aiReplyCancellation.beginPendingEcho(
     cancellationKeyForEcho(echo),
     echo?.id
@@ -104,19 +107,29 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       return null;
     }
 
-    const contact = senderAwareEchoesEnabled()
-      ? await senderConversations.claimSenderContact(verifiedEchoIdentity(echo))
-      : await contactsRepo.getOrCreateContact(echo.to);
+    const isSecondaryMutation=senderAwareEchoesEnabled() &&
+      echo.businessPhoneNumberId===process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+      echo.businessAccountId===process.env.WHATSAPP_SECONDARY_WABA_ID &&
+      ["edit","revoke"].includes(echo.type);
+    // Verify the signed sender before looking anything up. Mutations can only
+    // affect an already-bound sender-owned contact, never create a new lead.
+    const identity=senderAwareEchoesEnabled()?verifiedEchoIdentity(echo):null;
+    const contact=isSecondaryMutation
+      ? await senderConversations.findBoundContactForSender(identity)
+      : senderAwareEchoesEnabled()
+        ? await senderConversations.claimSenderContact(identity)
+        : await contactsRepo.getOrCreateContact(echo.to);
+    if (!contact) {
+      releasePendingAiForEcho(echo);
+      return null;
+    }
 
-    if (senderAwareEchoesEnabled() &&
-        echo.businessPhoneNumberId===process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
-        echo.businessAccountId===process.env.WHATSAPP_SECONDARY_WABA_ID &&
-        ["edit","revoke"].includes(echo.type)) {
+    if (isSecondaryMutation) {
       const changed=await echoMutations.record(echo,contact);
-      if (changed?.isNew) confirmPendingAiForEcho(echo);
-      else releasePendingAiForEcho(echo);
-      // An edit/revoke updates the ORIGINAL provider-authenticated staff
-      // message. It never creates another assistant message or booking event.
+      // An old edit/revoke is never a new staff reply. Whether it applies,
+      // remains pending, or replays, it must not cancel an AI response.
+      releasePendingAiForEcho(echo);
+      // Only an actual update to the original message notifies the Inbox.
       return changed?.messageId
         ? {contact,message:{id:changed.messageId},isNew:false,isMutation:true}
         : null;
