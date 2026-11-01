@@ -80,7 +80,7 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
         (111,11,'assistant','Previously accepted',now()-interval '50 minutes','read','wamid.111');
       -- A newer inbound must re-open Unreplied after a valid response.
       INSERT INTO messages (id, contact_id, role, content, created_at)
-      VALUES (211,11,'user','Another question',now()-interval '10 minutes');
+      VALUES (311,11,'user','Another question',now()-interval '10 minutes');
       -- Same timestamp with a larger assistant id counts as a later reply.
       UPDATE messages SET created_at='2026-10-30T10:00:00Z' WHERE id=12;
       INSERT INTO messages
