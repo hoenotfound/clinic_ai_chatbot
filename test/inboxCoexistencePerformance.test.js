@@ -118,7 +118,7 @@ test("multi-number Inbox hides untouched Coexistence contacts by default with ex
   assert.deepEqual(await contactsRepo.listConversations(), []);
 });
 
-test("single archived-contact summary bypasses the Inbox-only exclusion by default", async (t) => {
+test("single-contact summary still requires explicit archived access", async (t) => {
   const oldFlag = process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
   const oldRead = process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
   const original = pool.query;
@@ -131,13 +131,22 @@ test("single archived-contact summary bypasses the Inbox-only exclusion by defau
   });
   process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED = "true";
   delete process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
+  let expectedArchivedLookup = false;
   pool.query = async (sql, params) => {
     assert.deepEqual(params, [997]);
     assert.match(sql, /AND c\.id = \$1/);
-    assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+    if (expectedArchivedLookup) {
+      assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+    } else {
+      assert.match(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+    }
     return { rows: [] };
   };
   assert.deepEqual(await contactsRepo.listConversations({ contactId: 997 }), []);
+  expectedArchivedLookup = true;
+  assert.deepEqual(await contactsRepo.listConversations({
+    contactId: 997, includeEmptyCoexistenceContacts: true,
+  }), []);
 });
 
 
