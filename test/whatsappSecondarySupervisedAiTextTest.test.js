@@ -10,13 +10,13 @@ const {isSecondaryAdsOnlyEligible}=
 const {sendSecondaryStaffText}=
   require("../src/services/whatsappSecondaryStaffDispatch");
 
-const NOW=new Date("2026-11-01T03:00:00Z");
+const NOW=new Date("2026-11-01T11:00:00Z");
 const ENABLED={
   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only",
   WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_ENABLED:"true",
-  WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_CONTACT_ID:"8863",
-  WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_STARTS_AT:"2026-11-01T02:50:00Z",
-  WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_EXPIRES_AT:"2026-11-01T03:20:00Z",
+  WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_CONTACT_ID:"8871",
+  WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_STARTS_AT:"2026-11-01T10:50:00Z",
+  WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_EXPIRES_AT:"2026-11-01T11:20:00Z",
   WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
   WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
@@ -42,7 +42,7 @@ test("supervised mode is disabled by default and cannot admit other contact IDs"
   for(const e of [{}, {...ENABLED,WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_ENABLED:"false"},
     {...ENABLED,WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only"},
     {...ENABLED,WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_CONTACT_ID:"8864"}]){
-    assert.equal(await isSecondarySupervisedAiTextTestEligible(8863,{database,env:e,now:NOW}),false);
+    assert.equal(await isSecondarySupervisedAiTextTestEligible(8871,{database,env:e,now:NOW}),false);
   }
   for(const id of [8862,8864,1,"garbage",null]){
     assert.equal(await isSecondarySupervisedAiTextTestEligible(id,{database,env:ENABLED,now:NOW}),false);
@@ -54,9 +54,9 @@ test("supervised send requires a short future-bounded UTC window",()=>{
   assert.ok(supervisedTestWindow(ENABLED,NOW));
   for(const override of [
     {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_STARTS_AT:"2026-11-01"},
-    {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_EXPIRES_AT:"2026-11-01T04:00:01Z"},
-    {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_EXPIRES_AT:"2026-11-01T02:59:59Z"},
-    {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_STARTS_AT:"2026-11-01T03:01:00Z"},
+    {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_EXPIRES_AT:"2026-11-01T12:00:01Z"},
+    {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_EXPIRES_AT:"2026-11-01T10:59:59Z"},
+    {WHATSAPP_SECONDARY_SUPERVISED_AI_TEXT_TEST_STARTS_AT:"2026-11-01T11:01:00Z"},
     {WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1408739622311791"},
     {WHATSAPP_SECONDARY_WABA_ID:"1593376338308612"},
     {WHATSAPP_SECONDARY_SENDER_KEY:"neutro"},
@@ -72,9 +72,9 @@ test("supervised send requires a short future-bounded UTC window",()=>{
     assert.equal(supervisedTestWindow({...ENABLED,...override},NOW),null,
       JSON.stringify(override));
   }
-  assert.equal(supervisedTestWindow(ENABLED,new Date("2026-11-01T03:20:00Z")),null,
+  assert.equal(supervisedTestWindow(ENABLED,new Date("2026-11-01T11:20:00Z")),null,
     "test cannot send at/after expiry");
-  assert.equal(supervisedTestWindow(ENABLED,new Date("2026-11-01T02:49:59Z")),null,
+  assert.equal(supervisedTestWindow(ENABLED,new Date("2026-11-01T10:49:59Z")),null,
     "test cannot start early");
 });
 
@@ -93,16 +93,21 @@ test("only the verified secondary text contact passes the sender-bound database 
       "m.whatsapp_message_id IS NOT NULL",
       "m.created_at > $2::timestamptz - INTERVAL '24 hours'",
       "primary_sa.sender_key='neutro'",
+      "whatsapp_sender_owner_risk_override_audit",
+      "o.owner_authorized=TRUE",
+      "o.old_message_retry_prohibited=TRUE",
+      "whatsapp_sender_billing_attempts attempt",
+      "c.created_at >= '2026-11-01T10:53:00Z'",
     ])assert.ok(sql.includes(guard),guard);
-    assert.deepEqual(params,[8863,NOW.toISOString()]);
+    assert.deepEqual(params,[8871,NOW.toISOString()]);
     return{rows:[{eligible:true}]};
   }};
-  assert.equal(await isSecondarySupervisedAiTextTestEligible(8863,{database,env:ENABLED,now:NOW}),true);
+  assert.equal(await isSecondarySupervisedAiTextTestEligible(8871,{database,env:ENABLED,now:NOW}),true);
   assert.equal(calls,1);
-  assert.equal(await isSecondarySupervisedAiTextTestEligible(8863,{
+  assert.equal(await isSecondarySupervisedAiTextTestEligible(8871,{
     database:{query:async()=>({rows:[{eligible:false}]})},env:ENABLED,now:NOW,
   }),false);
-  assert.equal(await isSecondarySupervisedAiTextTestEligible(8863,{
+  assert.equal(await isSecondarySupervisedAiTextTestEligible(8871,{
     database:{query:async()=>{throw Error("DB unavailable")}},env:ENABLED,now:NOW,
   }),false);
 });
@@ -110,7 +115,7 @@ test("only the verified secondary text contact passes the sender-bound database 
 test("normal ad-only authorization remains OFF in test_only, including follow-up/media paths",async()=>{
   let calls=0;
   const database={query:async()=>{calls++;return{rows:[{eligible:true}]}}};
-  assert.equal(await isSecondaryAdsOnlyEligible(8863,{database,env:ENABLED}),false);
+  assert.equal(await isSecondaryAdsOnlyEligible(8871,{database,env:ENABLED}),false);
   assert.equal(calls,0);
   const senderFollowups=require("../src/services/whatsappSecondaryFollowUpService");
   const senderMedia=require("../src/services/whatsappSecondaryAiMediaQueue");
@@ -123,7 +128,7 @@ test("supervised AI text may reach normal policy check but not bypass it or call
   let providerCalls=0,queries=0,policies=0;
   const database={query:async()=>{queries++;return{rows:[{eligible:true}]}}};
   const res=await sendSecondaryStaffText({
-    contact:{id:8863,channel:"whatsapp",whatsapp_number:"60122220000"},
+    contact:{id:8871,channel:"whatsapp",whatsapp_number:"60122220000"},
     messageId:71,text:"Test response",origin:"ai_reply",
   },{
     env:ENABLED,now:()=>NOW,database,
@@ -142,7 +147,7 @@ test("supervised AI text may reach normal policy check but not bypass it or call
   assert.equal(providerCalls,0);
   for(const origin of ["system_fallback","ai_media","followup","marketing_followup"]){
     const blocked=await sendSecondaryStaffText({
-      contact:{id:8863,channel:"whatsapp",whatsapp_number:"60122220000"},
+      contact:{id:8871,channel:"whatsapp",whatsapp_number:"60122220000"},
       messageId:72,text:"No other automation",origin,
     },{env:ENABLED,now:()=>NOW,database,audienceEligible:async()=>false});
     assert.notEqual(blocked.code,"controlled_policy_denial");
