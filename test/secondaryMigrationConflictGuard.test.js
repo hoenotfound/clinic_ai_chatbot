@@ -7,15 +7,17 @@ const {loadMigrations}=require("../src/db/migrationRunner");
 
 test("forward-only multi-number migrations preserve sales 078/079",()=>{
  const migrations=loadMigrations();
- assert.equal(migrations.length,112);
+ assert.equal(migrations.length,113);
  assert.deepEqual(migrations.slice(77,81).map(m=>[m.version,m.name]),[
   [78,"sales_follow_up_tasks"],[79,"sales_follow_up_corrections"],
   [80,"whatsapp_sender_foundation"],[81,"whatsapp_sender_conversation_identity"]]);
  assert.deepEqual([migrations.at(-1).version,migrations.at(-1).name],
-  [112,"whatsapp_sender_owner_risk_override_audit"]);
+  [113,"secondary_66h_marketing_slot"]);
  assert.deepEqual([migrations.at(-2).version,migrations.at(-2).name],
-  [111,"secondary_marketing_languages"]);
+  [112,"whatsapp_sender_owner_risk_override_audit"]);
  assert.deepEqual([migrations.at(-3).version,migrations.at(-3).name],
+  [111,"secondary_marketing_languages"]);
+ assert.deepEqual([migrations.at(-4).version,migrations.at(-4).name],
   [110,"whatsapp_secondary_imported_contact_marker"]);
  assert.ok(migrations.every(m=>!(m.filePath||"").includes("ops/qa-only")));
 });
