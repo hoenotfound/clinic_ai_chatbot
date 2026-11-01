@@ -309,3 +309,60 @@ test("text-only AI never accepts a non-text provider callback",async()=>{
     assert.equal(calls.send.length,0);
   }
 });
+
+
+test("provider failure logs only safe codes while preserving unknown billing hold", async () => {
+  const { opts, calls } = setup({
+    providerResult: {
+      success:false, wamid:null, ambiguous:true, retryable:false,
+      providerFailureKind:"network_error", providerStatus:503,
+      providerErrorCode:131000,
+      error:"SECRET secondary-token-123 to +60123456789 message-body",
+    },
+    recordResult:{recorded:true,state:"unknown"},
+  });
+  const seen=[];
+  const previous=console.warn;
+  console.warn=(...args)=>seen.push(args);
+  let result;
+  try {
+    result=await sendSecondaryStaffText({...data,origin:"ai_reply"},{...opts,env:aiOnlyEnv});
+  } finally {
+    console.warn=previous;
+  }
+  assert.equal(result.unknown,true);
+  assert.equal(result.retryable,false);
+  assert.equal(calls.send.length,1);
+  assert.equal(calls.reserved,1);
+  assert.equal(calls.mark.length,1);
+  assert.equal(seen.length,1);
+  assert.equal(seen[0][0],"[Secondary WhatsApp provider outcome]");
+  const diagnostic=JSON.parse(seen[0][1]);
+  assert.deepEqual(diagnostic,{
+    outboundMessageId:120,origin:"ai_reply",kind:"network_error",
+    httpStatus:503,metaErrorCode:131000,definitivelyRejected:false,ambiguous:true,
+  });
+  assert.doesNotMatch(JSON.stringify(seen),/SECRET|60123456789|message-body|secondary-token/);
+});
+
+test("unknown provider failure kind is never logged verbatim", async () => {
+  const {opts}=setup({providerResult:{
+    success:false,ambiguous:true,
+    providerFailureKind:"SECRET\nINJECT",providerStatus:"not-an-http-status",
+    providerErrorCode:"unexpected",error:"sensitive",
+  },recordResult:{recorded:true,state:"unknown"}});
+  const seen=[];
+  const previous=console.warn;
+  console.warn=(...args)=>seen.push(args);
+  try {
+    await sendSecondaryStaffText({...data,origin:"ai_reply"},{...opts,env:aiOnlyEnv});
+  } finally {
+    console.warn=previous;
+  }
+  assert.equal(seen.length,1);
+  const diagnostic=JSON.parse(seen[0][1]);
+  assert.equal(diagnostic.kind,"unclassified_response");
+  assert.equal(diagnostic.httpStatus,null);
+  assert.equal(diagnostic.metaErrorCode,null);
+  assert.doesNotMatch(JSON.stringify(seen),/SECRET|INJECT|sensitive/);
+});
