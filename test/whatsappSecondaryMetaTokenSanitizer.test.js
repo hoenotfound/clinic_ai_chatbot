@@ -19,6 +19,9 @@ test("repairs only plausible Meta tokens with copy/paste whitespace",()=>{
   assert.deepEqual(normalizeSecondaryMetaToken(token),{status:"unchanged",token});
   assert.equal(normalizeSecondaryMetaToken("Bearer "+token).token,token);
   assert.equal(normalizeSecondaryMetaToken(token.slice(0,20)+"\u200B"+token.slice(20)).token,token);
+  assert.equal(normalizeSecondaryMetaToken(token.slice(0,20)+"\u202e"+token.slice(20)).token,token);
+  assert.equal(normalizeSecondaryMetaToken("\u201c"+token+"\u201d").token,token);
+  assert.equal(normalizeSecondaryMetaToken("`"+token+"`").token,token);
   assert.equal(normalizeSecondaryMetaToken("Bearer "+token+"\n").status,"normalized");
   for (const bad of [null,123,"",token.slice(0,8),"not an access token!",
     token+"|secret",token+"\0secret",token+"☎",token+"Authorization:"]){
