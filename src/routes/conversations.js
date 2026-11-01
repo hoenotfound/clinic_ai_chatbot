@@ -532,7 +532,12 @@ async function prepareStaffSend(contact, username) {
       username
     );
     if (claimed) {
-      preparedContact = claimed;
+      // Ownership claims return contacts.* without the joined sender identity.
+      // Refresh through the verified contact lookup before any staff send.
+      preparedContact = await contactsRepo.getContactById(claimed.id);
+      if (!preparedContact) {
+        throw new Error("Contact disappeared after claiming the AI handoff.");
+      }
     } else {
       // Ownership may have changed while the claim was waiting on its DB lock.
       // Re-read once and only fail if the synthetic handoff still exists.
@@ -564,8 +569,13 @@ async function finalizeStaffSendState(contactId, username) {
     latest.takeover_by === AI_HANDOFF_OWNER
   ) {
     const claimed = await claimAiHandoffOwnership(latest.id, username);
-    if (claimed) latest = claimed;
-    else {
+    if (claimed) {
+      // A claimed handoff is a bare UPDATE row, not a verified sender.
+      latest = await contactsRepo.getContactById(contactId);
+      if (!latest) {
+        throw new Error("Contact disappeared after finalizing the AI handoff.");
+      }
+    } else {
       latest = await contactsRepo.getContactById(contactId);
       if (!latest) return null;
     }
@@ -574,7 +584,16 @@ async function finalizeStaffSendState(contactId, username) {
   if (!latest.needs_attention && !latest.is_unread) return latest;
 
   const cleared = await contactsRepo.clearStaffAssistStateIfUnchanged(latest);
-  if (cleared) return cleared;
+  if (cleared) {
+    // UPDATE RETURNING contacts.* strips sender-joined fields for every media
+    // and forwarding route that relies on this helper. Never return it to
+    // delivery code without reloading its verified sender identity.
+    const refreshed = await contactsRepo.getContactById(contactId);
+    if (!refreshed) {
+      throw new Error("Contact disappeared after clearing Staff Assist state.");
+    }
+    return refreshed;
+  }
 
   // A newer inbound message, safety handoff, or attention reason won the race.
   // Return the current state without clearing it.
