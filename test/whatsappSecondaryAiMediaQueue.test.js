@@ -216,7 +216,7 @@ test("nighttime image jobs survive quiet hours without exceeding the 23h service
   query:async()=>({rows:[{eligible:true}],rowCount:1})};
  const ok=await worker.enqueue({contactId:21,inboundMessageId:41,
   items:[{imageUrl:"https://example.test/clinic.jpg",caption:"clinic approved"}]},
-  {database,env:approved});
+  {database,env:{...approved,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary"}});
  assert.equal(ok,true);
  const insert=statements.find(x=>x.includes("INSERT INTO whatsapp_sender_ai_media_jobs"));
  assert.ok(insert);
