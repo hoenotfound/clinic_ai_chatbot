@@ -8,6 +8,7 @@ const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 
 // Select a locale only from actual sender-owned customer text. Do not infer
@@ -23,10 +24,11 @@ function enabled(env=process.env){
  return Boolean(adsOnlyActivation(env)) &&
    env.PR395_STAGING_MODE!=="true" &&
    env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
-   env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+   ((env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true") ||
+     secondaryAdsOnlyFullAiMode(env)) &&
    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
    env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
-   env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
    env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
