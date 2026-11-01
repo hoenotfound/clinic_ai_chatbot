@@ -82,7 +82,19 @@ async function enqueue({
           (sender_id,contact_id,inbound_message_id,sequence_no,
            media_kind,image_url,caption,expires_at)
          VALUES($1,$2,$3,$4,$5,$6,$7,
-           LEAST($8::timestamptz + INTERVAL '23 hours',NOW() + INTERVAL '3 hours'))
+           LEAST($8::timestamptz + INTERVAL '23 hours',
+              CASE
+                -- The image worker observes clinic quiet hours (00:00-06:59 MYT).
+                -- Keep its pending images until after the next permitted 07:00
+                -- rather than expiring them at 03:00 without ever attempting a send.
+                WHEN EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) >= 21
+                  THEN ((date_trunc('day', NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')
+                    + INTERVAL '1 day 9 hours') AT TIME ZONE 'Asia/Kuala_Lumpur')
+                WHEN EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) < 7
+                  THEN ((date_trunc('day', NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')
+                    + INTERVAL '9 hours') AT TIME ZONE 'Asia/Kuala_Lumpur')
+                ELSE NOW() + INTERVAL '3 hours'
+              END))
          ON CONFLICT(sender_id,inbound_message_id,sequence_no) DO NOTHING`,
         [owner.rows[0].sender_id,contactId,inboundMessageId,i+sequenceOffset,
           kind,items[i].imageUrl,items[i].caption,owner.rows[0].created_at]
