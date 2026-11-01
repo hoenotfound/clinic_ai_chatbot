@@ -2022,9 +2022,11 @@ router.post("/:contactId/whatsapp-templates/send", handleTemplateMediaUpload, as
             publish: false,
           }
         );
-        const finalContact =
-          await finalizeStaffSendState(preparedContact.id, req.session.username);
-        return { preparedContact: finalContact || preparedContact, saved };
+        // Staff attention updates return plain contacts rows with no joined
+        // WhatsApp sender identity. Keep the verified contact from prepareStaffSend
+        // for delivery rather than misrouting primary replies as secondary.
+        await finalizeStaffSendState(preparedContact.id, req.session.username);
+        return { preparedContact, saved };
       }
     );
 
@@ -2760,9 +2762,11 @@ router.post("/:contactId/messages", async (req, res) => {
             replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
           }
         );
-        const finalContact =
-          await finalizeStaffSendState(preparedContact.id, req.session.username);
-        return { preparedContact: finalContact || preparedContact, saved };
+        // Staff attention updates return plain contacts rows with no joined
+        // WhatsApp sender identity. Keep the verified contact from prepareStaffSend
+        // for delivery rather than misrouting primary replies as secondary.
+        await finalizeStaffSendState(preparedContact.id, req.session.username);
+        return { preparedContact, saved };
       }
     );
 
