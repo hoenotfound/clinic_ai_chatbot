@@ -267,3 +267,32 @@ test("treatment-specific 6h video is selected without granting Inbox staff sendi
  assert.equal(selectedCalled,1);
  assert.equal(mediaCalls,1);
 });
+
+test("secondary 2h reminder uses the exact live primary clinic text, not a separate translation",async()=>{
+ const copy={automatedFollowUp:{
+   message:"Original Chinese text",
+   translations:{en:"Primary approved assessment invitation English",ms:"Primary Malay",zh:"Primary Chinese"},
+   serviceOverrides:[{serviceName:"骨盆调理",message:"Pelvic Chinese",
+     translations:{en:"Approved pelvic assessment English",ms:"Pelvic Malay",zh:"Pelvic Chinese"}}],
+ },services:[{name:"骨盆调理"}],serviceAliases:[]};
+ const f=fake();
+ const result=await worker.runOnce({...f,env,getConfig:()=>copy});
+ assert.equal(result.accepted,1);
+ assert.equal(f.calls.find(x=>x.save)?.save[2],"Approved pelvic assessment English");
+ assert.equal(f.calls.find(x=>x.send)?.send.text,"Approved pelvic assessment English");
+});
+test("secondary follow-up video cannot inherit stale CRM treatment after explicit topic switch",async()=>{
+ const cfg={services:[{name:"骨盆调理"},{name:"9D 逆龄抗衰"}],
+   serviceAliases:[{alias:"9D lift",officialService:"9D 逆龄抗衰"}],
+   automatedFollowUp:{message:"General",translations:{en:"General English"},
+     serviceOverrides:[{serviceName:"骨盆调理",translations:{en:"Pelvic English"}}]}};
+ const f=fake({rows:[{...candidate,customer_texts:["What about 9D lift?"],
+   treatment_interest:"骨盆调理"}]});
+ let target=null;
+ const result=await worker.runOnce({...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true"},
+   getConfig:()=>cfg,
+   videoSelection:args=>{target=args.treatmentInterest;return null;}});
+ assert.equal(result.accepted,1);
+ assert.equal(target,"9D 逆龄抗衰");
+ assert.equal(f.calls.find(x=>x.send).send.text,"General English");
+});
