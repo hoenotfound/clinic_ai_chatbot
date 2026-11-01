@@ -254,7 +254,7 @@ test("extended SQL verifies nonbillable signed Meta proof from matching sender/a
   "qualified_session.first_reply_at+rule.slot_hours",
   "INTERVAL '167 hours'","whatsapp_sender_billing_alarms",
   "whatsapp_sender_billing_gates",
-  "previous.status IN('accepted','unknown','blocked')",
+  "other.status IN('accepted','unknown','blocked')",
  ] )assert.ok(q.includes(fragment),"Missing safeguard "+fragment);
  assert.match(svc.EXTENDED_RECHECK_SQL,/attempted.status='claimed'/);
  assert.doesNotMatch(svc.CANDIDATES_SQL,/qualified_session/);
