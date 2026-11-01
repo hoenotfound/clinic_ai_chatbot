@@ -66,4 +66,29 @@ function listApprovedClinicVideos({
   seen.add(key);return true;
  }).map(item=>({key:item.videoKey,label:item.label}));
 }
-module.exports={verifyApprovedVideo,listApprovedClinicVideos,isCurrentApprovedFollowUpVideo};
+// Use the existing clinic-approved treatment-specific asset, never an ad label
+// or a media ID issued to the primary WhatsApp number.
+function selectApprovedTreatmentVideo({
+ slot,treatmentInterest,env=process.env,clinicConfig,storage=mediaStorage,
+}={}){
+ if(![2,6].includes(Number(slot)) ||
+    !(env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" ||
+      secondaryAdsOnlyFullAiMode(env)) ||
+    env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true" ||
+    env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED!=="true" ||
+    env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE!=="primary" ||
+    typeof treatmentInterest!=="string")return null;
+ const treatment=treatmentInterest.trim().toLocaleLowerCase();
+ if(!treatment)return null;
+ const base=clinicConfig?.automatedFollowUp;
+ const step=Number(slot)===2?base:base?.additionalSteps?.[0];
+ const entry=(Array.isArray(step?.serviceOverrides)?step.serviceOverrides:[])
+   .find(x=>String(x?.serviceName||"").trim().toLocaleLowerCase()===treatment);
+ // A generic/default video must not be mistaken for treatment-specific proof.
+ if(!entry || !String(entry.videoKey||"").trim())return null;
+ const key=entry.videoKey.trim();
+ if(!storage.isReferencedClinicFollowUpMediaKey(key,clinicConfig,env))return null;
+ return {mediaKey:key,mediaType:"video",mediaMimeType:"video/mp4",
+   mediaFilename:"clinic-followup.mp4"};
+}
+module.exports={verifyApprovedVideo,listApprovedClinicVideos,isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo};
