@@ -6,6 +6,10 @@
 const crypto=require("node:crypto");
 const history=require("./whatsappCoexistenceHistoryService");
 const paid=require("./whatsappPaidDefaultIngress");
+const {
+  secondaryAdsOnlyFullAiMode,
+  assertSecondaryOperationalSafety,
+} = require("./whatsappSenderActivationGate");
 
 const TARGET="+60174831336";
 const FIELDS=new Set(["history","smb_app_state_sync"]);
@@ -81,13 +85,24 @@ const PARITY_OPERATIONS=new Set([
   "WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED",
   "WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED",
 ]);
+// Full AI is a separately approved ADS-ONLY mode. It deliberately permits
+// automated media and reviewed follow-ups without granting staff Inbox sending.
+const ADS_ONLY_FULL_AI_OPERATIONS=new Set([
+  ...AUTOMATION_OPERATIONS,
+  "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
+]);
 function liveOperationsAllowed(env){
   const staffOnly=env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED==="true";
   const automation=env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true";
   if(staffOnly && automation)return false;
   const parity=env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true";
   // Parity must not be enabled by a lone switch or alongside the old staff mode.
-  if(parity && (!automation || staffOnly))return false;
+  if(parity && (!automation || staffOnly ||
+      env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED==="true"))return false;
   if(parity){
     return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
@@ -126,6 +141,37 @@ function liveOperationsAllowed(env){
       (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED!=="true" ||
         env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true") &&
       !DISALLOWED.some(key=>!PARITY_OPERATIONS.has(key) && env[key]==="true");
+  }
+  if(env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED==="true"){
+    // The sender startup gate has supported full AI for ads-origin contacts
+    // without staff sending, but the paid callback receiver's old text-only
+    // allowlist rejected these already-authorized media flags with HTTP 503.
+    // Reuse the exact startup safety policy, not a new weaker sender policy.
+    if(!secondaryAdsOnlyFullAiMode(env))return false;
+    try{assertSecondaryOperationalSafety(env);}catch{return false;}
+    return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
+      env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED!=="true" &&
+      env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED!=="true" &&
+      env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED!=="true" &&
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+      env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
+      env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
+      typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
+      env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
+      (env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED!=="true" ||
+        env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true") &&
+      !DISALLOWED.some(key=>
+        !ADS_ONLY_FULL_AI_OPERATIONS.has(key) && env[key]==="true");
   }
   if(automation){
     const followups=env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true";
