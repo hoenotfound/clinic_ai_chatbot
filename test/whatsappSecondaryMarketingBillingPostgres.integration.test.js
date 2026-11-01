@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
+const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const cs=process.env.TEST_DATABASE_URL;
 const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -69,6 +70,16 @@ test("migration 109 requires approved secondary MARKETING attempt for billable 4
     "(sender_id,contact_id,anchor_message_id,slot_hours) VALUES($1,$2,$3,$4)",
     [sender,contact,inbound,slot]);
   }
+  // Compile the extended read-only candidate query against a real migrated
+  // Postgres schema; no eligible contact or provider send is required.
+  await db.query("EXPLAIN "+marketing.EXTENDED_CANDIDATES_SQL,[
+   "ariel","100000000000002","200000000000002",
+   new Date(),10,"2026-11-01T00:00:00Z",
+  ]);
+  await db.query("EXPLAIN "+marketing.EXTENDED_RECHECK_SQL,[
+   "ariel","100000000000002","200000000000002",
+   new Date(),10,"2026-11-01T00:00:00Z",
+  ]);
   const later=(await db.query(
    "SELECT slot_hours FROM whatsapp_sender_marketing_followup_attempts "+
    "WHERE sender_id=$1 ORDER BY slot_hours",[sender])).rows;
