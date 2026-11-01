@@ -242,3 +242,111 @@ test("disposable PostgreSQL: UNKNOWN stays UNKNOWN after audited risk release; f
   await db.end();
  }
 });
+
+const oldReservation=hash("synthetic-older-unknown-reservation");
+const olderUnknown={
+ ...acceptedUnknown,reservationSha256:oldReservation,
+ reviewReason:"Independent reviewers explicitly accept both unknown delivery and charge for the older privacy-erased attempt, and will not retry it.",
+};
+
+test("batch evidence rejects duplicates, omissions and invented provider claims",()=>{
+ assert.equal(svc.validateReviewBatch({reviews:[]}),null);
+ assert.equal(svc.validateReviewBatch({reviews:[
+   acceptedUnknown,acceptedUnknown]}),null);
+ assert.equal(svc.validateReviewBatch({reviews:[
+   acceptedUnknown,{...olderUnknown,reviewer:"operator.two"}]}),null);
+ assert.equal(svc.validateReviewBatch({reviews:[
+   acceptedUnknown,{...olderUnknown,acceptsPossibleLaterMetaCharge:false}]}),null);
+ const valid=svc.validateReviewBatch({reviews:[acceptedUnknown,olderUnknown]});
+ assert.equal(valid.length,2);
+ assert.deepEqual(new Set(valid.map(x=>x.reservation)),new Set([reservation,oldReservation]));
+});
+
+test("disposable PostgreSQL: two historical UNKNOWN audits need independent reviews, one alarm release and no sends",
+ {skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const schema="multi_erased_alarm_"+process.pid+"_"+Date.now()+"_"+crypto.randomBytes(3).toString("hex");
+ const db=new Client({connectionString:process.env.TEST_DATABASE_URL});
+ await db.connect();
+ try{
+   await db.query("CREATE SCHEMA "+schema);
+   await db.query("SET search_path TO "+schema);
+   const database={
+     async connect(){
+       const c=new Client({connectionString:process.env.TEST_DATABASE_URL});
+       await c.connect();await c.query("SET search_path TO "+schema);
+       return{query:(...args)=>c.query(...args),release:()=>c.end()};
+     },query:(...args)=>db.query(...args),
+   };
+   await runMigrations(database,{quiet:true});
+   const sender=(await db.query(
+     "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
+     "VALUES('neutro_secondary',$1,$2,'Secondary','active') RETURNING id",
+     [env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+   )).rows[0].id;
+   for(const h of [oldReservation,reservation]){
+     await db.query(
+       "INSERT INTO whatsapp_sender_erased_billing_audit "+
+       "(reservation_sha256,sender_id,previous_state,staff_charge_approved,billable_receipt_seen) "+
+       "VALUES($1,$2,'unknown',TRUE,FALSE)",[h,sender]
+     );
+   }
+   await db.query(
+     "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reservation_id,reason,latest_wamid_hash) "+
+     "VALUES($1,NULL,'purged_unresolved_reservation',$2)",[sender,reservation]
+   );
+   // The latest alarm's matching audit is NOT sufficient if an older
+   // unresolved historical attempt also belongs to the same sender.
+   for(const missing of [
+     acceptedUnknown,
+     {reviews:[acceptedUnknown,acceptedUnknown]},
+     {reviews:[acceptedUnknown,{...olderUnknown,reservationSha256:hash("unrelated")}]},
+     {reviews:[acceptedUnknown,{...olderUnknown,independentApprover:"operator.one"}]},
+   ]){
+     const result=await svc.releaseReviewedErasedSecondaryAlarm(missing,{database,env});
+     assert.equal(result.released,false);
+     assert.equal((await db.query(
+       "SELECT count(*)::int AS n FROM whatsapp_sender_erased_alarm_resolutions"
+     )).rows[0].n,0);
+     assert.equal((await db.query(
+       "SELECT count(*)::int AS n FROM whatsapp_sender_billing_alarms"
+     )).rows[0].n,1);
+   }
+   const resolved=await svc.releaseReviewedErasedSecondaryAlarm({
+     reviews:[olderUnknown,acceptedUnknown],
+   },{database,env});
+   assert.deepEqual(resolved,{released:true,sendAuthorized:false,retryAuthorized:false});
+   const entries=(await db.query(
+     "SELECT reservation_sha256,outcome,charge_outcome,risk_accepted,"+
+     "original_retry_prohibited,reviewer,independent_approver "+
+     "FROM whatsapp_sender_erased_alarm_resolutions WHERE sender_id=$1 "+
+     "ORDER BY reservation_sha256",[sender]
+   )).rows;
+   assert.equal(entries.length,2);
+   assert.deepEqual(new Set(entries.map(row=>row.reservation_sha256)),
+     new Set([reservation,oldReservation]));
+   for(const row of entries){
+     assert.equal(row.outcome,"unknown");
+     assert.equal(row.charge_outcome,"unknown");
+     assert.equal(row.risk_accepted,true);
+     assert.equal(row.original_retry_prohibited,true);
+     assert.notEqual(row.reviewer,row.independent_approver);
+   }
+   assert.equal((await db.query(
+     "SELECT count(*)::int AS n FROM whatsapp_sender_billing_alarms"
+   )).rows[0].n,0);
+   assert.equal((await db.query(
+     "SELECT count(*)::int AS n FROM whatsapp_sender_erased_billing_audit"
+   )).rows[0].n,2);
+   assert.equal((await db.query(
+     "SELECT count(*)::int AS n FROM whatsapp_sender_billing_attempts"
+   )).rows[0].n,0);
+   const again=await svc.releaseReviewedErasedSecondaryAlarm({
+     reviews:[acceptedUnknown,olderUnknown],
+   },{database,env});
+   assert.equal(again.released,false);
+ } finally {
+   await db.query("SET search_path TO public").catch(()=>{});
+   await db.query("DROP SCHEMA IF EXISTS "+schema+" CASCADE").catch(()=>{});
+   await db.end();
+ }
+});
