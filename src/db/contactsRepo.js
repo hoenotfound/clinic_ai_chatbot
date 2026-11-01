@@ -573,11 +573,14 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
   // Inbox hides untouched contact-only Coexistence address-book imports; Contacts
   // retains them, and genuine history/live threads remain visible. This is a
   // read filter, never a delete or a change to sender routing/follow-up policy.
+  // Coexistence can import thousands of address-book contacts that have no
+  // messages or lead activity. Keep them searchable in Contacts, but do not
+  // hydrate them on every Inbox refresh. Explicit "false" restores the old list.
+  // Archived direct links still require the existing explicit archive option.
   const hideEmptyCoexistence = senderAwareInboxReadsEnabled() &&
     !includeEmptyCoexistenceContacts &&
-    process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS === "true";
+    process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS !== "false";
   // Preselect eligible IDs before expensive lead/message review subqueries.
-  // The flag is strictly opt-in; a rollback changes only presentation.
   const candidatesSql = hideEmptyCoexistence ? `
     WITH eligible_inbox_contacts AS MATERIALIZED (
       SELECT c.id FROM contacts c
