@@ -1058,3 +1058,84 @@ test("automated secondary MARKETING template settles only matching signed market
    [ids.ariel])).rows[0].n,1);
  });
 });
+
+
+test("verified free customer-service receipt settles while a separate purge alarm remains latched",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+   const {ids,reservation}=await seededSend(db,database);
+   const response=await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{pricing:{
+     type:"free_customer_service",billable:false,category:"service",
+    }})),{database,env});
+   assert.equal(response.matched,1);
+   const fingerprint=(await db.query(
+    "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+   )).rows[0].fingerprint;
+   await db.query(
+    "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason,latest_wamid_hash) " +
+    "VALUES($1,'purged_unresolved_reservation',$2)",
+    [ids.ariel,crypto.createHash("sha256").update("old-erased-reservation").digest("hex")]
+   );
+   const outcome=await settlement.reconcileVerifiedSecondaryNonbillable(
+    review(reservation.reservationId,fingerprint),{database,env});
+   assert.equal(outcome.reconciled,true);
+   assert.equal(outcome.sendAuthorized,false);
+   const gate=(await db.query(
+    "SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",[ids.ariel]
+   )).rows[0];
+   assert.equal(gate.state,"idle");
+   const alarm=(await db.query(
+    "SELECT reason,observed_count FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+    [ids.ariel]
+   )).rows[0];
+   assert.equal(alarm.reason,"purged_unresolved_reservation");
+   assert.equal(alarm.observed_count,1);
+   assert.equal((await billing.reserveSecondaryBillingAttempt({
+    contactId:0,messageId:0,
+   },{database,env})).reserved,false);
+  });
+ });
+
+test("reviewed settlement never overrides a genuine sender-wide provider billing alarm",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+   const {ids,reservation}=await seededSend(db,database);
+   await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{pricing:{
+     type:"free_customer_service",billable:false,category:"service",
+    }})),{database,env});
+   const fingerprint=(await db.query(
+    "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+   )).rows[0].fingerprint;
+   await db.query(
+    "INSERT INTO whatsapp_sender_billing_alarms(sender_id,reason,latest_wamid_hash) " +
+    "VALUES($1,'provider_billable',$2)",
+    [ids.ariel,crypto.createHash("sha256").update("unexpected-charge").digest("hex")]
+   );
+   const result=await settlement.reconcileVerifiedSecondaryNonbillable(
+    review(reservation.reservationId,fingerprint),{database,env});
+   assert.equal(result.code,"secondary_reconciliation_sender_alarm");
+   assert.equal((await db.query(
+    "SELECT state FROM whatsapp_sender_billing_gates WHERE sender_id=$1",
+    [ids.ariel]
+   )).rows[0].state,"awaiting_pricing");
+  });
+ });
+
+test("free customer-service billing can never be inferred from marketing-category receipts",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+   const {reservation}=await seededSend(db,database);
+   await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{pricing:{
+     type:"free_customer_service",billable:false,category:"marketing",
+    }})),{database,env});
+   const fingerprint=(await db.query(
+    "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+   )).rows[0].fingerprint;
+   const result=await settlement.reconcileVerifiedSecondaryNonbillable(
+    review(reservation.reservationId,fingerprint),{database,env});
+   assert.equal(result.code,"secondary_reconciliation_evidence_unverified");
+  });
+ });
