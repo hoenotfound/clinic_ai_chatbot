@@ -203,3 +203,26 @@ test("no sender authorization means stale images cannot be touched",async()=>{
   const result=await worker.quarantineStaleClaims({database,env:{}});
   assert.deepEqual(result,{disabled:true,quarantined:0});
 });
+
+test("nighttime image jobs survive quiet hours without exceeding the 23h service window",async()=>{
+ const statements=[];
+ const client={query:async(sql)=>{
+  statements.push(sql);
+  if(sql.includes("SELECT c.whatsapp_sender_id AS sender_id"))
+    return{rows:[{sender_id:9,created_at:new Date("2026-11-02T00:30:00Z")}],rowCount:1};
+  return{rows:[],rowCount:1};
+ },release:()=>{}};
+ const database={connect:async()=>client,
+  query:async()=>({rows:[{eligible:true}],rowCount:1})};
+ const ok=await worker.enqueue({contactId:21,inboundMessageId:41,
+  items:[{imageUrl:"https://example.test/clinic.jpg",caption:"clinic approved"}]},
+  {database,env:{...approved,WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary"}});
+ assert.equal(ok,true);
+ const insert=statements.find(x=>x.includes("INSERT INTO whatsapp_sender_ai_media_jobs"));
+ assert.ok(insert);
+ assert.match(insert,/INTERVAL '1 day 9 hours'/);
+ assert.match(insert,/INTERVAL '9 hours'/);
+ assert.match(insert,/INTERVAL '23 hours'/);
+ assert.match(worker.READY_SQL,/BETWEEN 7 AND 23/);
+ assert.match(worker.STILL_VALID_SQL,/BETWEEN 7 AND 23/);
+});

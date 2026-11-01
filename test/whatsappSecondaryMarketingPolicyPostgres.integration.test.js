@@ -6,7 +6,7 @@ const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const {CANDIDATES_SQL,RECHECK_SQL}=
  require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const cs=process.env.TEST_DATABASE_URL;
-test("migration 109 compiles second-account 48/72h consent, history, staff and one-shot candidate queries",{
+test("migration 109 compiles second-account 48/66h consent, history, staff and one-shot candidate queries",{
  skip:!cs,
 },async()=>{
  const db=new Client({connectionString:cs});
@@ -20,7 +20,7 @@ test("migration 109 compiles second-account 48/72h consent, history, staff and o
    await c.query("SET search_path TO "+schema);
    return{query:(...args)=>c.query(...args),release:()=>c.end()};
   }};
-  assert.equal(loadMigrations().at(-1).version,112);
+  assert.equal(loadMigrations().at(-1).version,113);
   await runMigrations(pool,{quiet:true});
   assert.equal((await db.query("SELECT count(*)::int n FROM whatsapp_sender_marketing_followup_rules")).rows[0].n,0);
   assert.equal((await db.query("SELECT count(*)::int n FROM whatsapp_sender_marketing_followup_attempts")).rows[0].n,0);
@@ -49,7 +49,7 @@ test("migration 109 compiles second-account 48/72h consent, history, staff and o
     "INSERT INTO whatsapp_sender_marketing_followup_rules "+
     "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
     "VALUES($1,$2,TRUE,$3,$4,$5,TRUE)",
-    [sender,name.startsWith("ns_48h")?48:72,name,lang,hash]
+    [sender,name.startsWith("ns_48h")?48:66,name,lang,hash]
   );
   assert.equal((await db.query(
    "SELECT COUNT(*)::int n FROM whatsapp_sender_marketing_followup_rules WHERE sender_id=$1",
