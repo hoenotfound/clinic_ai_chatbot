@@ -5,6 +5,7 @@
 // status reconciliation and reply-window checks are implemented.
 const { pool } = require("../db/db");
 const { classifyWhatsappSendFailure, classifyWhatsappAcceptedResponse } = require("./whatsappService");
+const { safeNetworkCause } = require("./whatsappSecondaryMetaReadOnlyProbe");
 
 const GRAPH_VERSION = "v26.0";
 const DEFAULT_TIMEOUT_MS = 10000;
@@ -142,6 +143,9 @@ function createSecondaryOutboundTransport(binding, {
         ? "timeout" : error?.name === "TypeError" ? "network_error" : "transport_exception";
       return { success: false, wamid: null, ambiguous: true, retryable: false,
         providerFailureKind,
+        // Fixed allow-list only. Raw error strings, URLs, headers, recipients,
+        // access tokens and nested causes must never reach logs.
+        providerNetworkCauseCode: safeNetworkCause(error),
         error: "Meta send outcome is unknown; reconcile before retrying." };
     } finally {
       clearTimeout(timer);
