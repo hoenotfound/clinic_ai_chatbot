@@ -1,7 +1,7 @@
 "use strict";
 
-// Offline, operator-reviewed recovery for ONE privacy-erased secondary sender
-// billing alarm. Deliberately NOT imported by server/router/worker or exposed
+// Offline, operator-reviewed recovery for ONE sender-wide billing alarm
+// backed by one or more historical privacy-erased UNKNOWN reservations. Deliberately NOT imported by server/router/worker or exposed
 // through an HTTP endpoint. No transport, message, contact, or replay actions.
 const { pool } = require("../db/db");
 
@@ -113,13 +113,25 @@ function validateEvidence(input = {}) {
   };
 }
 
+// All outstanding, privacy-erased UNKNOWN attempts must receive separate
+// independent reviews. A missing or duplicated historical review blocks the
+// sender-wide alarm release. Legacy one-record input remains supported.
+function validateReviewBatch(input) {
+  const batch = Array.isArray(input?.reviews) ? input.reviews : [input];
+  if (batch.length < 1 || batch.length > 32) return null;
+  const reviews = batch.map(validateEvidence);
+  if (reviews.some(r => !r)) return null;
+  if (new Set(reviews.map(r => r.reservation)).size !== reviews.length) return null;
+  return reviews;
+}
+
 async function releaseReviewedErasedSecondaryAlarm(input, {
   database = pool,
   env = process.env,
 } = {}) {
   if (!enabled(env)) return deny("secondary_erased_alarm_release_disabled");
-  const evidence = validateEvidence(input);
-  if (!evidence || typeof database?.connect !== "function") {
+  const reviews = validateReviewBatch(input);
+  if (!reviews || typeof database?.connect !== "function") {
     return deny("secondary_erased_alarm_authorized_review_required");
   }
   let client, inTransaction = false;
@@ -147,24 +159,35 @@ async function releaseReviewedErasedSecondaryAlarm(input, {
     );
     const alarm = alarms.rows?.[0];
     // The SHA field holds the erased RESERVATION hash, not a provider WAMID.
+    // The one sender alarm must refer to an explicitly reviewed reservation,
+    // even when OTHER historical unknown audits also exist.
+    const alarmReview = reviews.find(r => r.reservation === alarm?.latest_wamid_hash);
     if (alarms.rows?.length !== 1 ||
         alarm.reason !== "purged_unresolved_reservation" ||
-        alarm.reservation_id !== null ||
-        alarm.latest_wamid_hash !== evidence.reservation ||
+        alarm.reservation_id !== null || !alarmReview ||
         Number(alarm.observed_count) !== 1) {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_erased_alarm_not_exact_single_purge");
     }
     const erased = await client.query(
-      "SELECT reservation_sha256,previous_state,staff_charge_approved,billable_receipt_seen " +
-      "FROM whatsapp_sender_erased_billing_audit WHERE sender_id=$1 FOR SHARE", [senderId]
+      "SELECT a.reservation_sha256,a.previous_state,a.staff_charge_approved," +
+        "a.billable_receipt_seen," +
+        "r.reservation_sha256 IS NOT NULL AS previously_reviewed " +
+      "FROM whatsapp_sender_erased_billing_audit a " +
+      "LEFT JOIN whatsapp_sender_erased_alarm_resolutions r " +
+        "ON r.sender_id=a.sender_id AND r.reservation_sha256=a.reservation_sha256 " +
+      "WHERE a.sender_id=$1 ORDER BY a.reservation_sha256 FOR SHARE OF a", [senderId]
     );
-    const audit = erased.rows?.[0];
-    if (erased.rows?.length !== 1 ||
-        audit.reservation_sha256 !== evidence.reservation ||
-        audit.previous_state !== "unknown" ||
-        audit.staff_charge_approved !== true ||
-        audit.billable_receipt_seen !== false) {
+    const pending = (erased.rows || []).filter(row => !row.previously_reviewed);
+    const expected = new Set(reviews.map(r => r.reservation));
+    // One review per outstanding audit, including older privacy purges without
+    // a currently active alarm. Nothing is silently assumed resolved.
+    if (pending.length < 1 || pending.length !== reviews.length ||
+        !pending.some(row => row.reservation_sha256 === alarmReview.reservation) ||
+        pending.some(row => !expected.has(row.reservation_sha256) ||
+          row.previous_state !== "unknown" ||
+          row.staff_charge_approved !== true ||
+          row.billable_receipt_seen !== false)) {
       await client.query("ROLLBACK"); inTransaction = false;
       return deny("secondary_erased_alarm_purge_audit_mismatch");
     }
@@ -178,7 +201,7 @@ async function releaseReviewedErasedSecondaryAlarm(input, {
       "WHERE r.sender_id=$1 AND r.received_at >= $2) AS late_receipt, " +
       "EXISTS(SELECT 1 FROM whatsapp_sender_erased_alarm_resolutions x " +
       "WHERE x.sender_id=$1 AND x.reservation_sha256=$3) AS already_released",
-      [senderId, alarm.first_seen_at, evidence.reservation]
+      [senderId, alarm.first_seen_at, alarmReview.reservation]
     );
     const state = current.rows?.[0];
     if (current.rows?.length !== 1 || state.busy_gate ||
@@ -187,27 +210,28 @@ async function releaseReviewedErasedSecondaryAlarm(input, {
       return deny("secondary_erased_alarm_new_evidence_or_open_attempt");
     }
 
-    // Verified outcomes store only hashes of actual external evidence. A
-    // risk-accepted UNKNOWN/UNKNOWN outcome stores NULL hashes; neither is
-    // a provider receipt. The erased attempt and hashed purge audit remain
-    // unchanged, and no service retry can target deleted message context.
-    await client.query(
-      "INSERT INTO whatsapp_sender_erased_alarm_resolutions " +
-      "(sender_id,reservation_sha256,outcome,charge_outcome," +
-      "business_app_evidence_sha256,meta_billing_evidence_sha256," +
-      "risk_accepted,signed_receipt_ingress_verified," +
-      "secondary_payment_method_verified,original_retry_prohibited," +
-      "reviewer,independent_approver,review_reason) " +
-      "VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,TRUE,$8,$9,$10)",
-      [senderId,evidence.reservation,evidence.outcome,evidence.charge,
-        evidence.appHash,evidence.billingHash,evidence.riskAccepted,
-        evidence.reviewer,evidence.approver,evidence.reason]
-    );
+    // Every historical UNKNOWN receives its own append-only audit in the same
+    // transaction as the sole alarm release; never fabricate a provider
+    // receipt, relax a sender check, or revive erased customer data.
+    for (const evidence of reviews) {
+      await client.query(
+        "INSERT INTO whatsapp_sender_erased_alarm_resolutions " +
+        "(sender_id,reservation_sha256,outcome,charge_outcome," +
+        "business_app_evidence_sha256,meta_billing_evidence_sha256," +
+        "risk_accepted,signed_receipt_ingress_verified," +
+        "secondary_payment_method_verified,original_retry_prohibited," +
+        "reviewer,independent_approver,review_reason) " +
+        "VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,TRUE,TRUE,$8,$9,$10)",
+        [senderId,evidence.reservation,evidence.outcome,evidence.charge,
+          evidence.appHash,evidence.billingHash,evidence.riskAccepted,
+          evidence.reviewer,evidence.approver,evidence.reason]
+      );
+    }
     const removed = await client.query(
       "DELETE FROM whatsapp_sender_billing_alarms WHERE sender_id=$1 " +
       "AND reason='purged_unresolved_reservation' AND reservation_id IS NULL " +
       "AND latest_wamid_hash=$2 AND observed_count=1 RETURNING sender_id",
-      [senderId,evidence.reservation]
+      [senderId,alarmReview.reservation]
     );
     if (removed.rowCount !== 1) {
       throw new Error("Alarm changed during authorized reconciliation.");
@@ -231,5 +255,6 @@ module.exports = {
   OUTBOUND_FLAGS,
   enabled,
   validateEvidence,
+  validateReviewBatch,
   releaseReviewedErasedSecondaryAlarm,
 };
