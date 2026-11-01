@@ -13,7 +13,14 @@ function normalizeSecondaryMetaToken(raw){
   // such prefix; other arbitrary strings will fail the ASCII character check.
   const unprefixed=/^Bearer\s+/i.test(value)
     ? value.replace(/^Bearer\s+/i,"") : value;
-  const candidate=unprefixed.replace(/[\s\u200B-\u200D\uFEFF]/g,"");
+  // Another common source of invalid HTTP headers is invisible Unicode
+  // formatting from copied rich text. Strip Unicode format/space
+  // separators ONLY if the final value is still a plausible ASCII token.
+  const withoutMarks=unprefixed.replace(/[\s\p{Cf}\p{Zs}]/gu,"");
+  const quotePairs=[['"','"'],["'","'"],["\u201c","\u201d"],["\u2018","\u2019"],["`","`"]];
+  const wrapping=quotePairs.find(([a,b])=>
+    withoutMarks.startsWith(a) && withoutMarks.endsWith(b));
+  const candidate=wrapping ? withoutMarks.slice(1,-1) : withoutMarks;
   if(!/^[A-Za-z0-9._~+\/=\-]{30,4096}$/.test(candidate)) {
     return {status:"invalid",token:null};
   }
