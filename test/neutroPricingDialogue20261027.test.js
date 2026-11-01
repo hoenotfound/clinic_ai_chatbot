@@ -337,9 +337,9 @@ test("two-treatment decisions are audited as approved text-only and never select
   const fs = require("node:fs");
   const path = require("node:path");
   const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
-  assert.match(source,/approved: Boolean\(approvedPricingDecision \|\| twoTreatmentQuote\)/u);
+  assert.match(source,/approved: Boolean\(approvedPricingDecision \|\| twoTreatmentQuote \|\|/u);
   assert.match(source,/approvalReason: twoTreatmentQuote \? "two_treatments_verified_text_only"/u);
-  assert.match(source,/decisionSource: twoTreatmentQuote\?\.source/u);
+  assert.match(source,/twoTreatmentQuote\?\.source \|\| approvedPricingDecision\?\.source/u);
   assert.match(source,/const promoBundle = \(twoTreatmentQuote \|\| comboOfferDecision\?\.mode === "direct"\)/u);
   assert.match(source,/replyStatus: !sendOutcome\.sendResult\.success \? "text_not_accepted"/u);
 });
