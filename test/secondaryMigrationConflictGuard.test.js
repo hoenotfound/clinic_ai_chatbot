@@ -7,7 +7,7 @@ const {loadMigrations}=require("../src/db/migrationRunner");
 
 test("forward-only multi-number migrations preserve sales 078/079",()=>{
  const migrations=loadMigrations();
- assert.equal(migrations.length,112);
+ assert.equal(migrations.length,113);
  assert.deepEqual(migrations.slice(77,81).map(m=>[m.version,m.name]),[
   [78,"sales_follow_up_tasks"],[79,"sales_follow_up_corrections"],
   [80,"whatsapp_sender_foundation"],[81,"whatsapp_sender_conversation_identity"]]);
