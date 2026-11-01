@@ -222,9 +222,9 @@ test("secondary video follow-up remains entirely passive when media is OFF",asyn
   assert.equal(f.calls.some(c=>c.sql?.includes("INSERT INTO whatsapp_sender_followup_attempts")),false);
 });
 
-test("English follow-up is localized before saving and sending",async()=>{
+test("English fallback without a loaded clinic config remains supported",async()=>{
  const f=fake();
- const result=await worker.runOnce({...f,env});
+ const result=await worker.runOnce({...f,env,getConfig:()=>null});
  assert.equal(result.accepted,1);
  const text=f.calls.find(x=>x.save).save[2];
  assert.match(text,/treatment you asked about/);
@@ -246,6 +246,9 @@ test("treatment-specific 6h video is selected without granting Inbox staff sendi
  const result=await worker.runOnce({
   ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
    WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false"},
+  getConfig:()=>({services:[{name:"骨盆调理"}],
+    automatedFollowUp:{additionalSteps:[{message:"Malay followup",
+      translations:{ms:"Kalau nak tahu rawatan tadi, boleh tanya ya 😊"}}]}}),
   videoSelection:params=>{selectedCalled++;
    assert.equal(params.treatmentInterest,"骨盆调理");return selected;},
   videoApproved:()=>true,
