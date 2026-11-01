@@ -272,6 +272,8 @@ async function sendSecondaryStaffText({
         origin: ["ai_reply", "staff", "system_fallback", "followup",
           "ai_media", "marketing_followup"].includes(origin) ? origin : "other",
         kind,
+        networkCauseCode: /^[A-Z0-9_]{2,45}$/.test(send?.providerNetworkCauseCode || "")
+          ? send.providerNetworkCauseCode : null,
         httpStatus: Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
         metaErrorCode: Number.isInteger(errorCode) && errorCode > 0 ? errorCode : null,
         definitivelyRejected: send?.definitivelyRejected === true,
