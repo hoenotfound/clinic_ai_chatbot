@@ -115,8 +115,10 @@ test("unscoped legacy primary staff message preserves original transport", async
 });
 
 test("primary staff template also keeps verified sender across attention state changes", () => {
-  const start = source.indexOf("const saved = await conversationStore.appendMessageForContact(", source.indexOf('router.post("/:contactId/whatsapp-template"'));
-  const text = start >= 0 ? source.slice(start, start + 1500) : source;
+  const start = source.indexOf('router.post("/:contactId/whatsapp-templates/send"');
+  const end = source.indexOf("\nrouter.post(", start + 1);
+  assert.ok(start >= 0 && end > start, "manual template route must exist");
+  const text = source.slice(start, end);
   assert.match(text, /await finalizeStaffSendState\(preparedContact\.id, req\.session\.username\);\s*return \{ preparedContact, saved \};/);
   assert.doesNotMatch(text, /return \{ preparedContact: finalContact \|\| preparedContact, saved \}/);
 });
