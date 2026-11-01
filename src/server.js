@@ -38,6 +38,7 @@ const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDec
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
+const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -1681,6 +1682,23 @@ async function processIncomingMessage(
       if (completeQuote.changed) {
         console.warn("[Reply guard] Replaced unfulfilled price-list promise.");
         reply = completeQuote.reply;
+      }
+    }
+
+    // If a verified amount still cannot be quoted, never ask the same
+    // treatment-clarification question repeatedly after the customer already
+    // specified the service. This is a text-only acknowledgement, not
+    // authorization for a price or optional graphic.
+    if (!flagged && !marketingStopQuestion && !twoTreatmentQuote) {
+      const repeated = improveRepeatedPriceClarification({
+        customerText: text, reply, conversationHistory: history,
+        services: clinicConfig.services,
+        serviceAliases: clinicConfig.serviceAliases,
+        language: mediaLanguage,
+      });
+      if (repeated.changed) {
+        console.warn("[Reply guard] Avoided repeated pricing clarification.");
+        reply = repeated.reply;
       }
     }
 
