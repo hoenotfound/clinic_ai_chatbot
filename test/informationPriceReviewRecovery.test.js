@@ -26,7 +26,7 @@ const serviceAliases = [
 ];
 const promotions = [{
   name:"骨盆调理套餐", linkedService:"骨盆调理", sendOnPriceQuery:true,
-  validFrom:"2026-10-01",validUntil:"2026-10-31",
+  validFrom:"2026-10-01",validUntil:"2099-12-31",
   packages:[
     {name:"Package A",title:"尊享护理配套",imageUrl:"https://example.test/pelvic-a.jpg",
      caption:"本月限时优惠\nRM100 优惠券\n原价优惠 RM488\n优惠后仅需 RM3️⃣8️⃣8️⃣"},
