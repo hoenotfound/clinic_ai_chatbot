@@ -22,6 +22,8 @@ const candidate={
   inbound_id:981,whatsapp_number:"60125554444",
   media_key:null,media_type:null,media_mime_type:null,media_filename:null,
   message_text:"Hi, would you like to know more about our services?",
+  customer_texts:["How much is the pelvic treatment?"],
+  treatment_interest:"骨盆调理",
 };
 const contact={id:80,channel:"whatsapp",mode:"ai",whatsapp_sender_key:"ariel",
   whatsapp_sender_id:2,whatsapp_number:candidate.whatsapp_number};
@@ -218,4 +220,50 @@ test("secondary video follow-up remains entirely passive when media is OFF",asyn
   assert.deepEqual(result,{disabled:false,attempted:0,accepted:0});
   assert.equal(f.sends,0);
   assert.equal(f.calls.some(c=>c.sql?.includes("INSERT INTO whatsapp_sender_followup_attempts")),false);
+});
+
+test("English follow-up is localized before saving and sending",async()=>{
+ const f=fake();
+ const result=await worker.runOnce({...f,env});
+ assert.equal(result.accepted,1);
+ const text=f.calls.find(x=>x.save).save[2];
+ assert.match(text,/treatment you asked about/);
+ assert.doesNotMatch(text,/你/);
+ assert.equal(f.calls.find(x=>x.send).send.text,text);
+});
+test("unclear follow-up language skips before consuming a one-shot attempt",async()=>{
+ const f=fake({rows:[{...candidate,customer_texts:["ok","hi"]}]});
+ const result=await worker.runOnce({...f,env});
+ assert.deepEqual(result,{disabled:false,attempted:0,accepted:0});
+ assert.equal(f.calls.some(x=>x.sql?.includes("INSERT INTO whatsapp_sender_followup_attempts")),false);
+});
+test("treatment-specific 6h video is selected without granting Inbox staff sending",async()=>{
+ const selected={mediaKey:"approved-6h-video",mediaType:"video",
+  mediaMimeType:"video/mp4",mediaFilename:"clinic-followup.mp4"};
+ const f=fake({rows:[{...candidate,slot_hours:6,media_key:null,
+   customer_texts:["Saya nak tahu rawatan ini"],treatment_interest:"骨盆调理"}]});
+ let selectedCalled=0,mediaCalls=0;
+ const result=await worker.runOnce({
+  ...f,env:{...env,WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+   WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false"},
+  videoSelection:params=>{selectedCalled++;
+   assert.equal(params.treatmentInterest,"骨盆调理");return selected;},
+  videoApproved:()=>true,
+  storage:{downloadMedia:async()=>Buffer.from("approved video bytes")},
+  sendText:async payload=>{
+   assert.match(payload.text,/rawatan tadi/);
+   assert.equal(payload.origin,"followup");
+   assert.equal(payload.contact.whatsapp_sender_key,"ariel");
+   return payload.dispatchTransport({
+    uploadMedia:async()=>({success:true,mediaId:"777"}),
+    sendMediaById:async(type,id,options)=>{
+     mediaCalls++;assert.equal(type,"video");assert.equal(id,"777");
+     assert.match(options.caption,/rawatan tadi/);
+     return{success:true,wamid:"wamid.approved-video"};},
+   });
+  },
+ });
+ assert.equal(result.accepted,1);
+ assert.equal(selectedCalled,1);
+ assert.equal(mediaCalls,1);
 });

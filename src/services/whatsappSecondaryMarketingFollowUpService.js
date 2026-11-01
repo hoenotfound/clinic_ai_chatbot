@@ -19,7 +19,7 @@ function customerTemplateLocale(messages){
 }
 
 const INTERVAL=5*60*1000;
-const SLOTS=new Set([48,72]);
+const SLOTS=new Set([48,66]);
 function enabled(env=process.env){
  return Boolean(adsOnlyActivation(env)) &&
    env.PR395_STAGING_MODE!=="true" &&
@@ -93,7 +93,7 @@ const CANDIDATES_SQL=`
    WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
-   AND rule.slot_hours IN(48,72)
+   AND rule.slot_hours IN(48,66)
    AND ${adsOnlyEligibleSql("c","$6")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
