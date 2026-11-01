@@ -29,6 +29,7 @@ const whatsappZeroCostGuard = require("./whatsappZeroCostGuard");
 const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
 const { normalizeFollowUpDecision } = require("../utils/followUpDecisionSql");
+const { customerRequestsNearbyAlternative } = require("../utils/followUpLocationIntent");
 const { pool } = require("../db/db");
 const { previouslySentVideo, textOnlyVideoFallback } = require("../utils/followUpVideoPolicy");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
@@ -1236,6 +1237,34 @@ async function sendCandidate(candidate) {
   const stepIndex = Number(candidate.next_follow_up_step) || 1;
   const step = settings.steps[stepIndex - 1];
   if (!step) return;
+
+  // Respect an explicit request for a local alternative outside PJ. Persist
+  // a terminal sequence stop before any Meta send, AI generation or billing
+  // preflight. A city mention alone is not a stop; a fresh customer conversation
+  // may start a new eligible follow-up cycle normally.
+  if (customerRequestsNearbyAlternative(candidate)) {
+    const decision = normalizeFollowUpDecision({
+      action: "stop_sequence",
+      reason: "customer_requested_nearby_provider_outside_pj",
+    });
+    const stopped = await followUpRepo.recordAiDecisionIfStillEligible({
+      contactId: candidate.contact_id,
+      triggerMessageId: candidate.trigger_message_id,
+      stepIndex,
+      action: decision.action,
+      reason: decision.reason,
+      topic: "explicit_out_of_area_preference",
+      delayMinutes: step.delayMinutes,
+      previousDelayMinutes:
+        stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      timingMode: step.timingMode,
+      beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
+      quietHours: settings.quietHours,
+      triggerMode: settings.triggerMode,
+      activatedAt: settings.activatedAt,
+    });
+    return Boolean(stopped);
+  }
 
   // A sweep can begin just before quiet hours start. Re-check before claiming
   // so we never create an outbound row that should simply wait until morning.
