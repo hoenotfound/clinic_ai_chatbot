@@ -584,8 +584,7 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
   const candidatesSql = hideEmptyCoexistence ? `
     WITH eligible_inbox_contacts AS MATERIALIZED (
       SELECT c.id FROM contacts c
-      WHERE ${contactId == null ? "TRUE" : "c.id = $1"}
-        AND NOT (
+      WHERE ${contactId == null ? "" : "c.id = $1 AND "}NOT (
         c.whatsapp_sender_id IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM whatsapp_sender_accounts account
