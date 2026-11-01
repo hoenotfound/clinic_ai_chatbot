@@ -98,8 +98,8 @@ test("multi-number Inbox hides untouched Coexistence contacts by default with ex
     assert.deepEqual(params, []);
     if (expectedFilter) {
       assert.match(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
-      assert.match(sql, /NOT EXISTS \\(SELECT 1 FROM messages any_message/);
-      assert.match(sql, /NOT EXISTS \\(SELECT 1 FROM leads existing_lead/);
+      assert.match(sql, /NOT EXISTS \(SELECT 1 FROM messages any_message/);
+      assert.match(sql, /NOT EXISTS \(SELECT 1 FROM leads existing_lead/);
       assert.match(sql, /c.needs_attention IS DISTINCT FROM TRUE/);
     } else {
       assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
@@ -133,7 +133,7 @@ test("single archived-contact summary bypasses the Inbox-only exclusion by defau
   delete process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
   pool.query = async (sql, params) => {
     assert.deepEqual(params, [997]);
-    assert.match(sql, /AND c\\.id = \\$1/);
+    assert.match(sql, /AND c\.id = \$1/);
     assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
     return { rows: [] };
   };
