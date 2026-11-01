@@ -158,7 +158,12 @@ async function findCandidates({
     delays.length
   );
   const result = await pool.query(
-    `WITH conversation_state AS (
+    `WITH recent_inbound_contacts AS MATERIALIZED (
+       SELECT DISTINCT recent.contact_id
+       FROM messages recent
+       WHERE recent.role = 'user'
+         AND recent.created_at > now() - interval '23 hours 50 minutes'
+     ), conversation_state AS (
        SELECT
          c.id AS contact_id,
          c.channel,
@@ -197,7 +202,8 @@ async function findCandidates({
            ORDER BY service_inbound.created_at DESC, service_inbound.id DESC
            LIMIT 10
          ) AS recent_service_messages
-       FROM contacts c
+       FROM recent_inbound_contacts recent
+       JOIN contacts c ON c.id = recent.contact_id
        JOIN LATERAL (
          SELECT id, created_at
          FROM messages
@@ -408,7 +414,12 @@ async function getNextCandidateDueAt({
     delays.length
   );
   const result = await pool.query(
-    `WITH conversation_state AS (
+    `WITH recent_inbound_contacts AS MATERIALIZED (
+       SELECT DISTINCT recent.contact_id
+       FROM messages recent
+       WHERE recent.role = 'user'
+         AND recent.created_at > now() - interval '23 hours 50 minutes'
+     ), conversation_state AS (
        SELECT
          c.id AS contact_id,
          c.channel,
@@ -419,7 +430,8 @@ async function getNextCandidateDueAt({
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
          previous_follow_up.created_at AS previous_follow_up_created_at,
          policy_hold.retry_at AS policy_retry_at
-       FROM contacts c
+       FROM recent_inbound_contacts recent
+       JOIN contacts c ON c.id = recent.contact_id
        JOIN LATERAL (
          SELECT id, created_at
          FROM messages
