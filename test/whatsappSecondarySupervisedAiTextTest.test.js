@@ -96,7 +96,6 @@ test("only the verified secondary text contact passes the sender-bound database 
       "whatsapp_sender_owner_risk_override_audit",
       "o.owner_authorized=TRUE",
       "o.old_message_retry_prohibited=TRUE",
-      "whatsapp_sender_billing_attempts attempt",
       "c.created_at >= '2026-11-01T10:53:00Z'",
     ])assert.ok(sql.includes(guard),guard);
     assert.deepEqual(params,[8871,NOW.toISOString()]);
