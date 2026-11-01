@@ -10,7 +10,7 @@ const policy = require("./whatsappSecondaryPolicyService");
 const billing = require("../db/whatsappSenderBillingGateRepo");
 const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
-const { secondaryUsesPrimaryClinicContent } =
+const { secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode } =
   require("./whatsappSenderActivationGate");
 const {isSecondaryAdsOnlyEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
@@ -53,6 +53,9 @@ async function sendSecondaryStaffText({
   const parity = aiTextOnly && parityRequested &&
     env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true";
+  const fullAiRequested = env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED === "true";
+  const fullAi = secondaryAdsOnlyFullAiMode(env);
+  const elevatedAi = parity || fullAi;
   const aiTextAuthorized = aiTextOnly &&
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true" &&
@@ -60,17 +63,17 @@ async function sendSecondaryStaffText({
     env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     (parity || env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true") &&
-    (parity || env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") &&
-    (parity || (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true") ===
+    (elevatedAi || env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") &&
+    (elevatedAi || (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true") ===
       (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true")) &&
-    (parity || env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true") &&
+    (elevatedAi || env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true") &&
     env.WHATSAPP_COEXISTENCE_ENABLED === "true" &&
     secondaryUsesPrimaryClinicContent(env);
   const authorizedOrigin = origin === "staff"
     ? env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
       (!aiTextOnly || (parity && aiTextAuthorized))
     : (["ai_reply","system_fallback"].includes(origin) && aiTextAuthorized) ||
-      ((!aiTextOnly || (parity && aiTextAuthorized)) && origin === "ai_media" &&
+      ((!aiTextOnly || (elevatedAi && aiTextAuthorized)) && origin === "ai_media" &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
@@ -81,18 +84,18 @@ async function sendSecondaryStaffText({
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true") ||
-      (origin === "marketing_followup" && parity && aiTextAuthorized &&
+      (origin === "marketing_followup" && elevatedAi && aiTextAuthorized &&
         env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED === "true" &&
         env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" &&
         templateRequest?.automatedMarketingApproved === true);
-  if ((parityRequested && !parity) ||
+  if ((parityRequested && !parity) || (fullAiRequested && !fullAi) ||
       !authorizedOrigin ||
       // AI text-only and Phase B text follow-ups must not use a callback
       // capable of uploading media or sending non-text Graph payloads.
       (aiTextOnly && typeof dispatchTransport === "function" &&
-        (!parity || !aiTextAuthorized ||
+        (!elevatedAi || !aiTextAuthorized ||
          (origin === "ai_media" && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
          (origin === "followup" && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
          (origin === "staff" && !templateRequest &&
