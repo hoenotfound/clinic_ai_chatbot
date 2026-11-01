@@ -233,6 +233,13 @@ async function startApplication({
     console.log(
       "[Startup] Service initialization complete; readiness checks are passing."
     );
+    // Explicitly enabled, once per process: read-only Graph GET to diagnose
+    // secondary Meta DNS/TLS/auth reachability. Never sends a WhatsApp message,
+    // alters a billing gate, or holds the production readiness response.
+    if (process.env.WHATSAPP_SECONDARY_META_READONLY_PROBE_ON_BOOT === "true") {
+      void require("./whatsappSecondaryMetaReadOnlyProbe")
+        .probeSecondaryMetaConnectivity().catch(() => {});
+    }
     return server;
   } catch (err) {
     startupReadiness.markFailed();
