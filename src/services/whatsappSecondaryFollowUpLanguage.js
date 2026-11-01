@@ -13,7 +13,25 @@ const translated=Object.freeze({
     ms:"Kalau masih nak tahu tentang rawatan tadi, boleh tanya ya 😊 Nak tahu apa yang berlaku semasa sesi atau apa yang perlu disediakan sebelum datang?",
   }),
 });
-function localizedFollowUpText({slot,originalText,customerTexts}={}){
+function localizedFollowUpText({
+ slot,originalText,customerTexts,treatmentInterest,clinicConfig,
+}={}){
+ const config=clinicConfig?.automatedFollowUp;
+ if(config && [2,6].includes(Number(slot))){
+   const lang=detectConversationLanguage(
+     Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null);
+   if(!lang)return null;
+   const step=Number(slot)===2?config:config.additionalSteps?.[0];
+   if(!step)return null;
+   const overrides=Array.isArray(step.serviceOverrides)?step.serviceOverrides:[];
+   const service=(Array.isArray(clinicConfig.services)?clinicConfig.services:[])
+     .find(x=>String(x.name||"").trim().toLowerCase()===
+       String(treatmentInterest||"").trim().toLowerCase());
+   const selected=service?overrides.find(x=>x.serviceName===service.name):null;
+   const source=selected||step;
+   return String(source?.translations?.[lang]||source?.message||"").trim()||null;
+ }
+
  if(![2,6].includes(Number(slot)))return originalText;
  const language=detectConversationLanguage(
    Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],
