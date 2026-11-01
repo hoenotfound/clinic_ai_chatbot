@@ -139,6 +139,9 @@ test("single-contact summary still requires explicit archived access", async (t)
       assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
     } else {
       assert.match(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+      // A single-contact lookup must constrain the materialized CTE itself,
+      // rather than building candidates for every imported contact first.
+      assert.match(sql, /SELECT c\.id FROM contacts c\s+WHERE c\.id = \$1\s+AND NOT \(/);
     }
     return { rows: [] };
   };
