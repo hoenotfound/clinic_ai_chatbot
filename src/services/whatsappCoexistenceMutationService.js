@@ -4,6 +4,7 @@
 // No edit/revoke ever creates a new AI reply, customer turn or Cloud API send.
 const {pool}=require("../db/db");
 const senderRepo=require("../db/whatsappSenderConversationRepo");
+const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 
 const LOOKUP_SQL=`
  SELECT j.id,j.sender_id,j.contact_id,j.action,j.replacement_text,
@@ -92,11 +93,14 @@ async function record(echo,contact,{
       previous.action!==echo.type ||
       previous.replacement_text!==(echo.type==="edit"?echo.text:null))
      throw Error("Business App mutation replay conflicts.");
-   if(previous.status==="pending")
-     await applyPending({id:previous.id,senderId},{database});
+   if(previous.status==="pending"){
+     const applied=await applyPending({id:previous.id,senderId},{database});
+     if(!applied)wake();
+   }
    return{isNew:false,alreadySeen:true};
  }
  const applied=await applyPending({id:row.rows[0].id,senderId},{database});
+ if(!applied)wake();
  return{isNew:true,...(applied||{pending:true})};
 }
 async function runOnce({database=pool,env=process.env,limit=20}={}){
@@ -126,12 +130,38 @@ async function runOnce({database=pool,env=process.env,limit=20}={}){
  }
  return{disabled:false,applied};
 }
-let timer=null;
-function start({env=process.env,setIntervalFn=setInterval}={}){
- if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true"||timer)return false;
- timer=setIntervalFn(()=>runOnce({env}).catch(e=>
-   console.error("[Business App mutation] recovery failed:",e?.message)),60000);
- timer?.unref?.();return true;
+// Only inspect this account's unresolved edits/deletes when deciding whether
+// to retain the original one-minute recovery cadence.
+const PENDING_SQL=`SELECT EXISTS(
+   SELECT 1 FROM whatsapp_sender_coexistence_mutations j
+   JOIN whatsapp_sender_accounts sender ON sender.id=j.sender_id
+   WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
+     AND sender.meta_account_id=$3 AND sender.state='active'
+     AND j.status='pending'
+ ) AS has_work`;
+async function hasPendingWork({database=pool,env=process.env}={}){
+ if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true")return false;
+ const result=await database.query(PENDING_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ const pending=result.rows?.[0]?.has_work;
+ if(typeof pending!=="boolean")
+   throw Error("Recovery queue status unavailable; retry shortly");
+ return pending;
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={LOOKUP_SQL,record,applyPending,runOnce,start,stop};
+let worker=null;
+function wake(){return worker?.wake(0)===true;}
+function start({env=process.env,run=runOnce,database=pool,...clock}={}){
+ if(env.WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED!=="true"||worker)return false;
+ worker=createIdleAwareRecoveryWorker({
+   ...clock,
+   label:"Business App mutation recovery",
+   run:()=>run({env,database}),
+   hasPendingWork:()=>hasPendingWork({env,database}),
+ });
+ worker.start(0);
+ return true;
+}
+function stop(){if(worker){worker.stop();worker=null;}}
+module.exports={LOOKUP_SQL,PENDING_SQL,record,applyPending,runOnce,hasPendingWork,start,wake,stop};

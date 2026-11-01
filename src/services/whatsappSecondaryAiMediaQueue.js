@@ -12,12 +12,12 @@ const {secondaryUsesPrimaryClinicContent}=require("./whatsappSenderActivationGat
 const clinicImage=require("./whatsappSecondaryClinicImage");
 const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
 const configRepo=require("../db/configRepo");
+const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 const { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
-const INTERVAL_MS=60*1000;
-let timer=null;
+let worker=null;
 function enabled(env=process.env){
   return Boolean(adsOnlyActivation(env)) &&
     env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
@@ -89,6 +89,9 @@ async function enqueue({
       );
     }
     await client.query("COMMIT");
+    // Only signal after the durable commit. The worker runs as soon as newly
+    // queued images exist, without needing to wake an empty Neon every minute.
+    wake();
     return true;
   }catch(err){await client.query("ROLLBACK").catch(()=>{});throw err;}
   finally{client.release();}
@@ -350,12 +353,39 @@ async function runOnce({
  }
  return{disabled:false,accepted,pending};
 }
-function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
- if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>run({env}).catch(err=>
-   console.error("[Secondary WhatsApp AI media] Worker error:",err?.message)),INTERVAL_MS);
- timer?.unref?.();
+// A claimed job may be midway through a Meta send, or have a presently
+// unknown provider outcome after a crash. Continue the existing one-minute
+// recovery cadence until it is accepted or safely quarantined.
+const PENDING_SQL=`SELECT EXISTS(
+  SELECT 1 FROM whatsapp_sender_ai_media_jobs job
+  JOIN whatsapp_sender_accounts sender ON sender.id=job.sender_id
+  WHERE sender.sender_key=$1 AND sender.meta_phone_number_id=$2
+    AND sender.meta_account_id=$3 AND sender.state='active'
+    AND job.state IN ('pending','claimed')
+) AS has_work`;
+async function hasPendingWork({database=pool,env=process.env}={}){
+ if(!enabled(env))return false;
+ const result=await database.query(PENDING_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ const pending=result.rows?.[0]?.has_work;
+ if(typeof pending!=="boolean")
+   throw Error("Recovery queue status unavailable; retry shortly");
+ return pending;
+}
+function wake(){return worker?.wake(0)===true;}
+function start({env=process.env,run=runOnce,database=pool,...clock}={}){
+ if(!enabled(env)||worker)return false;
+ worker=createIdleAwareRecoveryWorker({
+   ...clock,
+   label:"Secondary WhatsApp AI media recovery",
+   run:()=>run({env,database}),
+   hasPendingWork:()=>hasPendingWork({env,database}),
+ });
+ worker.start(0);
  return true;
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,quarantineStaleClaims,runOnce,start,stop};
+function stop(){if(worker){worker.stop();worker=null;}}
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,quarantineStaleClaims,runOnce,hasPendingWork,start,wake,stop};
