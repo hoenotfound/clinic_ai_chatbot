@@ -212,7 +212,8 @@ test("nighttime image jobs survive quiet hours without exceeding the 23h service
     return{rows:[{sender_id:9,created_at:new Date("2026-11-02T00:30:00Z")}],rowCount:1};
   return{rows:[],rowCount:1};
  },release:()=>{}};
- const database={connect:async()=>client};
+ const database={connect:async()=>client,
+  query:async()=>({rows:[{eligible:true}],rowCount:1})};
  const ok=await worker.enqueue({contactId:21,inboundMessageId:41,
   items:[{imageUrl:"https://example.test/clinic.jpg",caption:"clinic approved"}]},
   {database,env:approved});
