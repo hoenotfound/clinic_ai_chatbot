@@ -576,9 +576,8 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
   // Coexistence can import thousands of address-book contacts that have no
   // messages or lead activity. Keep them searchable in Contacts, but do not
   // hydrate them on every Inbox refresh. Explicit "false" restores the old list.
-  // Single-contact lookups (including archived deep links) bypass this filter.
+  // Archived direct links still require the existing explicit archive option.
   const hideEmptyCoexistence = senderAwareInboxReadsEnabled() &&
-    contactId == null &&
     !includeEmptyCoexistenceContacts &&
     process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS !== "false";
   // Preselect eligible IDs before expensive lead/message review subqueries.
