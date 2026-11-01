@@ -10,7 +10,7 @@ const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
-const {localizedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
+const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
@@ -232,11 +232,16 @@ async function runOnce({
   for(const candidate of items) {
     const slot=Number(candidate.slot_hours);
     if(!SLOTS.has(slot) || !Number.isSafeInteger(Number(candidate.contact_id)))continue;
+    const clinicConfig=getConfig();
+    const confirmedTreatment=resolveFollowUpTreatment({
+      clinicConfig,customerTexts:candidate.customer_texts,
+      treatmentInterest:candidate.treatment_interest,
+    });
     const localized=slot===20 ? candidate.message_text : localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
-      treatmentInterest:candidate.treatment_interest,
-      clinicConfig:getConfig(),
+      treatmentInterest:confirmedTreatment,
+      clinicConfig,
     });
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!localized)continue;
@@ -274,8 +279,8 @@ async function runOnce({
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
       const selectedVideo=!candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
-          slot,treatmentInterest:candidate.treatment_interest,
-          env,clinicConfig:getConfig(),storage:mediaStorage,
+          slot,treatmentInterest:confirmedTreatment,
+          env,clinicConfig,storage:mediaStorage,
         }) : null;
       const key=candidate.media_key || selectedVideo?.mediaKey || null;
       const mediaType=candidate.media_key?candidate.media_type:selectedVideo?.mediaType;
