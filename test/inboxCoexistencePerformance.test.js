@@ -80,7 +80,7 @@ test("single-number deployments and opt-out preserve legacy Inbox SQL", async (t
   }
 });
 
-test("new exclusion is OFF by default even when two business numbers are active", async (t) => {
+test("multi-number Inbox hides untouched Coexistence contacts by default with explicit rollback", async (t) => {
   const oldFlag = process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
   const oldRead = process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
   const original = pool.query;
@@ -93,11 +93,51 @@ test("new exclusion is OFF by default even when two business numbers are active"
   });
   process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED = "true";
   delete process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
-  pool.query = async (sql) => {
+  let expectedFilter = true;
+  pool.query = async (sql, params) => {
+    assert.deepEqual(params, []);
+    if (expectedFilter) {
+      assert.match(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+      assert.match(sql, /NOT EXISTS \\(SELECT 1 FROM messages any_message/);
+      assert.match(sql, /NOT EXISTS \\(SELECT 1 FROM leads existing_lead/);
+      assert.match(sql, /c.needs_attention IS DISTINCT FROM TRUE/);
+    } else {
+      assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+    }
+    return { rows: [] };
+  };
+
+  assert.deepEqual(await contactsRepo.listConversations(), []);
+  // A production rollback must need no code edit or database migration.
+  process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS = "false";
+  expectedFilter = false;
+  assert.deepEqual(await contactsRepo.listConversations(), []);
+  // Re-enabling explicitly remains supported.
+  process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS = "true";
+  expectedFilter = true;
+  assert.deepEqual(await contactsRepo.listConversations(), []);
+});
+
+test("single archived-contact summary bypasses the Inbox-only exclusion by default", async (t) => {
+  const oldFlag = process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
+  const oldRead = process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+  const original = pool.query;
+  t.after(() => {
+    pool.query = original;
+    if (oldFlag === undefined) delete process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
+    else process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS = oldFlag;
+    if (oldRead === undefined) delete process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+    else process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED = oldRead;
+  });
+  process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED = "true";
+  delete process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
+  pool.query = async (sql, params) => {
+    assert.deepEqual(params, [997]);
+    assert.match(sql, /AND c\\.id = \\$1/);
     assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
     return { rows: [] };
   };
-  assert.deepEqual(await contactsRepo.listConversations(), []);
+  assert.deepEqual(await contactsRepo.listConversations({ contactId: 997 }), []);
 });
 
 
