@@ -126,6 +126,13 @@ async function startApplication({
   const server = await listenHttpServer(app, { port });
 
   try {
+    // Repair a pasted secondary Meta token ONLY when explicitly enabled.
+    // In-memory formatting only; never log secret bytes, modify credentials in
+    // Render, send a message, or weaken original unknown billing holds.
+    if (process.env.WHATSAPP_SECONDARY_META_TOKEN_NORMALIZE_ENABLED === "true") {
+      require("./whatsappSecondaryMetaTokenSanitizer")
+        .repairSecondaryMetaTokenInMemory();
+    }
     console.log("[Startup] Initializing database schema and migrations...");
     await initSchema();
     console.log("[Startup] Database schema and migrations ready.");
