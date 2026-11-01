@@ -37,7 +37,9 @@ const {resolveFollowUpTreatment}=require("../src/services/whatsappSecondaryFollo
 const liveClinic={
  services:[{name:"骨盆调理"},{name:"9D 逆龄抗衰"}],
  serviceAliases:[{alias:"pelvic",officialService:"骨盆调理"},
-   {alias:"9D lift",officialService:"9D 逆龄抗衰"}],
+   {alias:"9D lift",officialService:"9D 逆龄抗衰"},
+   {alias:"9D",officialService:"9D 逆龄抗衰"},
+   {alias:"9D逆龄抗衰",officialService:"9D 逆龄抗衰"}],
  automatedFollowUp:{
    message:"Primary clinic Chinese 2h",
    translations:{en:"Primary clinic English 2h",ms:"Primary clinic Malay 2h",
