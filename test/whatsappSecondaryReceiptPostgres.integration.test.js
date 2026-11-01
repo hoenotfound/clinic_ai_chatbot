@@ -1139,3 +1139,25 @@ test("free customer-service billing can never be inferred from marketing-categor
    assert.equal(result.code,"secondary_reconciliation_evidence_unverified");
   });
  });
+
+
+test("two conflicting free pricing classes cannot clear the secondary test billing hold",
+ {skip:!connectionString},async()=>{
+  await withSchema(async({db,database})=>{
+   const {reservation}=await seededSend(db,database);
+   await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{pricing:{
+     type:"free_customer_service",billable:false,category:"service",
+    }})),{database,env});
+   const selected=(await db.query(
+    "SELECT fingerprint FROM whatsapp_sender_status_receipts WHERE matched=true"
+   )).rows[0].fingerprint;
+   await receipts.recordSignedSecondaryStatusBatch(
+    signed(st("wamid.ariel-one",{status:"read",pricing:{
+     type:"free_entry_point",billable:false,category:"service",
+    }})),{database,env});
+   const denied=await settlement.reconcileVerifiedSecondaryNonbillable(
+    review(reservation.reservationId,selected),{database,env});
+   assert.equal(denied.code,"secondary_reconciliation_evidence_unverified");
+  });
+});
