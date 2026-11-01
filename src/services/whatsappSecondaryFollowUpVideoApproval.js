@@ -80,10 +80,14 @@ function selectApprovedTreatmentVideo({
     typeof treatmentInterest!=="string")return null;
  const treatment=treatmentInterest.trim().toLocaleLowerCase();
  if(!treatment)return null;
+ // Resolve only explicit, staff-configured service aliases, not ad captions.
+ const alias=(Array.isArray(clinicConfig?.serviceAliases)?clinicConfig.serviceAliases:[])
+   .find(x=>String(x?.alias||"").trim().toLocaleLowerCase()===treatment);
+ const verifiedService=String(alias?.officialService||treatment).trim().toLocaleLowerCase();
  const base=clinicConfig?.automatedFollowUp;
  const step=Number(slot)===2?base:base?.additionalSteps?.[0];
  const entry=(Array.isArray(step?.serviceOverrides)?step.serviceOverrides:[])
-   .find(x=>String(x?.serviceName||"").trim().toLocaleLowerCase()===treatment);
+   .find(x=>String(x?.serviceName||"").trim().toLocaleLowerCase()===verifiedService);
  // A generic/default video must not be mistaken for treatment-specific proof.
  if(!entry || !String(entry.videoKey||"").trim())return null;
  const key=entry.videoKey.trim();
