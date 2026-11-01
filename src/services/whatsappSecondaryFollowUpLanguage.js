@@ -13,7 +13,40 @@ const translated=Object.freeze({
     ms:"Kalau masih nak tahu tentang rawatan tadi, boleh tanya ya 😊 Nak tahu apa yang berlaku semasa sesi atau apa yang perlu disediakan sebelum datang?",
   }),
 });
-function localizedFollowUpText({slot,originalText,customerTexts}={}){
+function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}={}){
+ const services=(Array.isArray(clinicConfig?.services)?clinicConfig.services:[])
+   .map(x=>String(x?.name||"").trim()).filter(Boolean);
+ const aliases=Array.isArray(clinicConfig?.serviceAliases)?clinicConfig.serviceAliases:[];
+ const normalize=x=>String(x||"").trim().toLocaleLowerCase();
+ for(const message of Array.isArray(customerTexts)?customerTexts:[]){
+   const msg=normalize(message);if(!msg)continue;
+   const named=services.filter(service=>{
+     const terms=[service,...aliases.filter(a=>normalize(a?.officialService)===normalize(service))
+       .map(a=>a.alias)].map(normalize).filter(t=>t.length>1);
+     return terms.some(term=>msg.includes(term));
+   });
+   if(named.length>1)return null;
+   if(named.length===1)return named[0];
+ }
+ return services.find(service=>normalize(service)===normalize(treatmentInterest))||null;
+}
+function localizedFollowUpText({
+ slot,originalText,customerTexts,treatmentInterest,clinicConfig,
+}={}){
+ const config=clinicConfig?.automatedFollowUp;
+ if(config && [2,6].includes(Number(slot))){
+   const lang=detectConversationLanguage(
+     Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null);
+   if(!lang)return null;
+   const step=Number(slot)===2?config:config.additionalSteps?.[0];
+   if(!step)return null;
+   const overrides=Array.isArray(step.serviceOverrides)?step.serviceOverrides:[];
+   const service=resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
+   const selected=service?overrides.find(x=>x.serviceName===service):null;
+   const source=selected||step;
+   return String(source?.translations?.[lang]||source?.message||"").trim()||null;
+ }
+
  if(![2,6].includes(Number(slot)))return originalText;
  const language=detectConversationLanguage(
    Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],
@@ -22,4 +55,4 @@ function localizedFollowUpText({slot,originalText,customerTexts}={}){
  if(language==="zh")return String(originalText||"").trim()||null;
  return translated[Number(slot)]?.[language]||null;
 }
-module.exports={localizedFollowUpText};
+module.exports={localizedFollowUpText,resolveFollowUpTreatment};
