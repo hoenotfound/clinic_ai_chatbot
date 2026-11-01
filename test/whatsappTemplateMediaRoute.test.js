@@ -379,10 +379,10 @@ test("meridian-gift template rejects pelvis Package B and mismatched package tex
   const h = await harness(t, { templateName: "ns_fu_meridian_gift" });
   patch(t, clinicConfig, "promotions", [
     { name: "Pelvis", linkedService: "骨盆调理", imageUrl: "",
-      validUntil: "2026-10-31",
+      validUntil: "2099-12-31",
       packages: [{ name: "Package B", imageUrl: "/promo-images/31" }] },
     { name: "9D", linkedService: "9D 逆龄抗衰", imageUrl: "/promo-images/21",
-      validUntil: "2026-10-31",
+      validUntil: "2099-12-31",
       followUpMessage: "Free 全身通十二经络按摩 - 1 小时" },
   ]);
   const badMedia = await h.post(JSON.stringify({

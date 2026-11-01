@@ -75,6 +75,7 @@ const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
 const { isSecondaryAdsOnlyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
+const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsappSecondarySupervisedAiTextTest");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
 const {
@@ -606,8 +607,13 @@ async function processIncomingMessage(
       process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       secondaryUsesPrimaryClinicContent(process.env);
+    // In test_only, no ad lead qualifies. Only the strictly pinned personal
+    // contact can exercise a plain-text AI reply, for at most one hour.
     const secondaryAudienceEligible = secondaryAiReady
-      ? await isSecondaryAdsOnlyEligible(contact.id) : false;
+      ? (await isSecondaryAdsOnlyEligible(contact.id) ||
+        (!mediaType && !unsupportedType &&
+         typeof incoming.text === "string" && incoming.text.trim().length > 0 &&
+         await isSecondarySupervisedAiTextTestEligible(contact.id))) : false;
     const secondaryAiConversation = secondaryAiReady && secondaryAudienceEligible;
     // All other secondary conversations stay in staff-managed Inbox, even
     // when a global AI switch is ON or the sender's contact mode says "ai".
