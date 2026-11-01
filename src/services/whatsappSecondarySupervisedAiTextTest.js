@@ -95,8 +95,6 @@ async function isSecondarySupervisedAiTextTestEligible(contactId, {
               AND o.delivery_outcome='unknown' AND o.charge_outcome='unknown'
               AND o.old_message_retry_prohibited=TRUE
               AND o.possible_future_charge_accepted=TRUE)
-          AND NOT EXISTS (SELECT 1 FROM whatsapp_sender_billing_attempts attempt
-            WHERE attempt.sender_id=sa.id AND attempt.contact_id=c.id)
           AND EXISTS (
             SELECT 1 FROM messages m
             JOIN whatsapp_sender_message_context mc
