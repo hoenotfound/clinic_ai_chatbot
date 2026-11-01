@@ -126,16 +126,23 @@ function createSecondaryOutboundTransport(binding, {
       const body = await response.text();
       if (!response.ok) return {
         ...classifyWhatsappSendFailure(response.status, body),
+        providerFailureKind: "http_rejection",
         success: false,
         // Only an unambiguous synchronous client rejection proves Meta did
         // not accept this message. 408, 409, 425, 429 and 5xx are uncertain.
         definitivelyRejected: [400,401,403,404,422].includes(response.status),
       };
       let data;
-      try { data = JSON.parse(body); } catch { return { success: false, wamid: null, ambiguous: true, retryable: false, error: "Unverifiable Meta response." }; }
+      try { data = JSON.parse(body); } catch { return { success: false, wamid: null, ambiguous: true, retryable: false, providerFailureKind: "invalid_json", error: "Unverifiable Meta response." }; }
       return { success: true, data };
-    } catch {
-      return { success: false, wamid: null, ambiguous: true, retryable: false, error: "Meta send outcome is unknown; reconcile before retrying." };
+    } catch (error) {
+      // Safe diagnostic categories only. Never log tokens, HTTP bodies,
+      // message text, recipient phone numbers or stack traces.
+      const providerFailureKind = controller.signal.aborted || error?.name === "AbortError"
+        ? "timeout" : error?.name === "TypeError" ? "network_error" : "transport_exception";
+      return { success: false, wamid: null, ambiguous: true, retryable: false,
+        providerFailureKind,
+        error: "Meta send outcome is unknown; reconcile before retrying." };
     } finally {
       clearTimeout(timer);
     }
@@ -146,7 +153,11 @@ function createSecondaryOutboundTransport(binding, {
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       body: JSON.stringify({ messaging_product: "whatsapp", to: recipient, ...payload }),
     });
-    return result.success ? classifyWhatsappAcceptedResponse(result.data) : result;
+    if (!result.success) return result;
+    const accepted = classifyWhatsappAcceptedResponse(result.data);
+    // A successful HTTP response without a provider message ID is still UNKNOWN.
+    return accepted.success ? accepted :
+      { ...accepted, providerFailureKind: "http_success_without_wamid" };
   }
   async function uploadMedia(buffer, mimeType, filename) {
     if (!Buffer.isBuffer(buffer) || !buffer.length || !clean(mimeType) || !clean(filename)) {
