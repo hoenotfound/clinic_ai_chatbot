@@ -52,7 +52,9 @@ const SETTLEMENT_RECEIPTS_SQL = `
      WHERE r.reservation_id=$1::uuid AND r.sender_id=$2 AND r.matched=TRUE
        AND r.wamid=$3 AND r.fingerprint=$4
        AND r.meta_phone_number_id=$5 AND r.meta_account_id=$6
-       AND r.pricing_billable=FALSE AND r.pricing_type='free_entry_point'
+       AND r.pricing_billable=FALSE
+       AND (r.pricing_type='free_entry_point' OR
+         (r.pricing_type='free_customer_service' AND r.pricing_category='service'))
        AND r.delivery_status IN ('sent','delivered','read')
    ) AS matched_nonbillable,
    EXISTS(
@@ -60,7 +62,8 @@ const SETTLEMENT_RECEIPTS_SQL = `
      WHERE r.reservation_id=$1::uuid AND r.sender_id=$2
        AND (r.pricing_billable=TRUE OR r.delivery_status='failed'
          OR (r.pricing_type IS NOT NULL
-           AND r.pricing_type<>'free_entry_point')
+           AND NOT (r.pricing_type='free_entry_point' OR
+             (r.pricing_type='free_customer_service' AND r.pricing_category='service')))
          OR (r.pricing_billable IS NOT NULL AND r.pricing_billable<>FALSE))
    ) AS conflicting,
    EXISTS(
@@ -112,11 +115,20 @@ async function reconcileVerifiedSecondaryNonbillable({
       await client.query("ROLLBACK"); tx = false;
       return deny("secondary_reconciliation_unresolved_or_stale");
     }
+    // A historical privacy-purge hold blocks NEW sending but must not
+    // deadlock independent settlement of a distinct signed, nonbillable
+    // delivered message. Preserve the alarm unchanged for its separate
+    // two-reviewer release procedure; reject every other alarm type.
     const alarm = await client.query(
-      "SELECT 1 FROM whatsapp_sender_billing_alarms WHERE sender_id=$1",
+      "SELECT reason,observed_count,reservation_id FROM whatsapp_sender_billing_alarms " +
+      "WHERE sender_id=$1 FOR UPDATE",
       [senderId]
     );
-    if (alarm.rows?.length) {
+    const historicalPurgeOnly = alarm.rows?.length === 1 &&
+      alarm.rows[0].reason === "purged_unresolved_reservation" &&
+      Number(alarm.rows[0].observed_count) === 1 &&
+      alarm.rows[0].reservation_id === null;
+    if (alarm.rows?.length && !historicalPurgeOnly) {
       await client.query("ROLLBACK"); tx = false;
       return deny("secondary_reconciliation_sender_alarm");
     }
