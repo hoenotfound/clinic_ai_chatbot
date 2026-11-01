@@ -56,6 +56,24 @@ test("migration 109 requires approved secondary MARKETING attempt for billable 4
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
    [inbound,conversation]);
   const hash="a".repeat(64);
+  // Migration 114 fixes the previously broken 66h attempt slot and accepts
+  // Day 4/Day 6 in BOTH sender rules and one-shot attempt tables. These test
+  // rows do not authorize sends or touch any live account.
+  for(const slot of [66,96,144]){
+   await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_rules "+
+    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
+    "VALUES($1,$2,FALSE,'reviewed_future', 'zh_CN',$3,FALSE)",[sender,slot,hash]);
+   await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours) VALUES($1,$2,$3,$4)",
+    [sender,contact,inbound,slot]);
+  }
+  const later=(await db.query(
+   "SELECT slot_hours FROM whatsapp_sender_marketing_followup_attempts "+
+   "WHERE sender_id=$1 ORDER BY slot_hours",[sender])).rows;
+  assert.deepEqual(later.map(r=>Number(r.slot_hours)),[66,96,144]);
+
   await db.query(
    "INSERT INTO whatsapp_sender_marketing_followup_rules "+
    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
