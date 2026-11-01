@@ -107,3 +107,9 @@ outside the system in the Business App.
   opted-in second-number conversation test AI **text** response and
   signed charge receipts. Do not replay old history or send the erased
   message, and keep media, templates, and follow-ups OFF at first.
+
+## Relationship to PR #461
+
+PR #461 added privacy-safe Meta error categories to the outgoing transport and
+has been merged into main. This offline billing release changes no transport
+or WhatsApp sending logic; both fixes must retain the no-retry-on-UNKNOWN rule.
