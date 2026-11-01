@@ -3,6 +3,7 @@
 // This approves a SOURCE R2 object only; never a primary Meta provider media
 // ID, contact attachment, free-send assumption, or marketing permission.
 const mediaStorage=require("./mediaStorageService");
+const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 
 function denied(code){return{approved:false,code};}
 async function verifyApprovedVideo({
@@ -10,7 +11,7 @@ async function verifyApprovedVideo({
  env=process.env,clinicConfig,storage=mediaStorage,
 }={}){
  if(slot!==2 && slot!==6)return denied("secondary_video_slot_unsupported");
- if(env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED!=="true" ||
+ if((env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED!=="true" && !secondaryAdsOnlyFullAiMode(env)) ||
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true" ||
     env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED!=="true" ||
     env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE!=="primary" ||
@@ -32,7 +33,7 @@ function isCurrentApprovedFollowUpVideo({
   slot,mediaKey,env=process.env,clinicConfig,storage=mediaStorage,
 }={}){
   return (slot===2 || slot===6) &&
-    env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+    (env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" || secondaryAdsOnlyFullAiMode(env)) &&
     env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" &&
     env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
     env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
