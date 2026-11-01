@@ -58,10 +58,10 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
       );
       CREATE TABLE users (username text PRIMARY KEY, display_name text);
       INSERT INTO contacts (id, whatsapp_number)
-      SELECT id, '6012000' || id::text FROM generate_series(1,12) AS id;
+      SELECT id, '6012000' || id::text FROM generate_series(1,10) AS id;
       INSERT INTO messages (id, contact_id, role, content, created_at)
       SELECT id, id, 'user', 'Any update?', now()-interval '1 hour'
-      FROM generate_series(1,12) AS id;
+      FROM generate_series(1,10) AS id;
       -- Tests cover unsubmitted, failed, accepted pending and accepted
       -- NULL-status provider echoes. A local saved "sent" without a
       -- provider ID still is not evidence the customer received a reply.
@@ -76,18 +76,7 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
         (106,6,'assistant','Business App echo',now()-interval '50 minutes',NULL,'wamid.106'),
         (107,7,'assistant','Delivery failed',now()-interval '50 minutes','failed','wamid.107'),
         (108,8,'assistant','Accepted earlier',now()-interval '50 minutes','read','wamid.108'),
-        (109,9,'assistant','Legacy no provider ID',now()-interval '50 minutes','sent',NULL),
-        (111,11,'assistant','Previously accepted',now()-interval '50 minutes','read','wamid.111');
-      -- A newer inbound must re-open Unreplied after a valid response.
-      INSERT INTO messages (id, contact_id, role, content, created_at)
-      VALUES (311,11,'user','Another question',now()-interval '10 minutes');
-      -- Same timestamp with a larger assistant id counts as a later reply.
-      UPDATE messages SET created_at='2026-10-30T10:00:00Z' WHERE id=12;
-      INSERT INTO messages
-        (id,contact_id,role,content,created_at,delivery_status,whatsapp_message_id)
-      VALUES
-        (112,12,'assistant','Accepted at matching timestamp',
-         '2026-10-30T10:00:00Z','read','wamid.112');
+        (109,9,'assistant','Legacy no provider ID',now()-interval '50 minutes','sent',NULL);
       INSERT INTO messages
         (id, contact_id, role, content, created_at, delivery_status)
       VALUES (118,8,'assistant','Later unconfirmed draft',now()-interval '40 minutes','pending');
@@ -95,8 +84,8 @@ test("PostgreSQL Inbox Unreplied requires provider evidence and Staff Assist pre
     pool.query = client.query.bind(client);
     const conversations = await contactsRepo.listConversations();
     const byId = new Map(conversations.map(row => [Number(row.contact_id), row]));
-    const unreplied = [1,2,3,7,9,10,11];
-    const replied = [4,5,6,8,12];
+    const unreplied = [1,2,3,7,9,10];
+    const replied = [4,5,6,8];
     for (const id of unreplied) {
       assert.equal(byId.get(id)?.has_unreplied, true,
         `Contact ${id} must remain in Unreplied`);

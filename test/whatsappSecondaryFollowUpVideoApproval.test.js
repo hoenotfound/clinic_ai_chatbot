@@ -1,7 +1,7 @@
 "use strict";
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {verifyApprovedVideo,isCurrentApprovedFollowUpVideo}=require("../src/services/whatsappSecondaryFollowUpVideoApproval");
+const {verifyApprovedVideo,isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("../src/services/whatsappSecondaryFollowUpVideoApproval");
 const env={
  WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"true",
  WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
@@ -90,4 +90,54 @@ test("queued second-number video loses authorization when clinic removes, change
  assert.equal(isCurrentApprovedFollowUpVideo({
   slot:20,mediaKey:input.mediaKey,env,clinicConfig:input.clinicConfig,storage:m.storage,
  }),false);
+});
+
+const adsOnlyEnv={
+ ...env,
+ WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"false",
+ WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+ WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+ WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-11-02T00:00:00Z",
+ WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+ WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+ WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+ WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+ WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"false",
+ WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"false",
+ WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+ WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+};
+test("ads-only secondary AI can reuse verified video without enabling Inbox staff send",async()=>{
+ const storage={isReferencedClinicFollowUpMediaKey:(key)=>key===input.mediaKey,
+  getSharedFollowUpMediaInfo:async()=>({mimeType:"video/mp4",bytes:2048})};
+ const v=await verifyApprovedVideo({...input,env:adsOnlyEnv,storage});
+ assert.equal(v.approved,true);
+ assert.equal(isCurrentApprovedFollowUpVideo({...input,env:adsOnlyEnv,storage}),true);
+ for(const difference of [
+  {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"},
+  {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+  {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},
+ ]){
+  const fail={...adsOnlyEnv,...difference};
+  assert.equal((await verifyApprovedVideo({...input,env:fail,storage})).approved,false,
+   JSON.stringify(difference));
+ }
+});
+test("only the exact configured treatment video is selected for the appropriate slot",()=>{
+ const key="clients/neutro/messages/follow-up-config/approved.mp4";
+ const config={automatedFollowUp:{
+  serviceOverrides:[{serviceName:"骨盆调理",videoKey:key}],
+  additionalSteps:[{serviceOverrides:[{serviceName:"9D 逆龄抗衰",videoKey:key}]}],
+ }};
+ const storage={isReferencedClinicFollowUpMediaKey:x=>x===key};
+ const base={env:adsOnlyEnv,clinicConfig:config,storage};
+ assert.equal(selectApprovedTreatmentVideo({...base,slot:2,treatmentInterest:"骨盆调理"}).mediaKey,key);
+ assert.equal(selectApprovedTreatmentVideo({...base,slot:6,treatmentInterest:"9D 逆龄抗衰"}).mediaKey,key);
+ assert.equal(selectApprovedTreatmentVideo({...base,slot:2,treatmentInterest:"9D 逆龄抗衰"}),null);
+ assert.equal(selectApprovedTreatmentVideo({...base,slot:2,treatmentInterest:"unknown"}),null);
+ assert.equal(selectApprovedTreatmentVideo({...base,slot:20,treatmentInterest:"骨盆调理"}),null);
+ assert.equal(selectApprovedTreatmentVideo({...base,slot:2,treatmentInterest:"骨盆调理",
+  env:{...adsOnlyEnv,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"}}),null);
 });

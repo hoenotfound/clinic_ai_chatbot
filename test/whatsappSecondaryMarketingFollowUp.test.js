@@ -208,3 +208,16 @@ test("marketing worker accepts consented ads-only full AI mode without Inbox sta
  assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
  assert.equal(f.calls.find(x=>x.send).send.origin,"marketing_followup");
 });
+
+test("only 48h and approved 66h marketing slots are dispatched",async()=>{
+ const f=fake({candidates:[{...row,slot_hours:66}]});
+ const result=await svc.runOnce({...f,env});
+ assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
+ assert.equal(f.calls.find(x=>x.send).send.origin,"marketing_followup");
+ const legacy=fake({candidates:[{...row,slot_hours:72}]});
+ const skipped=await svc.runOnce({...legacy,env});
+ assert.deepEqual(skipped,{disabled:false,attempted:0,accepted:0});
+ assert.equal(legacy.calls.filter(x=>x.send).length,0);
+ assert.match(svc.CANDIDATES_SQL,/rule.slot_hours IN\(48,66\)/);
+ assert.doesNotMatch(svc.CANDIDATES_SQL,/rule.slot_hours IN\(48,72\)/);
+});

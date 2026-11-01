@@ -9,7 +9,8 @@ const messagesRepo=require("../db/messagesRepo");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
-const {isCurrentApprovedFollowUpVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
+const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
+const {localizedFollowUpText}=require("./whatsappSecondaryFollowUpLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
@@ -31,7 +32,17 @@ const CANDIDATES_SQL=`
    inbound.id AS inbound_id,inbound.created_at AS inbound_at,
    rule.sender_id,rule.slot_hours,rule.message_text,rule.media_key,
    rule.media_type,rule.media_mime_type,rule.media_filename,
-   rule.updated_at AS rule_updated_at
+   rule.updated_at AS rule_updated_at,
+   lead.treatment_interest,
+   ARRAY(SELECT language_turn.content FROM messages language_turn
+     JOIN whatsapp_sender_message_context language_context
+       ON language_context.message_id=language_turn.id
+       AND language_context.conversation_id=sc.id
+     WHERE language_turn.contact_id=c.id AND language_turn.role='user'
+       AND (language_turn.created_at,language_turn.id)
+           <= (inbound.created_at,inbound.id)
+     ORDER BY language_turn.created_at DESC,language_turn.id DESC LIMIT 5
+   ) AS customer_texts
  FROM whatsapp_sender_followup_rules rule
  JOIN whatsapp_sender_accounts sa ON sa.id=rule.sender_id
    AND sa.state='active' AND sa.sender_key=$1
@@ -54,6 +65,7 @@ const CANDIDATES_SQL=`
  ) inbound ON true
  LEFT JOIN LATERAL (
    SELECT lead.marketing_consent,lead.is_closed,lead.appointment_status,
+     lead.treatment_interest,
      stage.system_key AS stage_key
    FROM leads lead LEFT JOIN pipeline_stages stage ON stage.id=lead.stage_id
    WHERE lead.contact_id=c.id ORDER BY lead.created_at DESC,lead.id DESC
@@ -206,6 +218,7 @@ async function runOnce({
   store=messagesRepo,storage=mediaStorage,contacts=contactsRepo,
  getConfig=()=>configRepo.getConfig(),
  videoApproved=isCurrentApprovedFollowUpVideo,
+ videoSelection=selectApprovedTreatmentVideo,
 }={}) {
   const cutoff=adsOnlyActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
@@ -219,6 +232,12 @@ async function runOnce({
   for(const candidate of items) {
     const slot=Number(candidate.slot_hours);
     if(!SLOTS.has(slot) || !Number.isSafeInteger(Number(candidate.contact_id)))continue;
+    const localized=slot===20 ? candidate.message_text : localizedFollowUpText({
+      slot,originalText:candidate.message_text,
+      customerTexts:candidate.customer_texts,
+    });
+    // Do not burn a one-shot attempt for a language we cannot establish.
+    if(!localized)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
     if(candidate.media_key && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
@@ -251,7 +270,15 @@ async function runOnce({
     };
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
-      const key=candidate.media_key;
+      const selectedVideo=!candidate.media_key && slot!==20 &&
+        env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
+          slot,treatmentInterest:candidate.treatment_interest,
+          env,clinicConfig:getConfig(),storage:mediaStorage,
+        }) : null;
+      const key=candidate.media_key || selectedVideo?.mediaKey || null;
+      const mediaType=candidate.media_key?candidate.media_type:selectedVideo?.mediaType;
+      const mediaMime=candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType;
+      const mediaFilename=candidate.media_key?candidate.media_filename:selectedVideo?.mediaFilename;
       // Never inherit approval forever from the saved rule. The source
       // clinic may remove/replace a video after rule creation.
       const liveVideoApproval=()=>{
@@ -259,14 +286,14 @@ async function runOnce({
           slot,mediaKey:key,env,clinicConfig:getConfig(),storage:mediaStorage,
         })===true;}catch{return false;}
       };
-      if(key && (candidate.media_type!=="video" || !liveVideoApproval())){
+      if(key && (mediaType!=="video" || !liveVideoApproval())){
         await fail("sender_followup_video_approval_revoked");continue;
       }
       let bytes=null;
       if(key){
-        const mime=candidate.media_mime_type;
-        const kind=candidate.media_type;
-        const filename=candidate.media_filename;
+        const mime=mediaMime;
+        const kind=mediaType;
+        const filename=mediaFilename;
         if(!ALLOWED_MIME[kind]?.has(mime) ||
           !/^[A-Za-z0-9._ -]{1,180}$/.test(String(filename||""))){
           await fail("sender_followup_media_invalid");continue;
@@ -279,7 +306,7 @@ async function runOnce({
       // This is the PRIMARY Neutro follow-up AI generator, using only
       // sender-bound SECONDARY customer history. Generate after the one-shot
       // claim, and never send a static substitute when AI mode is explicitly on.
-      let outboundText=candidate.message_text;
+      let outboundText=localized;
       let aiMode=null;
       if(slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
@@ -299,12 +326,12 @@ async function runOnce({
       }
       const saved=await store.saveMessage(candidate.contact_id,
         "assistant",outboundText,null,null,null,null,
-        key?candidate.media_mime_type:null,{
+        key?mediaMime:null,{
           whatsappTemplate:{automatedSecondaryFollowup:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             slotHours:slot,anchorMessageId:candidate.inbound_id},
           isAutomatedFollowUp:true,mediaKey:key||null,
-          mediaFilename:key?candidate.media_filename:null,
+          mediaFilename:key?mediaFilename:null,
           initialDeliveryStatus:"unknown",
           initialDeliveryError:"Sender-scoped follow-up attempted; provider delivery not confirmed.",
         });
@@ -320,16 +347,16 @@ async function runOnce({
           if(!liveVideoApproval() || !await preSendCheck())
             return {success:false,unknown:true,ambiguous:true,retryable:false};
           const uploaded=await transport.uploadMedia(bytes,
-            candidate.media_mime_type,candidate.media_filename);
+            mediaMime,mediaFilename);
           if(!uploaded?.success || !uploaded.mediaId)return{
             success:false,ambiguous:true,retryable:false,
           };
           if(!liveVideoApproval() || !await preSendCheck())return{
             success:false,ambiguous:true,retryable:false,
           };
-          return transport.sendMediaById(candidate.media_type,
-            uploaded.mediaId,{caption:candidate.message_text,
-              filename:candidate.media_filename,voice:candidate.media_type==="audio"});
+          return transport.sendMediaById(mediaType,
+            uploaded.mediaId,{caption:outboundText,
+              filename:mediaFilename,voice:false});
         }}:{}),
       },{env,database});
       if(result?.success===true && /^wamid\./.test(String(result.wamid||""))) {
