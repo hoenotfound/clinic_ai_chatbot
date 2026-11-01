@@ -6,6 +6,7 @@
 const crypto=require("node:crypto");
 const history=require("./whatsappCoexistenceHistoryService");
 const paid=require("./whatsappPaidDefaultIngress");
+const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 
 const TARGET="+60174831336";
 const FIELDS=new Set(["history","smb_app_state_sync"]);
@@ -37,6 +38,7 @@ const DISALLOWED=[
   "WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED",
   "WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED",
   "WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED",
+  "WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED",
 ];
 // The history/import receiver remains strictly no-send. Once all import jobs
 // have finished, the already-signed LIVE receiver may explicitly graduate to
@@ -63,6 +65,15 @@ const AUTOMATION_OPERATIONS=new Set([
 // A separately approved parity mode can combine sender-scoped AI, staff,
  // media, reviewed templates and optional follow-ups. It never changes the
  // historical AI-only/staff-only behavior or imports old Business App history.
+const ADS_ONLY_AI_OPERATIONS=new Set([
+  ...AUTOMATION_OPERATIONS,
+  "WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED",
+  "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
+  "WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
+]);
 const PARITY_OPERATIONS=new Set([
   "WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED",
   "WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
@@ -126,6 +137,32 @@ function liveOperationsAllowed(env){
       (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED!=="true" ||
         env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true") &&
       !DISALLOWED.some(key=>!PARITY_OPERATIONS.has(key) && env[key]==="true");
+  }
+  // The ad-only AI mode permits treatment images and configured followups
+  // WITHOUT granting staff Inbox sending or imported-history access.
+  // Legacy automation and historical/QA-only modes remain unchanged.
+  if(env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED==="true"){
+    const marketing=env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED==="true";
+    return secondaryAdsOnlyFullAiMode(env) &&
+      !staffOnly && !parity &&
+      env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED==="true" &&
+      env.WHATSAPP_COEXISTENCE_ENABLED==="true" &&
+      env.WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE==="primary" &&
+      env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED==="true" &&
+      typeof env.WHATSAPP_SECONDARY_TOKEN==="string" &&
+      env.WHATSAPP_SECONDARY_TOKEN.trim().length>0 &&
+      (env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED!=="true" ||
+        env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true") &&
+      (env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED==="true")===marketing &&
+      (env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED==="true")===marketing &&
+      (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED==="true")===marketing &&
+      (!marketing || env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true") &&
+      !DISALLOWED.some(key=>!ADS_ONLY_AI_OPERATIONS.has(key) && env[key]==="true");
   }
   if(automation){
     const followups=env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true";
