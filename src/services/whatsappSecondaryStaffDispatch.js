@@ -258,6 +258,26 @@ async function sendSecondaryStaffText({
       ? await dispatchTransport(transport)
       : await transport.sendText(text.trim(), { replyToProviderMessageId });
     const accepted = send?.success === true && /^wamid\./.test(String(send.wamid || ""));
+    if (!accepted) {
+      // Only allowlisted scalar diagnostics. The transport's original body,
+      // error text, access token, recipient and message content stay private.
+      const safeKinds = new Set(["http_rejection", "invalid_json", "timeout",
+        "network_error", "transport_exception", "http_success_without_wamid"]);
+      const kind = safeKinds.has(send?.providerFailureKind)
+        ? send.providerFailureKind : "unclassified_response";
+      const status = Number(send?.providerStatus);
+      const errorCode = Number(send?.providerErrorCode);
+      console.warn("[Secondary WhatsApp provider outcome]", JSON.stringify({
+        outboundMessageId: mid,
+        origin: ["ai_reply", "staff", "system_fallback", "followup",
+          "ai_media", "marketing_followup"].includes(origin) ? origin : "other",
+        kind,
+        httpStatus: Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
+        metaErrorCode: Number.isInteger(errorCode) && errorCode > 0 ? errorCode : null,
+        definitivelyRejected: send?.definitivelyRejected === true,
+        ambiguous: send?.ambiguous === true,
+      }));
+    }
     const evidence = await billingRepo.recordSecondaryProviderOutcome({
       reservationId: reserved.reservationId,
       acceptedWamid: accepted ? send.wamid : null,
