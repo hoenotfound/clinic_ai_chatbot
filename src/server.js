@@ -1650,8 +1650,8 @@ async function processIncomingMessage(
     // Only a verified current price request may surface the separate 3D + 9D
     // combo. Reuse the SAME trusted, timestamped customer session as the
     // existing two-treatment resolver. No new pricing graphics are authorized.
-    const comboOfferDecision = !flagged && !marketingStopQuestion &&
-      clinicConfig.businessType === "tcm_clinic" &&
+    const comboOfferDecision = !flagged && !bookingReady &&
+      !marketingStopQuestion && clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveNeutroComboOfferReply({
           customerText: text,
