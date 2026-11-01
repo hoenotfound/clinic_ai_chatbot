@@ -43,7 +43,7 @@ const resultMedia = [
 ];
 const promotions = [
   { name: "Pelvic October Offer", linkedService: "骨盆调理", sendOnPriceQuery: true,
-    validFrom: "2026-10-01", validUntil: "2026-10-31",
+    validFrom: "2026-10-01", validUntil: "2099-12-31",
     packages: [
       { name: "Package A", imageUrl: "/api/config/result-media/image/21", caption: "现在只需 RM388 pelvic care" },
       { name: "Package B", imageUrl: "/api/config/result-media/image/22", caption: "现在只需 RM288 pelvic care" },
