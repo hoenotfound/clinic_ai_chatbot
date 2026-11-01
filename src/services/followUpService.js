@@ -7,6 +7,8 @@ const contactsRepo = require("../db/contactsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { createCoalescedImmediateWake, followUpChangeRequiresWake } =
+  require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
@@ -2214,18 +2216,24 @@ function startAutomatedFollowUps() {
   return followUpTimer.start();
 }
 
-// Any conversation change can make an outbound message newly eligible or make
-// an existing candidate ineligible. Recalculate while the database is already
-// active; once the chat becomes quiet the worker sleeps until the exact due time.
-realtimeEvents.subscribe("conversation_changed", () => {
-  wakeAutomatedFollowUps(0);
+// Keep first actionable events immediate and fold synchronous multi-publish
+// bursts into one wake in the next microtask. Scheduled due times never move.
+const wakeForRealtimeStateChange = createCoalescedImmediateWake(
+  () => wakeAutomatedFollowUps(0)
+);
+
+// Real messages, mode/attention changes and delivery status still re-evaluate
+// promptly. Reactions and presentation-only profile updates cannot change
+// follow-up eligibility and must not run the expensive candidate queries.
+realtimeEvents.subscribe("conversation_changed", (payload) => {
+  if (!followUpChangeRequiresWake(payload)) return;
+  wakeForRealtimeStateChange();
 });
 
-// Pipeline changes can make a previously booked lead eligible again
-// (cancelled/reschedule) or make a pending follow-up ineligible (booked/visited).
-// Recalculate immediately instead of waiting for an unrelated chat event.
+// Booking, consent, and lead changes always wake the same worker, including
+// previously booked contacts that become eligible again on cancellation.
 realtimeEvents.subscribe("pipeline_changed", () => {
-  wakeAutomatedFollowUps(0);
+  wakeForRealtimeStateChange();
 });
 
 realtimeEvents.subscribe("config_changed", (payload) => {
