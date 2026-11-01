@@ -60,6 +60,25 @@ test("8,000 Coexistence address-book imports keep real conversations and sender 
        (message_id,sender_id,source_wamid_hash)
        VALUES ($1,$2,$3)`, [historical,sender,"a".repeat(64)]
     );
+    // Two pending reviews and a resolved review must retain exactly the same
+    // Inbox count, newest-25 objects and newest-10 ordered staff summaries.
+    const secondReviewMessage = (await db.query(
+      "INSERT INTO messages (contact_id,role,content) VALUES ($1,'user','Review follow-up') RETURNING id",
+      [ids[0].id]
+    )).rows[0].id;
+    const resolvedReviewMessage = (await db.query(
+      "INSERT INTO messages (contact_id,role,content) VALUES ($1,'user','Already resolved') RETURNING id",
+      [ids[0].id]
+    )).rows[0].id;
+    await db.query(
+      `INSERT INTO ai_review_items
+       (contact_id,inbound_message_id,category,summary,status,created_at)
+       VALUES ($1,$2,'clinical','First question','pending','2026-10-01T01:00:00Z'),
+              ($1,$3,'clinical','Second question','pending','2026-10-01T02:00:00Z'),
+              ($1,$4,'information','No longer pending','resolved','2026-10-01T03:00:00Z')`,
+      [ids[0].id, historical, secondReviewMessage, resolvedReviewMessage]
+    );
+
     await db.query("INSERT INTO messages (contact_id,role,content) VALUES ($1,'user','New inbound')", [ids[1].id]);
     await db.query("UPDATE contacts SET needs_attention=TRUE WHERE id=$1", [ids[2].id]);
     await db.query("UPDATE contacts SET mode='human' WHERE id=$1", [ids[3].id]);
@@ -80,6 +99,19 @@ test("8,000 Coexistence address-book imports keep real conversations and sender 
     assert.ok(visibleIds.has(primary));
     assert.ok(!visibleIds.has(ids[5].id), "Untouched contact-only import is not an active conversation");
     assert.equal(visible.find(row => row.contact_id === ids[0].id).whatsapp_sender_key, "secondary");
+    const reviewed = visible.find(row => row.contact_id === ids[0].id);
+    assert.equal(reviewed.pending_review_count, 2);
+    assert.equal(reviewed.pending_review_summaries,
+      `[#${historical}] First question\n[#${secondReviewMessage}] Second question`);
+    assert.deepEqual(reviewed.pending_review_items.map(item => ({
+      messageId: item.messageId, summary: item.summary, category: item.category,
+    })), [
+      { messageId: historical, summary: "First question", category: "clinical" },
+      { messageId: secondReviewMessage, summary: "Second question", category: "clinical" },
+    ]);
+    assert.equal(visible.find(row => row.contact_id === ids[1].id).pending_review_count, 0);
+    assert.deepEqual(visible.find(row => row.contact_id === ids[1].id).pending_review_items, []);
+
 
     const deepLink = await contactsRepo.listConversations({
       contactId: ids[5].id, includeEmptyCoexistenceContacts: true,

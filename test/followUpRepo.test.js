@@ -127,7 +127,7 @@ test("automated follow-up discovery excludes conversations already waiting for s
   });
 
   pool.query = async (sql, params) => {
-    assert.match(sql, /FROM contacts c/);
+    assert.match(sql, /JOIN contacts c ON c\.id = recent\.contact_id/);
     assert.match(sql, /c\.needs_attention = false/);
     assert.match(sql, /previous_outbound/);
     assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
@@ -168,6 +168,37 @@ test("automated follow-up discovery excludes conversations already waiting for s
   assert.deepEqual(candidates, []);
 });
 
+
+test("follow-up discovery preselects only recently inbound contacts before expensive joins", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => { pool.query = originalQuery; });
+  const calls = [];
+  pool.query = async (sql, params) => {
+    calls.push({ sql, params });
+    assert.match(sql, /WITH recent_inbound_contacts AS MATERIALIZED/);
+    assert.match(sql, /SELECT DISTINCT recent\.contact_id\s+FROM messages recent/);
+    assert.match(sql, /recent\.role = 'user'/);
+    assert.match(sql, /recent\.created_at > now\(\) - interval '23 hours 50 minutes'/);
+    assert.match(sql, /FROM recent_inbound_contacts recent\s+JOIN contacts c ON c\.id = recent\.contact_id/);
+    // Keep the original last-inbound, primary-sender, consent, and claim guards.
+    assert.match(sql, /latest_inbound\.created_at > now\(\) - interval '23 hours 50 minutes'/);
+    assert.match(sql, /primary_sender\.meta_phone_number_id/);
+    assert.match(sql, /primary_sender\.meta_account_id/);
+    assert.match(sql, /whatsapp_marketing_opt_out_at IS NULL/);
+    return { rows: [{ due_at: null }] };
+  };
+  await followUpRepo.findCandidates({
+    delayMinutes: [120], triggerMode: "all",
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  });
+  await followUpRepo.getNextCandidateDueAt({
+    delayMinutes: [120], triggerMode: "all",
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].params.length, 8);
+  assert.equal(calls[1].params.length, 7);
+});
 
 test("pre-expiry timing uses the shared deadline and current customer inbound", async (t) => {
   const originalQuery = pool.query;

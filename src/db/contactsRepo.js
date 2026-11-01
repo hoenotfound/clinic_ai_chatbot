@@ -599,6 +599,33 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
   const result = await pool.query(
     `
     ${candidatesSql}
+    ${hideEmptyCoexistence ? "," : "WITH"} pending_ai_review_rows AS MATERIALIZED (
+      SELECT r.contact_id, r.id, r.inbound_message_id, r.summary, r.category,
+             r.created_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY r.contact_id ORDER BY r.created_at DESC, r.id DESC
+             ) AS review_rank
+      FROM ai_review_items r
+      WHERE r.status = 'pending'
+    ), pending_ai_reviews AS MATERIALIZED (
+      SELECT r.contact_id,
+             COUNT(*)::integer AS pending_review_count,
+             STRING_AGG(
+               '[#' || r.inbound_message_id::text || '] ' || LEFT(r.summary, 200),
+               CHR(10) ORDER BY r.created_at, r.id
+             ) FILTER (WHERE r.review_rank <= 10) AS pending_review_summaries,
+             COALESCE(
+               JSONB_AGG(
+                 JSONB_BUILD_OBJECT(
+                   'id', r.id, 'messageId', r.inbound_message_id,
+                   'summary', r.summary, 'category', r.category
+                 ) ORDER BY r.created_at, r.id
+               ) FILTER (WHERE r.review_rank <= 25),
+               '[]'::jsonb
+             ) AS pending_review_items
+      FROM pending_ai_review_rows r
+      GROUP BY r.contact_id
+    )
     SELECT
       c.id AS contact_id,
       c.whatsapp_number,
@@ -623,26 +650,9 @@ ${senderAwareInboxReadsEnabled() ? `
       c.created_at,
       c.needs_attention,
       c.attention_reason,
-      (SELECT COUNT(*)::integer FROM ai_review_items r
-       WHERE r.contact_id = c.id AND r.status = 'pending') AS pending_review_count,
-      (SELECT STRING_AGG('[#' || recent.inbound_message_id::text || '] ' ||
-         LEFT(recent.summary, 200), CHR(10) ORDER BY recent.created_at, recent.id)
-       FROM (
-         SELECT r.id, r.inbound_message_id, r.summary, r.created_at
-         FROM ai_review_items r
-         WHERE r.contact_id = c.id AND r.status = 'pending'
-         ORDER BY r.created_at DESC, r.id DESC LIMIT 10
-       ) recent) AS pending_review_summaries,
-      (SELECT COALESCE(JSONB_AGG(JSONB_BUILD_OBJECT(
-             'id', recent.id, 'messageId', recent.inbound_message_id,
-             'summary', recent.summary, 'category', recent.category)
-           ORDER BY recent.created_at, recent.id), '[]'::jsonb)
-       FROM (
-         SELECT r.id, r.inbound_message_id, r.summary, r.category, r.created_at
-         FROM ai_review_items r
-         WHERE r.contact_id = c.id AND r.status = 'pending'
-         ORDER BY r.created_at DESC, r.id DESC LIMIT 25
-       ) recent) AS pending_review_items,
+      COALESCE(pending_reviews.pending_review_count, 0) AS pending_review_count,
+      pending_reviews.pending_review_summaries,
+      COALESCE(pending_reviews.pending_review_items, '[]'::jsonb) AS pending_review_items,
       c.is_unread,
       c.needs_follow_up,
       c.whatsapp_opt_in_at,
@@ -685,6 +695,8 @@ ${senderAwareInboxReadsEnabled() ? `
       ON sc.contact_id = c.id AND sc.state = 'bound'
     LEFT JOIN whatsapp_sender_accounts sa ON sa.id = sc.sender_id
     ` : ""}
+    LEFT JOIN pending_ai_reviews pending_reviews
+      ON pending_reviews.contact_id = c.id
     LEFT JOIN LATERAL (
       SELECT l.id, l.owner_username, l.temperature, l.is_closed
       FROM leads l
