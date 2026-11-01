@@ -13,6 +13,10 @@ import LeadAssignmentBadge, {
 } from "../components/LeadAssignmentBadge";
 import { getBusinessTerminology } from "../utils/businessTerminology";
 import {
+  createSingleFlightInboxRefresh,
+  pipelineRefreshContactId,
+} from "../utils/inboxRefreshPolicy";
+import {
   messagingPolicyStatus,
   hasOpenReplyWindow,
   policyFailureExplanation,
@@ -542,41 +546,51 @@ export default function Inbox() {
   const latestSummaryByContactRef = useRef(new Map());
   const latestLocalEditByContactRef = useRef(new Map());
   const lastCommittedSummaryStartRef = useRef(0);
+  const conversationsRef = useRef(conversations);
+  const requestFullInboxRefreshRef = useRef(null);
+  if (!requestFullInboxRefreshRef.current) {
+    requestFullInboxRefreshRef.current = createSingleFlightInboxRefresh();
+  }
 
+  conversationsRef.current = conversations;
   selectedIdRef.current = selectedId;
   acquisitionContextRef.current = acquisitionContext;
   messagesRef.current = messages;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
-  async function refreshConversations() {
-    const started = ++inboxRequestClockRef.current;
-    latestFullRequestRef.current = started;
-    try {
-      let data = await api.listConversations();
-      // A staff deep link or explicitly open contact-only archive must remain
-      // reachable. Recheck permission rather than pinning stale customer data.
-      const pinnedId = selectedIdRef.current ?? requestedContactId;
-      if (pinnedId != null && !data.some((item) =>
-        Number(item.contact_id) === Number(pinnedId))) {
-        try {
-          const archived = await api.getConversationSummary(pinnedId, true);
-          if (archived) data = [archived, ...data];
-        } catch {
-          // Access may have changed or the contact may have been deleted.
+  function refreshConversations() {
+    // Share overlapping full-list requests, then fetch one fresh list if an
+    // event arrives during the in-flight query. Never cache staff permissions.
+    return requestFullInboxRefreshRef.current(async (requestAnother) => {
+      const started = ++inboxRequestClockRef.current;
+      latestFullRequestRef.current = started;
+      try {
+        let data = await api.listConversations();
+        // A staff deep link or explicitly open contact-only archive must remain
+        // reachable. Recheck permission rather than pinning stale customer data.
+        const pinnedId = selectedIdRef.current ?? requestedContactId;
+        if (pinnedId != null && !data.some((item) =>
+          Number(item.contact_id) === Number(pinnedId))) {
+          try {
+            const archived = await api.getConversationSummary(pinnedId, true);
+            if (archived) data = [archived, ...data];
+          } catch {
+            // Access may have changed or the contact may have been deleted.
+          }
         }
+        if (started !== latestFullRequestRef.current) return;
+        // A newer single-contact or local update committed while this full
+        // request was in flight. Requery instead of rolling the UI backwards.
+        if (lastCommittedSummaryStartRef.current > started) {
+          requestAnother();
+          return;
+        }
+        lastAppliedFullRequestRef.current = started;
+        setConversations(data);
+      } catch (err) {
+        console.error("Failed to refresh conversations:", err);
       }
-      if (started !== latestFullRequestRef.current) return;
-      // A newer single-contact or local update committed while this full
-      // request was in flight. Requery instead of rolling the UI backwards.
-      if (lastCommittedSummaryStartRef.current > started) {
-        void refreshConversations();
-        return;
-      }
-      lastAppliedFullRequestRef.current = started;
-      setConversations(data);
-    } catch (err) {
-      console.error("Failed to refresh conversations:", err);
-    }
+    });
   }
 
   async function refreshConversationSummary(contactId) {
@@ -864,6 +878,8 @@ export default function Inbox() {
     const pendingContactIds = new Set();
     let debounceTimer = null;
     let pipelineListTimer = null;
+    const pipelineContactIds = new Set();
+    let pipelineNeedsFullRefresh = false;
 
     function scheduleRefresh(contactId = null) {
       if (contactId != null) pendingContactIds.add(Number(contactId));
@@ -901,11 +917,28 @@ export default function Inbox() {
       }, REALTIME_DEBOUNCE_MS);
     }
 
-    function schedulePipelineListRefresh() {
+    function schedulePipelineListRefresh(payload) {
+      const id = pipelineRefreshContactId(payload, conversationsRef.current);
+      if (id == null) pipelineNeedsFullRefresh = true;
+      else pipelineContactIds.add(id);
       if (pipelineListTimer) clearTimeout(pipelineListTimer);
-      pipelineListTimer = setTimeout(() => {
+      pipelineListTimer = setTimeout(async () => {
         pipelineListTimer = null;
-        refreshConversations();
+        const changedIds = [...pipelineContactIds];
+        const requiresFull = pipelineNeedsFullRefresh || changedIds.length !== 1;
+        pipelineContactIds.clear();
+        pipelineNeedsFullRefresh = false;
+        if (!requiresFull) {
+          try {
+            // The server rechecks staff access; 403/404 falls back to a fresh
+            // full list to handle deleted, moved or newly assigned contacts.
+            await refreshConversationSummary(changedIds[0]);
+            return;
+          } catch {
+            // Never preserve a stale staff/lead assignment after a failed lookup.
+          }
+        }
+        await refreshConversations();
       }, REALTIME_DEBOUNCE_MS);
     }
 
@@ -968,16 +1001,20 @@ export default function Inbox() {
     }
 
     function handlePipelineChanged(event) {
-      // Temperature, stage and ownership live on the lead, not the contact.
-      // Refresh the lightweight conversation list so its compact lead indicator
-      // stays current when AI/rules or staff update the pipeline. Debounce bursts
-      // of scoring events so several updates do not trigger overlapping list reads.
-      schedulePipelineListRefresh();
+      // Single-contact changes refresh the same permission-checked summary as
+      // conversation events. Unknown, multi-contact, or redacted staff events
+      // retain the full-list safety path without changing the 250ms debounce.
+      let payload = {};
+      try {
+        payload = JSON.parse(event.data || "{}");
+      } catch {
+        // Malformed events must trigger a full refresh.
+      }
+      schedulePipelineListRefresh(payload);
 
       const currentId = selectedIdRef.current;
       if (currentId == null) return;
       try {
-        const payload = JSON.parse(event.data || "{}");
         const targetsSelectedContact =
           payload.contactId != null
           && Number(payload.contactId) === Number(currentId);
