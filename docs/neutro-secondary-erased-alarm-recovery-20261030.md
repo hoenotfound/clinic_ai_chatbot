@@ -1,4 +1,4 @@
-# Neutro second WhatsApp: erased billing-alarm recovery (draft)
+# Neutro second WhatsApp: reviewed multi-erasure billing-alarm recovery (draft)
 
 Status: **feature disabled by default**. Review and merge are source-control
 preparation only, not approval to deploy, invoke the release function, delete
@@ -14,10 +14,17 @@ the customer and send attempt but retained a hashed audit
 `purged_unresolved_reservation` sender-wide alarm. This was **not** a
 confirmed send, confirmed non-send, charge, or free message.
 
-The owner currently cannot access the secondary WhatsApp Business App. A
-read-only Meta check showed the number is registered, but its messaging
-account has **no active payment method shown**. That can prevent billable
-deliveries and does not establish the old message's outcome.
+On 1 November 2026, a supervised AI reply for contact 8863 was recorded
+UNKNOWN. The contact and reservation were then deleted at 18:53 MYT under
+a customer-data erasure, leaving a **second** historical UNKNOWN audit
+alongside the 29 October record and **one new sender-wide alarm**.
+The user's recreated contact 8871 is the same WhatsApp number, not an
+independent test recipient.
+
+Meta now reports a payment method on file, but that does not establish that
+either old message was sent, delivered, free, or billed. One unmatched signed
+status was observed at 12:37 MYT, before the latest erasure. No receipt
+links to either erased reservation.
 
 ## Two separately audited release types
 
@@ -48,11 +55,20 @@ not called by any production endpoint, worker, or scheduled task.
 ## Narrow transactional safeguards
 
 Under a sender lock, the code requires the exact registered secondary
-phone/account and one `purged_unresolved_reservation` alarm with one
-observation, a matching single erased-reservation audit record, the original
-unknown state and no recorded billable receipt. It rejects open sender
-gates/attempts, later provider receipts, multiple or changed alarms, a
-previous release, wrong identity, or any enabled secondary outbound flags.
+phone/account, exactly one `purged_unresolved_reservation` alarm with one
+observation and a matching latest erased reservation hash. It also loads
+**every historical erased audit** and its existing immutable resolution.
+Every outstanding erased UNKNOWN needs a **separate independent review**
+matching that specific reservation hash; any missing, duplicate, unrelated,
+unapproved or unsupported record prevents the entire release.
+Already individually resolved histories cannot substitute for an unreviewed
+attempt. All review records and the sole alarm removal happen in one
+transaction, or none occur.
+
+The release rejects open sender gates/attempts, later provider receipts,
+multiple or changed alarms, a previous release, wrong sender identity,
+and any enabled secondary outbound flags. It also rejects attempts to
+reconcile a new message using an old erased hash.
 
 On success it records only the old reservation hash, the truthful review
 outcome, risk acceptance, readiness attestations and reviewer identifiers.
@@ -78,10 +94,22 @@ outside the system in the Business App.
   new signed secondary webhook path. Confirm the payment method is active
   in Meta Billing Hub. Do not assume that adding a card proves billing
   for the old message.
-- A separate explicit owner approval must be obtained to perform an
-  audited, one-time risk release. Two distinct named reviewers must sign
-  off; unknown must remain unknown. No raw `DELETE` in Neon.
+- A separate explicit owner approval must be obtained at execution
+  for this exact alarm, with the known risk of later Meta charges.
+  Two **genuine independent authorized reviewers** must attest to **both**
+  outstanding historical UNKNOWN attempts. Names and evidence must be
+  provided by real people, not invented by an assistant. Owner consent
+  to code changes does not substitute for two approvals.
+  Keep the existing older and newer erased audits intact. No raw
+  `DELETE` in Neon. The currently available evidence is insufficient
+  to claim a previously sent or free message.
 - Only after the release and independent activation approval may a NEW
   opted-in second-number conversation test AI **text** response and
   signed charge receipts. Do not replay old history or send the erased
   message, and keep media, templates, and follow-ups OFF at first.
+
+## Relationship to PR #461
+
+PR #461 added privacy-safe Meta error categories to the outgoing transport and
+has been merged into main. This offline billing release changes no transport
+or WhatsApp sending logic; both fixes must retain the no-retry-on-UNKNOWN rule.
