@@ -5,7 +5,7 @@
 // This intentionally does NOT modify the Ads-Only SQL or any other automation
 // eligibility (media, lead scoring, summaries, follow-ups, templates).
 const {pool} = require("../db/db");
-const CONTACT_ID = 8871;
+const CONTACT_ID = 8877;
 const MAX_WINDOW_MS = 60 * 60 * 1000;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const NO_OTHER_SENDS = [
@@ -84,10 +84,10 @@ async function isSecondarySupervisedAiTextTestEligible(contactId, {
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND c.whatsapp_coexistence_imported_at IS NULL
-          -- Pin the exact re-created test contact verified at 18:54 MYT.
+          -- Pin only the new secondary test contact created at 23:01 MYT.
           -- Do not authorize a subsequent re-creation or another customer.
-          AND c.created_at >= '2026-11-01T10:53:00Z'::timestamptz
-          AND c.created_at < '2026-11-01T10:55:00Z'::timestamptz
+          AND c.created_at >= '2026-11-01T15:00:00Z'::timestamptz
+          AND c.created_at < '2026-11-01T15:02:00Z'::timestamptz
           -- The old UNKNOWN attempts were not reconciled or retried.
           -- The owner-exception record makes the risk explicit and durable.
           AND EXISTS (SELECT 1 FROM whatsapp_sender_owner_risk_override_audit o
