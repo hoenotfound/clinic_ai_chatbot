@@ -13,6 +13,7 @@ const { createVerifiedSecondaryOutboundTransport } =
 const { secondaryUsesPrimaryClinicContent } =
   require("./whatsappSenderActivationGate");
 const {isSecondaryAdsOnlyEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
 
 function block(code) {
   return {
@@ -125,7 +126,13 @@ async function sendSecondaryStaffText({
   }
   // Include paid automated marketing; staff templates never inherit AI restrictions.
   const automatedOrigin=["ai_reply","system_fallback","ai_media","followup","marketing_followup"].includes(origin);
-  const stillEligible=async()=>!automatedOrigin||await audienceEligible(cid,{database,env});
+  // Only ordinary AI text replies may use the expiring supervised test.
+  // Media, templates, follow-ups and automated fallback messages must
+  // continue to prove the genuine first-ad referral.
+  const stillEligible=async()=>!automatedOrigin ||
+    await audienceEligible(cid,{database,env}) ||
+    (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
+     await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()}));
   if (!await stillEligible())return block("secondary_ads_only_contact_ineligible");
 
   if (typeof preSendCheck === "function" && await preSendCheck() !== true) {
