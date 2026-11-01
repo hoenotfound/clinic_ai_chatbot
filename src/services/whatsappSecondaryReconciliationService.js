@@ -64,7 +64,12 @@ const SETTLEMENT_RECEIPTS_SQL = `
          OR (r.pricing_type IS NOT NULL
            AND NOT (r.pricing_type='free_entry_point' OR
              (r.pricing_type='free_customer_service' AND r.pricing_category='service')))
-         OR (r.pricing_billable IS NOT NULL AND r.pricing_billable<>FALSE))
+         OR (r.pricing_billable IS NOT NULL AND r.pricing_billable<>FALSE)
+         OR (r.pricing_type IS NOT NULL AND r.pricing_type IS DISTINCT FROM (
+           SELECT chosen.pricing_type FROM whatsapp_sender_status_receipts chosen
+           WHERE chosen.fingerprint=$4 AND chosen.sender_id=$2
+             AND chosen.reservation_id=$1::uuid
+         )))
    ) AS conflicting,
    EXISTS(
      SELECT 1 FROM whatsapp_sender_status_receipts r
