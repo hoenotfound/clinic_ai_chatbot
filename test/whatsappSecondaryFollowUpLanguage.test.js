@@ -32,3 +32,59 @@ test("20h AI content is unaffected by localization",()=>{
  const text="AI personalized message";
  assert.equal(localizedFollowUpText({slot:20,originalText:text,customerTexts:[]}),text);
 });
+
+const {resolveFollowUpTreatment}=require("../src/services/whatsappSecondaryFollowUpLanguage");
+const liveClinic={
+ services:[{name:"骨盆调理"},{name:"9D 逆龄抗衰"}],
+ serviceAliases:[{alias:"pelvic",officialService:"骨盆调理"},
+   {alias:"9D lift",officialService:"9D 逆龄抗衰"}],
+ automatedFollowUp:{
+   message:"Primary clinic Chinese 2h",
+   translations:{en:"Primary clinic English 2h",ms:"Primary clinic Malay 2h",
+     zh:"Primary clinic Chinese 2h"},
+   serviceOverrides:[{serviceName:"骨盆调理",
+     message:"Primary pelvic Chinese 2h",
+     translations:{en:"Primary pelvic English 2h",ms:"Primary pelvic Malay 2h",
+       zh:"Primary pelvic Chinese 2h"}}],
+   additionalSteps:[{message:"Primary clinic Chinese 6h",
+     translations:{en:"Primary clinic English 6h",ms:"Primary clinic Malay 6h",
+       zh:"Primary clinic Chinese 6h"},
+     serviceOverrides:[{serviceName:"9D 逆龄抗衰",
+       message:"Primary 9D Chinese 6h",
+       translations:{en:"Primary 9D English 6h",ms:"Primary 9D Malay 6h",
+         zh:"Primary 9D Chinese 6h"}}]}],
+ },
+};
+test("secondary reuses exact configured primary 2h/6h translations",()=>{
+ for(const [slot,customerTexts,treatmentInterest,expected] of [
+   [2,["How much is pelvic treatment?"],"骨盆调理","Primary pelvic English 2h"],
+   [2,["Saya nak tahu harga"],"骨盆调理","Primary pelvic Malay 2h"],
+   [2,["你好骨盆调理"],"骨盆调理","Primary pelvic Chinese 2h"],
+   [6,["Can you explain 9D lift?"],"骨盆调理","Primary 9D English 6h"],
+   [6,["Nak tahu rawatan 9D"],"骨盆调理","Primary 9D Malay 6h"],
+   [6,["9D逆龄抗衰"],"骨盆调理","Primary 9D Chinese 6h"],
+ ]){
+   assert.equal(localizedFollowUpText({slot,originalText:"Old secondary text",
+     customerTexts,treatmentInterest,clinicConfig:liveClinic}),expected);
+ }
+});
+test("latest customer's treatment overrides stale CRM; ambiguous treatments use general copy",()=>{
+ assert.equal(resolveFollowUpTreatment({clinicConfig:liveClinic,
+   treatmentInterest:"骨盆调理",customerTexts:["What about 9D lift?"]}),"9D 逆龄抗衰");
+ assert.equal(localizedFollowUpText({slot:2,originalText:"Old secondary text",
+   customerTexts:["Can you explain pelvic and 9D lift?"],treatmentInterest:"骨盆调理",
+   clinicConfig:liveClinic}),"Primary clinic English 2h");
+ assert.equal(localizedFollowUpText({slot:2,originalText:"Old secondary text",
+   customerTexts:["ok"],treatmentInterest:"骨盆调理",
+   clinicConfig:liveClinic}),null);
+});
+test("changes in clinic config update future secondary reminders without redeploy",()=>{
+ const a=localizedFollowUpText({slot:2,originalText:"stale",customerTexts:["How much?"],
+   treatmentInterest:"骨盆调理",clinicConfig:liveClinic});
+ const changed=structuredClone(liveClinic);
+ changed.automatedFollowUp.serviceOverrides[0].translations.en="Updated primary offer-free copy";
+ const b=localizedFollowUpText({slot:2,originalText:"stale",customerTexts:["How much?"],
+   treatmentInterest:"骨盆调理",clinicConfig:changed});
+ assert.equal(a,"Primary pelvic English 2h");
+ assert.equal(b,"Updated primary offer-free copy");
+});
