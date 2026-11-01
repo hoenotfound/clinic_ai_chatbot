@@ -189,3 +189,22 @@ test("recheck rejects a changed customer language without sending to Meta",async
  assert.equal(f.calls.filter(x=>x.send).length,0);
  assert.ok(f.calls.some(x=>x.sql?.includes("status='unknown'")));
 });
+
+
+test("marketing worker accepts consented ads-only full AI mode without Inbox staff access",async()=>{
+ const fullAi={
+  ...env,
+  WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"false",
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+  WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"true",
+ };
+ assert.equal(svc.enabled(fullAi),true);
+ assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"}),false);
+ assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"}),false);
+ assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"false"}),false);
+ assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"}),false);
+ const f=fake();
+ const result=await svc.runOnce({...f,env:fullAi});
+ assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
+ assert.equal(f.calls.find(x=>x.send).send.origin,"marketing_followup");
+});
