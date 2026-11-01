@@ -5,7 +5,7 @@
 // This intentionally does NOT modify the Ads-Only SQL or any other automation
 // eligibility (media, lead scoring, summaries, follow-ups, templates).
 const {pool} = require("../db/db");
-const CONTACT_ID = 8863;
+const CONTACT_ID = 8871;
 const MAX_WINDOW_MS = 60 * 60 * 1000;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const NO_OTHER_SENDS = [
@@ -55,8 +55,9 @@ function supervisedTestWindow(env = process.env, now = new Date()) {
   return {started, expires};
 }
 
-// Only this one known, new, direct-inbound secondary contact can be a
-// supervised AI text target. The customer must send a real fresh message.
+// Only this one known, newly bound direct-inbound secondary contact can be a
+// supervised AI text target after the explicitly owner-authorized, audited
+// historical billing hold release. It must have a fresh incoming message.
 // No manual insertion of an ad referral, no opt-in backfill or imported chat
 // promotion is permitted. All billing/Meta provider guards remain elsewhere.
 async function isSecondarySupervisedAiTextTestEligible(contactId, {
@@ -83,10 +84,17 @@ async function isSecondarySupervisedAiTextTestEligible(contactId, {
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
           AND c.whatsapp_coexistence_imported_at IS NULL
-          -- Pin the specific contact record verified on 1 November; no
-          -- recreated contact may reuse this temporary authorization.
-          AND c.created_at >= '2026-11-01T02:21:00Z'::timestamptz
-          AND c.created_at < '2026-11-01T02:23:00Z'::timestamptz
+          -- Pin the exact re-created test contact verified at 18:54 MYT.
+          -- Do not authorize a subsequent re-creation or another customer.
+          AND c.created_at >= '2026-11-01T10:53:00Z'::timestamptz
+          AND c.created_at < '2026-11-01T10:55:00Z'::timestamptz
+          -- The old UNKNOWN attempts were not reconciled or retried.
+          -- The owner-exception record makes the risk explicit and durable.
+          AND EXISTS (SELECT 1 FROM whatsapp_sender_owner_risk_override_audit o
+            WHERE o.sender_id=sa.id AND o.owner_authorized=TRUE
+              AND o.delivery_outcome='unknown' AND o.charge_outcome='unknown'
+              AND o.old_message_retry_prohibited=TRUE
+              AND o.possible_future_charge_accepted=TRUE)
           AND EXISTS (
             SELECT 1 FROM messages m
             JOIN whatsapp_sender_message_context mc
