@@ -370,7 +370,10 @@ async function hasPendingWork({database=pool,env=process.env}={}){
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,
  ]);
- return result.rows?.[0]?.has_work===true;
+ const pending=result.rows?.[0]?.has_work;
+ if(typeof pending!=="boolean")
+   throw Error("Recovery queue status unavailable; retry shortly");
+ return pending;
 }
 function wake(){return worker?.wake(0)===true;}
 function start({env=process.env,run=runOnce,database=pool,...clock}={}){
