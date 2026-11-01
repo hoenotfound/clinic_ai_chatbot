@@ -366,3 +366,43 @@ test("unknown provider failure kind is never logged verbatim", async () => {
   assert.equal(diagnostic.metaErrorCode,null);
   assert.doesNotMatch(JSON.stringify(seen),/SECRET|INJECT|sensitive/);
 });
+
+
+test("ads-only full AI can send treatment text and media without granting staff Inbox access",async()=>{
+ const full={
+  ...aiOnlyEnv,
+  WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+  WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-11-01T15:30:00Z",
+  WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"true",
+  WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+  WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+  WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+  WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"false",
+ };
+ const {opts,calls}=setup();
+ const accepted=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+  ...opts,env:full,
+ });
+ assert.equal(accepted.success,true);
+ const staff=await sendSecondaryStaffText({...data,origin:"staff"},{
+  ...opts,env:full,
+ });
+ assert.equal(staff.code,"secondary_staff_send_disabled");
+ assert.equal(calls.reserved,1,"blocked staff send must not create another reservation");
+ const noFull=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+  ...opts,env:{...full,WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"false"},
+ });
+ assert.equal(noFull.code,"secondary_staff_send_disabled");
+ for(const override of [
+  {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"},
+  {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+  {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
+  {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},
+ ]){
+  const blocked=await sendSecondaryStaffText({...data,origin:"ai_reply"},{
+   ...opts,env:{...full,...override},
+  });
+  assert.equal(blocked.code,"secondary_staff_send_disabled",JSON.stringify(override));
+ }
+});

@@ -38,6 +38,26 @@ function assertSecondaryLifecyclePin(env = process.env) {
     throw new Error("Unsafe WhatsApp secondary lifecycle pin: set the verified secondary E164 phone number before activation.");
   }
 }
+// Automated secondary treatment replies, media, and opted-in follow-ups
+// must never require granting chatbot Inbox staff sending privileges.
+function secondaryAdsOnlyFullAiMode(env = process.env) {
+  const cutoff = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
+  return env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED === "true" &&
+    env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED !== "true" &&
+    env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "ads_only" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(cutoff) &&
+    Number.isFinite(Date.parse(cutoff)) &&
+    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
+    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED !== "true" &&
+    env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED !== "true" &&
+    env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
+    env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true";
+}
+
 function assertSecondaryOperationalSafety(env = process.env) {
   assertExpectedSecondaryTarget(env);
   assertSecondaryLifecyclePin(env);
@@ -53,6 +73,8 @@ function assertSecondaryOperationalSafety(env = process.env) {
   const followups = env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true";
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parity = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
+  const fullAiRequested = env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED === "true";
+  const fullAi = secondaryAdsOnlyFullAiMode(env);
   // Parity is a separate explicitly enabled mode; an AI-only deployment
   // must not silently inherit manual/media/template authorizations.
   if (parity && (!aiTextOnly || !ai || !staff || !autoReconcile || !receiptIngress ||
@@ -61,9 +83,20 @@ function assertSecondaryOperationalSafety(env = process.env) {
       env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true")) {
     throw new Error("Unsafe WhatsApp secondary parity activation: verified AI, staff, signed receipts and automatic settlement are required.");
   }
+  if (fullAiRequested && !fullAi) {
+    throw new Error("Unsafe WhatsApp secondary ads-only full AI activation: preserve sender, audience, receipts, and staff-send isolation.");
+  }
+  if (fullAi && (env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED === "true" ||
+      env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED === "true" || billedReview) &&
+      (!followups || env.WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED !== "true" ||
+       env.WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED !== "true" ||
+       env.WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED !== "true" ||
+       !billedReview)) {
+    throw new Error("Unsafe WhatsApp secondary ads-only marketing activation: complete the signed template and billing protections.");
+  }
   // Phase A must not silently become staff sending, media or follow-ups.
   // Keep automatic reconciliation separately gated pending live receipt proof.
-  if (aiTextOnly && !parity && (!ai || staff || media || template || templateMedia ||
+  if (aiTextOnly && !parity && !fullAi && (!ai || staff || media || template || templateMedia ||
       aiMedia || billedReview || (followups !== autoReconcile) ||
       env.WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED === "true" ||
       env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED === "true" ||
@@ -110,7 +143,7 @@ function assertSecondaryOperationalSafety(env = process.env) {
   if ((aiMedia && (!ai || !autoReconcile || !receiptIngress ||
                    env.WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED !== "true")) ||
       (followups && (!ai || !autoReconcile || !receiptIngress)) ||
-      (media && !staff) || (template && !staff) ||
+      (media && !staff) || (template && !staff && !fullAi) ||
       (templateMedia && !template) ||
       (billedReview && (!template || !receiptIngress)) ||
       (autoReconcile && !receiptIngress) ||
@@ -263,4 +296,4 @@ async function assertStoredSenderSafety({
   };
 }
 
-module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent, assertExpectedSecondaryTarget, assertSecondaryLifecyclePin };
+module.exports = { assertSenderIngressSafety, assertStoredSenderSafety, assertSecondaryOperationalSafety, secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode, assertExpectedSecondaryTarget, assertSecondaryLifecyclePin };
