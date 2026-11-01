@@ -153,6 +153,15 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       return null;
     }
 
+    // A previously staged out-of-order edit/revoke can now be applied. This
+    // signal is in-process only; no new AI turn or provider send is created.
+    // Wake strictly after the original staff echo is durably committed.
+    if (persisted.isNew && senderAwareEchoesEnabled() &&
+        echo.businessPhoneNumberId === process.env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+        echo.businessAccountId === process.env.WHATSAPP_SECONDARY_WABA_ID) {
+      echoMutations.wake();
+    }
+
     // Provider-authenticated media echoes are durably queued for FETCH ONLY,
     // never re-sent by the Cloud API. On failure Meta retries safely because
     // the existing WAMID and queue job are both idempotent.
