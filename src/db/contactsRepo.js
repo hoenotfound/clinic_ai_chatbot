@@ -17,11 +17,14 @@ function legacyMalaysianLocalNumber(normalizedNumber) {
   return match ? `0${match[1]}` : null;
 }
 
-function publishContactChange(id) {
+function publishContactChange(id, { profileOnly = false } = {}) {
   if (!id) return;
   realtimeEvents.publish("conversation_changed", {
     contactId: id,
     reason: "contact_state",
+    // Profile name/photo updates change the Inbox display only.
+    // Preserve the event; avoid an unnecessary follow-up eligibility sweep.
+    ...(profileOnly ? { followUpStateUnchanged: true } : {}),
   });
 }
 
@@ -75,7 +78,7 @@ async function persistSocialProfile(row, profile) {
 
   const updated = result.rows[0];
   if (!updated) return row;
-  publishContactChange(row.contact_id || row.id);
+  publishContactChange(row.contact_id || row.id, { profileOnly: true });
   return { ...row, ...updated };
 }
 
@@ -673,23 +676,11 @@ ${senderAwareInboxReadsEnabled() ? `
       m.media_url AS last_message_media_url,
       m.created_at AS last_message_at,
       latest_customer.latest_inbound_at AS latest_inbound_at,
-      EXISTS (
-        SELECT 1
-        FROM messages inbound
-        WHERE inbound.contact_id = c.id
-          AND inbound.role = 'user'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM messages outbound
-            WHERE outbound.contact_id = c.id
-              AND outbound.role = 'assistant'
-              -- A saved draft or rejected message cannot hide an unread
-              -- customer request. Reuse the follow-up worker's provider
-              -- acceptance rule for WhatsApp, Messenger and Instagram.
-              AND ${acceptedNormalOutboundSql("outbound")}
-              AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
-          )
-      ) AS has_unreplied
+      (last_inbound_for_reply.id IS NOT NULL AND (
+        last_accepted_reply.id IS NULL
+        OR (last_accepted_reply.created_at, last_accepted_reply.id)
+           <= (last_inbound_for_reply.created_at, last_inbound_for_reply.id)
+      )) AS has_unreplied
     FROM ${hideEmptyCoexistence
       ? "eligible_inbox_contacts eligible JOIN contacts c ON c.id = eligible.id"
       : "contacts c"}
@@ -722,6 +713,26 @@ ${senderAwareInboxReadsEnabled() ? `
       ORDER BY COALESCE(source_created_at, created_at) DESC, id DESC
       LIMIT 1
     ) latest_customer ON true
+    -- Any unanswered inbound exists iff the newest inbound is later than the
+    -- newest provider-accepted outbound. Keep the original (created_at,id)
+    -- ordering, independent of the source timestamp shown in the Inbox.
+    LEFT JOIN LATERAL (
+      SELECT inbound.id, inbound.created_at
+      FROM messages inbound
+      WHERE inbound.contact_id = c.id AND inbound.role = 'user'
+      ORDER BY inbound.created_at DESC, inbound.id DESC
+      LIMIT 1
+    ) last_inbound_for_reply ON true
+    LEFT JOIN LATERAL (
+      SELECT outbound.id, outbound.created_at
+      FROM messages outbound
+      WHERE outbound.contact_id = c.id
+        AND outbound.role = 'assistant'
+        -- Unsigned drafts and failed/unknown sends are not accepted replies.
+        AND ${acceptedNormalOutboundSql("outbound")}
+      ORDER BY outbound.created_at DESC, outbound.id DESC
+      LIMIT 1
+    ) last_accepted_reply ON last_inbound_for_reply.id IS NOT NULL
     WHERE (m.created_at IS NOT NULL OR c.channel = 'whatsapp')
      ${contactId == null ? "" : "AND c.id = $1"}
     ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
