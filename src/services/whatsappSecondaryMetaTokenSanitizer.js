@@ -14,9 +14,9 @@ function normalizeSecondaryMetaToken(raw){
   const unprefixed=/^Bearer\s+/i.test(value)
     ? value.replace(/^Bearer\s+/i,"") : value;
   // Another common source of invalid HTTP headers is invisible Unicode
-  // formatting from copied rich text. Strip Unicode format/control/space
+  // formatting from copied rich text. Strip Unicode format/space
   // separators ONLY if the final value is still a plausible ASCII token.
-  const withoutMarks=unprefixed.replace(/[\s\p{Cf}\p{Cc}\p{Zs}]/gu,"");
+  const withoutMarks=unprefixed.replace(/[\s\p{Cf}\p{Zs}]/gu,"");
   const quotePairs=[['"','"'],["'","'"],["\u201c","\u201d"],["\u2018","\u2019"],["`","`"]];
   const wrapping=quotePairs.find(([a,b])=>
     withoutMarks.startsWith(a) && withoutMarks.endsWith(b));
