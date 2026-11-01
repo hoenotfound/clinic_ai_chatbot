@@ -491,3 +491,71 @@ test("only explicit, fully guarded staff-text cutover can use signed paid LIVE r
       /Unverified|disabled/,key+" must fail closed");
   }
 });
+
+
+test("signed secondary ads-only full-AI ingress accepts media-enabled mode with Inbox staff sending OFF",async()=>{
+ const full={...env,
+   WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"false",
+   WHATSAPP_SECONDARY_COEXISTENCE_HISTORY_IMPORT_ENABLED:"false",
+   WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED:"true",
+   WHATSAPP_SINGLE_SENDER_STRICT_METADATA:"true",
+   WHATSAPP_SINGLE_SENDER_ACCOUNT_GUARD_ENABLED:"true",
+   WHATSAPP_SECONDARY_TOKEN:"test-only-secondary-token",
+   WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+   WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"true",
+   WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"false",
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-11-01T16:17:22Z",
+   WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+   WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+   WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED:"true",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+   WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED:"true",
+   WHATSAPP_SECONDARY_BILLING_RESERVATIONS_ENABLED:"true",
+   WHATSAPP_SECONDARY_POLICY_EVALUATION_ENABLED:"true",
+   WHATSAPP_SECONDARY_RECEIPT_STAGING_ENABLED:"true",
+   WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"true",
+   WHATSAPP_SECONDARY_MANUAL_RECONCILIATION_ENABLED:"true",
+   WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED:"true",
+   WHATSAPP_COEXISTENCE_ENABLED:"true",
+   WHATSAPP_SECONDARY_CLINIC_CONTENT_SOURCE:"primary",
+   WHATSAPP_SECONDARY_SHARED_CLINIC_CONTENT_APPROVED:"true",
+   WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"false",
+   WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"false",
+   WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"false",
+   WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"false",
+   WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED:"false",
+   WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"false",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED:"false",
+ };
+ assert.doesNotThrow(()=>receiver.assertLiveConfig(full));
+ for(const field of ["messages","smb_message_echoes"]){
+   const response=res();let calls=0;
+   await receiver.dispatch(req(body(entry(full.WHATSAPP_SECONDARY_WABA_ID,
+     change(field)))),response,(request,reply)=>{
+       calls++;assert.equal(request.body.entry[0].changes[0].field,field);
+       return reply.sendStatus(200);
+     },{env:full,stageHistory:async()=>{throw Error("History must be off");},
+        dispatchPrimary:()=>{throw Error("Never route secondary through primary");}});
+   assert.equal(response.statusCode,200);
+   assert.equal(calls,1);
+ }
+ for(const changed of [
+   {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"},
+   {WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:""},
+   {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
+   {WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED:"true"},
+   {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
+   {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},
+   {WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"true"},
+   {WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED:"true"},
+   {WHATSAPP_SECONDARY_EXPECTED_PHONE_NUMBER_ID:"not-the-sender"},
+ ]){
+   assert.throws(()=>receiver.assertLiveConfig({...full,...changed}),/Unverified/,
+     JSON.stringify(changed));
+ }
+ assert.throws(()=>receiver.assertLiveConfig({
+   ...full,WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"false"
+ }),/Unverified/,"legacy automation must still refuse media");
+});
