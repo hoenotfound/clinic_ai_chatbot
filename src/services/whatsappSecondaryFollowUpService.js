@@ -235,6 +235,8 @@ async function runOnce({
     const localized=slot===20 ? candidate.message_text : localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
+      treatmentInterest:candidate.treatment_interest,
+      clinicConfig:getConfig(),
     });
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!localized)continue;
