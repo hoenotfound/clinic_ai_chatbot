@@ -232,3 +232,52 @@ test("invalid payloads do not reach Graph API", async () => {
   assert.equal((await client.uploadMedia(Buffer.alloc(0), "image/png", "x")).success, false);
   assert.equal(calls.length, 0);
 });
+
+
+test("secondary outbound classifies failures without sending twice", async () => {
+  const cases = [
+    {
+      fetchImpl: async () => ({
+        ok: false, status: 403,
+        text: async () => JSON.stringify({error:{code:190, message:"access denied"}}),
+      }),
+      expectedKind: "http_rejection", expectedStatus: 403, expectedCode: 190,
+    },
+    {
+      fetchImpl: async () => ({
+        ok:true, status:200, text: async () => JSON.stringify({messages:[]}),
+      }),
+      expectedKind: "http_success_without_wamid",
+    },
+    {
+      fetchImpl: async () => ({
+        ok:true, status:200, text: async () => "invalid-json",
+      }),
+      expectedKind: "invalid_json",
+    },
+    {
+      fetchImpl: async () => { throw Object.assign(new Error("timeout"), {name:"AbortError"}); },
+      expectedKind: "timeout",
+    },
+    {
+      fetchImpl: async () => { throw new TypeError("connection failed"); },
+      expectedKind: "network_error",
+    },
+  ];
+  for (const item of cases) {
+    let calls = 0;
+    const client = await createVerifiedSecondaryOutboundTransport(contact, {
+      env, database:database(), fetchImpl:async (...args)=>{
+        calls++;
+        return item.fetchImpl(...args);
+      },
+    });
+    const res = await client.sendText("One attempt only");
+    assert.equal(res.success, false);
+    assert.equal(res.providerFailureKind, item.expectedKind);
+    assert.equal(res.providerStatus ?? null, item.expectedStatus ?? null);
+    assert.equal(res.providerErrorCode ?? null, item.expectedCode ?? null);
+    assert.equal(res.retryable, false);
+    assert.equal(calls, 1);
+  }
+});
