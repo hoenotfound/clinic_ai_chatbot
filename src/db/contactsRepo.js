@@ -1039,7 +1039,7 @@ async function clearStaffAssistStateIfUnchanged(contact) {
   );
 
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id, { contact: updated });
+  if (updated) publishContactChange(updated.id, { contact });
   return updated;
 }
 
