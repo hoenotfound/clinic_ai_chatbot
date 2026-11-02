@@ -1783,6 +1783,73 @@ export default function Inbox() {
   );
 }
 
+// Mobile: swipe RIGHT to reveal a staff-only Archive / Unarchive action.
+function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, onReveal, onArchive, children }) {
+  const gestureRef = useRef(null);
+  const suppressNextClickRef = useRef(false);
+  const [dragOffset, setDragOffset] = useState(null);
+  const offset = dragOffset == null ? (open ? 92 : 0) : dragOffset;
+
+  function handleStart(event) {
+    if (event.touches?.length !== 1 || !window.matchMedia("(max-width: 639px)").matches) return;
+    const touch = event.touches[0];
+    gestureRef.current = { startX: touch.clientX, startY: touch.clientY, startOffset: open ? 92 : 0, axis: null, offset: open ? 92 : 0 };
+  }
+  function handleMove(event) {
+    const gesture = gestureRef.current;
+    if (!gesture || event.touches?.length !== 1) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - gesture.startX;
+    const dy = touch.clientY - gesture.startY;
+    if (!gesture.axis && Math.max(Math.abs(dx), Math.abs(dy)) > 10) {
+      gesture.axis = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+    }
+    if (gesture.axis !== "horizontal") return;
+    gesture.offset = Math.max(0, Math.min(92, gesture.startOffset + dx));
+    setDragOffset(gesture.offset);
+  }
+  function handleEnd() {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+    if (gesture?.axis !== "horizontal") return;
+    suppressNextClickRef.current = true;
+    onReveal(gesture.offset >= 54 ? contactId : null);
+    setDragOffset(null);
+  }
+  function handleCancel() {
+    gestureRef.current = null;
+    setDragOffset(null);
+  }
+  function handleClickCapture(event) {
+    if (!suppressNextClickRef.current) return;
+    suppressNextClickRef.current = false;
+    if (event.target.closest("[data-archive-action]")) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  return (
+    <div className="wa-archive-row relative mb-0.5 overflow-hidden rounded-xl"
+      onTouchStart={handleStart} onTouchMove={handleMove} onTouchEnd={handleEnd}
+      onTouchCancel={handleCancel} onClickCapture={handleClickCapture}
+      style={{ touchAction: "pan-y" }}>
+      <button data-archive-action="true" type="button"
+        aria-label={archived ? "Unarchive " + displayNameText : "Archive " + displayNameText}
+        disabled={pending} tabIndex={open ? 0 : -1}
+        onClick={() => { onReveal(null); onArchive(contactId); }}
+        className={archived
+          ? "absolute inset-y-0 left-0 flex w-[92px] flex-col items-center justify-center gap-1 bg-[#53616d] text-xs font-semibold text-white disabled:opacity-50"
+          : "absolute inset-y-0 left-0 flex w-[92px] flex-col items-center justify-center gap-1 bg-[#168c79] text-xs font-semibold text-white disabled:opacity-50"}>
+        {archived ? <UnarchiveIcon className="h-6 w-6" /> : <ArchiveIcon className="h-6 w-6" />}
+        {archived ? "Unarchive" : "Archive"}
+      </button>
+      <div className="relative bg-[var(--color-surface)]"
+        style={{ transform: "translateX(" + offset + "px)", transition: dragOffset == null ? "transform 180ms ease" : "none" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function ConversationList({
   conversations,
   selectedId,
@@ -1809,6 +1876,7 @@ function ConversationList({
     query: "",
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [revealedArchiveId, setRevealedArchiveId] = useState(null);
   const [visibleRowCount, setVisibleRowCount] = useState(60);
   const [directoryMatches, setDirectoryMatches] = useState([]);
   const [directorySearching, setDirectorySearching] = useState(false);
@@ -1908,6 +1976,7 @@ function ConversationList({
   );
   useEffect(() => {
     setVisibleRowCount(60);
+    setRevealedArchiveId(null);
   }, [filters.status, filters.archiveView, filters.channel, filters.sender, filters.control,
       filters.assignment, filters.replyWindow, filters.query]);
   const statusOptions = useMemo(() =>
@@ -2241,10 +2310,25 @@ function ConversationList({
         {renderedConversations.map((conversation) => {
           const selected = conversation.contact_id === selectedId;
           return (
-            <button
+            <SwipeArchiveRow
               key={conversation.contact_id}
+              contactId={conversation.contact_id}
+              displayNameText={displayName(conversation)}
+              archived={Boolean(conversation.inbox_archived_at)}
+              pending={archivePending}
+              open={revealedArchiveId === conversation.contact_id}
+              onReveal={setRevealedArchiveId}
+              onArchive={onToggleArchive}
+            >
+            <button
               type="button"
-              onClick={() => onSelect(conversation.contact_id)}
+              onClick={() => {
+                if (revealedArchiveId === conversation.contact_id) {
+                  setRevealedArchiveId(null);
+                  return;
+                }
+                onSelect(conversation.contact_id);
+              }}
               aria-current={selected ? "true" : undefined}
               className={`wa-inbox-row group mb-0.5 w-full rounded-xl px-3 py-2.5 text-left outline-none transition ${
                 selected
@@ -2313,6 +2397,7 @@ function ConversationList({
                 </div>
               </div>
             </button>
+            </SwipeArchiveRow>
           );
         })}
         {filteredConversations.length > visibleRowCount && (
