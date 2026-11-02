@@ -48,22 +48,22 @@ const env={
  WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575",
  WHATSAPP_SECONDARY_WABA_ID:"1852014482431209",
 };
-function fake({candidates=[row],claimed=true,approved=true,
+function fake({candidates=[row],extendedCandidates=[],claimed=true,approved=true,
   sendResult={success:true,wamid:"wamid.secondary-approved"}}={}){
  const calls=[];
  return{
  calls,
  database:{query:async(sql,args)=>{
   calls.push({sql,args});
-  if(sql===svc.CANDIDATES_SQL){
+  if(sql===svc.CANDIDATES_SQL || sql===svc.EXTENDED_CANDIDATES_SQL){
    assert.equal(args.length,6,"candidate selection binds the ads-only cutoff");
    assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
-   return{rows:candidates};
+   return{rows:sql===svc.CANDIDATES_SQL?candidates:extendedCandidates};
   }
-  if(sql===svc.RECHECK_SQL){
+  if(sql===svc.RECHECK_SQL || sql===svc.EXTENDED_RECHECK_SQL){
    assert.equal(args.length,6,"pre-send recheck must bind the same ads-only cutoff");
    assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
-   return{rows:candidates};
+   return{rows:sql===svc.RECHECK_SQL?candidates:extendedCandidates};
   }
   if(sql.includes("INSERT INTO whatsapp_sender_marketing_followup_attempts"))
    return{rows:claimed?[{id:555}]:[]};
@@ -151,7 +151,7 @@ test("no template send without current approval, after a failed claim, or after 
 test("language selection reuses customer conversation evidence without guesswork",()=>{
  assert.equal(svc.customerTemplateLocale(["Hi", "我想了解这个护理"]),"zh_CN");
  assert.equal(svc.customerTemplateLocale(["How much is the treatment?"]),"en_US");
- assert.equal(svc.customerTemplateLocale(["Saya nak tahu harga"]),"ms_MY");
+ assert.equal(svc.customerTemplateLocale(["Saya nak tahu harga"]),"ms");
  assert.equal(svc.customerTemplateLocale(["hi","ok"]),null);
  assert.equal(svc.customerTemplateLocale(["Please reply in English", "价钱?"]),"en_US");
 });
@@ -220,4 +220,53 @@ test("only 48h and approved 66h marketing slots are dispatched",async()=>{
  assert.equal(legacy.calls.filter(x=>x.send).length,0);
  assert.match(svc.CANDIDATES_SQL,/rule.slot_hours IN\(48,66\)/);
  assert.doesNotMatch(svc.CANDIDATES_SQL,/rule.slot_hours IN\(48,72\)/);
+});
+
+test("Day4/Day6 scheduler stays OFF while 48h/66h remain enabled",async()=>{
+ const f=fake({candidates:[],extendedCandidates:[{...row,slot_hours:96}]});
+ assert.equal(svc.extendedEnabled(env),false);
+ assert.deepEqual(await svc.runOnce({...f,env}),{disabled:false,attempted:0,accepted:0});
+ assert.equal(f.calls.some(x=>x.sql===svc.EXTENDED_CANDIDATES_SQL),false);
+ assert.equal(f.calls.filter(x=>x.send).length,0);
+});
+test("Day4/Day6 require separate rollout switch for sender's approved followups",async()=>{
+ const e={...env,WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED:"true"};
+ assert.equal(svc.extendedEnabled(e),true);
+ for(const slot of [96,144]){
+  const f=fake({candidates:[],extendedCandidates:[{...row,slot_hours:slot,inbound_id:911}]});
+  const result=await svc.runOnce({...f,env:e});
+  assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
+  assert.ok(f.calls.some(x=>x.sql===svc.EXTENDED_CANDIDATES_SQL));
+  assert.ok(f.calls.some(x=>x.sql===svc.EXTENDED_RECHECK_SQL));
+  assert.equal(f.calls.find(x=>x.send).send.templateRequest.languageCode,"zh_CN");
+ }
+});
+test("extended SQL verifies nonbillable signed Meta proof from matching sender/ad session",()=>{
+ const q=svc.EXTENDED_CANDIDATES_SQL;
+ for(const fragment of [
+  "rule.slot_hours IN(96,144)","whatsapp_free_entry_referrals referral",
+  "referral.source_type='ad'","reply_context.conversation_id=sc.id",
+  "receipt.sender_id=sa.id","receipt.matched=TRUE",
+  "receipt.pricing_type='free_entry_point'","receipt.pricing_billable=FALSE",
+  "receipt.meta_phone_number_id=sa.meta_phone_number_id",
+  "receipt.meta_account_id=sa.meta_account_id",
+  "qualified_session.origin_id AS inbound_id",
+  "qualified_session.first_reply_at+rule.slot_hours",
+  "INTERVAL '167 hours'","whatsapp_sender_billing_alarms",
+  "whatsapp_sender_billing_gates",
+  "other.status IN('accepted','unknown','blocked')",
+ ] )assert.ok(q.includes(fragment),"Missing safeguard "+fragment);
+ assert.match(svc.EXTENDED_RECHECK_SQL,/attempted.status='claimed'/);
+ assert.doesNotMatch(svc.CANDIDATES_SQL,/qualified_session/);
+});
+test("extended slots do not bypass operator charge or template gates",async()=>{
+ const e={...env,WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED:"true"};
+ for(const name of ["WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
+  "WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED",
+  "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED"]){
+  const f=fake({candidates:[],extendedCandidates:[{...row,slot_hours:96}]});
+  assert.deepEqual(await svc.runOnce({...f,env:{...e,[name]:"false"}}),
+   {disabled:true,attempted:0,accepted:0});
+  assert.equal(f.calls.length,0);
+ }
 });
