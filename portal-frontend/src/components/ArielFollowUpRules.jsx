@@ -88,7 +88,10 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
     <section aria-label="Secondary WhatsApp follow-ups"
       className="mb-5 rounded-2xl border-2 border-[var(--color-border)] bg-white p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-bold">{section === "marketing" ? "Extended marketing templates" : "Reply-window follow-up messages"}</h2>
+        <div>
+          <h2 className="text-base font-bold">{section === "marketing" ? "Extended marketing templates" : "Reply-window follow-up messages"}</h2>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">For {senderName} only</p>
+        </div>
         <span className="rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold">
           {!config ? "Checking connection" : !config.configured ? "Number unavailable" :
             section === "marketing" ? (config.marketingWorkerEnabled ? "Marketing worker on" : "Marketing worker off") :
