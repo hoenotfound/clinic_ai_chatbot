@@ -15,7 +15,8 @@ const configRepo=require("../db/configRepo");
 const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
-const {reconcileSecondaryMediaAudit}=require("./whatsappSecondaryAiMediaAudit");
+const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
+  require("./whatsappSecondaryAiMediaAudit");
 const { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const MAX_ITEMS=5;
@@ -553,10 +554,23 @@ async function hasPendingWork({database=pool,env=process.env}={}){
 function wake(){return worker?.wake(0)===true;}
 function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  if(!enabled(env)||worker)return false;
+ let historicalAuditPending=true;
  worker=createIdleAwareRecoveryWorker({
    ...clock,
    label:"Secondary WhatsApp AI media recovery",
-   run:()=>run({env,database}),
+   run:async()=>{
+     const result=await run({env,database});
+     if(historicalAuditPending){
+       try{
+         await reconcileRecentTerminalMediaAudit({database,env});
+         historicalAuditPending=false;
+       }catch(err){
+         console.warn("[Secondary WhatsApp AI media] old audit repair unavailable:",
+           err?.message);
+       }
+     }
+     return result;
+   },
    hasPendingWork:()=>hasPendingWork({env,database}),
  });
  worker.start(0);
