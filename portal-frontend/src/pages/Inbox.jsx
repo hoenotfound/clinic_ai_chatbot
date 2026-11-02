@@ -531,6 +531,9 @@ export default function Inbox() {
   const [outboundPendingByContact, setOutboundPendingByContact] = useState({});
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
+  // Keep unfinished text drafts per contact for this Inbox session only.
+  // Never write patient messages into localStorage or other persistent storage.
+  const draftsByContactRef = useRef(new Map());
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
   const [whatsappTemplatePrefill, setWhatsAppTemplatePrefill] = useState(null);
@@ -1608,6 +1611,21 @@ export default function Inbox() {
       ) : (
       <ThreadView
         key={selectedId ?? "no-conversation"}
+        initialDraft={draftsByContactRef.current.get(Number(selectedId)) || ""}
+        onDraftChange={(text) => {
+          if (selectedId == null) return;
+          const id = Number(selectedId);
+          if (!text) {
+            draftsByContactRef.current.delete(id);
+          } else {
+            // Cap memory used by open drafts without persisting private content.
+            draftsByContactRef.current.delete(id);
+            draftsByContactRef.current.set(id, text);
+            if (draftsByContactRef.current.size > 100) {
+              draftsByContactRef.current.delete(draftsByContactRef.current.keys().next().value);
+            }
+          }
+        }}
         contact={selectedContact}
         conversations={conversations || []}
         currentUsername={username}
@@ -2418,6 +2436,8 @@ function DateSeparator({ value }) {
 
 function ThreadView({
   contact,
+  initialDraft,
+  onDraftChange,
   conversations,
   currentUsername,
   canReplyToLeads,
@@ -2473,7 +2493,7 @@ function ThreadView({
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft || "");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
@@ -2703,9 +2723,14 @@ function ThreadView({
     shouldStickToBottomRef.current = distanceFromBottom < 120;
   }
 
+  function updateDraft(value) {
+    setDraft(value);
+    onDraftChange?.(value);
+  }
+
   function handleDraftChange(event) {
     draftEditVersionRef.current += 1;
-    setDraft(event.target.value);
+    updateDraft(event.target.value);
   }
 
   async function selectImageFile(file) {
@@ -3225,6 +3250,11 @@ function ThreadView({
 
   async function handleForwardConfirm(targetContactIds) {
     if (!forwardingMessage || !targetContactIds?.length) return;
+    if (!canReplyToLeads || policyBlocksComposer) {
+      setForwardingMessage(null);
+      onToast(messagingPolicy.explanation || "Forwarding is not permitted for this conversation.", "warning");
+      return;
+    }
     const messageId = forwardingMessage.id;
 
     // Match WhatsApp's feel: close the picker as soon as the action is accepted
@@ -3323,7 +3353,7 @@ function ThreadView({
         : onSend(text, selectedReply?.id || null);
 
       if (mountedRef.current) {
-        setDraft("");
+        updateDraft("");
         setReplyingTo(null);
         if (selectedImage) clearImage();
         if (selectedAttachment) clearAttachment();
@@ -3350,7 +3380,7 @@ function ThreadView({
         const draftUntouched =
           draftEditVersionRef.current === draftEditVersionAtSend;
         if (draftUntouched) {
-          setDraft(text);
+          updateDraft(text);
           setReplyingTo((current) => current || selectedReply);
           if (selectedImage) {
             setImageFile((current) => current || selectedImage);
@@ -3738,7 +3768,7 @@ function ThreadView({
                   (contact.channel || "whatsapp") === "whatsapp" &&
                   !policyBlocksComposer
                 }
-                canForward={canReplyToLeads && !message._optimistic}
+                canForward={canReplyToLeads && !policyBlocksComposer && !message._optimistic}
               />
             </div>
           ))}
@@ -3936,7 +3966,12 @@ function ThreadView({
                       if (attachmentMenuOpen) setAttachmentMenuOpen(false);
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
+                      // Phone keyboards use Return for a new line. Physical
+                      // desktop keyboards keep Enter-to-send; never send
+                      // mid-composition for Chinese/Japanese/Korean input.
+                      if (e.isComposing || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                      if (e.key === "Enter" && !e.shiftKey &&
+                          window.matchMedia("(min-width: 640px)").matches) {
                         e.preventDefault();
                         handleSubmit(e);
                       }
