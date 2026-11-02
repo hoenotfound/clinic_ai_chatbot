@@ -306,7 +306,7 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
  const result=await database.query(POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
-   env.WHATSAPP_SECONDARY_WABA_ID,now,1,cutoff,
+   env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
  ]);
  return result.rows?.[0]||null;
 }
