@@ -4603,9 +4603,9 @@ function FollowUpTool({
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
             <nav role="tablist" aria-label="Activity sections"
               className="flex gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white p-1.5">
-              {[["recent", "Recent activity"],["health", "Delivery health"],["templates", "Templates"]].map(([key, label]) => (
+              {[["recent", "Recent activity", "follow-up-delivery-events"],["health", "Delivery health", "follow-up-delivery-health"],["templates", "Templates", "follow-up-template-activity"]].map(([key, label, panelId]) => (
                 <button type="button" role="tab" key={key} id={`activity-tab-${key}`}
-                  aria-selected={activitySection===key} aria-controls={`activity-panel-${key}`}
+                  aria-selected={activitySection===key} aria-controls={panelId}
                   onClick={() => setActivitySection(key)}
                   className={`min-h-11 shrink-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold sm:text-sm ${activitySection===key
                     ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
