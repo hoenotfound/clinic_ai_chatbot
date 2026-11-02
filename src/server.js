@@ -1961,11 +1961,14 @@ async function processIncomingMessage(
         session: comboOfferDecision ? recentVerifiedPricingSession(history, text) : null,
         reply,
       });
-      let pricingMediaSkipReason = twoTreatmentQuote && !comboMediaPricingDecision
-        ? "two_treatments_text_only" : comboOfferDecision && !comboMediaPricingDecision
-          ? "verified_combo_media_not_authorized" : "not_evaluated";
-      const promoBundle = twoTreatmentQuote && !comboMediaPricingDecision
-        ? null : await resolvePricePromotionForReply({
+      const comboMediaUnavailable = Boolean(comboOfferDecision && !comboMediaPricingDecision);
+      let pricingMediaSkipReason = comboMediaUnavailable
+        ? "verified_combo_media_not_authorized" : twoTreatmentQuote
+          ? "two_treatments_text_only" : "not_evaluated";
+      // A verified combo quote MUST NOT fall back to the unrelated 3D or 9D
+      // picture when the combo image has missing or conflicting evidence.
+      const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
+        comboMediaUnavailable ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
         pricingDecision: comboMediaPricingDecision ||
