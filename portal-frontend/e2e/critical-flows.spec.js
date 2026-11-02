@@ -170,6 +170,7 @@ async function installApi(page, {
   authUser = STAFF_USER,
   initialVoucher = null,
   voucherWriteError = false,
+  archiveWriteError = false,
   verifiedFreeTemplateWindow = false,
   freeTemplateSendReady = true,
 } = {}) {
@@ -307,6 +308,7 @@ async function installApi(page, {
     if (archiveMatch && method === "PATCH") {
       const body = request.postDataJSON();
       record(request, body);
+      if (archiveWriteError) return fulfill(route, { error: "Archive update failed" }, 500);
       conversations = conversations.map((item) => Number(item.contact_id) === Number(archiveMatch[1])
         ? { ...item, inbox_archived_at: body.archived ? recentIso() : null }
         : item);
@@ -831,6 +833,61 @@ test("conversation actions archive and restore without changing AI ownership", a
   await page.getByRole("menuitem", { name: "Unarchive chat" }).click();
   const changes = apiState.calls.filter((c) => c.path === "/api/conversations/101/archive");
   expect(changes.map((c) => c.body.archived)).toEqual([true, false]);
+  expect(findCall(apiState, "POST", "/api/conversations/101/return-to-ai")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("read-only staff cannot see or swipe to Archive", async ({ page }, testInfo) => {
+  const apiState = await installApi(page, {
+    authUser: {
+      ...STAFF_USER,
+      permissions: { ...STAFF_USER.permissions, manage_assigned_leads: false },
+    },
+  });
+  await page.goto("/inbox");
+  const list = page.getByRole("complementary", { name: "Conversation inbox" });
+  const row = list.getByRole("button").filter({ hasText: "Alex Customer" }).first();
+  await expect(row).toBeVisible();
+  if (testInfo.project.name === "iphone-portrait") {
+    const wrap = list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" });
+    await wrap.evaluate((element) => {
+      const point = (x, y) => ({ identifier: 3, target: element, clientX: x, clientY: y, screenX: x, screenY: y });
+      for (const [type, touches] of [
+        ["touchstart", [point(35, 180)]],
+        ["touchmove", [point(155, 180)]],
+        ["touchend", []],
+      ]) {
+        const ev = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "touches", { value: touches });
+        element.dispatchEvent(ev);
+      }
+    });
+    await expect(wrap.locator("div[style*='translateX']")).toHaveAttribute("style", /translateX\(0px\)/);
+  }
+  await expect(list.getByRole("button", { name: "Archive chat" })).toHaveCount(0);
+  await row.click();
+  await page.getByRole("button", { name: "Conversation actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Archive chat" })).toHaveCount(0);
+  expect(findCall(apiState, "PATCH", "/api/conversations/101/archive")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("failed Archive restores the open thread, deep link, and original chat state", async ({ page }) => {
+  const apiState = await installApi(page, {
+    archiveWriteError: true,
+    initialConversations: [conversation({ inbox_archived_at: null, mode: "ai", needs_follow_up: true })],
+  });
+  await page.goto("/inbox?contact=101");
+  await expect(page.getByRole("button", { name: "Conversation actions" })).toBeVisible();
+  await page.getByRole("button", { name: "Conversation actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive chat" }).click();
+  await expect(page.getByText("Couldn't update archive. Please try again.")).toBeVisible();
+  await expect(page).toHaveURL(/contact=101/);
+  await expect(page.getByRole("button", { name: "Conversation actions" })).toBeVisible();
+  await page.getByRole("button", { name: "Conversation actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Archive chat" })).toBeVisible();
+  expect(findCall(apiState, "PATCH", "/api/conversations/101/archive")?.body).toEqual({ archived: true });
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
   expect(findCall(apiState, "POST", "/api/conversations/101/return-to-ai")).toBeFalsy();
   expectNoUnexpectedApi(apiState);
 });
