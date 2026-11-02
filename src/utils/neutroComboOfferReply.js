@@ -103,6 +103,9 @@ function resolveNeutroComboOfferReply({
   }
 
   const userTurns = turns.filter(turn => turn.role === "user");
+  // Do not re-sell a combo that this customer already declined. An explicit
+  // new joint-package request is handled separately above.
+  if (userTurns.some(turn => NO_COMBO.test(String(turn.content || "")))) return null;
   const named = userTurns.map(turn => named3D9D(turn.content));
   if (!(named.some(item => item.face) && named.some(item => item.firming)) ||
       (!currentNames.face && !currentNames.firming)) return null;
