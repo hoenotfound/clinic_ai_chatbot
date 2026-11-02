@@ -170,7 +170,7 @@ test("verified RM688 combo selects exactly its approved picture through normal p
  assert.equal(pricingDecision?.prices?.length,1);
  assert.equal(selected?.promotion.linkedService,"3D + 9D 组合");
  assert.equal(selected?.packages?.length,1);
- assert.match(selected.packages[0].imageUrl,/\\/promo-images\\/22$/u);
+ assert.ok(selected.packages[0].imageUrl.endsWith("/promo-images/22"));
  assert.match(selected.packages[0].caption,/RM688/u);
 });
 test("combo image is not authorized for absent, mismatched or unverified offer",()=>{
