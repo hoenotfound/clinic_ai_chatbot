@@ -1277,6 +1277,25 @@ router.patch("/:contactId/read-state", async (req, res) => {
   }
 });
 
+// Archiving only changes shared staff Inbox visibility, never the contact's
+// AI mode, lead stage, opt-out, follow-up schedule or sending permissions.
+router.patch("/:contactId/archive", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+    const { archived } = req.body || {};
+    if (typeof archived !== "boolean") {
+      return res.status(400).json({ error: "archived (boolean) is required." });
+    }
+    const updated = await contactsRepo.setInboxArchived(contactId, archived);
+    if (!updated) return res.status(404).json({ error: "Contact not found." });
+    res.json({ contactId, archived: !!updated.inbox_archived_at, archivedAt: updated.inbox_archived_at });
+  } catch (err) {
+    console.error("Failed to change Inbox archive state:", err);
+    res.status(500).json({ error: "Something went wrong updating archive state." });
+  }
+});
+
 router.patch("/:contactId/follow-up", async (req, res) => {
   try {
     const contactId = parsePositiveInt(req.params.contactId);
