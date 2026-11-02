@@ -1079,7 +1079,8 @@ router.get("/events", (req, res) => {
     }
   }, SSE_HEARTBEAT_MS);
 
-  req.once("close", finishStream);
+  // Tie lifecycle to the response actually carrying SSE. Incoming request
+  // completion is not reliable evidence that the outbound stream has closed.
   res.once("close", finishStream);
 });
 
