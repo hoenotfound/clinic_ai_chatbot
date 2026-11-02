@@ -2,7 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { recordWorkerWake, recordInboxFullList, snapshot, classifyChannel } =
+const { recordWorkerWake, recordInboxFullList, recordInboxRevisionCheck,
+  snapshot, classifyChannel } =
   require("../src/utils/refreshWakeDiagnostics");
 
 test("passive counters classify wake decisions without retaining sensitive event fields", () => {
@@ -53,4 +54,17 @@ test("bounded counters reject unknown worker and outcome categories", () => {
   recordWorkerWake("not-a-worker", "conversation_changed", {}, "queued");
   recordWorkerWake("secondary_service", "conversation_changed", {}, "not-a-result");
   assert.equal(snapshot().counters.length, previous);
+});
+
+test("cheap Inbox revision counters remain bounded, anonymous and separate from full reads", () => {
+  const initial = snapshot().counters.find(x => x.key === "inbox_revision|skipped_full_query")?.total || 0;
+  recordInboxRevisionCheck("skipped_full_query");
+  recordInboxRevisionCheck("full_query");
+  recordInboxRevisionCheck("wal_unavailable");
+  recordInboxRevisionCheck("patient-name: private");
+  const counters = snapshot().counters;
+  assert.equal(counters.find(x => x.key === "inbox_revision|skipped_full_query")?.total, initial + 1);
+  assert.ok(counters.some(x => x.key === "inbox_revision|full_query"));
+  assert.ok(counters.some(x => x.key === "inbox_revision|wal_unavailable"));
+  assert.doesNotMatch(JSON.stringify(counters), /patient-name: private/);
 });
