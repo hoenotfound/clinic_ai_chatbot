@@ -13,12 +13,35 @@ const clinicImage=require("./whatsappSecondaryClinicImage");
 const mediaApproval=require("./whatsappSecondaryClinicMediaAuthorization");
 const configRepo=require("../db/configRepo");
 const {createIdleAwareRecoveryWorker}=require("../utils/idleAwareRecoveryWorker");
+const realtimeEvents=require("../utils/realtimeEvents");
+const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
+const {reconcileSecondaryMediaAudit}=require("./whatsappSecondaryAiMediaAudit");
 const { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
 const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
 const CANCELLED_ERROR="Image not sent. The customer replied or the original send window ended before this image could be sent.";
+
+function publishSecondaryMediaStatus(message,env=process.env){
+ if(!message?.id || !message?.contact_id)return;
+ const scope=configuredVerifiedScope(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,env);
+ if(!scope)return; // Never infer the sender from a bare contact ID.
+ try{
+   realtimeEvents.publish("conversation_changed",{
+     ...scope,contactId:message.contact_id,messageId:message.id,
+     deliveryStatus:message.delivery_status,
+     deliveryError:message.delivery_error||null,reason:"delivery_status",
+   });
+ }catch{ /* SSE is best effort after the saved database state. */ }
+}
+async function reconcileAuditBestEffort(inboundMessageIds,database,env){
+ if(!inboundMessageIds?.length)return;
+ try{await reconcileSecondaryMediaAudit({inboundMessageIds,database,env});}
+ catch(err){console.warn("[Secondary WhatsApp AI media] audit update unavailable:",
+   err?.message);}
+}
 let worker=null;
 function enabled(env=process.env){
   return Boolean(adsOnlyActivation(env)) &&
@@ -259,7 +282,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
                AND staff.created_at>=inbound.created_at
            )
          )
-       RETURNING job.outbound_message_id
+       RETURNING job.inbound_message_id,job.outbound_message_id
     ), cancelled_messages AS (
       UPDATE messages AS m
          SET delivery_status='cancelled', delivery_error=$5
@@ -275,21 +298,36 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
            SELECT 1 FROM outbound_message_evidence e
            WHERE e.message_id=m.id AND e.accepted=TRUE
          )
-       RETURNING m.id
+       RETURNING m.id,m.contact_id,m.delivery_status,m.delivery_error
     )
     SELECT (SELECT COUNT(*) FROM obsolete)::int AS retired,
-           (SELECT COUNT(*) FROM cancelled_messages)::int AS messages_cancelled`,
+           (SELECT COUNT(*) FROM cancelled_messages)::int AS messages_cancelled,
+           (SELECT COALESCE(ARRAY_AGG(DISTINCT inbound_message_id),'{}'::integer[])
+              FROM obsolete) AS inbound_ids,
+           (SELECT COALESCE(JSON_AGG(ROW_TO_JSON(changed)),'[]'::json)
+              FROM cancelled_messages changed) AS changed_messages`,
    [env.WHATSAPP_SECONDARY_SENDER_KEY,
      env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
      adsOnlyActivation(env),CANCELLED_ERROR]
  );
- return{disabled:false,cancelled:Number(result.rows?.[0]?.retired||0)};
+ const row=result.rows?.[0]||{};
+ for(const message of (Array.isArray(row.changed_messages)?row.changed_messages:[])){
+   publishSecondaryMediaStatus(message,env);
+ }
+ await reconcileAuditBestEffort(row.inbound_ids||[],database,env);
+ return{disabled:false,cancelled:Number(row.retired||0)};
 }
 
 // Called only after a signed, sender-scoped Meta receipt has successfully
 // reconciled a previous billing reservation. No new send occurs here.
-async function wakeAfterVerifiedReconciliation({database=pool,env=process.env}={}){
- if(!enabled(env))return false;
+async function wakeAfterVerifiedReconciliation({
+ contactIds,database=pool,env=process.env,
+}={}){
+ const ids=[...new Set((Array.isArray(contactIds)?contactIds:[])
+   .map(Number).filter(id=>Number.isSafeInteger(id)&&id>0))];
+ // No sender-wide wake. Only the EXACT contact whose signed Meta receipt
+ // freed their individual billing gate may advance to a new image.
+ if(!enabled(env)||!ids.length)return false;
  const pending=await database.query(
    `UPDATE whatsapp_sender_ai_media_jobs AS job
        SET next_attempt_at=NOW(),updated_at=NOW()
@@ -298,13 +336,15 @@ async function wakeAfterVerifiedReconciliation({database=pool,env=process.env}={
        AND job.next_attempt_at>NOW() AND job.expires_at>NOW()
        AND sa.state='active' AND sa.sender_key=$1
        AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+       AND job.contact_id=ANY($4::int[])
        AND EXISTS(
          SELECT 1 FROM whatsapp_sender_billing_gates gate
-         WHERE gate.sender_id=sa.id AND gate.state='idle'
+         WHERE gate.sender_id=sa.id AND gate.owner_contact_id=job.contact_id
+           AND gate.state='idle'
        )
      RETURNING job.id`,
    [env.WHATSAPP_SECONDARY_SENDER_KEY,
-     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,ids]
  );
  if(pending.rowCount>0)wake();
  return pending.rowCount>0;
@@ -329,6 +369,7 @@ async function runOnce({
    adsOnlyActivation(env),
  ]);
  let accepted=0,pending=0;
+ const changedInbounds=new Set();
  for(const job of list.rows||[]){
    // Atomic one-shot claim; a crash after claim is UNKNOWN, never replayed.
    const claimed=await database.query(
@@ -336,6 +377,7 @@ async function runOnce({
      [job.id]
    );
    if(claimed.rowCount!==1)continue;
+   changedInbounds.add(job.inbound_message_id);
    const update=async(state)=>{
      const saved=await database.query(
        "UPDATE whatsapp_sender_ai_media_jobs SET state=$2,updated_at=NOW() WHERE id=$1 AND state='claimed' RETURNING outbound_message_id",
@@ -345,10 +387,11 @@ async function runOnce({
      // Only modify an unconfirmed assistant row; signed receipts remain authoritative.
      const id=saved.rows?.[0]?.outbound_message_id;
      if(id && state!=="accepted"){
-       await messageRepo.markDeliveryUnknownIfUnconfirmed(id,
+       const changed=await messageRepo.markDeliveryUnknownIfUnconfirmed(id,
          state==="expired"
            ? "Secondary image cancelled by a changed safety or customer policy."
            : "Secondary image delivery is uncertain; manually verify before resending.");
+       if(changed?.marked)publishSecondaryMediaStatus(changed.message,env);
      }
      return saved;
    };
@@ -402,6 +445,10 @@ async function runOnce({
          "UPDATE whatsapp_sender_ai_media_jobs SET outbound_message_id=$2 WHERE id=$1 AND state='claimed'",
          [job.id,messageId]
        );
+       publishSecondaryMediaStatus({
+         id:messageId,contact_id:contact.id,delivery_status:"queued",
+         delivery_error:QUEUED_ERROR,
+       },env);
      }
      // A claimed send may reach Meta. From this point until signed provider
      // proof is stored, present an uncertain outcome rather than "queued".
@@ -478,6 +525,7 @@ async function runOnce({
      console.error("[Secondary WhatsApp AI media] Uncertain outcome requires manual review:",err?.message);
    }
  }
+ await reconcileAuditBestEffort([...changedInbounds],database,env);
  return{disabled:false,accepted,pending};
 }
 // A claimed job may be midway through a Meta send, or have a presently
