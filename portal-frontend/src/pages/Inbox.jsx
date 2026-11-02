@@ -4909,7 +4909,7 @@ function MessageBubble({
           style={{ transform: `translateY(-50%) scale(${Math.min(1, 0.75 + swipeOffset / 160)})` }}
           aria-hidden="true"
         >
-          ↩
+          <ReplyIcon className="h-5 w-5" />
         </div>
       )}
 
@@ -4951,7 +4951,7 @@ function MessageBubble({
         {!isPatient && <p className="mb-1 pr-9 text-[10px] font-semibold text-white/65 sm:pr-7">{senderLabel}</p>}
         {isPatient && showActions && <div className="h-5 sm:h-3" aria-hidden="true" />}
         {message.is_forwarded && (
-          <p className={`mb-1 text-[10px] italic ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/65"}`}>↪ Forwarded</p>
+          <p className={`mb-1 flex items-center gap-1 text-[10px] italic ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/65"}`}><ForwardIcon className="h-3 w-3 shrink-0" />Forwarded</p>
         )}
         {isWhatsAppTemplate && (
           <p className="mb-1.5 inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-semibold text-white/80">
