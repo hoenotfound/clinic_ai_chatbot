@@ -773,7 +773,7 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
     fire("touchmove", [point(145, 182)]);
     fire("touchend", []);
   });
-  const archive = list.getByRole("button", { name: "Archive Alex Customer" });
+  const archive = list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Archive chat" });
   await expect(archive).toBeVisible();
   await archive.click();
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
@@ -782,9 +782,9 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
   await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
   await list.getByRole("button", { name: "Open archived chats" }).click();
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
-  await list.getByRole("button", { name: "Unarchive Alex Customer" }).toHaveCount(1);
+  await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).toHaveCount(1);
   // The archived action is hidden until the row is swiped right.
-  await list.getByRole("button", { name: "Unarchive Alex Customer" }).evaluate((element) => {
+  await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).evaluate((element) => {
     const wrap = element.closest(".wa-archive-row");
     const point = (x, y) => ({ identifier: 2, target: wrap, clientX: x, clientY: y, screenX: x, screenY: y });
     const fire = (type, touches) => {
@@ -796,7 +796,7 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
     fire("touchmove", [point(140, 182)]);
     fire("touchend", []);
   });
-  await list.getByRole("button", { name: "Unarchive Alex Customer" }).click();
+  await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).click();
   const allCalls = apiState.calls.filter((c) => c.path === "/api/conversations/101/archive");
   expect(allCalls.map((c) => c.body.archived)).toEqual([true, false]);
   await list.getByRole("button", { name: "Back to chats" }).click();
