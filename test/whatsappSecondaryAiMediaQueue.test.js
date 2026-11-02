@@ -226,3 +226,71 @@ test("nighttime image jobs survive quiet hours without exceeding the 23h service
  assert.match(worker.READY_SQL,/BETWEEN 7 AND 23/);
  assert.match(worker.STILL_VALID_SQL,/BETWEEN 7 AND 23/);
 });
+
+
+test("superseded pending images are retired by exact sender; confirmed or claimed sends stay untouched",async()=>{
+  const calls=[];
+  const database={query:async(sql,params)=>{
+    calls.push({sql,params});
+    return{rowCount:1,rows:[{retired:2,messages_cancelled:1}]};
+  }};
+  const result=await worker.cancelObsoletePending({database,env:approved});
+  assert.deepEqual(result,{disabled:false,cancelled:2});
+  assert.equal(calls.length,1);
+  const {sql,params}=calls[0];
+  assert.match(sql,/job.state='pending'/);
+  assert.match(sql,/job.expires_at<=NOW\(\)/);
+  assert.match(sql,/newer.role='user'/);
+  assert.match(sql,/staff.sent_by_username IS NOT NULL/);
+  assert.match(sql,/NOT \(.*\)/s);
+  assert.match(sql,/sa.sender_key=\$1/);
+  assert.match(sql,/sa.meta_phone_number_id=\$2/);
+  assert.match(sql,/sa.meta_account_id=\$3/);
+  assert.match(sql,/state='expired'/);
+  assert.match(sql,/delivery_status='cancelled'/);
+  assert.match(sql,/m.whatsapp_message_id IS NULL/);
+  assert.match(sql,/m.whatsapp_accepted_at IS NULL/);
+  assert.match(sql,/a.state<>'rejected'/);
+  assert.match(sql,/e.accepted=TRUE/);
+  assert.deepEqual(params.slice(0,3),["ariel","100000000000002","200000000000002"]);
+  assert.match(params[4],/Image not sent/);
+  assert.deepEqual(await worker.cancelObsoletePending({
+    database:{query:async()=>assert.fail("disabled media cleanup queried Neon")},
+    env:{}
+  }),{disabled:true,cancelled:0});
+});
+
+test("only a verified sender billing reconciliation wakes the delayed media queue",async()=>{
+  const calls=[];
+  const database={query:async(sql,params)=>{
+    calls.push({sql,params});return{rowCount:1,rows:[{id:7}]};
+  }};
+  assert.equal(await worker.wakeAfterVerifiedReconciliation({database,env:approved}),true);
+  assert.equal(calls.length,1);
+  assert.match(calls[0].sql,/job.state='pending'/);
+  assert.match(calls[0].sql,/gate.state='idle'/);
+  assert.match(calls[0].sql,/next_attempt_at=NOW\(\)/);
+  assert.match(calls[0].sql,/job.expires_at>NOW\(\)/);
+  assert.deepEqual(calls[0].params,["ariel","100000000000002","200000000000002"]);
+  assert.equal(await worker.wakeAfterVerifiedReconciliation({
+    database:{query:async()=>({rowCount:0,rows:[]})},env:approved
+  }),false);
+  assert.equal(await worker.wakeAfterVerifiedReconciliation({
+    database:{query:async()=>assert.fail("disabled media wake queried Neon")},env:{}
+  }),false);
+});
+
+test("media placeholder starts queued, becomes uncertain when claimed, then queues on known pre-send billing hold",async()=>{
+  const args=mocks();
+  args.send=async()=>({success:false,unknown:false,code:"secondary_billing_previous_send_unresolved"});
+  const result=await worker.runOnce({...args,env:approved});
+  assert.equal(result.pending,1);
+  const placeholder=args.calls.find(x=>x.appended).appended;
+  assert.equal(placeholder.at(-1).initialDeliveryStatus,"queued");
+  assert.ok(args.calls.some(x=>x.sql?.includes("delivery_status='unknown'")));
+  const deferred=args.calls.find(x=>x.sql?.includes("WITH deferred AS"));
+  assert.ok(deferred);
+  assert.equal(deferred.args[0],2);
+  assert.equal(deferred.args[1],90*1000);
+  assert.ok(!args.calls.some(x=>x.wamid));
+});
