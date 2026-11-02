@@ -561,14 +561,14 @@ export default function Inbox() {
   messagesRef.current = messages;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
-  function refreshConversations() {
+  function refreshConversations(reason = "staff_action") {
     // Share overlapping full-list requests, then fetch one fresh list if an
     // event arrives during the in-flight query. Never cache staff permissions.
     return requestFullInboxRefreshRef.current(async (requestAnother) => {
       const started = ++inboxRequestClockRef.current;
       latestFullRequestRef.current = started;
       try {
-        let data = await api.listConversations();
+        let data = await api.listConversations(reason);
         // A staff deep link or explicitly open contact-only archive must remain
         // reachable. Recheck permission rather than pinning stale customer data.
         const pinnedId = selectedIdRef.current ?? requestedContactId;
@@ -585,6 +585,8 @@ export default function Inbox() {
         // A newer single-contact or local update committed while this full
         // request was in flight. Requery instead of rolling the UI backwards.
         if (lastCommittedSummaryStartRef.current > started) {
+          // Preserve correctness; the next full read is caused by stale data.
+          reason = "stale_summary_retry";
           requestAnother();
           return;
         }
@@ -880,7 +882,7 @@ export default function Inbox() {
     const pipelineContactIds = new Set();
     let pipelineNeedsFullRefresh = false;
 
-    function scheduleRefresh(contactId = null) {
+    function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event") {
       if (contactId != null) pendingContactIds.add(Number(contactId));
       if (debounceTimer) clearTimeout(debounceTimer);
 
@@ -897,10 +899,12 @@ export default function Inbox() {
           try {
             await refreshConversationSummary(changedId);
           } catch {
-            await refreshConversations();
+            await refreshConversations("summary_fallback");
           }
         } else {
-          await refreshConversations();
+          await refreshConversations(
+            changedContacts.size === 0 ? sourceReason : "multi_contact_event"
+          );
         }
 
         const currentId = selectedIdRef.current;
@@ -924,7 +928,8 @@ export default function Inbox() {
       pipelineListTimer = setTimeout(async () => {
         pipelineListTimer = null;
         const changedIds = [...pipelineContactIds];
-        const requiresFull = pipelineNeedsFullRefresh || changedIds.length !== 1;
+        const unknownOrRedacted = pipelineNeedsFullRefresh;
+        const requiresFull = unknownOrRedacted || changedIds.length !== 1;
         pipelineContactIds.clear();
         pipelineNeedsFullRefresh = false;
         if (!requiresFull) {
@@ -937,7 +942,11 @@ export default function Inbox() {
             // Never preserve a stale staff/lead assignment after a failed lookup.
           }
         }
-        await refreshConversations();
+        await refreshConversations(
+          unknownOrRedacted ? "pipeline_unknown_event"
+            : changedIds.length !== 1 ? "pipeline_multi_contact"
+              : "pipeline_summary_fallback"
+        );
       }, REALTIME_DEBOUNCE_MS);
     }
 
@@ -1042,8 +1051,8 @@ export default function Inbox() {
     }
 
     const startup = createInboxLiveStartup({
-      loadInitial: () => { void refreshConversations(); },
-      refreshOnReconnect: () => scheduleRefresh(),
+      loadInitial: () => { void refreshConversations("startup"); },
+      refreshOnReconnect: () => scheduleRefresh(null, "reconnect"),
     });
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.addEventListener("pipeline_changed", handlePipelineChanged);

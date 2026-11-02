@@ -8,6 +8,7 @@ const { createAdaptiveWorkerTimer } = require("./adaptiveWorkerTimer");
 const { createCoalescedImmediateWake } = require("./followUpWakePolicy");
 const { recordWorkerRun } = require("./workerActivityMetrics");
 const { withDatabaseActivitySource } = require("./databaseActivityContext");
+const { recordWorkerWake } = require("./refreshWakeDiagnostics");
 
 const IDLE_RECHECK_MS = 60 * 60 * 1000;
 const ERROR_RETRY_MS = 5 * 60 * 1000;
@@ -133,6 +134,18 @@ function createSecondaryDueScheduler({
   let subscriptions = [];
   function wake() { return timer?.wake(0) || false; }
   const coalescedWake = createCoalescedImmediateWake(wake);
+  const lane = label === "Secondary WhatsApp marketing followup scheduler"
+    ? "secondary_marketing" : "secondary_service";
+  function observeEvent(type, payload, eligible) {
+    // Only fixed-label, in-memory counters. Diagnostic errors must never
+    // disrupt scheduling, and booking/opt-out signals retain their timing.
+    if (!eligible) {
+      recordWorkerWake(lane, type, payload, "ignored", env);
+      return;
+    }
+    recordWorkerWake(lane, type, payload,
+      coalescedWake() ? "queued" : "coalesced", env);
+  }
   function start() {
     if (timer && !timer.state().stopped) return false;
     timer = createTimer({
@@ -156,13 +169,16 @@ function createSecondaryDueScheduler({
     });
     subscriptions = [
       events.subscribe("conversation_changed", payload => {
-        if (secondaryEventRequiresWake("conversation_changed", payload, env)) coalescedWake();
+        observeEvent("conversation_changed", payload,
+          secondaryEventRequiresWake("conversation_changed", payload, env));
       }),
       events.subscribe("pipeline_changed", payload => {
-        if (secondaryEventRequiresWake("pipeline_changed", payload, env)) coalescedWake();
+        observeEvent("pipeline_changed", payload,
+          secondaryEventRequiresWake("pipeline_changed", payload, env));
       }),
-      events.subscribe("config_changed", () => coalescedWake()),
-      events.subscribe("secondary_followup_rules_changed", () => coalescedWake()),
+      events.subscribe("config_changed", payload => observeEvent("config_changed", payload, true)),
+      events.subscribe("secondary_followup_rules_changed", payload =>
+        observeEvent("secondary_followup_rules_changed", payload, true)),
     ];
     timer.start(0); // Restart recovery also inspects already-due slots.
     return true;

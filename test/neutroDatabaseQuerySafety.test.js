@@ -63,7 +63,9 @@ test("follow-up realtime subscriptions coalesce events but retain pipeline/confi
   const source = fs.readFileSync(path.join(__dirname, "../src/services/followUpService.js"), "utf8");
   assert.match(source, /createCoalescedImmediateWake/);
   assert.match(source, /followUpChangeRequiresWake\(payload\)/);
-  assert.match(source, /realtimeEvents\.subscribe\("pipeline_changed", \(\) => \{\s*wakeForRealtimeStateChange\(\)/);
+  assert.match(source, /realtimeEvents\.subscribe\("pipeline_changed", \(payload\) => \{/);
+  assert.match(source, /recordWorkerWake\("primary", "pipeline_changed", payload,/);
+  assert.match(source, /wakeForRealtimeStateChange\(\) \? "queued" : "coalesced"/);
   assert.match(source, /policyHoldRepo\.releaseAll\(\)/);
   assert.match(source, /wakeAutomatedFollowUps\(0\)/);
 });

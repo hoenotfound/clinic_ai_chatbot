@@ -4,6 +4,7 @@ const {
 } = require("../middleware/requireOpsReadinessToken");
 const { loadOpsReadiness } = require("../services/opsReadinessService");
 const { getPoolActivitySnapshot } = require("../services/databasePoolActivity");
+const { snapshot: getRefreshWakeDiagnostics } = require("../utils/refreshWakeDiagnostics");
 
 function requestBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
@@ -13,6 +14,7 @@ function createOpsReadinessRouter({
   authenticate = requireOpsReadinessToken,
   loadReadiness = loadOpsReadiness,
   loadPoolActivity = getPoolActivitySnapshot,
+  loadRefreshWakeDiagnostics = getRefreshWakeDiagnostics,
 } = {}) {
   const router = express.Router();
   router.use(authenticate);
@@ -23,6 +25,7 @@ function createOpsReadinessRouter({
     return res.json({
       observedAt: new Date().toISOString(),
       databasePool: loadPoolActivity(),
+      refreshWakeDiagnostics: loadRefreshWakeDiagnostics(),
     });
   });
 

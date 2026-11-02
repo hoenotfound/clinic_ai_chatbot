@@ -5,6 +5,7 @@
 // or native allocations. No request body, contact, phone or message is logged.
 const { readFileSync } = require("node:fs");
 const { takeWorkerActivity } = require("../utils/workerActivityMetrics");
+const { snapshot: getWakeDiagnostics } = require("../utils/refreshWakeDiagnostics");
 
 const INTERVAL_MS = 60 * 1000;
 const MIB = 1024 * 1024;
@@ -71,9 +72,22 @@ function startMemoryDiagnostics({
 } = {}) {
   if (timer || env.DA_MEMORY_DIAGNOSTICS_ENABLED === "false") return timer;
   if (!env.RENDER_SERVICE_ID && env.DA_MEMORY_DIAGNOSTICS_ENABLED !== "true") return null;
+  let samples = 0;
   const log = () => {
     try {
-      logger.info?.("[Memory diagnostics]", { ...sample(), workers: takeWorkerActivity() });
+      // Piggyback on the existing timer every fifth minute. No extra jobs,
+      // network, SQL or customer data. Keep Render log output compact.
+      samples++;
+      const wake = samples % 5 === 0 ? getWakeDiagnostics() : null;
+      const wakeSummary = wake?.last5Minutes > 0 ? {
+        last5Minutes: wake.last5Minutes,
+        top: wake.counters.filter(item => item.last5Minutes > 0)
+          .slice(0, 8).map(item => ({ key: item.key, count: item.last5Minutes })),
+      } : null;
+      logger.info?.("[Memory diagnostics]", {
+        ...sample(), workers: takeWorkerActivity(),
+        ...(wakeSummary ? { refreshWakeSummary: wakeSummary } : {}),
+      });
     } catch (error) {
       // Diagnostics never interrupt primary WhatsApp or other service workers.
       logger.warn?.("[Memory diagnostics] sample unavailable");
