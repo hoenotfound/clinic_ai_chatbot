@@ -423,3 +423,16 @@ test("Inbox lead temperature indicator stays minimal and exception-only", () => 
   assert.match(inbox, /Cold lead/);
   assert.doesNotMatch(inbox, /Warm lead/);
 });
+
+
+test("secondary queued and cancelled images never display misleading Meta delivery warnings",()=>{
+ const inbox = fs.readFileSync(path.join(__dirname,
+   "../portal-frontend/src/pages/Inbox.jsx"),"utf8");
+ assert.match(inbox,/deliveryQueued = !isPatient && message.delivery_status === "queued"/);
+ assert.match(inbox,/deliveryCancelled = !isPatient && message.delivery_status === "cancelled"/);
+ assert.match(inbox,/deliveryQueued \? "Image queued"/);
+ assert.match(inbox,/deliveryCancelled \? "Image not sent"/);
+ assert.match(inbox,/!isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled/);
+ assert.match(inbox,/isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled/);
+ assert.match(inbox,/cancelled: 6/);
+});
