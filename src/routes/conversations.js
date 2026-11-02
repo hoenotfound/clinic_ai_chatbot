@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
-const { recordInboxFullList } = require("../utils/refreshWakeDiagnostics");
+const { recordInboxFullList, recordInboxRevisionCheck } = require("../utils/refreshWakeDiagnostics");
 const { inboxPayloadEtag, matchesInboxPayloadEtag } = require("../utils/inboxConditionalResponse");
 const { createInboxRevisionGuard } = require("../utils/inboxRevisionGuard");
 const inboxRevisionGuard = createInboxRevisionGuard();
@@ -894,10 +894,12 @@ router.get("/", async (req, res) => {
         res.set("X-Inbox-Revision-Check", "fast");
         res.set("Server-Timing",
           `inbox-wal-check;dur=${Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6)}`);
+        recordInboxRevisionCheck("skipped_full_query");
         res.status(304).end();
         return;
       }
     }
+    recordInboxRevisionCheck(wal ? "full_query" : "wal_unavailable");
     const conversations = await withDatabaseActivitySource(
       "Inbox full conversation list", () => contactsRepo.listConversations());
     // Always enforce current staff scope on the server, not only in UI filters.
