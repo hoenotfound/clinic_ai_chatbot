@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import "./InboxWhatsApp.css";
@@ -4521,6 +4521,9 @@ function MessageBubble({
   canForward,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState(null);
+  const messageBubbleRef = useRef(null);
+  const mobileActionsRef = useRef(null);
   const [storedImageLoaded, setStoredImageLoaded] = useState(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -4608,8 +4611,49 @@ function MessageBubble({
     }
   }, []);
 
+  // Position the phone action menu relative to the selected chat bubble,
+  // like WhatsApp's contextual popup. Keep it inside the visible viewport
+  // even if the bubble is close to the screen edges or Safari address bar.
+  useLayoutEffect(() => {
+    if (!menuOpen || !window.matchMedia("(max-width: 639px)").matches) return undefined;
+    function updatePosition() {
+      const bubble = messageBubbleRef.current?.getBoundingClientRect();
+      const menu = mobileActionsRef.current?.getBoundingClientRect();
+      if (!bubble || !menu) return;
+      const viewport = window.visualViewport;
+      const viewTop = viewport?.offsetTop || 0;
+      const visibleHeight = viewport?.height || window.innerHeight;
+      const viewBottom = viewTop + visibleHeight;
+      const minTop = viewTop + 12;
+      const maxTop = Math.max(minTop, viewBottom - menu.height - 12);
+      const maxLeft = Math.max(12, window.innerWidth - menu.width - 12);
+      const left = Math.min(maxLeft, Math.max(12,
+        isPatient ? bubble.left : bubble.right - menu.width
+      ));
+      const below = bubble.bottom + 8;
+      const above = bubble.top - menu.height - 8;
+      const preferredTop = below + menu.height <= viewBottom - 12
+        ? below
+        : above >= minTop
+        ? above
+        : bubble.top - menu.height / 2;
+      const top = Math.min(maxTop, Math.max(minTop, preferredTop));
+      setMenuPosition({ left, top });
+    }
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.visualViewport?.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.visualViewport?.removeEventListener("resize", updatePosition);
+    };
+  }, [menuOpen, isPatient, canQuote, canForward, canCopy, offerReply, offerForward, replyUnavailableReason]);
+
   useEffect(() => {
-    if (!menuOpen) return undefined;
+    if (!menuOpen) {
+      setMenuPosition(null);
+      return undefined;
+    }
 
     function handleKeyDown(event) {
       if (event.key === "Escape") setMenuOpen(false);
@@ -4783,6 +4827,7 @@ function MessageBubble({
       )}
 
       <div
+        ref={messageBubbleRef}
         className={`wa-message-bubble group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform ${isSwiping ? "duration-0" : "duration-150"} sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
         style={{ transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
         onTouchStart={handleBubbleTouchStart}
@@ -4949,33 +4994,43 @@ function MessageBubble({
         <>
           <button
             type="button"
-            className="fixed inset-0 bg-black/40 sm:hidden"
+            className="fixed inset-0 bg-black/30 backdrop-blur-[1px] sm:hidden"
             style={{ zIndex: 3000 }}
             onClick={() => setMenuOpen(false)}
             aria-label="Close message actions"
           />
           <div
-            className="fixed inset-x-0 bottom-0 max-h-[80dvh] overflow-y-auto overscroll-contain rounded-t-[24px] bg-white text-[var(--color-text)] shadow-2xl sm:hidden"
+            ref={mobileActionsRef}
+            className="fixed w-[min(17rem,calc(100vw-24px))] max-h-[min(70dvh,24rem)] overflow-y-auto overscroll-contain rounded-[20px] border border-white/70 bg-white/95 p-1.5 text-[#1f292d] shadow-[0_16px_48px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:hidden"
             role="menu"
             aria-label="Message options"
+            data-menu-placement="anchored"
             style={{
               zIndex: 3001,
-              paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
+              top: menuPosition?.top ?? 0,
+              left: menuPosition?.left ?? 0,
+              visibility: menuPosition ? "visible" : "hidden",
               WebkitOverflowScrolling: "touch",
             }}
           >
-            <div className="flex h-5 items-center justify-center" aria-hidden="true">
-              <span className="h-1 w-10 rounded-full bg-slate-300" />
-            </div>
-            <div className="border-b border-[var(--color-border)] px-4 pb-3 pt-1">
-              <p className="text-sm font-bold">Message actions</p>
-              <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{replyPreviewText(message)}</p>
-            </div>
-            <div className="p-2">
-              {offerReply && <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined} onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-semibold active:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg text-[var(--color-primary)]">↩</span><span className="min-w-0"><span className="block">Reply</span>{!canQuote && <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">{replyUnavailableReason}</span>}</span></button>}
-              {offerForward && <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined} onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg text-[var(--color-text-muted)]">↪</span>Forward{!canForward ? " (unavailable)" : ""}</button>}
-              {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-base text-[var(--color-text-muted)]">⧉</span>Copy</button>}
-            </div>
+            {offerReply && (
+              <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined}
+                onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-[14px] px-3 py-2 text-left text-[15px] font-medium hover:bg-[#f3f4f6] active:bg-[#e9edef] disabled:cursor-not-allowed disabled:opacity-50">
+                <span className="w-7 shrink-0 text-center text-[25px]" aria-hidden="true">↶</span>
+                <span className="min-w-0"><span className="block">Reply</span>{!canQuote && <span className="block text-[11px] font-normal leading-snug text-[#667781]">{replyUnavailableReason}</span>}</span>
+              </button>
+            )}
+            {offerForward && (
+              <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined}
+                onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-[14px] px-3 py-2 text-left text-[15px] font-medium hover:bg-[#f3f4f6] active:bg-[#e9edef] disabled:cursor-not-allowed disabled:opacity-50">
+                <span className="w-7 shrink-0 text-center text-[25px]" aria-hidden="true">↪</span>Forward{!canForward ? " (unavailable)" : ""}
+              </button>
+            )}
+            {canCopy && (
+              <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-[14px] px-3 py-2 text-left text-[15px] font-medium hover:bg-[#f3f4f6] active:bg-[#e9edef]">
+                <span className="w-7 shrink-0 text-center text-[23px]" aria-hidden="true">⧉</span>Copy
+              </button>
+            )}
           </div>
         </>,
         document.body
