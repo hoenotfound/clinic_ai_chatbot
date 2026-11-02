@@ -899,9 +899,11 @@ test("floating action menu keeps the selected bubble highlighted after its layou
   const before = await spotlight.boundingBox();
   // Move as well as resize: the bubble may be partly clipped by the bottom
   // of the iPhone viewport, so its *visible* height need not grow by 120px.
-  await bubble.evaluate((element) => {
-    element.style.transform = "translateX(26px)";
-    element.style.paddingBottom = "130px";
+  // React owns the bubble's inline transform. Inject a persistent layout
+  // style instead of manually editing React-controlled properties, which a
+  // React render can legitimately restore before the observer measures them.
+  await page.addStyleTag({
+    content: ".wa-message-bubble { transform: translateX(26px) !important; padding-bottom: 130px !important; }",
   });
   await expect.poll(async () => (await spotlight.boundingBox())?.x)
     .toBeGreaterThan(before.x + 18);
