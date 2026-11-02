@@ -207,3 +207,32 @@ export function MoreIcon(props) {
     </svg>
   );
 }
+
+/* Message action icons use drawn outlines instead of typographic arrow glyphs.
+ * Keep them local so they render consistently in iOS Safari and on desktop. */
+export function ReplyIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 9 4 13l5 4" />
+      <path d="M4.5 13H14c4 0 6.5 2 6.5 5.5" />
+    </svg>
+  );
+}
+
+export function ForwardIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m15 9 5 4-5 4" />
+      <path d="M19.5 13H10c-4 0-6.5 2-6.5 5.5" />
+    </svg>
+  );
+}
+
+export function CopyIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="8" y="8" width="12" height="13" rx="2" />
+      <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3" />
+    </svg>
+  );
+}
