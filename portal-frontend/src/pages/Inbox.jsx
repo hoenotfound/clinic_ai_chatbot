@@ -4689,6 +4689,19 @@ function MessageBubble({
       ? new ResizeObserver(schedulePosition) : null;
     if (messageBubbleRef.current) observer?.observe(messageBubbleRef.current);
     if (mobileActionsRef.current) observer?.observe(mobileActionsRef.current);
+    // Safari may delay a ResizeObserver notification for inline bubble
+    // changes and media loading. Attribute / child changes are a separate,
+    // event-driven signal, not a polling loop.
+    const mutationObserver = typeof MutationObserver !== "undefined"
+      ? new MutationObserver(schedulePosition) : null;
+    if (messageBubbleRef.current) {
+      mutationObserver?.observe(messageBubbleRef.current, {
+        attributes: true,
+        attributeFilter: ["style", "class", "src", "width", "height"],
+        childList: true,
+        subtree: true,
+      });
+    }
     window.addEventListener("resize", schedulePosition);
     window.addEventListener("scroll", schedulePosition, true);
     window.visualViewport?.addEventListener("resize", schedulePosition);
@@ -4696,6 +4709,7 @@ function MessageBubble({
     return () => {
       if (frame != null) window.cancelAnimationFrame(frame);
       observer?.disconnect();
+      mutationObserver?.disconnect();
       window.removeEventListener("resize", schedulePosition);
       window.removeEventListener("scroll", schedulePosition, true);
       window.visualViewport?.removeEventListener("resize", schedulePosition);
