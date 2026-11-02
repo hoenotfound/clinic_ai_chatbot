@@ -85,6 +85,31 @@ function recordInboxRevisionCheck(outcome) {
   }
 }
 
+// A fallback reason is independent of the existing full-query counter.
+// Never include an ETag, WAL position, staff ID, request value or contact data.
+const REVISION_FALLBACKS = new Set([
+  "wal_unavailable", "missing_etag", "missing_proof",
+  "proof_mismatch_or_wal_changed", "wal_changed_during_check",
+]);
+function recordInboxRevisionFallback(reason) {
+  if (REVISION_FALLBACKS.has(reason)) count("inbox_revision_reason|" + reason);
+}
+
+// Reuses the existing bounded, five-minute diagnostics log and protected
+// operations snapshot. No new timers, requests or database activity.
+const SSE_EVENTS = new Set(["opened", "redacted_change"]);
+function recordSseLifecycle(event, durationMs) {
+  if (SSE_EVENTS.has(event)) {
+    count("sse|" + event);
+    return;
+  }
+  if (event !== "closed" || !Number.isFinite(durationMs) || durationMs < 0) return;
+  const bucket = durationMs < 10000 ? "under_10s"
+    : durationMs < 60000 ? "under_60s"
+      : durationMs < 300000 ? "under_5min" : "5min_plus";
+  count("sse|closed|" + bucket);
+}
+
 function snapshot() {
   const minute = nowMinute();
   const buckets = [...rows].map(([key, row]) => {
@@ -104,4 +129,5 @@ function snapshot() {
 }
 
 module.exports = { recordWorkerWake, recordInboxFullList,
-  recordInboxRevisionCheck, snapshot, classifyChannel, INBOX_REASONS };
+  recordInboxRevisionCheck, recordInboxRevisionFallback, recordSseLifecycle,
+  snapshot, classifyChannel, INBOX_REASONS };
