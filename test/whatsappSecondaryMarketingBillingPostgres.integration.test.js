@@ -4,6 +4,7 @@ const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
 const billing=require("../src/db/whatsappSenderBillingGateRepo");
+const marketing=require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const cs=process.env.TEST_DATABASE_URL;
 const env={
  WHATSAPP_MULTI_NUMBER_READ_ENABLED:"true",
@@ -37,7 +38,7 @@ test("migration 109 requires approved secondary MARKETING attempt for billable 4
     return{query:(...args)=>c.query(...args),release:()=>c.end()};
    },query:(...args)=>db.query(...args),
   };
-  assert.equal(loadMigrations().at(-1).version,113);
+  assert.equal(loadMigrations().at(-1).version,114);
   await runMigrations(pool,{quiet:true});
   const sender=(await db.query(
    "INSERT INTO whatsapp_sender_accounts(sender_key,meta_phone_number_id,meta_account_id,display_name,state) "+
@@ -56,6 +57,34 @@ test("migration 109 requires approved secondary MARKETING attempt for billable 4
   await db.query("INSERT INTO whatsapp_sender_message_context(message_id,conversation_id) VALUES($1,$2)",
    [inbound,conversation]);
   const hash="a".repeat(64);
+  // Migration 114 fixes the previously broken 66h attempt slot and accepts
+  // Day 4/Day 6 in BOTH sender rules and one-shot attempt tables. These test
+  // rows do not authorize sends or touch any live account.
+  for(const slot of [66,96,144]){
+   await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_rules "+
+    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+
+    "VALUES($1,$2,FALSE,'reviewed_future', 'zh_CN',$3,FALSE)",[sender,slot,hash]);
+   await db.query(
+    "INSERT INTO whatsapp_sender_marketing_followup_attempts "+
+    "(sender_id,contact_id,anchor_message_id,slot_hours) VALUES($1,$2,$3,$4)",
+    [sender,contact,inbound,slot]);
+  }
+  // Compile the extended read-only candidate query against a real migrated
+  // Postgres schema; no eligible contact or provider send is required.
+  await db.query("EXPLAIN "+marketing.EXTENDED_CANDIDATES_SQL,[
+   "ariel","100000000000002","200000000000002",
+   new Date(),10,"2026-11-01T00:00:00Z",
+  ]);
+  await db.query("EXPLAIN "+marketing.EXTENDED_RECHECK_SQL,[
+   "ariel","100000000000002","200000000000002",
+   new Date(),10,"2026-11-01T00:00:00Z",
+  ]);
+  const later=(await db.query(
+   "SELECT slot_hours FROM whatsapp_sender_marketing_followup_attempts "+
+   "WHERE sender_id=$1 ORDER BY slot_hours",[sender])).rows;
+  assert.deepEqual(later.map(r=>Number(r.slot_hours)),[66,96,144]);
+
   await db.query(
    "INSERT INTO whatsapp_sender_marketing_followup_rules "+
    "(sender_id,slot_hours,enabled,template_name,language_code,template_signature,operator_billing_approved) "+

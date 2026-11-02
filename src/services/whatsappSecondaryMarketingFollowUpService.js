@@ -18,10 +18,14 @@ const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
 // Malay from Latin characters or silently send English to an unknown speaker.
 function customerTemplateLocale(messages){
  const detected=detectConversationLanguage(Array.isArray(messages)?messages:[],null);
- return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms_MY":null;
+ return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms":null;
 }
 
-const SLOTS=new Set([48,66]);
+const SLOTS=new Set([48,66,96,144]);
+const EXTENDED_SLOTS=new Set([96,144]);
+function extendedEnabled(env=process.env){
+ return enabled(env) && env.WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED==="true";
+}
 function enabled(env=process.env){
  return Boolean(adsOnlyActivation(env)) &&
    env.PR395_STAGING_MODE!=="true" &&
@@ -163,6 +167,74 @@ const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  dueExpression:"inbound.created_at+rule.slot_hours*INTERVAL '1 hour'",
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
+// Day4/Day6 must be anchored to the first verified reply in the seven-day
+// ad-originated free-entry session, never the latest customer inbound.
+const EXTENDED_SESSION_SQL=`
+ JOIN LATERAL(
+  SELECT origin.id AS origin_id, reply.created_at AS first_reply_at
+  FROM whatsapp_free_entry_referrals referral
+  JOIN messages origin ON origin.id=referral.origin_message_id
+    AND origin.contact_id=c.id AND origin.role='user'
+    AND origin.whatsapp_message_id IS NOT NULL
+  JOIN whatsapp_sender_message_context origin_context
+    ON origin_context.message_id=origin.id AND origin_context.conversation_id=sc.id
+  JOIN LATERAL(
+    SELECT first.id,first.created_at,first.whatsapp_message_id
+    FROM messages first
+    JOIN whatsapp_sender_message_context reply_context
+      ON reply_context.message_id=first.id AND reply_context.conversation_id=sc.id
+    WHERE first.contact_id=c.id AND first.role='assistant'
+      AND first.whatsapp_message_id IS NOT NULL
+      AND first.created_at>=origin.created_at
+      AND first.created_at<origin.created_at+INTERVAL '24 hours'
+    ORDER BY first.created_at,first.id LIMIT 1
+  ) reply ON TRUE
+  JOIN whatsapp_sender_status_receipts receipt ON receipt.sender_id=sa.id
+    AND receipt.wamid=reply.whatsapp_message_id
+    AND receipt.matched=TRUE AND receipt.pricing_type='free_entry_point'
+    AND receipt.pricing_billable=FALSE
+    AND receipt.delivery_status IN('sent','delivered','read')
+    AND receipt.meta_phone_number_id=sa.meta_phone_number_id
+    AND receipt.meta_account_id=sa.meta_account_id
+  WHERE referral.contact_id=c.id AND referral.source_type='ad'
+    AND (NULLIF(BTRIM(referral.ctwa_clid),'') IS NOT NULL
+      OR NULLIF(BTRIM(referral.meta_ad_id),'') IS NOT NULL)
+    AND origin.created_at >= $6::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM whatsapp_sender_coexistence_history_messages imported
+      WHERE imported.sender_id=sa.id AND imported.message_id=origin.id)
+    AND $4::timestamptz>=reply.created_at
+    AND $4::timestamptz<reply.created_at+INTERVAL '167 hours'
+    AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts conflict
+      WHERE conflict.sender_id=sa.id AND conflict.wamid=reply.whatsapp_message_id
+        AND (conflict.pricing_billable IS DISTINCT FROM FALSE
+          OR conflict.pricing_type IS DISTINCT FROM 'free_entry_point'
+          OR conflict.delivery_status='failed'))
+  ORDER BY reply.created_at,origin.id LIMIT 1
+ ) qualified_session ON TRUE
+`;
+const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
+ .replace("inbound.id AS inbound_id,inbound.created_at AS inbound_at,",
+  "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
+ .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
+ .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)")
+ .replaceAll("inbound.created_at+rule.slot_hours","qualified_session.first_reply_at+rule.slot_hours")
+ .replace("inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
+  "qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'")
+ .replace("bad.anchor_message_id=inbound.id","bad.anchor_message_id IS NOT NULL")
+ .replace("attempted.anchor_message_id=inbound.id",
+  "attempted.anchor_message_id=qualified_session.origin_id")
+ .replace("ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5",
+  `AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_alarms alarm WHERE alarm.sender_id=sa.id)
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_billing_gates gate
+      WHERE gate.sender_id=sa.id AND gate.state<>'idle')
+   AND NOT EXISTS(SELECT 1 FROM whatsapp_sender_marketing_followup_attempts other
+      WHERE other.sender_id=sa.id AND other.contact_id=c.id
+        AND other.slot_hours=rule.slot_hours
+        AND other.status IN('accepted','unknown','blocked'))
+   AND (SELECT COUNT(*) FROM whatsapp_sender_marketing_followup_attempts sent
+      WHERE sent.sender_id=sa.id AND sent.contact_id=c.id AND sent.status='accepted')<4
+  ORDER BY qualified_session.first_reply_at,c.id,rule.slot_hours,rule.language_code LIMIT $5`);
+
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
 const RECHECK_SQL=CANDIDATES_SQL.replace(
@@ -176,6 +248,20 @@ const RECHECK_SQL=CANDIDATES_SQL.replace(
      SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
      WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
        AND attempted.anchor_message_id=inbound.id
+       AND attempted.slot_hours=rule.slot_hours AND attempted.status='claimed'
+   )`
+);
+const EXTENDED_RECHECK_SQL=EXTENDED_CANDIDATES_SQL.replace(
+ `   AND NOT EXISTS (
+     SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
+     WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
+       AND attempted.anchor_message_id=qualified_session.origin_id
+       AND attempted.slot_hours=rule.slot_hours
+   )`,
+ `   AND EXISTS (
+     SELECT 1 FROM whatsapp_sender_marketing_followup_attempts attempted
+     WHERE attempted.sender_id=sa.id AND attempted.contact_id=c.id
+       AND attempted.anchor_message_id=qualified_session.origin_id
        AND attempted.slot_hours=rule.slot_hours AND attempted.status='claimed'
    )`
 );
@@ -205,11 +291,16 @@ async function runOnce({
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    now,maxAttempts*3,cutoff];
  const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
+ if(extendedEnabled(env)){
+   const extra=(await database.query(EXTENDED_CANDIDATES_SQL,params)).rows||[];
+   candidates.push(...extra);
+ }
  let attempted=0,accepted=0;
  for(const candidate of candidates){
   if(attempted>=maxAttempts)break;
   const slot=Number(candidate.slot_hours);
   if(!SLOTS.has(slot) ||
+     (EXTENDED_SLOTS.has(slot) && !extendedEnabled(env)) ||
      customerTemplateLocale(candidate.customer_messages)!==candidate.language_code)continue;
   const claimed=await database.query(
    `INSERT INTO whatsapp_sender_marketing_followup_attempts
@@ -223,7 +314,9 @@ async function runOnce({
    "UPDATE whatsapp_sender_marketing_followup_attempts SET status='unknown',error_code=$2,completed_at=NOW() WHERE id=$1 AND status='claimed'",
    [id,String(code||"unconfirmed").slice(0,120)]).catch(()=>{});
   const current=async()=>{
-   const result=await database.query(RECHECK_SQL,[
+   if(EXTENDED_SLOTS.has(slot) && !extendedEnabled(env))return false;
+   const result=await database.query(EXTENDED_SLOTS.has(slot)?
+     EXTENDED_RECHECK_SQL:RECHECK_SQL,[
     params[0],params[1],params[2],new Date(),1000,cutoff]);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
@@ -323,6 +416,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
- CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,customerTemplateLocale,
+ CANDIDATES_SQL,RECHECK_SQL,EXTENDED_CANDIDATES_SQL,EXTENDED_RECHECK_SQL,
+ POTENTIAL_DUE_SQL,enabled,extendedEnabled,customerTemplateLocale,
  approvedStaticMarketingTemplate,runOnce,nextPotentialDueAt,start,stop,
 };
