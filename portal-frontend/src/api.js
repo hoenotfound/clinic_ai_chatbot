@@ -49,6 +49,13 @@ async function listInboxConversations(refreshReason = "other") {
     credentials: "include", cache: "no-store", headers,
   });
   if (res.status === 304 && inboxSnapshot) {
+    // A full-query 304 may supply the first usable revision proof after a
+    // previous WAL-check failure. Retain it only for the same strong ETag.
+    const returnedEtag = res.headers.get("etag");
+    const returnedProof = res.headers.get("x-inbox-revision-proof");
+    if (returnedProof && returnedEtag && returnedEtag === inboxSnapshotEtag) {
+      inboxSnapshotRevisionProof = returnedProof;
+    }
     // Server has freshly checked the complete payload AND current staff scope.
     return inboxSnapshot;
   }
