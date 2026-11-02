@@ -37,12 +37,17 @@ function initialInboundText(incoming, config = clinicConfig) {
   return incoming.text || `[${customerLabel} sent an empty message]`;
 }
 
-function publishInboundMessage(events, savedInbound) {
+function publishInboundMessage(events, savedInbound, incoming) {
   if (!savedInbound) return;
   events.publish("conversation_changed", {
     contactId: savedInbound.contact_id,
     messageId: savedInbound.id,
     reason: "message",
+    // Verified webhook identity lets secondary workers ignore unrelated
+    // primary WhatsApp / social activity without querying Neon for routing.
+    ...(incoming?.channel ? { channel: incoming.channel } : {}),
+    ...(incoming?.channel === "whatsapp" && incoming.businessPhoneNumberId != null
+      ? { businessPhoneNumberId: String(incoming.businessPhoneNumberId) } : {}),
   });
 }
 
@@ -494,7 +499,7 @@ function createInboundMessageClaimService({
 
     if (!durableClaim) return null;
 
-    publishInboundMessage(events, durableClaim.savedInbound);
+    publishInboundMessage(events, durableClaim.savedInbound, storedIncoming);
     return {
       incoming: storedIncoming,
       contact,
