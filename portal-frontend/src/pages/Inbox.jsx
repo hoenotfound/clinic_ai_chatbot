@@ -1290,6 +1290,14 @@ export default function Inbox() {
     }
     try {
       await api.setInboxArchived(id, archived);
+      // A late list refresh or deep-link selection must not reopen the archived
+      // thread after the server confirms the action.
+      if (wasOpen && (selectedIdRef.current == null || Number(selectedIdRef.current) === id)) {
+        setSelectedId(null);
+        setSearchParams({}, { replace: true });
+        setMobileThreadOpen(false);
+        setKeepExplicitlyOpenedThread(false);
+      }
       showToast(archived ? "Chat archived." : "Chat restored.", "info");
       return true;
     } catch (err) {
@@ -1664,6 +1672,9 @@ export default function Inbox() {
   }
 
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
+  // Never hide the mobile list when no conversation is selected, even if an
+  // older navigation event still has the thread-open flag set.
+  const visibleMobileThreadOpen = mobileThreadOpen && selectedId != null;
   const selectedContactIsFilteredOut =
     selectedContact && visibleConversationIds !== null &&
     !keepExplicitlyOpenedThread &&
@@ -1681,7 +1692,7 @@ export default function Inbox() {
         onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
-        mobileThreadOpen={mobileThreadOpen}
+        mobileThreadOpen={visibleMobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
         showUnassignedAssignment={showUnassignedAssignment}
@@ -1760,7 +1771,7 @@ export default function Inbox() {
           setWhatsAppTemplateOpen(true);
         }}
         onToast={showToast}
-        mobileThreadOpen={mobileThreadOpen}
+        mobileThreadOpen={visibleMobileThreadOpen}
         onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
       />
