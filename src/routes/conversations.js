@@ -7,6 +7,20 @@ const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
 const { recordInboxFullList } = require("../utils/refreshWakeDiagnostics");
 const { inboxPayloadEtag, matchesInboxPayloadEtag } = require("../utils/inboxConditionalResponse");
+const { createInboxRevisionGuard } = require("../utils/inboxRevisionGuard");
+const inboxRevisionGuard = createInboxRevisionGuard();
+
+// One tiny read-only PostgreSQL call replaces the expensive full-list SQL
+// only when WAL, authenticated staff scope and the previously served body
+// are proven unchanged. Failure always falls back to the original query.
+async function readInboxWal() {
+  try {
+    const result = await pool.query("SELECT pg_current_wal_lsn()::text AS wal_lsn");
+    return result.rows[0]?.wal_lsn || null;
+  } catch {
+    return null;
+  }
+}
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact, getAccessibleContactIds } = require("../utils/accessControl");
@@ -839,6 +853,13 @@ function sendMeasuredInboxJson(res, payload, startedAt, kind) {
     const etag = inboxPayloadEtag(serialized);
     res.set("Cache-Control", "private, no-store");
     res.set("ETag", etag);
+    if (res.locals?.inboxWalProof) {
+      const { wal, permittedIds } = res.locals.inboxWalProof;
+      const proof = inboxRevisionGuard.makeProof({
+        etag, wal, permittedIds, user: res.req?.user,
+      });
+      if (proof) res.set("X-Inbox-Revision-Proof", proof);
+    }
     if (matchesInboxPayloadEtag(res.req?.get("If-None-Match"), etag)) {
       res.status(304).end();
       return;
@@ -857,11 +878,32 @@ router.get("/", async (req, res) => {
   const startedAt = process.hrtime.bigint();
   recordInboxFullList(req.get("X-Inbox-Refresh-Reason"));
   try {
+    // WAL is read BEFORE the full list so a concurrent write can never be
+    // accidentally covered by the next fast-path proof. On a preflight 304,
+    // recheck permissions and WAL after the access check to narrow the race.
+    const wal = await readInboxWal();
+    const clientEtag = req.get("If-None-Match");
+    const clientProof = req.get("X-Inbox-Revision-Proof");
+    if (wal && clientEtag && clientProof) {
+      const currentAccess = await getAccessibleContactIds(req.user);
+      if (inboxRevisionGuard.matchesProof(clientProof, {
+        etag: clientEtag, wal, permittedIds: currentAccess, user: req.user,
+      }) && (await readInboxWal()) === wal) {
+        res.set("Cache-Control", "private, no-store");
+        res.set("ETag", clientEtag);
+        res.set("X-Inbox-Revision-Check", "fast");
+        res.set("Server-Timing",
+          `inbox-wal-check;dur=${Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6)}`);
+        res.status(304).end();
+        return;
+      }
+    }
     const conversations = await withDatabaseActivitySource(
       "Inbox full conversation list", () => contactsRepo.listConversations());
     // Always enforce current staff scope on the server, not only in UI filters.
     // Revoked assignments must disappear from the Inbox and fallback refresh.
     const permittedIds = await getAccessibleContactIds(req.user);
+    if (wal) res.locals.inboxWalProof = { wal, permittedIds };
     const allowedSet = permittedIds === null ? null : new Set(permittedIds.map(Number));
     const eligibleIds=await withDatabaseActivitySource("Inbox secondary eligibility",
       () => eligibleSecondaryAdsOnlyContactIds(
