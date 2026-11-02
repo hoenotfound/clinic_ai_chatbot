@@ -68,8 +68,11 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
   assert.match(source, /createSingleFlightInboxRefresh/);
   assert.match(source, /requestAnother\(\)/);
   assert.match(source, /pipelineRefreshContactId\(payload, conversationsRef\.current\)/);
-  assert.match(source, /await refreshConversationSummary\(changedId\)/);
-  assert.match(source, /catch\s*\{\s*await refreshConversations\("summary_fallback"\)/);
+  assert.match(source, /knownSummaryRefreshIds\(changedContacts\)/);
+  assert.match(source, /Promise\.all\(knownIds\.map\(id => refreshConversationSummary\(id\)\)\)/);
+  assert.match(source, /pendingUnknownConversationChange = true/);
+  assert.match(source, /unknownOrRedacted \? unknownReason/);
+  assert.match(source, /catch\s*\{[\s\S]{0,320}?await refreshConversations\("summary_fallback"\)/);
   assert.match(source, /scheduleRefresh\(payload\.contactId \?\? null\)/);
   assert.match(source, /createInboxLiveStartup\(\{/);
   assert.match(source, /source\.onopen = \(\) => startup\.onOpen\(\)/);
@@ -82,6 +85,9 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
     path.join(__dirname, "../portal-frontend/src/api.js"), "utf8"
   );
   assert.match(apiSource, /"X-Inbox-Refresh-Reason": refreshReason/);
+  assert.match(apiSource, /"If-None-Match": inboxSnapshotEtag/);
+  assert.match(apiSource, /cache: "no-store"/);
+  assert.match(apiSource, /clearInboxSnapshotCache\(\)/);
   assert.doesNotMatch(source, /refreshConversations\(\);\s*\}, \[\]\)/);
 });
 
@@ -139,4 +145,17 @@ test("unmounted Inbox never launches a delayed fallback or reconnect", async () 
   assert.equal(cancelled, true);
   assert.equal(loads, 0);
   assert.equal(reconnects, 0);
+});
+
+test("small known contact bursts use summaries and never suppress unknown/invalid change IDs", async () => {
+  const { knownSummaryRefreshIds } = await policy();
+  assert.deepEqual(knownSummaryRefreshIds(new Set([101])), [101]);
+  assert.deepEqual(knownSummaryRefreshIds(new Set([101, 102, 103])), [101, 102, 103]);
+  assert.equal(knownSummaryRefreshIds(new Set()), null);
+  assert.equal(knownSummaryRefreshIds(new Set([1, 2, 3, 4])), null,
+    "large event bursts retain a full permission-checked Inbox snapshot");
+  assert.equal(knownSummaryRefreshIds(new Set([1, NaN])), null);
+  assert.equal(knownSummaryRefreshIds([1, 1]), null);
+  assert.equal(knownSummaryRefreshIds([0]), null);
+  assert.equal(knownSummaryRefreshIds([5, "invalid"]), null);
 });
