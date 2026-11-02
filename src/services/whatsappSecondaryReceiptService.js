@@ -312,7 +312,10 @@ async function recordSignedSecondaryStatusBatch({
            AND (whatsapp_message_id IS NULL OR whatsapp_message_id=$3)
          RETURNING id,contact_id,delivery_status,
            CASE WHEN whatsapp_template->>'automatedSecondaryAiMedia'='true'
-             AND (whatsapp_template->>'anchorMessageId') ~ '^[0-9]{1,10}
+             AND (whatsapp_template->>'anchorMessageId') ~ '^[0-9]{1,10}$'
+           THEN (whatsapp_template->>'anchorMessageId')::integer ELSE NULL END
+             AS secondary_media_inbound_id`,
+        [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus]
       );
       if (delivery.rowCount !== 1) {
         throw new Error("Secondary status had no verified, saved message.");
@@ -501,16 +504,13 @@ async function recordSignedSecondaryStatusBatch({
     if (autoReconciled > 0) {
       try {
         await require("./whatsappSecondaryAiMediaQueue")
-          .wakeAfterVerifiedReconciliation({
-            contactIds:[...reconciledContactIds],database,env,
-          });
+          .wakeAfterVerifiedReconciliation({contactIds:[...reconciledContactIds],database,env});
       } catch (err) {
         console.warn("[Secondary WhatsApp AI media] verified wake unavailable:",
           err?.message);
       }
     }
-    // The picture audit only counts verified delivered/read callbacks, never
-    // a provider HTTP acceptance. No extra query for ordinary text receipts.
+    // Only confirmed media receipts need a media-specific audit query.
     const mediaInbounds=[...new Set(changedMessages
       .map(message=>Number(message.secondary_media_inbound_id))
       .filter(id=>Number.isSafeInteger(id)&&id>0))];
@@ -519,281 +519,7 @@ async function recordSignedSecondaryStatusBatch({
         await require("./whatsappSecondaryAiMediaAudit")
           .reconcileSecondaryMediaAudit({inboundMessageIds:mediaInbounds,database,env});
       }catch(err){
-        console.warn("[Secondary WhatsApp AI media] receipt audit unavailable:",
-          err?.message);
-      }
-    }
-    // Signed receipt, active sender, bound conversation, reservation and
-    // linked message were all verified above. No additional SQL required.
-    const verifiedScope = configuredVerifiedScope(
-      env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID, env.WHATSAPP_SECONDARY_WABA_ID, env
-    ) || { channel: "whatsapp" };
-    for (const message of changedMessages) {
-      try {
-        realtimeEvents.publish("conversation_changed", {
-          ...verifiedScope,
-          contactId: message.contact_id,
-          messageId: message.id,
-          deliveryStatus: message.delivery_status,
-          reason: "delivery_status",
-        });
-      } catch { /* Realtime is best effort after durable Meta receipt. */ }
-    }
-    return {
-      accepted: true, sendAuthorized: false, autoRetryAllowed: false,
-      matched, unmatched, replayed, held,
-      ...(env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true"
-        ? { autoReconciled } : {}),
-    };
-  } catch {
-    if (transaction && client) await client.query("ROLLBACK").catch(() => {});
-    return blocked("secondary_receipt_database_unavailable");
-  } finally {
-    if (client) client.release();
-  }
-}
-
-// No secondary message can enter the existing Neutro retry worker. A new
-// independent retry worker must first prove a verified non-delivery and
-// sender-specific billing reconciliation; nothing here dispatches messages.
-async function inspectSecondaryRetryHold(reservationId, {
-  database = pool, env = process.env,
-} = {}) {
-  if (!receiptEnabled(env)) return blocked("secondary_receipts_disabled");
-  if (!/^[0-9a-f-]{36}$/i.test(clean(reservationId))) {
-    return blocked("secondary_retry_invalid_reservation");
-  }
-  try {
-    const rows = (await database.query(
-      `SELECT a.state AS attempt_state,g.state AS gate_state,
-         EXISTS(SELECT 1 FROM whatsapp_sender_status_receipts r
-           WHERE r.reservation_id=a.reservation_id AND r.matched
-             AND (r.pricing_billable=true OR r.delivery_status='failed')) AS adverse_receipt
-       FROM whatsapp_sender_billing_attempts a
-       JOIN whatsapp_sender_billing_gates g
-         ON g.sender_id=a.sender_id AND g.reservation_id=a.reservation_id
-       JOIN whatsapp_sender_accounts sa ON sa.id=a.sender_id
-       WHERE a.reservation_id=$1::uuid
-         AND sa.sender_key=$2 AND sa.meta_phone_number_id=$3
-         AND sa.meta_account_id=$4`,
-      [reservationId,env.WHATSAPP_SECONDARY_SENDER_KEY,
-        env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
-    )).rows;
-    if (rows?.length !== 1) return blocked("secondary_retry_not_found");
-    return {
-      canAutoRetry: false, sendAuthorized: false, reservationFound: true,
-      code: rows[0].adverse_receipt ? "secondary_retry_adverse_receipt" :
-        rows[0].gate_state === "unknown" || rows[0].attempt_state === "unknown" ?
-          "secondary_retry_unknown_outcome" : "secondary_retry_waiting_pricing",
-    };
-  } catch {
-    return blocked("secondary_retry_database_unavailable");
-  }
-}
-
-module.exports = {
-  validateMetaSignature,
-  normalizedSignedEvents,
-  normalizedSecondarySubsetEvents,
-  MATCH_SECONDARY_ATTEMPT_SQL,
-  recordSignedSecondaryStatusBatch,
-  inspectSecondaryRetryHold,
-};
-
-           THEN (whatsapp_template->>'anchorMessageId')::integer ELSE NULL END
-             AS secondary_media_inbound_id`,
-        [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus]
-      );
-      if (delivery.rowCount !== 1) {
-        throw new Error("Secondary status had no verified, saved message.");
-      }
-      changedMessages.push(delivery.rows[0]);
-      const paidTemplateEligible =
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true" &&
-        attempt.billing_authorization_source === "staff_template_billing_review" &&
-        ["service","utility","marketing"].includes(event.pricingCategory);
-      // The exact marketing-template charge was independently approved
-      // and durably reserved before Meta send. A later operator kill switch
-      // must not turn a valid delayed pricing receipt into a sender-wide
-      // incident. With auto-settlement OFF, hold only this contact for review.
-      const authorizedMarketingCharge =
-        attempt.billable_authorized === true &&
-        attempt.billing_authorization_source ===
-          "operator_approved_marketing_template" &&
-        event.pricingBillable === true &&
-        event.pricingType === "regular" &&
-        event.pricingCategory === "marketing";
-      const paidMarketingEligible = authorizedMarketingCharge &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_BILLABLE_ENABLED === "true";
-      const paidServiceEligible =
-        env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
-        attempt.billing_authorization_source === "operator_acknowledged_service" &&
-        event.pricingCategory === "service";
-      const paidEligible =
-        attempt.billable_authorized === true &&
-        attempt.attempt_state === "awaiting_pricing" &&
-        attempt.gate_state === "awaiting_pricing" &&
-        Boolean(attempt.live_reservation_id) &&
-        event.pricingBillable === true &&
-        event.pricingType === "regular" &&
-        (paidTemplateEligible || paidServiceEligible || paidMarketingEligible) &&
-        ["sent","delivered","read"].includes(event.deliveryStatus);
-      const authorizedServiceCharge =
-        event.pricingBillable === true && event.pricingType === "regular" &&
-        event.pricingCategory === "service" &&
-        attempt.billable_authorized === true &&
-        attempt.billing_authorization_source === "operator_acknowledged_service";
-
-      // Already settled legitimately-priced attempts may receive additional
-      // out-of-order delivered/read receipts. Keep the evidence without
-      // treating consistent provider pricing as an unexpected new charge.
-      let consistentHistoricalPaid = false;
-      if (attempt.attempt_state === "reconciled" &&
-          event.pricingBillable === true &&
-          event.pricingType === "regular" &&
-          ["sent","delivered","read"].includes(event.deliveryStatus)) {
-        const confirmed = await client.query(
-          `SELECT 1 FROM whatsapp_sender_auto_reconciliations a
-            JOIN whatsapp_sender_status_receipts initial
-              ON initial.fingerprint=a.provider_receipt_fingerprint
-            WHERE a.reservation_id=$1::uuid AND a.sender_id=$2
-              AND a.method IN ('signed_meta_staff_authorized_charge',
-                               'signed_meta_operator_authorized_service_charge',
-                               'signed_meta_operator_approved_marketing_template')
-              AND a.pricing_billable=TRUE
-              AND initial.pricing_type=$3 AND initial.pricing_category=$4
-              AND initial.pricing_billable=TRUE`,
-          [attempt.reservation_id,attempt.sender_id,
-            event.pricingType,event.pricingCategory]
-        );
-        consistentHistoricalPaid=confirmed.rows?.length===1;
-      }
-      if (event.deliveryStatus === "failed" ||
-          (event.pricingBillable === true &&
-           !paidEligible && !consistentHistoricalPaid)) {
-        // Latch even when this callback relates to an ALREADY settled send.
-        // Subsequent new reservations must not ignore late contradictions.
-        // A bounced message must not disable unrelated customers. Only
-        // unexpected charges or identity incidents suspend the sender.
-        // An operator-approved service charge awaiting manual reconciliation
-        // holds only this contact; other secondary WhatsApp conversations may continue.
-        if (event.pricingBillable === true &&
-            !authorizedServiceCharge && !authorizedMarketingCharge) {
-          await client.query(
-            `INSERT INTO whatsapp_sender_billing_alarms
-               (sender_id,reservation_id,reason,latest_wamid_hash)
-             VALUES($1,$2,'provider_billable',$3)
-             ON CONFLICT(sender_id) DO UPDATE SET
-               observed_count=whatsapp_sender_billing_alarms.observed_count+1,
-               last_seen_at=NOW(),latest_wamid_hash=EXCLUDED.latest_wamid_hash`,
-            [attempt.sender_id,attempt.reservation_id,event.wamidHash]
-          );
-        }
-        if (attempt.live_reservation_id) {
-          await client.query(
-            "UPDATE whatsapp_sender_billing_gates SET state='unknown',updated_at=NOW() " +
-            "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
-            [attempt.reservation_id,attempt.sender_id]
-          );
-          await client.query(
-            "UPDATE whatsapp_sender_billing_attempts SET state='unknown',updated_at=NOW() " +
-            "WHERE reservation_id=$1 AND sender_id=$2 AND state IN ('awaiting_pricing','unknown')",
-            [attempt.reservation_id,attempt.sender_id]
-          );
-        }
-        held++;
-      } else if (paidEligible || (
-        env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
-        attempt.attempt_state === "awaiting_pricing" &&
-        attempt.gate_state === "awaiting_pricing" &&
-        attempt.live_reservation_id &&
-        event.pricingBillable === false &&
-        (event.pricingType === "free_entry_point" ||
-          (event.pricingType === "free_customer_service" &&
-           event.pricingCategory === "service")) &&
-        ["sent","delivered","read"].includes(event.deliveryStatus)
-      )) {
-        // One signed nonbillable receipt cannot overrule a previous adverse
-        // callback, wrong-recipient webhook or sender-level charge alarm.
-        // Sender gate is locked above, serializing this with a new reservation
-        // and any late provider callback.
-        const evidence = await client.query(
-          `SELECT
-             NOT EXISTS(
-               SELECT 1 FROM whatsapp_sender_billing_alarms a
-               WHERE a.sender_id=$1
-             ) AS no_alarm,
-             NOT EXISTS(
-               SELECT 1 FROM whatsapp_sender_status_receipts r
-               WHERE r.reservation_id=$2::uuid AND r.sender_id=$1
-                 AND (r.delivery_status='failed' OR
-                      (r.pricing_billable IS NOT NULL AND
-                       r.pricing_billable<>$4::boolean) OR
-                      (r.pricing_type IS NOT NULL AND
-                       r.pricing_type<>$5::text))
-             ) AS no_conflict,
-             NOT EXISTS(
-               SELECT 1 FROM whatsapp_sender_status_receipts r
-               WHERE r.sender_id=$1 AND r.wamid_hash=$3
-                 AND r.matched=false
-             ) AS no_wrong_recipient`,
-          [attempt.sender_id,attempt.reservation_id,event.wamidHash,
-            event.pricingBillable,event.pricingType]
-        );
-        const ok = evidence.rows?.[0];
-        if (evidence.rows?.length === 1 && ok.no_alarm === true &&
-            ok.no_conflict === true && ok.no_wrong_recipient === true) {
-          const added = await client.query(
-            `INSERT INTO whatsapp_sender_auto_reconciliations
-               (reservation_id,sender_id,provider_receipt_fingerprint,
-                method,pricing_billable)
-             VALUES($1::uuid,$2,$3,$4,$5)
-             ON CONFLICT(reservation_id) DO NOTHING RETURNING reservation_id`,
-            [attempt.reservation_id,attempt.sender_id,event.fingerprint,
-              paidEligible
-                ? (paidServiceEligible ? "signed_meta_operator_authorized_service_charge"
-                  : paidMarketingEligible ? "signed_meta_operator_approved_marketing_template"
-                  : "signed_meta_staff_authorized_charge")
-                : event.pricingType === "free_customer_service"
-                  ? "signed_meta_nonbillable_customer_service"
-                  : "signed_meta_nonbillable_free_entry",
-              paidEligible]
-          );
-          if (added.rowCount !== 1) throw new Error("Auto-reconciliation replay");
-          const finishedAttempt = await client.query(
-            `UPDATE whatsapp_sender_billing_attempts
-             SET state='reconciled',updated_at=NOW()
-             WHERE reservation_id=$1::uuid AND sender_id=$2 AND
-                   state='awaiting_pricing'`,
-            [attempt.reservation_id,attempt.sender_id]
-          );
-          const finishedGate = await client.query(
-            `UPDATE whatsapp_sender_billing_gates
-             SET state='idle',reservation_id=NULL,contact_id=NULL,
-                 message_id=NULL,wamid=NULL,updated_at=NOW()
-             WHERE reservation_id=$1::uuid AND sender_id=$2 AND
-                   state='awaiting_pricing'`,
-            [attempt.reservation_id,attempt.sender_id]
-          );
-          if (finishedAttempt.rowCount !== 1 || finishedGate.rowCount !== 1) {
-            throw new Error("Auto-reconciliation lost exact sender ownership");
-          }
-          autoReconciled++;
-        }
-      }
-    }
-    await client.query("COMMIT"); transaction = false;
-    // Once a previous sender reservation is safely reconciled, promptly
-    // revisit deferred images. This is a queue wake, never a message retry.
-    // A failure here must not invalidate a successfully saved signed receipt.
-    if (autoReconciled > 0) {
-      try {
-        await require("./whatsappSecondaryAiMediaQueue")
-          .wakeAfterVerifiedReconciliation({database,env});
-      } catch (err) {
-        console.warn("[Secondary WhatsApp AI media] verified wake unavailable:",
-          err?.message);
+        console.warn("[Secondary WhatsApp AI media] receipt audit unavailable:",err?.message);
       }
     }
     // Signed receipt, active sender, bound conversation, reservation and
