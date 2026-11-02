@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { createPortal } from "react-dom";
 import "./InboxWhatsApp.css";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
@@ -4723,6 +4724,9 @@ function MessageBubble({
   }
 
   function handleClickCapture(event) {
+    // React events from portalled menus still bubble through this component.
+    // Never swallow a menu action after a long press.
+    if (event.target?.closest?.('[role="menu"], [aria-label="Close message actions"]')) return;
     if (!suppressClickRef.current) return;
     suppressClickRef.current = false;
     event.preventDefault();
@@ -4904,19 +4908,24 @@ function MessageBubble({
         )}
       </div>
 
-      {menuOpen && (
+      {menuOpen && showActions && createPortal(
         <>
           <button
             type="button"
-            className="fixed inset-0 z-[80] bg-black/40 sm:hidden"
+            className="fixed inset-0 bg-black/40 sm:hidden"
+            style={{ zIndex: 3000 }}
             onClick={() => setMenuOpen(false)}
             aria-label="Close message actions"
           />
           <div
-            className="fixed inset-x-0 bottom-0 z-[81] overflow-hidden rounded-t-[24px] bg-white text-[var(--color-text)] shadow-2xl sm:hidden"
+            className="fixed inset-x-0 bottom-0 max-h-[80dvh] overflow-y-auto overscroll-contain rounded-t-[24px] bg-white text-[var(--color-text)] shadow-2xl sm:hidden"
             role="menu"
             aria-label="Message options"
-            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+            style={{
+              zIndex: 3001,
+              paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
+              WebkitOverflowScrolling: "touch",
+            }}
           >
             <div className="flex h-5 items-center justify-center" aria-hidden="true">
               <span className="h-1 w-10 rounded-full bg-slate-300" />
@@ -4931,7 +4940,8 @@ function MessageBubble({
               {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-base text-[var(--color-text-muted)]">⧉</span>Copy</button>}
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
