@@ -19,6 +19,7 @@ const RECONCILE_SQL=`
        AND m.delivery_status IN('delivered','read'))::int AS confirmed,
      COUNT(*) FILTER(WHERE j.state IN('pending','claimed'))::int AS pending,
      COUNT(*) FILTER(WHERE j.state='unknown'
+       OR (j.state='expired' AND m.delivery_status='unknown')
        OR (j.state='accepted' AND m.delivery_status='unknown'))::int AS uncertain,
      COUNT(*) FILTER(WHERE j.state='accepted' AND
        (m.delivery_status IS NULL OR m.delivery_status IN('queued','sent','pending')))::int AS awaiting_receipt,
