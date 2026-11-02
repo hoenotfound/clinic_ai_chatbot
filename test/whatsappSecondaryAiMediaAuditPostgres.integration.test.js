@@ -80,7 +80,8 @@ test("secondary media audit and contact wake operate on isolated PostgreSQL evid
    assert.deepEqual(initial,{status:"deferred",reason:"awaiting_sender_billing_receipt"});
 
    await db.query("UPDATE whatsapp_sender_ai_media_jobs SET state='expired' WHERE id=$1",[one.job]);
-   await audit.reconcileSecondaryMediaAudit({inboundMessageIds:[one.inbound],database,env});
+   assert.equal(await audit.reconcileRecentTerminalMediaAudit({database,env}),1,
+     "startup repair fixes historical expired images without touching the pending customer");
    assert.deepEqual((await db.query("SELECT status,reason,result_images_selected,result_images_sent "+
      "FROM result_media_decisions WHERE inbound_message_id=$1",[one.inbound])).rows[0],
      {status:"skipped",reason:"secondary_media_cancelled_before_send",
