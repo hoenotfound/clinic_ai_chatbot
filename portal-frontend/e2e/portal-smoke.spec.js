@@ -1631,13 +1631,9 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
   await mockPortalApi(page, { loggedIn: true });
   let reads = 0;
   const writes = [];
-  const secondaryRequests = [];
-  page.on("request", request => {
-    if (request.url().includes("whatsapp-secondary-followups")) {
-      secondaryRequests.push({ method: request.method(), url: new URL(request.url()).pathname });
-    }
-  });
-  await page.route("**/api/whatsapp-secondary-followups**", async (route) => {
+  // Match both the collection GET and /:slot PUT paths. A glob suffix does
+  // not reliably cover slash-separated paths in Playwright.
+  await page.route(/\/api\/whatsapp-secondary-followups(?:\/.*)?(?:\?.*)?$/, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (path === "/api/whatsapp-secondary-followups" && request.method() === "GET") {
@@ -1685,17 +1681,7 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
   await twoHour.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
   await twoHour.getByText(/I approve this clinic-owned video/).click();
   await twoHour.getByRole("button", { name: "Save secondary rule" }).click();
-  try {
-    await expect.poll(() => writes.length).toBe(1);
-  } catch (error) {
-    const alerts = await service.locator('[role="alert"]').allTextContents();
-    const editor = await twoHour.evaluate((node) => ({
-      open: node.open, text: node.innerText.slice(-1000),
-      buttons: [...node.querySelectorAll("button")].map(b => ({ text: b.innerText, disabled: b.disabled })),
-      checks: [...node.querySelectorAll('input[type="checkbox"]')].map(c => c.checked),
-    })).catch(e => ({ inspectionError: e.message }));
-    throw new Error(`Secondary save request missing: ${JSON.stringify({ secondaryRequests, alerts, editor })}; ${error.message}`);
-  }
+  await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toMatchObject({
     messageText: "Updated reminder for secondary only.",
     enabled: true, mediaKey: "clinic-video-2h",
