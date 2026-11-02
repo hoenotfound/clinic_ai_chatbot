@@ -5,7 +5,7 @@
 // This only formats verified text. It does not authorize promotional media.
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
-const { getActivePromotions } = require("./activePromotion");
+const { getActivePromotions, getPricePromotionBundle } = require("./activePromotion");
 const { verifiedPricesForService } = require("./verifiedPriceReply");
 const { isVerifiedStaffTurn } = require("./priceFollowUpContext");
 const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
@@ -146,4 +146,40 @@ function resolveNeutroComboOfferReply({
   return { ...offer, mode: "suggestion", reply };
 }
 
-module.exports = { resolveNeutroComboOfferReply };
+// Media is authorized independently of the model and the reply formatter.
+// The existing promotion selector still applies staff, clinical, billing,
+// delivery receipt, duplicate URL and 24-hour cooldown safeguards.
+function resolveNeutroComboMediaPricingDecision({
+  comboOfferDecision, promotions = [], customerText = "", session = null,
+  reply = "", now = Date.now(),
+} = {}) {
+  if (!comboOfferDecision ||
+      !["direct", "suggestion"].includes(comboOfferDecision.mode) ||
+      comboOfferDecision.treatment !== COMBO_SERVICE ||
+      !String(reply || "").includes(comboOfferDecision.price)) return null;
+
+  const bundle = getPricePromotionBundle(
+    promotions, COMBO_SERVICE, null, new Date(now)
+  );
+  // A single approved RM688 graphic, never an unrelated package or a
+  // multi-image blast. A missing/pending promotion safely remains text-only.
+  if (bundle?.packages?.length !== 1) return null;
+  const prices = verifiedPricesForService(
+    COMBO_SERVICE, promotions, customerText, session,
+    { allowTextOnlyOffers: true }
+  );
+  if (prices?.length !== 1 ||
+      prices[0].name !== bundle.packages[0].name ||
+      prices[0].price !== comboOfferDecision.price) return null;
+  return {
+    source: "verified_neutro_combo_image",
+    treatment: COMBO_SERVICE,
+    type: "price",
+    prices,
+  };
+}
+
+module.exports = {
+  resolveNeutroComboOfferReply,
+  resolveNeutroComboMediaPricingDecision,
+};
