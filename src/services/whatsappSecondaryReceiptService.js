@@ -492,6 +492,18 @@ async function recordSignedSecondaryStatusBatch({
       }
     }
     await client.query("COMMIT"); transaction = false;
+    // Once a previous sender reservation is safely reconciled, promptly
+    // revisit deferred images. This is a queue wake, never a message retry.
+    // A failure here must not invalidate a successfully saved signed receipt.
+    if (autoReconciled > 0) {
+      try {
+        await require("./whatsappSecondaryAiMediaQueue")
+          .wakeAfterVerifiedReconciliation({database,env});
+      } catch (err) {
+        console.warn("[Secondary WhatsApp AI media] verified wake unavailable:",
+          err?.message);
+      }
+    }
     // Signed receipt, active sender, bound conversation, reservation and
     // linked message were all verified above. No additional SQL required.
     const verifiedScope = configuredVerifiedScope(
