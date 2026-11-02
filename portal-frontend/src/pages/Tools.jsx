@@ -2363,16 +2363,14 @@ function FollowUpTool({
   const [followUpTab, setFollowUpTab] = useState("sequence");
   const [senderView, setSenderView] = useState("primary");
   const [secondarySection, setSecondarySection] = useState("service");
+  const [activitySection, setActivitySection] = useState("recent");
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
   const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
   const [focusAdvancedRule, setFocusAdvancedRule] = useState(null);
   const [jumpExtendedSlotHour, setJumpExtendedSlotHour] = useState(null);
   const [proposedTemplateSchedule, setProposedTemplateSchedule] = useState(null);
-  const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
-  useEffect(() => {
-    if (form.whatsappFreeOnly?.enabled === true) setBillingProtectionOpen(true);
-  }, [form.whatsappFreeOnly?.enabled]);
+  const [billingProtectionOpen, setBillingProtectionOpen] = useState(false);
   const [jumpStepIndex, setJumpStepIndex] = useState(null);
   useEffect(() => {
     if (validationIssue?.tab === "sequence" && /quiet hours/i.test(validationIssue.message || "")) {
@@ -4603,15 +4601,29 @@ function FollowUpTool({
             <FollowUpPerformance active={followUpTab === "performance"} />
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
-            <nav aria-label="Activity section shortcuts" className="flex flex-wrap gap-2 text-xs font-semibold">
-              <a href="#follow-up-delivery-health" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">Delivery health</a>
-              <a href="#follow-up-delivery-events" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">Recent activity</a>
-              <a href="#follow-up-template-activity" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">WhatsApp templates</a>
+            <nav role="tablist" aria-label="Activity sections"
+              className="flex gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white p-1.5">
+              {[["recent", "Recent activity"],["health", "Delivery health"],["templates", "Templates"]].map(([key, label]) => (
+                <button type="button" role="tab" key={key} id={`activity-tab-${key}`}
+                  aria-selected={activitySection===key} aria-controls={`activity-panel-${key}`}
+                  onClick={() => setActivitySection(key)}
+                  className={`min-h-11 shrink-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold sm:text-sm ${activitySection===key
+                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+                  {label}
+                </button>
+              ))}
             </nav>
-            <div id="follow-up-delivery-health" className="scroll-mt-4"><FollowUpHealth active={followUpTab === "activity"} />
+            <div id="follow-up-delivery-health" role="tabpanel" aria-labelledby="activity-tab-health"
+              className={activitySection === "health" ? "scroll-mt-4" : "hidden"}>
+              <FollowUpHealth active={followUpTab === "activity" && activitySection === "health"} />
             </div>
-            <div id="follow-up-delivery-events" className="scroll-mt-4"><FollowUpActivity active={followUpTab === "activity"} /></div>
-            <div id="follow-up-template-activity" className="scroll-mt-4"><Card>
+            <div id="follow-up-delivery-events" role="tabpanel" aria-labelledby="activity-tab-recent"
+              className={activitySection === "recent" ? "scroll-mt-4" : "hidden"}>
+              <FollowUpActivity active={followUpTab === "activity" && activitySection === "recent"} />
+            </div>
+            <div id="follow-up-template-activity" role="tabpanel" aria-labelledby="activity-tab-templates"
+              className={activitySection === "templates" ? "scroll-mt-4" : "hidden"}><Card>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-base font-bold">Extended WhatsApp template activity</h2>
