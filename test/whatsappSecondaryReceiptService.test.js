@@ -192,3 +192,14 @@ test("genuine padded Meta WAMIDs are accepted only with signed secondary identit
   wrong.entry[0].changes[0].value.metadata.phone_number_id=env.WHATSAPP_PHONE_NUMBER_ID;
   assert.equal(receipt.normalizedSecondarySubsetEvents(signed(wrong).rawBody,env),null);
 });
+
+
+test("signed secondary receipt reconciles only its own sender billing gate and audits image receipts",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const s=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryReceiptService.js"),"utf8");
+ assert.match(s,/const reconciledContactIds = new Set\(\)/);
+ assert.match(s,/reconciledContactIds\.add\(Number\(attempt\.contact_id\)\)/);
+ assert.match(s,/wakeAfterVerifiedReconciliation\(\{contactIds:\[\.\.\.reconciledContactIds\],database,env\}\)/);
+ assert.match(s,/AS secondary_media_inbound_id/);
+ assert.match(s,/\.reconcileSecondaryMediaAudit\(\{inboundMessageIds:mediaInbounds,database,env\}\)/);
+});
