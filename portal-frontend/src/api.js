@@ -317,6 +317,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ unread }),
     }),
+  setInboxArchived: (contactId, archived) =>
+    request(`/conversations/${contactId}/archive`, {
+      method: "PATCH",
+      body: JSON.stringify({ archived }),
+    }),
   setFollowUp: (contactId, needsFollowUp) =>
     request(`/conversations/${contactId}/follow-up`, {
       method: "PATCH",
