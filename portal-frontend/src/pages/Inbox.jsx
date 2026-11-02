@@ -204,7 +204,15 @@ function mergeMessageState(existing, incoming) {
   const deliveryAttemptChanged =
     incomingHasWamid && existing.whatsapp_message_id !== incoming.whatsapp_message_id;
 
-  if (deliveryAttemptChanged) {
+  // A secondary image may encounter a known pre-provider billing hold.
+  // The server can safely return it to "queued" once it verifies there was
+  // no provider attempt. Do not pin the earlier transient "unknown" badge.
+  const secondaryMediaSafelyRequeued =
+    existingStatus === "unknown" && incomingStatus === "queued" &&
+    existing.whatsapp_template?.automatedSecondaryAiMedia === true &&
+    !existing.whatsapp_message_id &&
+    (incoming.whatsapp_message_id == null);
+  if (deliveryAttemptChanged || secondaryMediaSafelyRequeued) {
     return merged;
   }
 
