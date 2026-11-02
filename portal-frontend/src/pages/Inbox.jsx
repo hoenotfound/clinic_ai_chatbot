@@ -4539,8 +4539,10 @@ function MessageBubble({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState(null);
+  const [selectedBubbleRect, setSelectedBubbleRect] = useState(null);
   const messageBubbleRef = useRef(null);
   const mobileActionsRef = useRef(null);
+  const messageActionsButtonRef = useRef(null);
   const [storedImageLoaded, setStoredImageLoaded] = useState(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
@@ -4628,11 +4630,11 @@ function MessageBubble({
     }
   }, []);
 
-  // Position the phone action menu relative to the selected chat bubble,
-  // like WhatsApp's contextual popup. Keep it inside the visible viewport
-  // even if the bubble is close to the screen edges or Safari address bar.
+  // Keep the context menu aligned with the selected bubble while images
+  // load, window dimensions change or the chat is scrolled. No polling.
   useLayoutEffect(() => {
     if (!menuOpen || !window.matchMedia("(max-width: 639px)").matches) return undefined;
+    let frame = null;
     function updatePosition() {
       const bubble = messageBubbleRef.current?.getBoundingClientRect();
       const menu = mobileActionsRef.current?.getBoundingClientRect();
@@ -4641,6 +4643,12 @@ function MessageBubble({
       const viewTop = viewport?.offsetTop || 0;
       const visibleHeight = viewport?.height || window.innerHeight;
       const viewBottom = viewTop + visibleHeight;
+      // Closing a floating menu after its message scrolls off-screen
+      // avoids leaving an action sheet attached to the wrong chat.
+      if (bubble.bottom < viewTop || bubble.top > viewBottom) {
+        setMenuOpen(false);
+        return;
+      }
       const minTop = viewTop + 12;
       const maxTop = Math.max(minTop, viewBottom - menu.height - 12);
       const maxLeft = Math.max(12, window.innerWidth - menu.width - 12);
@@ -4655,25 +4663,90 @@ function MessageBubble({
         ? above
         : bubble.top - menu.height / 2;
       const top = Math.min(maxTop, Math.max(minTop, preferredTop));
-      setMenuPosition({ left, top });
+      // A small inset keeps the spotlight edge off the message itself.
+      const bubbleRect = {
+        left: Math.max(0, bubble.left - 4),
+        top: Math.max(0, bubble.top - 4),
+        right: Math.min(window.innerWidth, bubble.right + 4),
+        bottom: Math.min(window.innerHeight, bubble.bottom + 4),
+      };
+      setMenuPosition((previous) =>
+        previous?.left === left && previous?.top === top ? previous : { left, top });
+      setSelectedBubbleRect((previous) =>
+        previous?.left === bubbleRect.left && previous?.top === bubbleRect.top &&
+        previous?.right === bubbleRect.right && previous?.bottom === bubbleRect.bottom
+          ? previous : bubbleRect);
+    }
+    function schedulePosition() {
+      if (frame != null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        updatePosition();
+      });
     }
     updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.visualViewport?.addEventListener("resize", updatePosition);
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(schedulePosition) : null;
+    if (messageBubbleRef.current) observer?.observe(messageBubbleRef.current);
+    if (mobileActionsRef.current) observer?.observe(mobileActionsRef.current);
+    // Safari may delay a ResizeObserver notification for inline bubble
+    // changes and media loading. Attribute / child changes are a separate,
+    // event-driven signal, not a polling loop.
+    const mutationObserver = typeof MutationObserver !== "undefined"
+      ? new MutationObserver(schedulePosition) : null;
+    if (messageBubbleRef.current) {
+      mutationObserver?.observe(messageBubbleRef.current, {
+        attributes: true,
+        attributeFilter: ["style", "class", "src", "width", "height"],
+        childList: true,
+        subtree: true,
+      });
+    }
+    window.addEventListener("resize", schedulePosition);
+    window.addEventListener("scroll", schedulePosition, true);
+    window.visualViewport?.addEventListener("resize", schedulePosition);
+    window.visualViewport?.addEventListener("scroll", schedulePosition);
     return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.visualViewport?.removeEventListener("resize", updatePosition);
+      if (frame != null) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      mutationObserver?.disconnect();
+      window.removeEventListener("resize", schedulePosition);
+      window.removeEventListener("scroll", schedulePosition, true);
+      window.visualViewport?.removeEventListener("resize", schedulePosition);
+      window.visualViewport?.removeEventListener("scroll", schedulePosition);
     };
   }, [menuOpen, isPatient, canQuote, canForward, canCopy, offerReply, offerForward, replyUnavailableReason]);
 
   useEffect(() => {
     if (!menuOpen) {
       setMenuPosition(null);
+      setSelectedBubbleRect(null);
       return undefined;
     }
 
+    function focusFirstAction() {
+      const actions = [...(mobileActionsRef.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])];
+      actions[0]?.focus({ preventScroll: true });
+    }
+    const focusFrame = window.requestAnimationFrame(() => {
+      if (window.matchMedia("(max-width: 639px)").matches) focusFirstAction();
+    });
     function handleKeyDown(event) {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        messageActionsButtonRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const actions = [...(mobileActionsRef.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || [])];
+      if (!actions.length) return;
+      event.preventDefault();
+      const current = actions.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0
+        : event.key === "End" ? actions.length - 1
+        : event.key === "ArrowDown" ? (current + 1) % actions.length
+        : (current < 0 ? actions.length - 1 : (current - 1 + actions.length) % actions.length);
+      actions[next]?.focus({ preventScroll: true });
     }
     document.addEventListener("keydown", handleKeyDown);
 
@@ -4682,6 +4755,7 @@ function MessageBubble({
     if (isMobile) document.body.style.overflow = "hidden";
 
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", handleKeyDown);
       if (isMobile) document.body.style.overflow = previousOverflow;
     };
@@ -4717,7 +4791,10 @@ function MessageBubble({
     longPressTriggeredRef.current = false;
     handleSwipeStart(event);
     if (!showActions || event.touches?.length !== 1) return;
-    if (event.target?.closest?.("button, a, audio, video, input, textarea, summary")) return;
+    // A held attachment or image opens message actions, while a short tap
+    // still opens the document or photo. Do not intercept native playback,
+    // seeking, inputs, or control buttons.
+    if (event.target?.closest?.("button, audio, video, input, textarea, summary")) return;
     const touch = event.touches[0];
     clearLongPress();
     longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
@@ -4761,7 +4838,7 @@ function MessageBubble({
   }
 
   function handleBubbleContextMenu(event) {
-    if (!showActions || event.target?.closest?.("button, a, audio, video, input, textarea, summary")) return;
+    if (!showActions || event.target?.closest?.("button, audio, video, input, textarea, summary")) return;
     event.preventDefault();
     clearLongPress();
     resetSwipe();
@@ -4857,6 +4934,7 @@ function MessageBubble({
         {showActions && (
           <div className="absolute -right-1 -top-1 z-20 sm:right-1.5 sm:top-1.5">
             <button
+              ref={messageActionsButtonRef}
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
               className={`flex h-11 w-11 touch-manipulation items-center justify-center rounded-full text-xl leading-none transition sm:h-7 sm:w-7 sm:text-lg ${isPatient ? "text-[var(--color-text-muted)] active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)]" : "text-white/80 active:bg-white/15 hover:bg-white/15"} ${menuOpen ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
@@ -5011,11 +5089,33 @@ function MessageBubble({
         <>
           <button
             type="button"
-            className="fixed inset-0 bg-black/30 backdrop-blur-[1px] sm:hidden"
-            style={{ zIndex: 3000 }}
+            className="fixed inset-0 bg-black/35 sm:hidden"
+            style={{
+              zIndex: 3000,
+              // Cut a spotlight around the original bubble instead of
+              // dimming it with the rest of the conversation. No DOM clones,
+              // duplicate media downloads or duplicate message controls.
+              clipPath: selectedBubbleRect
+                ? `polygon(evenodd, 0px 0px, 100% 0px, 100% 100%, 0px 100%, 0px 0px, ${selectedBubbleRect.left}px ${selectedBubbleRect.top}px, ${selectedBubbleRect.left}px ${selectedBubbleRect.bottom}px, ${selectedBubbleRect.right}px ${selectedBubbleRect.bottom}px, ${selectedBubbleRect.right}px ${selectedBubbleRect.top}px, ${selectedBubbleRect.left}px ${selectedBubbleRect.top}px)`
+                : undefined,
+            }}
             onClick={() => setMenuOpen(false)}
             aria-label="Close message actions"
           />
+          {selectedBubbleRect && (
+            <div
+              data-selected-message-spotlight="true"
+              aria-hidden="true"
+              className="pointer-events-none fixed rounded-xl border-2 border-white/80 shadow-[0_0_0_1px_rgba(0,128,105,0.18)] sm:hidden"
+              style={{
+                zIndex: 3001,
+                left: selectedBubbleRect.left,
+                top: selectedBubbleRect.top,
+                width: selectedBubbleRect.right - selectedBubbleRect.left,
+                height: selectedBubbleRect.bottom - selectedBubbleRect.top,
+              }}
+            />
+          )}
           <div
             ref={mobileActionsRef}
             className="fixed w-[min(17rem,calc(100vw-24px))] max-h-[min(70dvh,24rem)] overflow-y-auto overscroll-contain rounded-[20px] border border-white/70 bg-white/95 p-1.5 text-[#1f292d] shadow-[0_16px_48px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:hidden"
