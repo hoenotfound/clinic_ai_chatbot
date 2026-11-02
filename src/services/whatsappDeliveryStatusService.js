@@ -112,6 +112,7 @@ function createWhatsAppDeliveryStatusService({
     ? contactsRepo.clearDeliveryAttentionIfNoFailedMessages : async () => null,
   sendUnmatchedFailureAlert = defaultUnmatchedFailureAlert,
   logger = console,
+  env = process.env,
   wakeResultMedia = whatsappResultMediaQueue.wake,
   reconcileFreeOnlyGate = whatsappZeroCostGuard.reconcileConfirmedGate,
   publishPricingEvidence = () =>
@@ -241,7 +242,7 @@ function createWhatsAppDeliveryStatusService({
     }
     // Verification is already part of this write path. Reuse it to label the
     // realtime event; never issue SQL solely for the follow-up scheduler.
-    const eventScope = scopeForVerifiedDeliveryJob(job, senderVerification);
+    const eventScope = scopeForVerifiedDeliveryJob(job, senderVerification, env);
     const errorText = job.error_message || job.error_title || null;
     let statusAppliedNow = false;
     let updatedMessage = await messages.updateDeliveryStatusByWamid(
