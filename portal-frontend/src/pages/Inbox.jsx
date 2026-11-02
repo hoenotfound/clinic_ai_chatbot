@@ -12,6 +12,7 @@ import LeadAssignmentBadge, {
   matchesLeadAssignment,
 } from "../components/LeadAssignmentBadge";
 import { getBusinessTerminology } from "../utils/businessTerminology";
+import { inboxSenderDisplayName } from "../utils/inboxSenderDisplayName";
 import {
   createSingleFlightInboxRefresh,
   pipelineRefreshContactId,
@@ -144,6 +145,7 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
     conversation.last_message,
     conversation.lead_owner_display_name,
     conversation.lead_owner_username,
+    inboxSenderDisplayName(conversation),
     conversation.whatsapp_sender_display_name,
   ].filter(Boolean).join(" ").toLowerCase().includes(query);
 }
@@ -1765,7 +1767,7 @@ function ConversationList({
     for (const item of conversationList) {
       if (item.channel === "whatsapp" && item.whatsapp_sender_key) {
         found.set(item.whatsapp_sender_key,
-          item.whatsapp_sender_display_name || item.whatsapp_sender_key);
+          inboxSenderDisplayName(item) || item.whatsapp_sender_key);
       }
     }
     return [...found.entries()].sort((a, b) => a[1].localeCompare(b[1]));
@@ -2163,12 +2165,12 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
-                    {conversation.channel === "whatsapp" && conversation.whatsapp_sender_display_name && (
+                    {conversation.channel === "whatsapp" && inboxSenderDisplayName(conversation) && (
                       <span
                         title="Receiving WhatsApp business number"
                         className="max-w-[8rem] truncate rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
                       >
-                        {conversation.whatsapp_sender_display_name}
+                        {inboxSenderDisplayName(conversation)}
                       </span>
                     )}
                     {conversation.whatsapp_is_secondary === true &&
@@ -2217,7 +2219,7 @@ function ConversationList({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{displayName(contact)}</span>
                   <span className="block truncate text-xs text-[var(--color-text-muted)]">
-                    {contact.whatsapp_sender_display_name || contactMeta(contact)}
+                    {inboxSenderDisplayName(contact) || contactMeta(contact)}
                   </span>
                 </span>
               </button>
@@ -3391,12 +3393,12 @@ function ThreadView({
                 <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--color-text-muted)] sm:flex-none sm:text-[11px]">
                   {contactMeta(contact)}
                 </span>
-                {contact.channel === "whatsapp" && contact.whatsapp_sender_display_name && (
+                {contact.channel === "whatsapp" && inboxSenderDisplayName(contact) && (
                   <span
                     className="min-w-0 max-w-[8rem] truncate rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--color-text-muted)]"
-                    title={"Reply from " + contact.whatsapp_sender_display_name}
+                    title={"Reply from " + inboxSenderDisplayName(contact)}
                   >
-                    via {contact.whatsapp_sender_display_name}
+                    via {inboxSenderDisplayName(contact)}
                   </span>
                 )}
                 {secondarySenderSuspended && (
