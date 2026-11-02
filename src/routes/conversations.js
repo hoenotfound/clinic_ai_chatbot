@@ -1331,7 +1331,15 @@ router.patch("/:contactId/archive", async (req, res) => {
     if (typeof archived !== "boolean") {
       return res.status(400).json({ error: "archived (boolean) is required." });
     }
-    const updated = await contactsRepo.setInboxArchived(contactId, archived);
+    // Archive is a staff management action, not an unrestricted contact-ID
+    // update. Recheck ownership on every request, including from old tabs.
+    if (!hasCapability(req.user, "manage_assigned_leads") ||
+        !await canAccessContact(req.user, contactId)) {
+      return res.status(403).json({ error: "You cannot manage this conversation." });
+    }
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    const updated = await contactsRepo.setInboxArchived(contact.id, archived);
     if (!updated) return res.status(404).json({ error: "Contact not found." });
     res.json({ contactId, archived: !!updated.inbox_archived_at, archivedAt: updated.inbox_archived_at });
   } catch (err) {
