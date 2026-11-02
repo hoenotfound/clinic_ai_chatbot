@@ -288,7 +288,7 @@ test("media placeholder starts queued, becomes uncertain when claimed, then queu
   const placeholder=args.calls.find(x=>x.appended).appended;
   assert.equal(placeholder.at(-1).initialDeliveryStatus,"queued");
   assert.ok(args.calls.some(x=>x.sql?.includes("delivery_status='unknown'")));
-  const deferred=args.calls.find(x=>x.sql?.includes("delivery_status='queued'"));
+  const deferred=args.calls.find(x=>x.sql?.includes("WITH deferred AS"));
   assert.ok(deferred);
   assert.equal(deferred.args[0],2);
   assert.equal(deferred.args[1],90*1000);
