@@ -42,3 +42,12 @@ test("result audit schema is additive, per-message and private", () => {
   assert.match(migration, /promotion_images_sent/);
   assert.match(migration, /result_images_sent/);
 });
+
+
+test("a late selection audit cannot downgrade settled secondary media delivery",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const s=fs.readFileSync(path.join(__dirname,"../src/db/resultMediaDecisionRepo.js"),"utf8");
+ assert.match(s,/EXCLUDED.reason IN \('awaiting_sender_billing_receipt'/);
+ assert.match(s,/result_media_decisions.reason LIKE 'secondary_media_%'/);
+ assert.match(s,/result_images_selected = GREATEST/);
+});
