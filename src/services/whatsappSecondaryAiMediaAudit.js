@@ -63,6 +63,26 @@ const RECONCILE_SQL=`
  RETURNING inbound_message_id,status,reason
 `;
 
+// One bounded startup repair for records created before the live audit fix.
+// It only revisits terminal jobs with a stale "awaiting" / unconfirmed audit;
+// it does not claim pending jobs, change delivery state or invoke Meta.
+const RECENT_TERMINAL_SQL=`
+ SELECT j.inbound_message_id
+ FROM whatsapp_sender_ai_media_jobs j
+ JOIN whatsapp_sender_accounts sa ON sa.id=j.sender_id
+ JOIN result_media_decisions d ON d.inbound_message_id=j.inbound_message_id
+   AND d.contact_id=j.contact_id
+ WHERE sa.state='active' AND sa.sender_key=$1
+   AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+   AND j.created_at>NOW()-INTERVAL '14 days'
+   AND j.state IN('expired','accepted','unknown')
+   AND d.reason IN ('awaiting_sender_billing_receipt',
+     'result_media_delivery_unconfirmed','secondary_media_waiting_delivery_receipt')
+ GROUP BY j.inbound_message_id
+ ORDER BY MAX(j.updated_at) DESC
+ LIMIT 50
+`;
+
 async function reconcileSecondaryMediaAudit({
  inboundMessageIds,database=pool,env=process.env,
 }={}){
@@ -84,4 +104,20 @@ async function reconcileSecondaryMediaAudit({
  }
  return updated;
 }
-module.exports={RECONCILE_SQL,reconcileSecondaryMediaAudit};
+async function reconcileRecentTerminalMediaAudit({
+ database=pool,env=process.env,
+}={}){
+ if(!adsOnlyActivation(env) ||
+    env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true" ||
+    env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary")return 0;
+ const result=await database.query(RECENT_TERMINAL_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
+ ]);
+ return reconcileSecondaryMediaAudit({
+   inboundMessageIds:(result.rows||[]).map(row=>row.inbound_message_id),
+   database,env,
+ });
+}
+module.exports={RECONCILE_SQL,RECENT_TERMINAL_SQL,
+  reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit};
