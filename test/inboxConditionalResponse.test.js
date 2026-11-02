@@ -53,7 +53,8 @@ test("volatile Inbox API only reuses snapshot after explicit server 304, resets 
       status: 200, headers: { etag: '"inbox-test-a"',
         "x-inbox-revision-proof": "v1.testproof-a" },
     }),
-    new Response(null, { status: 304, headers: { etag: '"inbox-test-a"' } }),
+    new Response(null, { status: 304, headers: { etag: '"inbox-test-a"',
+      "x-inbox-revision-proof": "v1.testproof-a2" } }),
     new Response(JSON.stringify([{ contact_id: 1, last_message: "two" }]), {
       status: 200, headers: { etag: '"inbox-test-b"',
         "x-inbox-revision-proof": "v1.testproof-b" },
@@ -88,7 +89,8 @@ test("volatile Inbox API only reuses snapshot after explicit server 304, resets 
     assert.equal(latest[0].last_message, "two",
       "new server content must replace cached contact state");
     assert.equal(calls[2].options.headers["If-None-Match"], '"inbox-test-a"');
-    assert.equal(calls[2].options.headers["X-Inbox-Revision-Proof"], "v1.testproof-a");
+    assert.equal(calls[2].options.headers["X-Inbox-Revision-Proof"], "v1.testproof-a2",
+      "full-query 304 can upgrade revision proof without re-downloading the list");
 
     await api.logout();
     assert.equal(calls[3].url, "/api/auth/logout");
