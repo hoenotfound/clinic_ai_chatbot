@@ -4194,7 +4194,22 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
   });
 
+  function targetUnavailableReason(target) {
+    const policy = messagingPolicyStatus(target);
+    if (target?.channel === "whatsapp" && target?.whatsapp_is_secondary === true &&
+        (target.whatsapp_sender_state !== "active" ||
+          target.whatsapp_sender_coexistence_enabled !== true)) {
+      return "This WhatsApp business number is suspended.";
+    }
+    if (policy.applies && !policy.manualReplyAllowed) {
+      return policy.explanation || "The recipient's reply window is closed.";
+    }
+    return null;
+  }
+
   function toggleContact(contactId) {
+    const target = choices.find((item) => Number(item.contact_id) === Number(contactId));
+    if (!target || targetUnavailableReason(target)) return;
     setError("");
     setSelectedIds((current) => {
       if (current.includes(contactId)) return current.filter((id) => id !== contactId);
@@ -4267,13 +4282,16 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
           ) : choices.slice(0, visibleChoices).map((item) => {
             const id = Number(item.contact_id);
             const selected = selectedIds.includes(id);
+            const unavailableReason = targetUnavailableReason(item);
             return (
               <button
                 key={item.contact_id}
                 type="button"
                 onClick={() => toggleContact(id)}
+                disabled={Boolean(unavailableReason)}
+                title={unavailableReason || undefined}
                 aria-pressed={selected}
-                className={`flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-xl px-3 py-2.5 text-left transition active:bg-[var(--color-bg)] ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
+                className={`flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-xl px-3 py-2.5 text-left transition active:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-55 ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
               >
                 <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-xs font-bold ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] bg-white text-transparent"}`}>✓</span>
                 <ContactAvatar src={item.photo_url} channel={item.channel} size={40} />
@@ -4281,7 +4299,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
                   <span className="block truncate text-sm font-semibold">
                     {displayName(item)}{Number(item.contact_id) === Number(currentContactId) ? " (current)" : ""}
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{contactMeta(item)}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{unavailableReason || contactMeta(item)}</span>
                 </span>
               </button>
             );
