@@ -125,11 +125,16 @@ test("PostgreSQL integration: query acquisition is visible without extra telemet
 test("pool-activity route is read-only and never runs the full database-backed readiness loader", async () => {
   let fullReadinessCalls = 0;
   let poolSnapshots = 0;
+  let diagnosticsSnapshots = 0;
   const app = express();
   app.use("/api/ops/readiness", createOpsReadinessRouter({
     authenticate: (_req, _res, next) => next(),
     loadReadiness: async () => { fullReadinessCalls += 1; throw new Error("must not query DB"); },
     loadPoolActivity: () => { poolSnapshots += 1; return { acquiredTotal: 2, last5Minutes: 0 }; },
+    loadRefreshWakeDiagnostics: () => {
+      diagnosticsSnapshots += 1;
+      return { startedAt: "2026-11-02T00:00:00Z", counters: [{ key: "inbox|startup", total: 1 }] };
+    },
   }));
   const server = await new Promise(resolve => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -139,6 +144,8 @@ test("pool-activity route is read-only and never runs the full database-backed r
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.databasePool.acquiredTotal, 2);
+    assert.equal(body.refreshWakeDiagnostics.counters[0].key, "inbox|startup");
+    assert.equal(diagnosticsSnapshots, 1);
     assert.equal(fullReadinessCalls, 0);
     assert.equal(poolSnapshots, 1);
   } finally {
