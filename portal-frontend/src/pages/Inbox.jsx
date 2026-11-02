@@ -3747,7 +3747,13 @@ function ThreadView({
                   icon={contact.inbox_archived_at ? UnarchiveIcon : ArchiveIcon}
                   label={contact.inbox_archived_at ? "Unarchive chat" : "Archive chat"}
                   disabled={conversationStatePending}
-                  onClick={() => { setActionsOpen(false); onToggleArchive(); }}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onToggleArchive();
+                    // Closing a thread's Archive menu should always expose the
+                    // phone chat list, regardless of pending summary refreshes.
+                    if (mobileThreadOpen) onBack();
+                  }}
                 />
                 <ConversationActionItem
                   icon={FlagIcon}
