@@ -2575,7 +2575,7 @@ function ThreadView({
   const composerPlaceholder = secondarySenderSuspended
     ? "Secondary WhatsApp disconnected. Sending paused."
     : policyBlocksComposer
-    ? `${messagingPolicy.channelLabel} reply unavailable`
+    ? "Reply unavailable"
     : imageFile || attachmentFile
     ? "Add a caption…"
     : contact?.mode === "human"
@@ -3235,6 +3235,10 @@ function ThreadView({
 
   function handleReply(message) {
     if (!message || !canReplyToLeads || (contact?.channel || "whatsapp") !== "whatsapp") return;
+    if (policyBlocksComposer) {
+      onToast(messagingPolicy.explanation || "You cannot reply until the customer messages again.", "warning");
+      return;
+    }
     if (!message.whatsapp_message_id) {
       onToast("This message cannot be quoted on WhatsApp.", "warning");
       return;
@@ -3260,9 +3264,12 @@ function ThreadView({
 
   async function handleForwardConfirm(targetContactIds) {
     if (!forwardingMessage || !targetContactIds?.length) return;
-    if (!canReplyToLeads || policyBlocksComposer) {
+    // A forward is an outbound message to each TARGET, not a reply to the
+    // source chat. The server checks each target's current reply window, opt-out
+    // and sender identity before sending. Do not apply the source 24h window.
+    if (!canReplyToLeads || secondarySenderSuspended) {
       setForwardingMessage(null);
-      onToast(messagingPolicy.explanation || "Forwarding is not permitted for this conversation.", "warning");
+      onToast("Forwarding is not available for this business number.", "warning");
       return;
     }
     const messageId = forwardingMessage.id;
@@ -3778,7 +3785,16 @@ function ThreadView({
                   (contact.channel || "whatsapp") === "whatsapp" &&
                   !policyBlocksComposer
                 }
-                canForward={canReplyToLeads && !policyBlocksComposer && !message._optimistic}
+                offerReply={canReplyToLeads && (contact.channel || "whatsapp") === "whatsapp" && !message._optimistic}
+                replyUnavailableReason={
+                  policyBlocksComposer
+                    ? (messagingPolicy.explanation || "Reply unavailable until the customer messages again.")
+                    : !message.whatsapp_message_id
+                    ? "This message cannot be quoted on WhatsApp."
+                    : "Reply is unavailable for this message."
+                }
+                offerForward={canReplyToLeads && !message._optimistic}
+                canForward={canReplyToLeads && !secondarySenderSuspended && !message._optimistic}
               />
             </div>
           ))}
@@ -4178,7 +4194,22 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery);
   });
 
+  function targetUnavailableReason(target) {
+    const policy = messagingPolicyStatus(target);
+    if (target?.channel === "whatsapp" && target?.whatsapp_is_secondary === true &&
+        (target.whatsapp_sender_state !== "active" ||
+          target.whatsapp_sender_coexistence_enabled !== true)) {
+      return "This WhatsApp business number is suspended.";
+    }
+    if (policy.applies && !policy.manualReplyAllowed) {
+      return policy.explanation || "The recipient's reply window is closed.";
+    }
+    return null;
+  }
+
   function toggleContact(contactId) {
+    const target = choices.find((item) => Number(item.contact_id) === Number(contactId));
+    if (!target || targetUnavailableReason(target)) return;
     setError("");
     setSelectedIds((current) => {
       if (current.includes(contactId)) return current.filter((id) => id !== contactId);
@@ -4251,13 +4282,16 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
           ) : choices.slice(0, visibleChoices).map((item) => {
             const id = Number(item.contact_id);
             const selected = selectedIds.includes(id);
+            const unavailableReason = targetUnavailableReason(item);
             return (
               <button
                 key={item.contact_id}
                 type="button"
                 onClick={() => toggleContact(id)}
+                disabled={Boolean(unavailableReason)}
+                title={unavailableReason || undefined}
                 aria-pressed={selected}
-                className={`flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-xl px-3 py-2.5 text-left transition active:bg-[var(--color-bg)] ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
+                className={`flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-xl px-3 py-2.5 text-left transition active:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-55 ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
               >
                 <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-xs font-bold ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] bg-white text-transparent"}`}>✓</span>
                 <ContactAvatar src={item.photo_url} channel={item.channel} size={40} />
@@ -4265,7 +4299,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
                   <span className="block truncate text-sm font-semibold">
                     {displayName(item)}{Number(item.contact_id) === Number(currentContactId) ? " (current)" : ""}
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{contactMeta(item)}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{unavailableReason || contactMeta(item)}</span>
                 </span>
               </button>
             );
@@ -4481,6 +4515,9 @@ function MessageBubble({
   onForward,
   onCopy,
   canReply,
+  offerReply,
+  replyUnavailableReason,
+  offerForward,
   canForward,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -4562,7 +4599,7 @@ function MessageBubble({
     quoteDeliveryConfirmed
   );
   const canCopy = Boolean(String(message.content || "").trim());
-  const showActions = canQuote || canForward || canCopy;
+  const showActions = canQuote || canForward || canCopy || offerReply || offerForward;
   const replyPreview = message.reply_preview || null;
 
   useEffect(() => () => {
@@ -4639,8 +4676,8 @@ function MessageBubble({
     const start = longPressStartRef.current;
     const touch = event.touches?.[0];
     if (start && touch &&
-        (Math.abs(touch.clientX - start.x) > 10 ||
-          Math.abs(touch.clientY - start.y) > 10)) {
+        (Math.abs(touch.clientX - start.x) > 16 ||
+          Math.abs(touch.clientY - start.y) > 16)) {
       clearLongPress();
     }
     if (!longPressTriggeredRef.current) handleSwipeMove(event);
@@ -4770,8 +4807,8 @@ function MessageBubble({
             </button>
             {menuOpen && (
               <div className="absolute right-0 top-8 z-30 hidden min-w-36 rounded-xl border border-[var(--color-border)] bg-white p-1.5 text-[var(--color-text)] shadow-lg sm:block" role="menu">
-                {canQuote && <button type="button" role="menuitem" onClick={closeAndReply} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">↩&nbsp;&nbsp;Reply</button>}
-                {canForward && <button type="button" role="menuitem" onClick={closeAndForward} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">↪&nbsp;&nbsp;Forward</button>}
+                {offerReply && <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined} onClick={closeAndReply} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-45">↩&nbsp;&nbsp;Reply{!canQuote ? " (unavailable)" : ""}</button>}
+                {offerForward && <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined} onClick={closeAndForward} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-45">↪&nbsp;&nbsp;Forward{!canForward ? " (unavailable)" : ""}</button>}
                 {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">⧉&nbsp;&nbsp;Copy</button>}
               </div>
             )}
@@ -4935,8 +4972,8 @@ function MessageBubble({
               <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{replyPreviewText(message)}</p>
             </div>
             <div className="p-2">
-              {canQuote && <button type="button" role="menuitem" onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg text-[var(--color-primary)]">↩</span>Reply</button>}
-              {canForward && <button type="button" role="menuitem" onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg text-[var(--color-text-muted)]">↪</span>Forward</button>}
+              {offerReply && <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined} onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-semibold active:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg text-[var(--color-primary)]">↩</span><span className="min-w-0"><span className="block">Reply</span>{!canQuote && <span className="block text-[11px] font-normal text-[var(--color-text-muted)]">{replyUnavailableReason}</span>}</span></button>}
+              {offerForward && <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined} onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg text-[var(--color-text-muted)]">↪</span>Forward{!canForward ? " (unavailable)" : ""}</button>}
               {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-base text-[var(--color-text-muted)]">⧉</span>Copy</button>}
             </div>
           </div>
