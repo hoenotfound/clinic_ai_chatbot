@@ -754,7 +754,7 @@ export default function Inbox() {
   }
 
   useEffect(() => {
-    if (!conversations || selectedId != null) return;
+    if (!conversations || selectedId != null || conversationStatePending) return;
 
     if (conversations.length === 0) {
       if (requestedContactParam) {
@@ -768,7 +768,10 @@ export default function Inbox() {
           (conversation) => Number(conversation.contact_id) === requestedContactId
         )
       : null;
-    const firstConversation = requestedConversation || conversations[0];
+    const firstConversation = requestedConversation || conversations.find((conversation) => !conversation.inbox_archived_at);
+    // Never auto-open a chat that staff archived when returning to the Chats list.
+    // An explicit contact deep link remains supported via requestedConversation.
+    if (!firstConversation) return;
     setSelectedId(firstConversation.contact_id);
     if (requestedConversation) {
       setMobileThreadOpen(true);
@@ -798,6 +801,7 @@ export default function Inbox() {
     requestedContactId,
     requestedContactParam,
     selectedId,
+    conversationStatePending,
     setSearchParams,
     showToast,
   ]);
