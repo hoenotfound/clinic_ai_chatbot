@@ -436,7 +436,8 @@ test("closed 24-hour reply window blocks normal staff sending", async ({ page })
     })
   ).toBeVisible();
 
-  const composer = page.getByPlaceholder("WhatsApp reply unavailable");
+  const composer = page.getByRole("textbox", { name: "WhatsApp reply unavailable" });
+  await expect(composer).toHaveAttribute("placeholder", "Reply unavailable");
   await expect(composer).toBeDisabled();
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Record a voice message" })).toHaveCount(0);
