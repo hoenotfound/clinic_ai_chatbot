@@ -15,6 +15,7 @@ import { getBusinessTerminology } from "../utils/businessTerminology";
 import { inboxSenderDisplayName } from "../utils/inboxSenderDisplayName";
 import {
   createSingleFlightInboxRefresh,
+  createInboxLiveStartup,
   pipelineRefreshContactId,
 } from "../utils/inboxRefreshPolicy";
 import {
@@ -733,10 +734,6 @@ export default function Inbox() {
   }
 
   useEffect(() => {
-    refreshConversations();
-  }, []);
-
-  useEffect(() => {
     if (!conversations || selectedId != null) return;
 
     if (conversations.length === 0) {
@@ -1044,14 +1041,17 @@ export default function Inbox() {
       refreshAcquisitionContext(currentId);
     }
 
+    const startup = createInboxLiveStartup({
+      loadInitial: () => { void refreshConversations(); },
+      refreshOnReconnect: () => scheduleRefresh(),
+    });
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.addEventListener("pipeline_changed", handlePipelineChanged);
-    source.onopen = () => {
-      scheduleRefresh();
-    };
+    source.onopen = () => startup.onOpen();
     source.onerror = () => {};
 
     return () => {
+      startup.stop();
       if (debounceTimer) clearTimeout(debounceTimer);
       if (pipelineListTimer) clearTimeout(pipelineListTimer);
       source.removeEventListener("conversation_changed", handleConversationChanged);
