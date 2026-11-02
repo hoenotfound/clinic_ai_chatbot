@@ -303,6 +303,16 @@ async function installApi(page, {
       return fulfill(route, contact || { error: "Conversation not found" }, contact ? 200 : 404);
     }
 
+    const archiveMatch = path.match(/^\/api\/conversations\/(\d+)\/archive$/);
+    if (archiveMatch && method === "PATCH") {
+      const body = request.postDataJSON();
+      record(request, body);
+      conversations = conversations.map((item) => Number(item.contact_id) === Number(archiveMatch[1])
+        ? { ...item, inbox_archived_at: body.archived ? recentIso() : null }
+        : item);
+      return fulfill(route, { contactId: Number(archiveMatch[1]), archived: body.archived });
+    }
+
     const attributionMatch = path.match(/^\/api\/conversations\/(\d+)\/attribution$/);
     if (attributionMatch && method === "GET") {
       return fulfill(route, { lead: null, attribution: null });
@@ -735,6 +745,93 @@ test("message action menus use SVG Reply Forward Copy icons, never text glyphs",
   await menu.getByRole("menuitem", { name: /Copy/ }).click();
   await expect(menu).toBeHidden();
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("swipe right reveals Archive, moves chat into Archived, and Unarchive restores it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Phone list gesture only.");
+  const apiState = await installApi(page, {
+    initialConversations: [
+      conversation({ needs_follow_up: true, mode: "ai" }),
+      conversation({ contact_id: 202, name: "Bella Customer", whatsapp_number: "+60199887766" }),
+    ],
+  });
+  await page.goto("/inbox");
+  const list = page.getByRole("complementary", { name: "Conversation inbox" });
+  const row = list.getByRole("button").filter({ hasText: "Alex Customer" }).first();
+  await expect(row).toBeVisible();
+  const wrap = row.locator("xpath=..").locator("xpath=..");
+  await wrap.evaluate((element) => {
+    const point = (x, y) => ({ identifier: 1, target: element, clientX: x, clientY: y, screenX: x, screenY: y });
+    const fire = (type, touches) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "touches", { value: touches });
+      Object.defineProperty(ev, "changedTouches", { value: touches });
+      element.dispatchEvent(ev);
+    };
+    fire("touchstart", [point(55, 180)]);
+    fire("touchmove", [point(145, 182)]);
+    fire("touchend", []);
+  });
+  const archive = list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Archive chat" });
+  await expect(archive).toBeVisible();
+  await archive.click();
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
+  const sent = findCall(apiState, "PATCH", "/api/conversations/101/archive");
+  expect(sent?.body).toEqual({ archived: true });
+  await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
+  // Search still finds archived conversations without unarchiving them.
+  const search = list.getByRole("searchbox", { name: "Search by name, number, message, or assignee" });
+  await search.fill("Alex Customer");
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
+  await expect(list.getByText("Archived", { exact: true }).first()).toBeVisible();
+  await search.fill("");
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
+  await list.getByRole("button", { name: "Open archived chats" }).click();
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
+  await expect(list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" })
+    .getByRole("button", { name: "Unarchive chat" })).toHaveCount(1);
+  // The archived action is hidden until the row is swiped right.
+  await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).evaluate((element) => {
+    const wrap = element.closest(".wa-archive-row");
+    const point = (x, y) => ({ identifier: 2, target: wrap, clientX: x, clientY: y, screenX: x, screenY: y });
+    const fire = (type, touches) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "touches", { value: touches });
+      wrap.dispatchEvent(ev);
+    };
+    fire("touchstart", [point(50, 180)]);
+    fire("touchmove", [point(140, 182)]);
+    fire("touchend", []);
+  });
+  await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).click();
+  const allCalls = apiState.calls.filter((c) => c.path === "/api/conversations/101/archive");
+  expect(allCalls.map((c) => c.body.archived)).toEqual([true, false]);
+  await list.getByRole("button", { name: "Back to chats" }).click();
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
+  // Archive only affects display: follow-up and AI mode are untouched.
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("conversation actions archive and restore without changing AI ownership", async ({ page }) => {
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await page.getByRole("button", { name: "Conversation actions" }).click();
+  await page.getByRole("menuitem", { name: "Archive chat" }).click();
+  expect(findCall(apiState, "PATCH", "/api/conversations/101/archive")?.body)
+    .toEqual({ archived: true });
+  await page.getByRole("button", { name: "Open archived chats" }).click();
+  const archivedRow = page.getByRole("complementary", { name: "Conversation inbox" })
+    .getByRole("button").filter({ hasText: "Alex Customer" }).first();
+  await expect(archivedRow).toBeVisible();
+  await archivedRow.click();
+  await page.getByRole("button", { name: "Conversation actions" }).click();
+  await page.getByRole("menuitem", { name: "Unarchive chat" }).click();
+  const changes = apiState.calls.filter((c) => c.path === "/api/conversations/101/archive");
+  expect(changes.map((c) => c.body.archived)).toEqual([true, false]);
+  expect(findCall(apiState, "POST", "/api/conversations/101/return-to-ai")).toBeFalsy();
   expectNoUnexpectedApi(apiState);
 });
 

@@ -28,6 +28,8 @@ import {
 } from "../utils/whatsappPolicy";
 import {
   AlertIcon,
+  ArchiveIcon,
+  UnarchiveIcon,
   ArrowLeftIcon,
   BotIcon,
   CameraIcon,
@@ -133,6 +135,13 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
     if (filters.status === "unread" && !conversation.is_unread) return false;
     if (filters.status === "attention" && !conversation.needs_attention) return false;
   }
+  // Like WhatsApp search, an explicit search from Chats can find archived
+  // conversations without moving them back into the main list.
+  const archived = Boolean(conversation.inbox_archived_at);
+  const searchingAllChats = filters.archiveView === "active" && Boolean(filters.query.trim());
+  if (exclude !== "archiveView" &&
+      archived !== (filters.archiveView === "archived") &&
+      !(searchingAllChats && archived)) return false;
   if (exclude !== "channel" && filters.channel !== "all" &&
       (conversation.channel || "whatsapp") !== filters.channel) return false;
   if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
@@ -745,7 +754,7 @@ export default function Inbox() {
   }
 
   useEffect(() => {
-    if (!conversations || selectedId != null) return;
+    if (!conversations || selectedId != null || conversationStatePending) return;
 
     if (conversations.length === 0) {
       if (requestedContactParam) {
@@ -759,7 +768,10 @@ export default function Inbox() {
           (conversation) => Number(conversation.contact_id) === requestedContactId
         )
       : null;
-    const firstConversation = requestedConversation || conversations[0];
+    const firstConversation = requestedConversation || conversations.find((conversation) => !conversation.inbox_archived_at);
+    // Never auto-open a chat that staff archived when returning to the Chats list.
+    // An explicit contact deep link remains supported via requestedConversation.
+    if (!firstConversation) return;
     setSelectedId(firstConversation.contact_id);
     if (requestedConversation) {
       setMobileThreadOpen(true);
@@ -789,6 +801,7 @@ export default function Inbox() {
     requestedContactId,
     requestedContactParam,
     selectedId,
+    conversationStatePending,
     setSearchParams,
     showToast,
   ]);
@@ -1250,6 +1263,38 @@ export default function Inbox() {
     }
   }
 
+  async function handleToggleArchive(contactId) {
+    const id = Number(contactId);
+    const conversation = conversationsRef.current?.find((item) => Number(item.contact_id) === id);
+    if (!conversation || conversationStatePending) return;
+    const archived = !Boolean(conversation.inbox_archived_at);
+    setConversationStatePending(true);
+    // Optimistic UI keeps swipes snappy; the server owns the durable shared
+    // state. Never modify AI mode, follow-up flag or message contents.
+    updateConversationLocally(id, {
+      inbox_archived_at: archived ? new Date().toISOString() : null,
+    });
+    // Return to Chats immediately for a native-feeling archive action,
+    // rather than leaving a disappearing thread on screen during the request.
+    const wasOpen = Number(selectedIdRef.current) === id;
+    if (wasOpen) {
+      setSelectedId(null);
+      setSearchParams({}, { replace: true });
+      setMobileThreadOpen(false);
+      setKeepExplicitlyOpenedThread(false);
+    }
+    try {
+      await api.setInboxArchived(id, archived);
+      showToast(archived ? "Chat archived." : "Chat restored.", "info");
+    } catch (err) {
+      console.error("Failed to update Inbox archive:", err);
+      updateConversationLocally(id, { inbox_archived_at: conversation.inbox_archived_at || null });
+      showToast("Couldn't update archive. Please try again.", "error");
+    } finally {
+      setConversationStatePending(false);
+    }
+  }
+
   async function handleToggleUnread() {
     const conversation = conversations?.find((item) => item.contact_id === selectedId);
     if (!conversation || conversationStatePending) return;
@@ -1616,6 +1661,8 @@ export default function Inbox() {
         conversations={conversations}
         selectedId={selectedId}
         onSelect={handleSelectConversation}
+        onToggleArchive={handleToggleArchive}
+        archivePending={conversationStatePending}
         onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
@@ -1680,6 +1727,7 @@ export default function Inbox() {
         onResolveReview={handleResolveReview}
         onToggleFollowUp={handleToggleFollowUp}
         onToggleUnread={handleToggleUnread}
+        onToggleArchive={() => handleToggleArchive(selectedId)}
         onRetryMessage={handleRetryMessage}
         onSend={handleSend}
         onSendImage={handleSendImage}
@@ -1747,10 +1795,83 @@ export default function Inbox() {
   );
 }
 
+// Mobile: swipe RIGHT to reveal a staff-only Archive / Unarchive action.
+function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, onReveal, onArchive, children }) {
+  const gestureRef = useRef(null);
+  const suppressNextClickRef = useRef(false);
+  const [dragOffset, setDragOffset] = useState(null);
+  const offset = dragOffset == null ? (open ? 92 : 0) : dragOffset;
+
+  function handleStart(event) {
+    if (event.touches?.length !== 1 || !window.matchMedia("(max-width: 639px)").matches) return;
+    const touch = event.touches[0];
+    gestureRef.current = { startX: touch.clientX, startY: touch.clientY, startOffset: open ? 92 : 0, axis: null, offset: open ? 92 : 0 };
+  }
+  function handleMove(event) {
+    const gesture = gestureRef.current;
+    if (!gesture || event.touches?.length !== 1) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - gesture.startX;
+    const dy = touch.clientY - gesture.startY;
+    if (!gesture.axis && Math.max(Math.abs(dx), Math.abs(dy)) > 10) {
+      gesture.axis = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+    }
+    if (gesture.axis !== "horizontal") return;
+    gesture.offset = Math.max(0, Math.min(92, gesture.startOffset + dx));
+    setDragOffset(gesture.offset);
+  }
+  function handleEnd() {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+    if (gesture?.axis !== "horizontal") return;
+    suppressNextClickRef.current = true;
+    // A swipe may suppress the synthetic click; never block the next real tap.
+    window.setTimeout(() => { suppressNextClickRef.current = false; }, 300);
+    onReveal(gesture.offset >= 54 ? contactId : null);
+    setDragOffset(null);
+  }
+  function handleCancel() {
+    gestureRef.current = null;
+    setDragOffset(null);
+  }
+  function handleClickCapture(event) {
+    if (!suppressNextClickRef.current) return;
+    suppressNextClickRef.current = false;
+    if (event.target.closest("[data-archive-action]")) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  return (
+    <div className="wa-archive-row relative mb-0.5 overflow-hidden rounded-xl"
+      onTouchStart={handleStart} onTouchMove={handleMove} onTouchEnd={handleEnd}
+      onTouchCancel={handleCancel} onClickCapture={handleClickCapture}
+      style={{ touchAction: "pan-y" }}>
+      <button data-archive-action="true" type="button"
+        aria-label={archived ? "Unarchive chat" : "Archive chat"}
+        aria-description={"For " + displayNameText}
+        title={(archived ? "Unarchive " : "Archive ") + displayNameText}
+        disabled={pending} tabIndex={open ? 0 : -1}
+        onClick={() => { onReveal(null); onArchive(contactId); }}
+        className={archived
+          ? "absolute inset-y-0 left-0 flex w-[92px] flex-col items-center justify-center gap-1 bg-[#53616d] text-xs font-semibold text-white disabled:opacity-50"
+          : "absolute inset-y-0 left-0 flex w-[92px] flex-col items-center justify-center gap-1 bg-[#168c79] text-xs font-semibold text-white disabled:opacity-50"}>
+        {archived ? <UnarchiveIcon className="h-6 w-6" /> : <ArchiveIcon className="h-6 w-6" />}
+        {archived ? "Unarchive" : "Archive"}
+      </button>
+      <div className="relative bg-[var(--color-surface)]"
+        style={{ transform: "translateX(" + offset + "px)", transition: dragOffset == null ? "transform 180ms ease" : "none" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onToggleArchive,
+  archivePending,
   onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
@@ -1762,6 +1883,7 @@ function ConversationList({
 }) {
   const [filters, setFilters] = useState({
     status: "all",
+    archiveView: "active",
     channel: "all",
     sender: "all",
     control: "all",
@@ -1770,6 +1892,7 @@ function ConversationList({
     query: "",
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [revealedArchiveId, setRevealedArchiveId] = useState(null);
   const [visibleRowCount, setVisibleRowCount] = useState(60);
   const [directoryMatches, setDirectoryMatches] = useState([]);
   const [directorySearching, setDirectorySearching] = useState(false);
@@ -1869,7 +1992,8 @@ function ConversationList({
   );
   useEffect(() => {
     setVisibleRowCount(60);
-  }, [filters.status, filters.channel, filters.sender, filters.control,
+    setRevealedArchiveId(null);
+  }, [filters.status, filters.archiveView, filters.channel, filters.sender, filters.control,
       filters.assignment, filters.replyWindow, filters.query]);
   const statusOptions = useMemo(() =>
     STATUS_FILTERS.map((filter) => [
@@ -1886,6 +2010,7 @@ function ConversationList({
 
   const activeFilterCount =
     (filters.status !== "all" ? 1 : 0) +
+    (filters.archiveView === "archived" ? 1 : 0) +
     (filters.channel !== "all" ? 1 : 0) +
     (filters.sender !== "all" ? 1 : 0) +
     (filters.control !== "all" ? 1 : 0) +
@@ -1896,6 +2021,9 @@ function ConversationList({
 
   const activeFilterChips = useMemo(() => {
     const active = [];
+    if (filters.archiveView === "archived") {
+      active.push({ key: "archiveView", label: "Archived chats" });
+    }
     if (filters.status !== "all") {
       const label = STATUS_FILTERS.find((item) => item.key === filters.status)?.label;
       active.push({ key: "status", label: label || "Status" });
@@ -1929,7 +2057,7 @@ function ConversationList({
       });
     }
     return active;
-  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
+  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status, filters.archiveView]);
 
   function updateFilter(key, value) {
     onExplicitFilterChange();
@@ -1941,6 +2069,7 @@ function ConversationList({
     setFilters((current) => ({
       ...current,
       status: "all",
+      archiveView: "active",
       channel: "all",
       sender: "all",
       control: "all",
@@ -1951,7 +2080,7 @@ function ConversationList({
 
   function clearFilters() {
     onExplicitFilterChange();
-    setFilters({ status: "all", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
+    setFilters({ status: "all", archiveView: "active", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
   }
 
   return (
@@ -2104,6 +2233,14 @@ function ConversationList({
                 ]}
                 hint="Reply window is based on the last incoming customer message. Open can include staff-only Human Agent conversations; an open window does not override consent or sending restrictions."
               />
+              <div className="col-span-2">
+              <FilterSelect
+                label="Chats"
+                value={filters.archiveView}
+                onChange={(value) => updateFilter("archiveView", value)}
+                options={[["active", "Chats"], ["archived", "Archived"]]}
+              />
+              </div>
             </div>
           </div>
         )}
@@ -2114,7 +2251,7 @@ function ConversationList({
               <button
                 key={filter.key}
                 type="button"
-                onClick={() => updateFilter(filter.key, "all")}
+                onClick={() => updateFilter(filter.key, filter.key === "archiveView" ? "active" : "all")}
                 className={`${filter.key === "sender" ? "hidden sm:inline-flex" : "inline-flex"} min-h-9 max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-xs font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white`}
                 title={`Remove ${filter.label} filter`}
               >
@@ -2124,6 +2261,22 @@ function ConversationList({
             ))}
           </div>
         )}
+        <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+          {filters.archiveView === "archived" ? (
+            <button type="button" onClick={() => updateFilter("archiveView", "active")}
+              className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-primary)]"
+              aria-label="Back to chats">
+              <ArrowLeftIcon className="h-4 w-4" /> Back to chats
+            </button>
+          ) : (
+            <button type="button" onClick={() => updateFilter("archiveView", "archived")}
+              className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+              aria-label="Open archived chats">
+              <ArchiveIcon className="h-4 w-4" /> Archived
+              <span className="font-normal">{conversations?.filter((item) => item.inbox_archived_at).length ?? 0}</span>
+            </button>
+          )}
+        </div>
         <nav className="wa-inbox-status-tabs" aria-label="Quick conversation filters">
           {STATUS_FILTERS.map(({ key, label }) => (
             <button
@@ -2175,10 +2328,25 @@ function ConversationList({
         {renderedConversations.map((conversation) => {
           const selected = conversation.contact_id === selectedId;
           return (
-            <button
+            <SwipeArchiveRow
               key={conversation.contact_id}
+              contactId={conversation.contact_id}
+              displayNameText={displayName(conversation)}
+              archived={Boolean(conversation.inbox_archived_at)}
+              pending={archivePending}
+              open={revealedArchiveId === conversation.contact_id}
+              onReveal={setRevealedArchiveId}
+              onArchive={onToggleArchive}
+            >
+            <button
               type="button"
-              onClick={() => onSelect(conversation.contact_id)}
+              onClick={() => {
+                if (revealedArchiveId === conversation.contact_id) {
+                  setRevealedArchiveId(null);
+                  return;
+                }
+                onSelect(conversation.contact_id);
+              }}
               aria-current={selected ? "true" : undefined}
               className={`wa-inbox-row group mb-0.5 w-full rounded-xl px-3 py-2.5 text-left outline-none transition ${
                 selected
@@ -2241,12 +2409,14 @@ function ConversationList({
                         Staff only
                       </span>
                     )}
+                    {conversation.inbox_archived_at && <StatusBadge tone="muted">Archived</StatusBadge>}
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Needs follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
                   </div>
                 </div>
               </div>
             </button>
+            </SwipeArchiveRow>
           );
         })}
         {filteredConversations.length > visibleRowCount && (
@@ -2365,6 +2535,7 @@ function LeadTemperatureIndicator({ temperature }) {
 function StatusBadge({ tone, children }) {
   const styles = {
     accent: "bg-[var(--color-accent-light)] text-[#8a5d13]",
+    muted: "bg-[#e9edef] text-[#54656f]",
     danger: "bg-[var(--color-danger-light)] text-[var(--color-danger)]",
   };
   return (
@@ -2478,6 +2649,7 @@ function ThreadView({
   onResolveReview,
   onToggleFollowUp,
   onToggleUnread,
+  onToggleArchive,
   onRetryMessage,
   onSend,
   onSendImage,
@@ -3575,6 +3747,18 @@ function ThreadView({
                     />
                   )}
                 </div>
+                <ConversationActionItem
+                  icon={contact.inbox_archived_at ? UnarchiveIcon : ArchiveIcon}
+                  label={contact.inbox_archived_at ? "Unarchive chat" : "Archive chat"}
+                  disabled={conversationStatePending}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onToggleArchive();
+                    // Closing a thread's Archive menu should always expose the
+                    // phone chat list, regardless of pending summary refreshes.
+                    if (mobileThreadOpen) onBack();
+                  }}
+                />
                 <ConversationActionItem
                   icon={FlagIcon}
                   label={contact.needs_follow_up ? "Remove follow-up" : "Add follow-up"}

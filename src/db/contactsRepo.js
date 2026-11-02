@@ -662,6 +662,7 @@ ${senderAwareInboxReadsEnabled() ? `
       COALESCE(pending_reviews.pending_review_items, '[]'::jsonb) AS pending_review_items,
       c.is_unread,
       c.needs_follow_up,
+      c.inbox_archived_at,
       c.whatsapp_opt_in_at,
       c.whatsapp_opt_in_source,
       c.whatsapp_opt_out_at,
@@ -1518,6 +1519,19 @@ async function setUnread(id, isUnread) {
   return updated;
 }
 
+async function setInboxArchived(id, archived) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET inbox_archived_at = CASE WHEN $1::boolean THEN now() ELSE NULL END
+     WHERE id = $2
+     RETURNING id, inbox_archived_at`,
+    [archived, id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id, { profileOnly: true });
+  return updated;
+}
+
 async function setFollowUp(id, needsFollowUp) {
   const result = await pool.query(
     `UPDATE contacts
@@ -1558,6 +1572,7 @@ module.exports = {
   setDeliveryAttention,
   clearDeliveryAttentionIfNoFailedMessages,
   setUnread,
+  setInboxArchived,
   setFollowUp,
   TEMPORARY_AI_ATTENTION_REASON,
 };

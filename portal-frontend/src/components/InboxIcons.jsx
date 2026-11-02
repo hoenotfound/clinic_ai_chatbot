@@ -236,3 +236,21 @@ export function CopyIcon(props) {
     </svg>
   );
 }
+
+export function ArchiveIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="4" width="17" height="4.5" rx="1.2" />
+      <path d="M5.5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5M9.5 12.5h5" />
+    </svg>
+  );
+}
+
+export function UnarchiveIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="4" width="17" height="4.5" rx="1.2" />
+      <path d="M5.5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5M12 17v-6m-3 3 3-3 3 3" />
+    </svg>
+  );
+}
