@@ -151,7 +151,7 @@
     scroll-snap-type: x proximity;
   }
   .wa-inbox-status-tab {
-    min-height: 2.25rem;
+    min-height: 2.75rem;
     flex-shrink: 0;
     scroll-snap-align: start;
     border-radius: 999px;
