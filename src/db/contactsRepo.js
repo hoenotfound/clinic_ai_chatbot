@@ -613,6 +613,7 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
              ) AS review_rank
       FROM ai_review_items r
       WHERE r.status = 'pending'
+      ${hideEmptyCoexistence ? "AND EXISTS (SELECT 1 FROM eligible_inbox_contacts eligible WHERE eligible.id = r.contact_id)" : ""}
     ), pending_ai_reviews AS MATERIALIZED (
       SELECT r.contact_id,
              COUNT(*)::integer AS pending_review_count,
