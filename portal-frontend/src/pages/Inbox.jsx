@@ -135,8 +135,13 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
     if (filters.status === "unread" && !conversation.is_unread) return false;
     if (filters.status === "attention" && !conversation.needs_attention) return false;
   }
+  // Like WhatsApp search, an explicit search from Chats can find archived
+  // conversations without moving them back into the main list.
+  const archived = Boolean(conversation.inbox_archived_at);
+  const searchingAllChats = filters.archiveView === "active" && Boolean(filters.query.trim());
   if (exclude !== "archiveView" &&
-      Boolean(conversation.inbox_archived_at) !== (filters.archiveView === "archived")) return false;
+      archived !== (filters.archiveView === "archived") &&
+      !(searchingAllChats && archived)) return false;
   if (exclude !== "channel" && filters.channel !== "all" &&
       (conversation.channel || "whatsapp") !== filters.channel) return false;
   if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
@@ -2397,6 +2402,7 @@ function ConversationList({
                         Staff only
                       </span>
                     )}
+                    {conversation.inbox_archived_at && <StatusBadge tone="muted">Archived</StatusBadge>}
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Needs follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
                   </div>
