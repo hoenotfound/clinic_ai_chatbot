@@ -191,6 +191,8 @@ const DELIVERY_STATUS_RANK = {
   read: 3,
   unknown: 4,
   failed: 5,
+  queued: 0.5,
+  cancelled: 6,
 };
 
 function mergeMessageState(existing, incoming) {
@@ -4761,7 +4763,9 @@ function MessageBubble({
     );
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
-  const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
+  const deliveryQueued = !isPatient && message.delivery_status === "queued";
+  const deliveryCancelled = !isPatient && message.delivery_status === "cancelled";
+  const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed || deliveryQueued || deliveryCancelled;
   const policyFailureExplanationText = policyFailureExplanation(message, channel);
   const storedMediaSrc = message.media_base64
     ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
@@ -5218,12 +5222,12 @@ function MessageBubble({
           </div>
         )}
         {deliveryNeedsAction && (
-          <div className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[var(--color-danger)]">
+          <div className={`mt-2 rounded-lg bg-white px-2.5 py-2 ${deliveryQueued || deliveryCancelled ? "text-[var(--color-text-secondary)]" : "text-[var(--color-danger)]"}`}>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[10px] font-semibold">
-                {deliveryUnconfirmed ? "Delivery unconfirmed" : "Not delivered"}
+                {deliveryQueued ? "Image queued" : deliveryCancelled ? "Image not sent" : deliveryUnconfirmed ? "Delivery unconfirmed" : "Not delivered"}
               </span>
-              {!policyFailureExplanationText && !isSecondaryWhatsApp && (
+              {!policyFailureExplanationText && !isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled && (
                 <button
                   type="button"
                   onClick={() => message.whatsapp_template ? onOpenWhatsAppTemplates?.(message) : onRetry?.(message.id)}
@@ -5235,12 +5239,12 @@ function MessageBubble({
                 </button>
               )}
             </div>
-            {isSecondaryWhatsApp && (
+            {isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled && (
               <p className="mt-1 text-[10px] leading-snug opacity-80">
-                secondary WhatsApp retry is disabled to prevent duplicate Meta sends and charges. Verify delivery and billing before composing a new message.
+                Secondary WhatsApp retry is disabled to prevent duplicate Meta sends and charges. Verify delivery and billing before composing a new message.
               </p>
             )}
-            {message.whatsapp_template && !policyFailureExplanationText && (
+            {message.whatsapp_template && !policyFailureExplanationText && !deliveryQueued && !deliveryCancelled && (
               <p className="mt-1 text-[10px] leading-snug opacity-80">
                 A previous send may have reached the customer or incurred a charge. Check delivery before reviewing another template.
               </p>
