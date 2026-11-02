@@ -12,8 +12,9 @@ const realtimeEvents = require("./realtimeEvents");
 const MAX_MESSAGES_FOR_AI_CONTEXT = 20; // bounds prompt size/cost, not what's shown in the portal
 const MAX_PHOTOS_IN_AI_CONTEXT = 1;
 
-function publishMessageChange(contactId, messageId) {
+function publishMessageChange(contactId, messageId, eventScope = {}) {
   realtimeEvents.publish("conversation_changed", {
+    ...eventScope,
     contactId,
     messageId,
     reason: "message",
@@ -212,7 +213,7 @@ async function appendMessageForContact(
   );
 
   if (options.publish !== false) {
-    publishMessageChange(contactId, saved.id);
+    publishMessageChange(contactId, saved.id, options.eventScope);
   }
   return saved;
 }
