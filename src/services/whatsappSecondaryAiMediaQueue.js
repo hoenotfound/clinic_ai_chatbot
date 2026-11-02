@@ -17,6 +17,8 @@ const { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible } = re
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
+const QUEUED_ERROR="Image queued; waiting for the previous WhatsApp send to be verified.";
+const CANCELLED_ERROR="Image not sent. The customer replied or the original send window ended before this image could be sent.";
 let worker=null;
 function enabled(env=process.env){
   return Boolean(adsOnlyActivation(env)) &&
@@ -219,6 +221,95 @@ async function quarantineStaleClaims({
  return{disabled:false,quarantined:(stale.rows||[]).length};
 }
 
+
+/**
+ * Retire ONLY jobs that have never reached a Meta dispatch attempt.
+ * Pending jobs are known not to have reached the provider; claimed/unknown
+ * attempts must remain quarantined for billing and delivery reconciliation.
+ * The message update is guarded by its provider and billing evidence.
+ */
+async function cancelObsoletePending({database=pool,env=process.env}={}){
+ if(!enabled(env))return{disabled:true,cancelled:0};
+ const result=await database.query(
+   `WITH obsolete AS (
+      UPDATE whatsapp_sender_ai_media_jobs AS job
+         SET state='expired',updated_at=NOW()
+        FROM whatsapp_sender_accounts sa, contacts c, messages inbound
+       WHERE job.sender_id=sa.id AND job.contact_id=c.id
+         AND c.whatsapp_sender_id=sa.id
+         AND inbound.id=job.inbound_message_id
+         AND inbound.contact_id=c.id AND inbound.role='user'
+         AND job.state='pending'
+         AND sa.state='active' AND sa.sender_key=$1
+         AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+         AND (
+           job.expires_at<=NOW() OR
+           c.mode<>'ai' OR c.needs_attention=TRUE OR
+           c.whatsapp_opt_out_at IS NOT NULL OR
+           c.whatsapp_marketing_opt_out_at IS NOT NULL OR
+           NOT (${adsOnlyEligibleSql("c", "$4")}) OR
+           EXISTS(
+             SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
+               AND newer.role='user'
+               AND (newer.created_at,newer.id)>(inbound.created_at,inbound.id)
+           ) OR
+           EXISTS(
+             SELECT 1 FROM messages staff WHERE staff.contact_id=c.id
+               AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL
+               AND staff.created_at>=inbound.created_at
+           )
+         )
+       RETURNING job.outbound_message_id
+    ), cancelled_messages AS (
+      UPDATE messages AS m
+         SET delivery_status='cancelled', delivery_error=$5
+        FROM obsolete j
+       WHERE m.id=j.outbound_message_id AND m.role='assistant'
+         AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
+         AND m.delivery_status IN ('queued','unknown')
+         AND NOT EXISTS(
+           SELECT 1 FROM whatsapp_sender_billing_attempts a
+           WHERE a.message_id=m.id AND a.state<>'rejected'
+         )
+         AND NOT EXISTS(
+           SELECT 1 FROM outbound_message_evidence e
+           WHERE e.message_id=m.id AND e.accepted=TRUE
+         )
+       RETURNING m.id
+    )
+    SELECT (SELECT COUNT(*) FROM obsolete)::int AS retired,
+           (SELECT COUNT(*) FROM cancelled_messages)::int AS messages_cancelled`,
+   [env.WHATSAPP_SECONDARY_SENDER_KEY,
+     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
+     adsOnlyActivation(env),CANCELLED_ERROR]
+ );
+ return{disabled:false,cancelled:Number(result.rows?.[0]?.retired||0)};
+}
+
+// Called only after a signed, sender-scoped Meta receipt has successfully
+// reconciled a previous billing reservation. No new send occurs here.
+async function wakeAfterVerifiedReconciliation({database=pool,env=process.env}={}){
+ if(!enabled(env))return false;
+ const pending=await database.query(
+   `UPDATE whatsapp_sender_ai_media_jobs AS job
+       SET next_attempt_at=NOW(),updated_at=NOW()
+      FROM whatsapp_sender_accounts sa
+     WHERE job.sender_id=sa.id AND job.state='pending'
+       AND job.next_attempt_at>NOW() AND job.expires_at>NOW()
+       AND sa.state='active' AND sa.sender_key=$1
+       AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+       AND EXISTS(
+         SELECT 1 FROM whatsapp_sender_billing_gates gate
+         WHERE gate.sender_id=sa.id AND gate.state='idle'
+       )
+     RETURNING job.id`,
+   [env.WHATSAPP_SECONDARY_SENDER_KEY,
+     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID]
+ );
+ if(pending.rowCount>0)wake();
+ return pending.rowCount>0;
+}
+
 async function runOnce({
  database=pool,env=process.env,
  contacts=contactsRepo,store=conversationStore,
@@ -230,9 +321,7 @@ async function runOnce({
 }={}){
  if(!enabled(env))return{disabled:true,accepted:0,pending:0};
  await quarantineStaleClaims({database,env,messageRepo});
- await database.query(
-   "UPDATE whatsapp_sender_ai_media_jobs SET state='expired',updated_at=NOW() WHERE state='pending' AND expires_at<=NOW()"
- );
+ await cancelObsoletePending({database,env});
  const list=await database.query(READY_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
@@ -305,8 +394,8 @@ async function runOnce({
           whatsappTemplate:{automatedSecondaryAiMedia:true,
             senderKey:env.WHATSAPP_SECONDARY_SENDER_KEY,
             anchorMessageId:job.inbound_message_id},
-          initialDeliveryStatus:"unknown",
-          initialDeliveryError:"Secondary image queued; Meta acceptance not confirmed."}
+          initialDeliveryStatus:"queued",
+          initialDeliveryError:QUEUED_ERROR}
        );
        messageId=saved.id;
        await database.query(
@@ -314,6 +403,14 @@ async function runOnce({
          [job.id,messageId]
        );
      }
+     // A claimed send may reach Meta. From this point until signed provider
+     // proof is stored, present an uncertain outcome rather than "queued".
+     await database.query(
+       "UPDATE messages SET delivery_status='unknown',delivery_error=$2 " +
+       "WHERE id=$1 AND role='assistant' AND delivery_status='queued' " +
+       "AND whatsapp_message_id IS NULL AND whatsapp_accepted_at IS NULL",
+       [messageId,"Secondary image send started; Meta acceptance not confirmed."]
+     );
      const result=await send({
        contact,messageId,text:job.caption||"[automatic image]",
        origin:"ai_media",preSendCheck,
@@ -352,9 +449,27 @@ async function runOnce({
      }else if(["secondary_staff_billing_blocked","secondary_billing_previous_send_unresolved",
        "secondary_billing_sender_alarm"].includes(result?.code) && !result?.unknown){
        // No provider call or billable reservation occurred. Safe to defer.
+       // This documented billing block happened before any provider attempt.
+       // Keep an accurate queued badge, rather than an ambiguous send warning.
        await database.query(
-         "UPDATE whatsapp_sender_ai_media_jobs SET state='pending',next_attempt_at=NOW()+($2::int * INTERVAL '1 millisecond'),updated_at=NOW() WHERE id=$1 AND state='claimed'",
-         [job.id,RETRY_MS]
+         `WITH deferred AS (
+            UPDATE whatsapp_sender_ai_media_jobs
+               SET state='pending',
+                   next_attempt_at=NOW()+($2::int * INTERVAL '1 millisecond'),
+                   updated_at=NOW()
+             WHERE id=$1 AND state='claimed'
+             RETURNING outbound_message_id
+          )
+          UPDATE messages AS m SET delivery_status='queued',delivery_error=$3
+          FROM deferred d
+          WHERE m.id=d.outbound_message_id AND m.role='assistant'
+            AND m.whatsapp_message_id IS NULL AND m.whatsapp_accepted_at IS NULL
+            AND m.delivery_status IN ('unknown','queued')
+            AND NOT EXISTS(
+              SELECT 1 FROM whatsapp_sender_billing_attempts a
+              WHERE a.message_id=m.id AND a.state<>'rejected'
+            )`,
+         [job.id,RETRY_MS,QUEUED_ERROR]
        );
        pending++;
      }else await update("unknown");
@@ -400,4 +515,4 @@ function start({env=process.env,run=runOnce,database=pool,...clock}={}){
  return true;
 }
 function stop(){if(worker){worker.stop();worker=null;}}
-module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,quarantineStaleClaims,runOnce,hasPendingWork,start,wake,stop};
+module.exports={enabled,enqueue,READY_SQL,STILL_VALID_SQL,PENDING_SQL,quarantineStaleClaims,cancelObsoletePending,wakeAfterVerifiedReconciliation,runOnce,hasPendingWork,start,wake,stop};
