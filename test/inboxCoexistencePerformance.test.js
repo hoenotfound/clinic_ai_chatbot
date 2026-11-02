@@ -183,8 +183,10 @@ test("Inbox pending review summaries use one shared aggregation in both visibili
       assert.doesNotMatch(sql, /\(SELECT COUNT\(\*\)::integer FROM ai_review_items r/);
       if (hide === "true") {
         assert.match(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+        assert.match(sql, /EXISTS \(SELECT 1 FROM eligible_inbox_contacts eligible WHERE eligible\.id = r\.contact_id\)/);
       } else {
         assert.doesNotMatch(sql, /WITH eligible_inbox_contacts AS MATERIALIZED/);
+        assert.doesNotMatch(sql, /EXISTS \(SELECT 1 FROM eligible_inbox_contacts eligible WHERE eligible\.id = r\.contact_id\)/);
       }
       return { rows: [] };
     };
