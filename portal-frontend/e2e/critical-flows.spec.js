@@ -750,6 +750,37 @@ test("message action menus use SVG Reply Forward Copy icons, never text glyphs",
   expectNoUnexpectedApi(apiState);
 });
 
+test("Archived is in the Filters menu, not a dedicated row under the Inbox search", async ({ page }) => {
+  const apiState = await installApi(page, {
+    initialConversations: [
+      conversation(),
+      conversation({ contact_id: 202, name: "Bella Customer", whatsapp_number: "+60199887766", inbox_archived_at: recentIso() }),
+    ],
+  });
+  await page.goto("/inbox");
+  const list = page.getByRole("complementary", { name: "Conversation inbox" });
+  const header = list.locator(".wa-inbox-list-header");
+  // The header only has search, Filters, and status tabs. Archived must not
+  // take up an additional fixed row, especially on narrow screens.
+  await expect(header.getByRole("button", { name: "Open archived chats" })).toHaveCount(0);
+  await expect(header.getByRole("button", { name: "Back to chats" })).toHaveCount(0);
+  await expect(header.getByRole("combobox", { name: "Chats" })).toHaveCount(0);
+
+  await list.getByRole("button", { name: /Filters/ }).click();
+  const panel = list.locator("#inbox-filter-panel");
+  const chats = panel.getByRole("combobox", { name: "Chats" });
+  await expect(chats).toBeVisible();
+  await expect(panel.locator("select").first()).toHaveAttribute("aria-label", "Chats");
+  await expect(chats).toContainText("Archived (1)");
+  await chats.selectOption("archived");
+  await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
+  await chats.selectOption("active");
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
+  expect(findCall(apiState, "PATCH", "/api/conversations/202/archive")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
 test("swipe right reveals Archive, moves chat into Archived, and Unarchive restores it", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "iphone-portrait", "Phone list gesture only.");
   const apiState = await installApi(page, {
@@ -789,7 +820,9 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
   await expect(list.getByText("Archived", { exact: true }).first()).toBeVisible();
   await search.fill("");
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
-  await list.getByRole("button", { name: "Open archived chats" }).click();
+  await list.getByRole("button", { name: /Filters/ }).click();
+  const chatsFilter = list.getByRole("combobox", { name: "Chats" });
+  await chatsFilter.selectOption("archived");
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
   await expect(list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" })
     .getByRole("button", { name: "Unarchive chat" })).toHaveCount(1);
@@ -809,7 +842,7 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
   await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).click();
   const allCalls = apiState.calls.filter((c) => c.path === "/api/conversations/101/archive");
   expect(allCalls.map((c) => c.body.archived)).toEqual([true, false]);
-  await list.getByRole("button", { name: "Back to chats" }).click();
+  await chatsFilter.selectOption("active");
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
   // Archive only affects display: follow-up and AI mode are untouched.
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
@@ -824,7 +857,9 @@ test("conversation actions archive and restore without changing AI ownership", a
   await page.getByRole("menuitem", { name: "Archive chat" }).click();
   expect(findCall(apiState, "PATCH", "/api/conversations/101/archive")?.body)
     .toEqual({ archived: true });
-  await page.getByRole("button", { name: "Open archived chats" }).click();
+  const inboxList = page.getByRole("complementary", { name: "Conversation inbox" });
+  await inboxList.getByRole("button", { name: /Filters/ }).click();
+  await inboxList.getByRole("combobox", { name: "Chats" }).selectOption("archived");
   const archivedRow = page.getByRole("complementary", { name: "Conversation inbox" })
     .getByRole("button").filter({ hasText: "Alex Customer" }).first();
   await expect(archivedRow).toBeVisible();
