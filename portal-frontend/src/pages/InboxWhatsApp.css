@@ -341,8 +341,10 @@
     font-size: 1rem; /* Avoid iOS zoom when the keyboard opens. */
     line-height: 1.4rem;
   }
-  .wa-thread-composer textarea::placeholder {
-    white-space: nowrap;
+  /* Disabled fields cannot receive focus, so a smaller placeholder is
+   * safe on narrow iPhones and avoids a second line. */
+  .wa-thread-composer textarea:disabled {
+    font-size: 0.875rem;
   }
   .wa-thread-composer > div > div > div > button[aria-label="Open camera"] {
     color: #54656f;
