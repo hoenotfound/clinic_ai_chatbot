@@ -22,19 +22,30 @@ async function recordDecision({
      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (inbound_message_id) DO UPDATE SET
        status = CASE
+         -- A queued-image audit may settle before the inbound handler finishes.
+         -- A late "awaiting" or "unconfirmed" selector result cannot overwrite
+         -- a verified secondary image delivery or safe cancellation.
+         WHEN EXCLUDED.reason IN ('awaiting_sender_billing_receipt',
+                                  'result_media_delivery_unconfirmed')
+              AND result_media_decisions.reason LIKE 'secondary_media_%'
+           THEN result_media_decisions.status
          WHEN EXCLUDED.status='deferred'
            AND result_media_decisions.status <> 'deferred'
            AND result_media_decisions.reason IS DISTINCT FROM 'awaiting_meta_free_billing'
            THEN result_media_decisions.status
          ELSE EXCLUDED.status END,
        reason = CASE
+         WHEN EXCLUDED.reason IN ('awaiting_sender_billing_receipt',
+                                  'result_media_delivery_unconfirmed')
+              AND result_media_decisions.reason LIKE 'secondary_media_%'
+           THEN result_media_decisions.reason
          WHEN EXCLUDED.status='deferred'
            AND result_media_decisions.status <> 'deferred'
            AND result_media_decisions.reason IS DISTINCT FROM 'awaiting_meta_free_billing'
            THEN result_media_decisions.reason
          ELSE EXCLUDED.reason END,
        promotion_images_sent = GREATEST(result_media_decisions.promotion_images_sent, EXCLUDED.promotion_images_sent),
-       result_images_selected = EXCLUDED.result_images_selected,
+       result_images_selected = GREATEST(result_media_decisions.result_images_selected, EXCLUDED.result_images_selected),
        result_images_sent = GREATEST(result_media_decisions.result_images_sent, EXCLUDED.result_images_sent),
        updated_at = now()`,
     [contactId, inboundMessageId, status, reason,
