@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { recordWorkerWake, recordInboxFullList, recordInboxRevisionCheck,
-  snapshot, classifyChannel } =
+  recordInboxRevisionFallback, recordSseLifecycle, snapshot, classifyChannel } =
   require("../src/utils/refreshWakeDiagnostics");
 
 test("passive counters classify wake decisions without retaining sensitive event fields", () => {
@@ -67,4 +67,35 @@ test("cheap Inbox revision counters remain bounded, anonymous and separate from 
   assert.ok(counters.some(x => x.key === "inbox_revision|full_query"));
   assert.ok(counters.some(x => x.key === "inbox_revision|wal_unavailable"));
   assert.doesNotMatch(JSON.stringify(counters), /patient-name: private/);
+});
+
+test("fixed-label Inbox proof fallbacks never disclose request values", () => {
+  const before = snapshot().counters.find(x =>
+    x.key === "inbox_revision_reason|missing_proof")?.total || 0;
+  for (const reason of [
+    "wal_unavailable", "missing_etag", "missing_proof",
+    "proof_mismatch_or_wal_changed", "wal_changed_during_check",
+  ]) recordInboxRevisionFallback(reason);
+  recordInboxRevisionFallback("sensitive-customer-identification");
+  const items = snapshot().counters;
+  assert.equal(items.find(x => x.key === "inbox_revision_reason|missing_proof")?.total, before + 1);
+  assert.ok(items.some(x => x.key === "inbox_revision_reason|proof_mismatch_or_wal_changed"));
+  assert.doesNotMatch(JSON.stringify(items), /sensitive-customer-identification/);
+});
+
+test("SSE lifecycle captures only coarse connection ages and redacted events", () => {
+  for (const duration of [1000, 10000, 60000, 300000]) {
+    recordSseLifecycle("opened");
+    recordSseLifecycle("closed", duration);
+  }
+  recordSseLifecycle("redacted_change");
+  recordSseLifecycle("personal-staff-identity");
+  recordSseLifecycle("closed", "private-info");
+  const keys = snapshot().counters.map(x => x.key);
+  for (const key of [
+    "sse|opened", "sse|closed|under_10s", "sse|closed|under_60s",
+    "sse|closed|under_5min", "sse|closed|5min_plus",
+    "sse|redacted_change",
+  ]) assert.ok(keys.includes(key), key);
+  assert.doesNotMatch(keys.join(" "), /private-info|personal-staff-identity/);
 });
