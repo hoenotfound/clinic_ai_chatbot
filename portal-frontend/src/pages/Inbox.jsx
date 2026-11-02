@@ -5075,11 +5075,32 @@ function MessageBubble({
         <>
           <button
             type="button"
-            className="fixed inset-0 bg-black/30 backdrop-blur-[1px] sm:hidden"
-            style={{ zIndex: 3000 }}
+            className="fixed inset-0 bg-black/35 sm:hidden"
+            style={{
+              zIndex: 3000,
+              // Cut a spotlight around the original bubble instead of
+              // dimming it with the rest of the conversation. No DOM clones,
+              // duplicate media downloads or duplicate message controls.
+              clipPath: selectedBubbleRect
+                ? `polygon(evenodd, 0px 0px, 100% 0px, 100% 100%, 0px 100%, 0px 0px, ${selectedBubbleRect.left}px ${selectedBubbleRect.top}px, ${selectedBubbleRect.left}px ${selectedBubbleRect.bottom}px, ${selectedBubbleRect.right}px ${selectedBubbleRect.bottom}px, ${selectedBubbleRect.right}px ${selectedBubbleRect.top}px, ${selectedBubbleRect.left}px ${selectedBubbleRect.top}px)`
+                : undefined,
+            }}
             onClick={() => setMenuOpen(false)}
             aria-label="Close message actions"
           />
+          {selectedBubbleRect && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none fixed rounded-xl border-2 border-white/80 shadow-[0_0_0_1px_rgba(0,128,105,0.18)] sm:hidden"
+              style={{
+                zIndex: 3001,
+                left: selectedBubbleRect.left,
+                top: selectedBubbleRect.top,
+                width: selectedBubbleRect.right - selectedBubbleRect.left,
+                height: selectedBubbleRect.bottom - selectedBubbleRect.top,
+              }}
+            />
+          )}
           <div
             ref={mobileActionsRef}
             className="fixed w-[min(17rem,calc(100vw-24px))] max-h-[min(70dvh,24rem)] overflow-y-auto overscroll-contain rounded-[20px] border border-white/70 bg-white/95 p-1.5 text-[#1f292d] shadow-[0_16px_48px_rgba(0,0,0,0.25)] backdrop-blur-xl sm:hidden"
