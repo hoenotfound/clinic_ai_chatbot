@@ -92,3 +92,22 @@ test("separate price wording cannot be mistaken for an explicit combo quote",()=
    assert.notEqual(decision?.mode,"direct",text);
  }
 });
+
+test("both-treatment price enquiry quotes the two verified trials and the combo together",()=>{
+ const current="3D和9D多少钱？";
+ const standalone=[
+   {name:"3D 小颜术 First Trial",linkedService:"3D 小颜术",
+     sendOnPriceQuery:true,validFrom:"2000-01-01",validUntil:"2999-12-31",
+     pricing:{currency:"MYR",offer:488,normal:888},
+     caption:"3D First Trial 优惠价 RM488",imageUrl:"https://example.test/3d.png"},
+   {name:"9D 逆龄抗衰 First Trial",linkedService:"9D 逆龄抗衰",
+     sendOnPriceQuery:true,validFrom:"2000-01-01",validUntil:"2999-12-31",
+     pricing:{currency:"MYR",offer:488,normal:1288},
+     caption:"9D First Trial 优惠价 RM488",imageUrl:"https://example.test/9d.png"},
+ ];
+ const result=check(current,[turn("user",current,60)],{promotions:[...standalone,combo]});
+ assert.equal(result?.mode,"direct");
+ assert.match(result.reply,/3D 和 9D 分开体验/u);
+ assert.equal((result.reply.match(/RM488/gu)||[]).length,2);
+ assert.equal((result.reply.match(/RM688/gu)||[]).length,1);
+});
