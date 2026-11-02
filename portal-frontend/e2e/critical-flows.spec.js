@@ -780,6 +780,13 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
   const sent = findCall(apiState, "PATCH", "/api/conversations/101/archive");
   expect(sent?.body).toEqual({ archived: true });
   await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
+  // Search still finds archived conversations without unarchiving them.
+  const search = list.getByRole("searchbox", { name: "Search by name, number, message, or assignee" });
+  await search.fill("Alex Customer");
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
+  await expect(list.getByText("Archived", { exact: true }).first()).toBeVisible();
+  await search.fill("");
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
   await list.getByRole("button", { name: "Open archived chats" }).click();
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
   await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).toHaveCount(1);
