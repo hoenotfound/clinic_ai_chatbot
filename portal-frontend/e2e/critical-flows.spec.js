@@ -897,11 +897,20 @@ test("floating action menu keeps the selected bubble highlighted after its layou
   const spotlight = page.locator("[data-selected-message-spotlight]");
   await expect(menu).toBeVisible();
   const before = await spotlight.boundingBox();
-  await bubble.evaluate((element) => { element.style.paddingBottom = "130px"; });
-  await expect.poll(async () => (await spotlight.boundingBox())?.height).toBeGreaterThan(before.height + 80);
+  // Move as well as resize: the bubble may be partly clipped by the bottom
+  // of the iPhone viewport, so its *visible* height need not grow by 120px.
+  await bubble.evaluate((element) => {
+    element.style.transform = "translateX(26px)";
+    element.style.paddingBottom = "130px";
+  });
+  await expect.poll(async () => (await spotlight.boundingBox())?.x)
+    .toBeGreaterThan(before.x + 18);
   const after = await spotlight.boundingBox();
   const newBubble = await bubble.boundingBox();
-  expect(Math.abs(after.height - newBubble.height)).toBeLessThanOrEqual(10);
+  expect(Math.abs(after.x - Math.max(0, newBubble.x - 4))).toBeLessThanOrEqual(4);
+  const visibleHeight = Math.min(page.viewportSize().height, newBubble.y + newBubble.height + 4)
+    - Math.max(0, newBubble.y - 4);
+  expect(Math.abs(after.height - visibleHeight)).toBeLessThanOrEqual(10);
   const menuBox = await menu.boundingBox();
   expect(menuBox.x).toBeGreaterThanOrEqual(8);
   expect(menuBox.y).toBeGreaterThanOrEqual(8);
