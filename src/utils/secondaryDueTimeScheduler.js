@@ -113,7 +113,8 @@ function secondaryEventRequiresWake(type, payload, env = process.env) {
   // Lead scoring and completed Meta ad detail enrichment change only CRM
   // presentation, not the verified sender/consent/due-time eligibility.
   if (type === "pipeline_changed" &&
-      (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched")) {
+      (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched" ||
+       payload?.reason === "lead_assignment_recovered")) {
     return false;
   }
   return true;
