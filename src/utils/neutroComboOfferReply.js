@@ -83,7 +83,10 @@ function resolveNeutroComboOfferReply({
   if (otherServices.length) return null;
   const explicitlyJoint = currentNames.face && currentNames.firming &&
     JOINT_INTENT.test(current) && !SEPARATE_INTENT.test(current);
-  if (!explicitlyJoint && !verifiedIndividualQuote) return null;
+  const jointlyNamed = currentNames.face && currentNames.firming;
+  const ambiguousBothPrices = jointlyNamed && !explicitlyJoint &&
+    !SEPARATE_INTENT.test(current);
+  if (!explicitlyJoint && !verifiedIndividualQuote && !ambiguousBothPrices) return null;
 
   const offer = verifiedComboOffer(promotions, now, current, turns);
   if (!offer) return null;
@@ -93,6 +96,24 @@ function resolveNeutroComboOfferReply({
       : locale.startsWith("en") ? ", with a complimentary one-hour meridian massage"
         : "，另送 1 小时经络按摩"
     : "";
+
+  // A customer saying "3D 和 9D 多少钱" asked for both, but did NOT
+  // explicitly choose separate pricing or one combined treatment. Answer with
+  // both independently verified individual prices AND the distinct combo,
+  // without treating the customer's ambiguity as permission to send images.
+  if (ambiguousBothPrices && !verifiedIndividualQuote) {
+    const standalone = ["3D 小颜术", "9D 逆龄抗衰"].map(name => {
+      const entries = verifiedPricesForService(name, promotions, current, turns);
+      return entries?.length === 1 ? { name, price:entries[0].price } : null;
+    });
+    if (standalone.some(item => !item || !/^RM[1-9]\\d{0,5}$/u.test(item.price))) return null;
+    const reply = locale.startsWith("ms")
+      ? `Harga First Trial 3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
+      : locale.startsWith("en")
+        ? `The separate 3D and 9D First Trial offers are ${standalone[0].price} and ${standalone[1].price}. If you'd like both, the 3D + 9D combination offer is ${offer.price}${gift} 😊 Our practitioner can assess suitability first.`
+        : `3D 和 9D 分开体验的 First Trial 价格各是 ${standalone[0].price} 和 ${standalone[1].price}。如果两个都想体验，目前还有 3D + 9D 组合优惠 ${offer.price}${gift} 😊 中医师会先评估是否适合一起安排。`;
+    return { ...offer, mode:"direct", reply };
+  }
 
   if (explicitlyJoint) {
     const reply = locale.startsWith("ms")
