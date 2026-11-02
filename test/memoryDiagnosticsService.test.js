@@ -49,12 +49,28 @@ test("Render memory sampling uses an unref'd interval and never throws on loggin
   let intervalMs = 0;
   let unrefCount = 0;
   let callback = null;
-  const logger = { info() { reports++; if (reports === 2) throw Error("logger"); },
-    warn() {} };
+  const entries = [];
+  const logger = {
+    info(...args) {
+      reports++;
+      entries.push(args);
+      if (reports === 2) throw Error("logger");
+    },
+    warn() {},
+  };
   const timer = memory.startMemoryDiagnostics({
     env: { RENDER_SERVICE_ID: "srv-unit-test" },
     logger,
     sample: () => ({ rssMiB: 100 }),
+    wakeSnapshot: () => ({
+      last5Minutes: 50,
+      last15Minutes: 82,
+      counters: [
+        { key: "inbox|reconnect", last5Minutes: 2 },
+        { key: "wake|secondary_service|conversation_changed|other|unknown|queued", last5Minutes: 48 },
+        { key: "inbox|startup", last5Minutes: 0 },
+      ],
+    }),
     setIntervalFn(fn, ms) {
       callback = fn;
       intervalMs = ms;
@@ -67,4 +83,25 @@ test("Render memory sampling uses an unref'd interval and never throws on loggin
   assert.equal(unrefCount, 1);
   assert.doesNotThrow(callback);
   assert.equal(reports, 2);
+  // The existing once-per-minute timer emits a separate, single-line
+  // diagnostic string every fifth sample, without a second timer.
+  for (let i = 0; i < 3; i++) assert.doesNotThrow(callback);
+  assert.equal(reports, 6);
+  const diagnosticLogs = entries.filter(([message]) =>
+    String(message).startsWith("[Refresh/wake diagnostics] "));
+  assert.equal(diagnosticLogs.length, 1);
+  assert.equal(diagnosticLogs[0].length, 1, "summary stays one log entry");
+  assert.doesNotMatch(diagnosticLogs[0][0], /\\[Object\\]/);
+  const parsed = JSON.parse(
+    diagnosticLogs[0][0].slice("[Refresh/wake diagnostics] ".length)
+  );
+  assert.deepEqual(parsed, {
+    last5Minutes: 50,
+    last15Minutes: 82,
+    top: [
+      { key: "wake|secondary_service|conversation_changed|other|unknown|queued", count: 48 },
+      { key: "inbox|reconnect", count: 2 },
+    ],
+  });
+  assert.ok(entries.filter(([message]) => message === "[Memory diagnostics]").length === 5);
 });
