@@ -2528,6 +2528,7 @@ function LeadTemperatureIndicator({ temperature }) {
 function StatusBadge({ tone, children }) {
   const styles = {
     accent: "bg-[var(--color-accent-light)] text-[#8a5d13]",
+    muted: "bg-[#e9edef] text-[#54656f]",
     danger: "bg-[var(--color-danger-light)] text-[var(--color-danger)]",
   };
   return (
