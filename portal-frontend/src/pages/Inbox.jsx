@@ -2269,9 +2269,9 @@ function ConversationList({
               className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
               aria-label="Open archived chats">
               <ArchiveIcon className="h-4 w-4" /> Archived
-              <span className="font-normal">{conversations.filter((item) => item.inbox_archived_at).length}</span>
+              <span className="font-normal">{conversations?.filter((item) => item.inbox_archived_at).length ?? 0}</span>
             </button>
-          ) : null}
+          )}
         </div>
         <nav className="wa-inbox-status-tabs" aria-label="Quick conversation filters">
           {STATUS_FILTERS.map(({ key, label }) => (
