@@ -1919,6 +1919,7 @@ function ConversationList({
   }, []);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
+  const archivedCount = useMemo(() => conversationList.filter((item) => item.inbox_archived_at).length, [conversationList]);
   // A bounded server search allows staff to recover old, contact-only imports
   // even after they are hidden from the default list. Search never sends messages.
   useEffect(() => {
@@ -2179,6 +2180,15 @@ function ConversationList({
             )}
 
             <div className="grid grid-cols-2 gap-2">
+              {/* Archive belongs with other chat filters, not in a separate toolbar row. */}
+              <div className="col-span-2">
+                <FilterSelect
+                  label="Chats"
+                  value={filters.archiveView}
+                  onChange={(value) => updateFilter("archiveView", value)}
+                  options={[["active", "Inbox"], ["archived", `Archived (${archivedCount})`]]}
+                />
+              </div>
               {showSenderFilter && (
                 <div className="col-span-2">
                   <FilterSelect
@@ -2247,14 +2257,6 @@ function ConversationList({
                 ]}
                 hint="Reply window is based on the last incoming customer message. Open can include staff-only Human Agent conversations; an open window does not override consent or sending restrictions."
               />
-              <div className="col-span-2">
-              <FilterSelect
-                label="Chats"
-                value={filters.archiveView}
-                onChange={(value) => updateFilter("archiveView", value)}
-                options={[["active", "Chats"], ["archived", "Archived"]]}
-              />
-              </div>
             </div>
           </div>
         )}
@@ -2275,22 +2277,6 @@ function ConversationList({
             ))}
           </div>
         )}
-        <div className="mt-1 flex items-center justify-between gap-2 text-xs">
-          {filters.archiveView === "archived" ? (
-            <button type="button" onClick={() => updateFilter("archiveView", "active")}
-              className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-primary)]"
-              aria-label="Back to chats">
-              <ArrowLeftIcon className="h-4 w-4" /> Back to chats
-            </button>
-          ) : (
-            <button type="button" onClick={() => updateFilter("archiveView", "archived")}
-              className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
-              aria-label="Open archived chats">
-              <ArchiveIcon className="h-4 w-4" /> Archived
-              <span className="font-normal">{conversations?.filter((item) => item.inbox_archived_at).length ?? 0}</span>
-            </button>
-          )}
-        </div>
         <nav className="wa-inbox-status-tabs" aria-label="Quick conversation filters">
           {STATUS_FILTERS.map(({ key, label }) => (
             <button
