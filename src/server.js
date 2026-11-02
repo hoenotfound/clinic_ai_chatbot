@@ -34,6 +34,7 @@ const { resolveClarifiedPriceService } = require("./utils/priceClarificationCont
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
 const { resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
+const { resolveNeutroComboOfferReply } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -1646,6 +1647,31 @@ async function processIncomingMessage(
         contact.id + " inbound=" + savedInbound.id);
     }
 
+    // Only a verified current price request may surface the separate 3D + 9D
+    // combo. Reuse the SAME trusted, timestamped customer session as the
+    // existing two-treatment resolver. No new pricing graphics are authorized.
+    const comboOfferDecision = !flagged && !bookingReady &&
+      !marketingStopQuestion && clinicConfig.businessType === "tcm_clinic" &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? resolveNeutroComboOfferReply({
+          customerText: text,
+          session: recentVerifiedPricingSession(history, text),
+          services: clinicConfig.services,
+          serviceAliases: clinicConfig.serviceAliases,
+          promotions: clinicConfig.promotions,
+          language: mediaLanguage,
+          verifiedIndividualQuote: Boolean(twoTreatmentQuote) ||
+            Boolean(approvedPricingDecision?.prices?.some(item =>
+              item.price && reply.includes(item.price))),
+        }) : null;
+    if (comboOfferDecision) {
+      reply = comboOfferDecision.mode === "direct"
+        ? comboOfferDecision.reply
+        : reply + "\n\n" + comboOfferDecision.reply;
+      console.info("[Pricing] Verified Neutro combo " + comboOfferDecision.mode +
+        " contact=" + contact.id + " inbound=" + savedInbound.id);
+    }
+
     // Images are optional and sent only AFTER Meta accepts this text.
     // A later delivery failure must never turn an AI promise into a lie.
     // Even when a verified price is quoted, do not claim graphics are sent
@@ -1928,8 +1954,11 @@ async function processIncomingMessage(
       // A directly named service or a one-turn standalone price follow-up
       // remains customer-verified; never trust a stale CRM/ad label.
       let pricingMediaSkipReason = twoTreatmentQuote
-        ? "two_treatments_text_only" : "not_evaluated";
-      const promoBundle = twoTreatmentQuote ? null : await resolvePricePromotionForReply({
+        ? "two_treatments_text_only"
+        : comboOfferDecision?.mode === "direct"
+          ? "verified_combo_text_only" : "not_evaluated";
+      const promoBundle = (twoTreatmentQuote || comboOfferDecision?.mode === "direct")
+        ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
         pricingDecision: pricingAuthorityRequired ? approvedPricingDecision : null,
@@ -1983,7 +2012,8 @@ async function processIncomingMessage(
       // This optional write occurs after the text-send outcome is known and
       // cannot affect accepted text, media sending or retry semantics.
       if (priceQuery || packageQuery || pricingDecision || approvedPricingDecision ||
-          twoTreatmentQuote || shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
+          twoTreatmentQuote || comboOfferDecision?.mode === "direct" ||
+          shadowPriceException || scopedPackagePrice || numberedPricingSelection) {
         const quotedApprovedPrices = approvedPricingDecision?.prices?.length
           ? approvedPricingDecision.prices.every(item => reply.includes(item.price))
           : false;
@@ -1994,15 +2024,22 @@ async function processIncomingMessage(
             inboundMessageId: savedInbound.id,
             mode: aiPricingMode,
             observed: Boolean(pricingDecision),
-            approved: Boolean(approvedPricingDecision || twoTreatmentQuote),
+            approved: Boolean(approvedPricingDecision || twoTreatmentQuote ||
+              comboOfferDecision?.mode === "direct"),
             approvalReason: twoTreatmentQuote ? "two_treatments_verified_text_only"
-              : pricingApproval.reason,
+              : comboOfferDecision?.mode === "direct" ? "verified_combo_text_only"
+                : pricingApproval.reason,
             treatment: twoTreatmentQuote
               ? twoTreatmentQuote.prices.map(item => item.treatment).join(" / ")
-              : approvedPricingDecision?.treatment || null,
-            decisionSource: twoTreatmentQuote?.source || approvedPricingDecision?.source || null,
+              : comboOfferDecision?.mode === "direct"
+                ? comboOfferDecision.treatment
+                : approvedPricingDecision?.treatment || null,
+            decisionSource: comboOfferDecision?.mode === "direct"
+              ? "verified_combo_current_request"
+              : twoTreatmentQuote?.source || approvedPricingDecision?.source || null,
             replyStatus: !sendOutcome.sendResult.success ? "text_not_accepted"
               : twoTreatmentQuote ? "verified_two_treatment_prices_quoted"
+              : comboOfferDecision?.mode === "direct" ? "verified_combo_price_quoted"
               : approvedPricingDecision ? (quotedApprovedPrices ? "approved_price_quoted"
                 : approvedPricingDecision.servicePrice && reply.includes(approvedPricingDecision.servicePrice)
                   ? "approved_service_price_quoted" : "approved_quote_not_found")
