@@ -31,6 +31,18 @@ export function createSingleFlightInboxRefresh() {
   };
 }
 
+// Refresh a small, explicit batch via the existing permission-checked
+// single-contact summary endpoint. Unknown, redacted, or large event bursts
+// must keep a full snapshot, including reassignment and newly visible chats.
+export function knownSummaryRefreshIds(ids, max = 3) {
+  const values = ids instanceof Set ? [...ids] : Array.isArray(ids) ? ids : [];
+  if (values.length < 1 || values.length > max) return null;
+  const verified = values.map(Number);
+  if (verified.some(id => !Number.isSafeInteger(id) || id < 1) ||
+      new Set(verified).size !== verified.length) return null;
+  return verified;
+}
+
 // Known contact or a uniquely matching current lead can use the existing
 // permission-checked single-contact summary endpoint. Unknown/global events,
 // missing leads and redacted restricted-staff SSE signals must reload the full
