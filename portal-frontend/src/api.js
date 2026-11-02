@@ -1,5 +1,14 @@
 const BASE = "/api";
 
+// Only one volatile, per-tab snapshot. Do not persist patient summaries in
+// localStorage, sessionStorage, service workers or the HTTP disk cache.
+let inboxSnapshot = null;
+let inboxSnapshotEtag = null;
+function clearInboxSnapshotCache() {
+  inboxSnapshot = null;
+  inboxSnapshotEtag = null;
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
@@ -8,6 +17,7 @@ async function request(path, options = {}) {
   });
 
   if (!res.ok) {
+    if (res.status === 401) clearInboxSnapshotCache();
     const body = await res.json().catch(() => ({}));
     const error = new Error(body.error || `Request failed (${res.status})`);
     error.status = res.status;
@@ -21,6 +31,43 @@ async function request(path, options = {}) {
   }
 
   return res.json();
+}
+
+async function listInboxConversations(refreshReason = "other") {
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Inbox-Refresh-Reason": refreshReason,
+    ...(inboxSnapshot && inboxSnapshotEtag
+      ? { "If-None-Match": inboxSnapshotEtag } : {}),
+  };
+  // Explicit conditional validation, never the browser's persistent cache.
+  const res = await fetch(`${BASE}/conversations`, {
+    credentials: "include", cache: "no-store", headers,
+  });
+  if (res.status === 304 && inboxSnapshot) {
+    // Server has freshly checked the complete payload AND current staff scope.
+    return inboxSnapshot;
+  }
+  if (res.status === 304) {
+    // Unexpected 304 after a cancelled session/cache reset. Get a fresh body.
+    clearInboxSnapshotCache();
+    return request("/conversations", {
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-Inbox-Refresh-Reason": refreshReason },
+    });
+  }
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) clearInboxSnapshotCache();
+    const body = await res.json().catch(() => ({}));
+    const error = new Error(body.error || `Request failed (${res.status})`);
+    error.status = res.status;
+    throw error;
+  }
+  const payload = await res.json();
+  if (!Array.isArray(payload)) throw new TypeError("Invalid Inbox list response.");
+  inboxSnapshot = payload;
+  inboxSnapshotEtag = res.headers.get("etag");
+  return payload;
 }
 
 async function download(path) {
@@ -47,21 +94,24 @@ async function download(path) {
 }
 
 export const api = {
-  login: (username, password) =>
-    request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
-  logout: (pushEndpoint = null) =>
-    request("/auth/logout", {
-      method: "POST",
-      body: JSON.stringify({ pushEndpoint }),
-    }),
+  login: async (username, password) => {
+    const result = await request("/auth/login", {
+      method: "POST", body: JSON.stringify({ username, password }),
+    });
+    clearInboxSnapshotCache();
+    return result;
+  },
+  logout: async (pushEndpoint = null) => {
+    try {
+      return await request("/auth/logout", {
+        method: "POST", body: JSON.stringify({ pushEndpoint }),
+      });
+    } finally {
+      clearInboxSnapshotCache();
+    }
+  },
   me: () => request("/auth/me"),
-  listConversations: (refreshReason = "other") => request("/conversations", {
-    // Only a fixed diagnostic label. No IDs, names, message data or new calls.
-    headers: {
-      "Content-Type": "application/json",
-      "X-Inbox-Refresh-Reason": refreshReason,
-    },
-  }),
+  listConversations: listInboxConversations,
   getConversationSummary: (contactId, includeArchived = false) =>
     request(`/conversations/${encodeURIComponent(contactId)}/summary${includeArchived ? "?includeArchived=true" : ""}`),
   searchConversationDirectory: (term) =>

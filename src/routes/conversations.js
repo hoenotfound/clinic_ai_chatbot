@@ -6,6 +6,7 @@ const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
 const { recordInboxFullList } = require("../utils/refreshWakeDiagnostics");
+const { inboxPayloadEtag, matchesInboxPayloadEtag } = require("../utils/inboxConditionalResponse");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact, getAccessibleContactIds } = require("../utils/accessControl");
@@ -832,6 +833,17 @@ function sendMeasuredInboxJson(res, payload, startedAt, kind) {
   const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6);
   const responseBytes = Buffer.byteLength(serialized, "utf8");
   res.set("Server-Timing", `inbox-${kind};dur=${durationMs}`);
+  if (kind === "list") {
+    // Always compute the payload after CURRENT staff permissions are checked.
+    // Do not store patient snapshots on the server or in browser disk caches.
+    const etag = inboxPayloadEtag(serialized);
+    res.set("Cache-Control", "private, no-store");
+    res.set("ETag", etag);
+    if (matchesInboxPayloadEtag(res.req?.get("If-None-Match"), etag)) {
+      res.status(304).end();
+      return;
+    }
+  }
   res.type("json").send(serialized);
   if (durationMs >= 750 || responseBytes >= 250000) {
     console.info("[Inbox response metrics]", {

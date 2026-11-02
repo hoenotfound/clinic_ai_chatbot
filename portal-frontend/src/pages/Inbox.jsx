@@ -19,6 +19,7 @@ import {
   createSingleFlightInboxRefresh,
   createInboxLiveStartup,
   pipelineRefreshContactId,
+  knownSummaryRefreshIds,
 } from "../utils/inboxRefreshPolicy";
 import {
   messagingPolicyStatus,
@@ -882,43 +883,60 @@ export default function Inbox() {
   useEffect(() => {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
+    let pendingUnknownConversationChange = false;
+    let pendingUnknownConversationReason = "unknown_conversation_event";
     let debounceTimer = null;
     let pipelineListTimer = null;
     const pipelineContactIds = new Set();
     let pipelineNeedsFullRefresh = false;
 
     function scheduleRefresh(contactId = null, sourceReason = "unknown_conversation_event") {
-      if (contactId != null) pendingContactIds.add(Number(contactId));
+      const id = Number(contactId);
+      if (contactId != null && Number.isSafeInteger(id) && id > 0) {
+        pendingContactIds.add(id);
+      } else {
+        // Never drop a redacted/unknown permission change merely because
+        // an identified conversation changes in the same debounce window.
+        pendingUnknownConversationChange = true;
+        pendingUnknownConversationReason = sourceReason;
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
 
       debounceTimer = setTimeout(async () => {
         const changedContacts = new Set(pendingContactIds);
+        const unknownOrRedacted = pendingUnknownConversationChange;
+        const unknownReason = pendingUnknownConversationReason;
         pendingContactIds.clear();
+        pendingUnknownConversationChange = false;
+        pendingUnknownConversationReason = "unknown_conversation_event";
         debounceTimer = null;
 
-        // A single changed conversation needs just one small summary instead
-        // of the full Inbox response. Unknown/bulk events keep the existing
-        // full-refresh safety path (including restricted-staff SSE signals).
-        if (changedContacts.size === 1) {
-          const [changedId] = changedContacts;
+        const knownIds = knownSummaryRefreshIds(changedContacts);
+        if (!unknownOrRedacted && knownIds) {
           try {
-            await refreshConversationSummary(changedId);
+            // Two or three named changes use small, individually authorized
+            // summaries instead of a repeated 2 MB full Inbox snapshot.
+            await Promise.all(knownIds.map(id => refreshConversationSummary(id)));
           } catch {
+            // Recheck the full staff-visible set after a revoked assignment,
+            // deleted contact, backend failure or other missing summary.
             await refreshConversations("summary_fallback");
           }
         } else {
+          // A reconnect or redacted staff SSE MUST always recheck the full
+          // authorized list, even when known contacts also changed.
           await refreshConversations(
-            changedContacts.size === 0 ? sourceReason : "multi_contact_event"
+            unknownOrRedacted ? unknownReason : "multi_contact_event"
           );
         }
 
         const currentId = selectedIdRef.current;
         if (
           currentId != null &&
-          (changedContacts.size === 0 || changedContacts.has(Number(currentId)))
+          (unknownOrRedacted || changedContacts.has(Number(currentId)))
         ) {
           await refreshMessagesForContact(currentId);
-          if (changedContacts.size === 0) {
+          if (unknownOrRedacted) {
             await reconcileLoadedDeliveryStatuses(currentId);
           }
         }
@@ -934,23 +952,22 @@ export default function Inbox() {
         pipelineListTimer = null;
         const changedIds = [...pipelineContactIds];
         const unknownOrRedacted = pipelineNeedsFullRefresh;
-        const requiresFull = unknownOrRedacted || changedIds.length !== 1;
+        const knownIds = knownSummaryRefreshIds(changedIds);
         pipelineContactIds.clear();
         pipelineNeedsFullRefresh = false;
-        if (!requiresFull) {
+        if (!unknownOrRedacted && knownIds) {
           try {
-            // The server rechecks staff access; 403/404 falls back to a fresh
-            // full list to handle deleted, moved or newly assigned contacts.
-            await refreshConversationSummary(changedIds[0]);
+            // Every contact still uses the existing permission-checked route.
+            await Promise.all(knownIds.map(id => refreshConversationSummary(id)));
             return;
           } catch {
-            // Never preserve a stale staff/lead assignment after a failed lookup.
+            // An absent/unauthorized summary requires a full permission resync.
+            await refreshConversations("pipeline_summary_fallback");
+            return;
           }
         }
         await refreshConversations(
-          unknownOrRedacted ? "pipeline_unknown_event"
-            : changedIds.length !== 1 ? "pipeline_multi_contact"
-              : "pipeline_summary_fallback"
+          unknownOrRedacted ? "pipeline_unknown_event" : "pipeline_multi_contact"
         );
       }, REALTIME_DEBOUNCE_MS);
     }
