@@ -313,7 +313,7 @@ async function recordSignedSecondaryStatusBatch({
          RETURNING id,contact_id,delivery_status,
            CASE WHEN whatsapp_template->>'automatedSecondaryAiMedia'='true'
              AND (whatsapp_template->>'anchorMessageId') ~ '^[0-9]{1,10}$'
-           THEN (whatsapp_template->>'anchorMessageId')::integer ELSE NULL END
+           THEN (whatsapp_template->>'anchorMessageId')::bigint ELSE NULL END
              AS secondary_media_inbound_id`,
         [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus]
       );
