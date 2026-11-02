@@ -207,6 +207,8 @@ test("secondary scheduler ignores only proven unrelated inbound and CRM events",
  assert.equal(check("conversation_changed",{reason:"whatsapp_opt_out"}),true);
  assert.equal(check("pipeline_changed",{reason:"lead_scored"}),false);
  assert.equal(check("pipeline_changed",{reason:"meta_ad_enriched"}),false);
+ assert.equal(check("pipeline_changed",{reason:"lead_assignment_recovered"}),false);
+ assert.equal(check("conversation_changed",{reason:"lead_assignment_recovered"}),false);
  assert.equal(check("pipeline_changed",{reason:"appointment_set"}),true);
  assert.equal(check("pipeline_changed",{}),true);
  assert.equal(check("config_changed",{}),true);

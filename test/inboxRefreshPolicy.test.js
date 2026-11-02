@@ -71,6 +71,64 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
   assert.match(source, /await refreshConversationSummary\(changedId\)/);
   assert.match(source, /catch\s*\{\s*await refreshConversations\(\)/);
   assert.match(source, /scheduleRefresh\(payload\.contactId \?\? null\)/);
-  assert.match(source, /source\.onopen = \(\) => \{\s*scheduleRefresh\(\)/);
-  assert.match(source, /refreshConversations\(\);\s*\}, \[\]\)/);
+  assert.match(source, /createInboxLiveStartup\(\{/);
+  assert.match(source, /source\.onopen = \(\) => startup\.onOpen\(\)/);
+  assert.match(source, /startup\.stop\(\)/);
+  assert.doesNotMatch(source, /refreshConversations\(\);\s*\}, \[\]\)/);
+});
+
+test("first SSE open loads the Inbox once; reconnects resync", async () => {
+  const { createInboxLiveStartup } = await policy();
+  const timers = new Map();
+  let next = 0, loads = 0, reconnects = 0;
+  const startup = createInboxLiveStartup({
+    loadInitial: () => { loads++; },
+    refreshOnReconnect: () => { reconnects++; },
+    schedule: fn => { const id = ++next; timers.set(id, fn); return id; },
+    cancel: id => { timers.delete(id); },
+  });
+  startup.onOpen();
+  assert.equal(loads, 1, "first SSE open becomes the initial snapshot");
+  assert.equal(reconnects, 0);
+  assert.equal(timers.size, 0, "no later fallback read");
+  startup.onOpen();
+  assert.equal(loads, 1);
+  assert.equal(reconnects, 1, "reconnect still reloads staff permissions and missing events");
+  startup.stop();
+});
+
+test("unavailable SSE falls back promptly and late connection resynchronizes", async () => {
+  const { createInboxLiveStartup } = await policy();
+  const timers = new Map();
+  let loadCount = 0, resyncCount = 0, scheduledDelay;
+  const startup = createInboxLiveStartup({
+    loadInitial: () => { loadCount++; },
+    refreshOnReconnect: () => { resyncCount++; },
+    schedule: (fn, delay) => { timers.set(1, fn); scheduledDelay = delay; return 1; },
+    cancel: id => timers.delete(id),
+  });
+  assert.equal(scheduledDelay, 450);
+  timers.get(1)();
+  assert.equal(loadCount, 1, "Inbox remains available without the live connection");
+  startup.onOpen();
+  assert.equal(loadCount, 1);
+  assert.equal(resyncCount, 1, "connection after fallback must close the event gap");
+  startup.stop();
+});
+
+test("unmounted Inbox never launches a delayed fallback or reconnect", async () => {
+  const { createInboxLiveStartup } = await policy();
+  let fallback, loads = 0, reconnects = 0, cancelled = false;
+  const startup = createInboxLiveStartup({
+    loadInitial: () => { loads++; },
+    refreshOnReconnect: () => { reconnects++; },
+    schedule: fn => { fallback = fn; return 1; },
+    cancel: () => { cancelled = true; },
+  });
+  startup.stop();
+  fallback();
+  startup.onOpen();
+  assert.equal(cancelled, true);
+  assert.equal(loads, 0);
+  assert.equal(reconnects, 0);
 });

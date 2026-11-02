@@ -101,7 +101,8 @@ async function measureSecondaryWorkerRun(label, run) {
 // conservative: recheck, so opt-outs, bookings and legacy publishers are safe.
 function secondaryEventRequiresWake(type, payload, env = process.env) {
   if (type === "conversation_changed") {
-    if (payload?.reason === "reaction" || payload?.followUpStateUnchanged === true) return false;
+    if (payload?.reason === "reaction" || payload?.followUpStateUnchanged === true ||
+        payload?.reason === "lead_assignment_recovered") return false;
     if (payload?.channel && payload.channel !== "whatsapp") return false;
     if (payload?.businessPhoneNumberId != null &&
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
@@ -112,7 +113,8 @@ function secondaryEventRequiresWake(type, payload, env = process.env) {
   // Lead scoring and completed Meta ad detail enrichment change only CRM
   // presentation, not the verified sender/consent/due-time eligibility.
   if (type === "pipeline_changed" &&
-      (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched")) {
+      (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched" ||
+       payload?.reason === "lead_assignment_recovered")) {
     return false;
   }
   return true;

@@ -53,3 +53,54 @@ export function pipelineRefreshContactId(payload, conversations) {
   }
   return matching.size === 1 ? [...matching][0] : null;
 }
+
+
+// The initial Inbox snapshot must be taken after the first live connection
+// opens, so events between the snapshot and subscription cannot be lost.
+// If SSE is slow/unavailable, start an ordinary full read after a short grace
+// period; a later first connection still reconciles the gap safely.
+// Reconnects always refresh the full list to recheck staff permissions.
+export function createInboxLiveStartup({
+  loadInitial, refreshOnReconnect, graceMs = 450,
+  schedule = setTimeout, cancel = clearTimeout,
+} = {}) {
+  if (typeof loadInitial !== "function" || typeof refreshOnReconnect !== "function" ||
+      typeof schedule !== "function" || typeof cancel !== "function") {
+    throw new TypeError("Inbox startup requires initial and reconnect refreshes.");
+  }
+  let firstOpenSeen = false;
+  let initialRequested = false;
+  let stopped = false;
+  let fallbackTimer = schedule(() => {
+    fallbackTimer = null;
+    if (stopped || firstOpenSeen || initialRequested) return;
+    initialRequested = true;
+    loadInitial();
+  }, graceMs);
+
+  return {
+    onOpen() {
+      if (stopped) return;
+      if (!firstOpenSeen) {
+        firstOpenSeen = true;
+        if (fallbackTimer != null) {
+          cancel(fallbackTimer);
+          fallbackTimer = null;
+        }
+        if (!initialRequested) {
+          initialRequested = true;
+          loadInitial();
+          return;
+        }
+      }
+      // After an offline fallback (or on any reconnect), the full refresh is
+      // necessary: customer messages and staff permissions might have changed.
+      refreshOnReconnect();
+    },
+    stop() {
+      stopped = true;
+      if (fallbackTimer != null) cancel(fallbackTimer);
+      fallbackTimer = null;
+    },
+  };
+}
