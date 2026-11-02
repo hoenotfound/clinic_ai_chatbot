@@ -3894,7 +3894,7 @@ function ThreadView({
                         type="button"
                         onClick={toggleVoicePreviewPlayback}
                         aria-label={voicePreviewPlaying ? "Pause voice preview" : "Play voice preview"}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] transition hover:bg-[var(--color-bg)]"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full sm:h-8 sm:w-8 bg-[var(--color-primary-light)] text-[var(--color-primary)] transition hover:bg-[var(--color-bg)]"
                       >
                         {voicePreviewPlaying ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="ml-0.5 h-4 w-4" />}
                       </button>
