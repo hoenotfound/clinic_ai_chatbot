@@ -1,7 +1,10 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { resolveNeutroComboOfferReply } = require("../src/utils/neutroComboOfferReply");
+const {
+  resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision,
+} = require("../src/utils/neutroComboOfferReply");
+const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 
 const now=Date.now();
 const turn=(role,content,s=0)=>({role,content,pricingCreatedAtMs:now-s*1000});
@@ -122,5 +125,83 @@ test("customer refusing one treatment is never sold the combination",()=>{
    assert.equal(check(current,[turn("user",current,60)],{
      verifiedIndividualQuote:true
    }),null,current);
+ }
+});
+
+
+const mediaCombo={...combo,
+ imageUrl:"https://da-chatbot-neutro-sense-tcm.onrender.com/promo-images/22",
+ caption:"✨ 9D + 3D 组合限时优惠: RM688"};
+const comboQuery="3D+9D组合多少钱？";
+const comboSession=[turn("user",comboQuery,30)];
+function comboMedia(promos=[mediaCombo],text=comboQuery,session=comboSession,extra={}){
+ const decision=check(text,session,{promotions:promos});
+ const pricingDecision=resolveNeutroComboMediaPricingDecision({
+   comboOfferDecision:decision,promotions:promos,customerText:text,
+   session,reply:decision?.reply,now,...extra
+ });
+ return {decision,pricingDecision};
+}
+async function selectMedia({promos=[mediaCombo],text=comboQuery,session=comboSession,
+ overrides={},recentlySent=false,unconfirmed=false,replyOverride}={}){
+ const {decision,pricingDecision}=comboMedia(promos,text,session,{
+   ...(replyOverride!==undefined?{reply:replyOverride}:{})
+ });
+ const reasons=[];
+ const selected=await resolvePricePromotionForReply({
+   priceQuery:true,packageQuery:false,
+   aiPricingEnabled:true,pricingDecision,
+   treatment:pricingDecision?.treatment,
+   verifiedServiceFromText:pricingDecision?.treatment,
+   customerText:text,conversationHistory:session,
+   services,serviceAliases,promotions:promos,
+   flagged:false,bookingReady:false,keywordReason:null,needsAttention:false,
+   textSendSucceeded:true,language:"zh",contactId:8880,
+   wasPromoRecentlySent:async()=>recentlySent,
+   hasUnconfirmedMediaDelivery:async()=>unconfirmed,
+   onSkip:reason=>reasons.push(reason),
+   ...overrides,
+ });
+ return {decision,pricingDecision,selected,reasons};
+}
+test("verified RM688 combo selects exactly its approved picture through normal promotion guard",async()=>{
+ const {pricingDecision,selected}=await selectMedia();
+ assert.equal(pricingDecision?.source,"verified_neutro_combo_image");
+ assert.equal(pricingDecision?.prices?.length,1);
+ assert.equal(selected?.promotion.linkedService,"3D + 9D 组合");
+ assert.equal(selected?.packages?.length,1);
+ assert.match(selected.packages[0].imageUrl,/\\/promo-images\\/22$/u);
+ assert.match(selected.packages[0].caption,/RM688/u);
+});
+test("combo image is not authorized for absent, mismatched or unverified offer",()=>{
+ assert.equal(comboMedia([{...mediaCombo,imageUrl:""}]).pricingDecision,null);
+ assert.equal(comboMedia([{...mediaCombo,pricing:{currency:"MYR",offer:999}}]).pricingDecision,null);
+ assert.equal(comboMedia([mediaCombo,{...mediaCombo}]).pricingDecision,null);
+ const good=comboMedia();
+ const unquoted=resolveNeutroComboMediaPricingDecision({
+   comboOfferDecision:good.decision,promotions:[mediaCombo],
+   customerText:comboQuery,session:comboSession,
+   reply:"We will check your price",now
+ });
+ assert.equal(unquoted,null);
+});
+test("combo price image respects accepted text, duplicate and uncertain delivery",async()=>{
+ for (const [name,opts,expected] of [
+   ["text rejected",{overrides:{textSendSucceeded:false}},"text_not_accepted"],
+   ["staff reviewing",{overrides:{needsAttention:true}},"staff_review_or_takeover"],
+   ["booking ready",{overrides:{bookingReady:true}},"booking_ready"],
+   ["clinical review",{overrides:{flagged:true}},"safety_or_review"],
+   ["already sent",{recentlySent:true},"all_graphics_already_sent"],
+   ["unconfirmed Meta receipt",{unconfirmed:true},"unconfirmed_media_delivery"],
+ ]) {
+   const {selected,reasons}=await selectMedia(opts);
+   assert.equal(selected,null,name);
+   assert.ok(reasons.includes(expected),name+" / "+reasons);
+ }
+});
+test("combo image never sends for customer refusal or ordinary 9D-only prices",async()=>{
+ for(const text of ["3D+9D组合多少钱？不要组合","9D多少钱？","只要9D不要3D，多少钱？"]){
+   const session=[turn("user",text,30)];
+   assert.equal(comboMedia([mediaCombo],text,session).pricingDecision,null,text);
  }
 });
