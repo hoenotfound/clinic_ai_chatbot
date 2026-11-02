@@ -39,6 +39,9 @@ function deriveSecondaryPotentialDueSql(candidateSql, {
   // The original send query still applies quiet hours and expiration guards.
   sql += "   AND " + dueExpression + " > $4::timestamptz - INTERVAL '8 hours'\n";
   sql += candidateSql.slice(endIndex, orderIndex);
+  // Only five binding values are needed by the hint. Original candidate
+  // selectors bind activation cutoff as $6 after a discarded LIMIT $5.
+  sql = sql.replace(/\\$6\\b/g, "$5");
   return `SELECT MIN(due_at) FILTER (WHERE due_at > $4::timestamptz) AS next_due_at,
        COALESCE(BOOL_OR(due_at <= $4::timestamptz), FALSE) AS has_overdue
     FROM (${sql}) sender_due_candidates`;
