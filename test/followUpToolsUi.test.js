@@ -38,3 +38,35 @@ test("follow-up video preview stays private and validates stored keys", () => {
   assert.match(source, /Referrer-Policy", "no-referrer"/);
   assert.match(source, /res\.redirect\(302, url\)/);
 });
+
+test("sender-specific follow-up controls are separated without mixing save actions", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const secondary = read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+
+  assert.match(tools, /aria-label="Follow-up sender"/);
+  assert.match(tools, /Primary WhatsApp/);
+  assert.match(tools, /Secondary WhatsApp/);
+  assert.match(tools, /showStatusControl=\{false\}/);
+  assert.match(tools, /ariaLabel="Enable 24-hour follow-ups"/);
+  assert.match(tools, /hasUnsavedChanges=\{senderView === "primary" && hasUnsavedChanges\}/);
+  assert.match(tools, /aria-label="Secondary follow-up sections"/);
+  assert.match(tools, /aria-label="Follow-up activation overview"/);
+  assert.match(tools, /View details and checks/);
+  assert.match(tools, /Extended WhatsApp timeline/);
+  assert.match(tools, /\["performance", "Results"\]/);
+  assert.match(tools, /aria-label="Activity sections"/);
+  assert.match(tools, /billingProtectionOpen, setBillingProtectionOpen\] = useState\(form\.whatsappFreeOnly\?\.enabled === true\)/);
+  assert.match(tools, /activitySection === "recent"/);
+  assert.match(tools, /activitySection === "health"/);
+  assert.match(tools, /section=\{secondarySection\}/);
+  assert.match(tools, /secondarySection === "media" && <ArielMediaReview \/>/);
+
+  assert.match(secondary, /if\(!active\|\|config\)return/);
+  assert.match(secondary, /section === "service"/);
+  assert.match(secondary, /section === "marketing"/);
+  assert.match(secondary, /<details key=\{slot\}/);
+  assert.match(secondary, /Changes not saved/);
+  assert.match(secondary, /setConfig\(prev=>prev\?/);
+  assert.match(secondary, /operatorBillingApproved:row.enabled && row.approved===true/);
+  assert.match(secondary, /confirmClinicVideoReuse:true/);
+});

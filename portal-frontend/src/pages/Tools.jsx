@@ -2361,6 +2361,9 @@ function FollowUpTool({
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [followUpTab, setFollowUpTab] = useState("sequence");
+  const [senderView, setSenderView] = useState("primary");
+  const [secondarySection, setSecondarySection] = useState("service");
+  const [activitySection, setActivitySection] = useState("recent");
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
   const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
@@ -2812,9 +2815,10 @@ function FollowUpTool({
       title="Automated follow-up"
       description="Send a short sequence when a customer goes quiet, with optional service-specific messages."
       switchLabel="24-hour follow-ups"
+      showStatusControl={false}
       enabled={form.enabled}
       savedEnabled={savedEnabled}
-      hasUnsavedChanges={hasUnsavedChanges}
+      hasUnsavedChanges={senderView === "primary" && hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
       saving={saving || translating}
@@ -2830,9 +2834,59 @@ function FollowUpTool({
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <ArielFollowUpRules />
-      <ArielMediaReview />
-      {uploadingVideo && (
+      <nav role="tablist" aria-label="Follow-up sender" className="mb-4 grid gap-2 rounded-2xl border border-[var(--color-border)] bg-white p-2 sm:grid-cols-2">
+        {[
+          ["primary", "Primary WhatsApp", "Main sequence and shared channel settings"],
+          ["secondary", "Secondary WhatsApp", "Separate follow-ups and templates"],
+        ].map(([id, title, subtitle]) => (
+          <button key={id} id={`follow-up-sender-${id}`} role="tab" aria-label={title} aria-selected={senderView === id}
+            aria-controls={`follow-up-sender-panel-${id}`} onClick={() => setSenderView(id)}
+            className={`rounded-xl border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${senderView === id
+              ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/50" : "border-transparent hover:bg-[var(--color-bg)]"}`}>
+            <span className="block text-sm font-bold">{title}</span>
+            <span className="mt-1 block text-xs text-[var(--color-text-muted)]">{subtitle}</span>
+          </button>
+        ))}
+      </nav>
+      <div id="follow-up-sender-panel-secondary" role="tabpanel" aria-labelledby="follow-up-sender-secondary"
+        className={senderView === "secondary" ? "space-y-4" : "hidden"}>
+        {hasUnsavedChanges && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          Primary changes are still unsaved. Return to Primary WhatsApp to save them.
+        </p>}
+        <nav role="tablist" aria-label="Secondary follow-up sections"
+          className="grid grid-cols-3 gap-1.5 rounded-xl border border-[var(--color-border)] bg-white p-1.5">
+          {[["service","Messages"],["marketing","Templates"],["media","Media"]].map(([id,label]) => (
+            <button type="button" key={id} id={`secondary-tab-${id}`} role="tab"
+              aria-selected={secondarySection===id} aria-controls={`secondary-panel-${id}`}
+              onClick={() => setSecondarySection(id)}
+              className={`min-h-11 shrink-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${secondarySection===id
+                ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>{label}</button>
+          ))}
+        </nav>
+        <div role="tabpanel" id={`secondary-panel-${secondarySection}`} aria-labelledby={`secondary-tab-${secondarySection}`}>
+          <div className={secondarySection === "media" ? "hidden" : ""}>
+            <ArielFollowUpRules active={senderView === "secondary"} section={secondarySection} />
+          </div>
+          {senderView === "secondary" && secondarySection === "media" && <ArielMediaReview />}
+        </div>
+      </div>
+      <div id="follow-up-sender-panel-primary" role="tabpanel" aria-labelledby="follow-up-sender-primary"
+        className={senderView === "primary" ? "" : "hidden"}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-white px-4 py-3">
+          <div>
+            <h2 className="text-sm font-bold">Main follow-up sequence</h2>
+            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Primary WhatsApp and supported social channels</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-[var(--color-text-muted)]">
+              {form.enabled !== savedEnabled ? (form.enabled ? "On after save" : "Off after save") : form.enabled ? "On" : "Off"}
+            </span>
+            <Switch checked={form.enabled} onChange={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
+              ariaLabel="Enable 24-hour follow-ups" />
+          </div>
+        </div>
+        {uploadingVideo && (
         <div
           role="status"
           className="mb-5 flex items-start gap-3 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/55 px-3.5 py-3"
@@ -2847,12 +2901,12 @@ function FollowUpTool({
         </div>
       )}
 
-      <section aria-label="Follow-up activation overview" className="mb-4 rounded-xl border border-[var(--color-border)] bg-white px-4 py-4 sm:px-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <section aria-label="Follow-up activation overview" className="mb-4 rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-bold">Automation readiness</h2>
-            <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-              Based on saved settings, server evidence and Meta template checks—not a promise that any customer will receive a message.
+            <h2 className="text-sm font-bold">Follow-up readiness</h2>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              Saved setup, Meta templates and delivery safeguards
             </p>
           </div>
           <span aria-label={`Overall follow-up readiness: ${operationalReadiness.overall.label}`}
@@ -2860,42 +2914,52 @@ function FollowUpTool({
             {operationalReadiness.overall.label}
           </span>
         </div>
-        <p className="mt-2 text-xs text-[var(--color-text-muted)]">{operationalReadiness.overall.detail}</p>
         {hasUnsavedChanges && (
           <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-            Unsaved changes are not live. The statuses below describe your last saved configuration.
+            Unsaved changes are not live. Readiness reflects the last saved settings.
           </p>
         )}
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {[
-            { title: "24-hour follow-ups", status: operationalReadiness.normal, tab: "sequence" },
-            { title: "Extended WhatsApp templates", status: operationalReadiness.extended,
-              tab: operationalReadiness.extended.target || "whatsapp" },
-          ].map((item) => (
-            <div key={item.title} className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold">{item.title}</h3>
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${followUpReadinessTone(item.status.level)}`}>
-                  {item.status.label}
-                </span>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{item.status.detail}</p>
-              <button type="button" onClick={() => setFollowUpTab(item.tab)}
-                className="mt-3 min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 text-xs font-semibold text-[var(--color-primary)]">
-                {item.tab === "sequence" ? "Review sequence" : "Review WhatsApp setup"}
+        <details className="group mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] [&::-webkit-details-marker]:hidden">
+            <span>View details and checks</span>
+            <span className="text-[var(--color-text-muted)] group-open:hidden">Show</span>
+            <span className="hidden text-[var(--color-text-muted)] group-open:inline">Hide</span>
+          </summary>
+          <div className="border-t border-[var(--color-border)] bg-white p-3">
+            <p className="text-xs leading-5 text-[var(--color-text-muted)]">{operationalReadiness.overall.detail}</p>
+            <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+              Readiness is based on saved settings and available verification. It is not a promise of delivery or zero Meta charges.
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {[
+                { title: "24-hour follow-ups", status: operationalReadiness.normal, tab: "sequence" },
+                { title: "Extended WhatsApp templates", status: operationalReadiness.extended,
+                  tab: operationalReadiness.extended.target || "whatsapp" },
+              ].map((item) => (
+                <div key={item.title} className="rounded-lg border border-[var(--color-border)] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold">{item.title}</h3>
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${followUpReadinessTone(item.status.level)}`}>{item.status.label}</span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{item.status.detail}</p>
+                  <button type="button" onClick={() => setFollowUpTab(item.tab)}
+                    className="mt-2 min-h-10 rounded-lg px-2 text-xs font-semibold text-[var(--color-primary)]">
+                    {item.tab === "sequence" ? "Review sequence" : "Review WhatsApp setup"}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
+              <p>Template server: {freeEntryStatusError ? "Unavailable" : !freeEntryStatus ? "Checking" : freeEntryStatus.enabledOnServer ? "On" : "Off"}
+                {" · "}Saved templates: {savedFreeEntryEnabled ? "On" : "Off"}</p>
+              <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(true); }}
+                disabled={freeEntryStatusLoading || templateCatalogLoading}
+                className="min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 font-semibold text-[var(--color-primary)] disabled:opacity-50">
+                {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck readiness"}
               </button>
             </div>
-          ))}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
-          <p>Template server: {freeEntryStatusError ? "Verification failed" : !freeEntryStatus ? "Checking or unavailable" : freeEntryStatus.enabledOnServer ? "On" : "Off"}
-            {" · "}Tools: {savedFreeEntryEnabled ? "On" : "Off"}</p>
-          <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(true); }}
-            disabled={freeEntryStatusLoading || templateCatalogLoading}
-            className="min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 font-semibold text-[var(--color-primary)] disabled:opacity-50">
-            {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck readiness"}
-          </button>
-        </div>
+          </div>
+        </details>
         {form.freeEntry?.enabled === true && freeEntryStatus && !freeEntryStatus.enabledOnServer && (
           <p role="status" className="mt-2 text-xs text-amber-700">
             Extended templates are selected in Tools but the server sending switch is off. No extended templates will be sent.
@@ -2938,43 +3002,23 @@ function FollowUpTool({
         )}
       </section>
 
-      <nav
-        role="tablist"
-        aria-label="Follow-up sections"
-        className="mb-4 grid min-w-0 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
-      >
+      <nav role="tablist" aria-label="Follow-up sections"
+        className="mb-4 grid grid-cols-3 gap-1.5 rounded-xl border border-[var(--color-border)] bg-white p-1.5 sm:flex">
         {[
-          { group: "Everyday", tabs: [
-            { key: "sequence", label: "Sequence" },
-            { key: "activity", label: "Activity" },
-            { key: "performance", label: "Performance" },
-          ] },
-          { group: "Advanced", tabs: [
-            { key: "pricing", label: "Pricing" },
-            { key: "whatsapp", label: "WhatsApp templates" },
-          ] },
-        ].map(({ group, tabs }) => (
-          <div key={group} className="min-w-0">
-            <p className="mb-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{group}</p>
-            <div className="flex min-w-0 gap-2 overflow-x-auto overscroll-x-contain pb-1">
-              {tabs.map(({ key, label }) => (
-                <button
-                  type="button"
-                  key={key}
-                  id={`follow-up-tab-${key}`}
-                  role="tab"
-                  aria-selected={followUpTab === key}
-                  aria-controls={`follow-up-panel-${key}`}
-                  onClick={() => setFollowUpTab(key)}
-                  className={`min-h-11 shrink-0 flex-1 whitespace-nowrap rounded-xl border px-3 py-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${followUpTab === key
-                    ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                    : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/35"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
+          ["sequence", "Sequence"],
+          ["pricing", "Pricing"],
+          ["whatsapp", "Templates"],
+          ["activity", "Activity"],
+          ["performance", "Results"],
+        ].map(([key, label]) => (
+          <button type="button" key={key} id={`follow-up-tab-${key}`} role="tab"
+            aria-selected={followUpTab === key} aria-controls={`follow-up-panel-${key}`}
+            onClick={() => setFollowUpTab(key)}
+            className={`min-h-11 shrink-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)] sm:text-sm ${followUpTab === key
+              ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+              : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+            {label}
+          </button>
         ))}
       </nav>
 
@@ -3076,6 +3120,13 @@ function FollowUpTool({
                   );
                 })}
               </ol>
+              <details className="group mt-3 rounded-xl border border-[var(--color-border)]">
+                <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] [&::-webkit-details-marker]:hidden">
+                  <span>Extended WhatsApp timeline · {(form.freeEntry?.slotsHours || []).length} times</span>
+                  <span className="text-[var(--color-primary)] group-open:hidden">View</span>
+                  <span className="hidden text-[var(--color-primary)] group-open:inline">Hide</span>
+                </summary>
+                <div className="border-t border-[var(--color-border)] px-3 pb-3">
               <ol aria-label="Extended WhatsApp follow-up timeline" className="mt-2 space-y-2">
                 <li className="relative mt-4 pl-9">
                   <span aria-hidden="true" className="absolute left-0 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]">W</span>
@@ -3140,6 +3191,9 @@ function FollowUpTool({
                   );
                 })}
               </ol>
+                </div>
+              </details>
+
               <div aria-label="Selected follow-up" className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/35 px-3.5 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -4550,18 +4604,38 @@ function FollowUpTool({
           </Card>
           </div>
           <div id="follow-up-panel-performance" role="tabpanel" aria-labelledby="follow-up-tab-performance" className={followUpTab === "performance" ? "space-y-5" : "hidden"}>
+            <p className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs text-[var(--color-text-muted)]">
+              These reports are grouped by channel. WhatsApp totals can include both primary and secondary numbers.
+            </p>
             <FollowUpPerformance active={followUpTab === "performance"} />
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
-            <nav aria-label="Activity section shortcuts" className="flex flex-wrap gap-2 text-xs font-semibold">
-              <a href="#follow-up-delivery-health" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">Delivery health</a>
-              <a href="#follow-up-delivery-events" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">Recent activity</a>
-              <a href="#follow-up-template-activity" className="min-h-11 rounded-lg border border-[var(--color-border)] px-3 py-3">WhatsApp templates</a>
+            <p className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs text-[var(--color-text-muted)]">
+              Activity is grouped by channel, not WhatsApp phone number. WhatsApp events may include both senders.
+            </p>
+            <nav role="tablist" aria-label="Activity sections"
+              className="flex gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white p-1.5">
+              {[["recent", "Recent activity", "follow-up-delivery-events"],["health", "Delivery health", "follow-up-delivery-health"],["templates", "Templates", "follow-up-template-activity"]].map(([key, label, panelId]) => (
+                <button type="button" role="tab" key={key} id={`activity-tab-${key}`}
+                  aria-selected={activitySection===key} aria-controls={panelId}
+                  onClick={() => setActivitySection(key)}
+                  className={`min-h-11 shrink-0 flex-1 rounded-lg px-3 py-2 text-xs font-semibold sm:text-sm ${activitySection===key
+                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+                  {label}
+                </button>
+              ))}
             </nav>
-            <div id="follow-up-delivery-health" className="scroll-mt-4"><FollowUpHealth active={followUpTab === "activity"} />
+            <div id="follow-up-delivery-health" role="tabpanel" aria-labelledby="activity-tab-health"
+              className={activitySection === "health" ? "scroll-mt-4" : "hidden"}>
+              <FollowUpHealth active={followUpTab === "activity" && activitySection === "health"} />
             </div>
-            <div id="follow-up-delivery-events" className="scroll-mt-4"><FollowUpActivity active={followUpTab === "activity"} /></div>
-            <div id="follow-up-template-activity" className="scroll-mt-4"><Card>
+            <div id="follow-up-delivery-events" role="tabpanel" aria-labelledby="activity-tab-recent"
+              className={activitySection === "recent" ? "scroll-mt-4" : "hidden"}>
+              <FollowUpActivity active={followUpTab === "activity" && activitySection === "recent"} />
+            </div>
+            <div id="follow-up-template-activity" role="tabpanel" aria-labelledby="activity-tab-templates"
+              className={activitySection === "templates" ? "scroll-mt-4" : "hidden"}><Card>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-base font-bold">Extended WhatsApp template activity</h2>
@@ -4842,6 +4916,7 @@ function FollowUpTool({
             </Card>
           </div>
         </aside>
+      </div>
       </div>
     </ToolShell>
   );
@@ -5387,7 +5462,7 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
   );
 }
 
-function ToolShell({ title, description, switchLabel = null, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
+function ToolShell({ title, description, switchLabel = null, showStatusControl = true, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
   const enabledStateChanged = enabled !== savedEnabled;
   const enabledLabel = enabledStateChanged
     ? enabled
@@ -5409,11 +5484,11 @@ function ToolShell({ title, description, switchLabel = null, enabled, savedEnabl
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)] sm:text-[15px]">{description}</p>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+            {showStatusControl && <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
               {switchLabel && <span className="text-xs font-medium text-[var(--color-text-muted)]">{switchLabel}</span>}
               <span className="text-sm font-semibold text-[var(--color-text)]">{enabledLabel}</span>
               <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${switchLabel || title}`} />
-            </div>
+            </div>}
           </header>
 
           <div className="mt-5 sm:mt-6">{children}</div>
