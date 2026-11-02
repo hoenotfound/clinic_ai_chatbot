@@ -4,7 +4,7 @@ import { api } from "../api";
 const SLOTS=[2,6,20];
 const fallback={2:"",6:"",20:""};
 
-export default function ArielFollowUpRules(){
+export default function ArielFollowUpRules({ active = true, section = "service" }){
   const [rules,setRules]=useState(fallback);
   const [enabled,setEnabled]=useState({2:false,6:false,20:false});
   const [videos,setVideos]=useState({2:"",6:""});
@@ -19,9 +19,10 @@ export default function ArielFollowUpRules(){
   const [saved,setSaved]=useState(null);
 
   useEffect(()=>{
-    let active=true;
+    if(!active||config)return;
+    let mounted=true;
     api.getSecondaryFollowUpRules().then(data=>{
-      if(!active)return;
+      if(!mounted)return;
       setConfig(data);
       setRules(Object.fromEntries(SLOTS.map(slot=>[
         slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.message_text||"",
@@ -42,9 +43,9 @@ export default function ArielFollowUpRules(){
           enabled:saved.some(r=>r.enabled===true),approved:false,
         }];
       })));
-    }).catch(e=>{if(active)setError(e.message||"Could not load secondary WhatsApp settings.");});
-    return()=>{active=false;};
-  },[]);
+    }).catch(e=>{if(mounted)setError(e.message||"Could not load secondary WhatsApp settings.");});
+    return()=>{mounted=false;};
+  },[active,config]);
   async function save(slot){
     setBusy(slot);setError("");setSaved(null);
     try{
@@ -87,15 +88,17 @@ export default function ArielFollowUpRules(){
     <section aria-label="Secondary WhatsApp follow-ups"
       className="mb-5 rounded-2xl border-2 border-[var(--color-border)] bg-white p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-bold">{senderName} — separate WhatsApp follow-ups</h2>
+        <h2 className="text-base font-bold">{section === "marketing" ? "Extended marketing templates" : "Reply-window follow-up messages"}</h2>
         <span className="rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold">
-          {!config?.configured?"Sender not activated":config?.workerEnabled?"Worker enabled":"Worker disabled"}
+          {!config ? "Checking connection" : !config.configured ? "Number unavailable" :
+            section === "marketing" ? (config.marketingWorkerEnabled ? "Marketing worker on" : "Marketing worker off") :
+            (config.workerEnabled ? "Reply worker on" : "Reply worker off")}
         </span>
       </div>
       <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-        These 2h / 6h / 20h service-window rules belong only to the verified secondary number.
-        Changes here never affect Neutro Sense. Only opted-in customers inside a verified 24-hour window
-        may receive these messages. Quiet hours: 00:00–07:00 Malaysia time.
+        {section === "marketing"
+          ? "48-hour and 72-hour templates belong to this number only. Each language requires Meta approval, marketing consent and its own sending switch."
+          : "These messages are only for eligible customers of the secondary number inside a verified 24-hour reply window. Quiet hours: 00:00–07:00 Malaysia time."}
       </p>
       {error&&<p role="alert" className="mt-3 text-xs text-[var(--color-danger)]">{error}</p>}
       {!config ? <p className="mt-3 text-xs">Checking sender settings…</p> :
@@ -104,9 +107,14 @@ export default function ArielFollowUpRules(){
           The secondary WhatsApp number is not yet verified and active, or sender-aware
           mode is disabled. Follow-ups cannot be configured or sent yet.
         </p> :
-      <div className="mt-4 space-y-4">
+      section === "service" ? <div className="mt-4 space-y-3">
         {SLOTS.map(slot=>
-          <div key={slot} className="rounded-xl border border-[var(--color-border)] p-3">
+          <details key={slot} className="group overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+              <span>After {slot} hours</span>
+              <span className="text-xs text-[var(--color-text-muted)]">{enabled[slot] ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
+            </summary>
+            <div className="border-t border-[var(--color-border)] p-3">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor={`secondary-followup-${slot}`} className="text-sm font-semibold">
                 After {slot} hours
@@ -157,10 +165,11 @@ export default function ArielFollowUpRules(){
                 {busy===slot?"Saving…":"Save secondary rule"}
               </button>
             </div>
-          </div>
+            </div>
+          </details>
         )}
-      </div>}
-      {config?.configured&&
+      </div> : null}
+      {config?.configured && section === "marketing" &&
         <div className="mt-5 rounded-xl border border-[var(--color-border)] p-3">
           <h3 className="text-sm font-bold">48h / 72h — approved marketing templates</h3>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
@@ -186,8 +195,12 @@ export default function ArielFollowUpRules(){
               t.languageCode===locale&&t.name===row.templates[locale])).filter(Boolean);
             const selectedCount=languages.filter(([locale])=>Boolean(row.templates[locale])).length;
             const validSelection=selectedCount>0&&selected.length===selectedCount;
-            return <div key={slot}
-              className="mt-3 rounded-lg border border-[var(--color-border)] p-3">
+            return <details key={slot} className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
+              <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-xs font-semibold [&::-webkit-details-marker]:hidden">
+                <span>After {slot} hours</span>
+                <span className="text-[var(--color-text-muted)]">{row.enabled ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
+              </summary>
+              <div className="border-t border-[var(--color-border)] p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold">After {slot} hours</span>
                 <label className="flex items-center gap-2 text-xs">
@@ -249,14 +262,20 @@ export default function ArielFollowUpRules(){
                   {busy===slot?"Saving…":"Save template languages"}
                 </button>
               </div>
-            </div>;
+              </div>
+            </details>;
           })}
         </div>}
-      {config?.configured&&!config.workerEnabled&&
+      {config?.configured && section === "service" && !config.workerEnabled &&
         <p className="mt-3 text-xs text-[var(--color-text-muted)]">
           These saved settings cannot send anything until this number's separate
           operational switch and real Meta validation are enabled.
         </p>}
+      {config?.configured && section === "marketing" && !config.marketingWorkerEnabled && (
+        <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+          The marketing worker is off. Saving templates does not enable sending until that worker and Meta checks allow it.
+        </p>
+      )}
     </section>
   );
 }
