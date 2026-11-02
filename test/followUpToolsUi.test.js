@@ -38,3 +38,24 @@ test("follow-up video preview stays private and validates stored keys", () => {
   assert.match(source, /Referrer-Policy", "no-referrer"/);
   assert.match(source, /res\.redirect\(302, url\)/);
 });
+
+test("sender-specific follow-up controls are separated without mixing save actions", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const secondary = read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+
+  assert.match(tools, /aria-label="Follow-up sender"/);
+  assert.match(tools, /Primary WhatsApp/);
+  assert.match(tools, /Secondary WhatsApp/);
+  assert.match(tools, /showStatusControl=\{senderView === "primary"\}/);
+  assert.match(tools, /hasUnsavedChanges=\{senderView === "primary" && hasUnsavedChanges\}/);
+  assert.match(tools, /aria-label="Secondary follow-up sections"/);
+  assert.match(tools, /section=\{secondarySection\}/);
+  assert.match(tools, /secondarySection === "media" && <ArielMediaReview \/>/);
+
+  assert.match(secondary, /if\(!active\|\|config\)return/);
+  assert.match(secondary, /section === "service"/);
+  assert.match(secondary, /section === "marketing"/);
+  assert.match(secondary, /<details key=\{slot\}/);
+  assert.match(secondary, /operatorBillingApproved:row.enabled && row.approved===true/);
+  assert.match(secondary, /confirmClinicVideoReuse:true/);
+});
