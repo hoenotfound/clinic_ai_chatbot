@@ -111,3 +111,16 @@ test("both-treatment price enquiry quotes the two verified trials and the combo 
  assert.equal((result.reply.match(/RM488/gu)||[]).length,2);
  assert.equal((result.reply.match(/RM688/gu)||[]).length,1);
 });
+
+test("customer refusing one treatment is never sold the combination",()=>{
+ for(const current of [
+   "我只想做9D，3D不要，多少钱？",
+   "不要3D，9D多少钱？",
+   "Only 9D, not 3D. What is the price?",
+   "只要3D不要9D，多少钱",
+ ]) {
+   assert.equal(check(current,[turn("user",current,60)],{
+     verifiedIndividualQuote:true
+   }),null,current);
+ }
+});
