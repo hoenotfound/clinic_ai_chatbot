@@ -55,7 +55,13 @@ export const api = {
       body: JSON.stringify({ pushEndpoint }),
     }),
   me: () => request("/auth/me"),
-  listConversations: () => request("/conversations"),
+  listConversations: (refreshReason = "other") => request("/conversations", {
+    // Only a fixed diagnostic label. No IDs, names, message data or new calls.
+    headers: {
+      "Content-Type": "application/json",
+      "X-Inbox-Refresh-Reason": refreshReason,
+    },
+  }),
   getConversationSummary: (contactId, includeArchived = false) =>
     request(`/conversations/${encodeURIComponent(contactId)}/summary${includeArchived ? "?includeArchived=true" : ""}`),
   searchConversationDirectory: (term) =>
