@@ -1,5 +1,6 @@
 const clients = new Set();
 const listeners = new Map();
+const { recordSseLifecycle } = require("./refreshWakeDiagnostics");
 
 function normalizeAccess(res) {
   const access = res.req?.user?.realtimeAccess;
@@ -71,6 +72,9 @@ function payloadForClient(client, event, payload) {
     // contact/lead id on their long-lived SSE connection: ownership may change
     // after the connection opens, while the next API refresh will always run a
     // fresh DB authorization check and return the correct newly assigned set.
+    // Count only that a permission-redacted change required a full Inbox
+    // reconciliation. Never log the client, contact or staff identity.
+    recordSseLifecycle("redacted_change");
     return {};
   }
 
