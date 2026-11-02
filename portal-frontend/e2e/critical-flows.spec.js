@@ -837,6 +837,156 @@ test("mobile long press opens the WhatsApp-style message actions without sending
   expectNoUnexpectedApi(apiState);
 });
 
+test("blocked WhatsApp conversations do not offer forwarding but preserve Copy", async ({ page }) => {
+  const expiredInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [conversation({
+      latest_inbound_at: expiredInbound,
+      latest_customer_message_at: expiredInbound,
+      last_message_at: expiredInbound,
+    })],
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await page.getByRole("button", { name: "Message actions" }).first().click();
+
+  const menu = page.getByRole("menu", {
+    name: page.viewportSize().width < 640 ? "Message options" : undefined,
+  });
+  await expect(menu.getByRole("menuitem", { name: /Copy/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Forward/ })).toHaveCount(0);
+  await expect(menu.getByRole("menuitem", { name: /Reply/ })).toHaveCount(0);
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages/1/forward")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("suspended secondary WhatsApp number cannot forward from the message actions", async ({ page }) => {
+  const apiState = await installApi(page, {
+    initialConversations: [conversation({
+      whatsapp_is_secondary: true,
+      whatsapp_sender_state: "suspended",
+      whatsapp_sender_coexistence_enabled: false,
+    })],
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await page.getByRole("button", { name: "Message actions" }).first().click();
+  await expect(page.getByRole("menuitem", { name: /Copy/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Forward/ })).toHaveCount(0);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("an unfinished Inbox draft is isolated per contact and cleared only when sent", async ({ page }) => {
+  const bella = conversation({
+    contact_id: 202,
+    name: "Bella Customer",
+    whatsapp_profile_name: "Bella Customer",
+    whatsapp_number: "+60199887766",
+    last_message_content: "Question from Bella",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), bella],
+  });
+
+  await page.goto("/inbox");
+
+  async function selectContact(name) {
+    const thread = page.locator(`section[aria-label="Conversation with ${name}"]`);
+    if ((page.viewportSize()?.width ?? 0) < 1024) {
+      const back = page.getByRole("button", { name: "Back to conversations" });
+      if (await back.isVisible()) await back.click();
+    }
+    const list = page.getByRole("complementary", { name: "Conversation inbox" });
+    await list.getByRole("button").filter({ hasText: name }).first().click();
+    await expect(thread).toBeVisible();
+    return thread.locator("textarea").first();
+  }
+
+  const alexComposer = await selectContact("Alex Customer");
+  await alexComposer.fill("Unsent Alex draft");
+  const bellaComposer = await selectContact("Bella Customer");
+  await bellaComposer.fill("Unsent Bella draft");
+  const alexAgain = await selectContact("Alex Customer");
+  await expect(alexAgain).toHaveValue("Unsent Alex draft");
+  const bellaAgain = await selectContact("Bella Customer");
+  await expect(bellaAgain).toHaveValue("Unsent Bella draft");
+
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(bellaAgain).toHaveValue("");
+  expect(findCall(apiState, "POST", "/api/conversations/202/messages")?.body?.text).toBe("Unsent Bella draft");
+
+  const alexAfterBellaSend = await selectContact("Alex Customer");
+  await expect(alexAfterBellaSend).toHaveValue("Unsent Alex draft");
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("phone Return adds a line without sending and mobile controls are easy to tap", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Phone-only keyboard and touch checks.");
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+
+  const search = page.getByRole("searchbox", { name: "Search by name, number, message, or assignee" });
+  const searchFont = await search.evaluate((node) => parseFloat(getComputedStyle(node).fontSize));
+  expect(searchFont).toBeGreaterThanOrEqual(16);
+
+  await search.fill("Alex");
+  const clear = page.getByRole("button", { name: "Clear search" });
+  const clearSize = await clear.boundingBox();
+  expect(clearSize.width).toBeGreaterThanOrEqual(44);
+  expect(clearSize.height).toBeGreaterThanOrEqual(44);
+  await clear.click();
+
+  await openInboxConversation(page);
+  for (const accessibleName of [
+    "Back to conversations",
+    "Open details for Alex Customer",
+    "Take over conversation",
+    "Conversation actions",
+  ]) {
+    const button = page.getByRole("button", { name: accessibleName }).first();
+    const rect = await button.boundingBox();
+    expect(rect, accessibleName).not.toBeNull();
+    expect(rect.width, accessibleName).toBeGreaterThanOrEqual(44);
+    expect(rect.height, accessibleName).toBeGreaterThanOrEqual(44);
+  }
+
+  const composer = page.locator("textarea").first();
+  await composer.fill("First line");
+  await composer.press("Enter");
+  await composer.type("Second line");
+  await expect(composer).toHaveValue("First line\nSecond line");
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+
+  await page.getByRole("button", { name: "Send message" }).click();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body?.text)
+    .toBe("First line\nSecond line");
+  expectNoUnexpectedApi(apiState);
+});
+
+test("desktop Enter sends but Enter during IME composition never sends", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Physical keyboard check on desktop.");
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const composer = page.locator("textarea").first();
+  await composer.fill("Multilingual draft");
+  await composer.evaluate((element) => {
+    element.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", bubbles: true, cancelable: true, isComposing: true,
+    }));
+  });
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  await composer.press("Enter");
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body?.text)
+    .toBe("Multilingual draft");
+  expectNoUnexpectedApi(apiState);
+});
+
 test("login submits credentials and reaches Inbox", async ({ page }) => {
   const apiState = await installApi(page, { loggedIn: false });
 
