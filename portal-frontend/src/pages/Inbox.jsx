@@ -4445,6 +4445,9 @@ function MessageBubble({
   const swipeStartRef = useRef(null);
   const swipeOffsetRef = useRef(0);
   const suppressClickRef = useRef(false);
+  const longPressTimerRef = useRef(null);
+  const longPressStartRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isWhatsAppTemplate = !!message.whatsapp_template;
@@ -4517,6 +4520,12 @@ function MessageBubble({
   const showActions = canQuote || canForward || canCopy;
   const replyPreview = message.reply_preview || null;
 
+  useEffect(() => () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     if (!menuOpen) return undefined;
 
@@ -4548,6 +4557,72 @@ function MessageBubble({
   function closeAndCopy() {
     setMenuOpen(false);
     onCopy?.(message);
+  }
+
+  function clearLongPress() {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }
+
+  // A held message opens the same actions as the overflow button.
+  // This is presentation-only: reply and forward still use the existing
+  // policy-checked handlers, and unsupported actions are never offered.
+  function handleBubbleTouchStart(event) {
+    longPressTriggeredRef.current = false;
+    handleSwipeStart(event);
+    if (!showActions || event.touches?.length !== 1) return;
+    if (event.target?.closest?.("button, a, audio, video, input, textarea, summary")) return;
+    const touch = event.touches[0];
+    clearLongPress();
+    longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      if (!longPressStartRef.current || swipeOffsetRef.current > 0) return;
+      longPressTriggeredRef.current = true;
+      suppressClickRef.current = true;
+      setMenuOpen(true);
+      resetSwipe();
+      longPressStartRef.current = null;
+      window.setTimeout(() => { suppressClickRef.current = false; }, 650);
+    }, 450);
+  }
+
+  function handleBubbleTouchMove(event) {
+    const start = longPressStartRef.current;
+    const touch = event.touches?.[0];
+    if (start && touch &&
+        (Math.abs(touch.clientX - start.x) > 10 ||
+          Math.abs(touch.clientY - start.y) > 10)) {
+      clearLongPress();
+    }
+    if (!longPressTriggeredRef.current) handleSwipeMove(event);
+  }
+
+  function handleBubbleTouchEnd() {
+    clearLongPress();
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      resetSwipe();
+      return;
+    }
+    finishSwipe();
+  }
+
+  function handleBubbleTouchCancel() {
+    clearLongPress();
+    longPressTriggeredRef.current = false;
+    cancelSwipe();
+  }
+
+  function handleBubbleContextMenu(event) {
+    if (!showActions || event.target?.closest?.("button, a, audio, video, input, textarea, summary")) return;
+    event.preventDefault();
+    clearLongPress();
+    resetSwipe();
+    setMenuOpen(true);
   }
 
   function handleSwipeStart(event) {
@@ -4625,10 +4700,11 @@ function MessageBubble({
       <div
         className={`wa-message-bubble group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform ${isSwiping ? "duration-0" : "duration-150"} sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
         style={{ transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
-        onTouchStart={handleSwipeStart}
-        onTouchMove={handleSwipeMove}
-        onTouchEnd={finishSwipe}
-        onTouchCancel={cancelSwipe}
+        onTouchStart={handleBubbleTouchStart}
+        onTouchMove={handleBubbleTouchMove}
+        onTouchEnd={handleBubbleTouchEnd}
+        onTouchCancel={handleBubbleTouchCancel}
+        onContextMenu={handleBubbleContextMenu}
         onClickCapture={handleClickCapture}
       >
         {showActions && (
