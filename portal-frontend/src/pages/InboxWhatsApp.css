@@ -122,8 +122,17 @@
     border-radius: 0.85rem;
     background: #f0f2f5;
     color: #111b21;
-    font-size: 0.875rem;
+    font-size: 1rem; /* iOS Safari must not zoom when this field receives focus. */
     box-shadow: none;
+  }
+  .wa-inbox-list-header button[aria-label="Clear search"] {
+    width: 2.75rem;
+    height: 2.75rem;
+    right: 0;
+    border-radius: 50%;
+  }
+  .wa-inbox-list-header input[type="search"] {
+    padding-right: 3rem;
   }
   .wa-inbox-list-header input[type="search"]:focus {
     outline: 2px solid #25d36655;
@@ -220,13 +229,13 @@
     gap: 0.15rem;
   }
   .wa-thread-toolbar button[aria-label="Back to conversations"] {
-    width: 2.5rem;
-    min-width: 2.5rem;
+    width: 2.75rem;
+    min-width: 2.75rem;
     border-radius: 50%;
   }
   .wa-thread-toolbar button[aria-label^="Open details for"] {
-    width: 2.5rem;
-    min-width: 2.5rem;
+    width: 2.75rem;
+    min-width: 2.75rem;
   }
   .wa-thread-contact-name {
     color: #111b21;
@@ -248,21 +257,24 @@
     gap: 0.2rem;
   }
   .wa-thread-actions > button[aria-label="Conversation actions"] {
-    width: 2.5rem;
-    height: 2.5rem;
+    width: 2.75rem;
+    height: 2.75rem;
     border: none;
     border-radius: 50%;
     background: transparent;
   }
   .wa-thread-desktop-handoff {
-    min-width: 2.5rem;
-    width: 2.5rem;
-    height: 2.5rem;
+    min-width: 2.75rem;
+    width: 2.75rem;
+    height: 2.75rem;
     padding: 0;
     border-radius: 50%;
   }
   .wa-thread-desktop-handoff > span {
     display: none;
+  }
+  .wa-thread-messages > div > div > button {
+    min-height: 2.75rem;
   }
   .wa-thread-messages {
     padding: 0.9rem 0.6rem;
@@ -346,8 +358,8 @@
 
 @media (max-width: 360px) {
   .wa-thread-toolbar button[aria-label^="Open details for"] {
-    width: 2.25rem;
-    min-width: 2.25rem;
+    width: 2.75rem;
+    min-width: 2.75rem;
   }
   .wa-thread-contact-meta > span:first-child {
     display: none;
