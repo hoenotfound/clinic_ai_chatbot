@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { recordWorkerWake, recordInboxFullList, recordInboxRevisionCheck,
   recordInboxRevisionFallback, recordSseLifecycle, snapshot, classifyChannel } =
   require("../src/utils/refreshWakeDiagnostics");
@@ -98,4 +100,17 @@ test("SSE lifecycle captures only coarse connection ages and redacted events", (
     "sse|redacted_change",
   ]) assert.ok(keys.includes(key), key);
   assert.doesNotMatch(keys.join(" "), /private-info|personal-staff-identity/);
+});
+
+test("Inbox SSE cleanup follows the outbound response, not incoming request completion", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"), "utf8");
+  const start = source.indexOf('router.get("/events", (req, res) => {');
+  const end = source.indexOf('router.get("/:contactId/messages"', start);
+  const eventRoute = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(eventRoute, /res\.once\("close", finishStream\)/);
+  assert.doesNotMatch(eventRoute, /req\.(on|once)\("close"/);
+  assert.match(eventRoute, /recordSseLifecycle\("opened"\)/);
+  assert.match(eventRoute, /recordSseLifecycle\("closed", Date\.now\(\) - openedAt\)/);
 });
