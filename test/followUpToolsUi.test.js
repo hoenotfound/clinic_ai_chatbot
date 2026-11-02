@@ -46,9 +46,14 @@ test("sender-specific follow-up controls are separated without mixing save actio
   assert.match(tools, /aria-label="Follow-up sender"/);
   assert.match(tools, /Primary WhatsApp/);
   assert.match(tools, /Secondary WhatsApp/);
-  assert.match(tools, /showStatusControl=\{senderView === "primary"\}/);
+  assert.match(tools, /showStatusControl=\{false\}/);
+  assert.match(tools, /ariaLabel="Enable main follow-up sequence"/);
   assert.match(tools, /hasUnsavedChanges=\{senderView === "primary" && hasUnsavedChanges\}/);
   assert.match(tools, /aria-label="Secondary follow-up sections"/);
+  assert.match(tools, /aria-label="Follow-up activation overview"/);
+  assert.match(tools, /View details and checks/);
+  assert.match(tools, /Extended WhatsApp timeline/);
+  assert.match(tools, /\["performance", "Results"\]/);
   assert.match(tools, /section=\{secondarySection\}/);
   assert.match(tools, /secondarySection === "media" && <ArielMediaReview \/>/);
 
