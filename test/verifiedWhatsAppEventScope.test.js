@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   scopeForPersistedContact,
   scopeForVerifiedDeliveryJob,
@@ -97,4 +99,21 @@ test("missing verified sender does not suppress real opt-outs or bookings", () =
     assert.equal(secondaryEventRequiresWake("conversation_changed",
       { ...unknown, reason }, env), true);
   }
+});
+
+test("contact change publishers reuse persisted sender without new SQL or inferred ownership", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/db/contactsRepo.js"), "utf8");
+  const start = source.indexOf("function publishContactChange(");
+  const end = source.indexOf("function notifyTelegram(", start);
+  const publishBody = source.slice(start, end);
+  assert.match(publishBody, /scopeForPersistedContact\(contact\)/);
+  assert.doesNotMatch(publishBody, /pool\.query|SELECT|businessPhoneNumberId:.*WHATSAPP_PHONE_NUMBER_ID/);
+  assert.match(source, /publishContactChange\(updated\.id, \{ contact: updated \}\)/);
+  assert.match(source, /publishContactChange\(row\.contact_id \|\| row\.id, \{ profileOnly: true, contact: row \}\)/);
+  const unknown = scopeForPersistedContact({ id: 42, channel: "whatsapp" }, env);
+  assert.deepEqual(unknown, { channel: "whatsapp" });
+  assert.equal(secondaryEventRequiresWake("conversation_changed",
+    { ...unknown, reason: "booking_confirmed" }, env), true,
+    "unknown sender still permits time-critical secondary follow-up checks");
 });
