@@ -815,8 +815,10 @@ test("conversation actions archive and restore without changing AI ownership", a
   expect(findCall(apiState, "PATCH", "/api/conversations/101/archive")?.body)
     .toEqual({ archived: true });
   await page.getByRole("button", { name: "Open archived chats" }).click();
-  await expect(page.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
-  await openInboxConversation(page);
+  const archivedRow = page.getByRole("complementary", { name: "Conversation inbox" })
+    .getByRole("button").filter({ hasText: "Alex Customer" }).first();
+  await expect(archivedRow).toBeVisible();
+  await archivedRow.click();
   await page.getByRole("button", { name: "Conversation actions" }).click();
   await page.getByRole("menuitem", { name: "Unarchive chat" }).click();
   const changes = apiState.calls.filter((c) => c.path === "/api/conversations/101/archive");
