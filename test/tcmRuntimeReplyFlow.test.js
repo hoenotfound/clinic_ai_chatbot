@@ -12,6 +12,7 @@ const { isComplimentaryAssessmentFeeQuestion, complimentaryAssessmentFeeReply } 
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { resolveApprovedPricingAssessment } = require("../src/utils/approvedPricingDecision");
 const { appendRequestedBusinessFacts } = require("../src/utils/verifiedPricingBusinessFacts");
+const { scopeForPersistedContact } = require("../src/utils/verifiedWhatsAppEventScope");
 
 // Execute the actual production handler and tracked text-sending functions,
 // not a reimplementation of the handler's control flow. Only external
@@ -71,6 +72,7 @@ function harness({ failDelivery = false } = {}) {
   const context = {
     console: { error: (...args) => state.errors.push(args.join(" ")), log: () => {}, warn: () => {}, info: () => {} },
     process, setTimeout, clearTimeout, Buffer,
+    scopeForPersistedContact,
     aiReplyCancellation: {
       keyForWhatsAppNumber: () => "whatsapp:test", snapshot: () => 0,
       safeToSend: () => state.allowSend,
