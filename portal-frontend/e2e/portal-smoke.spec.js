@@ -1676,8 +1676,8 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
   await service.getByLabel("After 2 hours").fill("Updated reminder for secondary only.");
   await expect(twoHour.locator("summary")).toContainText("Unsaved");
 
-  await service.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
-  await service.getByText(/I approve this clinic-owned video/).click();
+  await twoHour.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
+  await twoHour.getByText(/I approve this clinic-owned video/).click();
   await service.getByRole("button", { name: "Save secondary rule" }).first().click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toMatchObject({
@@ -2392,7 +2392,7 @@ test("Follow-up pricing and WhatsApp tabs fill desktop width", async ({ page }) 
 
   for (const [tab, id] of [
     ["Pricing", "follow-up-panel-pricing"],
-    ["WhatsApp templates", "follow-up-panel-whatsapp"],
+    ["Templates", "follow-up-panel-whatsapp"],
     ["Activity", "follow-up-panel-activity"],
   ]) {
     await page.getByRole("tab", { name: tab }).click();
@@ -2425,6 +2425,7 @@ test("Follow-up readiness distinguishes saved live state from unsaved edits on p
   await page.setViewportSize({ width: 375, height: 740 });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   await expect(overview.getByLabel("Overall follow-up readiness: Active")).toBeVisible();
   const regular = overview.getByRole("heading", { name: "24-hour follow-ups" }).locator("..").locator("..");
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
@@ -2459,6 +2460,7 @@ test("Follow-up readiness reports blocked server without obscuring active normal
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   await expect(overview.getByLabel("Overall follow-up readiness: Needs attention")).toBeVisible();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Sending blocked");
@@ -2486,6 +2488,7 @@ test("Follow-up readiness reports sending blocked when normal follow-ups are pau
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   await expect(overview.getByLabel("Overall follow-up readiness: Sending blocked")).toBeVisible();
   const normal = overview.getByRole("heading", { name: "24-hour follow-ups" }).locator("..").locator("..");
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
@@ -2515,6 +2518,7 @@ test("Follow-up readiness Recheck forces a fresh Meta catalog and reflects chang
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Active");
 
@@ -2553,6 +2557,7 @@ test("Follow-up readiness verifies approved fallback version, billing safeguards
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Partially available");
   await expect(extended).toContainText("language/template combination");
@@ -2590,6 +2595,7 @@ test("Follow-up readiness respects assessment-first blocking of automatic promot
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Needs setup");
   await expect(extended).toContainText("unavailable with assessment-first pricing");
@@ -2619,6 +2625,7 @@ test("Follow-up readiness treats automatic promotion media as conditional, not v
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Needs verification");
   await expect(extended).toContainText("unambiguous, eligible image");
@@ -2648,6 +2655,7 @@ test("Follow-up readiness does not accept explicit media on an automatic promoti
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Needs setup");
   await expect(extended).toContainText("cannot override automatic promotion media");
@@ -2672,6 +2680,7 @@ test("Readiness blocks a +72h-only sequence without verified seven-day evidence"
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Sending blocked");
   await expect(extended).toContainText("No configured extended follow-up time can be sent");
@@ -2698,6 +2707,7 @@ test("Readiness distinguishes wholly restricted times from a partly eligible 26h
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Partially available");
   await expect(extended).toContainText("Earlier configured slots may still work if the customer remains eligible.");
@@ -2724,6 +2734,7 @@ test("Readiness blocks +71h without quiet-hours early shift under the 72h ceilin
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Sending blocked");
   await expect(extended).toContainText("+71h slot cannot send at its normal due time");
@@ -2751,6 +2762,7 @@ test("Readiness marks +71h as conditional when quiet hours may advance final slo
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Needs verification");
   await expect(extended).toContainText("quiet hours move the final attempt earlier");
@@ -2779,6 +2791,7 @@ test("Readiness keeps an eligible +26h slot partially available beside blocked +
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Partially available");
   await expect(extended).toContainText("+71h slot cannot send at its normal due time");
@@ -2805,6 +2818,7 @@ test("Readiness treats +71h as nominally eligible under a verified seven-day cei
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Active");
   await expect(extended).not.toContainText("quiet-hours early sending");
@@ -2829,6 +2843,7 @@ test("Readiness allows +72h only when seven-day proof and rollout are verified",
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Active");
   await expect(extended).not.toContainText("Sending blocked");
@@ -2852,6 +2867,7 @@ test("Readiness does not mark a saved extended setup active without a valid acti
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Needs setup");
   await expect(extended).toContainText("activation time is missing or invalid");
@@ -2875,6 +2891,7 @@ test("Follow-up readiness shows strict billing block without claiming guaranteed
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Sending blocked");
   await expect(extended).toContainText("Meta billable callback");
@@ -2893,6 +2910,7 @@ test("Readiness blocks both paths when global automated replies are off", async 
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   await expect(overview.getByLabel("Overall follow-up readiness: Sending blocked")).toBeVisible();
   await expect(overview).toContainText("The global automated replies server switch is off.");
 });
@@ -2914,6 +2932,7 @@ test("Readiness distinguishes approved all-language coverage from missing post-7
   });
   await page.goto("/tools");
   const overview = page.getByRole("region", { name: "Follow-up activation overview" });
+  await overview.getByText("View details and checks").click();
   const extended = overview.getByRole("heading", { name: "Extended WhatsApp templates" }).locator("..").locator("..");
   await expect(extended).toContainText("Partially available");
   await expect(extended).toContainText("Times at +72h or later require verified seven-day Meta eligibility");
@@ -2962,6 +2981,7 @@ test("Unified follow-up journey edits regular and extended steps without sending
   });
   await page.setViewportSize({ width: 375, height: 740 });
   await page.goto("/tools");
+  await page.getByText(/Extended WhatsApp timeline ·/).click();
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Customer follow-up journey");
   await expect(journey).toContainText("After 24 hours · WhatsApp templates");
@@ -2997,6 +3017,7 @@ test("Unified follow-up journey shows extended pause and missing template withou
     },
   });
   await page.goto("/tools");
+  await page.getByText(/Extended WhatsApp timeline ·/).click();
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   await expect(journey).toContainText("Extended follow-ups paused");
   await expect(journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" })
@@ -3020,6 +3041,7 @@ test("Unified timeline shows sending blocked when saved or draft regular follow-
   });
   await page.setViewportSize({ width: 375, height: 740 });
   await page.goto("/tools");
+  await page.getByText(/Extended WhatsApp timeline ·/).click();
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
   await expect(extended.getByText("Saved setup: Sending blocked", { exact: true })).toBeVisible();
@@ -3047,6 +3069,7 @@ test("Unified timeline does not show Enabled when the parent switch is disabled 
     onConfigUpdate: value => writes.push(value),
   });
   await page.goto("/tools");
+  await page.getByText(/Extended WhatsApp timeline ·/).click();
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
   await expect(extended.getByText("Saved setup: Enabled in Tools", { exact: true })).toBeVisible();
@@ -3070,6 +3093,7 @@ test("Unified timeline shows unsaved extended enablement as draft only", async (
     onConfigUpdate: payload => writes.push(payload),
   });
   await page.goto("/tools");
+  await page.getByText(/Extended WhatsApp timeline ·/).click();
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
   await expect(extended.getByText("Saved setup: Paused", { exact: true })).toBeVisible();
@@ -3105,6 +3129,7 @@ test("Extended WhatsApp activity explains accepted versus unknown and links safe
   await page.setViewportSize({ width: 375, height: 740 });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tablist", { name: "Activity sections" }).getByRole("tab", { name: "Templates" }).click();
   const activity = page.locator("#follow-up-template-activity");
   await expect(activity).toContainText("Accepted by WhatsApp");
   await expect(activity).toContainText("delivery to the customer is not confirmed");
@@ -3141,6 +3166,7 @@ test("Extended eligibility explains pause, low interest and missing distinct lan
   });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tablist", { name: "Activity sections" }).getByRole("tab", { name: "Templates" }).click();
   const area = page.locator("#follow-up-template-activity");
   await expect(area).toContainText("Customer requested more time");
   await expect(area).toContainText("Additional reminder intentionally skipped");
@@ -3161,6 +3187,7 @@ test("Extended follow-up activity remains safe when provider status is unrecogni
   });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tablist", { name: "Activity sections" }).getByRole("tab", { name: "Templates" }).click();
   const activity = page.locator("#follow-up-template-activity");
   await expect(activity).toContainText("queued for review");
   await expect(activity).toContainText("Only a recorded provider status is available");
