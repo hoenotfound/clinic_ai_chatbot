@@ -1289,6 +1289,7 @@ export default function Inbox() {
     try {
       await api.setInboxArchived(id, archived);
       showToast(archived ? "Chat archived." : "Chat restored.", "info");
+      return true;
     } catch (err) {
       console.error("Failed to update Inbox archive:", err);
       updateConversationLocally(id, { inbox_archived_at: conversation.inbox_archived_at || null });
@@ -1300,6 +1301,7 @@ export default function Inbox() {
         setKeepExplicitlyOpenedThread(previousExplicitThread);
       }
       showToast("Couldn't update archive. Please try again.", "error");
+      return false;
     } finally {
       setConversationStatePending(false);
     }
@@ -3764,9 +3766,11 @@ function ThreadView({
                   icon={contact.inbox_archived_at ? UnarchiveIcon : ArchiveIcon}
                   label={contact.inbox_archived_at ? "Unarchive chat" : "Archive chat"}
                   disabled={conversationStatePending}
-                  onClick={() => {
+                  onClick={async () => {
                     setActionsOpen(false);
-                    onToggleArchive();
+                    // Navigate to the list only after success; a failed API call
+                    // must leave the original mobile thread accessible.
+                    if (await onToggleArchive() && mobileThreadOpen) onBack();
                   }}
                 />}
                 <ConversationActionItem
