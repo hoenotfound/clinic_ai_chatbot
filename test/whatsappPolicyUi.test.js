@@ -436,3 +436,13 @@ test("secondary queued and cancelled images never display misleading Meta delive
  assert.match(inbox,/isSecondaryWhatsApp && !deliveryQueued && !deliveryCancelled/);
  assert.match(inbox,/cancelled: 6/);
 });
+
+
+test("secondary media SSE refreshes a cancelled image and safely requeues a known pre-provider hold",()=>{
+ const s=fs.readFileSync(path.join(__dirname,"../portal-frontend/src/pages/Inbox.jsx"),"utf8");
+ assert.match(s,/secondaryMediaSafelyRequeued/);
+ assert.match(s,/existingStatus === "unknown" && incomingStatus === "queued"/);
+ assert.match(s,/existing\.whatsapp_template\?\.automatedSecondaryAiMedia === true/);
+ assert.match(s,/!existing\.whatsapp_message_id/);
+ assert.match(s,/existingStatus &&[\s\S]*DELIVERY_STATUS_RANK\[existingStatus\]/);
+});
