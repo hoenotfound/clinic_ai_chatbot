@@ -28,6 +28,8 @@ import {
 } from "../utils/whatsappPolicy";
 import {
   AlertIcon,
+  ArchiveIcon,
+  UnarchiveIcon,
   ArrowLeftIcon,
   BotIcon,
   CameraIcon,
@@ -1252,6 +1254,35 @@ export default function Inbox() {
     }
   }
 
+  async function handleToggleArchive(contactId) {
+    const id = Number(contactId);
+    const conversation = conversationsRef.current?.find((item) => Number(item.contact_id) === id);
+    if (!conversation || conversationStatePending) return;
+    const archived = !Boolean(conversation.inbox_archived_at);
+    setConversationStatePending(true);
+    // Optimistic UI keeps swipes snappy; the server owns the durable shared
+    // state. Never modify AI mode, follow-up flag or message contents.
+    updateConversationLocally(id, {
+      inbox_archived_at: archived ? new Date().toISOString() : null,
+    });
+    try {
+      await api.setInboxArchived(id, archived);
+      if (Number(selectedIdRef.current) === id) {
+        setSelectedId(null);
+        setSearchParams({}, { replace: true });
+        setMobileThreadOpen(false);
+        setKeepExplicitlyOpenedThread(false);
+      }
+      showToast(archived ? "Chat archived." : "Chat restored.", "info");
+    } catch (err) {
+      console.error("Failed to update Inbox archive:", err);
+      updateConversationLocally(id, { inbox_archived_at: conversation.inbox_archived_at || null });
+      showToast("Couldn't update archive. Please try again.", "error");
+    } finally {
+      setConversationStatePending(false);
+    }
+  }
+
   async function handleToggleUnread() {
     const conversation = conversations?.find((item) => item.contact_id === selectedId);
     if (!conversation || conversationStatePending) return;
@@ -1618,6 +1649,8 @@ export default function Inbox() {
         conversations={conversations}
         selectedId={selectedId}
         onSelect={handleSelectConversation}
+        onToggleArchive={handleToggleArchive}
+        archivePending={conversationStatePending}
         onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
@@ -1682,6 +1715,7 @@ export default function Inbox() {
         onResolveReview={handleResolveReview}
         onToggleFollowUp={handleToggleFollowUp}
         onToggleUnread={handleToggleUnread}
+        onToggleArchive={() => handleToggleArchive(selectedId)}
         onRetryMessage={handleRetryMessage}
         onSend={handleSend}
         onSendImage={handleSendImage}
@@ -1753,6 +1787,8 @@ function ConversationList({
   conversations,
   selectedId,
   onSelect,
+  onToggleArchive,
+  archivePending,
   onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
@@ -2508,6 +2544,7 @@ function ThreadView({
   onResolveReview,
   onToggleFollowUp,
   onToggleUnread,
+  onToggleArchive,
   onRetryMessage,
   onSend,
   onSendImage,
@@ -3605,6 +3642,12 @@ function ThreadView({
                     />
                   )}
                 </div>
+                <ConversationActionItem
+                  icon={contact.inbox_archived_at ? UnarchiveIcon : ArchiveIcon}
+                  label={contact.inbox_archived_at ? "Unarchive chat" : "Archive chat"}
+                  disabled={conversationStatePending}
+                  onClick={() => { setActionsOpen(false); onToggleArchive(); }}
+                />
                 <ConversationActionItem
                   icon={FlagIcon}
                   label={contact.needs_follow_up ? "Remove follow-up" : "Add follow-up"}
