@@ -789,7 +789,8 @@ test("swipe right reveals Archive, moves chat into Archived, and Unarchive resto
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
   await list.getByRole("button", { name: "Open archived chats" }).click();
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
-  await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).toHaveCount(1);
+  await expect(list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" })
+    .getByRole("button", { name: "Unarchive chat" })).toHaveCount(1);
   // The archived action is hidden until the row is swiped right.
   await list.locator(".wa-archive-row").filter({ hasText: "Alex Customer" }).getByRole("button", { name: "Unarchive chat" }).evaluate((element) => {
     const wrap = element.closest(".wa-archive-row");
