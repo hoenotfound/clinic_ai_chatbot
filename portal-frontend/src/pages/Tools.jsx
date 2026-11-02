@@ -2927,6 +2927,9 @@ function FollowUpTool({
           </summary>
           <div className="border-t border-[var(--color-border)] bg-white p-3">
             <p className="text-xs leading-5 text-[var(--color-text-muted)]">{operationalReadiness.overall.detail}</p>
+            <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+              Readiness is based on saved settings and available verification. It is not a promise of delivery or zero Meta charges.
+            </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {[
                 { title: "24-hour follow-ups", status: operationalReadiness.normal, tab: "sequence" },
