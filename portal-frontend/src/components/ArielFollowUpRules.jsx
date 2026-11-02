@@ -59,7 +59,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
       setEnabled(prev=>({...prev,[slot]:data.rule.enabled}));
       setConfig(prev=>prev?({...prev,rules:[
         ...(prev.rules||[]).filter(item=>Number(item.slot_hours)!==slot),
-        data.rule,
+        { ...data.rule, media_key: selected || null },
       ]}):prev);
       if(slot!==20)setMediaApproved(prev=>({...prev,[slot]:false}));
       setSaved(slot);
