@@ -1631,6 +1631,12 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
   await mockPortalApi(page, { loggedIn: true });
   let reads = 0;
   const writes = [];
+  const secondaryRequests = [];
+  page.on("request", request => {
+    if (request.url().includes("whatsapp-secondary-followups")) {
+      secondaryRequests.push({ method: request.method(), url: new URL(request.url()).pathname });
+    }
+  });
   await page.route("**/api/whatsapp-secondary-followups**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -1679,7 +1685,14 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
   await twoHour.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
   await twoHour.getByText(/I approve this clinic-owned video/).click();
   await twoHour.getByRole("button", { name: "Save secondary rule" }).click();
-  await expect.poll(() => writes.length).toBe(1);
+  try {
+    await expect.poll(() => writes.length).toBe(1);
+  } catch (error) {
+    const alerts = await service.getByRole("alert").allTextContents();
+    throw new Error(`Secondary save request missing: ${JSON.stringify({ secondaryRequests, alerts,
+      enabled: await twoHour.getByRole("button", { name: /Save secondary rule|Saving/ }).isEnabled(),
+      approval: await twoHour.getByRole("checkbox").isChecked() })}; ${error.message}`);
+  }
   expect(writes[0]).toMatchObject({
     messageText: "Updated reminder for secondary only.",
     enabled: true, mediaKey: "clinic-video-2h",
