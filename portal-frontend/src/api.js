@@ -4,9 +4,11 @@ const BASE = "/api";
 // localStorage, sessionStorage, service workers or the HTTP disk cache.
 let inboxSnapshot = null;
 let inboxSnapshotEtag = null;
+let inboxSnapshotRevisionProof = null;
 function clearInboxSnapshotCache() {
   inboxSnapshot = null;
   inboxSnapshotEtag = null;
+  inboxSnapshotRevisionProof = null;
 }
 
 async function request(path, options = {}) {
@@ -39,12 +41,21 @@ async function listInboxConversations(refreshReason = "other") {
     "X-Inbox-Refresh-Reason": refreshReason,
     ...(inboxSnapshot && inboxSnapshotEtag
       ? { "If-None-Match": inboxSnapshotEtag } : {}),
+    ...(inboxSnapshot && inboxSnapshotEtag && inboxSnapshotRevisionProof
+      ? { "X-Inbox-Revision-Proof": inboxSnapshotRevisionProof } : {}),
   };
   // Explicit conditional validation, never the browser's persistent cache.
   const res = await fetch(`${BASE}/conversations`, {
     credentials: "include", cache: "no-store", headers,
   });
   if (res.status === 304 && inboxSnapshot) {
+    // A full-query 304 may supply the first usable revision proof after a
+    // previous WAL-check failure. Retain it only for the same strong ETag.
+    const returnedEtag = res.headers.get("etag");
+    const returnedProof = res.headers.get("x-inbox-revision-proof");
+    if (returnedProof && returnedEtag && returnedEtag === inboxSnapshotEtag) {
+      inboxSnapshotRevisionProof = returnedProof;
+    }
     // Server has freshly checked the complete payload AND current staff scope.
     return inboxSnapshot;
   }
@@ -67,6 +78,8 @@ async function listInboxConversations(refreshReason = "other") {
   if (!Array.isArray(payload)) throw new TypeError("Invalid Inbox list response.");
   inboxSnapshot = payload;
   inboxSnapshotEtag = res.headers.get("etag");
+  // Only an opaque, server-signed proof; no patient data or disk persistence.
+  inboxSnapshotRevisionProof = res.headers.get("x-inbox-revision-proof");
   return payload;
 }
 
