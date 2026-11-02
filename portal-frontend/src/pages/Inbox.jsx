@@ -2115,7 +2115,7 @@ function ConversationList({
                 key={filter.key}
                 type="button"
                 onClick={() => updateFilter(filter.key, "all")}
-                className="inline-flex min-h-9 max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-xs font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white"
+                className={`${filter.key === "sender" ? "hidden sm:inline-flex" : "inline-flex"} min-h-9 max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-xs font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white`}
                 title={`Remove ${filter.label} filter`}
               >
                 <span className="truncate">{filter.label}</span>
