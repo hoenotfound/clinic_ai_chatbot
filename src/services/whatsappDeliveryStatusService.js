@@ -19,6 +19,8 @@ const IDLE_RECOVERY_INTERVAL_MS = 60 * 60 * 1000;
 const BILLING_ALERT_RETRY_INTERVAL_MS = 30 * 1000;
 const UNMATCHED_CALLBACK_GRACE_SECONDS = 5 * 60;
 const STALE_AFTER_SECONDS = 60;
+const { scopeForVerifiedDeliveryJob } = require("../utils/verifiedWhatsAppEventScope");
+
 const STALE_RECHECK_GRACE_MS = 5 * 1000;
 const BATCH_SIZE = 50;
 const MAX_ATTEMPTS = 5;
@@ -29,9 +31,10 @@ function deliveryFailureReason(job) {
   return job.error_message || job.error_title || "WhatsApp reported delivery as failed.";
 }
 
-function defaultPublish(message) {
+function defaultPublish(message, scope = {}) {
   if (!message) return;
   realtimeEvents.publish("conversation_changed", {
+    ...scope,
     contactId: message.contact_id,
     messageId: message.id,
     whatsappMessageId: message.whatsapp_message_id,
@@ -41,9 +44,10 @@ function defaultPublish(message) {
   });
 }
 
-function defaultPublishContact(contactId) {
+function defaultPublishContact(contactId, scope = {}) {
   if (!contactId) return;
   realtimeEvents.publish("conversation_changed", {
+    ...scope,
     contactId,
     reason: "contact_state",
   });
@@ -177,9 +181,9 @@ function createWhatsAppDeliveryStatusService({
     return stored;
   }
 
-  function publishContactSafely(contactId) {
+  function publishContactSafely(contactId, scope = {}) {
     try {
-      publishContact(contactId);
+      publishContact(contactId, scope);
     } catch (err) {
       logger.error("Failed to publish durable WhatsApp delivery attention state:", err);
     }
@@ -201,7 +205,7 @@ function createWhatsAppDeliveryStatusService({
     );
   }
 
-  async function restoreFailureAttention(job, updatedMessage) {
+  async function restoreFailureAttention(job, updatedMessage, scope = {}) {
     if (job.delivery_status !== "failed" || updatedMessage.delivery_status !== "failed") {
       return null;
     }
@@ -219,13 +223,15 @@ function createWhatsAppDeliveryStatusService({
     // its message-level failure record, but do not re-alert or log an open
     // delivery task that the database deliberately refused to create.
     if (!updatedContact) return null;
-    publishContactSafely(updatedMessage.contact_id);
+    publishContactSafely(updatedMessage.contact_id, scope);
     return { reason, attentionReason };
   }
 
   async function processClaimedJob(job) {
+    let senderVerification = null;
     if (typeof repo.verifyJobSender === "function") {
       const checked = await repo.verifyJobSender(job);
+      senderVerification = checked;
       if (checked?.matched === false) {
         const err = new Error("WhatsApp provider status cannot be applied to " +
           "a message from another or unverified Meta receiving number.");
@@ -233,6 +239,9 @@ function createWhatsAppDeliveryStatusService({
         throw err;
       }
     }
+    // Verification is already part of this write path. Reuse it to label the
+    // realtime event; never issue SQL solely for the follow-up scheduler.
+    const eventScope = scopeForVerifiedDeliveryJob(job, senderVerification);
     const errorText = job.error_message || job.error_title || null;
     let statusAppliedNow = false;
     let updatedMessage = await messages.updateDeliveryStatusByWamid(
@@ -251,7 +260,7 @@ function createWhatsAppDeliveryStatusService({
     } else {
       statusAppliedNow = true;
       try {
-        publish(updatedMessage);
+        publish(updatedMessage, eventScope);
       } catch (err) {
         logger.error("Failed to publish durable WhatsApp delivery status:", err);
       }
@@ -271,7 +280,7 @@ function createWhatsAppDeliveryStatusService({
     ) {
       try {
         const cleared = await reconcileAcceptedReplyAttention(updatedMessage.contact_id);
-        if (cleared) publishContactSafely(updatedMessage.contact_id);
+        if (cleared) publishContactSafely(updatedMessage.contact_id, eventScope);
       } catch (error) {
         logger.error(
           `Could not reconcile accepted WhatsApp reply attention for contact ${updatedMessage.contact_id}:`,
@@ -304,7 +313,7 @@ function createWhatsAppDeliveryStatusService({
 
     const failure = transientRetryQueued
       ? null
-      : await restoreFailureAttention(job, updatedMessage);
+      : await restoreFailureAttention(job, updatedMessage, eventScope);
     if (failure) {
       logger.error(
         `Delivery failed for message ${job.wamid}${job.error_code ? ` (code ${job.error_code})` : ""}:`,
