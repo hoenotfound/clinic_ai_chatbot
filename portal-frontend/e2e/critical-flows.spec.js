@@ -855,9 +855,25 @@ test("blocked WhatsApp conversations do not offer forwarding but preserve Copy",
   const menu = page.getByRole("menu", {
     name: page.viewportSize().width < 640 ? "Message options" : undefined,
   });
-  await expect(menu.getByRole("menuitem", { name: /Copy/ })).toBeVisible();
+  const copy = menu.getByRole("menuitem", { name: /Copy/ });
+  await expect(copy).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: /Forward/ })).toHaveCount(0);
   await expect(menu.getByRole("menuitem", { name: /Reply/ })).toHaveCount(0);
+  if (page.viewportSize().width < 640) {
+    // A visible React element can still be clipped by the message scroller
+    // or hidden behind the composer on real phones. Check actual hit testing.
+    await expect(copy).toBeInViewport({ ratio: 0.99 });
+    const sheetIsAboveComposer = await copy.evaluate((button) => {
+      const menuElement = button.closest('[aria-label="Message options"]');
+      const rect = button.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return menuElement?.parentElement === document.body &&
+        Boolean(hit && (button === hit || button.contains(hit)));
+    });
+    expect(sheetIsAboveComposer).toBe(true);
+    await copy.click();
+    await expect(menu).toBeHidden();
+  }
   expect(findCall(apiState, "POST", "/api/conversations/101/messages/1/forward")).toBeFalsy();
   expectNoUnexpectedApi(apiState);
 });
