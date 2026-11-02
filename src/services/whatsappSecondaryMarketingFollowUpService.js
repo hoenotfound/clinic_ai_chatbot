@@ -10,6 +10,9 @@ const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
+const realtimeEvents=require("../utils/realtimeEvents");
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+ require("../utils/secondaryDueTimeScheduler");
 
 // Select a locale only from actual sender-owned customer text. Do not infer
 // Malay from Latin characters or silently send English to an unknown speaker.
@@ -18,7 +21,6 @@ function customerTemplateLocale(messages){
  return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms_MY":null;
 }
 
-const INTERVAL=5*60*1000;
 const SLOTS=new Set([48,66]);
 function enabled(env=process.env){
  return Boolean(adsOnlyActivation(env)) &&
@@ -153,6 +155,14 @@ const CANDIDATES_SQL=`
    )
  ORDER BY inbound.created_at,c.id,rule.slot_hours,rule.language_code LIMIT $5
 `;
+// This read-only hint keeps every candidate consent, sender and billing rule
+// while looking ahead to the next sendable slot. The actual candidate selector
+// and pre-send policy recheck still exclusively authorize messages.
+const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
+ fromTable:"whatsapp_sender_marketing_followup_rules",
+ dueExpression:"inbound.created_at+rule.slot_hours*INTERVAL '1 hour'",
+ quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
+});
 // Recheck with the existing claim; sender, real inbound, consent and operator
 // rule version must stay eligible. No second claim after Meta ambiguity.
 const RECHECK_SQL=CANDIDATES_SQL.replace(
@@ -290,13 +300,29 @@ async function runOnce({
  }
  return{disabled:false,attempted,accepted};
 }
-let timer=null;
-function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
- if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>run({env}).catch(e=>
-   console.error("[secondary WhatsApp marketing] Worker failed:",e?.message)),INTERVAL);
- timer?.unref?.();
- return true;
+async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
+ const cutoff=adsOnlyActivation(env);
+ if(!enabled(env)||!cutoff)return null;
+ const result=await database.query(POTENTIAL_DUE_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
+ ]);
+ return result.rows?.[0]||null;
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={CANDIDATES_SQL,RECHECK_SQL,enabled,customerTemplateLocale,approvedStaticMarketingTemplate,runOnce,start,stop};
+
+let scheduler=null;
+function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
+ database=pool,events=realtimeEvents,createTimer,now}={}){
+ if(!enabled(env)||scheduler)return false;
+ scheduler=createSecondaryDueScheduler({
+   label:"Secondary WhatsApp marketing followup scheduler",
+   run,readNextDue,database,env,events,createTimer,now,
+ });
+ return scheduler.start();
+}
+function stop(){scheduler?.stop();scheduler=null;}
+module.exports={
+ CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,customerTemplateLocale,
+ approvedStaticMarketingTemplate,runOnce,nextPotentialDueAt,start,stop,
+};

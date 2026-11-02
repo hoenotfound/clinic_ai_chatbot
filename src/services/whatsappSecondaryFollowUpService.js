@@ -14,10 +14,12 @@ const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecond
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const realtimeEvents=require("../utils/realtimeEvents");
+const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
+  require("../utils/secondaryDueTimeScheduler");
 
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
-const INTERVAL=5*60*1000;
 const ALLOWED_MIME={
   video:new Set(["video/mp4","video/3gpp"]),
   image:new Set(["image/jpeg","image/png"]),
@@ -130,6 +132,12 @@ const CANDIDATES_SQL=`
  ORDER BY inbound.created_at,c.id,rule.slot_hours
  LIMIT $5
 `;
+
+const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
+  fromTable:"whatsapp_sender_followup_rules",
+  dueExpression:"inbound.created_at + rule.slot_hours * INTERVAL '1 hour'",
+  quietWindowEndMarker:"   -- Never send an old 2h slot",
+});
 
 function enabled(env) {
  return Boolean(adsOnlyActivation(env)) &&
@@ -386,14 +394,29 @@ async function runOnce({
   return {disabled:false,attempted,accepted};
 }
 
-let timer=null;
-function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}) {
- if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>run({env}).catch(e=>
-   console.error("[secondary WhatsApp followups] Sender-scoped worker error:",e?.message)
- ),INTERVAL);
- timer?.unref?.();
- return true;
+async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
+ const cutoff=adsOnlyActivation(env);
+ if(!enabled(env)||!cutoff)return null;
+ const result=await database.query(POTENTIAL_DUE_SQL,[
+   env.WHATSAPP_SECONDARY_SENDER_KEY,
+   env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+   env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
+ ]);
+ return result.rows?.[0]||null;
 }
-function stop(){if(timer){clearInterval(timer);timer=null;}}
-module.exports={CANDIDATES_SQL,RECHECK_SQL,enabled,runOnce,start,stop};
+
+let scheduler=null;
+function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
+ database=pool,events=realtimeEvents,createTimer,now}={}){
+ if(!enabled(env)||scheduler)return false;
+ scheduler=createSecondaryDueScheduler({
+   label:"Secondary WhatsApp service followup scheduler",
+   run,readNextDue,database,env,events,createTimer,now,
+ });
+ return scheduler.start();
+}
+function stop(){scheduler?.stop();scheduler=null;}
+module.exports={
+ CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,runOnce,
+ nextPotentialDueAt,start,stop,
+};

@@ -5,6 +5,7 @@
 // AI scheduling, 24h policy, billing or marketing consent handlers.
 const crypto=require("node:crypto");
 const {pool}=require("../db/db");
+const {measureSecondaryWorkerRun}=require("../utils/secondaryDueTimeScheduler");
 const senderRepo=require("../db/whatsappSenderConversationRepo");
 const {normalizeWhatsappNumber}=require("../utils/whatsappPhoneNormalization");
 
@@ -315,7 +316,9 @@ async function runOnce({
 let timer=null;
 function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
  if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>run({env}).catch(e=>
+ timer=setIntervalFn(()=>measureSecondaryWorkerRun(
+   "Secondary WhatsApp coexistence history import",()=>run({env})
+ ).catch(e=>
    console.error("[WhatsApp Coexistence] import worker:",e?.message)),60000);
  timer?.unref?.();return true;
 }

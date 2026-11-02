@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
-const {CANDIDATES_SQL,RECHECK_SQL}=
+const {CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL}=
  require("../src/services/whatsappSecondaryMarketingFollowUpService");
 const cs=process.env.TEST_DATABASE_URL;
 test("migration 109 compiles second-account 48/66h consent, history, staff and one-shot candidate queries",{
@@ -26,12 +26,18 @@ test("migration 109 compiles second-account 48/66h consent, history, staff and o
   assert.equal((await db.query("SELECT count(*)::int n FROM whatsapp_sender_marketing_followup_attempts")).rows[0].n,0);
   await db.query("PREPARE secondary_marketing_candidates(text,text,text,timestamptz,integer,timestamptz) AS "+CANDIDATES_SQL);
   await db.query("PREPARE secondary_marketing_recheck(text,text,text,timestamptz,integer,timestamptz) AS "+RECHECK_SQL);
+  await db.query("PREPARE secondary_marketing_due(text,text,text,timestamptz,timestamptz) AS "+POTENTIAL_DUE_SQL);
+  const due=await db.query(
+   "EXECUTE secondary_marketing_due('ariel','100000000000002','200000000000002',NOW(),NOW())");
+  assert.equal(due.rows?.[0]?.next_due_at,null);
+  assert.equal(due.rows?.[0]?.has_overdue,false);
   const candidates=await db.query(
    "EXECUTE secondary_marketing_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW())");
   assert.deepEqual(candidates.rows,[]);
   const checks=await db.query(
    "EXECUTE secondary_marketing_recheck('ariel','100000000000002','200000000000002',NOW(),10,NOW())");
   assert.deepEqual(checks.rows,[]);
+  await db.query("DEALLOCATE secondary_marketing_due");
   await db.query("DEALLOCATE secondary_marketing_candidates");
   await db.query("DEALLOCATE secondary_marketing_recheck");
   // Two approved languages coexist in the SAME slot; one attempt is still

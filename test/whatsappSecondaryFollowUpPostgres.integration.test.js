@@ -3,7 +3,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {Client}=require("pg");
 const {runMigrations,loadMigrations}=require("../src/db/migrationRunner");
-const {CANDIDATES_SQL,RECHECK_SQL}=require("../src/services/whatsappSecondaryFollowUpService");
+const {CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL}=require("../src/services/whatsappSecondaryFollowUpService");
 
 const connectionString=process.env.TEST_DATABASE_URL;
 test("PostgreSQL compiles both sender-specific followup queries against migrated production schema",{
@@ -34,6 +34,14 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
    await db.query(
      "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,timestamptz,timestamptz) AS "+RECHECK_SQL
    );
+   await db.query(
+     "PREPARE sender_followup_due(text,text,text,timestamptz,timestamptz) AS "+POTENTIAL_DUE_SQL
+   );
+   const due=await db.query(
+     "EXECUTE sender_followup_due('ariel','100000000000002','200000000000002',NOW(),NOW())"
+   );
+   assert.equal(due.rows?.[0]?.next_due_at,null);
+   assert.equal(due.rows?.[0]?.has_overdue,false);
    const c=await db.query(
      "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW())"
    );
@@ -42,6 +50,7 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
      "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW(),NOW())"
    );
    assert.equal(status.rows?.[0]?.allowed,false);
+   await db.query("DEALLOCATE sender_followup_due");
    await db.query("DEALLOCATE sender_followup_candidates");
    await db.query("DEALLOCATE sender_followup_recheck");
  }finally{
