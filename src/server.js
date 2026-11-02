@@ -2002,7 +2002,7 @@ async function processIncomingMessage(
         // when staff used an older caption than the current promotion copy.
         // Unverified legacy behaviour retains its existing matching rules.
         wasPromoRecentlySent: selectPromoDuplicateCheck({
-          aiPricingEnabled: pricingAuthorityRequired,
+          aiPricingEnabled: pricingAuthorityRequired || Boolean(comboMediaPricingDecision),
           numberedPricingSelection: pricingAuthorityRequired
             ? (approvedPricingDecision?.source === "numbered_price_menu"
                 ? numberedPricingSelection : null)
