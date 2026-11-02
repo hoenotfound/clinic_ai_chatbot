@@ -265,18 +265,25 @@ test("only a verified sender billing reconciliation wakes the delayed media queu
   const database={query:async(sql,params)=>{
     calls.push({sql,params});return{rowCount:1,rows:[{id:7}]};
   }};
-  assert.equal(await worker.wakeAfterVerifiedReconciliation({database,env:approved}),true);
+  assert.equal(await worker.wakeAfterVerifiedReconciliation({
+    contactIds:[21,21],database,env:approved,
+  }),true);
   assert.equal(calls.length,1);
   assert.match(calls[0].sql,/job.state='pending'/);
   assert.match(calls[0].sql,/gate.state='idle'/);
+  assert.match(calls[0].sql,/gate.owner_contact_id=job.contact_id/);
+  assert.match(calls[0].sql,/job.contact_id=ANY\(\$4::int\[\]\)/);
   assert.match(calls[0].sql,/next_attempt_at=NOW\(\)/);
   assert.match(calls[0].sql,/job.expires_at>NOW\(\)/);
-  assert.deepEqual(calls[0].params,["ariel","100000000000002","200000000000002"]);
+  assert.deepEqual(calls[0].params,["ariel","100000000000002","200000000000002",[21]]);
   assert.equal(await worker.wakeAfterVerifiedReconciliation({
-    database:{query:async()=>({rowCount:0,rows:[]})},env:approved
+    contactIds:[21],database:{query:async()=>({rowCount:0,rows:[]})},env:approved
   }),false);
   assert.equal(await worker.wakeAfterVerifiedReconciliation({
     database:{query:async()=>assert.fail("disabled media wake queried Neon")},env:{}
+  }),false);
+  assert.equal(await worker.wakeAfterVerifiedReconciliation({
+    database:{query:async()=>assert.fail("empty contact scope queried Neon")},env:approved,
   }),false);
 });
 
@@ -293,4 +300,25 @@ test("media placeholder starts queued, becomes uncertain when claimed, then queu
   assert.equal(deferred.args[0],2);
   assert.equal(deferred.args[1],90*1000);
   assert.ok(!args.calls.some(x=>x.wamid));
+});
+
+test("cancelled pending images notify only their verified sender and do not retry Meta",async()=>{
+ const events=[];
+ const realtime=require("../src/utils/realtimeEvents");
+ const unsubscribe=realtime.subscribe("conversation_changed",e=>events.push(e));
+ try{
+   const database={query:async(sql)=>{
+     assert.match(sql,/FROM cancelled_messages changed/);
+     return{rows:[{retired:2,messages_cancelled:1,
+       inbound_ids:[41],
+       changed_messages:[{id:89,contact_id:21,delivery_status:"cancelled",
+         delivery_error:"Image not sent"}]}],rowCount:1};
+   }};
+   assert.equal((await worker.cancelObsoletePending({database,env:approved})).cancelled,2);
+   assert.deepEqual(events,[{
+     channel:"whatsapp",businessPhoneNumberId:approved.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+     contactId:21,messageId:89,deliveryStatus:"cancelled",
+     deliveryError:"Image not sent",reason:"delivery_status",
+   }]);
+ }finally{unsubscribe();}
 });
