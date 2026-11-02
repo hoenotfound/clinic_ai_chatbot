@@ -1678,7 +1678,7 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
 
   await twoHour.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
   await twoHour.getByText(/I approve this clinic-owned video/).click();
-  await service.getByRole("button", { name: "Save secondary rule" }).first().click();
+  await twoHour.getByRole("button", { name: "Save secondary rule" }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toMatchObject({
     messageText: "Updated reminder for secondary only.",
