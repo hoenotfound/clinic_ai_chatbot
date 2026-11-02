@@ -1650,14 +1650,15 @@ test("Automated follow-up sections preserve draft settings while switching tabs"
   await expect(page.getByText("同意接收跟进优惠", { exact: true })).toBeVisible();
   await expect(page.getByText("暂时不用", { exact: true })).toBeVisible();
 
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await expect(page.getByText("WhatsApp Free Messaging Only")).toBeVisible();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
 
   await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).last().click();
   await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
 
-  await page.getByRole("tab", { name: "Sequence" }).click();
+  await page.getByRole("tab", { name: "Sequence", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("You have unsaved changes")).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
@@ -1809,7 +1810,7 @@ test("Strict WhatsApp billing protection opens when enabled and remains collapsi
     },
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
 
   const disclosure = page.locator("#follow-up-panel-whatsapp > details").first();
   const switchControl = disclosure.getByRole("switch", { name: "Block potentially paid WhatsApp sends" });
@@ -1830,9 +1831,9 @@ test("Inactive strict billing settings start collapsed and open without changing
   await page.goto("/tools");
 
   const tabs = page.getByRole("tablist", { name: "Follow-up sections" });
-  await expect(tabs).toContainText("Everyday");
-  await expect(tabs).toContainText("Advanced");
-  await tabs.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await expect(tabs).toContainText("Sequence");
+  await expect(tabs).toContainText("Results");
+  await tabs.getByRole("tab", { name: "Templates", exact: true }).click();
 
   const disclosure = page.locator("#follow-up-panel-whatsapp > details").first();
   const switchControl = disclosure.getByRole("switch", { name: "Block potentially paid WhatsApp sends" });
@@ -1865,7 +1866,7 @@ test("Phase 7 performance tab shows mature reply rates, preliminary conversions 
   };
   await mockPortalApi(page,{loggedIn:true,followUpPerformance:(filters)=>{calls.push(filters);return performance;}});
   await page.goto("/tools");
-  await page.getByRole("tab",{name:"Performance"}).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const view=page.getByRole("region",{name:"Follow-up performance analytics"});
   await expect(view).toContainText("Follow-up performance");
   await expect(view).toContainText("50.0%");
@@ -1892,7 +1893,7 @@ test("Phase 8 never recommends optimizing with immature follow-up samples", asyn
     daily: [],
   }});
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("Collecting evidence");
   await expect(intelligence).toContainText("Reply comparisons are withheld");
@@ -1914,7 +1915,7 @@ test("Phase 8 shows descriptive comparisons only for mature sufficiently sized g
     daily: [],
   }});
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("Enough mature reply data");
   await expect(intelligence).toContainText("FU1: 30%");
@@ -1937,7 +1938,7 @@ test("Phase 8 includes text-only sends and suppresses incomplete treatment compa
     ], daily: [],
   }});
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("Text / no accepted media: 25%");
   await expect(intelligence).toContainText("Treatment comparison unavailable");
@@ -1956,7 +1957,7 @@ test("Phase 8 honours exact sample and service-missing boundaries", async ({ pag
     ], daily: [],
   }});
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("3D: 16.7%");
   await expect(intelligence).toContainText("9D: 16.7%");
@@ -1967,7 +1968,7 @@ test("Phase 8 handles empty reports and only one qualifying group", async ({ pag
   let report = { summary: { sent: 0 }, breakdown: [], daily: [] };
   await mockPortalApi(page, { loggedIn: true, followUpPerformance: () => report });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("No accepted follow-ups");
   report = { summary: { sent: 30, reply_matured: 30, replied_matured: 5, milestone_matured: 30 },
@@ -1989,7 +1990,7 @@ test("Phase 8 suppresses media comparisons when unknown media exceeds twenty per
     ], daily: [],
   }});
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("Media comparisons are withheld");
   await expect(intelligence).toContainText("Media comparison unavailable");
@@ -2006,7 +2007,7 @@ test("Phase 8 permits media comparison at exactly twenty percent unknown metadat
     ], daily: [],
   }});
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "Performance" }).click();
+  await page.getByRole("tab", { name: "Results", exact: true }).click();
   const intelligence = page.getByRole("region", { name: "Follow-up intelligence" });
   await expect(intelligence).toContainText("Video: 25%");
   await expect(intelligence).toContainText("Text / no accepted media: 25%");
@@ -2026,13 +2027,14 @@ test("Follow-up mobile polish keeps tabs, performance cards, and Activity shortc
   await page.goto("/tools");
   const tabbar = page.getByRole("tablist", { name: "Follow-up sections" });
   await expect(tabbar.getByRole("tab")).toHaveCount(5);
-  await tabbar.getByRole("tab", { name: "Performance" }).click();
+  await tabbar.getByRole("tab", { name: "Results", exact: true }).click();
   const report = page.getByRole("region", { name: "Follow-up performance analytics" });
   await expect(report.getByLabel("By follow-up step mobile results")).toContainText("FU1");
   await expect(report.getByLabel("By follow-up step mobile results")).toContainText("25.0%");
   await tabbar.getByRole("tab", { name: "Activity" }).click();
-  const links = page.getByRole("navigation", { name: "Activity section shortcuts" });
-  await expect(links.getByRole("link")).toHaveCount(3);
+  const sections = page.getByRole("tablist", { name: "Activity sections" });
+  await expect(sections.getByRole("tab")).toHaveCount(3);
+  await expect(sections.getByRole("tab", { name: "Recent activity" })).toHaveAttribute("aria-selected", "true");
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -2045,7 +2047,7 @@ test("Follow-up mobile layout across phone, tablet and desktop widths", async ({
   await page.goto("/tools");
   for (const width of [320, 375, 390, 768, 1280]) {
     await page.setViewportSize({ width, height: 800 });
-    await page.getByRole("tab", { name: "Performance" }).click();
+    await page.getByRole("tab", { name: "Results", exact: true }).click();
     const report = page.getByRole("region", { name: "Follow-up performance analytics" });
     await expect(report).toContainText("Follow-up performance");
     if (width < 640) await expect(report.getByLabel("By follow-up step mobile results")).toBeVisible();
@@ -2053,11 +2055,12 @@ test("Follow-up mobile layout across phone, tablet and desktop widths", async ({
     await expectNoHorizontalPageOverflow(page);
   }
   await page.getByRole("tab", { name: "Activity" }).click();
-  for (const target of ["follow-up-delivery-health", "follow-up-delivery-events", "follow-up-template-activity"]) {
-    await page.getByRole("navigation", { name: "Activity section shortcuts" })
-      .locator(`a[href="#${target}"]`).click();
+  const sections = page.getByRole("tablist", { name: "Activity sections" });
+  for (const [name, target] of [["Delivery health", "follow-up-delivery-health"],
+    ["Recent activity", "follow-up-delivery-events"], ["Templates", "follow-up-template-activity"]]) {
+    await sections.getByRole("tab", { name, exact: true }).click();
     await expect(page.locator(`#${target}`)).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe(`#${target}`);
+    await expect(sections.getByRole("tab", { name, exact: true })).toHaveAttribute("aria-selected", "true");
   }
 });
 
@@ -2081,6 +2084,7 @@ test("Phase 6 follow-up health reports failures and tentative next steps without
   await mockPortalApi(page, { loggedIn: true, followUpHealth: data });
   await page.goto("/tools");
   await page.getByRole("tab", { name: "Activity" }).click();
+  await page.getByRole("tablist", { name: "Activity sections" }).getByRole("tab", { name: "Delivery health" }).click();
   const health = page.getByRole("region", { name: "Follow-up health monitoring" });
   await expect(health).toContainText("Follow-up monitoring");
   await expect(health).toContainText("Video rejected");
@@ -2158,7 +2162,9 @@ test("Follow-up Activity shows recorded outcomes, precise skips and navigable In
     .toHaveAttribute("href", "/inbox?contact=106");
   await expect(activity.getByRole("link", { name: "Open conversation" }).first())
     .toHaveAttribute("href", "/inbox?contact=101");
+  await page.getByRole("tablist", { name: "Activity sections" }).getByRole("tab", { name: "Templates" }).click();
   await expect(page.getByRole("heading", { name: "Extended WhatsApp template activity" })).toBeVisible();
+  await page.getByRole("tablist", { name: "Activity sections" }).getByRole("tab", { name: "Recent activity" }).click();
   await activity.getByRole("button", { name: "Failed" }).click();
   await expect.poll(() => calls.at(-1)?.state).toBe("failed");
   await expect(activity.getByRole("article")).toHaveCount(1);
@@ -2290,7 +2296,7 @@ test("Follow-up tab settings save without changing the separate follow-up contro
   expect(saved[0].pricingReminder.enabled).toBe(true);
   expect(saved[0].freeEntry.enabled).toBe(false);
 
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByLabel("Approved template fallback language").selectOption("ms");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved.length).toBe(2);
@@ -2388,7 +2394,7 @@ test("Follow-up readiness reports blocked server without obscuring active normal
   await expect(extended).toContainText("server sending switch is off");
   await expect(overview).toContainText("Normal follow-ups may still run.");
   await extended.getByRole("button", { name: "Review WhatsApp setup" }).click();
-  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Templates", exact: true })).toHaveAttribute("aria-selected", "true");
   expect(writes).toBe(0);
 });
 
@@ -2902,7 +2908,7 @@ test("Unified follow-up journey edits regular and extended steps without sending
   await journey.getByRole("button", { name: "Edit Follow-up 2 from sequence overview" }).click();
   await expect(page.getByLabel("Selected follow-up")).toContainText("Editing Follow-up 2 of 2");
   await journey.getByRole("button", { name: "Edit extended WhatsApp +98h follow-up" }).click();
-  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Templates", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("#extended-follow-up-time-98")).toBeFocused();
   await expect(page.getByLabel("Message for +98h follow-up")).toBeVisible();
   expect(writes).toHaveLength(0);
@@ -2996,7 +3002,7 @@ test("Unified timeline shows unsaved extended enablement as draft only", async (
   const journey = page.getByRole("region", { name: "Follow-up sequence overview" });
   const extended = journey.getByRole("list", { name: "Extended WhatsApp follow-up timeline" });
   await expect(extended.getByText("Saved setup: Paused", { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByRole("switch", { name: "Enable extended WhatsApp free-entry follow-ups" }).click();
   await page.getByRole("tab", { name: "Sequence" }).click();
   await expect(journey).toContainText("Previewing unsaved configuration");
@@ -3108,7 +3114,7 @@ test("Critical WhatsApp billing alarms remain visible outside collapsed diagnost
   });
   await page.goto("/tools");
   await expect(page.getByRole("alert")).toContainText("WhatsApp billing alarm");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await expect(page.getByText("Advanced eligibility and billing details")).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("Verified free-entry sends are blocked");
 });
@@ -3192,7 +3198,7 @@ test("Saving an invalid extended template redirects to WhatsApp templates", asyn
   await page.goto("/tools");
   await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByRole("tab", { name: "WhatsApp templates" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Templates", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
     .toContainText("Enter an approved WhatsApp MARKETING template name");
   await expect(page.getByLabel("Free-entry template name")).toBeVisible();
@@ -3268,7 +3274,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     },
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await expect(page.getByLabel("Free-entry template name")).toBeVisible();
   await page.getByLabel("Free-entry template name").selectOption("clinic_text_reminder");
   await expect(page.locator("#free-entry-default-template option", { hasText: "clinic_utility_notice" })).toHaveCount(0);
@@ -3312,7 +3318,7 @@ test("WhatsApp template picker supports approved IMAGE and VIDEO headers with R2
     mediaSourceId: "promo:1",
   });
   await page.reload();
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByText("Advanced: treatment-specific templates and media").click();
   await expect(page.getByText("Attached: pricing-package.jpg")).toBeVisible();
   await expect(page.getByLabel("Extended template treatment 1")).toHaveValue("骨盆调理");
@@ -3363,7 +3369,7 @@ test("After-24-hour planner selects approved text messages without changing trea
     onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
 
   const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
   await expect(planner).toBeVisible();
@@ -3420,7 +3426,7 @@ test("After-24-hour media shortcut creates a draft for the selected time, never 
   });
   await page.setViewportSize({ width: 375, height: 740 });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
   await planner.getByRole("button", { name: "Treatment media for +98h follow-up" }).click();
   const editor = page.getByRole("region", { name: "Extended template rule 1" });
@@ -3456,7 +3462,7 @@ test("Changing extended schedule requires confirmation before deleting video rul
     onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   const schedule = page.getByLabel("Free-entry follow-up schedule");
   await expect(schedule).toHaveValue("26,50,74,98,122,162");
   await schedule.selectOption("26,50,98");
@@ -3504,7 +3510,7 @@ test("Schedule deletion warning refreshes if another excluded-time rule is added
     onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   const schedule = page.getByLabel("Free-entry follow-up schedule");
   await schedule.selectOption("26,50,98");
   const warning = page.getByRole("alert", { name: "Review extended schedule changes" });
@@ -3561,7 +3567,7 @@ test("Existing Unicode-equivalent treatment rule saves with backend-compatible n
     onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByLabel("Message for +26h follow-up").selectOption("clinic_other");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => saved.length).toBe(1);
@@ -3595,7 +3601,7 @@ test("Unicode-equivalent duplicate treatment rules are rejected before sending a
     onConfigUpdate: () => { writes += 1; },
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByLabel("Approved template fallback language").selectOption("en_US");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Fix this setting before saving" }))
@@ -3623,7 +3629,7 @@ test("Incomplete extended media draft opens its editor and saves after correctin
     onConfigUpdate: ({ automatedFollowUp }) => saved.push(automatedFollowUp),
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByRole("region", { name: "After 24 hours guided setup" })
     .getByRole("button", { name: "Treatment media for +98h follow-up" }).click();
   await page.getByText("Advanced: treatment-specific templates and media").click();
@@ -3672,7 +3678,7 @@ test("Planner explains per-time duplicates and approved Chinese English Malay ve
     ], reusableMedia: [] },
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
   const duplicate = planner.getByText(/Same template as an earlier time \(clinic_text\)/);
   await expect(duplicate).toHaveCount(2);
@@ -3710,7 +3716,7 @@ test("After-24-hour planner preserves saved media template when opening quick co
     ], reusableMedia: [] },
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   const planner = page.getByRole("region", { name: "After 24 hours guided setup" });
   await expect(planner.getByLabel("Message for +26h follow-up")).toHaveValue("ns_fu_meridian_gift");
   await expect(planner).toContainText("Gift approved");
@@ -3742,7 +3748,7 @@ test("WhatsApp template picker uploads new JPG or video and preserves selected m
     onConfigUpdate: (payload) => saved.push(payload.automatedFollowUp),
   });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByText("Advanced: treatment-specific templates and media").click();
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
   await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
@@ -3797,7 +3803,7 @@ test("Delayed treatment image upload cannot attach to a changed rule", async ({ 
   await page.route("**/api/config/automated-follow-up/template-media-image",
     (route) => { delayedRequest = route; });
   await page.goto("/tools");
-  await page.getByRole("tab", { name: "WhatsApp templates" }).click();
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
   await page.getByText("Advanced: treatment-specific templates and media").click();
   await page.getByRole("button", { name: "Add treatment follow-up template" }).click();
   await page.getByLabel("Extended template treatment 1").selectOption("骨盆调理");
