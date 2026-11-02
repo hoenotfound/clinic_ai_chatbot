@@ -6,7 +6,7 @@
 const nowMinute = () => Math.floor(Date.now() / 60000);
 const rows = new Map();
 const STARTED_AT = new Date().toISOString();
-const MAX_KEYS = 256;
+const MAX_KEYS = 512;
 
 const INBOX_REASONS = new Set([
   "startup", "reconnect", "summary_fallback", "multi_contact_event",
@@ -69,8 +69,7 @@ function recordWorkerWake(lane, type, payload, outcome, env = process.env) {
     : type === "secondary_followup_rules_changed" ? "rules_changed"
       : payload?.reason;
   const reason = EVENT_REASONS.has(rawReason) ? rawReason : "other";
-  const channel = CHANNELS.has(classifyChannel(payload, env))
-    ? classifyChannel(payload, env) : "unknown";
+  const channel = classifyChannel(payload, env);
   count(["wake", lane, safeType, reason, channel, outcome].join("|"));
 }
 
