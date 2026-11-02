@@ -40,6 +40,8 @@ function harness({
   reconcileQueuedMediaDelivery = async () => [],
   isQueuedImageMessage = async () => false,
   reconcileAcceptedReplyAttention = async () => null,
+  verifyJobSender = null,
+  env = process.env,
 } = {}) {
   const calls = [];
   const repo = {
@@ -75,6 +77,7 @@ function harness({
     },
     pruneCompleted: async () => 0,
     flagUnmatchedCompletedFailures: async () => [],
+    ...(verifyJobSender ? { verifyJobSender: async job => verifyJobSender(job) } : {}),
   };
   const messages = {
     updateDeliveryStatusByWamid: async (...args) => {
@@ -82,7 +85,7 @@ function harness({
       return updateResult;
     },
   };
-  const publish = (message) => calls.push(["publish", message.id]);
+  const publish = (message, scope) => calls.push(["publish", message.id, scope]);
   const publishContact = (contactId) => calls.push(["publishContact", contactId]);
   const sendDeliveryFailureAlert = async (input) => {
     calls.push(["sendDeliveryFailureAlert", input.contactId, input.reason]);
@@ -107,6 +110,7 @@ function harness({
       return { status: "sent" };
     },
     logger,
+    env,
   });
   return { calls, repo, service };
 }
@@ -476,4 +480,65 @@ test("repeated Meta delivery receipts wake FEP only for a new meaningful billing
   await callback("wamid.one", "free_entry_point", true, "delivered");
   assert.equal(calls.filter(x => x[0] === "wake").length, 3,
     "another verified entry and a genuine billable transition require fresh checks");
+});
+
+test("verified primary Meta delivery status is scoped without another query", async () => {
+  const env = {
+    WHATSAPP_MULTI_NUMBER_READ_ENABLED: "true",
+    WHATSAPP_PHONE_NUMBER_ID: "1408739622311791",
+    WHATSAPP_WABA_ID: "1593376338308612",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID: "1318355951360575",
+    WHATSAPP_SECONDARY_WABA_ID: "1852014482431209",
+  };
+  const statusJob = job({
+    business_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+    business_account_id: env.WHATSAPP_WABA_ID,
+  });
+  const { calls, service } = harness({
+    claimed: [statusJob],
+    updateResult: {
+      id: 41, contact_id: 9, whatsapp_message_id: statusJob.wamid,
+      delivery_status: "delivered",
+    },
+    verifyJobSender: async () => ({ matched: true }),
+    env,
+  });
+  await service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  assert.deepEqual(calls.find(call => call[0] === "publish"), [
+    "publish", 41,
+    { channel: "whatsapp", businessPhoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID },
+  ]);
+  assert.ok(calls.some(call => call[0] === "markCompleted"));
+});
+
+test("unverified sender stays unknown and sender mismatch never publishes", async () => {
+  const env = {
+    WHATSAPP_MULTI_NUMBER_READ_ENABLED: "true",
+    WHATSAPP_PHONE_NUMBER_ID: "1408739622311791",
+    WHATSAPP_WABA_ID: "1593376338308612",
+    WHATSAPP_SECONDARY_PHONE_NUMBER_ID: "1318355951360575",
+    WHATSAPP_SECONDARY_WABA_ID: "1852014482431209",
+  };
+  const statusJob = job({
+    business_phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+    business_account_id: env.WHATSAPP_WABA_ID,
+  });
+  const updated = { id: 41, contact_id: 9, whatsapp_message_id: statusJob.wamid,
+    delivery_status: "delivered" };
+  const unknown = harness({
+    claimed: [statusJob], updateResult: updated, env,
+    verifyJobSender: async () => ({ matched: null }),
+  });
+  await unknown.service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  assert.deepEqual(unknown.calls.find(call => call[0] === "publish"),
+    ["publish", 41, { channel: "whatsapp" }]);
+
+  const mismatched = harness({
+    claimed: [statusJob], updateResult: updated, env,
+    verifyJobSender: async () => ({ matched: false }),
+  });
+  await mismatched.service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  assert.equal(mismatched.calls.some(call => call[0] === "publish"), false);
+  assert.equal(mismatched.calls.some(call => call[0] === "updateDeliveryStatusByWamid"), false);
+  assert.ok(mismatched.calls.some(call => call[0] === "markFailed"));
 });
