@@ -50,15 +50,18 @@ test("volatile Inbox API only reuses snapshot after explicit server 304, resets 
   const calls = [];
   const responses = [
     new Response(JSON.stringify([{ contact_id: 1, last_message: "one" }]), {
-      status: 200, headers: { etag: '"inbox-test-a"' },
+      status: 200, headers: { etag: '"inbox-test-a"',
+        "x-inbox-revision-proof": "v1.testproof-a" },
     }),
     new Response(null, { status: 304, headers: { etag: '"inbox-test-a"' } }),
     new Response(JSON.stringify([{ contact_id: 1, last_message: "two" }]), {
-      status: 200, headers: { etag: '"inbox-test-b"' },
+      status: 200, headers: { etag: '"inbox-test-b"',
+        "x-inbox-revision-proof": "v1.testproof-b" },
     }),
     new Response("{}", { status: 200 }), // logout
     new Response(JSON.stringify([{ contact_id: 2 }]), {
-      status: 200, headers: { etag: '"inbox-test-c"' },
+      status: 200, headers: { etag: '"inbox-test-c"',
+        "x-inbox-revision-proof": "v1.testproof-c" },
     }),
     new Response("{}", { status: 401 }), // auth expired
     new Response(JSON.stringify([{ contact_id: 3 }]), {
@@ -80,21 +83,26 @@ test("volatile Inbox API only reuses snapshot after explicit server 304, resets 
     const unchanged = await api.listConversations("reconnect");
     assert.strictEqual(unchanged, first, "304 reuses the exact per-tab snapshot");
     assert.equal(calls[1].options.headers["If-None-Match"], '"inbox-test-a"');
+    assert.equal(calls[1].options.headers["X-Inbox-Revision-Proof"], "v1.testproof-a");
     const latest = await api.listConversations("multi_contact_event");
     assert.equal(latest[0].last_message, "two",
       "new server content must replace cached contact state");
     assert.equal(calls[2].options.headers["If-None-Match"], '"inbox-test-a"');
+    assert.equal(calls[2].options.headers["X-Inbox-Revision-Proof"], "v1.testproof-a");
 
     await api.logout();
     assert.equal(calls[3].url, "/api/auth/logout");
     const next = await api.listConversations("startup");
     assert.deepEqual(next, [{ contact_id: 2 }]);
+    assert.equal(calls[4].options.headers["X-Inbox-Revision-Proof"], undefined);
     assert.equal(calls[4].options.headers["If-None-Match"], undefined,
       "logout prevents old patient's cached data from leaking across sessions");
 
     await assert.rejects(api.listConversations("reconnect"), err => err.status === 401);
     assert.equal(calls[5].options.headers["If-None-Match"], '"inbox-test-c"');
+    assert.equal(calls[5].options.headers["X-Inbox-Revision-Proof"], "v1.testproof-c");
     await api.listConversations("startup");
+    assert.equal(calls[6].options.headers["X-Inbox-Revision-Proof"], undefined);
     assert.equal(calls[6].options.headers["If-None-Match"], undefined,
       "401 clears cached data and validator");
   } finally {
