@@ -24,13 +24,20 @@ const job={id:2,sender_id:9,contact_id:21,whatsapp_number:"60125550000",
   inbound_message_id:41,sequence_no:0,caption:"Neutro approved promotion",
   media_kind:"promotion",image_url:"https://example.test/neutro-promo.jpg",
 };
-function mocks({result={success:true,wamid:"wamid.ariel-media"},ready=true,jobImageUrl=job.image_url}={}){
+function mocks({result={success:true,wamid:"wamid.ariel-media"},ready=true,jobImageUrl=job.image_url,
+  preexistingMessageId=null}={}){
   const calls=[];
   const database={query:async(sql,args)=>{
     calls.push({sql,args});
-    if(sql===worker.READY_SQL)return{rows:[{...job,image_url:jobImageUrl}]};
+    if(sql===worker.READY_SQL)return{rows:[{...job,image_url:jobImageUrl,
+      outbound_message_id:preexistingMessageId}]};
     if(sql===worker.STILL_VALID_SQL)return{rows:[{allowed:ready}]};
     if(sql.includes("state='claimed'")&&sql.includes("RETURNING id"))return{rowCount:1,rows:[{id:2}]};
+    if(preexistingMessageId && sql.includes("state=$2") && sql.includes("RETURNING outbound_message_id"))
+      return{rowCount:1,rows:[{outbound_message_id:preexistingMessageId}]};
+    if(sql.includes("UPDATE messages AS m") && sql.includes("delivery_status='cancelled'"))
+      return{rowCount:1,rows:[{id:preexistingMessageId,contact_id:21,
+        delivery_status:"cancelled",delivery_error:"Image not sent"}]};
     return{rowCount:1,rows:[]};
   }};
   const contact={id:21,channel:"whatsapp",mode:"ai",needs_attention:false,
@@ -320,5 +327,22 @@ test("cancelled pending images notify only their verified sender and do not retr
      contactId:21,messageId:89,deliveryStatus:"cancelled",
      deliveryError:"Image not sent",reason:"delivery_status",
    }]);
+ }finally{unsubscribe();}
+});
+
+test("revoked pre-send secondary image with an existing placeholder is cancelled without a Meta attempt",async()=>{
+ const args=mocks({preexistingMessageId:89});
+ args.getConfig=()=>({promotions:[]});
+ const sent=[];
+ const realtime=require("../src/utils/realtimeEvents");
+ const unsubscribe=realtime.subscribe("conversation_changed",e=>sent.push(e));
+ try{
+   const r=await worker.runOnce({...args,env:approved});
+   assert.equal(r.accepted,0);
+   assert.ok(args.calls.some(c=>c.sql?.includes("UPDATE messages AS m") &&
+     c.sql.includes("a.state<>'rejected'") &&
+     c.sql.includes("e.accepted=TRUE")));
+   assert.equal(args.calls.filter(c=>c.send).length,0);
+   assert.deepEqual(sent.map(e=>e.deliveryStatus),["cancelled"]);
  }finally{unsubscribe();}
 });
