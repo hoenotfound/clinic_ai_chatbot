@@ -2463,7 +2463,8 @@ async function processIncomingMessage(
                   pendingResultSend.error ||
                     channelMessaging.rejectedError(contact.channel)
                 ),
-              contact.channel || "whatsapp"
+              contact.channel || "whatsapp",
+              scopeForPersistedContact(contact)
             );
 
             if (!pendingResultSend.success) {
