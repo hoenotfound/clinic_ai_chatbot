@@ -2876,6 +2876,11 @@ function FollowUpTool({
       </div>
       <div id="follow-up-sender-panel-primary" role="tabpanel" aria-labelledby="follow-up-sender-primary"
         className={senderView === "primary" ? "" : "hidden"}>
+        <p className="mb-4 rounded-xl border border-[var(--color-border)] bg-white px-4 py-3 text-xs leading-5 text-[var(--color-text-muted)]">
+          This is the main follow-up sequence for the primary WhatsApp and supported social channels.
+          Activity and performance reports group results by channel, not by individual WhatsApp number.
+          Secondary-number messages and templates are edited separately.
+        </p>
         {uploadingVideo && (
         <div
           role="status"
