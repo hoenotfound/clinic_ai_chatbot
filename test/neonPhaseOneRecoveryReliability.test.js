@@ -209,5 +209,5 @@ test("failed R2 deletion is stored for retry, wakes cleanup and later completes"
   assert.equal(completed, 1);
   assert.equal(deletionAttempts, 2);
   assert.equal(pending, false);
-  assert.equal(cleanupOptions.delayForResult(null), 30 * 60 * 1000);
+  assert.equal(cleanupOptions.delayForResult(null), 60 * 60 * 1000);
 });

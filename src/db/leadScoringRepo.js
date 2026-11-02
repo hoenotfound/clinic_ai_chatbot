@@ -463,7 +463,7 @@ async function completeScore({
   });
 
   if (outcome.status === "completed") {
-    realtimeEvents.publish("pipeline_changed", { leadId });
+    realtimeEvents.publish("pipeline_changed", { leadId, reason: "lead_scored" });
   }
   return outcome;
 }

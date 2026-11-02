@@ -6,6 +6,7 @@ const {
   IDLE_RECHECK_MS,ERROR_RETRY_MS,
   nextAllowedClinicTime,nextSecondaryDueDelay,
   createSecondaryDueScheduler,measureSecondaryWorkerRun,
+  secondaryEventRequiresWake,
 }=require("../src/utils/secondaryDueTimeScheduler");
 const {createAdaptiveWorkerTimer}=require("../src/utils/adaptiveWorkerTimer");
 const {takeWorkerActivity}=require("../src/utils/workerActivityMetrics");
@@ -187,4 +188,52 @@ test("legacy secondary metrics collect duration/failure without querying the dat
  const rows=takeWorkerActivity();
  assert.equal(rows.find(r=>r.label==="Secondary tested passive monitor")?.runs,1);
  assert.equal(rows.find(r=>r.label==="Secondary tested passive failure")?.failures,1);
+});
+
+test("secondary scheduler ignores only proven unrelated inbound and CRM events",()=> {
+ const env={WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575"};
+ const check=(type,payload)=>secondaryEventRequiresWake(type,payload,env);
+ assert.equal(check("conversation_changed",{channel:"facebook",reason:"message"}),false);
+ assert.equal(check("conversation_changed",{channel:"instagram",reason:"message"}),false);
+ assert.equal(check("conversation_changed",{
+  channel:"whatsapp",businessPhoneNumberId:"1408739622311791",reason:"message",
+ }),false,"primary sender must never awaken secondary scheduler");
+ assert.equal(check("conversation_changed",{
+  channel:"whatsapp",businessPhoneNumberId:"1318355951360575",reason:"message",
+ }),true,"verified secondary message must wake immediately");
+ assert.equal(check("conversation_changed",{reason:"message",contactId:90}),true,
+  "legacy publishers with unknown sender must still wake safely");
+ assert.equal(check("conversation_changed",{reason:"booking_confirmed"}),true);
+ assert.equal(check("conversation_changed",{reason:"whatsapp_opt_out"}),true);
+ assert.equal(check("pipeline_changed",{reason:"lead_scored"}),false);
+ assert.equal(check("pipeline_changed",{reason:"meta_ad_enriched"}),false);
+ assert.equal(check("pipeline_changed",{reason:"appointment_set"}),true);
+ assert.equal(check("pipeline_changed",{}),true);
+ assert.equal(check("config_changed",{}),true);
+});
+
+test("unrelated verified events do not reschedule a genuine due slot",async()=>{
+ const clock=fakeClock("2026-11-02T00:00:00Z"),events=fakeEvents();
+ let runs=0;
+ const scheduler=createSecondaryDueScheduler({
+  label:"Secondary event routing test",
+  env:{WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"1318355951360575"},database:{},events,
+  createTimer:clock.createTimer,now:clock.now,
+  run:async()=>{runs++;return{attempted:0,accepted:0};},
+  readNextDue:async()=>({next_due_at:"2026-11-02T03:00:00Z",has_overdue:false}),
+ });
+ scheduler.start();await clock.advance(0);
+ events.publish("conversation_changed",{
+  channel:"whatsapp",businessPhoneNumberId:"1408739622311791",reason:"message",
+ });
+ events.publish("conversation_changed",{channel:"facebook",reason:"message"});
+ events.publish("pipeline_changed",{reason:"lead_scored"});
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,1,"proven unrelated events must not query Neon");
+ events.publish("conversation_changed",{
+  channel:"whatsapp",businessPhoneNumberId:"1318355951360575",reason:"message",
+ });
+ await Promise.resolve();await clock.advance(0);
+ assert.equal(runs,2,"secondary message still wakes immediately");
+ scheduler.stop();
 });

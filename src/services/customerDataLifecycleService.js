@@ -6,7 +6,9 @@ const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
 
 const MEDIA_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
-const IDLE_MEDIA_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+// Preserve immediate manual-deletion cleanup and exact due-job wake-ups.
+// Only empty-queue orphan-recovery sweeps move to hourly.
+const IDLE_MEDIA_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 let activeCleanupWorker = null;
 
 function wakeCustomerMediaCleanup(delayMs = 0) {

@@ -230,6 +230,6 @@ test("media cleanup wakes at the exact stored retry deadline", () => {
   );
   assert.equal(
     lifecycle.mediaCleanupDelay(null, now),
-    30 * 60 * 1000
+    60 * 60 * 1000
   );
 });

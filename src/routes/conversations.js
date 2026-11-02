@@ -4,6 +4,7 @@ const { verboseInboxMediaLogs, logInboxMediaSummary, trackInboxMediaResponse } =
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
+const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact, getAccessibleContactIds } = require("../utils/accessControl");
@@ -842,16 +843,18 @@ function sendMeasuredInboxJson(res, payload, startedAt, kind) {
 router.get("/", async (req, res) => {
   const startedAt = process.hrtime.bigint();
   try {
-    const conversations = await contactsRepo.listConversations();
+    const conversations = await withDatabaseActivitySource(
+      "Inbox full conversation list", () => contactsRepo.listConversations());
     // Always enforce current staff scope on the server, not only in UI filters.
     // Revoked assignments must disappear from the Inbox and fallback refresh.
     const permittedIds = await getAccessibleContactIds(req.user);
     const allowedSet = permittedIds === null ? null : new Set(permittedIds.map(Number));
-    const eligibleIds=await eligibleSecondaryAdsOnlyContactIds(
-      conversations.filter(c=>c.whatsapp_sender_key==="neutro_secondary" &&
-        c.mode==="ai" && c.needs_attention!==true)
-        .map(c=>Number(c.contact_id))
-    );
+    const eligibleIds=await withDatabaseActivitySource("Inbox secondary eligibility",
+      () => eligibleSecondaryAdsOnlyContactIds(
+        conversations.filter(c=>c.whatsapp_sender_key==="neutro_secondary" &&
+          c.mode==="ai" && c.needs_attention!==true)
+          .map(c=>Number(c.contact_id))
+      ));
     const mapped = conversations.filter((c) =>
       allowedSet === null || allowedSet.has(Number(c.contact_id))).map(c => {
       const secondary = c.channel === "whatsapp" &&
@@ -901,9 +904,10 @@ router.get("/:contactId/summary", async (req, res) => {
   try {
     const contactId = parsePositiveInt(req.params.contactId);
     if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
-    const rows = await contactsRepo.listConversations({
-      contactId, includeEmptyCoexistenceContacts: req.query.includeArchived === "true",
-    });
+    const rows = await withDatabaseActivitySource("Inbox contact summary",
+      () => contactsRepo.listConversations({
+        contactId, includeEmptyCoexistenceContacts: req.query.includeArchived === "true",
+      }));
     if (!rows.length) return res.status(404).json({ error: "Conversation not in active Inbox." });
     const c = rows[0];
     const eligibleIds=await eligibleSecondaryAdsOnlyContactIds([Number(c.contact_id)]);

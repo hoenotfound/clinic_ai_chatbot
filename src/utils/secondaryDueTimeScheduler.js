@@ -96,6 +96,28 @@ async function measureSecondaryWorkerRun(label, run) {
   }
 }
 
+// Only skip events whose trusted source proves they cannot affect this
+// WhatsApp number's follow-up eligibility. Missing sender details remain
+// conservative: recheck, so opt-outs, bookings and legacy publishers are safe.
+function secondaryEventRequiresWake(type, payload, env = process.env) {
+  if (type === "conversation_changed") {
+    if (payload?.reason === "reaction" || payload?.followUpStateUnchanged === true) return false;
+    if (payload?.channel && payload.channel !== "whatsapp") return false;
+    if (payload?.businessPhoneNumberId != null &&
+        env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
+        String(payload.businessPhoneNumberId) !== String(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID)) {
+      return false;
+    }
+  }
+  // Lead scoring and completed Meta ad detail enrichment change only CRM
+  // presentation, not the verified sender/consent/due-time eligibility.
+  if (type === "pipeline_changed" &&
+      (payload?.reason === "lead_scored" || payload?.reason === "meta_ad_enriched")) {
+    return false;
+  }
+  return true;
+}
+
 function createSecondaryDueScheduler({
   label, run, readNextDue, events, env,
   database, createTimer = createAdaptiveWorkerTimer,
@@ -132,11 +154,11 @@ function createSecondaryDueScheduler({
     });
     subscriptions = [
       events.subscribe("conversation_changed", payload => {
-        if (payload?.reason === "reaction" ||
-            payload?.followUpStateUnchanged === true) return;
-        coalescedWake();
+        if (secondaryEventRequiresWake("conversation_changed", payload, env)) coalescedWake();
       }),
-      events.subscribe("pipeline_changed", () => coalescedWake()),
+      events.subscribe("pipeline_changed", payload => {
+        if (secondaryEventRequiresWake("pipeline_changed", payload, env)) coalescedWake();
+      }),
       events.subscribe("config_changed", () => coalescedWake()),
       events.subscribe("secondary_followup_rules_changed", () => coalescedWake()),
     ];
@@ -155,4 +177,5 @@ module.exports = {
   IDLE_RECHECK_MS, ERROR_RETRY_MS, BACKLOG_RECHECK_MS,
   deriveSecondaryPotentialDueSql, nextAllowedClinicTime,
   nextSecondaryDueDelay, measureSecondaryWorkerRun, createSecondaryDueScheduler,
+  secondaryEventRequiresWake,
 };
