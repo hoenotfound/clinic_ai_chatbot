@@ -6,6 +6,7 @@ const {listApprovedSecondaryMarketingTemplates}=require("../services/whatsappSec
 const {enabled:marketingWorkerEnabled}=require("../services/whatsappSecondaryMarketingFollowUpService");
 const {verifyApprovedVideo,listApprovedClinicVideos}=require("../services/whatsappSecondaryFollowUpVideoApproval");
 const {hasCapability}=require("../utils/permissions");
+const {publishInternal}=require("../utils/realtimeEvents");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
 function allowed(req,res,next){
@@ -118,6 +119,9 @@ router.put("/:slot",async(req,res)=>{
       [identity.id,slot,enabled,text,mediaKey,mediaKey?"video":null,
        mediaKey?"video/mp4":null,mediaKey?"clinic-followup.mp4":null]
     );
+    // A saved rule can add, remove or move the next due slot. Wake in-memory
+    // workers without extra browser SSE traffic or database polling.
+    publishInternal("secondary_followup_rules_changed",{type:"service"});
     res.set("Cache-Control","no-store");
     return res.json({saved:true,rule:updated.rows[0],
       workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true"});
@@ -149,6 +153,7 @@ router.put("/marketing/:slot",async(req,res)=>{
      "WHERE sender_id=$1 AND slot_hours=$2 RETURNING slot_hours,enabled,"+
      "template_name,language_code,operator_billing_approved,updated_at",
      [identity.id,slot]);
+   publishInternal("secondary_followup_rules_changed",{type:"marketing"});
    res.set("Cache-Control","no-store");
    return res.json({saved:true,rules:disabled.rows||[],rule:disabled.rows?.[0]||null,
     marketingWorkerEnabled:marketingWorkerEnabled(process.env)});
@@ -219,6 +224,7 @@ router.put("/marketing/:slot",async(req,res)=>{
   }finally{
    client.release();
   }
+  publishInternal("secondary_followup_rules_changed",{type:"marketing"});
   res.set("Cache-Control","no-store");
   return res.json({saved:true,rules:rows,rule:rows.find(r=>r.enabled)||null,
    marketingWorkerEnabled:marketingWorkerEnabled(process.env)});

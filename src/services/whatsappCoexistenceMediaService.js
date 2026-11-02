@@ -4,6 +4,7 @@
 // their media using the verified recipient number's own token. Never invoke
 // an outbound Graph send, Neutro's token fallback, or a customer AI turn.
 const {pool}=require("../db/db");
+const {measureSecondaryWorkerRun}=require("../utils/secondaryDueTimeScheduler");
 const contactsRepo=require("../db/contactsRepo");
 const mediaStorage=require("./mediaStorageService");
 const channelMessaging=require("./channelMessagingService");
@@ -166,7 +167,9 @@ async function runOnce({
 }
 function start({env=process.env,setIntervalFn=setInterval,run=runOnce}={}){
  if(!enabled(env)||timer)return false;
- timer=setIntervalFn(()=>run({env}).catch(e=>
+ timer=setIntervalFn(()=>measureSecondaryWorkerRun(
+   "Secondary WhatsApp Business App media recovery",()=>run({env})
+ ).catch(e=>
    console.error("[Business App echo media] worker:",e?.message)),60000);
  timer?.unref?.();return true;
 }
