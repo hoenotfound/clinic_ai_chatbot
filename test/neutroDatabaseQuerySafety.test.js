@@ -106,6 +106,6 @@ test("Inbox Unreplied uses newest inbound vs newest accepted outbound without sc
 test("social profile enrichment preserves Inbox events without waking follow-up candidate search", () => {
   const source = fs.readFileSync(path.join(__dirname, "../src/db/contactsRepo.js"), "utf8");
   assert.match(source, /reason: "contact_state"/);
-  assert.match(source, /publishContactChange\(row\.contact_id \|\| row\.id, \{ profileOnly: true \}\)/);
+  assert.match(source, /publishContactChange\(row\.contact_id \|\| row\.id, \{ profileOnly: true, contact: row \}\)/);
   assert.match(source, /followUpStateUnchanged: true/);
 });
