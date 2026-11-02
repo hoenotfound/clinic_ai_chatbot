@@ -62,3 +62,24 @@ test("English and Malay messages are localized",()=>{
  assert.match(check(text,[turn("user",text,100)],{language:"en"})?.reply||"",/RM688/u);
  assert.match(check(text,[turn("user",text,100)],{language:"ms"})?.reply||"",/RM688/u);
 });
+
+test("a previous combo refusal prevents offering it again",()=>{
+ const current="3d的多少钱？";
+ const session=[turn("user","9d",260),turn("assistant","9D RM488",245),
+   turn("user","不要组合，我要分开看",220),
+   turn("assistant","好的，分开了解",200),
+   turn("user",current,80)];
+ assert.equal(check(current,session,{verifiedIndividualQuote:true}),null);
+});
+
+test("the existing Neutro combo promotion can be verified from consistent RM688 copy",()=>{
+ const current="3D+9D组合多少钱？";
+ const liveShaped={...combo,pricing:null,
+   caption:"✨ 9D + 3D 组合限时优惠: RM688",
+   followUpMessage:"Hi～组合体验价只需 RM688！还额外免费送你 1 小时经络穴位按摩！",
+   mediaTranslations:{en:{caption:"9D + 3D Limited-Time Combo Offer: RM688"}},
+   followUpTranslations:{en:"Includes meridian massage"}};
+ const result=check(current,[turn("user",current,60)],{promotions:[liveShaped]});
+ assert.equal(result?.mode,"direct");
+ assert.match(result?.reply||"",/RM688/u);
+});
