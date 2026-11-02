@@ -140,13 +140,13 @@ test("Inbox thread header stays compact while keeping owner and channel context"
   assert.doesNotMatch(inbox, /Type a WhatsApp message to this patient/);
 });
 
-test("restricted Inbox scope hides irrelevant assignment choices and explains the visible workload", () => {
+test("restricted Inbox scope hides unnecessary lead owner control and explains the visible workload", () => {
   const inbox = source("portal-frontend/src/pages/Inbox.jsx");
 
   assert.match(inbox, /const \{ user, username, permissions \} = useAuth\(\)/);
   assert.match(inbox, /const canViewAllLeads = permissions\.view_all_leads === true/);
-  assert.match(inbox, /canViewAllLeads \? \(/);
-  assert.match(inbox, /My assigned leads/);
+  assert.match(inbox, /canViewAllLeads && \(/);
+  assert.doesNotMatch(inbox, /My assigned leads/);
   assert.match(inbox, /No assigned conversations/);
   assert.match(inbox, /Leads assigned to you will appear here automatically/);
   assert.match(
