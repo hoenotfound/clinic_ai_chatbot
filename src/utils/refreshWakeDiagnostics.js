@@ -77,6 +77,14 @@ function recordInboxFullList(reason) {
   count("inbox|" + (INBOX_REASONS.has(reason) ? reason : "other"));
 }
 
+// Counters only. No usernames, patient IDs, request headers or WAL positions.
+function recordInboxRevisionCheck(outcome) {
+  if (outcome === "skipped_full_query" || outcome === "full_query" ||
+      outcome === "wal_unavailable") {
+    count("inbox_revision|" + outcome);
+  }
+}
+
 function snapshot() {
   const minute = nowMinute();
   const buckets = [...rows].map(([key, row]) => {
@@ -95,5 +103,5 @@ function snapshot() {
     last15Minutes: buckets.reduce((s,x)=>s+x.last15Minutes,0), counters: buckets };
 }
 
-module.exports = { recordWorkerWake, recordInboxFullList, snapshot,
-  classifyChannel, INBOX_REASONS };
+module.exports = { recordWorkerWake, recordInboxFullList,
+  recordInboxRevisionCheck, snapshot, classifyChannel, INBOX_REASONS };
