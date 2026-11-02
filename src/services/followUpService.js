@@ -7,6 +7,7 @@ const contactsRepo = require("../db/contactsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { recordWorkerWake } = require("../utils/refreshWakeDiagnostics");
 const { createCoalescedImmediateWake, followUpChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
@@ -2226,14 +2227,19 @@ const wakeForRealtimeStateChange = createCoalescedImmediateWake(
 // promptly. Reactions and presentation-only profile updates cannot change
 // follow-up eligibility and must not run the expensive candidate queries.
 realtimeEvents.subscribe("conversation_changed", (payload) => {
-  if (!followUpChangeRequiresWake(payload)) return;
-  wakeForRealtimeStateChange();
+  if (!followUpChangeRequiresWake(payload)) {
+    recordWorkerWake("primary", "conversation_changed", payload, "ignored");
+    return;
+  }
+  recordWorkerWake("primary", "conversation_changed", payload,
+    wakeForRealtimeStateChange() ? "queued" : "coalesced");
 });
 
 // Booking, consent, and lead changes always wake the same worker, including
 // previously booked contacts that become eligible again on cancellation.
-realtimeEvents.subscribe("pipeline_changed", () => {
-  wakeForRealtimeStateChange();
+realtimeEvents.subscribe("pipeline_changed", (payload) => {
+  recordWorkerWake("primary", "pipeline_changed", payload,
+    wakeForRealtimeStateChange() ? "queued" : "coalesced");
 });
 
 realtimeEvents.subscribe("config_changed", (payload) => {
