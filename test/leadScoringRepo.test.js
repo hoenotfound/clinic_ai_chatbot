@@ -207,7 +207,7 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
   assert.match(activity.sql, /'AI scoring'/);
   assert.equal(activity.params[2].applied, true);
-  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 8 } }]);
+  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 8, reason: "lead_scored" } }]);
 });
 
 test("marking a score failed reports when the third attempt is terminal", async (t) => {
