@@ -1216,7 +1216,7 @@ async function markDeliveryUnknownIfUnconfirmed(messageId, errorText = null) {
        AND role = 'assistant'
        AND (
          delivery_status IS NULL
-         OR delivery_status IN ('failed', 'unknown')
+         OR delivery_status IN ('failed', 'unknown', 'queued')
        )
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, errorText]
