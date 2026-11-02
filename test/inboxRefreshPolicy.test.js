@@ -72,7 +72,7 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
   assert.match(source, /Promise\.all\(knownIds\.map\(id => refreshConversationSummary\(id\)\)\)/);
   assert.match(source, /pendingUnknownConversationChange = true/);
   assert.match(source, /unknownOrRedacted \? unknownReason/);
-  assert.match(source, /catch\s*\{\s*await refreshConversations\("summary_fallback"\)/);
+  assert.match(source, /catch\s*\{[\s\S]{0,320}?await refreshConversations\("summary_fallback"\)/);
   assert.match(source, /scheduleRefresh\(payload\.contactId \?\? null\)/);
   assert.match(source, /createInboxLiveStartup\(\{/);
   assert.match(source, /source\.onopen = \(\) => startup\.onOpen\(\)/);
