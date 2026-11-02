@@ -54,6 +54,10 @@ test("sender-specific follow-up controls are separated without mixing save actio
   assert.match(tools, /View details and checks/);
   assert.match(tools, /Extended WhatsApp timeline/);
   assert.match(tools, /\["performance", "Results"\]/);
+  assert.match(tools, /aria-label="Activity sections"/);
+  assert.match(tools, /billingProtectionOpen, setBillingProtectionOpen\] = useState\(false\)/);
+  assert.match(tools, /activitySection === "recent"/);
+  assert.match(tools, /activitySection === "health"/);
   assert.match(tools, /section=\{secondarySection\}/);
   assert.match(tools, /secondarySection === "media" && <ArielMediaReview \/>/);
 
@@ -61,6 +65,8 @@ test("sender-specific follow-up controls are separated without mixing save actio
   assert.match(secondary, /section === "service"/);
   assert.match(secondary, /section === "marketing"/);
   assert.match(secondary, /<details key=\{slot\}/);
+  assert.match(secondary, /Changes not saved/);
+  assert.match(secondary, /setConfig\(prev=>prev\?/);
   assert.match(secondary, /operatorBillingApproved:row.enabled && row.approved===true/);
   assert.match(secondary, /confirmClinicVideoReuse:true/);
 });
