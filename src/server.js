@@ -109,12 +109,15 @@ const {
 const { createApp } = require("./createApp");
 const { startApplication } = require("./services/applicationStartup");
 
+const { scopeForPersistedContact } = require("./utils/verifiedWhatsAppEventScope");
+
 const WHATSAPP_SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 
-function publishDeliveryStatus(message) {
+function publishDeliveryStatus(message, eventScope = {}) {
   if (!message) return;
   realtimeEvents.publish("conversation_changed", {
+    ...eventScope,
     contactId: message.contact_id,
     messageId: message.id,
     whatsappMessageId: message.whatsapp_message_id,
@@ -128,7 +131,8 @@ async function persistSendOutcome(
   savedMessage,
   sendResult,
   errorText = WHATSAPP_SEND_REJECTED_ERROR,
-  channel = "whatsapp"
+  channel = "whatsapp",
+  eventScope = {}
 ) {
   let updated = null;
   if (sendResult.wamid) {
@@ -148,7 +152,7 @@ async function persistSendOutcome(
       errorText
     );
   }
-  publishDeliveryStatus(updated);
+  publishDeliveryStatus(updated, eventScope);
   return updated || savedMessage;
 }
 
@@ -220,6 +224,7 @@ async function sendTrackedText(
     durableOutboundReserved = true;
     if (!guarded) {
       realtimeEvents.publish("conversation_changed", {
+        ...scopeForPersistedContact(contact),
         contactId: saved.contact_id,
         messageId: saved.id,
         reason: "message",
@@ -236,7 +241,7 @@ async function sendTrackedText(
       null,
       null,
       null,
-      guarded ? { publish: false } : undefined
+      { ...(guarded ? { publish: false } : {}), eventScope: scopeForPersistedContact(contact) }
     );
   }
 
@@ -318,6 +323,7 @@ async function sendTrackedText(
 
   if (guarded) {
     realtimeEvents.publish("conversation_changed", {
+      ...scopeForPersistedContact(contact),
       contactId: saved.contact_id,
       messageId: saved.id,
       reason: "message",
@@ -329,7 +335,8 @@ async function sendTrackedText(
     saved,
     sendResult,
     errorText,
-    contact.channel || "whatsapp"
+    contact.channel || "whatsapp",
+    scopeForPersistedContact(contact)
   );
   if (durableOutboundReserved) {
     await inboundProcessingRepo.finalizeOutboundAttempt(
@@ -2127,7 +2134,7 @@ async function processIncomingMessage(
             null,
             promoPackage.imageUrl,
             null,
-            guardedPromo ? { publish: false } : undefined
+            { ...(guardedPromo ? { publish: false } : {}), eventScope: scopeForPersistedContact(contact) }
           );
           const promoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
             savedPromo.id,
@@ -2153,6 +2160,7 @@ async function processIncomingMessage(
 
           if (guardedPromo) {
             realtimeEvents.publish("conversation_changed", {
+              ...scopeForPersistedContact(contact),
               contactId: savedPromo.contact_id,
               messageId: savedPromo.id,
               reason: "message",
@@ -2365,7 +2373,7 @@ async function processIncomingMessage(
               null,
               resultItem.imageUrl,
               null,
-              guardedResult ? { publish: false } : undefined
+              { ...(guardedResult ? { publish: false } : {}), eventScope: scopeForPersistedContact(contact) }
             );
             pendingResultMessage = savedResult;
             const resultProviderRecorder = messagesRepo.socialProviderAliasRecorder(
@@ -2396,6 +2404,7 @@ async function processIncomingMessage(
 
             if (guardedResult) {
               realtimeEvents.publish("conversation_changed", {
+                ...scopeForPersistedContact(contact),
                 contactId: savedResult.contact_id,
                 messageId: savedResult.id,
                 reason: "message",
