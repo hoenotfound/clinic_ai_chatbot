@@ -794,6 +794,49 @@ test("mobile swipe right starts a quoted reply", async ({ page }, testInfo) => {
   expectNoUnexpectedApi(apiState);
 });
 
+test("mobile long press opens the WhatsApp-style message actions without sending anything", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Long press is a phone interaction.");
+
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const bubble = page.getByRole("button", { name: "Message actions" }).first().locator("xpath=../..");
+  await bubble.evaluate(async (element) => {
+    const point = (x, y) => ({
+      identifier: 1,
+      target: element,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      pageX: x,
+      pageY: y,
+    });
+    const dispatch = (type, touches, changedTouches = touches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "targetTouches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: changedTouches });
+      element.dispatchEvent(event);
+    };
+    dispatch("touchstart", [point(40, 160)]);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    dispatch("touchend", [], [point(40, 160)]);
+  });
+
+  const menu = page.getByRole("menu", { name: "Message options" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Reply/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Forward/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Copy/ })).toBeVisible();
+
+  await menu.getByRole("menuitem", { name: /Reply/ }).click();
+  await expect(page.getByText(/Replying to/i)).toBeVisible();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
 test("login submits credentials and reaches Inbox", async ({ page }) => {
   const apiState = await installApi(page, { loggedIn: false });
 
