@@ -145,6 +145,8 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
   );
 }
 
+const { configuredVerifiedScope } = require("../utils/verifiedWhatsAppEventScope");
+
 const MATCH_SECONDARY_ATTEMPT_SQL = `
  SELECT a.reservation_id,a.sender_id,a.message_id,a.contact_id,
         a.state AS attempt_state,
@@ -490,9 +492,15 @@ async function recordSignedSecondaryStatusBatch({
       }
     }
     await client.query("COMMIT"); transaction = false;
+    // Signed receipt, active sender, bound conversation, reservation and
+    // linked message were all verified above. No additional SQL required.
+    const verifiedScope = configuredVerifiedScope(
+      env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID, env.WHATSAPP_SECONDARY_WABA_ID, env
+    ) || { channel: "whatsapp" };
     for (const message of changedMessages) {
       try {
         realtimeEvents.publish("conversation_changed", {
+          ...verifiedScope,
           contactId: message.contact_id,
           messageId: message.id,
           deliveryStatus: message.delivery_status,
