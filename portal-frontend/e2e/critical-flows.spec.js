@@ -701,11 +701,18 @@ test("Inbox message actions are mobile-friendly and preserve quoted reply target
     await expect(sheet).toBeVisible();
     const viewport = page.viewportSize();
     const box = await sheet.boundingBox();
+    const bubble = await actionsButton.locator("xpath=../..").boundingBox();
     expect(viewport).not.toBeNull();
     expect(box).not.toBeNull();
-    expect(Math.abs(box.x)).toBeLessThanOrEqual(1);
-    expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(1);
-    expect(Math.abs(box.y + box.height - viewport.height)).toBeLessThanOrEqual(2);
+    expect(bubble).not.toBeNull();
+    await expect(sheet).toHaveAttribute("data-menu-placement", "anchored");
+    // WhatsApp-style contextual popup, not an edge-to-edge bottom sheet.
+    expect(box.width).toBeLessThan(viewport.width - 20);
+    expect(box.x).toBeGreaterThanOrEqual(10);
+    expect(box.y).toBeGreaterThanOrEqual(10);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width - 10);
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height - 8);
+    expect(Math.abs(box.x - bubble.x)).toBeLessThanOrEqual(28);
 
     const replyAction = sheet.getByRole("menuitem", { name: /Reply/ });
     const replyBox = await replyAction.boundingBox();
@@ -830,6 +837,14 @@ test("mobile long press opens the WhatsApp-style message actions without sending
   await expect(menu.getByRole("menuitem", { name: /Reply/ })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: /Forward/ })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: /Copy/ })).toBeVisible();
+  await expect(menu).toHaveAttribute("data-menu-placement", "anchored");
+  const bubbleBox = await bubble.boundingBox();
+  const menuBox = await menu.boundingBox();
+  expect(bubbleBox).not.toBeNull();
+  expect(menuBox).not.toBeNull();
+  expect(menuBox.width).toBeLessThan(page.viewportSize().width - 20);
+  expect(menuBox.y).toBeGreaterThanOrEqual(10);
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(page.viewportSize().height - 8);
 
   await menu.getByRole("menuitem", { name: /Reply/ }).click();
   await expect(page.getByText(/Replying to/i)).toBeVisible();
