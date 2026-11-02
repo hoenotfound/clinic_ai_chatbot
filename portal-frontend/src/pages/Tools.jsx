@@ -2361,6 +2361,8 @@ function FollowUpTool({
   const [previewServiceName, setPreviewServiceName] = useState("");
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [followUpTab, setFollowUpTab] = useState("sequence");
+  const [senderView, setSenderView] = useState("primary");
+  const [secondarySection, setSecondarySection] = useState("service");
   const [showDeliveryRules, setShowDeliveryRules] = useState(false);
   const [showBuilderHelp, setShowBuilderHelp] = useState(false);
   const [showAdvancedTemplateRules, setShowAdvancedTemplateRules] = useState(false);
@@ -2812,9 +2814,10 @@ function FollowUpTool({
       title="Automated follow-up"
       description="Send a short sequence when a customer goes quiet, with optional service-specific messages."
       switchLabel="24-hour follow-ups"
+      showStatusControl={senderView === "primary"}
       enabled={form.enabled}
       savedEnabled={savedEnabled}
-      hasUnsavedChanges={hasUnsavedChanges}
+      hasUnsavedChanges={senderView === "primary" && hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
       saving={saving || translating}
@@ -2830,9 +2833,50 @@ function FollowUpTool({
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <ArielFollowUpRules />
-      <ArielMediaReview />
-      {uploadingVideo && (
+      <nav role="tablist" aria-label="Follow-up sender" className="mb-5 grid gap-2 rounded-2xl border border-[var(--color-border)] bg-white p-2 sm:grid-cols-2">
+        {[
+          ["primary", "Primary WhatsApp", "Main sequence and shared channel settings"],
+          ["secondary", "Secondary WhatsApp", "Separate follow-ups and templates"],
+        ].map(([id, title, subtitle]) => (
+          <button key={id} id={`follow-up-sender-${id}`} role="tab" aria-selected={senderView === id}
+            aria-controls={`follow-up-sender-panel-${id}`} onClick={() => setSenderView(id)}
+            className={`rounded-xl border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${senderView === id
+              ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/50" : "border-transparent hover:bg-[var(--color-bg)]"}`}>
+            <span className="block text-sm font-bold">{title}</span>
+            <span className="mt-1 block text-xs text-[var(--color-text-muted)]">{subtitle}</span>
+          </button>
+        ))}
+      </nav>
+      <div id="follow-up-sender-panel-secondary" role="tabpanel" aria-labelledby="follow-up-sender-secondary"
+        className={senderView === "secondary" ? "space-y-4" : "hidden"}>
+        {hasUnsavedChanges && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          Primary changes are still unsaved. Return to Primary WhatsApp to save them.
+        </p>}
+        <div className="rounded-xl border border-[var(--color-border)] bg-white p-4">
+          <h2 className="text-base font-bold">Secondary WhatsApp</h2>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            Only the second number is affected here. Sending permissions, worker switches, templates and billing checks are separate from the primary number.
+          </p>
+          <nav role="tablist" aria-label="Secondary follow-up sections" className="mt-4 flex gap-2 overflow-x-auto pb-1">
+            {[["service","2h · 6h · 20h"],["marketing","48h · 72h templates"],["media","Media review"]].map(([id,label]) => (
+              <button type="button" key={id} id={`secondary-tab-${id}`} role="tab" aria-selected={secondarySection===id}
+                aria-controls={`secondary-panel-${id}`} onClick={() => setSecondarySection(id)}
+                className={`min-h-11 shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold ${secondarySection===id
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                  : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>{label}</button>
+            ))}
+          </nav>
+        </div>
+        <div role="tabpanel" id={`secondary-panel-${secondarySection}`} aria-labelledby={`secondary-tab-${secondarySection}`}>
+          <div className={secondarySection === "media" ? "hidden" : ""}>
+            <ArielFollowUpRules active={senderView === "secondary"} section={secondarySection} />
+          </div>
+          {senderView === "secondary" && secondarySection === "media" && <ArielMediaReview />}
+        </div>
+      </div>
+      <div id="follow-up-sender-panel-primary" role="tabpanel" aria-labelledby="follow-up-sender-primary"
+        className={senderView === "primary" ? "" : "hidden"}>
+        {uploadingVideo && (
         <div
           role="status"
           className="mb-5 flex items-start gap-3 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/55 px-3.5 py-3"
@@ -4843,6 +4887,7 @@ function FollowUpTool({
           </div>
         </aside>
       </div>
+      </div>
     </ToolShell>
   );
 }
@@ -5387,7 +5432,7 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
   );
 }
 
-function ToolShell({ title, description, switchLabel = null, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
+function ToolShell({ title, description, switchLabel = null, showStatusControl = true, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
   const enabledStateChanged = enabled !== savedEnabled;
   const enabledLabel = enabledStateChanged
     ? enabled
@@ -5409,11 +5454,11 @@ function ToolShell({ title, description, switchLabel = null, enabled, savedEnabl
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)] sm:text-[15px]">{description}</p>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+            {showStatusControl && <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
               {switchLabel && <span className="text-xs font-medium text-[var(--color-text-muted)]">{switchLabel}</span>}
               <span className="text-sm font-semibold text-[var(--color-text)]">{enabledLabel}</span>
               <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${switchLabel || title}`} />
-            </div>
+            </div>}
           </header>
 
           <div className="mt-5 sm:mt-6">{children}</div>
