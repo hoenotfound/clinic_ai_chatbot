@@ -669,6 +669,75 @@ async function openInboxConversation(page, name = "Alex Customer") {
   ).toBeVisible();
 }
 
+test("WhatsApp sender selection stays inside Filters on mobile and filters the list", async ({ page }, testInfo) => {
+  const primary = conversation({
+    contact_id: 101,
+    whatsapp_sender_key: "neutro",
+    whatsapp_sender_display_name: "Neutro Sense",
+  });
+  const secondary = conversation({
+    contact_id: 202,
+    name: "Bella Customer",
+    whatsapp_profile_name: "Bella Customer",
+    whatsapp_number: "+60199887766",
+    whatsapp_sender_key: "neutro_secondary",
+    whatsapp_sender_display_name: "中医养生馆",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [primary, secondary],
+  });
+  await page.goto("/inbox");
+  const list = page.getByRole("complementary", { name: "Conversation inbox" });
+  const panel = list.locator('[aria-label="Inbox filters"]');
+  const filtersButton = list.getByRole("button", { name: /Filters/ });
+  const sender = panel.getByRole("combobox", { name: "WhatsApp business number" });
+
+  if (testInfo.project.name === "iphone-portrait") {
+    // Business-number tabs must not occupy a second row below search.
+    await expect(list.locator('div[aria-label="WhatsApp business number"]')).toHaveCount(0);
+    await expect(sender).toBeHidden();
+  }
+  await filtersButton.click();
+  await expect(sender).toBeVisible();
+  await expect(sender.locator("option")).toHaveText(["All numbers", "DA", "中医养生馆"]);
+  await sender.selectOption("neutro_secondary");
+  await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
+  await expect(filtersButton).toContainText("1");
+  if (testInfo.project.name === "iphone-portrait") {
+    await filtersButton.click();
+    await expect(panel).toBeHidden();
+    await expect(list.getByRole("button", { name: /Number · 中医养生馆/ })).toBeHidden();
+    await expect(sender).toBeHidden();
+    await filtersButton.click();
+  }
+  await sender.selectOption("all");
+  await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
+  await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("message action menus use SVG Reply Forward Copy icons, never text glyphs", async ({ page }, testInfo) => {
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await page.getByRole("button", { name: "Message actions" }).first().click();
+  const menu = testInfo.project.name === "iphone-portrait"
+    ? page.getByRole("menu", { name: "Message options" })
+    : page.getByRole("menu").first();
+  await expect(menu).toBeVisible();
+  for (const label of ["Reply", "Forward", "Copy"]) {
+    const action = menu.getByRole("menuitem", { name: new RegExp(label) });
+    await expect(action).toBeVisible();
+    await expect(action.locator("svg")).toHaveCount(1);
+    expect((await action.innerText()).trim().startsWith(label)).toBe(true);
+  }
+  await menu.getByRole("menuitem", { name: /Copy/ }).click();
+  await expect(menu).toBeHidden();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
 test("Inbox message actions are mobile-friendly and preserve quoted reply targets", async ({ page }, testInfo) => {
   const secondConversation = conversation({
     contact_id: 202,
