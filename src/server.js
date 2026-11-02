@@ -34,7 +34,7 @@ const { resolveClarifiedPriceService } = require("./utils/priceClarificationCont
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
 const { resolveTwoTreatmentPriceReply, canRecoverTwoPriceInformationReview } = require("./utils/priceConversationRecovery");
-const { resolveNeutroComboOfferReply } = require("./utils/neutroComboOfferReply");
+const { resolveNeutroComboOfferReply, resolveNeutroComboMediaPricingDecision } = require("./utils/neutroComboOfferReply");
 const { resolveApprovedPricingAssessment } = require("./utils/approvedPricingDecision");
 const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpContext");
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
@@ -1951,22 +1951,31 @@ async function processIncomingMessage(
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
     {
-      // A directly named service or a one-turn standalone price follow-up
-      // remains customer-verified; never trust a stale CRM/ad label.
-      let pricingMediaSkipReason = twoTreatmentQuote
-        ? "two_treatments_text_only"
-        : comboOfferDecision?.mode === "direct"
-          ? "verified_combo_text_only" : "not_evaluated";
-      const promoBundle = (twoTreatmentQuote || comboOfferDecision?.mode === "direct")
+      // The combo reply is verified text, but optional media needs its own
+      // matching active price/package authorization. Keep the existing
+      // selector and secondary durable queue as the only sending paths.
+      const comboMediaPricingDecision = resolveNeutroComboMediaPricingDecision({
+        comboOfferDecision,
+        promotions: clinicConfig.promotions,
+        customerText: text,
+        session: comboOfferDecision ? recentVerifiedPricingSession(history, text) : null,
+        reply,
+      });
+      let pricingMediaSkipReason = twoTreatmentQuote && !comboMediaPricingDecision
+        ? "two_treatments_text_only" : comboOfferDecision && !comboMediaPricingDecision
+          ? "verified_combo_media_not_authorized" : "not_evaluated";
+      const promoBundle = twoTreatmentQuote && !comboMediaPricingDecision
         ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
-        pricingDecision: pricingAuthorityRequired ? approvedPricingDecision : null,
-        aiPricingEnabled: pricingAuthorityRequired,
+        pricingDecision: comboMediaPricingDecision ||
+          (pricingAuthorityRequired ? approvedPricingDecision : null),
+        aiPricingEnabled: pricingAuthorityRequired || Boolean(comboMediaPricingDecision),
         metaAdContext,
-        treatment: verifiedPriceService?.name ||
+        treatment: comboMediaPricingDecision?.treatment || verifiedPriceService?.name ||
           (pricingAuthorityRequired ? null : details?.treatment),
-        verifiedServiceFromText: verifiedPriceService?.name || null,
+        verifiedServiceFromText: comboMediaPricingDecision?.treatment ||
+          verifiedPriceService?.name || null,
         verifiedNumberedSelection: pricingAuthorityRequired
           ? (approvedPricingDecision?.source === "numbered_price_menu"
               ? approvedPricingDecision.treatment : null)
