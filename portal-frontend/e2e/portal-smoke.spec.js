@@ -1626,6 +1626,77 @@ test("assessment-first clinics cannot enable an ineffective pricing reminder but
   await expectNoHorizontalPageOverflow(page);
 });
 
+test("Follow-up sender workspaces keep drafts and save secondary rules independently on phones", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 740 });
+  await mockPortalApi(page, { loggedIn: true });
+  let reads = 0;
+  const writes = [];
+  await page.route("**/api/whatsapp-secondary-followups**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/whatsapp-secondary-followups" && request.method() === "GET") {
+      reads += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        configured: true, senderDisplayName: "DA Second Number",
+        workerEnabled: false, mediaEnabled: true,
+        availableClinicVideos: [{ key: "clinic-video-2h", label: "Clinic testimonial" }],
+        rules: [{ slot_hours: 2, enabled: true, message_text: "First reminder.", media_key: null },
+          { slot_hours: 6, enabled: false, message_text: "Second reminder.", media_key: null },
+          { slot_hours: 20, enabled: false, message_text: "Third reminder.", media_key: null }],
+        marketingRules: [], marketingWorkerEnabled: false,
+        marketingCatalogAvailable: true, marketingTemplates: [],
+      }) });
+    }
+    if (path === "/api/whatsapp-secondary-followups/2" && request.method() === "PUT") {
+      const body = request.postDataJSON();
+      writes.push(body);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        saved: true, rule: { slot_hours: 2, enabled: body.enabled,
+          message_text: body.messageText, has_media: Boolean(body.mediaKey) },
+      }) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/tools");
+  await expect.poll(() => reads).toBe(0);
+
+  // Primary edits must not silently become secondary edits.
+  await page.getByRole("switch", { name: "Enable 24-hour follow-ups" }).click();
+  await page.getByRole("tab", { name: "Secondary WhatsApp" }).click();
+  await expect(page.getByText("Primary changes are still unsaved.")).toBeVisible();
+  await expect.poll(() => reads).toBe(1);
+  const sections = page.getByRole("tablist", { name: "Secondary follow-up sections" });
+  await expect(sections.getByRole("tab")).toHaveCount(3);
+  await expect(page.getByRole("heading", { name: "Reply-window follow-up messages" })).toBeVisible();
+
+  const service = page.getByRole("region", { name: "Secondary WhatsApp follow-ups" });
+  const twoHour = service.locator("details").first();
+  await expect(twoHour.locator("summary")).toContainText("On");
+  await twoHour.locator("summary").click();
+  await service.getByLabel("After 2 hours").fill("Updated reminder for secondary only.");
+  await expect(twoHour.locator("summary")).toContainText("Unsaved");
+
+  await service.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
+  await service.getByText(/I approve this clinic-owned video/).click();
+  await service.getByRole("button", { name: "Save secondary rule" }).first().click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toMatchObject({
+    messageText: "Updated reminder for secondary only.",
+    enabled: true, mediaKey: "clinic-video-2h",
+    confirmClinicVideoReuse: true,
+  });
+  await expect(twoHour.locator("summary")).not.toContainText("Unsaved");
+
+  await sections.getByRole("tab", { name: "Templates" }).click();
+  await expect(page.getByRole("heading", { name: "Extended marketing templates" })).toBeVisible();
+  await sections.getByRole("tab", { name: "Messages" }).click();
+  await expect(service.getByLabel("After 2 hours")).toHaveValue("Updated reminder for secondary only.");
+  await page.getByRole("tab", { name: "Primary WhatsApp" }).click();
+  await expect(page.getByRole("switch", { name: "Enable 24-hour follow-ups" })).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => reads).toBe(1);
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test("Automated follow-up sections preserve draft settings while switching tabs", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true });
   await page.goto("/tools");
