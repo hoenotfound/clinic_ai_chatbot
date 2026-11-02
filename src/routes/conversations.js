@@ -5,6 +5,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
+const { recordInboxFullList } = require("../utils/refreshWakeDiagnostics");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact, getAccessibleContactIds } = require("../utils/accessControl");
@@ -842,6 +843,7 @@ function sendMeasuredInboxJson(res, payload, startedAt, kind) {
 
 router.get("/", async (req, res) => {
   const startedAt = process.hrtime.bigint();
+  recordInboxFullList(req.get("X-Inbox-Refresh-Reason"));
   try {
     const conversations = await withDatabaseActivitySource(
       "Inbox full conversation list", () => contactsRepo.listConversations());

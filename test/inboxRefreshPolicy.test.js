@@ -69,11 +69,19 @@ test("Inbox wiring retains staff-safe full-list fallback and live summary refres
   assert.match(source, /requestAnother\(\)/);
   assert.match(source, /pipelineRefreshContactId\(payload, conversationsRef\.current\)/);
   assert.match(source, /await refreshConversationSummary\(changedId\)/);
-  assert.match(source, /catch\s*\{\s*await refreshConversations\(\)/);
+  assert.match(source, /catch\s*\{\s*await refreshConversations\("summary_fallback"\)/);
   assert.match(source, /scheduleRefresh\(payload\.contactId \?\? null\)/);
   assert.match(source, /createInboxLiveStartup\(\{/);
   assert.match(source, /source\.onopen = \(\) => startup\.onOpen\(\)/);
   assert.match(source, /startup\.stop\(\)/);
+  assert.match(source, /refreshConversations\("startup"\)/);
+  assert.match(source, /scheduleRefresh\(null, "reconnect"\)/);
+  assert.match(source, /"pipeline_unknown_event"/);
+  assert.match(source, /"pipeline_summary_fallback"/);
+  const apiSource = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/api.js"), "utf8"
+  );
+  assert.match(apiSource, /"X-Inbox-Refresh-Reason": refreshReason/);
   assert.doesNotMatch(source, /refreshConversations\(\);\s*\}, \[\]\)/);
 });
 
