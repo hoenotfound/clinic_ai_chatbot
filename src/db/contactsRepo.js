@@ -2,6 +2,7 @@ const { pool } = require("./db");
 const { normalizeWhatsappNumber } = require("../utils/whatsappPhoneNormalization");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { scopeForPersistedContact } = require("../utils/verifiedWhatsAppEventScope");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
@@ -17,9 +18,12 @@ function legacyMalaysianLocalNumber(normalizedNumber) {
   return match ? `0${match[1]}` : null;
 }
 
-function publishContactChange(id, { profileOnly = false } = {}) {
+function publishContactChange(id, { profileOnly = false, contact = null } = {}) {
   if (!id) return;
   realtimeEvents.publish("conversation_changed", {
+    // No lookup: only a verified, already loaded sender record can scope this
+    // event. Missing sender fields remain unknown and fail closed.
+    ...scopeForPersistedContact(contact),
     contactId: id,
     reason: "contact_state",
     // Profile name/photo updates change the Inbox display only.
@@ -78,7 +82,7 @@ async function persistSocialProfile(row, profile) {
 
   const updated = result.rows[0];
   if (!updated) return row;
-  publishContactChange(row.contact_id || row.id, { profileOnly: true });
+  publishContactChange(row.contact_id || row.id, { profileOnly: true, contact: row });
   return { ...row, ...updated };
 }
 
@@ -187,7 +191,7 @@ async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
       [normalizedNumber, legacyNumber, profileName]
     );
     const reconciled = result.rows[0] || null;
-    if (reconciled) publishContactChange(reconciled.id);
+    if (reconciled) publishContactChange(reconciled.id, { contact: reconciled });
     return reconciled;
   } catch (err) {
     // Another request may have inserted the canonical number after the
@@ -468,7 +472,7 @@ async function updateContactName(id, name) {
     [name || null, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -529,7 +533,7 @@ async function updateContact(id, { name, whatsappNumber }) {
     [name || null, normalizeWhatsappNumber(whatsappNumber), id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -831,7 +835,7 @@ async function takeOver(id, staffUsername) {
   // Keep the existing Telegram cooldown while staff owns the chat. Otherwise
   // the very next customer message in human mode could immediately generate a
   // second intervention alert for the same unresolved conversation.
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -931,7 +935,7 @@ async function returnToAi(id, expectedUpdatedAt = null) {
   const updated = result.rows[0] || null;
   // Human-intervention Telegram alerts use a strict rolling 30-minute
   // per-contact cooldown. Returning to AI must not reopen that window early.
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1035,7 +1039,7 @@ async function clearStaffAssistStateIfUnchanged(contact) {
   );
 
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1063,7 +1067,7 @@ async function setAttention(
   if (updated) {
     // Clearing an Inbox attention flag is operational state only. It must not
     // reset the Telegram anti-spam window for this contact.
-    publishContactChange(updated.id);
+    publishContactChange(updated.id, { contact: updated });
     if (needsAttention) {
       notifyTelegram(
         telegramImmediateAlerts.sendHumanInterventionAlert({
@@ -1130,7 +1134,7 @@ async function setAiReviewAttention(id, inboundMessageId, summary, category = "c
   );
   const updated = result.rows[0] || null;
   if (!updated) return getContactById(id);
-  publishContactChange(updated.id);
+  publishContactChange(updated.id, { contact: updated });
   notifyTelegram(
     telegramImmediateAlerts.sendAiReviewAlert({
       contactId: updated.id,
@@ -1214,7 +1218,7 @@ async function dismissAttentionAndReviews(id) {
     [id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1285,7 +1289,7 @@ async function resolveAiReviewItem(contactId, reviewId) {
     [contactId, reviewId]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1327,7 +1331,7 @@ async function clearTemporaryAiAttention(id) {
     [id, TEMPORARY_AI_ATTENTION_REASON]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1377,7 +1381,7 @@ async function setDeliveryAttention(id, reason, failedMessageId = null) {
     [reason, id, safeMessageId]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
 
   // A higher-priority booking/clinical/AI-review warning can prevent an
   // actionable delivery failure from replacing the contact attention flag.
@@ -1501,7 +1505,7 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
     [id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1514,7 +1518,7 @@ async function setUnread(id, isUnread) {
     [isUnread, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
@@ -1527,7 +1531,7 @@ async function setFollowUp(id, needsFollowUp) {
     [needsFollowUp, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id, { contact: updated });
   return updated;
 }
 
