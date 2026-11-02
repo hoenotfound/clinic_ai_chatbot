@@ -5,7 +5,8 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const { withDatabaseActivitySource } = require("../utils/databaseActivityContext");
-const { recordInboxFullList, recordInboxRevisionCheck } = require("../utils/refreshWakeDiagnostics");
+const { recordInboxFullList, recordInboxRevisionCheck,
+  recordInboxRevisionFallback, recordSseLifecycle } = require("../utils/refreshWakeDiagnostics");
 const { inboxPayloadEtag, matchesInboxPayloadEtag } = require("../utils/inboxConditionalResponse");
 const { createInboxRevisionGuard } = require("../utils/inboxRevisionGuard");
 const inboxRevisionGuard = createInboxRevisionGuard();
@@ -884,11 +885,18 @@ router.get("/", async (req, res) => {
     const wal = await readInboxWal();
     const clientEtag = req.get("If-None-Match");
     const clientProof = req.get("X-Inbox-Revision-Proof");
+    // Fixed-label reasons tell us whether full SQL followed a missing browser
+    // validator, unavailable WAL, stale proof or a write during verification.
+    // The existing authorization and fail-closed fast path are unchanged.
+    let fallbackReason = !wal ? "wal_unavailable"
+      : !clientEtag ? "missing_etag"
+        : !clientProof ? "missing_proof" : "proof_mismatch_or_wal_changed";
     if (wal && clientEtag && clientProof) {
       const currentAccess = await getAccessibleContactIds(req.user);
-      if (inboxRevisionGuard.matchesProof(clientProof, {
+      const proofMatches = inboxRevisionGuard.matchesProof(clientProof, {
         etag: clientEtag, wal, permittedIds: currentAccess, user: req.user,
-      }) && (await readInboxWal()) === wal) {
+      });
+      if (proofMatches && (await readInboxWal()) === wal) {
         res.set("Cache-Control", "private, no-store");
         res.set("ETag", clientEtag);
         res.set("X-Inbox-Revision-Check", "fast");
@@ -898,7 +906,9 @@ router.get("/", async (req, res) => {
         res.status(304).end();
         return;
       }
+      if (proofMatches) fallbackReason = "wal_changed_during_check";
     }
+    recordInboxRevisionFallback(fallbackReason);
     recordInboxRevisionCheck(wal ? "full_query" : "wal_unavailable");
     const conversations = await withDatabaseActivitySource(
       "Inbox full conversation list", () => contactsRepo.listConversations());
@@ -1050,20 +1060,27 @@ router.get("/events", (req, res) => {
   res.flushHeaders?.();
   res.write("retry: 3000\n\n");
 
+  const openedAt = Date.now();
+  recordSseLifecycle("opened");
   const removeClient = realtimeEvents.addClient(res);
+  let closed = false;
+  function finishStream() {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    removeClient();
+    recordSseLifecycle("closed", Date.now() - openedAt);
+  }
   const heartbeat = setInterval(() => {
     try {
       res.write(": keepalive\n\n");
     } catch {
-      clearInterval(heartbeat);
-      removeClient();
+      finishStream();
     }
   }, SSE_HEARTBEAT_MS);
 
-  req.on("close", () => {
-    clearInterval(heartbeat);
-    removeClient();
-  });
+  req.once("close", finishStream);
+  res.once("close", finishStream);
 });
 
 // Portal message history is cursor-paginated. The first request returns only
