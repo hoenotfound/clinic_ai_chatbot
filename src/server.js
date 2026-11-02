@@ -290,7 +290,7 @@ async function sendTrackedText(
           ambiguousReason
         );
         if (ambiguous?.message) {
-          publishDeliveryStatus(ambiguous.message);
+          publishDeliveryStatus(ambiguous.message, scopeForPersistedContact(contact));
         }
       } catch (markErr) {
         console.error(
@@ -2175,7 +2175,8 @@ async function processIncomingMessage(
             savedPromo,
             promoResult,
             promoError,
-            contact.channel || "whatsapp"
+            contact.channel || "whatsapp",
+            scopeForPersistedContact(contact)
           );
           if (!promoResult.success) {
             console.warn(
@@ -2420,7 +2421,8 @@ async function processIncomingMessage(
               savedResult,
               resultSend,
               resultError,
-              contact.channel || "whatsapp"
+              contact.channel || "whatsapp",
+              scopeForPersistedContact(contact)
             );
             pendingResultMessage = null;
             pendingResultSend = null;
