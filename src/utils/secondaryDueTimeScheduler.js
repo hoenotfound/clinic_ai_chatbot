@@ -101,7 +101,8 @@ async function measureSecondaryWorkerRun(label, run) {
 // conservative: recheck, so opt-outs, bookings and legacy publishers are safe.
 function secondaryEventRequiresWake(type, payload, env = process.env) {
   if (type === "conversation_changed") {
-    if (payload?.reason === "reaction" || payload?.followUpStateUnchanged === true) return false;
+    if (payload?.reason === "reaction" || payload?.followUpStateUnchanged === true ||
+        payload?.reason === "lead_assignment_recovered") return false;
     if (payload?.channel && payload.channel !== "whatsapp") return false;
     if (payload?.businessPhoneNumberId != null &&
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID &&
