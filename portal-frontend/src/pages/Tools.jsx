@@ -2854,8 +2854,8 @@ function FollowUpTool({
           Primary changes are still unsaved. Return to Primary WhatsApp to save them.
         </p>}
         <nav role="tablist" aria-label="Secondary follow-up sections"
-          className="flex gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white p-1.5">
-          {[["service","Messages"],["marketing","Templates"],["media","Media review"]].map(([id,label]) => (
+          className="grid grid-cols-3 gap-1.5 rounded-xl border border-[var(--color-border)] bg-white p-1.5">
+          {[["service","Messages"],["marketing","Templates"],["media","Media"]].map(([id,label]) => (
             <button type="button" key={id} id={`secondary-tab-${id}`} role="tab"
               aria-selected={secondarySection===id} aria-controls={`secondary-panel-${id}`}
               onClick={() => setSecondarySection(id)}
