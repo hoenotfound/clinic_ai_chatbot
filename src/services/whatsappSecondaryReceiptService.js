@@ -221,6 +221,7 @@ async function recordSignedSecondaryStatusBatch({
     let replayed = 0;
     let held = 0;
     let autoReconciled = 0;
+    const reconciledContactIds = new Set();
     const changedMessages = [];
     for (const event of events) {
       const owner = await client.query(MATCH_SECONDARY_ATTEMPT_SQL, [
@@ -309,7 +310,11 @@ async function recordSignedSecondaryStatusBatch({
            END
          WHERE id=$1 AND contact_id=$2 AND role='assistant'
            AND (whatsapp_message_id IS NULL OR whatsapp_message_id=$3)
-         RETURNING id,contact_id,delivery_status`,
+         RETURNING id,contact_id,delivery_status,
+           CASE WHEN whatsapp_template->>'automatedSecondaryAiMedia'='true'
+             AND (whatsapp_template->>'anchorMessageId') ~ '^[0-9]{1,10}$'
+           THEN (whatsapp_template->>'anchorMessageId')::bigint ELSE NULL END
+             AS secondary_media_inbound_id`,
         [attempt.message_id,attempt.contact_id,event.wamid,event.deliveryStatus]
       );
       if (delivery.rowCount !== 1) {
@@ -488,6 +493,7 @@ async function recordSignedSecondaryStatusBatch({
             throw new Error("Auto-reconciliation lost exact sender ownership");
           }
           autoReconciled++;
+          reconciledContactIds.add(Number(attempt.contact_id));
         }
       }
     }
@@ -498,10 +504,22 @@ async function recordSignedSecondaryStatusBatch({
     if (autoReconciled > 0) {
       try {
         await require("./whatsappSecondaryAiMediaQueue")
-          .wakeAfterVerifiedReconciliation({database,env});
+          .wakeAfterVerifiedReconciliation({contactIds:[...reconciledContactIds],database,env});
       } catch (err) {
         console.warn("[Secondary WhatsApp AI media] verified wake unavailable:",
           err?.message);
+      }
+    }
+    // Only confirmed media receipts need a media-specific audit query.
+    const mediaInbounds=[...new Set(changedMessages
+      .map(message=>Number(message.secondary_media_inbound_id))
+      .filter(id=>Number.isSafeInteger(id)&&id>0))];
+    if(mediaInbounds.length){
+      try{
+        await require("./whatsappSecondaryAiMediaAudit")
+          .reconcileSecondaryMediaAudit({inboundMessageIds:mediaInbounds,database,env});
+      }catch(err){
+        console.warn("[Secondary WhatsApp AI media] receipt audit unavailable:",err?.message);
       }
     }
     // Signed receipt, active sender, bound conversation, reservation and
