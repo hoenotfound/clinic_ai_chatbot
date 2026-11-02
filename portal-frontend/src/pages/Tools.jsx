@@ -2916,7 +2916,7 @@ function FollowUpTool({
         </div>
         {hasUnsavedChanges && (
           <p role="status" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-            Changes are not live until saved. Readiness reflects the last saved settings.
+            Unsaved changes are not live. Readiness reflects the last saved settings.
           </p>
         )}
         <details className="group mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -2929,19 +2929,19 @@ function FollowUpTool({
             <p className="text-xs leading-5 text-[var(--color-text-muted)]">{operationalReadiness.overall.detail}</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {[
-                { title: "Standard sequence", status: operationalReadiness.normal, tab: "sequence" },
-                { title: "Extended templates", status: operationalReadiness.extended,
+                { title: "24-hour follow-ups", status: operationalReadiness.normal, tab: "sequence" },
+                { title: "Extended WhatsApp templates", status: operationalReadiness.extended,
                   tab: operationalReadiness.extended.target || "whatsapp" },
               ].map((item) => (
                 <div key={item.title} className="rounded-lg border border-[var(--color-border)] p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs font-semibold">{item.title}</p>
+                    <h3 className="text-xs font-semibold">{item.title}</h3>
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${followUpReadinessTone(item.status.level)}`}>{item.status.label}</span>
                   </div>
                   <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">{item.status.detail}</p>
                   <button type="button" onClick={() => setFollowUpTab(item.tab)}
                     className="mt-2 min-h-10 rounded-lg px-2 text-xs font-semibold text-[var(--color-primary)]">
-                    {item.tab === "sequence" ? "Open sequence" : "Open templates"}
+                    {item.tab === "sequence" ? "Review sequence" : "Review WhatsApp setup"}
                   </button>
                 </div>
               ))}
@@ -2952,7 +2952,7 @@ function FollowUpTool({
               <button type="button" onClick={() => { refreshFreeEntryStatus(); if (savedFreeEntryEnabled) refreshTemplateCatalog(true); }}
                 disabled={freeEntryStatusLoading || templateCatalogLoading}
                 className="min-h-10 rounded-lg border border-[var(--color-border)] bg-white px-3 font-semibold text-[var(--color-primary)] disabled:opacity-50">
-                {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck"}
+                {freeEntryStatusLoading || templateCatalogLoading ? "Checking…" : "Recheck readiness"}
               </button>
             </div>
           </div>
