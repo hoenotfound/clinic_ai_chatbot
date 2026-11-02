@@ -200,6 +200,29 @@ async function sendTrackedText(
     };
   }
 
+  // The ad-only eligibility check must run BEFORE reserving an assistant
+  // message or an outbound attempt. An existing primary WhatsApp patient may
+  // arrive through a new secondary ad, but must remain manual there. This
+  // protects even callers that bypass the ordinary incoming-message handler.
+  const secondaryAutomatedText = contact.channel === "whatsapp" &&
+    contact.whatsapp_sender_id != null &&
+    contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY &&
+    ["ai_reply", "system_fallback"].includes(origin);
+  if (secondaryAutomatedText) {
+    const audienceEligible = await isSecondaryAdsOnlyEligible(contact.id) ||
+      (origin === "ai_reply" &&
+       await isSecondarySupervisedAiTextTestEligible(contact.id));
+    if (!audienceEligible) {
+      return {
+        finalMessage: null,
+        sendResult: {
+          success: false, wamid: null, cancelled: true, error: null,
+          code: "secondary_ads_only_contact_ineligible",
+        },
+      };
+    }
+  }
+
   // For durable inbound work, reserve the assistant row and the outbound-attempt
   // marker in one database transaction before calling Meta. A restart after
   // this point is therefore reconciled as accepted/rejected/ambiguous instead
@@ -606,13 +629,20 @@ async function processIncomingMessage(
     if (senderScoped && !contact?.whatsapp_sender_key) {
       throw new Error("Sender-scoped AI reply cannot resolve a verified sender key.");
     }
-    const secondaryContact = senderScoped &&
-      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY;
+    // Sender identity is already verified on the persisted contact. Do not
+    // let a disabled ingress flag accidentally bypass the ads-only audience.
+    // A secondary message must stay manual regardless of the inbound mode.
+    const secondaryContact = channel === "whatsapp" &&
+      contact?.whatsapp_sender_id != null &&
+      Boolean(process.env.WHATSAPP_PRIMARY_SENDER_KEY) &&
+      contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
     // An ad click by an existing/imported/direct customer never promotes the
     // conversation into AI. Check persisted FIRST inbound, not lead source labels.
     // Check the no-send gates first. Avoid even calling the eligibility
     // helper on every incoming manual chat when secondary AI is OFF.
     const secondaryAiReady = secondaryContact &&
+      process.env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary" &&
+      contact.whatsapp_sender_key === process.env.WHATSAPP_SECONDARY_SENDER_KEY &&
       process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       secondaryUsesPrimaryClinicContent(process.env);
@@ -638,6 +668,13 @@ async function processIncomingMessage(
     canSendAutomatedReply = aiCancellationKey
       ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
       : null;
+
+    // Skip ordinary excluded text before lead scoring, model generation,
+    // pricing/media selection and assistant draft creation. The inbound
+    // remains saved and unread for staff in the secondary Inbox.
+    if (secondaryInboxOnly && !mediaType && !unsupportedType) {
+      return { wasFirstMessage, keywordReason };
+    }
 
     if (unsupportedType) {
       // Unsupported provider payloads are already durable/unread in Inbox.
