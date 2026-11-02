@@ -1270,14 +1270,17 @@ export default function Inbox() {
     updateConversationLocally(id, {
       inbox_archived_at: archived ? new Date().toISOString() : null,
     });
+    // Return to Chats immediately for a native-feeling archive action,
+    // rather than leaving a disappearing thread on screen during the request.
+    const wasOpen = Number(selectedIdRef.current) === id;
+    if (wasOpen) {
+      setSelectedId(null);
+      setSearchParams({}, { replace: true });
+      setMobileThreadOpen(false);
+      setKeepExplicitlyOpenedThread(false);
+    }
     try {
       await api.setInboxArchived(id, archived);
-      if (Number(selectedIdRef.current) === id) {
-        setSelectedId(null);
-        setSearchParams({}, { replace: true });
-        setMobileThreadOpen(false);
-        setKeepExplicitlyOpenedThread(false);
-      }
       showToast(archived ? "Chat archived." : "Chat restored.", "info");
     } catch (err) {
       console.error("Failed to update Inbox archive:", err);
