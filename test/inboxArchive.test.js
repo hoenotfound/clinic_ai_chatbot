@@ -71,3 +71,66 @@ test("PostgreSQL archive restores only on a genuinely newer inbound, not history
     try { await db.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); } finally { await db.end(); }
   }
 });
+
+test("archive API refuses unassigned and read-only staff before changing the contact", async (t) => {
+  const router = require("../src/routes/conversations");
+  const route = router.stack.find(layer =>
+    layer.route?.path === "/:contactId/archive" && layer.route.methods.patch);
+  assert.ok(route, "archive route must exist");
+  const handler = route.route.stack.at(-1).handle;
+  const originalQuery = pool.query;
+  const originalGet = contactsRepo.getContactById;
+  const originalArchive = contactsRepo.setInboxArchived;
+  t.after(() => {
+    pool.query = originalQuery;
+    contactsRepo.getContactById = originalGet;
+    contactsRepo.setInboxArchived = originalArchive;
+  });
+
+  let owner = "different-staff", changed = 0, fetched = 0;
+  pool.query = async (sql, args) => {
+    assert.match(sql, /FROM leads/);
+    assert.deepEqual(args, [101]);
+    return { rows: [{ owner_username: owner }] };
+  };
+  contactsRepo.getContactById = async id => {
+    fetched++;
+    assert.equal(id, 101);
+    return { id: 101 };
+  };
+  contactsRepo.setInboxArchived = async (id, archived) => {
+    changed++;
+    assert.equal(id, 101);
+    return { id, inbox_archived_at: archived ? "2026-11-02T00:00:00Z" : null };
+  };
+  async function call(permissions, body = { archived: true }) {
+    const req = { params: { contactId: "101" }, body,
+      user: { id: 5, username: "staff", role: "sales",
+        permissions: { view_all_leads: false, view_assigned_leads: true,
+          manage_assigned_leads: true, ...permissions } } };
+    const res = {
+      statusCode: 200, payload: null,
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.payload = body; return this; },
+    };
+    await handler(req, res);
+    return res;
+  }
+
+  const unassigned = await call({});
+  assert.equal(unassigned.statusCode, 403);
+  assert.equal(changed, 0);
+  assert.equal(fetched, 0);
+
+  owner = "staff";
+  const readOnly = await call({ manage_assigned_leads: false });
+  assert.equal(readOnly.statusCode, 403);
+  assert.equal(changed, 0);
+  assert.equal(fetched, 0);
+
+  const permitted = await call({});
+  assert.equal(permitted.statusCode, 200);
+  assert.equal(permitted.payload.archived, true);
+  assert.equal(changed, 1);
+  assert.equal(fetched, 1);
+});
