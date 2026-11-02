@@ -101,12 +101,12 @@ function resolveNeutroComboOfferReply({
   // explicitly choose separate pricing or one combined treatment. Answer with
   // both independently verified individual prices AND the distinct combo,
   // without treating the customer's ambiguity as permission to send images.
-  if (ambiguousBothPrices && !verifiedIndividualQuote) {
+  if (ambiguousBothPrices) {
     const standalone = ["3D 小颜术", "9D 逆龄抗衰"].map(name => {
       const entries = verifiedPricesForService(name, promotions, current, turns);
       return entries?.length === 1 ? { name, price:entries[0].price } : null;
     });
-    if (standalone.some(item => !item || !/^RM[1-9]\\d{0,5}$/u.test(item.price))) return null;
+    if (standalone.some(item => !item || !/^RM[1-9]\d{0,5}$/u.test(item.price))) return null;
     const reply = locale.startsWith("ms")
       ? `Harga First Trial 3D ialah ${standalone[0].price}, dan 9D ialah ${standalone[1].price} secara berasingan. Jika berminat dengan kedua-duanya, pakej 3D + 9D kini ${offer.price}${gift} 😊 Pengamal akan semak kesesuaian dahulu.`
       : locale.startsWith("en")
