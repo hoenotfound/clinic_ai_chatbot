@@ -15,6 +15,7 @@ const INDIVIDUAL_SERVICES = new Set(["3D 小颜术", "9D 逆龄抗衰"]);
 const MAX_CONTEXT_MS = 3 * 60 * 60 * 1000;
 const REJECT = /(?:退订|退訂|不要再发|不要再發|停止发|停止發|不想(?:做|了解)|不需要(?:治疗|治療|护理|護理)|\b(?:stop\s+(?:messag|promot)|opt[ -]?out|unsubscribe|not\s+interested)\b)/iu;
 const NO_COMBO = /(?:不要|不想要?|不需要|不选|不選|不用|不是)\s*(?:3\s*d\s*[+＋]\s*9\s*d\s*)?(?:组合|組合|搭配|combo|bundle)|\b(?:no|not|without|bukan|tak\s+nak)\s+(?:the\s+)?(?:combo|bundle|pakej)\b/iu;
+const NO_INDIVIDUAL = /(?:不要|不想(?:要|做|了解)?|不考虑|不考慮|不用|不是|排除)\s*(?:做|了解)?\s*(?:3\s*d|9\s*d)|(?:3\s*d|9\s*d)\s*(?:不要|不做|不用|不想(?:要|做)?|不考虑|不考慮)|(?:只想|只要|只做|仅想|僅想)\s*(?:要|做|了解)?\s*(?:3\s*d|9\s*d)|\b(?:not|without|no|only|just)\s+(?:the\s+)?(?:3\s*d|9\s*d)\b/iu;
 const ADMIN_PRICE = /(?:押金|订金|訂金|定金|咨询费|諮詢費|挂号|掛號|评估费|評估費|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
 const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所有(?:疗程|療程|服务|服務|项目|項目)|\b(?:all\s+(?:treatments?|services?)|whole\s+clinic|price\s+list)\b)/iu;
 const SEPARATE_INTENT = /(?:分开|分開|分别|分別|各自|单独|單獨|\b(?:separately|individually|each|asing[- ]asing)\b)/iu;
@@ -70,7 +71,8 @@ function resolveNeutroComboOfferReply({
 } = {}) {
   const current = String(customerText || "").trim();
   if (!current || !hasExplicitPriceRequest(current) || ADMIN_PRICE.test(current) ||
-      BROAD.test(current) || NO_COMBO.test(current) || REJECT.test(current) ||
+      BROAD.test(current) || NO_COMBO.test(current) || NO_INDIVIDUAL.test(current) ||
+      REJECT.test(current) ||
       hasClinicalMediaRisk(current)) return null;
   const turns = safeRecentSession(session, current, now);
   if (!turns) return null;
