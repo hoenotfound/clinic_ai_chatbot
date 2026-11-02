@@ -1813,6 +1813,8 @@ function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, 
     gestureRef.current = null;
     if (gesture?.axis !== "horizontal") return;
     suppressNextClickRef.current = true;
+    // A swipe may suppress the synthetic click; never block the next real tap.
+    window.setTimeout(() => { suppressNextClickRef.current = false; }, 300);
     onReveal(gesture.offset >= 54 ? contactId : null);
     setDragOffset(null);
   }
@@ -1833,7 +1835,9 @@ function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, 
       onTouchCancel={handleCancel} onClickCapture={handleClickCapture}
       style={{ touchAction: "pan-y" }}>
       <button data-archive-action="true" type="button"
-        aria-label={archived ? "Unarchive " + displayNameText : "Archive " + displayNameText}
+        aria-label={archived ? "Unarchive chat" : "Archive chat"}
+        aria-description={"For " + displayNameText}
+        title={(archived ? "Unarchive " : "Archive ") + displayNameText}
         disabled={pending} tabIndex={open ? 0 : -1}
         onClick={() => { onReveal(null); onArchive(contactId); }}
         className={archived
@@ -2160,12 +2164,6 @@ function ConversationList({
                 </div>
               )}
               <FilterSelect
-                label="Chats"
-                value={filters.archiveView}
-                onChange={(value) => updateFilter("archiveView", value)}
-                options={[["active", "Chats"], ["archived", "Archived"]]}
-              />
-              <FilterSelect
                 label="Status"
                 value={filters.status}
                 onChange={(value) => updateFilter("status", value)}
@@ -2223,6 +2221,14 @@ function ConversationList({
                 ]}
                 hint="Reply window is based on the last incoming customer message. Open can include staff-only Human Agent conversations; an open window does not override consent or sending restrictions."
               />
+              <div className="col-span-2">
+              <FilterSelect
+                label="Chats"
+                value={filters.archiveView}
+                onChange={(value) => updateFilter("archiveView", value)}
+                options={[["active", "Chats"], ["archived", "Archived"]]}
+              />
+              </div>
             </div>
           </div>
         )}
