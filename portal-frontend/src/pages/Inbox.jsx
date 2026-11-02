@@ -133,6 +133,8 @@ function matchesInboxFilters(conversation, filters, { exclude = null, now, canVi
     if (filters.status === "unread" && !conversation.is_unread) return false;
     if (filters.status === "attention" && !conversation.needs_attention) return false;
   }
+  if (exclude !== "archiveView" &&
+      Boolean(conversation.inbox_archived_at) !== (filters.archiveView === "archived")) return false;
   if (exclude !== "channel" && filters.channel !== "all" &&
       (conversation.channel || "whatsapp") !== filters.channel) return false;
   if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
@@ -1762,6 +1764,7 @@ function ConversationList({
 }) {
   const [filters, setFilters] = useState({
     status: "all",
+    archiveView: "active",
     channel: "all",
     sender: "all",
     control: "all",
@@ -1869,7 +1872,7 @@ function ConversationList({
   );
   useEffect(() => {
     setVisibleRowCount(60);
-  }, [filters.status, filters.channel, filters.sender, filters.control,
+  }, [filters.status, filters.archiveView, filters.channel, filters.sender, filters.control,
       filters.assignment, filters.replyWindow, filters.query]);
   const statusOptions = useMemo(() =>
     STATUS_FILTERS.map((filter) => [
@@ -1886,6 +1889,7 @@ function ConversationList({
 
   const activeFilterCount =
     (filters.status !== "all" ? 1 : 0) +
+    (filters.archiveView === "archived" ? 1 : 0) +
     (filters.channel !== "all" ? 1 : 0) +
     (filters.sender !== "all" ? 1 : 0) +
     (filters.control !== "all" ? 1 : 0) +
@@ -1896,6 +1900,9 @@ function ConversationList({
 
   const activeFilterChips = useMemo(() => {
     const active = [];
+    if (filters.archiveView === "archived") {
+      active.push({ key: "archiveView", label: "Archived chats" });
+    }
     if (filters.status !== "all") {
       const label = STATUS_FILTERS.find((item) => item.key === filters.status)?.label;
       active.push({ key: "status", label: label || "Status" });
@@ -1929,7 +1936,7 @@ function ConversationList({
       });
     }
     return active;
-  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
+  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status, filters.archiveView]);
 
   function updateFilter(key, value) {
     onExplicitFilterChange();
@@ -1941,6 +1948,7 @@ function ConversationList({
     setFilters((current) => ({
       ...current,
       status: "all",
+      archiveView: "active",
       channel: "all",
       sender: "all",
       control: "all",
@@ -1951,7 +1959,7 @@ function ConversationList({
 
   function clearFilters() {
     onExplicitFilterChange();
-    setFilters({ status: "all", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
+    setFilters({ status: "all", archiveView: "active", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
   }
 
   return (
@@ -2047,6 +2055,12 @@ function ConversationList({
                 </div>
               )}
               <FilterSelect
+                label="Chats"
+                value={filters.archiveView}
+                onChange={(value) => updateFilter("archiveView", value)}
+                options={[["active", "Chats"], ["archived", "Archived"]]}
+              />
+              <FilterSelect
                 label="Status"
                 value={filters.status}
                 onChange={(value) => updateFilter("status", value)}
@@ -2114,7 +2128,7 @@ function ConversationList({
               <button
                 key={filter.key}
                 type="button"
-                onClick={() => updateFilter(filter.key, "all")}
+                onClick={() => updateFilter(filter.key, filter.key === "archiveView" ? "active" : "all")}
                 className={`${filter.key === "sender" ? "hidden sm:inline-flex" : "inline-flex"} min-h-9 max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-xs font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white`}
                 title={`Remove ${filter.label} filter`}
               >
@@ -2124,6 +2138,22 @@ function ConversationList({
             ))}
           </div>
         )}
+        <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+          {filters.archiveView === "archived" ? (
+            <button type="button" onClick={() => updateFilter("archiveView", "active")}
+              className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-primary)]"
+              aria-label="Back to chats">
+              <ArrowLeftIcon className="h-4 w-4" /> Back to chats
+            </button>
+          ) : conversations?.some((item) => item.inbox_archived_at) ? (
+            <button type="button" onClick={() => updateFilter("archiveView", "archived")}
+              className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+              aria-label="Open archived chats">
+              <ArchiveIcon className="h-4 w-4" /> Archived
+              <span className="font-normal">{conversations.filter((item) => item.inbox_archived_at).length}</span>
+            </button>
+          ) : null}
+        </div>
         <nav className="wa-inbox-status-tabs" aria-label="Quick conversation filters">
           {STATUS_FILTERS.map(({ key, label }) => (
             <button
