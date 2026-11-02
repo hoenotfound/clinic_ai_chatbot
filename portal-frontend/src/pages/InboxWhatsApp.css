@@ -42,10 +42,10 @@
   body:has(.wa-inbox-shell) .app-sidebar[data-inbox-thread="false"][data-mobile-open="false"] {
     position: fixed;
     top: 0;
-    left: 0;
+    right: 0;
     z-index: 55;
-    width: 0;
-    height: 0;
+    width: 4rem;
+    height: 4rem;
     overflow: visible;
     background: transparent;
   }
@@ -255,6 +255,13 @@
     background: transparent;
   }
   .wa-thread-desktop-handoff {
+    min-width: 2.5rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .wa-thread-desktop-handoff > span {
     display: none;
   }
   .wa-thread-messages {
