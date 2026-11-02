@@ -976,14 +976,8 @@ test("iPhone hold on message text opens actions without selecting text", async (
   await openInboxConversation(page);
   const content = page.getByText("Hi, I would like to know more.", { exact: true }).last();
   await expect(content).toBeVisible();
-  const css = await content.evaluate((node) => {
-    const bubble = node.closest(".wa-message-bubble");
-    const computed = getComputedStyle(bubble);
-    return { select: computed.userSelect, callout: computed.webkitTouchCallout };
-  });
-  expect(css.select).toBe("none");
-  expect(css.callout).toBe("none");
-
+  // Exercise the actual gesture on message text. Safari's computed CSS
+  // aliases differ across WebKit versions, so behavior matters more here.
   await content.evaluate(async (element) => {
     const point = (x, y) => ({
       identifier: 2, target: element, clientX: x, clientY: y,
@@ -1024,8 +1018,18 @@ test("closed WhatsApp reply placeholder stays on one line on a phone", async ({ 
   await expect(composer).toBeDisabled();
   await expect(composer).toHaveAttribute("placeholder", "Reply unavailable");
   await expect(composer).toHaveAttribute("aria-label", "WhatsApp reply unavailable");
-  const style = await composer.evaluate((el) => getComputedStyle(el, "::placeholder").whiteSpace);
-  expect(style).toBe("nowrap");
+  // WebKit forces pre-wrap on textarea placeholders despite ::placeholder CSS.
+  // Check the shortened label actually fits the available single line instead.
+  const size = await composer.evaluate((el) => {
+    const style = getComputedStyle(el);
+    const probe = document.createElement("canvas").getContext("2d");
+    probe.font = style.font;
+    return {
+      text: probe.measureText(el.getAttribute("placeholder")).width,
+      available: el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    };
+  });
+  expect(size.text).toBeLessThan(size.available);
   expectNoUnexpectedApi(apiState);
 });
 
