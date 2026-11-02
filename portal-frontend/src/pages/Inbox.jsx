@@ -44,6 +44,9 @@ import {
   PauseIcon,
   PlayIcon,
   PlusIcon,
+  ReplyIcon,
+  ForwardIcon,
+  CopyIcon,
   SearchIcon,
   SendIcon,
   StopIcon,
@@ -2014,26 +2017,6 @@ function ConversationList({
           </button>
         </div>
 
-        {showSenderFilter && (
-          <div className="mt-2 flex gap-1 overflow-x-auto pb-0.5" aria-label="WhatsApp business number">
-            {[["all", "All"], ...senderOptions].map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => updateFilter("sender", key)}
-                aria-pressed={filters.sender === key}
-                className={`min-h-9 max-w-[10rem] shrink-0 truncate rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  filters.sender === key
-                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-
         {filtersOpen && (
           <div
             id="inbox-filter-panel"
@@ -2053,6 +2036,16 @@ function ConversationList({
             )}
 
             <div className="grid grid-cols-2 gap-2">
+              {showSenderFilter && (
+                <div className="col-span-2">
+                  <FilterSelect
+                    label="WhatsApp business number"
+                    value={filters.sender}
+                    onChange={(value) => updateFilter("sender", value)}
+                    options={[["all", "All numbers"], ...senderOptions]}
+                  />
+                </div>
+              )}
               <FilterSelect
                 label="Status"
                 value={filters.status}
@@ -4947,9 +4940,9 @@ function MessageBubble({
             </button>
             {menuOpen && (
               <div className="absolute right-0 top-8 z-30 hidden min-w-36 rounded-xl border border-[var(--color-border)] bg-white p-1.5 text-[var(--color-text)] shadow-lg sm:block" role="menu">
-                {offerReply && <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined} onClick={closeAndReply} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-45">↩&nbsp;&nbsp;Reply{!canQuote ? " (unavailable)" : ""}</button>}
-                {offerForward && <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined} onClick={closeAndForward} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-45">↪&nbsp;&nbsp;Forward{!canForward ? " (unavailable)" : ""}</button>}
-                {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">⧉&nbsp;&nbsp;Copy</button>}
+                {offerReply && <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined} onClick={closeAndReply} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-45"><ReplyIcon className="h-[18px] w-[18px] shrink-0" />Reply{!canQuote ? " (unavailable)" : ""}</button>}
+                {offerForward && <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined} onClick={closeAndForward} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-45"><ForwardIcon className="h-[18px] w-[18px] shrink-0" />Forward{!canForward ? " (unavailable)" : ""}</button>}
+                {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]"><CopyIcon className="h-[18px] w-[18px] shrink-0" />Copy</button>}
               </div>
             )}
           </div>
@@ -5133,19 +5126,19 @@ function MessageBubble({
             {offerReply && (
               <button type="button" role="menuitem" disabled={!canQuote} title={!canQuote ? replyUnavailableReason : undefined}
                 onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-[14px] px-3 py-2 text-left text-[15px] font-medium hover:bg-[#f3f4f6] active:bg-[#e9edef] disabled:cursor-not-allowed disabled:opacity-50">
-                <span className="w-7 shrink-0 text-center text-[25px]" aria-hidden="true">↶</span>
+                <ReplyIcon className="h-6 w-6 shrink-0 text-[#344054]" />
                 <span className="min-w-0"><span className="block">Reply</span>{!canQuote && <span className="block text-[11px] font-normal leading-snug text-[#667781]">{replyUnavailableReason}</span>}</span>
               </button>
             )}
             {offerForward && (
               <button type="button" role="menuitem" disabled={!canForward} title={!canForward ? "Business number suspended" : undefined}
                 onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-[14px] px-3 py-2 text-left text-[15px] font-medium hover:bg-[#f3f4f6] active:bg-[#e9edef] disabled:cursor-not-allowed disabled:opacity-50">
-                <span className="w-7 shrink-0 text-center text-[25px]" aria-hidden="true">↪</span>Forward{!canForward ? " (unavailable)" : ""}
+                <ForwardIcon className="h-6 w-6 shrink-0 text-[#344054]" />Forward{!canForward ? " (unavailable)" : ""}
               </button>
             )}
             {canCopy && (
               <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-[14px] px-3 py-2 text-left text-[15px] font-medium hover:bg-[#f3f4f6] active:bg-[#e9edef]">
-                <span className="w-7 shrink-0 text-center text-[23px]" aria-hidden="true">⧉</span>Copy
+                <CopyIcon className="h-6 w-6 shrink-0 text-[#344054]" />Copy
               </button>
             )}
           </div>
