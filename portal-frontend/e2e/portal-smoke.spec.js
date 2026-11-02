@@ -1691,7 +1691,7 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
     const alerts = await service.getByRole("alert").allTextContents();
     throw new Error(`Secondary save request missing: ${JSON.stringify({ secondaryRequests, alerts,
       enabled: await twoHour.getByRole("button", { name: /Save secondary rule|Saving/ }).isEnabled(),
-      approval: await twoHour.getByRole("checkbox").isChecked() })}; ${error.message}`);
+      approval: await twoHour.getByRole("checkbox").last().isChecked() })}; ${error.message}`);
   }
   expect(writes[0]).toMatchObject({
     messageText: "Updated reminder for secondary only.",
