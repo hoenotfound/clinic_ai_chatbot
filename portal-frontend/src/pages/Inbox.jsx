@@ -5090,6 +5090,7 @@ function MessageBubble({
           />
           {selectedBubbleRect && (
             <div
+              data-selected-message-spotlight="true"
               aria-hidden="true"
               className="pointer-events-none fixed rounded-xl border-2 border-white/80 shadow-[0_0_0_1px_rgba(0,128,105,0.18)] sm:hidden"
               style={{
