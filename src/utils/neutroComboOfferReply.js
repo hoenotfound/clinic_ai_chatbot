@@ -17,7 +17,7 @@ const REJECT = /(?:退订|退訂|不要再发|不要再發|停止发|停止發|�
 const NO_COMBO = /(?:不要|不想要?|不需要|不选|不選|不用|不是)\s*(?:3\s*d\s*[+＋]\s*9\s*d\s*)?(?:组合|組合|搭配|combo|bundle)|\b(?:no|not|without|bukan|tak\s+nak)\s+(?:the\s+)?(?:combo|bundle|pakej)\b/iu;
 const ADMIN_PRICE = /(?:押金|订金|訂金|定金|咨询费|諮詢費|挂号|掛號|评估费|評估費|booking\s+fee|deposit|assessment\s+fee|consultation\s+fee)/iu;
 const BROAD = /(?:全院|全部(?:疗程|療程|服务|服務|价目|價目)|所有(?:疗程|療程|服务|服務|项目|項目)|\b(?:all\s+(?:treatments?|services?)|whole\s+clinic|price\s+list)\b)/iu;
-const SEPARATE_INTENT = /(?:分开|分開|分别|分別|各自|单独|單獨|\\b(?:separately|individually|each|asing[- ]asing)\\b)/iu;
+const SEPARATE_INTENT = /(?:分开|分開|分别|分別|各自|单独|單獨|\b(?:separately|individually|each|asing[- ]asing)\b)/iu;
 const JOINT_INTENT = /(?:3\s*d\s*[+＋]\s*9\s*d|9\s*d\s*[+＋]\s*3\s*d|组合|組合|搭配|一起\s*做|一齐\s*做|一齊\s*做|同时\s*做|同時\s*做|加起来|加起來|打包价|打包價|\b(?:combo|bundle|combined|together|gabungan|sekaligus)\b)/iu;
 
 function named3D9D(text) {
