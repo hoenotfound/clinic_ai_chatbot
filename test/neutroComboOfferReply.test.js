@@ -83,3 +83,12 @@ test("the existing Neutro combo promotion can be verified from consistent RM688 
  assert.equal(result?.mode,"direct");
  assert.match(result?.reply||"",/RM688/u);
 });
+
+test("separate price wording cannot be mistaken for an explicit combo quote",()=>{
+ const queries=["3D+9D 分开多少钱？","3D+9D分别多少钱？",
+   "3D+9D separately how much?", "3D+9D masing-masing individually price?"];
+ for(const text of queries) {
+   const decision=check(text,[turn("user",text,40)]);
+   assert.notEqual(decision?.mode,"direct",text);
+ }
+});
