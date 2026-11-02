@@ -2833,7 +2833,7 @@ function FollowUpTool({
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <nav role="tablist" aria-label="Follow-up sender" className="mb-5 grid gap-2 rounded-2xl border border-[var(--color-border)] bg-white p-2 sm:grid-cols-2">
+      <nav role="tablist" aria-label="Follow-up sender" className="mb-4 grid gap-2 rounded-2xl border border-[var(--color-border)] bg-white p-2 sm:grid-cols-2">
         {[
           ["primary", "Primary WhatsApp", "Main sequence and shared channel settings"],
           ["secondary", "Secondary WhatsApp", "Separate follow-ups and templates"],
@@ -3186,7 +3186,8 @@ function FollowUpTool({
                     </li>
                   );
                 })}
-              </ol>                </div>
+              </ol>
+                </div>
               </details>
 
               <div aria-label="Selected follow-up" className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/35 px-3.5 py-3">
