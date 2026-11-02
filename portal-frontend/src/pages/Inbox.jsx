@@ -1266,7 +1266,7 @@ export default function Inbox() {
   async function handleToggleArchive(contactId) {
     const id = Number(contactId);
     const conversation = conversationsRef.current?.find((item) => Number(item.contact_id) === id);
-    if (!conversation || conversationStatePending) return;
+    if (!conversation || conversationStatePending || !canManageLeads) return;
     const archived = !Boolean(conversation.inbox_archived_at);
     setConversationStatePending(true);
     // Optimistic UI keeps swipes snappy; the server owns the durable shared
@@ -1277,6 +1277,9 @@ export default function Inbox() {
     // Return to Chats immediately for a native-feeling archive action,
     // rather than leaving a disappearing thread on screen during the request.
     const wasOpen = Number(selectedIdRef.current) === id;
+    const previousSearchParams = new URLSearchParams(searchParams);
+    const previousMobileThreadOpen = mobileThreadOpen;
+    const previousExplicitThread = keepExplicitlyOpenedThread;
     if (wasOpen) {
       setSelectedId(null);
       setSearchParams({}, { replace: true });
@@ -1289,6 +1292,13 @@ export default function Inbox() {
     } catch (err) {
       console.error("Failed to update Inbox archive:", err);
       updateConversationLocally(id, { inbox_archived_at: conversation.inbox_archived_at || null });
+      // Restore the exact thread/navigation state if the server rejected the change.
+      if (wasOpen) {
+        setSelectedId(id);
+        setSearchParams(previousSearchParams, { replace: true });
+        setMobileThreadOpen(previousMobileThreadOpen);
+        setKeepExplicitlyOpenedThread(previousExplicitThread);
+      }
       showToast("Couldn't update archive. Please try again.", "error");
     } finally {
       setConversationStatePending(false);
@@ -1663,6 +1673,7 @@ export default function Inbox() {
         onSelect={handleSelectConversation}
         onToggleArchive={handleToggleArchive}
         archivePending={conversationStatePending}
+        canManageLeads={canManageLeads}
         onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
@@ -1796,14 +1807,14 @@ export default function Inbox() {
 }
 
 // Mobile: swipe RIGHT to reveal a staff-only Archive / Unarchive action.
-function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, onReveal, onArchive, children }) {
+function SwipeArchiveRow({ contactId, displayNameText, archived, pending, enabled, open, onReveal, onArchive, children }) {
   const gestureRef = useRef(null);
   const suppressNextClickRef = useRef(false);
   const [dragOffset, setDragOffset] = useState(null);
   const offset = dragOffset == null ? (open ? 92 : 0) : dragOffset;
 
   function handleStart(event) {
-    if (event.touches?.length !== 1 || !window.matchMedia("(max-width: 639px)").matches) return;
+    if (!enabled || event.touches?.length !== 1 || !window.matchMedia("(max-width: 639px)").matches) return;
     const touch = event.touches[0];
     gestureRef.current = { startX: touch.clientX, startY: touch.clientY, startOffset: open ? 92 : 0, axis: null, offset: open ? 92 : 0 };
   }
@@ -1846,7 +1857,7 @@ function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, 
       onTouchStart={handleStart} onTouchMove={handleMove} onTouchEnd={handleEnd}
       onTouchCancel={handleCancel} onClickCapture={handleClickCapture}
       style={{ touchAction: "pan-y" }}>
-      <button data-archive-action="true" type="button"
+      {enabled && <button data-archive-action="true" type="button"
         aria-label={archived ? "Unarchive chat" : "Archive chat"}
         aria-description={"For " + displayNameText}
         title={(archived ? "Unarchive " : "Archive ") + displayNameText}
@@ -1857,7 +1868,7 @@ function SwipeArchiveRow({ contactId, displayNameText, archived, pending, open, 
           : "absolute inset-y-0 left-0 flex w-[92px] flex-col items-center justify-center gap-1 bg-[#168c79] text-xs font-semibold text-white disabled:opacity-50"}>
         {archived ? <UnarchiveIcon className="h-6 w-6" /> : <ArchiveIcon className="h-6 w-6" />}
         {archived ? "Unarchive" : "Archive"}
-      </button>
+      </button>}
       <div className="relative bg-[var(--color-surface)]"
         style={{ transform: "translateX(" + offset + "px)", transition: dragOffset == null ? "transform 180ms ease" : "none" }}>
         {children}
@@ -1872,6 +1883,7 @@ function ConversationList({
   onSelect,
   onToggleArchive,
   archivePending,
+  canManageLeads,
   onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
@@ -2334,6 +2346,7 @@ function ConversationList({
               displayNameText={displayName(conversation)}
               archived={Boolean(conversation.inbox_archived_at)}
               pending={archivePending}
+              enabled={canManageLeads}
               open={revealedArchiveId === conversation.contact_id}
               onReveal={setRevealedArchiveId}
               onArchive={onToggleArchive}
@@ -3747,18 +3760,15 @@ function ThreadView({
                     />
                   )}
                 </div>
-                <ConversationActionItem
+                {canManageLeads && <ConversationActionItem
                   icon={contact.inbox_archived_at ? UnarchiveIcon : ArchiveIcon}
                   label={contact.inbox_archived_at ? "Unarchive chat" : "Archive chat"}
                   disabled={conversationStatePending}
                   onClick={() => {
                     setActionsOpen(false);
                     onToggleArchive();
-                    // Closing a thread's Archive menu should always expose the
-                    // phone chat list, regardless of pending summary refreshes.
-                    if (mobileThreadOpen) onBack();
                   }}
-                />
+                />}
                 <ConversationActionItem
                   icon={FlagIcon}
                   label={contact.needs_follow_up ? "Remove follow-up" : "Add follow-up"}
