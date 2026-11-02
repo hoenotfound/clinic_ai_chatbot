@@ -87,6 +87,17 @@ test("secondary media audit and contact wake operate on isolated PostgreSQL evid
      {status:"skipped",reason:"secondary_media_cancelled_before_send",
        result_images_selected:1,result_images_sent:0});
 
+   const ambiguous=Number((await db.query(
+     "INSERT INTO messages(contact_id,role,content,media_url,delivery_status) "+
+     "VALUES($1,'assistant','Ambiguous image','https://example.test/image.jpg','unknown') RETURNING id",
+     [one.contact])).rows[0].id);
+   await db.query("UPDATE whatsapp_sender_ai_media_jobs SET outbound_message_id=$2 WHERE id=$1",
+     [one.job,ambiguous]);
+   await audit.reconcileSecondaryMediaAudit({inboundMessageIds:[one.inbound],database,env});
+   assert.equal((await db.query("SELECT reason FROM result_media_decisions WHERE inbound_message_id=$1",
+     [one.inbound])).rows[0].reason,"secondary_media_outcome_unconfirmed",
+     "an expired job with an unknown local message must not be reported as safely cancelled");
+
    const outbound=Number((await db.query(
      "INSERT INTO messages(contact_id,role,content,media_url,delivery_status,whatsapp_message_id) "+
      "VALUES($1,'assistant','Result B','https://example.test/image.jpg','sent','wamid.secondary-b') RETURNING id",
