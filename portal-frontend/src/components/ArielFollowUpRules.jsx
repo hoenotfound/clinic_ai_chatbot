@@ -57,6 +57,10 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
           confirmClinicVideoReuse:true}:{}),
       });
       setEnabled(prev=>({...prev,[slot]:data.rule.enabled}));
+      setConfig(prev=>prev?({...prev,rules:[
+        ...(prev.rules||[]).filter(item=>Number(item.slot_hours)!==slot),
+        data.rule,
+      ]}):prev);
       if(slot!==20)setMediaApproved(prev=>({...prev,[slot]:false}));
       setSaved(slot);
     }catch(e){setError(e.message||"Unable to save secondary follow-up.");}
@@ -79,6 +83,10 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
         enabled:(data.rules||[]).some(r=>r.enabled===true),
         approved:false,
       }}));
+      setConfig(prev=>prev?({...prev,marketingRules:[
+        ...(prev.marketingRules||[]).filter(item=>Number(item.slot_hours)!==slot),
+        ...(data.rules||[]),
+      ]}):prev);
       setSaved(slot);
     }catch(e){setError(e.message||"Unable to save the verified secondary templates.");}
     finally{setBusy(null);}
@@ -86,7 +94,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
   const senderName=config?.senderDisplayName || "Secondary WhatsApp";
   return (
     <section aria-label="Secondary WhatsApp follow-ups"
-      className="mb-5 rounded-2xl border-2 border-[var(--color-border)] bg-white p-4 sm:p-5">
+      className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-base font-bold">{section === "marketing" ? "Extended marketing templates" : "Reply-window follow-up messages"}</h2>
@@ -111,11 +119,15 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
           mode is disabled. Follow-ups cannot be configured or sent yet.
         </p> :
       section === "service" ? <div className="mt-4 space-y-3">
-        {SLOTS.map(slot=>
-          <details key={slot} className="group overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
+        {SLOTS.map(slot=>{
+          const current=config.rules?.find(item=>Number(item.slot_hours)===slot);
+          const dirty=enabled[slot] !== (current?.enabled===true) ||
+            rules[slot] !== (current?.message_text||"") ||
+            (slot!==20 && (videos[slot]||"") !== (current?.media_key||""));
+          return <details key={slot} className="group overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
             <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
               <span>After {slot} hours</span>
-              <span className="text-xs text-[var(--color-text-muted)]">{enabled[slot] ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
+              <span className="text-xs text-[var(--color-text-muted)]">{dirty ? "Unsaved" : enabled[slot] ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
             </summary>
             <div className="border-t border-[var(--color-border)] p-3">
             <div className="flex items-center justify-between gap-2">
@@ -131,7 +143,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
             <textarea id={`secondary-followup-${slot}`} rows={2} maxLength={1024}
               value={rules[slot]} onChange={e=>setRules(prev=>({...prev,[slot]:e.target.value}))}
               placeholder="Write and approve the exact message for this phone number"
-              className="mt-2 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-xs" />
+              className="mt-2 min-h-24 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-base sm:text-sm" />
             {(slot===2||slot===6)&&config?.mediaEnabled&&
               <div className="mt-3 rounded-lg border border-[var(--color-border)] p-2">
                 <label htmlFor={`secondary-video-${slot}`} className="block text-xs font-semibold">
@@ -142,7 +154,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
                     setVideos(prev=>({...prev,[slot]:e.target.value}));
                     setMediaApproved(prev=>({...prev,[slot]:false}));
                   }}
-                  className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-2 py-2 text-xs">
+                  className="mt-1 min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-base sm:text-sm">
                   <option value="">Text only (no video)</option>
                   {(config.availableClinicVideos||[]).map(item=>
                     <option key={item.key} value={item.key}>{item.label}</option>
@@ -157,24 +169,23 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               </div>}
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-[11px] text-[var(--color-text-muted)]">
-                {saved===slot?"Saved to secondary number only":
-                  videos[slot]?"Video requires explicit approval and separate Meta receipts":
-                    "Text-only; no media is sent"}
+                {dirty ? "Changes not saved" : saved===slot ? "Saved to secondary number" :
+                  videos[slot] ? "Video must be approved before sending" : "Text only"}
               </span>
               <button type="button" onClick={()=>save(slot)}
                 disabled={busy!==null||rules[slot].trim().length<3||
                   ((slot===2||slot===6)&&config?.mediaEnabled&&Boolean(videos[slot])&&!mediaApproved[slot])}
-                className="rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                className="min-h-11 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                 {busy===slot?"Saving…":"Save secondary rule"}
               </button>
             </div>
             </div>
-          </details>
-        )}
+          </details>;
+        })}
       </div> : null}
       {config?.configured && section === "marketing" &&
-        <div className="mt-5 rounded-xl border border-[var(--color-border)] p-3">
-          <h3 className="text-sm font-bold">48h / 72h — approved marketing templates</h3>
+        <div className="mt-4">
+          <h3 className="text-sm font-bold">Approved templates</h3>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
             These are paid marketing templates for the second number only.
             No message is sent without an approved account template, explicit
@@ -198,10 +209,15 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               t.languageCode===locale&&t.name===row.templates[locale])).filter(Boolean);
             const selectedCount=languages.filter(([locale])=>Boolean(row.templates[locale])).length;
             const validSelection=selectedCount>0&&selected.length===selectedCount;
+            const savedRows=(config.marketingRules||[]).filter(item=>Number(item.slot_hours)===slot);
+            const savedEnabled=savedRows.some(item=>item.enabled===true);
+            const templateChanged=languages.some(([locale])=>(row.templates[locale]||"") !==
+              (savedRows.find(item=>item.language_code===locale)?.template_name||""));
+            const dirty=row.enabled!==savedEnabled||templateChanged;
             return <details key={slot} className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
               <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-xs font-semibold [&::-webkit-details-marker]:hidden">
                 <span>After {slot} hours</span>
-                <span className="text-[var(--color-text-muted)]">{row.enabled ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
+                <span className="text-[var(--color-text-muted)]">{dirty ? "Unsaved" : row.enabled ? "On" : "Off"} · <span className="group-open:hidden">Edit</span><span className="hidden group-open:inline">Close</span></span>
               </summary>
               <div className="border-t border-[var(--color-border)] p-3">
               <div className="flex items-center justify-between gap-2">
@@ -231,7 +247,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
                       ...p[slot],templates:{...p[slot].templates,[locale]:e.target.value},
                       enabled:false,approved:false,
                     }}))}
-                    className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-xs">
+                    className="mt-1 min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-white p-2 text-base sm:text-sm">
                     <option value="">No automatic send for {label}</option>
                     {choices.filter(t=>t.languageCode===locale).map(t=>
                       <option key={`${t.name}::${t.languageCode}`} value={t.name}>
@@ -255,13 +271,13 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               </label>}
               <div className="mt-2 flex justify-between gap-2">
                 <span className="text-xs text-[var(--color-text-muted)]">
-                  {saved===slot?"Saved to second number only":
-                    config.marketingWorkerEnabled?"Worker enabled":"Worker OFF"}
+                  {dirty ? "Changes not saved" : saved===slot ? "Saved to second number" :
+                    config.marketingWorkerEnabled ? "Worker enabled" : "Worker off"}
                 </span>
                 <button type="button" onClick={()=>saveMarketing(slot)}
                   disabled={busy!==null||(row.enabled&&
                     (!config.marketingCatalogAvailable||!validSelection||!row.approved))}
-                  className="rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                  className="min-h-11 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                   {busy===slot?"Saving…":"Save template languages"}
                 </button>
               </div>
