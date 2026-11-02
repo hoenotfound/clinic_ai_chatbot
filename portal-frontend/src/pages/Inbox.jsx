@@ -928,7 +928,8 @@ export default function Inbox() {
       pipelineListTimer = setTimeout(async () => {
         pipelineListTimer = null;
         const changedIds = [...pipelineContactIds];
-        const requiresFull = pipelineNeedsFullRefresh || changedIds.length !== 1;
+        const unknownOrRedacted = pipelineNeedsFullRefresh;
+        const requiresFull = unknownOrRedacted || changedIds.length !== 1;
         pipelineContactIds.clear();
         pipelineNeedsFullRefresh = false;
         if (!requiresFull) {
@@ -942,7 +943,7 @@ export default function Inbox() {
           }
         }
         await refreshConversations(
-          pipelineNeedsFullRefresh ? "pipeline_unknown_event"
+          unknownOrRedacted ? "pipeline_unknown_event"
             : changedIds.length !== 1 ? "pipeline_multi_contact"
               : "pipeline_summary_fallback"
         );
