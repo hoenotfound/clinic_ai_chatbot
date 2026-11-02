@@ -91,7 +91,7 @@ test("Render memory sampling uses an unref'd interval and never throws on loggin
     String(message).startsWith("[Refresh/wake diagnostics] "));
   assert.equal(diagnosticLogs.length, 1);
   assert.equal(diagnosticLogs[0].length, 1, "summary stays one log entry");
-  assert.doesNotMatch(diagnosticLogs[0][0], /\\[Object\\]/);
+  assert.doesNotMatch(diagnosticLogs[0][0], /\[Object\]/);
   const parsed = JSON.parse(
     diagnosticLogs[0][0].slice("[Refresh/wake diagnostics] ".length)
   );
