@@ -124,24 +124,26 @@ const STATUS_FILTERS = [
   { key: "unreplied", label: "Unreplied" },
   { key: "follow-up", label: "Needs follow-up" },
   { key: "unread", label: "Unread" },
+  { key: "archived", label: "Archived" },
   { key: "attention", label: "Needs attention" },
 ];
 
 // Use one matching rule for the Inbox list and all contextual filter counts.
 function matchesInboxFilters(conversation, filters, { exclude = null, now, canViewAllLeads, currentUsername }) {
-  if (exclude !== "status") {
-    if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
-    if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
-    if (filters.status === "unread" && !conversation.is_unread) return false;
-    if (filters.status === "attention" && !conversation.needs_attention) return false;
-  }
-  // Like WhatsApp search, an explicit search from Chats can find archived
-  // conversations without moving them back into the main list.
+  // Archived is a separate Status choice. Other statuses exclude archived
+  // chats, unless staff explicitly searches for them.
   const archived = Boolean(conversation.inbox_archived_at);
-  const searchingAllChats = filters.archiveView === "active" && Boolean(filters.query.trim());
-  if (exclude !== "archiveView" &&
-      archived !== (filters.archiveView === "archived") &&
-      !(searchingAllChats && archived)) return false;
+  if (exclude !== "status") {
+    if (filters.status === "archived") {
+      if (!archived) return false;
+    } else {
+      if (archived && !filters.query.trim()) return false;
+      if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
+      if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
+      if (filters.status === "unread" && !conversation.is_unread) return false;
+      if (filters.status === "attention" && !conversation.needs_attention) return false;
+    }
+  }
   if (exclude !== "channel" && filters.channel !== "all" &&
       (conversation.channel || "whatsapp") !== filters.channel) return false;
   if (exclude !== "sender" && filters.sender && filters.sender !== "all" &&
@@ -1897,7 +1899,6 @@ function ConversationList({
 }) {
   const [filters, setFilters] = useState({
     status: "all",
-    archiveView: "active",
     channel: "all",
     sender: "all",
     control: "all",
@@ -1919,7 +1920,6 @@ function ConversationList({
   }, []);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
-  const archivedCount = useMemo(() => conversationList.filter((item) => item.inbox_archived_at).length, [conversationList]);
   // A bounded server search allows staff to recover old, contact-only imports
   // even after they are hidden from the default list. Search never sends messages.
   useEffect(() => {
@@ -1984,12 +1984,18 @@ function ConversationList({
     );
     const statusBase = matching("status");
     const replyBase = matching("replyWindow");
+    // Count ordinary statuses without archived chats. Search remains able to
+    // find archived matches without modifying their archive state.
+    const inboxStatusBase = statusBase.filter((item) =>
+      !item.inbox_archived_at || Boolean(filters.query.trim())
+    );
     const statusCounts = {
-      all: statusBase.length,
-      unreplied: statusBase.filter(isConversationUnreplied).length,
-      "follow-up": statusBase.filter((item) => item.needs_follow_up).length,
-      unread: statusBase.filter((item) => item.is_unread).length,
-      attention: statusBase.filter((item) => item.needs_attention).length,
+      all: inboxStatusBase.length,
+      unreplied: inboxStatusBase.filter(isConversationUnreplied).length,
+      "follow-up": inboxStatusBase.filter((item) => item.needs_follow_up).length,
+      unread: inboxStatusBase.filter((item) => item.is_unread).length,
+      archived: statusBase.filter((item) => item.inbox_archived_at).length,
+      attention: inboxStatusBase.filter((item) => item.needs_attention).length,
     };
     const open = replyBase.filter((item) => hasOpenReplyWindow(item, replyWindowNow)).length;
     return {
@@ -2008,7 +2014,7 @@ function ConversationList({
   useEffect(() => {
     setVisibleRowCount(60);
     setRevealedArchiveId(null);
-  }, [filters.status, filters.archiveView, filters.channel, filters.sender, filters.control,
+  }, [filters.status, filters.channel, filters.sender, filters.control,
       filters.assignment, filters.replyWindow, filters.query]);
   const statusOptions = useMemo(() =>
     STATUS_FILTERS.map((filter) => [
@@ -2025,7 +2031,6 @@ function ConversationList({
 
   const activeFilterCount =
     (filters.status !== "all" ? 1 : 0) +
-    (filters.archiveView === "archived" ? 1 : 0) +
     (filters.channel !== "all" ? 1 : 0) +
     (filters.sender !== "all" ? 1 : 0) +
     (filters.control !== "all" ? 1 : 0) +
@@ -2036,9 +2041,6 @@ function ConversationList({
 
   const activeFilterChips = useMemo(() => {
     const active = [];
-    if (filters.archiveView === "archived") {
-      active.push({ key: "archiveView", label: "Archived chats" });
-    }
     if (filters.status !== "all") {
       const label = STATUS_FILTERS.find((item) => item.key === filters.status)?.label;
       active.push({ key: "status", label: label || "Status" });
@@ -2072,7 +2074,7 @@ function ConversationList({
       });
     }
     return active;
-  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status, filters.archiveView]);
+  }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
 
   function updateFilter(key, value) {
     onExplicitFilterChange();
@@ -2084,8 +2086,7 @@ function ConversationList({
     setFilters((current) => ({
       ...current,
       status: "all",
-      archiveView: "active",
-      channel: "all",
+        channel: "all",
       sender: "all",
       control: "all",
       assignment: "all",
@@ -2095,7 +2096,7 @@ function ConversationList({
 
   function clearFilters() {
     onExplicitFilterChange();
-    setFilters({ status: "all", archiveView: "active", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
+    setFilters({ status: "all", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
   }
 
   return (
@@ -2111,7 +2112,7 @@ function ConversationList({
               ? "Loading…"
               : hasActiveFilters
               ? `${filteredConversations.length} / ${conversationList.length}`
-              : conversationList.length}
+              : statusCounts.all}
           </p>
         </div>
 
@@ -2180,15 +2181,26 @@ function ConversationList({
             )}
 
             <div className="grid grid-cols-2 gap-2">
-              {/* Archive belongs with other chat filters, not in a separate toolbar row. */}
-              <div className="col-span-2">
-                <FilterSelect
-                  label="Chats"
-                  value={filters.archiveView}
-                  onChange={(value) => updateFilter("archiveView", value)}
-                  options={[["active", "Inbox"], ["archived", `Archived (${archivedCount})`]]}
-                />
-              </div>
+              <FilterSelect
+                label="Status"
+                value={filters.status}
+                onChange={(value) => {
+                  updateFilter("status", value);
+                  setFiltersOpen(false);
+                }}
+                options={statusOptions}
+              />
+              <FilterSelect
+                label="Channel"
+                value={filters.channel}
+                onChange={(value) => updateFilter("channel", value)}
+                options={[
+                  ["all", "All channels"],
+                  ["whatsapp", "WhatsApp"],
+                  ["facebook", "Facebook"],
+                  ["instagram", "Instagram"],
+                ]}
+              />
               {showSenderFilter && (
                 <div className="col-span-2">
                   <FilterSelect
@@ -2199,43 +2211,16 @@ function ConversationList({
                   />
                 </div>
               )}
-              <FilterSelect
-                label="Status"
-                value={filters.status}
-                onChange={(value) => updateFilter("status", value)}
-                options={statusOptions}
-              />
-              <FilterSelect
-                label="Channel"
-                value={filters.channel}
-                onChange={(value) => updateFilter("channel", value)}
-                options={[
-                  ["all", "All"],
-                  ["whatsapp", "WhatsApp"],
-                  ["facebook", "Facebook"],
-                  ["instagram", "Instagram"],
-                ]}
-              />
-              <div className="col-span-2">
-                {canViewAllLeads ? (
+              {canViewAllLeads && (
+                <div className="col-span-2">
                   <FilterSelect
                     label="Lead owner"
                     value={filters.assignment}
                     onChange={(value) => updateFilter("assignment", value)}
                     options={assignmentOptions}
                   />
-                ) : (
-                  <div className="min-w-0">
-                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                      Lead owner
-                    </span>
-                    <div className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-2.5 text-sm text-[var(--color-text-muted)]">
-                      <UserIcon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">My assigned leads</span>
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
               <FilterSelect
                 label="Handled by"
                 value={filters.control}
@@ -2267,7 +2252,7 @@ function ConversationList({
               <button
                 key={filter.key}
                 type="button"
-                onClick={() => updateFilter(filter.key, filter.key === "archiveView" ? "active" : "all")}
+                onClick={() => updateFilter(filter.key, "all")}
                 className={`${filter.key === "sender" ? "hidden sm:inline-flex" : "inline-flex"} min-h-9 max-w-[11rem] shrink-0 items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-xs font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white`}
                 title={`Remove ${filter.label} filter`}
               >
@@ -2311,8 +2296,12 @@ function ConversationList({
         {conversations && conversations.length > 0 && filteredConversations.length === 0 &&
           !directorySearching && externalMatches.length === 0 && (
           <EmptyListState
-            title="No matching conversations"
-            description="Try changing your search or filters."
+            title={filters.status === "archived" && statusCounts.archived === 0
+              ? "No archived conversations"
+              : "No matching conversations"}
+            description={filters.status === "archived" && statusCounts.archived === 0
+              ? "Chats you archive will appear here. New customer messages return them to the Inbox."
+              : "Try changing your search or filters."}
             action={
               <button
                 type="button"
