@@ -688,13 +688,13 @@ test("WhatsApp sender selection stays inside Filters on mobile and filters the l
   });
   await page.goto("/inbox");
   const list = page.getByRole("complementary", { name: "Conversation inbox" });
-  const panel = list.getByRole("region", { name: "Inbox filters" });
+  const panel = list.locator('[aria-label="Inbox filters"]');
   const filtersButton = list.getByRole("button", { name: /Filters/ });
   const sender = panel.getByRole("combobox", { name: "WhatsApp business number" });
 
   if (testInfo.project.name === "iphone-portrait") {
     // Business-number tabs must not occupy a second row below search.
-    await expect(list.getByRole("group", { name: "WhatsApp business number" })).toHaveCount(0);
+    await expect(list.locator('div[aria-label="WhatsApp business number"]')).toHaveCount(0);
     await expect(sender).toBeHidden();
   }
   await filtersButton.click();
