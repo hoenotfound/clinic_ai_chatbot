@@ -709,8 +709,8 @@ test("WhatsApp sender selection stays inside Filters on mobile and filters the l
     await expect(panel).toBeHidden();
     await expect(list.getByRole("button", { name: /Number · 中医养生馆/ })).toBeHidden();
     await expect(sender).toBeHidden();
+    await filtersButton.click();
   }
-  await filtersButton.click();
   await sender.selectOption("all");
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
   await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
