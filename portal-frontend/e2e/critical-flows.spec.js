@@ -713,6 +713,14 @@ test("Inbox message actions are mobile-friendly and preserve quoted reply target
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width - 10);
     expect(box.y + box.height).toBeLessThanOrEqual(viewport.height - 8);
     expect(Math.abs(box.x - bubble.x)).toBeLessThanOrEqual(28);
+    const closeOverlay = page.getByRole("button", { name: "Close message actions" });
+    await expect(closeOverlay).toHaveCSS("clip-path", /polygon\(evenodd/);
+    const spotlight = page.locator('[data-selected-message-spotlight]');
+    await expect(spotlight).toBeVisible();
+    const before = await spotlight.boundingBox();
+    expect(before).not.toBeNull();
+    expect(Math.abs(before.x - bubble.x)).toBeLessThanOrEqual(5);
+    expect(Math.abs(before.height - bubble.height)).toBeLessThanOrEqual(10);
 
     const replyAction = sheet.getByRole("menuitem", { name: /Reply/ });
     const replyBox = await replyAction.boundingBox();
@@ -849,6 +857,111 @@ test("mobile long press opens the WhatsApp-style message actions without sending
   await menu.getByRole("menuitem", { name: /Reply/ }).click();
   await expect(page.getByText(/Replying to/i)).toBeVisible();
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("iPhone message menu responds to keyboard navigation and Escape without sending", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Mobile floating actions only.");
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const trigger = page.getByRole("button", { name: "Message actions" }).first();
+  await trigger.click();
+  const menu = page.getByRole("menu", { name: "Message options" });
+  await expect(menu).toBeVisible();
+  const reply = menu.getByRole("menuitem", { name: /Reply/ });
+  const forward = menu.getByRole("menuitem", { name: /Forward/ });
+  const copy = menu.getByRole("menuitem", { name: /Copy/ });
+  await expect(reply).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(copy).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(forward).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(reply).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("floating action menu keeps the selected bubble highlighted after its layout changes", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Mobile spotlight and observer only.");
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const bubble = page.getByRole("button", { name: "Message actions" }).first().locator("xpath=../..");
+  await bubble.getByRole("button", { name: "Message actions" }).click();
+  const menu = page.getByRole("menu", { name: "Message options" });
+  const spotlight = page.locator("[data-selected-message-spotlight]");
+  await expect(menu).toBeVisible();
+  const before = await spotlight.boundingBox();
+  await bubble.evaluate((element) => { element.style.paddingBottom = "130px"; });
+  await expect.poll(async () => (await spotlight.boundingBox())?.height).toBeGreaterThan(before.height + 80);
+  const after = await spotlight.boundingBox();
+  const newBubble = await bubble.boundingBox();
+  expect(Math.abs(after.height - newBubble.height)).toBeLessThanOrEqual(10);
+  const menuBox = await menu.boundingBox();
+  expect(menuBox.x).toBeGreaterThanOrEqual(8);
+  expect(menuBox.y).toBeGreaterThanOrEqual(8);
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(page.viewportSize().height - 8);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("holding a document opens message actions without changing its download link", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Phone document long press.");
+  const apiState = await installApi(page, {
+    initialMessages: [{
+      ...inboundMessages()[0], id: 1, content: "Document attached",
+      media_mime_type: "application/pdf", media_filename: "Terms.pdf",
+      media_base64: "SGVsbG8=", has_media_attachment: true,
+    }],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const doc = page.getByRole("link", { name: /Terms.pdf/ });
+  await expect(doc).toHaveAttribute("href", /^data:application\/pdf;base64,/);
+  await doc.evaluate(async (element) => {
+    const touch = { identifier: 3, target: element, clientX: 100, clientY: 200, screenX: 100, screenY: 200 };
+    const dispatch = (type, touches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: touches });
+      element.dispatchEvent(event);
+    };
+    dispatch("touchstart", [touch]);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    dispatch("touchend", []);
+  });
+  const menu = page.getByRole("menu", { name: "Message options" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Forward/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /Reply/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(doc).toHaveAttribute("href", /^data:application\/pdf;base64,/);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("audio message controls remain available alongside their actions button", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Mobile native voice player.");
+  const apiState = await installApi(page, {
+    initialMessages: [{
+      ...inboundMessages()[0], id: 1, content: "Voice note",
+      media_mime_type: "audio/ogg", media_base64: "T2dnUw==",
+      has_media_attachment: true,
+    }],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const audio = page.locator(".wa-message-bubble audio");
+  await expect(audio).toBeVisible();
+  await expect(audio).toHaveAttribute("controls", "");
+  const button = page.getByRole("button", { name: "Message actions" }).first();
+  await button.click();
+  await expect(page.getByRole("menu", { name: "Message options" })).toBeVisible();
+  await expect(audio).toBeVisible();
   expectNoUnexpectedApi(apiState);
 });
 
