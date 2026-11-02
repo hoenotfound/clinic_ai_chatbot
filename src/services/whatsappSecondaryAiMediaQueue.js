@@ -388,10 +388,34 @@ async function runOnce({
      // Only modify an unconfirmed assistant row; signed receipts remain authoritative.
      const id=saved.rows?.[0]?.outbound_message_id;
      if(id && state!=="accepted"){
+       if(state==="expired"){
+         // An expired pre-send claim cannot be treated as a Meta attempt.
+         // Cancel only if no reservation, WAMID or provider evidence exists.
+         const cancelled=await database.query(
+           `UPDATE messages AS m
+               SET delivery_status='cancelled',delivery_error=$2
+             WHERE m.id=$1 AND m.role='assistant'
+               AND m.whatsapp_message_id IS NULL
+               AND m.whatsapp_accepted_at IS NULL
+               AND m.delivery_status IN ('queued','unknown')
+               AND NOT EXISTS(
+                 SELECT 1 FROM whatsapp_sender_billing_attempts a
+                 WHERE a.message_id=m.id AND a.state<>'rejected')
+               AND NOT EXISTS(
+                 SELECT 1 FROM outbound_message_evidence e
+                 WHERE e.message_id=m.id AND e.accepted=TRUE)
+             RETURNING m.id,m.contact_id,m.delivery_status,m.delivery_error`,
+           [id,CANCELLED_ERROR]
+         );
+         if(cancelled.rows?.[0]){
+           publishSecondaryMediaStatus(cancelled.rows[0],env);
+           return saved;
+         }
+       }
+       // If a prior provider or billing attempt exists, preserve uncertain
+       // delivery for human reconciliation rather than declare it unsent.
        const changed=await messageRepo.markDeliveryUnknownIfUnconfirmed(id,
-         state==="expired"
-           ? "Secondary image cancelled by a changed safety or customer policy."
-           : "Secondary image delivery is uncertain; manually verify before resending.");
+         "Secondary image delivery is uncertain; manually verify before resending.");
        if(changed?.marked)publishSecondaryMediaStatus(changed.message,env);
      }
      return saved;
