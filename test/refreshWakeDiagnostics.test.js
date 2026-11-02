@@ -114,3 +114,60 @@ test("Inbox SSE cleanup follows the outbound response, not incoming request comp
   assert.match(eventRoute, /recordSseLifecycle\("opened"\)/);
   assert.match(eventRoute, /recordSseLifecycle\("closed", Date\.now\(\) - openedAt\)/);
 });
+
+test("live SSE route survives request close, sends updates and unregisters only on response close", () => {
+  const { EventEmitter } = require("node:events");
+  const router = require("../src/routes/conversations");
+  const realtimeEvents = require("../src/utils/realtimeEvents");
+  const route = router.stack.find(layer => layer.route?.path === "/events" &&
+    layer.route.methods.get);
+  assert.ok(route, "SSE route must be registered");
+  const serve = route.route.stack.at(-1).handle;
+
+  function openStream(restricted = false) {
+    const req = new EventEmitter();
+    req.user = { id: 21, username: "test-staff",
+      realtimeAccess: restricted ? { contactIds: [71], leadIds: null } : null };
+    const res = new EventEmitter();
+    res.req = req;
+    res.destroyed = false;
+    res.writableEnded = false;
+    res.statusCode = 200;
+    res.headers = {};
+    res.chunks = [];
+    res.status = function (code) { this.statusCode = code; return this; };
+    res.set = function (headers) { Object.assign(this.headers, headers); return this; };
+    res.flushHeaders = function () {};
+    res.write = function (chunk) { this.chunks.push(chunk); return true; };
+    serve(req, res);
+    return { req, res };
+  }
+
+  // A completed incoming GET must not end a still-live response stream.
+  const first = openStream();
+  try {
+    assert.equal(first.res.statusCode, 200);
+    assert.match(first.res.headers["Content-Type"], /text\/event-stream/);
+    first.req.emit("close");
+    realtimeEvents.publish("conversation_changed", { reason: "message", contactId: 71 });
+    assert.ok(first.res.chunks.some(x => x.includes('event: conversation_changed')),
+      "client still receives new events after the incoming request is complete");
+  } finally {
+    first.res.emit("close");
+  }
+  const previous = first.res.chunks.length;
+  realtimeEvents.publish("conversation_changed", { reason: "message", contactId: 71 });
+  assert.equal(first.res.chunks.length, previous, "closed response must unsubscribe");
+
+  // The next connection must still receive events; restricted staff receive
+  // only a redacted refresh signal, never a contact ID.
+  const reconnect = openStream(true);
+  try {
+    realtimeEvents.publish("conversation_changed", { reason: "message", contactId: 71 });
+    const event = reconnect.res.chunks.filter(x => x.includes('event: conversation_changed')).at(-1);
+    assert.match(event, /data: \{\}/);
+    assert.doesNotMatch(event, /contactId/);
+  } finally {
+    reconnect.res.emit("close");
+  }
+});
