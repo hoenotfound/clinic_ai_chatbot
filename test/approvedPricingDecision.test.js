@@ -208,7 +208,8 @@ test("Server wires one approved decision to guard, quote, media and duplicate lo
   assert.match(server,/verifiedPricingIntent: Boolean\(approvedPricingDecision\)/u);
   assert.match(server,/const authorizedPricingInput = pricingAuthorityRequired\s*\? approvedPricingDecision : undefined/u);
   assert.match(server,/pricingDecision: authorizedPricingInput/u);
-  assert.match(server,/pricingDecision: pricingAuthorityRequired \? approvedPricingDecision : null/u);
+  assert.ok(server.includes("pricingDecision: comboMediaPricingDecision ||"));
+  assert.ok(server.includes("(pricingAuthorityRequired ? approvedPricingDecision : null)"));
   assert.match(server,/aiPricingEnabled: pricingAuthorityRequired/u);
   assert.doesNotMatch(server,/pricingDecision: approvedPricingDecision \|\| \(aiPricingEnabled/u);
   assert.doesNotMatch(server,/service => service\.name === pricingDecision\?\.treatment/u);
