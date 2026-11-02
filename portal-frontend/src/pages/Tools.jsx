@@ -2999,7 +2999,7 @@ function FollowUpTool({
       </section>
 
       <nav role="tablist" aria-label="Follow-up sections"
-        className="mb-4 flex min-w-0 gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white p-1.5">
+        className="mb-4 grid grid-cols-3 gap-1.5 rounded-xl border border-[var(--color-border)] bg-white p-1.5 sm:flex">
         {[
           ["sequence", "Sequence"],
           ["pricing", "Pricing"],
