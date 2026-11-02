@@ -115,7 +115,10 @@ async function trackedSend({eligible=false, origin="ai_reply", durable=true}={})
       sendSecondaryStaffText:async()=>{calls.dispatched++;return {
         success:true,wamid:"wamid.verified-secondary"
       };},
-      channelMessaging:{sendText:async()=>{throw Error("wrong sender")}},
+      channelMessaging:{
+        rejectedError:()=> "simulated provider rejection",
+        sendText:async()=>{throw Error("wrong sender")},
+      },
       persistSendOutcome:async(message)=>message,
       providerMessageId:()=> "wamid.verified-secondary",
       recordReadinessSendEvidence:()=>{},
