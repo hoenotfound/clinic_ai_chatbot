@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import "./InboxWhatsApp.css";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
@@ -530,6 +531,9 @@ export default function Inbox() {
   const [outboundPendingByContact, setOutboundPendingByContact] = useState({});
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
+  // Keep unfinished text drafts per contact for this Inbox session only.
+  // Never write patient messages into localStorage or other persistent storage.
+  const draftsByContactRef = useRef(new Map());
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
   const [whatsappTemplatePrefill, setWhatsAppTemplatePrefill] = useState(null);
@@ -1586,7 +1590,7 @@ export default function Inbox() {
     !visibleConversationIds.includes(selectedContact.contact_id);
 
   return (
-    <div className="flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
+    <div className="wa-inbox-shell flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
@@ -1616,6 +1620,21 @@ export default function Inbox() {
       ) : (
       <ThreadView
         key={selectedId ?? "no-conversation"}
+        initialDraft={draftsByContactRef.current.get(Number(selectedId)) || ""}
+        onDraftChange={(text) => {
+          if (selectedId == null) return;
+          const id = Number(selectedId);
+          if (!text) {
+            draftsByContactRef.current.delete(id);
+          } else {
+            // Cap memory used by open drafts without persisting private content.
+            draftsByContactRef.current.delete(id);
+            draftsByContactRef.current.set(id, text);
+            if (draftsByContactRef.current.size > 100) {
+              draftsByContactRef.current.delete(draftsByContactRef.current.keys().next().value);
+            }
+          }
+        }}
         contact={selectedContact}
         conversations={conversations || []}
         currentUsername={username}
@@ -1916,10 +1935,10 @@ function ConversationList({
 
   return (
     <aside
-      className={`${mobileThreadOpen ? "hidden lg:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:w-[19rem] xl:w-[20.5rem] 2xl:w-[22rem]`}
+      className={`wa-inbox-list ${mobileThreadOpen ? "hidden lg:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:w-[19rem] xl:w-[20.5rem] 2xl:w-[22rem]`}
       aria-label="Conversation inbox"
     >
-      <header className="shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
+      <header className="wa-inbox-list-header shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
         <div className="flex items-baseline justify-between gap-3">
           <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
           <p className="shrink-0 text-[11px] text-[var(--color-text-muted)]" aria-live="polite">
@@ -2094,9 +2113,23 @@ function ConversationList({
             ))}
           </div>
         )}
+        <nav className="wa-inbox-status-tabs" aria-label="Quick conversation filters">
+          {STATUS_FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={filters.status === key}
+              onClick={() => updateFilter("status", key)}
+              className="wa-inbox-status-tab"
+            >
+              {label}
+              <span className="ml-1 opacity-70">{statusCounts[key]}</span>
+            </button>
+          ))}
+        </nav>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
+      <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
         {!conversations && <ConversationListSkeleton />}
 
         {conversations && conversations.length === 0 &&
@@ -2136,28 +2169,28 @@ function ConversationList({
               type="button"
               onClick={() => onSelect(conversation.contact_id)}
               aria-current={selected ? "true" : undefined}
-              className={`group mb-0.5 w-full rounded-xl px-3 py-2.5 text-left outline-none transition ${
+              className={`wa-inbox-row group mb-0.5 w-full rounded-xl px-3 py-2.5 text-left outline-none transition ${
                 selected
                   ? "bg-[var(--color-primary-light)]"
                   : "hover:bg-[var(--color-bg)]"
               } focus:ring-2 focus:ring-inset focus:ring-[var(--color-primary)]/35`}
             >
               <div className="flex items-start gap-3">
-                <ContactAvatar src={conversation.photo_url} channel={conversation.channel} size={42} />
+                <ContactAvatar src={conversation.photo_url} channel={conversation.channel} size={48} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
-                      <span className={`min-w-0 truncate text-sm ${conversation.is_unread ? "font-semibold" : "font-medium"}`}>
+                      <span className={`wa-inbox-contact-name min-w-0 truncate text-sm ${conversation.is_unread ? "font-semibold" : "font-medium"}`}>
                         {displayName(conversation)}
                       </span>
                       <LeadTemperatureIndicator temperature={conversation.lead_temperature} />
                     </div>
-                    <span className={`shrink-0 text-[10px] ${conversation.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+                    <span className={`wa-inbox-last-time shrink-0 text-[10px] ${conversation.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
                       {formatConversationTime(conversation.last_message_at)}
                     </span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-2">
-                    <p className={`min-w-0 flex-1 truncate text-xs leading-5 ${conversation.is_unread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                    <p className={`wa-inbox-preview min-w-0 flex-1 truncate text-xs leading-5 ${conversation.is_unread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                       {conversation.last_message_media_url ? "Photo · " : ""}
                       {conversation.last_message || (conversation.last_message_media_url ? "Attachment" : "No messages yet")}
                     </p>
@@ -2165,7 +2198,7 @@ function ConversationList({
                       <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" title="Unread" />
                     )}
                   </div>
-                  <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <div className="wa-inbox-row-metadata mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
                     <LeadAssignmentBadge
                       ownerUsername={conversation.lead_owner_username}
                       ownerDisplayName={conversation.lead_owner_display_name}
@@ -2412,6 +2445,8 @@ function DateSeparator({ value }) {
 
 function ThreadView({
   contact,
+  initialDraft,
+  onDraftChange,
   conversations,
   currentUsername,
   canReplyToLeads,
@@ -2467,7 +2502,7 @@ function ThreadView({
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft || "");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
@@ -2697,9 +2732,14 @@ function ThreadView({
     shouldStickToBottomRef.current = distanceFromBottom < 120;
   }
 
+  function updateDraft(value) {
+    setDraft(value);
+    onDraftChange?.(value);
+  }
+
   function handleDraftChange(event) {
     draftEditVersionRef.current += 1;
-    setDraft(event.target.value);
+    updateDraft(event.target.value);
   }
 
   async function selectImageFile(file) {
@@ -3219,6 +3259,11 @@ function ThreadView({
 
   async function handleForwardConfirm(targetContactIds) {
     if (!forwardingMessage || !targetContactIds?.length) return;
+    if (!canReplyToLeads || policyBlocksComposer) {
+      setForwardingMessage(null);
+      onToast(messagingPolicy.explanation || "Forwarding is not permitted for this conversation.", "warning");
+      return;
+    }
     const messageId = forwardingMessage.id;
 
     // Match WhatsApp's feel: close the picker as soon as the action is accepted
@@ -3317,7 +3362,7 @@ function ThreadView({
         : onSend(text, selectedReply?.id || null);
 
       if (mountedRef.current) {
-        setDraft("");
+        updateDraft("");
         setReplyingTo(null);
         if (selectedImage) clearImage();
         if (selectedAttachment) clearAttachment();
@@ -3344,7 +3389,7 @@ function ThreadView({
         const draftUntouched =
           draftEditVersionRef.current === draftEditVersionAtSend;
         if (draftUntouched) {
-          setDraft(text);
+          updateDraft(text);
           setReplyingTo((current) => current || selectedReply);
           if (selectedImage) {
             setImageFile((current) => current || selectedImage);
@@ -3374,9 +3419,9 @@ function ThreadView({
   }
 
   return (
-    <section className={`${mobileThreadOpen ? "flex" : "hidden lg:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
-      <header className="relative z-30 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-2.5">
+    <section className={`wa-inbox-thread ${mobileThreadOpen ? "flex" : "hidden lg:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
+      <header className="wa-thread-header relative z-30 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+        <div className="wa-thread-toolbar flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <button
               type="button"
@@ -3397,8 +3442,8 @@ function ThreadView({
               <ContactAvatar src={contact.photo_url} channel={contact.channel} size={42} />
             </button>
             <div className="min-w-0">
-              <h2 className="truncate font-display text-[15px] font-bold sm:text-base">{displayName(contact)}</h2>
-              <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
+              <h2 className="wa-thread-contact-name truncate font-display text-[15px] font-bold sm:text-base">{displayName(contact)}</h2>
+              <div className="wa-thread-contact-meta mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
                 <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--color-text-muted)] sm:flex-none sm:text-[11px]">
                   {contactMeta(contact)}
                 </span>
@@ -3448,7 +3493,7 @@ function ThreadView({
               </div>
             </div>
           </div>
-          <div ref={actionsMenuRef} className="relative flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div ref={actionsMenuRef} className="wa-thread-actions relative flex shrink-0 items-center gap-1.5 sm:gap-2">
             {contact.mode === "human" ? (
               <button
                 type="button"
@@ -3459,7 +3504,7 @@ function ThreadView({
                 disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
                 aria-label="Return control to AI"
-                className="inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
+                className="wa-thread-desktop-handoff inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
                 {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Return to AI</span>
@@ -3473,7 +3518,7 @@ function ThreadView({
                 }}
                 disabled={actionPending}
                 aria-label="Take over conversation"
-                className="inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
+                className="wa-thread-desktop-handoff inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
                 {actionPending ? <Spinner /> : <UserIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Take over</span>
@@ -3495,6 +3540,23 @@ function ThreadView({
             </button>
             {actionsOpen && (
               <div role="menu" aria-label="Conversation actions" className="absolute right-0 top-full z-40 mt-2 w-52 overflow-hidden rounded-xl border border-[var(--color-border)] bg-white p-1.5 shadow-[0_16px_40px_rgba(24,39,33,0.16)]">
+                <div className="sm:hidden">
+                  {contact.mode === "human" ? (
+                    <ConversationActionItem
+                      icon={BotIcon}
+                      label="Return control to AI"
+                      disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+                      onClick={() => { setActionsOpen(false); onReturnToAi(); }}
+                    />
+                  ) : (
+                    <ConversationActionItem
+                      icon={UserIcon}
+                      label="Take over conversation"
+                      disabled={actionPending}
+                      onClick={() => { setActionsOpen(false); onTakeOver(); }}
+                    />
+                  )}
+                </div>
                 <ConversationActionItem
                   icon={FlagIcon}
                   label={contact.needs_follow_up ? "Remove follow-up" : "Add follow-up"}
@@ -3662,7 +3724,7 @@ function ThreadView({
         )}
       </header>
 
-      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="inbox-thread-bg min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5 sm:py-5">
+      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="wa-thread-messages inbox-thread-bg min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5 sm:py-5">
         <div className="mx-auto w-full max-w-4xl space-y-2.5">
           {hasMoreOlderMessages && (
             <div className="pb-1 text-center">
@@ -3715,7 +3777,7 @@ function ThreadView({
                   (contact.channel || "whatsapp") === "whatsapp" &&
                   !policyBlocksComposer
                 }
-                canForward={canReplyToLeads && !message._optimistic}
+                canForward={canReplyToLeads && !policyBlocksComposer && !message._optimistic}
               />
             </div>
           ))}
@@ -3725,7 +3787,7 @@ function ThreadView({
 
       <form
         onSubmit={handleSubmit}
-        className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 pt-2.5 sm:px-5"
+        className="wa-thread-composer shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 pt-2.5 sm:px-5"
         style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
       >
         <div className="mx-auto w-full max-w-4xl">
@@ -3841,7 +3903,7 @@ function ThreadView({
                         type="button"
                         onClick={toggleVoicePreviewPlayback}
                         aria-label={voicePreviewPlaying ? "Pause voice preview" : "Play voice preview"}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)] transition hover:bg-[var(--color-bg)]"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full sm:h-8 sm:w-8 bg-[var(--color-primary-light)] text-[var(--color-primary)] transition hover:bg-[var(--color-bg)]"
                       >
                         {voicePreviewPlaying ? <PauseIcon className="h-4 w-4" /> : <PlayIcon className="ml-0.5 h-4 w-4" />}
                       </button>
@@ -3913,7 +3975,12 @@ function ThreadView({
                       if (attachmentMenuOpen) setAttachmentMenuOpen(false);
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
+                      // Phone keyboards use Return for a new line. Physical
+                      // desktop keyboards keep Enter-to-send; never send
+                      // mid-composition for Chinese/Japanese/Korean input.
+                      if (e.isComposing || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                      if (e.key === "Enter" && !e.shiftKey &&
+                          window.matchMedia("(min-width: 640px)").matches) {
                         e.preventDefault();
                         handleSubmit(e);
                       }
@@ -4422,6 +4489,9 @@ function MessageBubble({
   const swipeStartRef = useRef(null);
   const swipeOffsetRef = useRef(0);
   const suppressClickRef = useRef(false);
+  const longPressTimerRef = useRef(null);
+  const longPressStartRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isWhatsAppTemplate = !!message.whatsapp_template;
@@ -4494,6 +4564,12 @@ function MessageBubble({
   const showActions = canQuote || canForward || canCopy;
   const replyPreview = message.reply_preview || null;
 
+  useEffect(() => () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     if (!menuOpen) return undefined;
 
@@ -4525,6 +4601,72 @@ function MessageBubble({
   function closeAndCopy() {
     setMenuOpen(false);
     onCopy?.(message);
+  }
+
+  function clearLongPress() {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }
+
+  // A held message opens the same actions as the overflow button.
+  // This is presentation-only: reply and forward still use the existing
+  // policy-checked handlers, and unsupported actions are never offered.
+  function handleBubbleTouchStart(event) {
+    longPressTriggeredRef.current = false;
+    handleSwipeStart(event);
+    if (!showActions || event.touches?.length !== 1) return;
+    if (event.target?.closest?.("button, a, audio, video, input, textarea, summary")) return;
+    const touch = event.touches[0];
+    clearLongPress();
+    longPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null;
+      if (!longPressStartRef.current || swipeOffsetRef.current > 0) return;
+      longPressTriggeredRef.current = true;
+      suppressClickRef.current = true;
+      setMenuOpen(true);
+      resetSwipe();
+      longPressStartRef.current = null;
+      window.setTimeout(() => { suppressClickRef.current = false; }, 650);
+    }, 450);
+  }
+
+  function handleBubbleTouchMove(event) {
+    const start = longPressStartRef.current;
+    const touch = event.touches?.[0];
+    if (start && touch &&
+        (Math.abs(touch.clientX - start.x) > 10 ||
+          Math.abs(touch.clientY - start.y) > 10)) {
+      clearLongPress();
+    }
+    if (!longPressTriggeredRef.current) handleSwipeMove(event);
+  }
+
+  function handleBubbleTouchEnd() {
+    clearLongPress();
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      resetSwipe();
+      return;
+    }
+    finishSwipe();
+  }
+
+  function handleBubbleTouchCancel() {
+    clearLongPress();
+    longPressTriggeredRef.current = false;
+    cancelSwipe();
+  }
+
+  function handleBubbleContextMenu(event) {
+    if (!showActions || event.target?.closest?.("button, a, audio, video, input, textarea, summary")) return;
+    event.preventDefault();
+    clearLongPress();
+    resetSwipe();
+    setMenuOpen(true);
   }
 
   function handleSwipeStart(event) {
@@ -4600,12 +4742,13 @@ function MessageBubble({
       )}
 
       <div
-        className={`group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform ${isSwiping ? "duration-0" : "duration-150"} sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
+        className={`wa-message-bubble group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform ${isSwiping ? "duration-0" : "duration-150"} sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
         style={{ transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
-        onTouchStart={handleSwipeStart}
-        onTouchMove={handleSwipeMove}
-        onTouchEnd={finishSwipe}
-        onTouchCancel={cancelSwipe}
+        onTouchStart={handleBubbleTouchStart}
+        onTouchMove={handleBubbleTouchMove}
+        onTouchEnd={handleBubbleTouchEnd}
+        onTouchCancel={handleBubbleTouchCancel}
+        onContextMenu={handleBubbleContextMenu}
         onClickCapture={handleClickCapture}
       >
         {showActions && (
