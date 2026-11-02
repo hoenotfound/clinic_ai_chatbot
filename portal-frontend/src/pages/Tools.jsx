@@ -4598,9 +4598,15 @@ function FollowUpTool({
           </Card>
           </div>
           <div id="follow-up-panel-performance" role="tabpanel" aria-labelledby="follow-up-tab-performance" className={followUpTab === "performance" ? "space-y-5" : "hidden"}>
+            <p className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs text-[var(--color-text-muted)]">
+              These reports are grouped by channel. WhatsApp totals can include both primary and secondary numbers.
+            </p>
             <FollowUpPerformance active={followUpTab === "performance"} />
           </div>
           <div id="follow-up-panel-activity" role="tabpanel" aria-labelledby="follow-up-tab-activity" className={followUpTab === "activity" ? "space-y-5" : "hidden"}>
+            <p className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs text-[var(--color-text-muted)]">
+              Activity is grouped by channel, not WhatsApp phone number. WhatsApp events may include both senders.
+            </p>
             <nav role="tablist" aria-label="Activity sections"
               className="flex gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white p-1.5">
               {[["recent", "Recent activity", "follow-up-delivery-events"],["health", "Delivery health", "follow-up-delivery-health"],["templates", "Templates", "follow-up-template-activity"]].map(([key, label, panelId]) => (
