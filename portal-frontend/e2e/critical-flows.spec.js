@@ -837,7 +837,7 @@ test("mobile long press opens the WhatsApp-style message actions without sending
   expectNoUnexpectedApi(apiState);
 });
 
-test("blocked WhatsApp conversations do not offer forwarding but preserve Copy", async ({ page }) => {
+test("closed source WhatsApp chat shows Reply unavailable, Forward and Copy", async ({ page }) => {
   const expiredInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
   const apiState = await installApi(page, {
     initialConversations: [conversation({
@@ -857,8 +857,12 @@ test("blocked WhatsApp conversations do not offer forwarding but preserve Copy",
   });
   const copy = menu.getByRole("menuitem", { name: /Copy/ });
   await expect(copy).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: /Forward/ })).toHaveCount(0);
-  await expect(menu.getByRole("menuitem", { name: /Reply/ })).toHaveCount(0);
+  const reply = menu.getByRole("menuitem", { name: /Reply/ });
+  const forward = menu.getByRole("menuitem", { name: /Forward/ });
+  await expect(reply).toBeVisible();
+  await expect(reply).toBeDisabled();
+  await expect(forward).toBeVisible();
+  await expect(forward).toBeEnabled();
   if (page.viewportSize().width < 640) {
     // A visible React element can still be clipped by the message scroller
     // or hidden behind the composer on real phones. Check actual hit testing.
@@ -892,7 +896,136 @@ test("suspended secondary WhatsApp number cannot forward from the message action
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
   await page.getByRole("button", { name: "Message actions" }).first().click();
   await expect(page.getByRole("menuitem", { name: /Copy/ })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Forward/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Forward/ })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: /Reply/ })).toBeDisabled();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("forwarding from a closed source sends only to an eligible target in the same business", async ({ page }) => {
+  const closedAt = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
+  const closedSource = conversation({
+    latest_inbound_at: closedAt,
+    latest_customer_message_at: closedAt,
+    last_message_at: closedAt,
+    whatsapp_sender_id: "same-business",
+  });
+  const openTarget = conversation({
+    contact_id: 202,
+    name: "Bella Customer",
+    whatsapp_profile_name: "Bella Customer",
+    whatsapp_number: "+60199887766",
+    whatsapp_sender_id: "same-business",
+  });
+  const closedTarget = conversation({
+    contact_id: 303,
+    name: "Carol Customer",
+    whatsapp_profile_name: "Carol Customer",
+    whatsapp_number: "+60199883344",
+    whatsapp_sender_id: "same-business",
+    latest_inbound_at: closedAt,
+    latest_customer_message_at: closedAt,
+    last_message_at: closedAt,
+  });
+  const differentSenderTarget = conversation({
+    contact_id: 404,
+    name: "Other business contact",
+    whatsapp_profile_name: "Other business contact",
+    whatsapp_sender_id: "different-business",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [closedSource, openTarget, closedTarget, differentSenderTarget],
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await page.getByRole("button", { name: "Message actions" }).first().click();
+  const menu = page.getByRole("menu", {
+    name: (page.viewportSize()?.width ?? 1000) < 640 ? "Message options" : undefined,
+  });
+  await expect(menu.getByRole("menuitem", { name: /Reply/ })).toBeDisabled();
+  await menu.getByRole("menuitem", { name: /Forward/ }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Forward message" });
+  const bella = dialog.getByRole("button").filter({ hasText: "Bella Customer" });
+  const carol = dialog.getByRole("button").filter({ hasText: "Carol Customer" });
+  await expect(bella).toBeEnabled();
+  await expect(carol).toBeDisabled();
+  await expect(carol).toContainText(/must message|window|reply/i);
+  await expect(dialog.getByText("Other business contact")).toHaveCount(0);
+
+  await bella.click();
+  await dialog.getByRole("button", { name: "Forward (1)" }).click();
+  const sent = findCall(apiState, "POST", "/api/conversations/101/messages/1/forward");
+  expect(sent?.body?.targetContactIds).toEqual([202]);
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("iPhone hold on message text opens actions without selecting text", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "iPhone-specific long press interaction.");
+  const closedAt = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [conversation({
+      latest_inbound_at: closedAt,
+      latest_customer_message_at: closedAt,
+      last_message_at: closedAt,
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const content = page.getByText("Hi, I would like to know more.", { exact: true }).last();
+  await expect(content).toBeVisible();
+  const css = await content.evaluate((node) => {
+    const bubble = node.closest(".wa-message-bubble");
+    const computed = getComputedStyle(bubble);
+    return { select: computed.userSelect, callout: computed.webkitTouchCallout };
+  });
+  expect(css.select).toBe("none");
+  expect(css.callout).toBe("none");
+
+  await content.evaluate(async (element) => {
+    const point = (x, y) => ({
+      identifier: 2, target: element, clientX: x, clientY: y,
+      screenX: x, screenY: y, pageX: x, pageY: y,
+    });
+    const fire = (type, touches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: touches });
+      element.dispatchEvent(event);
+    };
+    fire("touchstart", [point(100, 180)]);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    fire("touchend", []);
+  });
+  const sheet = page.getByRole("menu", { name: "Message options" });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole("menuitem", { name: /Reply/ })).toBeDisabled();
+  await expect(sheet.getByRole("menuitem", { name: /Forward/ })).toBeEnabled();
+  await expect(sheet.getByRole("menuitem", { name: /Copy/ })).toBeEnabled();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("closed WhatsApp reply placeholder stays on one line on a phone", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Mobile-specific composer layout.");
+  const closedAt = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [conversation({
+      latest_inbound_at: closedAt,
+      latest_customer_message_at: closedAt,
+      last_message_at: closedAt,
+    })],
+  });
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  const composer = page.locator("textarea").first();
+  await expect(composer).toBeDisabled();
+  await expect(composer).toHaveAttribute("placeholder", "Reply unavailable");
+  await expect(composer).toHaveAttribute("aria-label", "WhatsApp reply unavailable");
+  const style = await composer.evaluate((el) => getComputedStyle(el, "::placeholder").whiteSpace);
+  expect(style).toBe("nowrap");
   expectNoUnexpectedApi(apiState);
 });
 
