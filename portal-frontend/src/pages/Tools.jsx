@@ -2370,7 +2370,10 @@ function FollowUpTool({
   const [focusAdvancedRule, setFocusAdvancedRule] = useState(null);
   const [jumpExtendedSlotHour, setJumpExtendedSlotHour] = useState(null);
   const [proposedTemplateSchedule, setProposedTemplateSchedule] = useState(null);
-  const [billingProtectionOpen, setBillingProtectionOpen] = useState(false);
+  const [billingProtectionOpen, setBillingProtectionOpen] = useState(form.whatsappFreeOnly?.enabled === true);
+  useEffect(() => {
+    if (form.whatsappFreeOnly?.enabled === true) setBillingProtectionOpen(true);
+  }, [form.whatsappFreeOnly?.enabled]);
   const [jumpStepIndex, setJumpStepIndex] = useState(null);
   useEffect(() => {
     if (validationIssue?.tab === "sequence" && /quiet hours/i.test(validationIssue.message || "")) {
@@ -2836,7 +2839,7 @@ function FollowUpTool({
           ["primary", "Primary WhatsApp", "Main sequence and shared channel settings"],
           ["secondary", "Secondary WhatsApp", "Separate follow-ups and templates"],
         ].map(([id, title, subtitle]) => (
-          <button key={id} id={`follow-up-sender-${id}`} role="tab" aria-selected={senderView === id}
+          <button key={id} id={`follow-up-sender-${id}`} role="tab" aria-label={title} aria-selected={senderView === id}
             aria-controls={`follow-up-sender-panel-${id}`} onClick={() => setSenderView(id)}
             className={`rounded-xl border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${senderView === id
               ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/50" : "border-transparent hover:bg-[var(--color-bg)]"}`}>
@@ -2880,7 +2883,7 @@ function FollowUpTool({
               {form.enabled !== savedEnabled ? (form.enabled ? "On after save" : "Off after save") : form.enabled ? "On" : "Off"}
             </span>
             <Switch checked={form.enabled} onChange={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
-              ariaLabel="Enable main follow-up sequence" />
+              ariaLabel="Enable 24-hour follow-ups" />
           </div>
         </div>
         {uploadingVideo && (
