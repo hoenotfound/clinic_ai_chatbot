@@ -69,6 +69,7 @@ function startMemoryDiagnostics({
   logger = console,
   setIntervalFn = setInterval,
   sample = sampleMemory,
+  wakeSnapshot = getWakeDiagnostics,
 } = {}) {
   if (timer || env.DA_MEMORY_DIAGNOSTICS_ENABLED === "false") return timer;
   if (!env.RENDER_SERVICE_ID && env.DA_MEMORY_DIAGNOSTICS_ENABLED !== "true") return null;
@@ -78,16 +79,26 @@ function startMemoryDiagnostics({
       // Piggyback on the existing timer every fifth minute. No extra jobs,
       // network, SQL or customer data. Keep Render log output compact.
       samples++;
-      const wake = samples % 5 === 0 ? getWakeDiagnostics() : null;
-      const wakeSummary = wake?.last5Minutes > 0 ? {
-        last5Minutes: wake.last5Minutes,
-        top: wake.counters.filter(item => item.last5Minutes > 0)
-          .slice(0, 8).map(item => ({ key: item.key, count: item.last5Minutes })),
-      } : null;
       logger.info?.("[Memory diagnostics]", {
         ...sample(), workers: takeWorkerActivity(),
-        ...(wakeSummary ? { refreshWakeSummary: wakeSummary } : {}),
       });
+      if (samples % 5 === 0) {
+        const wake = wakeSnapshot();
+        // Emit one compact JSON string instead of a nested object: Node's
+        // util.inspect collapses nested arrays into [Object] in Render logs.
+        // This uses fixed-category counters only. No IDs, event payloads,
+        // customer content, network activity or database access.
+        const summary = {
+          last5Minutes: wake.last5Minutes,
+          last15Minutes: wake.last15Minutes,
+          top: wake.counters
+            .filter(item => item.last5Minutes > 0)
+            .sort((a, b) => b.last5Minutes - a.last5Minutes || a.key.localeCompare(b.key))
+            .slice(0, 8)
+            .map(item => ({ key: item.key, count: item.last5Minutes })),
+        };
+        logger.info?.(`[Refresh/wake diagnostics] ${JSON.stringify(summary)}`);
+      }
     } catch (error) {
       // Diagnostics never interrupt primary WhatsApp or other service workers.
       logger.warn?.("[Memory diagnostics] sample unavailable");
