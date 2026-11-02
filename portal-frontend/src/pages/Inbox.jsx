@@ -2264,7 +2264,7 @@ function ConversationList({
               aria-label="Back to chats">
               <ArrowLeftIcon className="h-4 w-4" /> Back to chats
             </button>
-          ) : conversations?.some((item) => item.inbox_archived_at) ? (
+          ) : (
             <button type="button" onClick={() => updateFilter("archiveView", "archived")}
               className="inline-flex min-h-10 items-center gap-2 font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
               aria-label="Open archived chats">
