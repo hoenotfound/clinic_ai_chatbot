@@ -781,9 +781,9 @@ test("Archived joins the Status filter with a clean header and accurate active c
   await expect(list.getByRole("button").filter({ hasText: "Bella Customer" }).first()).toBeVisible();
   await expect(list.getByRole("button").filter({ hasText: "Alex Customer" })).toHaveCount(0);
   if (testInfo.project.name === "iphone-portrait") {
-    const statusTabs = list.getByRole("navigation", { name: "Quick conversation filters" });
-    const allTab = statusTabs.getByRole("button", { name: /^All / });
-    const archivedTab = statusTabs.getByRole("button", { name: /^Archived / });
+    const statusTabs = list.locator(".wa-inbox-status-tabs");
+    const allTab = statusTabs.locator("button").filter({ hasText: /^All/ });
+    const archivedTab = statusTabs.locator("button").filter({ hasText: /^Archived/ });
     await expect(archivedTab).toHaveAttribute("aria-pressed", "true");
     await allTab.click();
     await expect(list.getByRole("button").filter({ hasText: "Alex Customer" }).first()).toBeVisible();
@@ -892,6 +892,9 @@ test("conversation actions archive and restore without changing AI ownership", a
   expect(findCall(apiState, "PATCH", "/api/conversations/101/archive")?.body)
     .toEqual({ archived: true });
   const inboxList = page.getByRole("complementary", { name: "Conversation inbox" });
+  // A successful mobile archive returns to the chat list asynchronously.
+  await expect(inboxList).toBeVisible();
+  await expect(inboxList.getByRole("button", { name: /Filters/ })).toBeVisible();
   await inboxList.getByRole("button", { name: /Filters/ }).click();
   await inboxList.getByRole("combobox", { name: "Status" }).selectOption("archived");
   const archivedRow = page.getByRole("complementary", { name: "Conversation inbox" })
