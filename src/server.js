@@ -42,6 +42,7 @@ const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPric
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
 const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
+const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -1796,18 +1797,23 @@ async function processIncomingMessage(
     const repeatVisitPriceReply = !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
-      /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
-      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
-      channel === "whatsapp"
-      ? await resolveNeutroSubsequentPricing({
-          contactId: contact.id, inboundMessageId: savedInbound.id,
-          customerText: text, conversationHistory: history,
-          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-          promotions: clinicConfig.promotions, language: mediaLanguage,
-        }) : null;
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
+        ? await resolveNeutroSubsequentPricing({
+            contactId: contact.id, inboundMessageId: savedInbound.id,
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            promotions: clinicConfig.promotions, language: mediaLanguage,
+          })
+        : resolveRepeatVisitPriceReply({
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            language: mediaLanguage,
+          })
+      : null;
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
-      if (repeatVisitPriceReply.mode === "staff_handoff") {
+      if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
         flagged = true;
         reviewRequired = false;
         reviewType = null;
@@ -1816,7 +1822,7 @@ async function processIncomingMessage(
       packageQuery = false;
       console.info("[Pricing] Neutro subsequent-session contact=" +
         contact.id + " inbound=" + savedInbound.id +
-        " stage=" + repeatVisitPriceReply.mode +
+        " stage=" + (repeatVisitPriceReply.mode || "legacy_staff_confirmation") +
         " treatment=" + repeatVisitPriceReply.treatment);
     }
 
