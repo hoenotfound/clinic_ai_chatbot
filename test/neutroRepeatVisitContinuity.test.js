@@ -67,7 +67,7 @@ test("A question about second-session price never borrows an old ad or staff cho
     customerText: "9D 第二次价格多少",
     conversationHistory: [...thread().slice(0,-1),
       turn("user", "9D 第二次价格多少", 206)],
-  })), null, "newly named service is handled by separate verification");
+  }))?.treatment, "9D 逆龄抗衰", "current customer-named service overrides the older choice");
   const withStaff = [...thread().slice(0, -1),
     turn("assistant", "[Verified STAFF message] I can help", 199, true),
     turn("user", "问下 如果第二次后 价格大概", 206)];
