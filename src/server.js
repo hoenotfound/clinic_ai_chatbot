@@ -41,6 +41,7 @@ const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpCo
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
+const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -1621,6 +1622,7 @@ async function processIncomingMessage(
             resultMedia: clinicConfig.resultMedia, conversationHistory: history,
             promotions: clinicConfig.promotions,
             allowContinuedPriceContext: aiPricingEnabled,
+            isFirstMessage,
           })
         : guardedOfferIntro;
       if (finalOfferGuard.replaced) {
@@ -1784,6 +1786,30 @@ async function processIncomingMessage(
         console.warn("[Reply guard] Avoided repeated pricing clarification.");
         reply = repeated.reply;
       }
+    }
+
+    // An independently confirmed repeat-visit enquiry is not a request for
+    // the first-trial promotional amount. The normal price formatter above
+    // may only know that first-trial price. Never send it as a second price.
+    // Route the precise, text-only question to staff and stop AI ownership.
+    const repeatVisitPriceReply = !flagged && !bookingReady &&
+      !keywordReason && !marketingStopQuestion &&
+      clinicConfig.businessType === "tcm_clinic" &&
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
+      ? resolveRepeatVisitPriceReply({
+          customerText: text, conversationHistory: history,
+          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+          language: mediaLanguage,
+        }) : null;
+    if (repeatVisitPriceReply) {
+      reply = repeatVisitPriceReply.reply;
+      flagged = true;
+      reviewRequired = false;
+      reviewType = null;
+      priceQuery = false;
+      packageQuery = false;
+      console.info("[Pricing] Repeat visit requires staff-confirmed rate contact=" +
+        contact.id + " inbound=" + savedInbound.id);
     }
 
     // A marketing STOP must not become a price/promotion reply even if the
@@ -2008,6 +2034,11 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
+    if (repeatVisitPriceReply) {
+      // A human-confirmed follow-up price is needed. No promo or result image.
+      await auditResultMediaEarlyExit("repeat_visit_price_staff_confirmation");
+      return { wasFirstMessage, keywordReason };
+    }
     {
       // The combo reply is verified text, but optional media needs its own
       // matching active price/package authorization. Keep the existing
