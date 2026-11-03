@@ -8,7 +8,7 @@ const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
-  reviewedContactFollowupGuardSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
@@ -121,7 +121,7 @@ const CANDIDATES_SQL=`
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
-   AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7")}
+   AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
@@ -312,7 +312,8 @@ async function runOnce({
  // for ONE. Allow up to three candidate rows per slot, not extra attempts.
  const params=[env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
-   now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE];
+   now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   originalAdsOnlyCutoff(env)];
  const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
  if(extendedEnabled(env)){
    const extra=(await database.query(EXTENDED_CANDIDATES_SQL,params)).rows||[];
@@ -340,7 +341,8 @@ async function runOnce({
    if(EXTENDED_SLOTS.has(slot) && !extendedEnabled(env))return false;
    const result=await database.query(EXTENDED_SLOTS.has(slot)?
      EXTENDED_RECHECK_SQL:RECHECK_SQL,[
-    params[0],params[1],params[2],new Date(),1000,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE]);
+    params[0],params[1],params[2],new Date(),1000,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+      originalAdsOnlyCutoff(env)]);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
     Number(x.inbound_id)===Number(candidate.inbound_id) &&
@@ -424,6 +426,7 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   originalAdsOnlyCutoff(env),
  ]);
  return result.rows?.[0]||null;
 }
