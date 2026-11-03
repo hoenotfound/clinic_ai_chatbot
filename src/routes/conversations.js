@@ -889,6 +889,7 @@ function sendMeasuredInboxJson(res, payload, startedAt, kind) {
 }
 
 router.get("/", async (req, res) => {
+  if (req.query.paged === "true") return handleInboxPage(req,res);
   const startedAt = process.hrtime.bigint();
   recordInboxFullList(req.get("X-Inbox-Refresh-Reason"));
   try {
@@ -978,7 +979,7 @@ router.get("/", async (req, res) => {
 // Paginated staff Inbox. The index remains entirely inside the server: only
 // the selected page of full conversation rows crosses Neon -> Render -> browser.
 // Search/status counts are calculated across all staff-accessible contacts.
-router.get("/page", async (req,res) => {
+async function handleInboxPage(req,res) {
   const startedAt=process.hrtime.bigint();
   try {
     const filters=normalizeInboxPageFilters(req.query);
@@ -1041,7 +1042,8 @@ router.get("/page", async (req,res) => {
     console.error("Failed to load paginated Inbox:",err);
     res.status(500).json({error:"Something went wrong loading conversations."});
   }
-});
+}
+router.get("/page",handleInboxPage);
 
 // Search the complete customer directory, including archived contact-only
 // Coexistence imports, with a bounded result set and CURRENT staff ownership.
