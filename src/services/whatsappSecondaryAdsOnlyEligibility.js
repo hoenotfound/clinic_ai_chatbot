@@ -1,11 +1,10 @@
 "use strict";
 
-// Secondary AI requires a genuine first Click-to-WhatsApp ad after activation.
-// Pre-activation/contact-only-sync records have UNKNOWN older history (Meta may
-// import only recent chats). They remain manual unless both numbers' full
-// histories have been explicitly checked and an audited decision recorded.
-// Actual historical chats and prior primary-number customers remain excluded.
-// Every automated send continues to use the same sender- and message-bound check.
+// The legacy ads-only rule still protects media, follow-ups and marketing.
+// Under a SEPARATE explicit rollout setting, conversational text AI may reply
+// to any secondary-number contact who sends a new inbound after activation.
+// Staff ownership, opt-outs, provider-bound sender and billing checks remain.
+// Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
 
 function adsOnlyActivation(env = process.env) {
