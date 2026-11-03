@@ -100,6 +100,9 @@ const CANDIDATES_SQL=`
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
+   ad_followup.source AS ad_followup_source,
+   ad_followup.headline AS ad_followup_headline,
+   ad_followup.body AS ad_followup_body,
    ARRAY(SELECT language_turn.content FROM messages language_turn
      JOIN whatsapp_sender_message_context language_context
        ON language_context.message_id=language_turn.id
@@ -132,13 +135,20 @@ const CANDIDATES_SQL=`
  ${FIRST_REPLY_SQL}
  ${PREVIOUS_STEP_SQL}
  LEFT JOIN LATERAL (
-   SELECT lead.marketing_consent,lead.is_closed,lead.appointment_status,
+   SELECT lead.id,lead.marketing_consent,lead.is_closed,lead.appointment_status,
      lead.treatment_interest,
      stage.system_key AS stage_key
    FROM leads lead LEFT JOIN pipeline_stages stage ON stage.id=lead.stage_id
    WHERE lead.contact_id=c.id ORDER BY lead.created_at DESC,lead.id DESC
    LIMIT 1
  ) lead ON true
+ LEFT JOIN LATERAL (
+   SELECT attribution.source,attribution.headline,attribution.body
+   FROM lead_attributions attribution
+   WHERE attribution.lead_id = lead.id
+   ORDER BY attribution.attributed_at DESC,attribution.id DESC
+   LIMIT 1
+ ) ad_followup ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
    AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
