@@ -1796,7 +1796,7 @@ async function processIncomingMessage(
     const repeatVisitPriceReply = !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
-      /^neutro\\s+sense\\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
+      /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || "")) &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
       channel === "whatsapp"
       ? await resolveNeutroSubsequentPricing({
