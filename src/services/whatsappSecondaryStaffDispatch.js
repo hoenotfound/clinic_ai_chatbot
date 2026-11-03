@@ -12,7 +12,8 @@ const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
 const { secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode } =
   require("./whatsappSenderActivationGate");
-const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible}=
+const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,
+  isSecondaryAutomationEligible} =
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
 
@@ -40,7 +41,7 @@ const ALLOWED_RESERVATION_SQL = `
 async function sendSecondaryStaffText({
   contact, messageId, text, replyToProviderMessageId = null,
   origin = "staff", preSendCheck = null, dispatchTransport = null,
-  templateRequest = null,
+  templateRequest = null, anchorMessageId = null,
 }, {
   env = process.env, database = pool,
   fetchImpl = global.fetch,
@@ -49,6 +50,7 @@ async function sendSecondaryStaffText({
   now = () => new Date(),
   audienceEligible=isSecondaryAdsOnlyEligible,
   replyAudienceEligible=isSecondaryAiReplyEligible,
+  automationAudienceEligible=isSecondaryAutomationEligible,
 } = {}) {
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
@@ -137,10 +139,16 @@ async function sendSecondaryStaffText({
   // Broader AI reply audience never expands media, follow-up, or marketing.
   const allContactText = ["ai_reply","system_fallback"].includes(origin) &&
     env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE === "all_contacts";
+  const allContactAutomation = !allContactText &&
+    automatedOrigin && env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "all_contacts";
   const stillEligible=async()=>!automatedOrigin ||
     (allContactText
       ? await replyAudienceEligible(cid,{database,env})
-      : await audienceEligible(cid,{database,env})) ||
+      : allContactAutomation
+        ? await automationAudienceEligible(cid,{
+            database,env,inboundMessageId:anchorMessageId
+          })
+        : await audienceEligible(cid,{database,env})) ||
     (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
      await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()}));
   if (!await stillEligible())return block("secondary_ads_only_contact_ineligible");

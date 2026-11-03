@@ -56,12 +56,12 @@ function fake({candidates=[row],extendedCandidates=[],claimed=true,approved=true
  database:{query:async(sql,args)=>{
   calls.push({sql,args});
   if(sql===svc.CANDIDATES_SQL || sql===svc.EXTENDED_CANDIDATES_SQL){
-   assert.equal(args.length,6,"candidate selection binds the ads-only cutoff");
+   assert.equal(args.length,8,"candidate selection binds audience and both cutoffs");
    assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
    return{rows:sql===svc.CANDIDATES_SQL?candidates:extendedCandidates};
   }
   if(sql===svc.RECHECK_SQL || sql===svc.EXTENDED_RECHECK_SQL){
-   assert.equal(args.length,6,"pre-send recheck must bind the same ads-only cutoff");
+   assert.equal(args.length,8,"pre-send recheck binds audience and both cutoffs");
    assert.equal(args[5],new Date(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT).toISOString());
    return{rows:sql===svc.RECHECK_SQL?candidates:extendedCandidates};
   }

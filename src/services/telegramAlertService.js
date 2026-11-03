@@ -1,6 +1,6 @@
 const https = require("https");
 const telegramAlertRepo = require("../db/telegramAlertRepo");
-const {isSecondaryAdsOnlyEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {isSecondaryAutomationEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
 const {pool}=require("../db/db");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
@@ -356,7 +356,9 @@ function createTelegramAlertService({
                 secondary=owner.rows?.[0]?.secondary===true;
               }
               if (secondary &&
-                  !await isSecondaryAdsOnlyEligible(claim.contact_id,{env})) {
+                  !await isSecondaryAutomationEligible(claim.contact_id,{
+                    env,inboundMessageId:claim.through_message_id
+                  })) {
                 await repository.markSuperseded(claim.alert_id);
                 return "superseded";
               }

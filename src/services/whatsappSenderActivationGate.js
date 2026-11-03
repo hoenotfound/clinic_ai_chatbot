@@ -41,13 +41,23 @@ function assertSecondaryLifecyclePin(env = process.env) {
 // Automated secondary treatment replies, media, and opted-in follow-ups
 // must never require granting chatbot Inbox staff sending privileges.
 function secondaryAdsOnlyFullAiMode(env = process.env) {
-  const cutoff = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
+  const audience = env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE;
+  const cutoff = String(audience === "all_contacts"
+    ? env.WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT || ""
+    : env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
+  const replyCutoff = String(env.WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT || "");
+  const timestampValid = value =>
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) &&
+    Number.isFinite(Date.parse(value));
+  const audienceValid = audience === "ads_only" ||
+    (audience === "all_contacts" &&
+      env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE === "all_contacts" &&
+      timestampValid(replyCutoff) &&
+      Date.parse(cutoff) >= Date.parse(replyCutoff));
   return env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED !== "true" &&
     env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
-    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "ads_only" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(cutoff) &&
-    Number.isFinite(Date.parse(cutoff)) &&
+    audienceValid && timestampValid(cutoff) &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&

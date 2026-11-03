@@ -5,7 +5,7 @@ const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecovery
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { scoreLeadConversation, nextLeadScoringModelRetryAt, restoreLeadScoringModelCooldowns } = require("./leadScoringAiService");
-const { isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
+const { isSecondaryAutomationEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 const telegramAlerts = require("./telegramAlertService");
 
 // Retained for compatibility and short failure retries. The worker no longer
@@ -298,7 +298,9 @@ function createLeadScoringRunner({
         const secondaryCandidate = candidate.whatsapp_sender_key ===
           (process.env.WHATSAPP_SECONDARY_SENDER_KEY || "neutro_secondary");
         if (secondaryCandidate &&
-            !await isSecondaryAdsOnlyEligible(candidate.contact_id)) continue;
+            !await isSecondaryAutomationEligible(candidate.contact_id,{
+                inboundMessageId:candidate.through_message_id
+              })) continue;
         const claim = await repository.claimCandidate(candidate);
         if (!claim) continue;
 
@@ -335,7 +337,9 @@ function createLeadScoringRunner({
           }
 
           if (secondaryCandidate &&
-              !await isSecondaryAdsOnlyEligible(candidate.contact_id)) {
+              !await isSecondaryAutomationEligible(candidate.contact_id,{
+                inboundMessageId:candidate.through_message_id
+              })) {
             await repository.markScoreCancelled(claim.id);
             continue;
           }
@@ -398,7 +402,9 @@ function createLeadScoringRunner({
           // summary or AI temperature assessment.
           if (failure?.terminal &&
               (!secondaryCandidate ||
-               await isSecondaryAdsOnlyEligible(candidate.contact_id))) {
+               await isSecondaryAutomationEligible(candidate.contact_id,{
+                inboundMessageId:candidate.through_message_id
+              }))) {
             try {
               await queueScoringFailureFallback({
                 failure,
