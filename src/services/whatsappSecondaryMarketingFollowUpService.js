@@ -389,7 +389,7 @@ async function runOnce({
     [id,saved.id]);
    const result=await send({
      contact,messageId:saved.id,text:"[approved-marketing-template]",
-     origin:"marketing_followup",
+     origin:"marketing_followup",anchorMessageId:candidate.inbound_id,
      templateRequest:{
       name:template.name,languageCode:template.language,
       treatmentInterest:candidate.treatment_interest,
