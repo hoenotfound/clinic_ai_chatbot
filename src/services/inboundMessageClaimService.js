@@ -14,7 +14,7 @@ const whatsappPolicy = require("./whatsappPolicyService");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 const leadReengagementAlertService = require("./leadReengagementAlertService");
-const { isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
+const { isSecondaryAutomationEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 function initialInboundText(incoming, config = clinicConfig) {
   const { customerLabel } = getOperationalLabels(config);
@@ -246,8 +246,8 @@ function createInboundMessageClaimService({
       const secondary = channel === "whatsapp" &&
         process.env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary" &&
         contact.whatsapp_sender_key === "neutro_secondary";
-      if (!secondary || await isSecondaryAdsOnlyEligible(contact.id, {
-        database, env: process.env,
+      if (!secondary || await isSecondaryAutomationEligible(contact.id, {
+        database, env: process.env,inboundMessageId:savedInbound.id,
       })) {
         await reengagement.notifyIfReengaged({
           contactId: contact.id,
