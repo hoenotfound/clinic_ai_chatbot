@@ -335,7 +335,7 @@ async function runOnce({
     serviceFollowupParityActivation(env),
   ])).rows||[];
   let attempted=0,accepted=0;
-  for(const candidate of items) {
+  for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
     if(!SLOTS.has(slot) || !Number.isSafeInteger(Number(candidate.contact_id)))continue;
     const clinicConfig=getConfig();
