@@ -11,6 +11,16 @@ const {hasCapability}=require("../utils/permissions");
 const {publishInternal}=require("../utils/realtimeEvents");
 const router=express.Router();
 const SLOTS=new Set([2,6,20]);
+// A secondary rule controls its own enabled state and optional approved
+// sender-owned media. Its visible message comes from the live primary clinic
+// settings; never let a saved secondary text override those shared messages.
+function primaryFollowUpMessages(clinicConfig){
+ const primary=clinicConfig?.automatedFollowUp||{};
+ const steps=[primary,primary.additionalSteps?.[0],primary.additionalSteps?.[1]];
+ return Object.fromEntries([2,6,20].map((slot,i)=>[
+  slot,typeof steps[i]?.message==="string"?steps[i].message.trim():"",
+ ]));
+}
 function allowed(req,res,next){
   if(!hasCapability(req.user,"manage_tools")){
     return res.status(403).json({error:"Manage Tools permission is required."});
@@ -65,6 +75,7 @@ router.get("/",async(req,res)=>{
         env:process.env,clinicConfig:configRepo.getConfig(),
       }),
       rules:rules.rows,
+      primaryFollowUpMessages:primaryFollowUpMessages(configRepo.getConfig()),
       marketingRules:marketing.rows,
       marketingWorkerEnabled:marketingWorkerEnabled(process.env),
       marketingTemplates:templates||[],marketingCatalogAvailable:templates!==null,
@@ -78,11 +89,11 @@ router.put("/:slot",async(req,res)=>{
   try {
     const slot=Number(req.params.slot);
     if(!SLOTS.has(slot))return res.status(400).json({error:"Only 2, 6 and 20 hour follow-ups are supported."});
-    const text=typeof req.body?.messageText==="string"?req.body.messageText.trim():"";
+    const text=primaryFollowUpMessages(configRepo.getConfig())[slot]||"";
     const enabled=req.body?.enabled;
     if(typeof enabled!=="boolean" || text.length<3 || text.length>1024 ||
       /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) {
-      return res.status(400).json({error:"Provide a reviewed message of 3–1024 characters and a valid enabled setting."});
+      return res.status(400).json({error:"Primary clinic follow-up text must be configured (3–1024 characters) before changing this secondary rule."});
     }
     // Reuse only a pre-existing Neutro-clinic follow-up video object,
     // never a customer attachment or a primary Meta media ID. Both numbers
