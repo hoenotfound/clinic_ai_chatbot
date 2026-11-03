@@ -7,7 +7,7 @@ const messagesRepo=require("../db/messagesRepo");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
+const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
@@ -69,8 +69,12 @@ const FIRST_REPLY_SQL=`
      AND reply.whatsapp_message_id IS NOT NULL
      AND reply.sent_by_username IS NULL
      AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
-     AND reply.created_at>=CASE WHEN $7::text='all_contacts' THEN inbound.created_at ELSE c.created_at END
-     AND reply.created_at<(CASE WHEN $7::text='all_contacts' THEN inbound.created_at ELSE c.created_at END)+INTERVAL '24 hours'
+     AND reply.created_at>=CASE WHEN $7::text='all_contacts'
+        AND NOT (${adsOnlyEligibleSql("c","$8")})
+      THEN inbound.created_at ELSE c.created_at END
+     AND reply.created_at<(CASE WHEN $7::text='all_contacts'
+        AND NOT (${adsOnlyEligibleSql("c","$8")})
+      THEN inbound.created_at ELSE c.created_at END)+INTERVAL '24 hours'
    ORDER BY reply.created_at,reply.id LIMIT 1
  ) first_reply ON TRUE
 `;
