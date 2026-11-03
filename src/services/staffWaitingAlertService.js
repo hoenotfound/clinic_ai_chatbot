@@ -1,6 +1,6 @@
 const { pool } = require("../db/db");
 const { staffWaitingOwnershipSql } = require("../db/staffWaitingEligibility");
-const { isSecondaryAdsOnlyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
+const { isSecondaryAiReplyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -227,7 +227,7 @@ function createStaffWaitingAlertService({
   getContext = getImmediateAlertContext,
   stillWaiting = isStillWaitingForStaff,
   queueAlert = queuePreparedAlert,
-  eligibleForSecondaryAi = isSecondaryAdsOnlyEligible,
+  eligibleForSecondaryAi = isSecondaryAiReplyEligible,
   config = clinicConfig,
 } = {}) {
   return async function sendStaffWaitingAlert({
