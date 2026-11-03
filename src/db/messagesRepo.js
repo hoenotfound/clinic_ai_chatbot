@@ -307,7 +307,8 @@ async function getRecentResultProofContext(contactId, inboundMessageId, query = 
     throw new TypeError("Valid contact and inbound message IDs are required.");
   }
   const result = await query(
-    "SELECT role, content, sent_by_username, media_url, media_mime_type " +
+    "SELECT role, content, sent_by_username, media_url, media_mime_type, " +
+    "delivery_status, whatsapp_message_id " +
     "FROM messages WHERE contact_id = $1 AND id < $2 " +
     "AND created_at >= (SELECT created_at - INTERVAL '2 hours' " +
     "FROM messages WHERE id = $2 AND contact_id = $1 AND role = 'user') " +
