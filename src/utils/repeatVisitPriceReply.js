@@ -69,7 +69,7 @@ function resolveRepeatVisitPriceReply({
         ? "You're asking about the second session of " + selected +
           " 😊 The first-trial offer may differ from subsequent-session pricing. I'll need our team to confirm the actual amount so I don't give you an incorrect quote."
         : "明白～你问的是" + selected +
-          "第一次体验之后，第二次继续护理的收费对吗？😊\\n首次体验优惠不一定适用于第二次，后续收费需要由门店同事确认，避免给你错误的价格。";
+          "第一次体验之后，第二次继续护理的收费对吗？😊\n首次体验优惠不一定适用于第二次，后续收费需要由门店同事确认，避免给你错误的价格。";
     return { treatment: selected, reply };
   }
   if (!isRecentPricingThread(turns, selectionAt, now)) return null;
