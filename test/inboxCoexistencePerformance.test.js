@@ -34,6 +34,35 @@ test("Coexistence contact-only import is hidden only from the Inbox list", async
   assert.deepEqual(await contactsRepo.listConversations(), []);
 });
 
+test("scoped Inbox list filters inside Neon before pending review and message hydration",async(t)=>{
+  const originalQuery=pool.query;
+  const originalMulti=process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+  const originalHide=process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
+  t.after(()=>{
+    pool.query=originalQuery;
+    if(originalMulti===undefined)delete process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
+    else process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED=originalMulti;
+    if(originalHide===undefined)delete process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
+    else process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS=originalHide;
+  });
+  process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED="true";
+  process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS="true";
+  let queries=0;
+  pool.query=async(sql,params)=>{
+    queries++;
+    assert.deepEqual(params,[[11,17]]);
+    assert.match(sql,/SELECT c\\.id FROM contacts c\\s+WHERE c\\.id = ANY\\(\\$1::integer\\[\\]\\) AND NOT/);
+    assert.match(sql,/WHERE \\(m\\.created_at IS NOT NULL OR c\\.channel = 'whatsapp'\\)\\s+AND c\\.id = ANY\\(\\$1::integer\\[\\]\\)/);
+    assert.match(sql,/pending_ai_review_rows AS MATERIALIZED/);
+    return{rows:[]};
+  };
+  assert.deepEqual(await contactsRepo.listConversations({accessibleContactIds:[11,17]}),[]);
+  assert.equal(queries,1);
+  assert.deepEqual(await contactsRepo.listConversations({accessibleContactIds:[]}),[]);
+  assert.equal(queries,1,"no-permission staff must never run a full Inbox query");
+  await assert.rejects(contactsRepo.listConversations({accessibleContactIds:["11"]}),/invalid contact ID/);
+});
+
 test("direct linked archived contacts can be fetched with sender identity intact", async (t) => {
   const previousVisibility = process.env.INBOX_HIDE_EMPTY_COEX_CONTACTS;
   const previous = process.env.WHATSAPP_MULTI_NUMBER_READ_ENABLED;
