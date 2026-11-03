@@ -10,8 +10,8 @@ Do not automatically upgrade pre-activation contacts based on zero DB messages.
 - New secondary contacts whose **first** provider message is a verified
   post-activation Meta Click-to-WhatsApp ad continue through existing AI rules.
 - Pre-activation/contact-only contacts stay manual, even if they send an ad
-  enquiry, until a named operator checks the complete full secondary WhatsApp Business App history and the primary number's
-  complete available history from its authoritative business records.
+  enquiry, until a named operator checks the complete secondary WhatsApp Business App history and the
+  primary number's history from authoritative business records.
 - If *either* number has an earlier customer/business conversation, or staff
   cannot reliably verify the full history, record `historical_or_unknown`;
   keep AI blocked. The absence of six-month imported history is not proof.
@@ -28,8 +28,9 @@ Do not automatically upgrade pre-activation contacts based on zero DB messages.
   before the operator's review are blocked as well.
 
 ## Operator workflow
-1. Open the contact in the Inbox and the secondary WhatsApp Business App and the primary number's authoritative
-   chat records; inspect the **complete** conversation history, not only the six-
+1. Open the contact in the Inbox, check the secondary WhatsApp Business App,
+   and inspect the primary number's authoritative chat records. Review the
+   **complete** conversation history, not only the six-
    month import. If the primary number has no Business App, use its
    authoritative CRM/WhatsApp history instead. If older history on either
    number is unavailable, do not approve.
@@ -47,8 +48,8 @@ Do not automatically upgrade pre-activation contacts based on zero DB messages.
    staff ownership checks remain independent.
 
 Example administrative transaction. Substitute the reviewed contact ID,
-first inbound message ID, operator and evidence note only *after* both app
-histories have been checked:
+first inbound message ID, operator and evidence note only *after* both
+numbers' authoritative histories have been checked:
 
 ```sql
 BEGIN;
