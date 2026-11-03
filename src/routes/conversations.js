@@ -10,6 +10,16 @@ const { recordInboxFullList, recordInboxRevisionCheck,
 const { inboxPayloadEtag, matchesInboxPayloadEtag } = require("../utils/inboxConditionalResponse");
 const { createInboxRevisionGuard } = require("../utils/inboxRevisionGuard");
 const inboxRevisionGuard = createInboxRevisionGuard();
+const { createSameRevisionSingleFlight } = require("../utils/inboxQuerySingleFlight");
+const shareUnscopedInboxQuery = createSameRevisionSingleFlight();
+
+function sameInboxPermissionScope(first, second) {
+  if (first === null || second === null) return first === second;
+  if (!Array.isArray(first) || !Array.isArray(second)) return false;
+  if (first.length !== second.length) return false;
+  const ids = new Set(first.map(Number));
+  return ids.size === second.length && second.every(id => ids.has(Number(id)));
+}
 
 // One tiny read-only PostgreSQL call replaces the expensive full-list SQL
 // only when WAL, authenticated staff scope and the previously served body
@@ -889,11 +899,13 @@ router.get("/", async (req, res) => {
     // Fixed-label reasons tell us whether full SQL followed a missing browser
     // validator, unavailable WAL, stale proof or a write during verification.
     // The existing authorization and fail-closed fast path are unchanged.
+    let scopedAccess;
     let fallbackReason = !wal ? "wal_unavailable"
       : !clientEtag ? "missing_etag"
         : !clientProof ? "missing_proof" : "proof_mismatch_or_wal_changed";
     if (wal && clientEtag && clientProof) {
       const currentAccess = await getAccessibleContactIds(req.user);
+      scopedAccess = currentAccess;
       const proofMatches = inboxRevisionGuard.matchesProof(clientProof, {
         etag: clientEtag, wal, permittedIds: currentAccess, user: req.user,
       });
@@ -911,11 +923,25 @@ router.get("/", async (req, res) => {
     }
     recordInboxRevisionFallback(fallbackReason);
     recordInboxRevisionCheck(wal ? "full_query" : "wal_unavailable");
-    const conversations = await withDatabaseActivitySource(
-      "Inbox full conversation list", () => contactsRepo.listConversations());
-    // Always enforce current staff scope on the server, not only in UI filters.
-    // Revoked assignments must disappear from the Inbox and fallback refresh.
-    const permittedIds = await getAccessibleContactIds(req.user);
+    if (scopedAccess === undefined) {
+      scopedAccess = await getAccessibleContactIds(req.user);
+    }
+    // Read only currently permitted contacts from Neon; permissions are
+    // rechecked afterwards so reassignment during the query cannot disclose
+    // an old or newly forbidden conversation.
+    const loadScoped = access => withDatabaseActivitySource(
+      "Inbox full conversation list",
+      () => contactsRepo.listConversations({ accessibleContactIds: access }));
+    let conversations = scopedAccess === null
+      ? await shareUnscopedInboxQuery(wal, () => loadScoped(null))
+      : await loadScoped(scopedAccess);
+    let permittedIds = await getAccessibleContactIds(req.user);
+    // Assignments can change mid-query. Repeat the scoped read once if so,
+    // then apply the final current permission filter regardless.
+    if (!sameInboxPermissionScope(scopedAccess, permittedIds)) {
+      conversations = await loadScoped(permittedIds);
+      permittedIds = await getAccessibleContactIds(req.user);
+    }
     if (wal) res.locals.inboxWalProof = { wal, permittedIds };
     const allowedSet = permittedIds === null ? null : new Set(permittedIds.map(Number));
     const eligibleIds=await withDatabaseActivitySource("Inbox secondary eligibility",
