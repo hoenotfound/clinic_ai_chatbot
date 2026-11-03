@@ -14,7 +14,7 @@ const MAX_SESSION_AGE_MS = 3 * 60 * 60 * 1000;
 
 function resolveRepeatVisitPriceReply({
   customerText, conversationHistory = [], services = [], serviceAliases = [],
-  language = "zh", now = Date.now(),
+  language = "zh", now = Date.now(), allowDirectNamedService = false,
 } = {}) {
   const current = String(customerText || "").trim();
   if (!current || !SECOND_VISIT.test(current) || !PRICE_WORDS.test(current) ||
@@ -35,11 +35,10 @@ function resolveRepeatVisitPriceReply({
   // General 1-on-1 assessment invitations are not competing paid treatments.
   const treatmentMentions = value => findServicesInText(value, candidates)
     .filter(name => !NON_TREATMENT_ANCHOR_PATTERN.test(name));
-  // A clearly customer-NAMED service is stronger than the older context.
-  // This also protects "3D second session price" from being treated as a
-  // request for the RM488 first-trial graphic.
+  // Only Neutro opts into direct customer-named repeat-session detection.
+  // Other clinics keep their established contextual handling.
   const currentServices = [...new Set(treatmentMentions(current))];
-  if (currentServices.length > 1) return null;
+  if (currentServices.length > 1 || (currentServices.length && !allowDirectNamedService)) return null;
   const earlier = turns.slice(0, -1);
   let selected = currentServices[0] || null;
   let selectionAt = -1;
