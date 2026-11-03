@@ -34,11 +34,11 @@ function localizedFollowUpText({
  slot,originalText,customerTexts,treatmentInterest,clinicConfig,
 }={}){
  const config=clinicConfig?.automatedFollowUp;
- if(config && [2,6].includes(Number(slot))){
+ if(config && [2,6,20].includes(Number(slot))){
    const lang=detectConversationLanguage(
      Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null);
    if(!lang)return null;
-   const step=Number(slot)===2?config:config.additionalSteps?.[0];
+   const step=Number(slot)===2?config:Number(slot)===6?config.additionalSteps?.[0]:config.additionalSteps?.[1];
    if(!step)return null;
    const overrides=Array.isArray(step.serviceOverrides)?step.serviceOverrides:[];
    const service=resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
