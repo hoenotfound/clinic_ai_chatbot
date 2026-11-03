@@ -707,17 +707,20 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
   // as the safe fallback, preserving the existing general-image behavior.
   const targetedMedia =
     targeted && (targeted.imageUrl || targeted.videoKey || voiceNotesPresent(targeted.voiceNotes)) ? targeted : null;
-  const mediaSource = targetedMedia || step;
+  // Mixed ads must not inherit a configured generic/CRM media asset that
+  // could depict 3D or 9D before the customer confirms a treatment.
+  const mediaSource = candidate.adFollowUpPolicy?.ambiguous
+    ? null : (targetedMedia || step);
   return {
     message: neutralMixedAdFollowUp({
       policy:candidate.adFollowUpPolicy,language,slot:stepIndex===1?2:0,
     }) || source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
     targetedMediaService: targetedMedia?.serviceName || null,
-    selectedImageUrl: mediaSource.imageUrl || "",
-    selectedVideoKey: mediaSource.videoKey || "",
-    selectedVideoFilename: mediaSource.videoFilename || "",
-    selectedVoiceNote: selectedVoiceNote(mediaSource.voiceNotes, language),
+    selectedImageUrl: mediaSource?.imageUrl || "",
+    selectedVideoKey: mediaSource?.videoKey || "",
+    selectedVideoFilename: mediaSource?.videoFilename || "",
+    selectedVoiceNote: mediaSource ? selectedVoiceNote(mediaSource.voiceNotes, language) : null,
     promotionFollowUp: false,
     promotionPackageSelection,
   };
