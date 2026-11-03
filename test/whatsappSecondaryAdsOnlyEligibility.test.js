@@ -45,7 +45,7 @@ test("eligibility relies on sender-bound first provider inbound with actual Meta
     "earlier_primary_message.source_created_at",
     "whatsapp_secondary_ad_eligibility_reviews ads_review",
     "ads_review.decision='no_prior_conversation_verified'",
-    "ads_review.primary_app_history_checked=TRUE",
+    "ads_review.primary_history_checked=TRUE",
     "earlier_clinic_contact.whatsapp_number IN",
     "primary_sender.sender_key='neutro'",
     "FROM messages ads_prior",
