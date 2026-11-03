@@ -82,14 +82,22 @@ test("verified ads-only full AI may enable AI media and personalized follow-ups 
   }
 });
 
-test("receiver keeps all sender, audience, signed receipts and no-staff boundaries",()=>{
+test("full AI receiver supports separately authorized staff text and media",()=>{
+ const withStaff={...valid,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+   WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true"};
+ assert.equal(secondaryAdsOnlyFullAiMode(withStaff),true);
+ assert.doesNotThrow(()=>assertSenderIngressSafety(withStaff));
+ assert.doesNotThrow(()=>receiver.assertLiveConfig(withStaff));
+ assert.throws(()=>receiver.assertLiveConfig({...valid,
+   WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true"}),/Unverified/);
+});
+
+test("receiver keeps all sender, audience and signed receipt boundaries",()=>{
   const forbidden=[
     ["WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED","false"],
     ["WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED","true"],
     ["WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE","all"],
     ["WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT",""],
-    ["WHATSAPP_SECONDARY_STAFF_SEND_ENABLED","true"],
-    ["WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED","true"],
     ["WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED","true"],
     ["WHATSAPP_PAID_SECONDARY_STAFF_TEXT_MODE_ENABLED","true"],
     ["WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED","true"],
