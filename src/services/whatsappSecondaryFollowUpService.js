@@ -11,6 +11,9 @@ const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
+const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
+  require("../utils/adFollowUpTreatment");
+const {detectConversationLanguage}=require("../utils/chatLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
@@ -47,7 +50,7 @@ const ALLOWED_MIME={
  // message starts a new sequence; staff replies never authorize automation.
 const FIRST_REPLY_SQL=`
  JOIN LATERAL (
-   SELECT reply.created_at AS at FROM messages reply
+   SELECT reply.created_at AS at, reply.content AS text FROM messages reply
    JOIN whatsapp_sender_message_context reply_context
      ON reply_context.message_id=reply.id
     AND reply_context.conversation_id=sc.id
@@ -97,6 +100,7 @@ const CANDIDATES_SQL=`
    inbound.id AS inbound_id,inbound.created_at AS inbound_at,
    rule.sender_id,rule.slot_hours,rule.message_text,rule.media_key,
    rule.media_type,rule.media_mime_type,rule.media_filename,
+   first_reply.text AS first_reply_text,
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
@@ -335,15 +339,33 @@ async function runOnce({
     const slot=Number(candidate.slot_hours);
     if(!SLOTS.has(slot) || !Number.isSafeInteger(Number(candidate.contact_id)))continue;
     const clinicConfig=getConfig();
-    const confirmedTreatment=resolveFollowUpTreatment({
-      clinicConfig,customerTexts:candidate.customer_texts,
-      treatmentInterest:candidate.treatment_interest,
+    const adFollowUpPolicy=resolveAdFollowUpTreatment({
+      adSource:candidate.ad_followup_source,
+      headline:candidate.ad_followup_headline,body:candidate.ad_followup_body,
+      customerTexts:candidate.customer_texts,
+      services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
     });
-    const localized=localizedFollowUpText({
+    const confirmedTreatment=adFollowUpPolicy
+      ? adFollowUpPolicy.treatment
+      : resolveFollowUpTreatment({
+          clinicConfig,customerTexts:candidate.customer_texts,
+          treatmentInterest:candidate.treatment_interest,
+        });
+    candidate={...candidate,adFollowUpPolicy};
+    const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
+    // A generic "PM" provides no language evidence; fall back to the already
+    // delivered first reply, not the internal ad name or CRM treatment.
+    const replyLanguage=customerLanguage ||
+      detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
+    const localized=neutralMixedAdFollowUp({
+      policy:adFollowUpPolicy,language:replyLanguage,slot,
+    }) || localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
+      languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
       treatmentInterest:confirmedTreatment,
       clinicConfig,
+      forceGeneral:adFollowUpPolicy?.ambiguous === true,
     });
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!localized)continue;
@@ -420,7 +442,8 @@ async function runOnce({
       // claim, and never send a static substitute when AI mode is explicitly on.
       let outboundText=localized;
       let aiMode=null;
-      if(slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+      if(slot===20 && !adFollowUpPolicy?.ambiguous &&
+         env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
           await fail(personalized?.code||"secondary_20h_ai_unavailable");continue;
