@@ -59,6 +59,18 @@ test("Postgres free-entry candidate, claim/recheck, post-reply silence and billi
         channel TEXT, meta_source_type TEXT, ctwa_clid TEXT, meta_ad_id TEXT
       );
     `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/014_whatsapp_delivery_status_jobs.sql"), "utf8"));
     await client.query(fs.readFileSync(path.join(__dirname,
@@ -790,6 +802,18 @@ test("Postgres FEP wake query uses the verified epoch, consent and unclaimed slo
         INSERT INTO whatsapp_free_entry_pricing_evidence
           VALUES('wamid.entry','free_entry_point',false,'delivered');
       `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
       clinicConfig.automatedFollowUp = {
         ...previous,
         quietHours: { enabled:false,start:"00:00",end:"07:00" },
