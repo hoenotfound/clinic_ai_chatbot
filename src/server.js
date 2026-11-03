@@ -41,7 +41,7 @@ const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpCo
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
-const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
+const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
 const { setTimeout: pauseBeforeResultMedia } = require("node:timers/promises");
@@ -1788,28 +1788,35 @@ async function processIncomingMessage(
       }
     }
 
-    // An independently confirmed repeat-visit enquiry is not a request for
-    // the first-trial promotional amount. The normal price formatter above
-    // may only know that first-trial price. Never send it as a second price.
-    // Route the precise, text-only question to staff and stop AI ownership.
+    // A first-trial image must be provider-accepted for this same treatment
+    // before we suggest later-session packages. If the customer then repeats
+    // their later-session price request AFTER an accepted package suggestion,
+    // staff takes over. This text-only path never licenses RM488 trial media
+    // or the configured standing normal price as an automated reply.
     const repeatVisitPriceReply = !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
-      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-      ? resolveRepeatVisitPriceReply({
+      clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true &&
+      channel === "whatsapp"
+      ? await resolveNeutroSubsequentPricing({
+          contactId: contact.id, inboundMessageId: savedInbound.id,
           customerText: text, conversationHistory: history,
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-          language: mediaLanguage,
+          promotions: clinicConfig.promotions, language: mediaLanguage,
         }) : null;
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
-      flagged = true;
-      reviewRequired = false;
-      reviewType = null;
+      if (repeatVisitPriceReply.mode === "staff_handoff") {
+        flagged = true;
+        reviewRequired = false;
+        reviewType = null;
+      }
       priceQuery = false;
       packageQuery = false;
-      console.info("[Pricing] Repeat visit requires staff-confirmed rate contact=" +
-        contact.id + " inbound=" + savedInbound.id);
+      console.info("[Pricing] Neutro subsequent-session contact=" +
+        contact.id + " inbound=" + savedInbound.id +
+        " stage=" + repeatVisitPriceReply.mode +
+        " treatment=" + repeatVisitPriceReply.treatment);
     }
 
     // A marketing STOP must not become a price/promotion reply even if the
@@ -1885,7 +1892,9 @@ async function processIncomingMessage(
       // cases distinct so the normal handoff recovery never clears them.
       const handoffReason = urgentSafety || isActiveSafetyConcern(text)
         ? (keywordReason || "Medical safety concern requires staff attention.")
-        : "AI handed off this conversation.";
+        : repeatVisitPriceReply?.mode === "staff_handoff"
+          ? repeatVisitPriceReply.staffReason
+          : "AI handed off this conversation.";
       const pausedContact = await pauseAiForHumanHandoff(
         contact.id,
         handoffReason
@@ -2035,8 +2044,9 @@ async function processIncomingMessage(
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
     if (repeatVisitPriceReply) {
-      // A human-confirmed follow-up price is needed. No promo or result image.
-      await auditResultMediaEarlyExit("repeat_visit_price_staff_confirmation");
+      // These are text-only subsequent-session turns. Never send a First Trial
+      // picture as if it were the individual later-session price.
+      await auditResultMediaEarlyExit("subsequent_session_" + repeatVisitPriceReply.mode);
       return { wasFirstMessage, keywordReason };
     }
     {
