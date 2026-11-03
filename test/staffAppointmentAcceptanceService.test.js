@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   AGREED_TIME_REASON,
   isBriefAcceptance,
+  isDirectBookingIntent,
   hasSpecificStaffTimeOffer,
   isExplicitRescheduleOffer,
   conflictsWithConfirmedSlot,
@@ -211,9 +212,9 @@ test("pending staff-slot acceptance appears in every primary and secondary follo
   const { pendingAcceptedAppointmentAllowedSql } =
     require("../src/utils/pendingAcceptedAppointmentFollowUp");
   const sql = pendingAcceptedAppointmentAllowedSql("c");
-  assert.match(sql, /booking_acceptance\.metadata->>'outcome'='staff_time_accepted'/);
+  assert.match(sql, /booking_acceptance\.metadata->>'outcome' IN/);
   assert.match(sql, /ORDER BY latest_booking_lead\.created_at DESC/);
-  assert.match(sql, /appointment_status,'none'\) NOT IN \('cancelled','reschedule'\)/);
+  assert.match(sql, /appointment_status,'none'\) = 'reschedule'/);
   assert.throws(() => pendingAcceptedAppointmentAllowedSql("c;DROP TABLE"), /alias/);
   const { followUpAttentionAllowedSql } = require("../src/utils/aiReviewPolicy");
   assert.match(followUpAttentionAllowedSql("c"), /staff_time_accepted/);
@@ -225,4 +226,11 @@ test("pending staff-slot acceptance appears in every primary and secondary follo
     extended.CANDIDATES_SQL, extended.POTENTIAL_DUE_SQL].filter(Boolean)) {
     assert.match(query, /staff_time_accepted/);
   }
+});
+
+test("direct booking requests exclude exploratory and pricing questions",()=>{
+ for(const s of ["我想预约明天10点","请帮我预约","I want to book tomorrow","nak book appointment"])
+   assert.equal(isDirectBookingIntent(s),true,s);
+ for(const s of ["How to book?","多少钱？","I want to book if there is a discount","I want to cancel booking"])
+   assert.equal(isDirectBookingIntent(s),false,s);
 });

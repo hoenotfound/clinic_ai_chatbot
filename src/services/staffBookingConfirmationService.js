@@ -1,7 +1,9 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
+const { pool } = require("../db/db");
+const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
-// Explicit staff confirmations with a complete unambiguous calendar date can
+// Only explicit staff confirmations with a complete calendar date can
 // update CRM only AFTER Meta accepted the outbound staff-authored text. A
 // proposed time, "Ok", or a date without a year is never an auto-confirmation.
 function parseStaffConfirmedSlot(message, now = new Date()) {
@@ -53,15 +55,41 @@ function parseStaffConfirmedSlot(message, now = new Date()) {
   return instant.toISOString();
 }
 
+function isStaffVisitAcknowledgement(message) {
+  const value = String(message || "").trim();
+  if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
+  if (/cancel|maybe|if you|如果|可能|取消|改期|not confirmed/iu.test(value)) return false;
+  return /see\s*(?:u|you)\s*[,，]?\s*(?:tmr|tomorrow|next\s+(?:mon|tue|wed|thu|fri|sat|sun)|(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?)|(?:明天|後天|后天|星期[一二三四五六日天]).{0,18}(?:见|見)|(?:confirmed|booked|已确认|已確認|已订好|已訂好).{0,50}(?:\d{1,2}[/-]\d{1,2}).{0,35}(?:\d{1,2}[:：.]\d{2})/iu.test(value);
+}
+
 function createStaffBookingConfirmationService({
   pipeline = pipelineRepo,
   config = clinicConfig,
   now = () => new Date(),
+  database = pool,
+  markPendingBooking = markBookingReadyForContact,
 } = {}) {
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
     const appointmentAt = parseStaffConfirmedSlot(staffText, now());
-    if (!appointmentAt) return null;
+    if (!appointmentAt) {
+      if (!isStaffVisitAcknowledgement(staffText)) return null;
+      const proof = await database.query(
+        "SELECT id FROM messages WHERE contact_id=$1 AND role='assistant' " +
+        "AND sent_by_username IS NOT NULL AND whatsapp_message_id IS NOT NULL " +
+        "AND is_automated_follow_up=false AND BTRIM(content)=BTRIM($2) " +
+        "AND created_at>=now()-interval '30 minutes' " +
+        "AND COALESCE(delivery_status,'pending') IN ('pending','sent','delivered','read') " +
+        "ORDER BY id DESC LIMIT 1",
+        [contactId,staffText]
+      );
+      if (!proof.rows?.[0]?.id) return null;
+      return markPendingBooking(contactId,proof.rows[0].id,{
+        reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
+        activityDescription:"Provider-verified staff visit acknowledgement; CRM confirmation still required.",
+        details:{appointmentPreference:staffText},
+      });
+    }
     const lead = await pipeline.getActiveLeadForContact(contactId);
     if (!lead || lead.is_closed || ["visited", "cancelled"].includes(lead.appointment_status)) return null;
     // Existing updateLead handles validation, stage transition, booking alert
@@ -72,6 +100,7 @@ function createStaffBookingConfirmationService({
 const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
   parseStaffConfirmedSlot,
+  isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
   recordStaffConfirmedBooking,
 };
