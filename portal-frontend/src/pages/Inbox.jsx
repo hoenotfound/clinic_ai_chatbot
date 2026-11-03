@@ -548,6 +548,18 @@ export default function Inbox() {
     : null;
 
   const [conversations, setConversations] = useState(null);
+  const [inboxPage, setInboxPage] = useState({
+    hasMore:false,nextOffset:0,total:0,allCount:0,
+    statusCounts:null,replyWindowCounts:null,senderOptions:null,assignmentOptions:null,
+  });
+  const [inboxPageLoading, setInboxPageLoading] = useState(false);
+  const [olderPageLoading, setOlderPageLoading] = useState(false);
+  const inboxFiltersRef = useRef({
+    status:"all",channel:"all",sender:"all",control:"all",
+    assignment:"all",replyWindow:"all",query:"",
+  });
+  const filterRefreshTimerRef = useRef(null);
+  const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -594,13 +606,22 @@ export default function Inbox() {
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   function refreshConversations(reason = "staff_action") {
-    // Share overlapping full-list requests, then fetch one fresh list if an
-    // event arrives during the in-flight query. Never cache staff permissions.
+    // Only refresh the first page. A changed filter or late SSE response
+    // queues one final fresh page without retaining an old staff snapshot.
     return requestFullInboxRefreshRef.current(async (requestAnother) => {
       const started = ++inboxRequestClockRef.current;
       latestFullRequestRef.current = started;
+      const filterSnapshot = {...inboxFiltersRef.current};
+      setInboxPageLoading(true);
       try {
-        let data = await api.listConversations(reason);
+        const page = await api.listConversationsPage({
+          filters:filterSnapshot,offset:0,limit:100,reason,
+        });
+        let data = page.items;
+        if (JSON.stringify(filterSnapshot)!==JSON.stringify(inboxFiltersRef.current)) {
+          requestAnother();
+          return;
+        }
         // A staff deep link or explicitly open contact-only archive must remain
         // reachable. Recheck permission rather than pinning stale customer data.
         const pinnedId = selectedIdRef.current ?? requestedContactId;
@@ -624,10 +645,71 @@ export default function Inbox() {
         }
         lastAppliedFullRequestRef.current = started;
         setConversations(data);
+        setInboxPage({
+          hasMore:page.hasMore,nextOffset:page.nextOffset,total:page.total,
+          allCount:page.allCount,statusCounts:page.statusCounts,
+          replyWindowCounts:page.replyWindowCounts,senderOptions:page.senderOptions,
+          assignmentOptions:page.assignmentOptions,
+        });
       } catch (err) {
         console.error("Failed to refresh conversations:", err);
+      } finally {
+        setInboxPageLoading(false);
       }
     });
+  }
+
+  function handleInboxFiltersChange(nextFilters) {
+    const previous=inboxFiltersRef.current;
+    inboxFiltersRef.current={...nextFilters};
+    if (filterRefreshTimerRef.current) clearTimeout(filterRefreshTimerRef.current);
+    if (previous.query!==nextFilters.query) {
+      // Search is global and server-backed. Debounce typing but not filter taps.
+      filterRefreshTimerRef.current=setTimeout(()=>{
+        filterRefreshTimerRef.current=null;
+        void refreshConversations("search");
+      },300);
+    } else {
+      void refreshConversations("filter_change");
+    }
+  }
+
+  useEffect(() => () => {
+    if (filterRefreshTimerRef.current) clearTimeout(filterRefreshTimerRef.current);
+  }, []);
+
+  async function loadMoreInboxConversations() {
+    if(pageLoadingRef.current || !inboxPage.hasMore || inboxPageLoading) return;
+    pageLoadingRef.current=true;
+    setOlderPageLoading(true);
+    const started=latestFullRequestRef.current;
+    const filters={...inboxFiltersRef.current};
+    try {
+      const page=await api.listConversationsPage({
+        filters,offset:inboxPage.nextOffset,limit:100,reason:"older_page",
+      });
+      if(started!==latestFullRequestRef.current ||
+         JSON.stringify(filters)!==JSON.stringify(inboxFiltersRef.current)) return;
+      setConversations(current=>{
+        const existing=new Set((current||[]).map(row=>Number(row.contact_id)));
+        return orderInboxSummaries([
+          ...(current||[]),
+          ...page.items.filter(row=>!existing.has(Number(row.contact_id))),
+        ]);
+      });
+      setInboxPage({
+        hasMore:page.hasMore,nextOffset:page.nextOffset,total:page.total,
+        allCount:page.allCount,statusCounts:page.statusCounts,
+        replyWindowCounts:page.replyWindowCounts,senderOptions:page.senderOptions,
+        assignmentOptions:page.assignmentOptions,
+      });
+    } catch(err) {
+      console.error("Failed to load older conversations:",err);
+      showToast("Couldn't load older conversations. Try again.", "warning");
+    } finally {
+      pageLoadingRef.current=false;
+      setOlderPageLoading(false);
+    }
   }
 
   async function refreshConversationSummary(contactId) {
@@ -1712,6 +1794,11 @@ export default function Inbox() {
         onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
+        onFiltersChange={handleInboxFiltersChange}
+        paging={inboxPage}
+        onLoadMore={loadMoreInboxConversations}
+        pageLoading={inboxPageLoading}
+        olderPageLoading={olderPageLoading}
         mobileThreadOpen={visibleMobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
