@@ -2,7 +2,7 @@
 
 // Secondary AI requires a genuine first Click-to-WhatsApp ad after activation.
 // Pre-activation/contact-only-sync records have UNKNOWN older history (Meta may
-// import only recent chats). They remain manual unless both Business App
+// import only recent chats). They remain manual unless both numbers' full
 // histories have been explicitly checked and an audited decision recorded.
 // Actual historical chats and prior primary-number customers remain excluded.
 // Every automated send continues to use the same sender- and message-bound check.
@@ -51,14 +51,14 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
         OR EXISTS (
           -- A contact-only sync is not proof of a prior conversation, but
           -- cannot be auto-cleared: six-month import omits older conversations.
-          -- Only an explicit review of BOTH business app histories can
+          -- Only an explicit review of BOTH sender histories can
           -- authorize future inbound AI on a verified first ad.
           SELECT 1 FROM whatsapp_secondary_ad_eligibility_reviews ads_review
           WHERE ads_review.contact_id=${contactSql}.id
             AND ads_review.origin_message_id=ads_first.id
             AND ads_review.decision='no_prior_conversation_verified'
             AND ads_review.secondary_app_history_checked=TRUE
-            AND ads_review.primary_app_history_checked=TRUE
+            AND ads_review.primary_history_checked=TRUE
             AND ads_review.reviewed_at >= ads_first.created_at
         )
       )
