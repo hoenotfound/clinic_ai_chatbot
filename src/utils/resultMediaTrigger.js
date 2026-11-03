@@ -524,7 +524,11 @@ async function resolveResultMediaForReply(options = {}) {
     String(options.customerText||"").trim().length<=36;
   const couldBeOutcome=isContextualResultOutcomeQuestion(options.customerText) &&
     namedNow.length===0;
-  if (!CONTEXTUAL_FALLBACK_SKIP_REASONS.has(originalSkip) ||
+  const verifiedChoiceMayOverrideModelHint=couldBeBareChoice &&
+    ["meta_creative_conflicts_with_ai","no_matching_enabled_result_media"]
+      .includes(originalSkip);
+  if (!(CONTEXTUAL_FALLBACK_SKIP_REASONS.has(originalSkip) ||
+        verifiedChoiceMayOverrideModelHint) ||
       !(couldBeBareChoice || couldBeOutcome) ||
       !(Array.isArray(options.resultMedia) && options.resultMedia.some((entry) =>
         entry?.enabled === true &&
