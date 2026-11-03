@@ -321,6 +321,8 @@ function verifiedRecentChoiceAfterQuestion({
   const prompt=String(preceding?.content||"").normalize("NFKC").trim();
   if (preceding?.role!=="assistant" || preceding?.sent_by_username ||
       preceding?.media_url || preceding?.media_mime_type ||
+      !["sent","delivered","read","accepted"].includes(preceding?.delivery_status) ||
+      !preceding?.whatsapp_message_id ||
       /^\[Verified STAFF message\]/iu.test(prompt) ||
       !prompt || !TREATMENT_CHOICE_QUESTION.test(prompt)) return null;
   const configured=matchingResultMediaSet(resultMedia,service);
