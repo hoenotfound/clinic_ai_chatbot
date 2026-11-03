@@ -141,7 +141,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
                   "Primary content shared"}
               </span>
               <button type="button" onClick={()=>save(slot)}
-                disabled={busy!==null||inherited.length<3}
+                disabled={busy!==null||(enabled[slot]&&inherited.length<3)}
                 className="min-h-11 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
                 {busy===slot?"Saving…":"Save sender switch"}
               </button>
