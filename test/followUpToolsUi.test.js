@@ -82,7 +82,7 @@ test("secondary extended follow-ups consistently use 48h/66h with optional Malay
  assert.doesNotMatch(ui,/\[48,72\]/);
  assert.match(ui,/ms/);
  assert.match(route,/\["zh_CN","en_US","ms"\]/);
- assert.match(ui,/Automatically use the matching clinic video/);
+ assert.match(ui,/approved treatment video is chosen automatically/);
  assert.match(route,/if\(!\[48,66\]\.includes\(slot\)\)/);
  assert.doesNotMatch(route,/Only 48h and 72h/);
 });
