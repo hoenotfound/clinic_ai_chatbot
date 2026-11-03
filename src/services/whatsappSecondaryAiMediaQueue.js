@@ -18,7 +18,7 @@ const {configuredVerifiedScope}=require("../utils/verifiedWhatsAppEventScope");
 const {reconcileSecondaryMediaAudit,reconcileRecentTerminalMediaAudit}=
   require("./whatsappSecondaryAiMediaAudit");
 const { secondaryAutomationActivation, secondaryAutomationEligibleSql,
-  isSecondaryAutomationEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
+  isSecondaryAutomationEligible,originalAdsOnlyCutoff } = require("./whatsappSecondaryAdsOnlyEligibility");
 
 const MAX_ITEMS=5;
 const RETRY_MS=90*1000;
@@ -92,7 +92,7 @@ async function enqueue({
          JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
            AND mc.conversation_id=sc.id
         WHERE c.id=$1 AND c.channel='whatsapp' AND c.mode='ai'
-          AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7")}
+          AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
           AND c.needs_attention=FALSE
           AND c.whatsapp_opt_out_at IS NULL
           AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -100,7 +100,8 @@ async function enqueue({
           AND sa.meta_phone_number_id=$4 AND sa.meta_account_id=$5`,
       [contactId,inboundMessageId,env.WHATSAPP_SECONDARY_SENDER_KEY,
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
-        secondaryAutomationActivation(env),env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE]
+        secondaryAutomationActivation(env),env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+         originalAdsOnlyCutoff(env)]
     );
     if(owner.rowCount!==1){await client.query("ROLLBACK");return false;}
     for(let i=0;i<items.length;i++){
@@ -153,7 +154,7 @@ const READY_SQL=`
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
  WHERE job.state='pending' AND job.next_attempt_at<=NOW()
-   AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6")}
+   AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
    AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -190,7 +191,7 @@ const STILL_VALID_SQL=`
    JOIN messages inbound ON inbound.id=job.inbound_message_id
      AND inbound.contact_id=c.id AND inbound.role='user'
    WHERE job.id=$1 AND job.state='claimed'
-     AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6")}
+     AND ${secondaryAutomationEligibleSql("c","$5","inbound","$6","$7")}
      AND job.expires_at>NOW() AND c.mode='ai' AND c.needs_attention=FALSE
      AND c.whatsapp_opt_out_at IS NULL
      AND c.whatsapp_marketing_opt_out_at IS NULL
@@ -272,7 +273,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
            c.mode<>'ai' OR c.needs_attention=TRUE OR
            c.whatsapp_opt_out_at IS NOT NULL OR
            c.whatsapp_marketing_opt_out_at IS NOT NULL OR
-           NOT (${secondaryAutomationEligibleSql("c","$4","inbound","$6")}) OR
+           NOT (${secondaryAutomationEligibleSql("c","$4","inbound","$6","$7")}) OR
            EXISTS(
              SELECT 1 FROM messages newer WHERE newer.contact_id=c.id
                AND newer.role='user'
@@ -311,7 +312,7 @@ async function cancelObsoletePending({database=pool,env=process.env}={}){
    [env.WHATSAPP_SECONDARY_SENDER_KEY,
      env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
      secondaryAutomationActivation(env),CANCELLED_ERROR,
-     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE]
+     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,originalAdsOnlyCutoff(env)]
  );
  const row=result.rows?.[0]||{};
  for(const message of (Array.isArray(row.changed_messages)?row.changed_messages:[])){
@@ -370,7 +371,7 @@ async function runOnce({
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
    Math.max(1,Math.min(10,Number(limit)||5)),
    secondaryAutomationActivation(env),
-   env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,originalAdsOnlyCutoff(env),
  ]);
  let accepted=0,pending=0;
  const changedInbounds=new Set();
@@ -435,7 +436,7 @@ async function runOnce({
          job.id,env.WHATSAPP_SECONDARY_SENDER_KEY,
          env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
          secondaryAutomationActivation(env),
-         env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+         env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,originalAdsOnlyCutoff(env),
        ]);
        if(check.rows?.[0]?.allowed!==true)return false;
        const current=await contacts.getContactById(job.contact_id);
