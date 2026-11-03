@@ -113,6 +113,26 @@ test("8,000 Coexistence address-book imports keep real conversations and sender 
     assert.deepEqual(visible.find(row => row.contact_id === ids[1].id).pending_review_items, []);
 
 
+    // Real Postgres proof: restricted staff must not transfer unrelated rows,
+    // even when thousands of imported contacts exist.
+    const scopedRows = await contactsRepo.listConversations({
+      accessibleContactIds: [ids[0].id, ids[5].id],
+    });
+    assert.deepEqual(scopedRows.map(row => row.contact_id), [ids[0].id]);
+    assert.equal(scopedRows[0].pending_review_count, 2);
+    assert.deepEqual(await contactsRepo.listConversations({
+      accessibleContactIds: [],
+    }), []);
+    const singleWithScope = await contactsRepo.listConversations({
+      contactId: ids[0].id,
+      accessibleContactIds: [ids[0].id],
+    });
+    assert.equal(singleWithScope.length, 1);
+    assert.deepEqual(await contactsRepo.listConversations({
+      contactId: ids[0].id,
+      accessibleContactIds: [ids[1].id],
+    }), []);
+
     const deepLink = await contactsRepo.listConversations({
       contactId: ids[5].id, includeEmptyCoexistenceContacts: true,
     });
