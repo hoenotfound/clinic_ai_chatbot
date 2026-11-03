@@ -58,7 +58,7 @@ async function mockInbox(page, conversations) {
       value = { user, username: user.username };
     } else if (pathname === "/api/conversations") {
       value = currentConversations.map(item => ({ ...item }));
-    } else if (/^\\/api\\/conversations\\/\\d+\\/read-state$/.test(pathname) &&
+    } else if (/^\/api\/conversations\/\d+\/read-state$/.test(pathname) &&
       route.request().method() === "PATCH") {
       const id = Number(pathname.split("/")[3]);
       const payload = JSON.parse(route.request().postData() || "{}");
