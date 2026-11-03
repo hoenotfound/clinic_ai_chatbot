@@ -120,8 +120,9 @@ test("Postgres: fresh non-ad messages qualify without replay; old ad sequences s
     // media jobs, so these queries cannot send anything.
     const base=["neutro_secondary","100000000000023","200000000000023"];
     const params=[...base,new Date(now),10,cutover,"all_contacts",legacy];
-    await db.query(followup.CANDIDATES_SQL,params);
-    await db.query(followup.POTENTIAL_DUE_SQL,[...base,new Date(now),cutover,"all_contacts",legacy]);
+    await db.query(followup.CANDIDATES_SQL,[...params,null]);
+    await db.query(followup.POTENTIAL_DUE_SQL,
+      [...base,new Date(now),cutover,"all_contacts",legacy,null]);
     await db.query(marketing.CANDIDATES_SQL,params);
     await db.query(marketing.POTENTIAL_DUE_SQL,[...base,new Date(now),cutover,"all_contacts",legacy]);
     await db.query(media.READY_SQL,[...base,5,cutover,"all_contacts",legacy]);
