@@ -14,6 +14,7 @@ const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecond
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {adsOnlyActivation,adsOnlyEligibleSql,reviewedContactFollowupGuardSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
@@ -127,6 +128,7 @@ const CANDIDATES_SQL=`
    AND rule.slot_hours IN(2,6,20)
    AND ${adsOnlyEligibleSql('c','$6')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
+   AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -223,6 +225,7 @@ const RECHECK_SQL=`
    AND EXTRACT(EPOCH FROM rule.updated_at)::text=$7::text
    AND ${adsOnlyEligibleSql('c','$8')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
+   AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
