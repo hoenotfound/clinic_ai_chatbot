@@ -105,7 +105,7 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     await db.query(
       "INSERT INTO whatsapp_secondary_ad_eligibility_reviews "+
       "(contact_id,origin_message_id,decision,reviewed_by,"+
-      " secondary_app_history_checked,primary_app_history_checked,review_note) "+
+      " secondary_app_history_checked,primary_history_checked,review_note) "+
       "VALUES($1,$2,'no_prior_conversation_verified',$3,TRUE,TRUE,$4)",
       [contactOnly.id,contactOnlyFirstAd,"reviewer","Full history checked on both numbers; no prior chat"]
     );
@@ -124,7 +124,7 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     await db.query(
       "INSERT INTO whatsapp_secondary_ad_eligibility_reviews "+
       "(contact_id,origin_message_id,decision,reviewed_by,"+
-      " secondary_app_history_checked,primary_app_history_checked,review_note) "+
+      " secondary_app_history_checked,primary_history_checked,review_note) "+
       "VALUES($1,$2,'historical_or_unknown',$3,FALSE,FALSE,$4)",
       [oldContact.id,oldAdId,"reviewer","Historical status remains unknown"]
     );
@@ -132,7 +132,7 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     await db.query(
       "UPDATE whatsapp_secondary_ad_eligibility_reviews SET "+
       "decision='no_prior_conversation_verified',reviewed_by='reviewer',"+
-      "secondary_app_history_checked=TRUE,primary_app_history_checked=TRUE,"+
+      "secondary_app_history_checked=TRUE,primary_history_checked=TRUE,"+
       "review_note='Full Business App history verified on both numbers', reviewed_at=NOW() "+
       "WHERE contact_id=$1",[oldContact.id]
     );
