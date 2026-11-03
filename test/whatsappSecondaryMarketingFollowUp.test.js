@@ -151,7 +151,7 @@ test("no template send without current approval, after a failed claim, or after 
 test("language selection reuses customer conversation evidence without guesswork",()=>{
  assert.equal(svc.customerTemplateLocale(["Hi", "我想了解这个护理"]),"zh_CN");
  assert.equal(svc.customerTemplateLocale(["How much is the treatment?"]),"en_US");
- assert.equal(svc.customerTemplateLocale(["Saya nak tahu harga"]),"ms_MY");
+ assert.equal(svc.customerTemplateLocale(["Saya nak tahu harga"]),"ms");
  assert.equal(svc.customerTemplateLocale(["hi","ok"]),null);
  assert.equal(svc.customerTemplateLocale(["Please reply in English", "价钱?"]),"en_US");
 });
@@ -277,5 +277,5 @@ test("marketing 48h/66h is anchored to first sender-owned reply and never guesse
  assert.match(svc.CANDIDATES_SQL,/inbound\.created_at<=\$4::timestamptz-INTERVAL '24 hours'/);
  assert.match(svc.CANDIDATES_SQL,/reply_context\.conversation_id=sc\.id/);
  assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\.first_reply_at\+rule\.slot_hours/);
- assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms_MY");
+ assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms");
 });
