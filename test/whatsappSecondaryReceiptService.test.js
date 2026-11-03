@@ -97,6 +97,41 @@ test("malformed or message-bearing status batches are rejected",()=>{
   }
 });
 
+
+test("receipt rejections identify only safe validation categories without touching Neon",async()=>{
+ const samples=[
+   [x=>{x.entry[0].changes[0].value.statuses[0].id="wamid.bad?identifier";},"status_id_invalid"],
+   [x=>{x.entry[0].changes[0].value.statuses[0].status="unknown";},"status_value_unsupported"],
+   [x=>{x.entry[0].changes[0].value.statuses[0].recipient_id="hidden";},"status_recipient_invalid"],
+   [x=>{x.entry[0].changes[0].value.statuses[0].timestamp="not-a-time";},"status_timestamp_invalid"],
+   [x=>{x.entry[0].changes[0].value.statuses[0].pricing.billable="false";},"status_pricing_invalid"],
+   [x=>{x.entry[0].id="other-account";},"mixed_sender_or_status_mismatch"],
+ ];
+ for(const [mutate,reason] of samples){
+   const input=body();
+   mutate(input);
+   const result=await receipt.recordSignedSecondaryStatusBatch({
+     ...signed(input),subsetFromVerifiedWebhook:true
+   },{env,database:{connect:async()=>{throw Error("invalid status cannot access Neon");}}});
+   assert.equal(result.accepted,false);
+   assert.equal(result.code,"secondary_receipt_batch_invalid");
+   assert.equal(result.reason,reason);
+   assert.match(result.reason,/^[a-z_]+$/);
+   assert.equal(JSON.stringify(result).includes("wamid"),false);
+   assert.equal(JSON.stringify(result).includes("hidden"),false);
+ }
+});
+test("unrelated signed primary statuses are ignored without opening a secondary DB connection",async()=>{
+ const original=body();
+ original.entry[0].id=env.WHATSAPP_WABA_ID;
+ original.entry[0].changes[0].value.metadata.phone_number_id=env.WHATSAPP_PHONE_NUMBER_ID;
+ const result=await receipt.recordSignedSecondaryStatusBatch({
+   ...signed(original),subsetFromVerifiedWebhook:true
+ },{env,database:{connect:async()=>{throw Error("primary-only callback must not access Neon");}}});
+ assert.equal(result.accepted,true);
+ assert.equal(result.matched,0);
+});
+
 test("a valid signed status has business identity and no implicit send permission",()=>{
   const updates = receipt.normalizedSignedEvents(signed(body()).rawBody,env);
   assert.equal(updates.length,1);
