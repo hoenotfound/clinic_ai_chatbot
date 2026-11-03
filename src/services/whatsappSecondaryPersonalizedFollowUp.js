@@ -77,7 +77,9 @@ async function createPersonalized20h({
  try{
    decision=await generate({
      conversation:context,triggerMessageId:ids[3],stepNumber:3,
-     treatmentInterest:clean(lead.treatment_interest),
+     treatmentInterest:clean(candidate.adFollowUpPolicy
+       ? candidate.adFollowUpPolicy.treatment
+       : lead.treatment_interest),
      stageName:clean(lead.stage_name),
      branchName:clean(lead.branch_name),
      appointmentStatus:clean(lead.appointment_status),
