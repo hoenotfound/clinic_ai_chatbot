@@ -2,8 +2,10 @@
 // agreement, not an appointment confirmation. Still, stop promotional
 // follow-ups until staff resolves it. A later lead or explicit cancellation
 // or reschedule on that lead may start a fresh enquiry.
+const clinicConfig = require("../config/clinicConfig");
 function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
   if (!/^[a-z][a-z0-9_]*$/iu.test(contactAlias)) throw new Error("Invalid contact SQL alias");
+  if (!["aesthetic_clinic","tcm_clinic"].includes(clinicConfig.businessType)) return "TRUE";
   return `NOT EXISTS (
     SELECT 1 FROM leads booking_lead
     LEFT JOIN lead_activities booking_acceptance ON booking_acceptance.lead_id=booking_lead.id
