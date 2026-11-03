@@ -548,6 +548,18 @@ export default function Inbox() {
     : null;
 
   const [conversations, setConversations] = useState(null);
+  const [inboxPage, setInboxPage] = useState({
+    hasMore:false,nextOffset:0,total:0,allCount:0,
+    statusCounts:null,replyWindowCounts:null,senderOptions:null,assignmentOptions:null,
+  });
+  const [inboxPageLoading, setInboxPageLoading] = useState(false);
+  const [olderPageLoading, setOlderPageLoading] = useState(false);
+  const inboxFiltersRef = useRef({
+    status:"all",channel:"all",sender:"all",control:"all",
+    assignment:"all",replyWindow:"all",query:"",
+  });
+  const filterRefreshTimerRef = useRef(null);
+  const pageLoadingRef = useRef(false);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -594,13 +606,22 @@ export default function Inbox() {
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   function refreshConversations(reason = "staff_action") {
-    // Share overlapping full-list requests, then fetch one fresh list if an
-    // event arrives during the in-flight query. Never cache staff permissions.
+    // Only refresh the first page. A changed filter or late SSE response
+    // queues one final fresh page without retaining an old staff snapshot.
     return requestFullInboxRefreshRef.current(async (requestAnother) => {
       const started = ++inboxRequestClockRef.current;
       latestFullRequestRef.current = started;
+      const filterSnapshot = {...inboxFiltersRef.current};
+      setInboxPageLoading(true);
       try {
-        let data = await api.listConversations(reason);
+        const page = await api.listConversationsPage({
+          filters:filterSnapshot,offset:0,limit:100,reason,
+        });
+        let data = page.items;
+        if (JSON.stringify(filterSnapshot)!==JSON.stringify(inboxFiltersRef.current)) {
+          requestAnother();
+          return;
+        }
         // A staff deep link or explicitly open contact-only archive must remain
         // reachable. Recheck permission rather than pinning stale customer data.
         const pinnedId = selectedIdRef.current ?? requestedContactId;
@@ -624,10 +645,71 @@ export default function Inbox() {
         }
         lastAppliedFullRequestRef.current = started;
         setConversations(data);
+        setInboxPage({
+          hasMore:page.hasMore,nextOffset:page.nextOffset,total:page.total,
+          allCount:page.allCount,statusCounts:page.statusCounts,
+          replyWindowCounts:page.replyWindowCounts,senderOptions:page.senderOptions,
+          assignmentOptions:page.assignmentOptions,
+        });
       } catch (err) {
         console.error("Failed to refresh conversations:", err);
+      } finally {
+        setInboxPageLoading(false);
       }
     });
+  }
+
+  function handleInboxFiltersChange(nextFilters) {
+    const previous=inboxFiltersRef.current;
+    inboxFiltersRef.current={...nextFilters};
+    if (filterRefreshTimerRef.current) clearTimeout(filterRefreshTimerRef.current);
+    if (previous.query!==nextFilters.query) {
+      // Search is global and server-backed. Debounce typing but not filter taps.
+      filterRefreshTimerRef.current=setTimeout(()=>{
+        filterRefreshTimerRef.current=null;
+        void refreshConversations("search");
+      },300);
+    } else {
+      void refreshConversations("filter_change");
+    }
+  }
+
+  useEffect(() => () => {
+    if (filterRefreshTimerRef.current) clearTimeout(filterRefreshTimerRef.current);
+  }, []);
+
+  async function loadMoreInboxConversations() {
+    if(pageLoadingRef.current || !inboxPage.hasMore || inboxPageLoading) return;
+    pageLoadingRef.current=true;
+    setOlderPageLoading(true);
+    const started=latestFullRequestRef.current;
+    const filters={...inboxFiltersRef.current};
+    try {
+      const page=await api.listConversationsPage({
+        filters,offset:inboxPage.nextOffset,limit:100,reason:"older_page",
+      });
+      if(started!==latestFullRequestRef.current ||
+         JSON.stringify(filters)!==JSON.stringify(inboxFiltersRef.current)) return;
+      setConversations(current=>{
+        const existing=new Set((current||[]).map(row=>Number(row.contact_id)));
+        return orderInboxSummaries([
+          ...(current||[]),
+          ...page.items.filter(row=>!existing.has(Number(row.contact_id))),
+        ]);
+      });
+      setInboxPage({
+        hasMore:page.hasMore,nextOffset:page.nextOffset,total:page.total,
+        allCount:page.allCount,statusCounts:page.statusCounts,
+        replyWindowCounts:page.replyWindowCounts,senderOptions:page.senderOptions,
+        assignmentOptions:page.assignmentOptions,
+      });
+    } catch(err) {
+      console.error("Failed to load older conversations:",err);
+      showToast("Couldn't load older conversations. Try again.", "warning");
+    } finally {
+      pageLoadingRef.current=false;
+      setOlderPageLoading(false);
+    }
   }
 
   async function refreshConversationSummary(contactId) {
@@ -1712,6 +1794,11 @@ export default function Inbox() {
         onSelectArchived={openArchivedConversation}
         onVisibleConversationsChange={setVisibleConversationIds}
         onExplicitFilterChange={() => setKeepExplicitlyOpenedThread(false)}
+        onFiltersChange={handleInboxFiltersChange}
+        paging={inboxPage}
+        onLoadMore={loadMoreInboxConversations}
+        pageLoading={inboxPageLoading}
+        olderPageLoading={olderPageLoading}
         mobileThreadOpen={visibleMobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
@@ -1922,6 +2009,11 @@ function ConversationList({
   onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
+  onFiltersChange,
+  paging,
+  onLoadMore,
+  pageLoading,
+  olderPageLoading,
   mobileThreadOpen,
   currentUsername,
   canViewAllLeads,
@@ -1937,6 +2029,7 @@ function ConversationList({
     replyWindow: "all",
     query: "",
   });
+  const filtersRef = useRef(filters);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [revealedArchiveId, setRevealedArchiveId] = useState(null);
   const [visibleRowCount, setVisibleRowCount] = useState(60);
@@ -1980,7 +2073,7 @@ function ConversationList({
   }, [directoryMatches, conversationList, filters.channel, filters.sender]);
   // Only show business-number switching once the server has verified and
   // linked more than one sender. Legacy single-number clients stay simple.
-  const senderOptions = useMemo(() => {
+  const localSenderOptions = useMemo(() => {
     const found = new Map();
     for (const item of conversationList) {
       if (item.channel === "whatsapp" && item.whatsapp_sender_key) {
@@ -1990,13 +2083,16 @@ function ConversationList({
     }
     return [...found.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [conversationList]);
+  const senderOptions = paging?.senderOptions || localSenderOptions;
   const showSenderFilter = senderOptions.length > 1;
-  const assignmentOptions = useMemo(
+  const localAssignmentOptions = useMemo(
     () => buildLeadAssignmentFilterOptions(conversationList, currentUsername, {
       includeUnassigned: showUnassignedAssignment,
     }),
     [conversationList, currentUsername, showUnassignedAssignment]
   );
+  const assignmentOptions = (paging?.assignmentOptions || localAssignmentOptions)
+    .filter(([value])=>showUnassignedAssignment || value!=="unassigned");
   useEffect(() => {
     if (
       (!canViewAllLeads && filters.assignment !== "all") ||
@@ -2036,7 +2132,11 @@ function ConversationList({
     };
   }, [conversationList, filters, replyWindowNow, canViewAllLeads, currentUsername]);
 
-  const { filtered: filteredConversations, statusCounts, replyWindowCounts } = contextualFilterMatches;
+  const { filtered: filteredConversations, statusCounts: localStatusCounts,
+    replyWindowCounts: localReplyWindowCounts } = contextualFilterMatches;
+  // Server counts include older pages. Legacy mocked arrays use local counts.
+  const statusCounts = paging?.statusCounts || localStatusCounts;
+  const replyWindowCounts = paging?.replyWindowCounts || localReplyWindowCounts;
   // Bound DOM size without changing search, filters or accurate badge totals.
   const renderedConversations = useMemo(
     () => filteredConversations.slice(0, visibleRowCount),
@@ -2107,27 +2207,26 @@ function ConversationList({
     return active;
   }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
 
+  function applyFilters(next) {
+    onExplicitFilterChange();
+    filtersRef.current=next;
+    setFilters(next);
+    onFiltersChange?.(next);
+  }
   function updateFilter(key, value) {
-    onExplicitFilterChange();
-    setFilters((current) => ({ ...current, [key]: value }));
+    applyFilters({ ...filtersRef.current, [key]: value });
   }
-
   function clearAppliedFilters() {
-    onExplicitFilterChange();
-    setFilters((current) => ({
-      ...current,
-      status: "all",
-        channel: "all",
-      sender: "all",
-      control: "all",
-      assignment: "all",
-      replyWindow: "all",
-    }));
+    applyFilters({
+      ...filtersRef.current,status:"all",channel:"all",sender:"all",
+      control:"all",assignment:"all",replyWindow:"all",
+    });
   }
-
   function clearFilters() {
-    onExplicitFilterChange();
-    setFilters({ status: "all", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
+    applyFilters({
+      status:"all",channel:"all",sender:"all",control:"all",
+      assignment:"all",replyWindow:"all",query:"",
+    });
   }
 
   return (
@@ -2142,7 +2241,7 @@ function ConversationList({
             {!conversations
               ? "Loading…"
               : hasActiveFilters
-              ? `${filteredConversations.length} / ${conversationList.length}`
+              ? `${paging?.total ?? filteredConversations.length} / ${paging?.allCount ?? conversationList.length}`
               : statusCounts.all}
           </p>
         </div>
@@ -2309,7 +2408,18 @@ function ConversationList({
         </nav>
       </header>
 
-      <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
+      <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5"
+        onScroll={(event)=>{
+          const element=event.currentTarget;
+          // Keep the Show more button stable while touch scrolling or when
+          // Playwright scrolls it into view to click. Only fetch a NEW server
+          // page automatically after every currently loaded row is visible.
+          if (paging?.hasMore && !olderPageLoading && !pageLoading &&
+              visibleRowCount>=filteredConversations.length &&
+              element.scrollHeight-element.scrollTop-element.clientHeight<180) {
+            void onLoadMore?.();
+          }
+        }}>
         {!conversations && <ConversationListSkeleton />}
 
         {conversations && conversations.length === 0 &&
@@ -2440,13 +2550,24 @@ function ConversationList({
             </SwipeArchiveRow>
           );
         })}
-        {filteredConversations.length > visibleRowCount && (
+        {(filteredConversations.length > visibleRowCount || paging?.hasMore) && (
           <button
             type="button"
-            onClick={() => setVisibleRowCount((current) => current + 60)}
-            className="my-3 w-full rounded-xl border border-[var(--color-border)] px-3 py-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+            disabled={olderPageLoading || pageLoading}
+            onClick={()=>{
+              if (filteredConversations.length > visibleRowCount) {
+                setVisibleRowCount(current=>current+60);
+              } else {
+                setVisibleRowCount(current=>current+100);
+                void onLoadMore?.();
+              }
+            }}
+            className="my-3 w-full rounded-xl border border-[var(--color-border)] px-3 py-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-light)] disabled:opacity-60"
           >
-            Show more conversations ({filteredConversations.length - visibleRowCount} remaining)
+            {olderPageLoading ? "Loading older conversations…" :
+              filteredConversations.length > visibleRowCount
+                ? `Show more conversations (${Math.max(0,(paging?.total ?? filteredConversations.length)-visibleRowCount)} remaining)`
+                : `Load older conversations (${Math.max(0,(paging?.total ?? 0)-filteredConversations.length)} remaining)`}
           </button>
         )}
         {filters.query.trim().length >= 2 && (directorySearching || externalMatches.length > 0) && (

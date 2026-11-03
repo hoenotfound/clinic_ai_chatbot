@@ -37,6 +37,8 @@ const { pipeline } = require("node:stream/promises");
 const { canAccessContact, getAccessibleContactIds } = require("../utils/accessControl");
 const { hasCapability } = require("../utils/permissions");
 const contactsRepo = require("../db/contactsRepo");
+const { listInboxPageIndex } = require("../db/inboxPageIndexRepo");
+const { normalizeInboxPageFilters, inboxPageModel } = require("../services/inboxPaginationService");
 const { pool } = require("../db/db");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
@@ -887,6 +889,7 @@ function sendMeasuredInboxJson(res, payload, startedAt, kind) {
 }
 
 router.get("/", async (req, res) => {
+  if (req.query.paged === "true") return handleInboxPage(req,res);
   const startedAt = process.hrtime.bigint();
   recordInboxFullList(req.get("X-Inbox-Refresh-Reason"));
   try {
@@ -972,6 +975,76 @@ router.get("/", async (req, res) => {
     res.status(500).json({ error: "Something went wrong loading conversations." });
   }
 });
+
+// Paginated staff Inbox. The index remains entirely inside the server: only
+// the selected page of full conversation rows crosses Neon -> Render -> browser.
+// Search/status counts are calculated across all staff-accessible contacts.
+async function handleInboxPage(req,res) {
+  const startedAt=process.hrtime.bigint();
+  try {
+    const filters=normalizeInboxPageFilters(req.query);
+    const offset=Number(req.query.offset ?? 0);
+    const limit=Number(req.query.limit ?? 100);
+    if (!Number.isSafeInteger(offset) || offset<0 || offset>100000 ||
+        !Number.isSafeInteger(limit) || limit<1 || limit>100) {
+      return res.status(400).json({error:"Invalid Inbox page."});
+    }
+    const load=async(access)=>{
+      const index=await withDatabaseActivitySource("Inbox page index",
+        ()=>listInboxPageIndex({accessibleContactIds:access,query:filters.query}));
+      // Portal sender labels and social profile fallbacks are presentation-only.
+      const current=index.map(row=>contactsRepo.presentPortalContact(row));
+      const model=inboxPageModel(current,filters,{
+        offset,limit,username:req.user?.username || "",
+        canViewAll:hasCapability(req.user,"view_all_leads"),
+      });
+      const rows=model.ids.length ? await withDatabaseActivitySource(
+        "Inbox page hydration",()=>contactsRepo.listConversations({
+          contactIds:model.ids,accessibleContactIds:access,
+        })) : [];
+      const byId=new Map(rows.map(row=>[Number(row.contact_id),row]));
+      const ordered=model.ids.map(id=>byId.get(id)).filter(Boolean);
+      const eligibleIds=await withDatabaseActivitySource("Inbox page secondary eligibility",
+        ()=>eligibleSecondaryAiReplyContactIds(
+          ordered.filter(row=>row.whatsapp_sender_key==="neutro_secondary" &&
+            row.mode==="ai" && row.needs_attention!==true)
+            .map(row=>Number(row.contact_id))));
+      const items=ordered.map(row=>{
+        const secondary=row.channel==="whatsapp" &&
+          row.whatsapp_sender_id!=null &&
+          Boolean(row.whatsapp_sender_phone_number_id) &&
+          String(row.whatsapp_sender_phone_number_id)!==
+            String(process.env.WHATSAPP_PHONE_NUMBER_ID||"");
+        return {...row,
+          whatsapp_is_secondary:secondary,
+          whatsapp_secondary_connection_state:secondary
+            ? (row.whatsapp_sender_state==="active" && row.whatsapp_sender_coexistence_enabled===true
+              ? "connected" : "suspended") : null,
+          whatsapp_secondary_ai_enabled:secondary && secondaryAiForContact(row,eligibleIds),
+        };
+      });
+      return {...model,items,ids:undefined};
+    };
+    let access=await getAccessibleContactIds(req.user);
+    let result=await load(access);
+    let current=await getAccessibleContactIds(req.user);
+    if (!sameInboxPermissionScope(access,current)) {
+      // Recheck and redo under the new assignment before responding.
+      access=current;
+      result=await load(access);
+      current=await getAccessibleContactIds(req.user);
+      if (!sameInboxPermissionScope(access,current)) {
+        return res.status(409).json({error:"Inbox permissions changed. Refresh the list."});
+      }
+    }
+    res.set("Cache-Control","private, no-store");
+    sendMeasuredInboxJson(res,result,startedAt,"page");
+  } catch(err) {
+    console.error("Failed to load paginated Inbox:",err);
+    res.status(500).json({error:"Something went wrong loading conversations."});
+  }
+}
+router.get("/page",handleInboxPage);
 
 // Search the complete customer directory, including archived contact-only
 // Coexistence imports, with a bounded result set and CURRENT staff ownership.

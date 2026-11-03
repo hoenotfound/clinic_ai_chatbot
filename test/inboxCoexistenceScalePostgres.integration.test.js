@@ -6,6 +6,8 @@ const { Client } = require("pg");
 const { pool } = require("../src/db/db");
 const { runMigrations } = require("../src/db/migrationRunner");
 const contactsRepo = require("../src/db/contactsRepo");
+const {listInboxPageIndex}=require("../src/db/inboxPageIndexRepo");
+const {inboxPageModel}=require("../src/services/inboxPaginationService");
 
 // Uses only an isolated, throwaway test schema. Never connects to production.
 test("8,000 Coexistence address-book imports keep real conversations and sender identity intact", {
@@ -132,6 +134,37 @@ test("8,000 Coexistence address-book imports keep real conversations and sender 
       contactId: ids[0].id,
       accessibleContactIds: [ids[1].id],
     }), []);
+
+    // Lightweight paged index must preserve the original visibility and
+    // ordering, but transfer no review JSON or full last-message content.
+    const index = await listInboxPageIndex();
+    const firstPage = inboxPageModel(index.map(contactsRepo.presentPortalContact),
+      {},{limit:3,now:Date.parse("2026-11-03T00:00:00Z")});
+    assert.equal(index.length,visible.length);
+    assert.equal(firstPage.ids.length,3);
+    assert.equal(firstPage.hasMore,true);
+    const hydrated = await contactsRepo.listConversations({
+      contactIds:firstPage.ids,
+    });
+    assert.equal(hydrated.length,3);
+    assert.deepEqual(new Set(hydrated.map(x=>x.contact_id)),
+      new Set(firstPage.ids));
+    const fromIndex = await listInboxPageIndex({
+      accessibleContactIds:[ids[0].id,ids[5].id,primary],
+    });
+    assert.deepEqual(new Set(fromIndex.map(x=>x.contact_id)),
+      new Set([ids[0].id,primary]));
+    const archivedSearch = await listInboxPageIndex({
+      accessibleContactIds:[ids[0].id],
+      query:"already resolved",
+    });
+    assert.equal(archivedSearch[0].search_match,true);
+    assert.equal(inboxPageModel(archivedSearch,{query:"already resolved"},
+      {limit:100}).total,1);
+    const unreadPage=inboxPageModel(index,{status:"unread"});
+    assert.ok(unreadPage.ids.includes(ids[4].id),
+      "unread contacts beyond the first page remain filterable");
+    assert.deepEqual(await contactsRepo.listConversations({contactIds:[]}),[]);
 
     const deepLink = await contactsRepo.listConversations({
       contactId: ids[5].id, includeEmptyCoexistenceContacts: true,

@@ -83,6 +83,36 @@ async function listInboxConversations(refreshReason = "other") {
   return payload;
 }
 
+// Paginated Inbox is intentionally not cached. Every page rechecks current
+// staff access on the server. Legacy test fixtures that return arrays remain
+// compatible, and production always returns page metadata and global counts.
+async function listInboxConversationsPage({
+  filters={},offset=0,limit=100,reason="other",
+}={}) {
+  const params=new URLSearchParams({
+    paged:"true",offset:String(offset),limit:String(limit),
+    status:filters.status||"all",channel:filters.channel||"all",
+    sender:filters.sender||"all",control:filters.control||"all",
+    assignment:filters.assignment||"all",replyWindow:filters.replyWindow||"all",
+    query:filters.query||"",
+  });
+  const result=await request("/conversations?"+params.toString(),{
+    cache:"no-store",
+    headers:{"Content-Type":"application/json","X-Inbox-Refresh-Reason":reason},
+  });
+  if(Array.isArray(result)) {
+    return {items:result,total:result.length,allCount:result.length,
+      nextOffset:result.length,hasMore:false,statusCounts:null,
+      replyWindowCounts:null,senderOptions:null,assignmentOptions:null};
+  }
+  if(!result || !Array.isArray(result.items) ||
+      !Number.isSafeInteger(Number(result.total)) ||
+      !Number.isSafeInteger(Number(result.nextOffset))) {
+    throw new TypeError("Invalid paginated Inbox response");
+  }
+  return result;
+}
+
 async function download(path) {
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
@@ -125,6 +155,7 @@ export const api = {
   },
   me: () => request("/auth/me"),
   listConversations: listInboxConversations,
+  listConversationsPage: listInboxConversationsPage,
   getConversationSummary: (contactId, includeArchived = false) =>
     request(`/conversations/${encodeURIComponent(contactId)}/summary${includeArchived ? "?includeArchived=true" : ""}`),
   searchConversationDirectory: (term) =>
