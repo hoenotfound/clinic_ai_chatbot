@@ -32,10 +32,10 @@ test("migration 109 compiles second-account 48/66h consent, history, staff and o
   assert.equal(due.rows?.[0]?.next_due_at,null);
   assert.equal(due.rows?.[0]?.has_overdue,false);
   const candidates=await db.query(
-   "EXECUTE secondary_marketing_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW())");
+   "EXECUTE secondary_marketing_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW(),'ads_only',NOW())");
   assert.deepEqual(candidates.rows,[]);
   const checks=await db.query(
-   "EXECUTE secondary_marketing_recheck('ariel','100000000000002','200000000000002',NOW(),10,NOW())");
+   "EXECUTE secondary_marketing_recheck('ariel','100000000000002','200000000000002',NOW(),10,NOW(),'ads_only',NOW())");
   assert.deepEqual(checks.rows,[]);
   await db.query("DEALLOCATE secondary_marketing_due");
   await db.query("DEALLOCATE secondary_marketing_candidates");
