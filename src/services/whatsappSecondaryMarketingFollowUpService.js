@@ -55,6 +55,25 @@ function enabled(env=process.env){
    env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED==="true";
 }
+
+ // Anchor 48h/66h to the first verified sender-owned business reply,
+ // matching the primary WhatsApp session, not a later customer message.
+const FIRST_REPLY_SQL=`
+ JOIN LATERAL (
+   SELECT reply.created_at AS at FROM messages reply
+   JOIN whatsapp_sender_message_context reply_context
+     ON reply_context.message_id=reply.id
+    AND reply_context.conversation_id=sc.id
+   WHERE reply.contact_id=c.id AND reply.role='assistant'
+     AND reply.whatsapp_message_id IS NOT NULL
+     AND reply.sent_by_username IS NULL
+     AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND reply.created_at>=c.created_at
+     AND reply.created_at<c.created_at+INTERVAL '24 hours'
+   ORDER BY reply.created_at,reply.id LIMIT 1
+ ) first_reply ON TRUE
+`;
+
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -92,6 +111,7 @@ const CANDIDATES_SQL=`
        WHERE h.sender_id=sa.id AND h.message_id=m.id)
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON TRUE
+ ${FIRST_REPLY_SQL}
  JOIN LATERAL(
    SELECT l.marketing_consent,l.treatment_interest,l.is_closed,l.appointment_status,
      stage.system_key AS stage_key
@@ -129,16 +149,17 @@ const CANDIDATES_SQL=`
    )
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
      BETWEEN 7 AND 23
-   AND inbound.created_at+rule.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
-   AND inbound.created_at+rule.slot_hours*INTERVAL '1 hour'
+   AND first_reply.at+rule.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
+   AND first_reply.at+rule.slot_hours*INTERVAL '1 hour'
      >$4::timestamptz-INTERVAL '8 hours'
    AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'
+   AND inbound.created_at<=$4::timestamptz-INTERVAL '24 hours'
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_marketing_followup_rules newer
      WHERE newer.sender_id=rule.sender_id AND newer.enabled=TRUE
        AND newer.language_code=rule.language_code
        AND newer.slot_hours>rule.slot_hours
-       AND inbound.created_at+newer.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
+       AND first_reply.at+newer.slot_hours*INTERVAL '1 hour'<=$4::timestamptz
    )
    AND NOT EXISTS (
      SELECT 1 FROM messages human WHERE human.contact_id=c.id
@@ -164,7 +185,7 @@ const CANDIDATES_SQL=`
 // and pre-send policy recheck still exclusively authorize messages.
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
  fromTable:"whatsapp_sender_marketing_followup_rules",
- dueExpression:"inbound.created_at+rule.slot_hours*INTERVAL '1 hour'",
+ dueExpression:"first_reply.at+rule.slot_hours*INTERVAL '1 hour'",
  quietWindowEndMarker:"   AND inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
 });
 // Day4/Day6 must be anchored to the first verified reply in the seven-day
@@ -217,7 +238,7 @@ const EXTENDED_CANDIDATES_SQL=CANDIDATES_SQL
   "qualified_session.origin_id AS inbound_id,qualified_session.first_reply_at AS inbound_at,")
  .replace(") lead ON TRUE",") lead ON TRUE"+EXTENDED_SESSION_SQL)
  .replace("rule.slot_hours IN(48,66)","rule.slot_hours IN(96,144)")
- .replaceAll("inbound.created_at+rule.slot_hours","qualified_session.first_reply_at+rule.slot_hours")
+ .replaceAll("first_reply.at","qualified_session.first_reply_at")
  .replace("inbound.created_at>$4::timestamptz-INTERVAL '7 days'",
   "qualified_session.first_reply_at>$4::timestamptz-INTERVAL '7 days'")
  .replace("bad.anchor_message_id=inbound.id","bad.anchor_message_id IS NOT NULL")
