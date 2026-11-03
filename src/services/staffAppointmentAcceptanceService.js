@@ -94,12 +94,14 @@ function sameSpecificOfferedSlot(staffText, relayText) {
     const weekday = String(text).match(/星期[一二三四五六日天1-7]|(?:周|週)[一二三四五六日天1-7]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b/iu);
     const numbered = String(text).match(/\b(\d{1,2})[:：.](\d{2})\s*(a\.?m\.?|p\.?m\.?)?/iu);
     const chinese = numbered ? null : String(text).match(/(\d{1,2})\s*[点點]\s*(半|\d{1,2}\s*分)?/u);
-    if (!numbered && !chinese) return null;
-    const hour = Number(numbered ? numbered[1] : chinese[1]);
+    const clockAmPm = numbered || chinese ? null : String(text).match(/\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+    if (!numbered && !chinese && !clockAmPm) return null;
+    const hour = Number(numbered ? numbered[1] : chinese ? chinese[1] : clockAmPm[1]);
     const minute = numbered ? Number(numbered[2]) : chinese?.[2]
       ? chinese[2] === "半" ? 30 : Number(chinese[2].replace(/\s*分/u, "")) : 0;
     if (hour > 23 || minute > 59) return null;
-    const daypart = numbered && numbered[3] ? /p/i.test(numbered[3]) ? "pm" : "am"
+    const suffix = numbered?.[3] || clockAmPm?.[2] || "";
+    const daypart = suffix ? /p/i.test(suffix) ? "pm" : "am"
       : /下午|傍晚|晚上/u.test(text) ? "pm"
         : /早上|上午/u.test(text) ? "am" : "";
     return {
