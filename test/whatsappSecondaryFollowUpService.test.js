@@ -19,6 +19,7 @@ const env={
 };
 const candidate={
   contact_id:80,sender_id:2,slot_hours:2,
+  rule_version:"1790000000.860775",
   inbound_id:981,whatsapp_number:"60125554444",
   media_key:null,media_type:null,media_mime_type:null,media_filename:null,
   message_text:"Hi, would you like to know more about our services?",
@@ -298,4 +299,27 @@ test("secondary follow-up video cannot inherit stale CRM treatment after explici
  assert.equal(result.accepted,1);
  assert.equal(target,"9D 逆龄抗衰");
  assert.equal(f.calls.find(x=>x.send).send.text,"General English");
+});
+
+
+test("pre-send revision matches exact PostgreSQL microseconds instead of rounded JS Date",async()=>{
+ const f=fake();
+ const result=await worker.runOnce({...f,env});
+ assert.equal(result.accepted,1);
+ const recheck=f.calls.find(x=>x.sql===worker.RECHECK_SQL);
+ assert.equal(recheck.args[6],candidate.rule_version);
+ assert.match(worker.RECHECK_SQL,/EXTRACT\(EPOCH FROM rule\.updated_at\)::text=\$7::text/);
+ assert.doesNotMatch(worker.RECHECK_SQL,/rule\.updated_at=\$7::timestamptz/);
+ assert.match(worker.CANDIDATES_SQL,/EXTRACT\(EPOCH FROM rule\.updated_at\)::text AS rule_version/);
+});
+
+test("2h/6h use primary reply anchor but 20h still protects the customer window",()=>{
+ for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+  assert.match(sql,/first_reply\.at/);
+  assert.match(sql,/first_reply\.at END/);
+  assert.match(sql,/WHEN rule\.slot_hours=20/);
+  assert.match(sql,/reply\.is_automated_follow_up IS DISTINCT FROM TRUE/);
+  assert.match(sql,/reply_context\.conversation_id=sc\.id/);
+ }
+ assert.match(worker.POTENTIAL_DUE_SQL,/first_reply\.at/);
 });
