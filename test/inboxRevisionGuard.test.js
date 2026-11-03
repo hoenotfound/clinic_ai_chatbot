@@ -78,7 +78,7 @@ test("route's fast validation is before list query and fails closed on unknown W
   const secondWal = body.indexOf('(await readInboxWal()) === wal');
   const shortCircuit = body.indexOf('res.status(304).end()');
   const query = body.indexOf('contactsRepo.listConversations({ accessibleContactIds: access })');
-  const freshAccess = body.indexOf('const permittedIds = await getAccessibleContactIds(req.user)');
+  const freshAccess = body.indexOf('let permittedIds = await getAccessibleContactIds(req.user)');
   assert.ok(start >= 0 && revision >= 0 && scope > revision && proof > scope &&
     secondWal > proof && shortCircuit > secondWal && query > shortCircuit &&
     freshAccess > query, "full list is skipped only after fresh scope and twice-confirmed WAL");
