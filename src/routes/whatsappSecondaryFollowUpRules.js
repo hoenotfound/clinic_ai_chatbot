@@ -175,7 +175,7 @@ router.put("/marketing/:slot",async(req,res)=>{
     const name=String(t?.name||"").trim();
     const language=String(t?.languageCode||"").trim();
     if(!/^[a-z0-9_]{1,128}$/.test(name) ||
-       !["zh_CN","en_US","ms_MY"].includes(language) || languages.has(language))
+       !["zh_CN","en_US","ms"].includes(language) || languages.has(language))
       return true;
     languages.add(language);
     return false;
