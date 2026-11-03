@@ -295,13 +295,14 @@ test("Pre-promo sender refuses a prior accepted variant, unresolved attempt and 
   }), null, "expired promotions cannot be revived by the pre-promo branch");
 });
 
-test("Neutro server retains normal guarded promo sender for pre-promo but not package and staff turns", () => {
+test("Neutro server retains the guarded promo sender for pre-promo only", () => {
   const fs = require("node:fs");
-  const source = fs.readFileSync(require.resolve("../src/server.js"),"utf8");
-  assert.match(source,/repeatVisitPriceReply\\?\\.mode === "before_promo"/u);
-  assert.match(source,/resolveNeutroFirstTrialPromotion\\(/u);
-  assert.match(source,/repeatVisitPriceReply\\.mode !== "before_promo"/u);
+  const source = fs.readFileSync(require.resolve("../src/server.js"), "utf8");
+  assert.ok(source.includes('repeatVisitPriceReply?.mode === "before_promo"'));
+  assert.ok(source.includes("resolveNeutroFirstTrialPromotion({"));
+  assert.ok(source.includes('repeatVisitPriceReply.mode !== "before_promo"'));
   assert.ok(source.indexOf("resolveNeutroFirstTrialPromotion({") <
     source.indexOf("const pacedPromotions = planPromotionMediaPacing(promoBundle.packages)"));
-  assert.match(source,/secondaryAiConversation \\? secondaryAiMediaQueue : whatsappResultMediaQueue/u);
+  assert.ok(source.includes("secondaryAiConversation ? secondaryAiMediaQueue : whatsappResultMediaQueue"));
+  assert.ok(source.includes('channel === "whatsapp" && /^neutro'));
 });
