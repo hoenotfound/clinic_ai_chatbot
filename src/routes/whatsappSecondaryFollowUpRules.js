@@ -4,6 +4,8 @@ const {pool}=require("../db/db");
 const configRepo=require("../db/configRepo");
 const {listApprovedSecondaryMarketingTemplates}=require("../services/whatsappSecondaryMarketingTemplateCatalog");
 const {enabled:marketingWorkerEnabled}=require("../services/whatsappSecondaryMarketingFollowUpService");
+const {enabled:serviceWorkerEnabled}=require("../services/whatsappSecondaryFollowUpService");
+const {secondaryAdsOnlyFullAiMode}=require("../services/whatsappSenderActivationGate");
 const {verifyApprovedVideo,listApprovedClinicVideos}=require("../services/whatsappSecondaryFollowUpVideoApproval");
 const {hasCapability}=require("../utils/permissions");
 const {publishInternal}=require("../utils/realtimeEvents");
@@ -54,9 +56,10 @@ router.get("/",async(req,res)=>{
       .catch(()=>null);
     return res.json({
       configured:true,senderDisplayName:identity.display_name,
-      workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true",
+      workerEnabled:serviceWorkerEnabled(process.env),
       quietHours:{start:"00:00",end:"07:00"},
-      mediaEnabled:process.env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
+      mediaEnabled:(process.env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" ||
+        secondaryAdsOnlyFullAiMode(process.env)) &&
         process.env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true",
       availableClinicVideos:listApprovedClinicVideos({
         env:process.env,clinicConfig:configRepo.getConfig(),
@@ -124,7 +127,7 @@ router.put("/:slot",async(req,res)=>{
     publishInternal("secondary_followup_rules_changed",{type:"service"});
     res.set("Cache-Control","no-store");
     return res.json({saved:true,rule:updated.rows[0],
-      workerEnabled:process.env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true"});
+      workerEnabled:serviceWorkerEnabled(process.env)});
   }catch(err) {
     console.error("Unable to save Secondary WhatsApp follow-up rule:",err);
     return res.status(503).json({error:"Could not save the verified Secondary WhatsApp follow-up configuration."});
@@ -136,8 +139,8 @@ router.put("/:slot",async(req,res)=>{
 router.put("/marketing/:slot",async(req,res)=>{
  try {
   const slot=Number(req.params.slot);
-  if(![48,72].includes(slot))
-   return res.status(400).json({error:"Only 48h and 72h marketing templates are supported."});
+  if(![48,66].includes(slot))
+   return res.status(400).json({error:"Only 48h and 66h marketing templates are supported."});
   const enabled=req.body?.enabled;
   if(typeof enabled!=="boolean")
    return res.status(400).json({error:"A valid enabled setting is required."});
@@ -172,7 +175,7 @@ router.put("/marketing/:slot",async(req,res)=>{
     const name=String(t?.name||"").trim();
     const language=String(t?.languageCode||"").trim();
     if(!/^[a-z0-9_]{1,128}$/.test(name) ||
-       !["zh_CN","en_US","ms_MY"].includes(language) || languages.has(language))
+       !["zh_CN","en_US","ms"].includes(language) || languages.has(language))
       return true;
     languages.add(language);
     return false;

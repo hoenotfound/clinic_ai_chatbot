@@ -270,3 +270,12 @@ test("extended slots do not bypass operator charge or template gates",async()=>{
   assert.equal(f.calls.length,0);
  }
 });
+
+
+test("marketing 48h/66h is anchored to first sender-owned reply and never guesses Malay locale",()=>{
+ assert.match(svc.CANDIDATES_SQL,/first_reply\.at\+rule\.slot_hours/);
+ assert.match(svc.CANDIDATES_SQL,/inbound\.created_at<=\$4::timestamptz-INTERVAL '24 hours'/);
+ assert.match(svc.CANDIDATES_SQL,/reply_context\.conversation_id=sc\.id/);
+ assert.match(svc.EXTENDED_CANDIDATES_SQL,/qualified_session\.first_reply_at\+rule\.slot_hours/);
+ assert.equal(svc.customerTemplateLocale(["Saya nak tanya pasal rawatan"]),"ms");
+});

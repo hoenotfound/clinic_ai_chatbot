@@ -70,3 +70,25 @@ test("sender-specific follow-up controls are separated without mixing save actio
   assert.match(secondary, /operatorBillingApproved:row.enabled && row.approved===true/);
   assert.match(secondary, /confirmClinicVideoReuse:true/);
 });
+
+
+test("secondary extended follow-ups consistently use 48h/66h with optional Malay approvals",()=>{
+ const ui=read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+ const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
+ assert.match(ui,/\[48,66\]/);
+ assert.doesNotMatch(ui,/\[48,72\]/);
+ assert.match(ui,/ms/);
+ assert.match(route,/\["zh_CN","en_US","ms"\]/);
+ assert.match(ui,/Automatically use the matching clinic video/);
+ assert.match(route,/if\(!\[48,66\]\.includes\(slot\)\)/);
+ assert.doesNotMatch(route,/Only 48h and 72h/);
+});
+
+
+test("secondary follow-up status is based on effective ads-only worker and media gates",()=>{
+ const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
+ assert.match(route,/enabled:serviceWorkerEnabled/);
+ assert.match(route,/workerEnabled:serviceWorkerEnabled\(process\.env\)/);
+ assert.match(route,/secondaryAdsOnlyFullAiMode\(process\.env\)/);
+ assert.match(route,/WHATSAPP_SECONDARY_AI_MEDIA_ENABLED/);
+});

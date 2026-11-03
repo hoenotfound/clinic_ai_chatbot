@@ -11,8 +11,8 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
   const [mediaApproved,setMediaApproved]=useState({2:false,6:false});
   const [config,setConfig]=useState(null);
   const [marketing,setMarketing]=useState({
-    48:{templates:{zh_CN:"",en_US:""},enabled:false,approved:false},
-    72:{templates:{zh_CN:"",en_US:""},enabled:false,approved:false},
+    48:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
+    66:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
   });
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(null);
@@ -34,10 +34,10 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
         slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.media_key||"",
       ])));
       setMediaApproved({2:false,6:false});
-      setMarketing(Object.fromEntries([48,72].map(slot=>{
+      setMarketing(Object.fromEntries([48,66].map(slot=>{
         const saved=(data.marketingRules||[]).filter(r=>Number(r.slot_hours)===slot);
         return [slot,{
-          templates:Object.fromEntries(["zh_CN","en_US"].map(lang=>[
+          templates:Object.fromEntries(["zh_CN","en_US","ms"].map(lang=>[
             lang,saved.find(r=>r.language_code===lang)?.template_name||"",
           ])),
           enabled:saved.some(r=>r.enabled===true),approved:false,
@@ -108,8 +108,8 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
       </div>
       <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
         {section === "marketing"
-          ? "48-hour and 72-hour templates belong to this number only. Each language requires Meta approval, marketing consent and its own sending switch."
-          : "These messages are only for eligible customers of the secondary number inside a verified 24-hour reply window. Quiet hours: 00:00–07:00 Malaysia time."}
+          ? "48-hour and 66-hour templates belong to this number only. Each language requires Meta approval, marketing consent and its own sending switch."
+          : "These messages use the primary clinic\u0027s approved translations and matching treatment videos when available. Only eligible secondary ad enquiries are followed up within the verified 24-hour reply window. Quiet hours: 00:00–07:00 Malaysia time."}
       </p>
       {error&&<p role="alert" className="mt-3 text-xs text-[var(--color-danger)]">{error}</p>}
       {!config ? <p className="mt-3 text-xs">Checking sender settings…</p> :
@@ -155,7 +155,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
                     setMediaApproved(prev=>({...prev,[slot]:false}));
                   }}
                   className="mt-1 min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-base sm:text-sm">
-                  <option value="">Text only (no video)</option>
+                  <option value="">Automatically use the matching clinic video</option>
                   {(config.availableClinicVideos||[]).map(item=>
                     <option key={item.key} value={item.key}>{item.label}</option>
                   )}
@@ -201,10 +201,10 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
               No approved text-only marketing templates on the second account yet.
               Submit and get them approved in Meta first.
             </p>}
-          {[48,72].map(slot=>{
+          {[48,66].map(slot=>{
             const row=marketing[slot];
             const choices=config.marketingTemplates||[];
-            const languages=[["zh_CN","Chinese"],["en_US","English"]];
+            const languages=[["zh_CN","Chinese"],["en_US","English"],["ms","Malay"]];
             const selected=languages.map(([locale])=>choices.find(t=>
               t.languageCode===locale&&t.name===row.templates[locale])).filter(Boolean);
             const selectedCount=languages.filter(([locale])=>Boolean(row.templates[locale])).length;
