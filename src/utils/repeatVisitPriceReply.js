@@ -60,7 +60,18 @@ function resolveRepeatVisitPriceReply({
   // Contextual replies need both a recent customer-authored selection and a
   // matching accepted assistant turn. Current explicit naming is sufficient
   // on its own and does not require a previous bot to have repeated the name.
-  if (selectionAt === -1) return { treatment: selected };
+  if (selectionAt === -1) {
+    const locale = String(language || "").toLowerCase();
+    const reply = locale.startsWith("ms")
+      ? "Saya faham, anda bertanya tentang caj sesi kedua untuk " + selected +
+        " 😊 Harga percubaan pertama tidak semestinya sama dengan sesi seterusnya. Saya perlu minta staf pusat sahkan harga sebenar supaya tidak beri maklumat yang salah."
+      : locale.startsWith("en")
+        ? "You're asking about the second session of " + selected +
+          " 😊 The first-trial offer may differ from subsequent-session pricing. I'll need our team to confirm the actual amount so I don't give you an incorrect quote."
+        : "明白～你问的是" + selected +
+          "第一次体验之后，第二次继续护理的收费对吗？😊\\n首次体验优惠不一定适用于第二次，后续收费需要由门店同事确认，避免给你错误的价格。";
+    return { treatment: selected, reply };
+  }
   if (!isRecentPricingThread(turns, selectionAt, now)) return null;
   const selectedAt = earlier[selectionAt].pricingCreatedAtMs;
   if (!Number.isFinite(selectedAt) || now - selectedAt > MAX_SESSION_AGE_MS) return null;
