@@ -568,6 +568,8 @@ export default function Inbox() {
   const [acquisitionContext, setAcquisitionContext] = useState(null);
   const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
+  // Prevent a stale ?contact deep link from reopening a just-archived mobile thread.
+  const archiveReturningToListRef = useRef(false);
   const acquisitionContextRef = useRef(acquisitionContext);
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
@@ -767,6 +769,12 @@ export default function Inbox() {
 
   useEffect(() => {
     if (!conversations || selectedId != null || conversationStatePending) return;
+    // setSearchParams and local state can commit in different renders. Do not
+    // reopen the archived conversation from an old deep link in between.
+    if (archiveReturningToListRef.current) {
+      if (requestedContactParam) return;
+      archiveReturningToListRef.current = false;
+    }
 
     if (conversations.length === 0) {
       if (requestedContactParam) {
@@ -1293,6 +1301,7 @@ export default function Inbox() {
     const previousMobileThreadOpen = mobileThreadOpen;
     const previousExplicitThread = keepExplicitlyOpenedThread;
     if (wasOpen) {
+      archiveReturningToListRef.current = true;
       setSelectedId(null);
       setSearchParams({}, { replace: true });
       setMobileThreadOpen(false);
@@ -1315,6 +1324,7 @@ export default function Inbox() {
       updateConversationLocally(id, { inbox_archived_at: conversation.inbox_archived_at || null });
       // Restore the exact thread/navigation state if the server rejected the change.
       if (wasOpen) {
+        archiveReturningToListRef.current = false;
         setSelectedId(id);
         setSearchParams(previousSearchParams, { replace: true });
         setMobileThreadOpen(previousMobileThreadOpen);
