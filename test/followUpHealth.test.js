@@ -87,7 +87,7 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
         created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
       );
       CREATE TABLE IF NOT EXISTS lead_activities (
-        lead_id INTEGER, metadata JSONB
+        id BIGSERIAL PRIMARY KEY, lead_id INTEGER, metadata JSONB
       );
     `);
 
