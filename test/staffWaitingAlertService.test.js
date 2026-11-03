@@ -164,6 +164,27 @@ test("secondary staff waiting service checks eligibility before queuing guidance
   assert.match(queued.messageText,/not eligible for secondary AI/);
 });
 
+test("all-contact secondary waiting alert explains staff pause instead of ad exclusion",()=>{
+  const envAll={
+    ...enabledEnv,
+    WHATSAPP_SECONDARY_SENDER_KEY:"neutro_secondary",
+    WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_SEND_ENABLED:"true",
+    WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE:"all_contacts",
+    WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT:"2026-11-03T03:20:00Z",
+  };
+  const text=buildStaffWaitingAlertMessage({
+    context:{...context,whatsapp_sender_key:"neutro_secondary",
+      mode:"ai",needs_attention:true,secondary_ai_eligible:false},
+    waitingMinutes:31,config:renovation,env:envAll,
+  });
+  assert.match(text,/AI is paused while staff attention/);
+  assert.match(text,/WhatsApp Business App/);
+  assert.match(text,/previous enquiries are never replayed/);
+  assert.doesNotMatch(text,/This contact is not eligible for secondary AI/);
+  assert.doesNotMatch(text,/Return to AI does not override/);
+});
+
 test("Facebook waiting reminder uses Messenger identifier instead of a WhatsApp placeholder", () => {
   const text = buildStaffWaitingAlertMessage({
     context: {

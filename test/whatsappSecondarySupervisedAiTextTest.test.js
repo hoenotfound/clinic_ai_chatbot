@@ -158,7 +158,7 @@ test("server routes only secondary inbound text into the supervised exception",(
   const source=fs.readFileSync(path.join(__dirname,"../src/server.js"),"utf8");
   const section=source.slice(source.indexOf("const secondaryAiReady ="),
     source.indexOf("const secondaryAiConversation ="));
-  assert.match(section,/isSecondaryAdsOnlyEligible\(contact.id\)/);
+  assert.match(section,/isSecondaryAiReplyEligible\(contact.id, \{ inboundMessageId: savedInbound.id \}\)/);
   assert.match(section,/isSecondarySupervisedAiTextTestEligible\(contact.id\)/);
   assert.match(section,/!mediaType && !unsupportedType/);
   assert.match(section,/typeof incoming.text === "string"/);

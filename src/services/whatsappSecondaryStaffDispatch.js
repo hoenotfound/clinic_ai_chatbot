@@ -12,7 +12,8 @@ const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
 const { secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode } =
   require("./whatsappSenderActivationGate");
-const {isSecondaryAdsOnlyEligible}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible}=
+  require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
 
 function block(code) {
@@ -47,6 +48,7 @@ async function sendSecondaryStaffText({
   policyService = policy, billingRepo = billing, conversationRepo = senderRepo,
   now = () => new Date(),
   audienceEligible=isSecondaryAdsOnlyEligible,
+  replyAudienceEligible=isSecondaryAiReplyEligible,
 } = {}) {
   const aiTextOnly = env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true";
   const parityRequested = env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED === "true";
@@ -132,8 +134,13 @@ async function sendSecondaryStaffText({
   // Only ordinary AI text replies may use the expiring supervised test.
   // Media, templates, follow-ups and automated fallback messages must
   // continue to prove the genuine first-ad referral.
+  // Broader AI reply audience never expands media, follow-up, or marketing.
+  const allContactText = ["ai_reply","system_fallback"].includes(origin) &&
+    env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE === "all_contacts";
   const stillEligible=async()=>!automatedOrigin ||
-    await audienceEligible(cid,{database,env}) ||
+    (allContactText
+      ? await replyAudienceEligible(cid,{database,env})
+      : await audienceEligible(cid,{database,env})) ||
     (origin==="ai_reply" && !dispatchTransport && !templateRequest &&
      await isSecondarySupervisedAiTextTestEligible(cid,{database,env,now:now()}));
   if (!await stillEligible())return block("secondary_ads_only_contact_ineligible");

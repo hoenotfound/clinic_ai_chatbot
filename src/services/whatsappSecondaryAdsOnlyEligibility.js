@@ -1,11 +1,10 @@
 "use strict";
 
-// Secondary AI requires a genuine first Click-to-WhatsApp ad after activation.
-// Pre-activation/contact-only-sync records have UNKNOWN older history (Meta may
-// import only recent chats). They remain manual unless both numbers' full
-// histories have been explicitly checked and an audited decision recorded.
-// Actual historical chats and prior primary-number customers remain excluded.
-// Every automated send continues to use the same sender- and message-bound check.
+// The legacy ads-only rule still protects media, follow-ups and marketing.
+// Under a SEPARATE explicit rollout setting, conversational text AI may reply
+// to any secondary-number contact who sends a new inbound after activation.
+// Staff ownership, opt-outs, provider-bound sender and billing checks remain.
+// Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
 
 function adsOnlyActivation(env = process.env) {
@@ -184,5 +183,113 @@ async function eligibleSecondaryAdsOnlyContactIds(ids, {
   }
   return result;
 }
+
+/**
+ * Neutro may allow conversational AI replies to all contacts on its secondary
+ * number WITHOUT enlarging its separately approved ads-only follow-up audience.
+ * This is a separately opted-in setting with a UTC switch-on time, so pre-
+ * activation webhook work cannot become a retroactive AI reply.
+ */
+function secondaryAllContactReplyActivation(env = process.env) {
+  if (env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts" ||
+      env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
+      env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return null;
+  const raw = String(env.WHATSAPP_SECONDARY_AI_REPLY_ALL_ACTIVATED_AT || "");
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw)) return null;
+  const d = new Date(raw);
+  return Number.isFinite(d.getTime()) && d.getTime() > 0 ? d.toISOString() : null;
+}
+
+// Only use this for replies to incoming customer messages. It deliberately
+// does NOT replace the ads-only SQL for follow-ups, marketing, or media jobs.
+async function isSecondaryAiReplyEligible(contactId, {
+  database = pool, env = process.env, inboundMessageId = null,
+} = {}) {
+  if (env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts")
+    return isSecondaryAdsOnlyEligible(contactId, { database, env });
+  const cutoff = secondaryAllContactReplyActivation(env);
+  const id = Number(contactId);
+  const mid = inboundMessageId == null ? null : Number(inboundMessageId);
+  if (!cutoff || !Number.isSafeInteger(id) || id <= 0 ||
+      (mid != null && (!Number.isSafeInteger(mid) || mid <= 0)) ||
+      !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID || !env.WHATSAPP_SECONDARY_WABA_ID)
+    return false;
+  try {
+    const proof = mid == null ? "" : `
+      AND EXISTS (
+        SELECT 1 FROM messages inbound
+        JOIN whatsapp_sender_message_context mc
+          ON mc.message_id=inbound.id AND mc.conversation_id=sc.id
+        WHERE inbound.id=$5
+          AND inbound.contact_id=c.id
+          AND inbound.role='user'
+          AND inbound.whatsapp_message_id IS NOT NULL
+          AND inbound.created_at >= $4::timestamptz
+          AND inbound.source_created_at >= $4::timestamptz
+      )`;
+    const result = await database.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM contacts c
+         JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
+         JOIN whatsapp_sender_conversations sc
+           ON sc.sender_id=sa.id AND sc.contact_id=c.id
+          AND sc.state='bound' AND sc.customer_wa_id=c.whatsapp_number
+         WHERE c.id=$1 AND c.channel='whatsapp'
+           AND sa.sender_key='neutro_secondary' AND sa.state='active'
+           AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+           AND c.mode='ai' AND c.needs_attention IS NOT TRUE
+           AND c.whatsapp_opt_out_at IS NULL
+           ${proof}
+       ) AS eligible`,
+      mid == null ? [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+        env.WHATSAPP_SECONDARY_WABA_ID] :
+        [id,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+          env.WHATSAPP_SECONDARY_WABA_ID,cutoff,mid]
+    );
+    return result.rows?.[0]?.eligible === true;
+  } catch (err) {
+    console.error("[secondary all-contact reply] Eligibility failed closed:", err?.message);
+    return false;
+  }
+}
+
+// The Inbox needs one batched query, not one DB round trip per contact.
+// This is an AI-ownership indicator, not permission to replay old messages.
+async function eligibleSecondaryAiReplyContactIds(ids, {
+  database = pool, env = process.env,
+} = {}) {
+  if (env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE !== "all_contacts")
+    return eligibleSecondaryAdsOnlyContactIds(ids, {database,env});
+  const result = new Set();
+  if (!secondaryAllContactReplyActivation(env) || !Array.isArray(ids)) return result;
+  const valid = [...new Set(ids.map(Number).filter(n => Number.isSafeInteger(n) && n > 0))];
+  if (!valid.length || !env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID ||
+      !env.WHATSAPP_SECONDARY_WABA_ID) return result;
+  try {
+    const rows = await database.query(
+      `SELECT c.id FROM contacts c
+       JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
+       JOIN whatsapp_sender_conversations sc
+         ON sc.sender_id=sa.id AND sc.contact_id=c.id
+        AND sc.state='bound' AND sc.customer_wa_id=c.whatsapp_number
+       WHERE c.id=ANY($1::integer[]) AND c.channel='whatsapp'
+         AND sa.sender_key='neutro_secondary' AND sa.state='active'
+         AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
+         AND c.mode='ai' AND c.needs_attention IS NOT TRUE
+         AND c.whatsapp_opt_out_at IS NULL`,
+      [valid,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
+        env.WHATSAPP_SECONDARY_WABA_ID]
+    );
+    for (const row of rows.rows || []) result.add(Number(row.id));
+  } catch (err) {
+    console.error("[secondary all-contact reply] Inbox eligibility failed closed:", err?.message);
+  }
+  return result;
+}
+
 module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
-  eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql };
+  eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
+  secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
+  eligibleSecondaryAiReplyContactIds };

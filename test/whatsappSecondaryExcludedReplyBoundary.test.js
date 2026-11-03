@@ -36,7 +36,7 @@ async function excludedIncoming({scopedIngress = true} = {}) {
       clinicConfig:{},
       getOperationalLabels:()=>({customerLabel:"customer",customerSingular:"customer"}),
       secondaryUsesPrimaryClinicContent:()=>true,
-      isSecondaryAdsOnlyEligible:async()=>{calls.audience++;return false;},
+      isSecondaryAiReplyEligible:async()=>{calls.audience++;return false;},
       isSecondarySupervisedAiTextTestEligible:async()=>{
         calls.testException++;return false;
       },
@@ -96,7 +96,7 @@ async function trackedSend({eligible=false, origin="ai_reply", durable=true}={})
   const sendTrackedText=realServerFunction(
     "async function sendTrackedText(", "function unwrapIncoming(", "sendTrackedText",{
       process:{env:{WHATSAPP_PRIMARY_SENDER_KEY:"neutro"}},
-      isSecondaryAdsOnlyEligible:async()=>{calls.queries++;return eligible;},
+      isSecondaryAiReplyEligible:async()=>{calls.queries++;return eligible;},
       isSecondarySupervisedAiTextTestEligible:async()=>{calls.supervised++;return false;},
       inboundProcessingRepo:{
         reserveOutboundAttempt:async()=>{calls.reservations++;return {
