@@ -1,7 +1,7 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
 
-// Explicit staff confirmations with a complete unambiguous calendar date can
+// Only explicit staff confirmations with a complete calendar date can
 // update CRM only AFTER Meta accepted the outbound staff-authored text. A
 // proposed time, "Ok", or a date without a year is never an auto-confirmation.
 function parseStaffConfirmedSlot(message, now = new Date()) {
