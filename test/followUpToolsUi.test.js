@@ -68,7 +68,10 @@ test("sender-specific follow-up controls are separated without mixing save actio
   assert.match(secondary, /Changes not saved/);
   assert.match(secondary, /setConfig\(prev=>prev\?/);
   assert.match(secondary, /operatorBillingApproved:row.enabled && row.approved===true/);
-  assert.match(secondary, /confirmClinicVideoReuse:true/);
+  assert.match(secondary, /readOnly aria-readonly="true"/);
+  assert.match(secondary, /primaryFollowUpMessages/);
+  assert.match(secondary, /Primary WhatsApp/);
+  assert.doesNotMatch(secondary, /confirmClinicVideoReuse:true/);
 });
 
 
@@ -79,7 +82,7 @@ test("secondary extended follow-ups consistently use 48h/66h with optional Malay
  assert.doesNotMatch(ui,/\[48,72\]/);
  assert.match(ui,/ms/);
  assert.match(route,/\["zh_CN","en_US","ms"\]/);
- assert.match(ui,/Automatically use the matching clinic video/);
+ assert.match(ui,/approved treatment video is chosen automatically/);
  assert.match(route,/if\(!\[48,66\]\.includes\(slot\)\)/);
  assert.doesNotMatch(route,/Only 48h and 72h/);
 });
@@ -91,4 +94,26 @@ test("secondary follow-up status is based on effective ads-only worker and media
  assert.match(route,/workerEnabled:serviceWorkerEnabled\(process\.env\)/);
  assert.match(route,/secondaryAdsOnlyFullAiMode\(process\.env\)/);
  assert.match(route,/WHATSAPP_SECONDARY_AI_MEDIA_ENABLED/);
+});
+
+
+test("secondary message preview is read-only and cannot overwrite inherited primary copy",()=>{
+ const ui=read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+ const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
+ assert.match(ui,/value=\{inherited\} readOnly/);
+ assert.match(ui,/saveSecondaryFollowUpRule\(slot,\{enabled:enabled\[slot\]\}\)/);
+ assert.doesNotMatch(ui,/onChange=\{e=>setRules/);
+ assert.doesNotMatch(ui,/messageText:rules\[slot\]/);
+ assert.match(route,/const text=primaryFollowUpMessages\(configRepo\.getConfig\(\)\)\[slot\]/);
+ assert.match(route,/primaryFollowUpMessages:primaryFollowUpMessages/);
+});
+
+
+test("secondary follow-up disable remains available even if primary content is temporarily missing",()=>{
+ const ui=read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+ const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
+ assert.match(ui,/enabled\[slot\]&&inherited\.length<3/);
+ assert.match(route,/if\(!enabled\)\{/);
+ assert.match(route,/UPDATE whatsapp_sender_followup_rules SET enabled=FALSE/);
+ assert.match(route,/text=primaryFollowUpMessages\(configRepo\.getConfig\(\)\)\[slot\]/);
 });

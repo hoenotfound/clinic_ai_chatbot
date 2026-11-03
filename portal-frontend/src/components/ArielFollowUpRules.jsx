@@ -2,13 +2,9 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 
 const SLOTS=[2,6,20];
-const fallback={2:"",6:"",20:""};
 
 export default function ArielFollowUpRules({ active = true, section = "service" }){
-  const [rules,setRules]=useState(fallback);
   const [enabled,setEnabled]=useState({2:false,6:false,20:false});
-  const [videos,setVideos]=useState({2:"",6:""});
-  const [mediaApproved,setMediaApproved]=useState({2:false,6:false});
   const [config,setConfig]=useState(null);
   const [marketing,setMarketing]=useState({
     48:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
@@ -24,16 +20,9 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
     api.getSecondaryFollowUpRules().then(data=>{
       if(!mounted)return;
       setConfig(data);
-      setRules(Object.fromEntries(SLOTS.map(slot=>[
-        slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.message_text||"",
-      ])));
       setEnabled(Object.fromEntries(SLOTS.map(slot=>[
         slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.enabled===true,
       ])));
-      setVideos(Object.fromEntries([2,6].map(slot=>[
-        slot,data.rules?.find(x=>Number(x.slot_hours)===slot)?.media_key||"",
-      ])));
-      setMediaApproved({2:false,6:false});
       setMarketing(Object.fromEntries([48,66].map(slot=>{
         const saved=(data.marketingRules||[]).filter(r=>Number(r.slot_hours)===slot);
         return [slot,{
@@ -49,19 +38,12 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
   async function save(slot){
     setBusy(slot);setError("");setSaved(null);
     try{
-      const selected=(slot===20||!config?.mediaEnabled)?"":videos[slot];
-      if(selected && !mediaApproved[slot])throw Error("Approve this exact clinic video before saving.");
-      const data=await api.saveSecondaryFollowUpRule(slot,{
-        messageText:rules[slot],enabled:enabled[slot],
-        ...(selected?{mediaKey:selected,mediaType:"video",
-          confirmClinicVideoReuse:true}:{}),
-      });
+      const data=await api.saveSecondaryFollowUpRule(slot,{enabled:enabled[slot]});
       setEnabled(prev=>({...prev,[slot]:data.rule.enabled}));
       setConfig(prev=>prev?({...prev,rules:[
         ...(prev.rules||[]).filter(item=>Number(item.slot_hours)!==slot),
-        { ...data.rule, media_key: selected || null },
+        data.rule,
       ]}):prev);
-      if(slot!==20)setMediaApproved(prev=>({...prev,[slot]:false}));
       setSaved(slot);
     }catch(e){setError(e.message||"Unable to save secondary follow-up.");}
     finally{setBusy(null);}
@@ -121,9 +103,8 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
       section === "service" ? <div className="mt-4 space-y-3">
         {SLOTS.map(slot=>{
           const current=config.rules?.find(item=>Number(item.slot_hours)===slot);
-          const dirty=enabled[slot] !== (current?.enabled===true) ||
-            rules[slot] !== (current?.message_text||"") ||
-            (slot!==20 && (videos[slot]||"") !== (current?.media_key||""));
+          const inherited=config.primaryFollowUpMessages?.[slot]||"";
+          const dirty=enabled[slot] !== (current?.enabled===true);
           return <details key={slot} className="group overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
             <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
               <span>After {slot} hours</span>
@@ -140,43 +121,29 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
                 Enabled
               </label>
             </div>
-            <textarea id={`secondary-followup-${slot}`} rows={2} maxLength={1024}
-              value={rules[slot]} onChange={e=>setRules(prev=>({...prev,[slot]:e.target.value}))}
-              placeholder="Write and approve the exact message for this phone number"
-              className="mt-2 min-h-24 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-base sm:text-sm" />
-            {(slot===2||slot===6)&&config?.mediaEnabled&&
-              <div className="mt-3 rounded-lg border border-[var(--color-border)] p-2">
-                <label htmlFor={`secondary-video-${slot}`} className="block text-xs font-semibold">
-                  Optional clinic follow-up video
-                </label>
-                <select id={`secondary-video-${slot}`} value={videos[slot]||""}
-                  onChange={e=>{
-                    setVideos(prev=>({...prev,[slot]:e.target.value}));
-                    setMediaApproved(prev=>({...prev,[slot]:false}));
-                  }}
-                  className="mt-1 min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-base sm:text-sm">
-                  <option value="">Automatically use the matching clinic video</option>
-                  {(config.availableClinicVideos||[]).map(item=>
-                    <option key={item.key} value={item.key}>{item.label}</option>
-                  )}
-                </select>
-                {videos[slot]&&
-                  <label className="mt-2 flex items-start gap-2 text-xs">
-                    <input type="checkbox" checked={mediaApproved[slot]||false}
-                      onChange={e=>setMediaApproved(prev=>({...prev,[slot]:e.target.checked}))}/>
-                    <span>I approve this clinic-owned video for opted-in customers on the second WhatsApp.</span>
-                  </label>}
-              </div>}
+            <textarea id={`secondary-followup-${slot}`} rows={3}
+              value={inherited} readOnly aria-readonly="true"
+              className="mt-2 min-h-24 w-full resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-sm text-[var(--color-text-muted)]" />
+            <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+              Message content and treatment-specific translations are inherited from Primary WhatsApp.
+              Edit the primary follow-up settings to change the wording on both numbers.
+              {slot===20&&" When secondary 20h AI personalization is enabled, it creates a contextual message instead."}
+            </p>
+            {(slot===2||slot===6)&&
+              <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                {config.mediaEnabled
+                  ? "The correct approved treatment video is chosen automatically from the primary clinic library. No separate secondary video is required."
+                  : "Treatment videos are unavailable until the secondary account's own media approval and sending checks are enabled."}
+              </p>}
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-[11px] text-[var(--color-text-muted)]">
                 {dirty ? "Changes not saved" : saved===slot ? "Saved to secondary number" :
-                  videos[slot] ? "Video must be approved before sending" : "Text only"}
+                  "Primary content shared"}
               </span>
               <button type="button" onClick={()=>save(slot)}
-                disabled={busy!==null||rules[slot].trim().length<3||
-                  ((slot===2||slot===6)&&config?.mediaEnabled&&Boolean(videos[slot])&&!mediaApproved[slot])}
+                disabled={busy!==null||(enabled[slot]&&inherited.length<3)}
                 className="min-h-11 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                {busy===slot?"Saving…":"Save secondary rule"}
+                {busy===slot?"Saving…":"Save sender switch"}
               </button>
             </div>
             </div>

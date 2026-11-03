@@ -82,8 +82,11 @@ test("secondary followups never inherit Neutro content or start by default",asyn
   assert.match(worker.RECHECK_SQL,/latest_lead\.stage_key/);
   assert.match(worker.RECHECK_SQL,/NULLIF\(BTRIM\(c\.whatsapp_opt_in_source\)/);
   assert.match(worker.CANDIDATES_SQL,/INTERVAL '8 hours'/);
-  assert.match(worker.CANDIDATES_SQL,/newer_rule\.slot_hours>rule\.slot_hours/);
-  assert.match(worker.RECHECK_SQL,/newer_rule\.slot_hours>rule\.slot_hours/);
+  assert.match(worker.CANDIDATES_SQL,/preceding\.slot_hours<rule\.slot_hours/);
+  assert.match(worker.RECHECK_SQL,/preceding\.slot_hours<rule\.slot_hours/);
+  assert.match(worker.CANDIDATES_SQL,/preceding_sent\.status='accepted'/);
+  assert.match(worker.RECHECK_SQL,/previous_step\.completed_at IS NOT NULL/);
+  assert.doesNotMatch(worker.CANDIDATES_SQL,/newer_rule\.slot_hours>rule\.slot_hours/);
 });
 
 test("one eligible Ariel followup is durably claimed before sender-specific send",async()=>{
@@ -322,4 +325,21 @@ test("2h/6h use primary reply anchor but 20h still protects the customer window"
   assert.match(sql,/reply_context\.conversation_id=sc\.id/);
  }
  assert.match(worker.POTENTIAL_DUE_SQL,/first_reply\.at/);
+});
+
+
+test("sequential sender follow-ups never skip FU1 for FU2 or send after a failed previous step",()=>{
+  for(const sql of [worker.CANDIDATES_SQL,worker.RECHECK_SQL]){
+    assert.match(sql,/preceding\.enabled=TRUE/);
+    assert.match(sql,/preceding\.slot_hours<rule\.slot_hours/);
+    assert.match(sql,/preceding_sent\.anchor_message_id=inbound\.id/);
+    assert.match(sql,/preceding_sent\.status='accepted'/);
+    assert.match(sql,/previous_step\.slot_hours IS NULL OR previous_step\.completed_at IS NOT NULL/);
+    assert.match(sql,/GREATEST\(/);
+    assert.match(sql,/previous_step\.completed_at \+/);
+    assert.match(sql,/rule\.slot_hours - previous_step\.slot_hours/);
+  }
+  assert.match(worker.RECHECK_SQL,/prior_problem\.status IN\('unknown','blocked'\)/);
+  assert.match(worker.POTENTIAL_DUE_SQL,/previous_step\.completed_at/);
+  assert.doesNotMatch(worker.CANDIDATES_SQL,/newer_rule\.slot_hours/);
 });

@@ -48,9 +48,29 @@ const FIRST_REPLY_SQL=`
 const FOLLOWUP_DUE_SQL=`(CASE WHEN rule.slot_hours=20
    THEN inbound.created_at ELSE first_reply.at END)
    + rule.slot_hours * INTERVAL '1 hour'`;
-const NEWER_DUE_SQL=`(CASE WHEN newer_rule.slot_hours=20
-   THEN inbound.created_at ELSE first_reply.at END)
-   + newer_rule.slot_hours * INTERVAL '1 hour'`;
+// Resolve only the last enabled earlier slot. A later reminder must not jump
+// ahead of an unsent, failed or ambiguous previous reminder.
+const PREVIOUS_STEP_SQL=`
+ LEFT JOIN LATERAL (
+   SELECT preceding.slot_hours, preceding_sent.completed_at
+   FROM whatsapp_sender_followup_rules preceding
+   LEFT JOIN whatsapp_sender_followup_attempts preceding_sent
+     ON preceding_sent.sender_id=sa.id AND preceding_sent.contact_id=c.id
+    AND preceding_sent.anchor_message_id=inbound.id
+    AND preceding_sent.slot_hours=preceding.slot_hours
+    AND preceding_sent.status='accepted'
+   WHERE preceding.sender_id=rule.sender_id AND preceding.enabled=TRUE
+     AND preceding.slot_hours IN(2,6,20)
+     AND preceding.slot_hours<rule.slot_hours
+   ORDER BY preceding.slot_hours DESC LIMIT 1
+ ) previous_step ON TRUE
+`;
+const SEQUENCE_DUE_SQL=`GREATEST(
+  ${FOLLOWUP_DUE_SQL},
+  COALESCE(previous_step.completed_at +
+    (rule.slot_hours - previous_step.slot_hours) * INTERVAL '1 hour',
+    ${FOLLOWUP_DUE_SQL})
+)`;
 
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
@@ -94,6 +114,7 @@ const CANDIDATES_SQL=`
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON true
  ${FIRST_REPLY_SQL}
+ ${PREVIOUS_STEP_SQL}
  LEFT JOIN LATERAL (
    SELECT lead.marketing_consent,lead.is_closed,lead.appointment_status,
      lead.treatment_interest,
@@ -116,20 +137,14 @@ const CANDIDATES_SQL=`
    AND COALESCE(lead.stage_key,'') NOT IN('appointment_set','visited')
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
        BETWEEN 7 AND 23
-   AND ${FOLLOWUP_DUE_SQL} <= $4::timestamptz
+   AND ${SEQUENCE_DUE_SQL} <= $4::timestamptz
    -- Catch up after quiet hours or a worker interruption, but never send
    -- a stale follow-up more than eight hours after its original due time.
-   AND ${FOLLOWUP_DUE_SQL}
+   AND ${SEQUENCE_DUE_SQL}
        > $4::timestamptz - INTERVAL '8 hours'
-   -- Never send an old 2h slot if a newer configured 6h/20h slot is due.
-   AND NOT EXISTS (
-     SELECT 1 FROM whatsapp_sender_followup_rules newer_rule
-     WHERE newer_rule.sender_id=rule.sender_id AND newer_rule.enabled=TRUE
-       AND newer_rule.slot_hours IN(2,6,20)
-       AND newer_rule.slot_hours>rule.slot_hours
-       AND ${NEWER_DUE_SQL}
-           <= $4::timestamptz
-   )
+   -- Follow-ups run in order. A later step needs its preceding enabled
+   -- sender-specific step to have been accepted, not merely scheduled.
+   AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL)
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
    AND EXISTS (
      SELECT 1 FROM messages reply JOIN whatsapp_sender_message_context mc
@@ -164,8 +179,8 @@ const CANDIDATES_SQL=`
 
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_followup_rules",
-  dueExpression:FOLLOWUP_DUE_SQL,
-  quietWindowEndMarker:"   -- Never send an old 2h slot",
+  dueExpression:SEQUENCE_DUE_SQL,
+  quietWindowEndMarker:"   -- Follow-ups run in order.",
 });
 
 function enabled(env) {
@@ -198,6 +213,7 @@ const RECHECK_SQL=`
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
  ${FIRST_REPLY_SQL}
+ ${PREVIOUS_STEP_SQL}
  JOIN whatsapp_sender_followup_attempts attempt ON
    attempt.sender_id=sa.id AND attempt.contact_id=c.id
    AND attempt.anchor_message_id=inbound.id
@@ -235,15 +251,16 @@ const RECHECK_SQL=`
        AND human.created_at>=inbound.created_at
    )
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
-   AND ${FOLLOWUP_DUE_SQL} <= NOW()
-   AND ${FOLLOWUP_DUE_SQL}
+   AND ${SEQUENCE_DUE_SQL} <= NOW()
+   AND ${SEQUENCE_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
+   AND (previous_step.slot_hours IS NULL OR previous_step.completed_at IS NOT NULL)
    AND NOT EXISTS (
-     SELECT 1 FROM whatsapp_sender_followup_rules newer_rule
-     WHERE newer_rule.sender_id=rule.sender_id AND newer_rule.enabled=TRUE
-       AND newer_rule.slot_hours IN(2,6,20)
-       AND newer_rule.slot_hours>rule.slot_hours
-       AND ${NEWER_DUE_SQL} <= NOW()
+     SELECT 1 FROM whatsapp_sender_followup_attempts prior_problem
+     WHERE prior_problem.sender_id=sa.id AND prior_problem.contact_id=c.id
+       AND prior_problem.anchor_message_id=inbound.id
+       AND prior_problem.id<>attempt.id
+       AND prior_problem.status IN('unknown','blocked')
    )
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
