@@ -10,22 +10,8 @@ const { recordInboxFullList, recordInboxRevisionCheck,
 const { inboxPayloadEtag, matchesInboxPayloadEtag } = require("../utils/inboxConditionalResponse");
 const { createInboxRevisionGuard } = require("../utils/inboxRevisionGuard");
 const inboxRevisionGuard = createInboxRevisionGuard();
-
-// Deduplicate only truly overlapping unrestricted full-list SQL queries at
-// the SAME WAL revision. Never keep a completed customer snapshot in memory.
-// Authorization is checked separately for every request, after loading.
-const inFlightInboxLists = new Map();
-function shareUnscopedInboxQuery(wal, load) {
-  if (!wal) return load();
-  const existing = inFlightInboxLists.get(wal);
-  if (existing) return existing;
-  let flight;
-  flight = Promise.resolve().then(load).finally(() => {
-    if (inFlightInboxLists.get(wal) === flight) inFlightInboxLists.delete(wal);
-  });
-  inFlightInboxLists.set(wal, flight);
-  return flight;
-}
+const { createSameRevisionSingleFlight } = require("../utils/inboxQuerySingleFlight");
+const shareUnscopedInboxQuery = createSameRevisionSingleFlight();
 
 function sameInboxPermissionScope(first, second) {
   if (first === null || second === null) return first === second;
