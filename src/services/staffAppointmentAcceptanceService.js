@@ -128,6 +128,8 @@ function sameSpecificOfferedSlot(staffText, relayText) {
         (aParts[2] && bParts[2] && aParts[2] !== bParts[2])) return false;
   } else if (!offered.weekday || !relayed.weekday ||
       offered.weekday !== relayed.weekday) return false;
+  if (offered.hour > 12 && relayed.daypart && offered.hour !== relayed.hour) return false;
+  if (relayed.hour > 12 && offered.daypart && offered.hour !== relayed.hour) return false;
   return offered.hour % 12 === relayed.hour % 12 && offered.minute === relayed.minute &&
     (!offered.daypart || !relayed.daypart || offered.daypart === relayed.daypart);
 }
