@@ -66,13 +66,15 @@ function createStaffBookingConfirmationService({
   pipeline = pipelineRepo,
   config = clinicConfig,
   now = () => new Date(),
+  database = pool,
+  markPendingBooking = markBookingReadyForContact,
 } = {}) {
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
     const appointmentAt = parseStaffConfirmedSlot(staffText, now());
     if (!appointmentAt) {
       if (!isStaffVisitAcknowledgement(staffText)) return null;
-      const proof = await pool.query(
+      const proof = await database.query(
         "SELECT id FROM messages WHERE contact_id=$1 AND role='assistant' " +
         "AND sent_by_username IS NOT NULL AND whatsapp_message_id IS NOT NULL " +
         "AND is_automated_follow_up=false AND BTRIM(content)=BTRIM($2) " +
@@ -82,7 +84,7 @@ function createStaffBookingConfirmationService({
         [contactId,staffText]
       );
       if (!proof.rows?.[0]?.id) return null;
-      return markBookingReadyForContact(contactId,proof.rows[0].id,{
+      return markPendingBooking(contactId,proof.rows[0].id,{
         reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
         activityDescription:"Provider-verified staff visit acknowledgement; CRM confirmation still required.",
         details:{appointmentPreference:staffText},
