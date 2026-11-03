@@ -18,9 +18,9 @@ const turn = (role, content, seconds, staff = false) => ({
   role, content, pricingCreatedAtMs: now - 300_000 + seconds * 1000,
   pricingStaffAuthored: staff,
 });
-// Mirrors the actual Natalie 3 November discussion, using no customer data.
+// Synthetic sequence covering a treatment enquiry, follow-up questions and repeat-visit pricing.
 const thread = () => [
-  turn("user", "Hi～想了解 Neutro Sense TCM 3D 小颜术，可以 WhatsApp 跟进我和发相关优惠～", 0),
+  turn("user", "你好，我想了解3D 小颜术", 0),
   turn("assistant", "Hi～你是对我们的 3D 小颜术有兴趣对吗～", 2),
   turn("assistant", "这个是我们顾客完成一次【3D小颜术】后的 Before & After", 4),
   turn("user", "整体", 31),
@@ -32,8 +32,8 @@ const thread = () => [
   turn("assistant", "3D小颜术一般没有固定次数", 133),
   turn("user", "或多久一次", 135),
   turn("assistant", "可以先来做1对1体态评估，中医师再建议间隔", 141),
-  turn("user", "等我出国回来再预约", 180),
-  turn("assistant", "祝你出国旅途愉快，回来后再安排", 186),
+  turn("user", "我下个月再预约", 180),
+  turn("assistant", "好的，有空再来安排", 186),
   turn("user", "问下 如果第二次后 价格大概", 206),
 ];
 const config = overrides => ({
@@ -42,7 +42,7 @@ const config = overrides => ({
   language: "zh", now, ...overrides,
 });
 
-test("Natalie regression: second-session price remains tied to customer-confirmed 3D, without quoting trial price", () => {
+test("3D follow-up regression: second-session price remains tied to customer-confirmed 3D, without quoting trial price", () => {
   const result = resolveRepeatVisitPriceReply(config());
   assert.equal(result?.treatment, "3D 小颜术");
   assert.match(result?.reply || "", /3D 小颜术/u);
