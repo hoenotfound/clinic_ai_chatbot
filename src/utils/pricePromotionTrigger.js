@@ -136,7 +136,7 @@ async function resolvePricePromotionForReply({
     return skip("price_confirmation_no_new_graphic");
   }
   const clarificationService = aiPricingEnabled
-    ? pricingDecision.clarifiedPriceService
+    ? pricingDecision?.clarifiedPriceService || null
     : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveClarifiedPriceService({
           customerText, conversationHistory, services, serviceAliases,
