@@ -13,8 +13,8 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
       ORDER BY latest_booking_lead.created_at DESC, latest_booking_lead.id DESC
       LIMIT 1
     )
-      AND booking_acceptance.metadata->>'outcome'='staff_time_accepted'
-      AND COALESCE(booking_lead.appointment_status,'none') NOT IN ('cancelled','reschedule')
+      AND booking_acceptance.metadata->>'outcome' IN ('staff_time_accepted','booking_ready','staff_visit_acknowledged')
+      AND COALESCE(booking_lead.appointment_status,'none') <> 'cancelled'
   )`;
 }
 module.exports = { pendingAcceptedAppointmentAllowedSql };
