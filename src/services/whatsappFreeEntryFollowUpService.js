@@ -14,6 +14,7 @@ const freeEntryReport = require("../db/whatsappFreeEntryReportRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { quietHoursStatus } = require("../utils/quietHours");
+const { pendingAcceptedAppointmentAllowedSql } = require("../utils/pendingAcceptedAppointmentFollowUp");
 const { terminalFollowUpDecisionSql } = require("../utils/followUpDecisionSql");
 const { effectiveSlotDueAt } = require("../utils/freeEntrySchedule");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
@@ -159,7 +160,8 @@ const candidateSql = `
     AND lead.is_closed = false
     AND COALESCE(lead.stage_type, 'open') = 'open'
     AND COALESCE(lead.system_key, '') NOT IN ('appointment_set','visited')
-    AND COALESCE(lead.appointment_status, 'none') NOT IN ('set','visited')
+    AND ${pendingAcceptedAppointmentAllowedSql("c")}
+     AND COALESCE(lead.appointment_status, 'none') NOT IN ('set','visited')
     AND (referral.ctwa_clid IS NOT NULL OR referral.meta_ad_id IS NOT NULL)
     AND evidence.pricing_type = 'free_entry_point'
     AND evidence.billable = false
@@ -942,7 +944,8 @@ const potentialDueSql = `
     AND lead.is_closed = false
     AND COALESCE(lead.stage_type,'open') = 'open'
     AND COALESCE(lead.system_key,'') NOT IN ('appointment_set','visited')
-    AND COALESCE(lead.appointment_status,'none') NOT IN ('set','visited')
+    AND ${pendingAcceptedAppointmentAllowedSql("c")}
+     AND COALESCE(lead.appointment_status,'none') NOT IN ('set','visited')
     AND (referral.ctwa_clid IS NOT NULL OR referral.meta_ad_id IS NOT NULL)
     AND first_reply.created_at >= $1::timestamptz - interval '24 hours'
     AND (first_reply.created_at >= $1::timestamptz

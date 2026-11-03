@@ -17,7 +17,7 @@ function hasSpecificStaffTimeOffer(value) {
   const text = String(value || "");
   const date = /(?:\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b)/iu;
   const time = /(?:\b(?:[01]?\d|2[0-3])[:：.][0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b|\b(?:1[0-2]|0?[1-9])\s*(?:a\.?m\.?|p\.?m\.?)\b|(?:[一二三四五六七八九十]|\d{1,2})\s*[点點](?:半|[0-5]?\d\s*分)?)/iu;
-  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|预约|預約|安排|时间你|時間你|works?\??|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
+  const isSchedulingOffer = /(?:方便吗|方便嗎|可以吗|可以嗎|合适吗|合適嗎|这个时间|這個時間|预约|預約|安排|时间你|時間你|works?\??|availab|time\s*slot|appointment|booking|temujanji|boleh\s*(?:tak|ke)|sesuai\s*(?:tak|ke))/iu;
   return date.test(text) && time.test(text) && isSchedulingOffer.test(text);
 }
 
@@ -80,6 +80,44 @@ function conflictsWithConfirmedSlot(offerText, appointmentAt) {
   return hour !== Number(local.hour) || minute !== Number(local.minute);
 }
 
+
+/**
+ * An AI may repeat a genuine staff-offered slot. Only treat the customer's
+ * immediately following brief acceptance as a pending agreement when BOTH
+ * proposals name the same concrete date/day and clock time.
+ * AI-only offers must never create a booking or a staff acceptance event.
+ */
+function sameSpecificOfferedSlot(staffText, relayText) {
+  if (!hasSpecificStaffTimeOffer(staffText) || !hasSpecificStaffTimeOffer(relayText)) return false;
+  function slot(text) {
+    const date = String(text).match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](20\d{2}))?\b/u);
+    const weekday = String(text).match(/星期[一二三四五六日天1-7]|(?:周|週)[一二三四五六日天1-7]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b/iu);
+    const numbered = String(text).match(/\b(\d{1,2})[:：.](\d{2})\s*(a\.?m\.?|p\.?m\.?)?/iu);
+    const chinese = numbered ? null : String(text).match(/(\d{1,2})\s*[点點]\s*(半|\d{1,2}\s*分)?/u);
+    if (!numbered && !chinese) return null;
+    const hour = Number(numbered ? numbered[1] : chinese[1]);
+    const minute = numbered ? Number(numbered[2]) : chinese?.[2]
+      ? chinese[2] === "半" ? 30 : Number(chinese[2].replace(/\s*分/u, "")) : 0;
+    if (hour > 23 || minute > 59) return null;
+    const daypart = numbered && numbered[3] ? /p/i.test(numbered[3]) ? "pm" : "am"
+      : /下午|傍晚|晚上/u.test(text) ? "pm"
+        : /早上|上午/u.test(text) ? "am" : "";
+    return {
+      date: date ? [Number(date[1]), Number(date[2]), date[3] || ""].join("/") : "",
+      weekday: weekday ? weekday[0].toLowerCase() : "",
+      hour, minute, daypart,
+    };
+  }
+  const offered = slot(staffText), relayed = slot(relayText);
+  if (!offered || !relayed) return false;
+  if (offered.date || relayed.date) {
+    if (!offered.date || !relayed.date || offered.date !== relayed.date) return false;
+  } else if (!offered.weekday || !relayed.weekday ||
+      offered.weekday !== relayed.weekday) return false;
+  return offered.hour === relayed.hour && offered.minute === relayed.minute &&
+    (!offered.daypart || !relayed.daypart || offered.daypart === relayed.daypart);
+}
+
 function createStaffAppointmentAcceptanceService({
   database = pool,
   publish = realtimeEvents.publish,
@@ -134,7 +172,48 @@ function createStaffAppointmentAcceptanceService({
         ].join("\n"),
         [contactId, inboundMessageId]
       );
-      const offer = selected.rows[0];
+      let offer = selected.rows[0];
+      if (!offer) {
+        // The immediately preceding message may be an AI relay of an actual
+        // staff offer. Require a same-slot staff message within 24 hours.
+        // Matching the date AND time avoids taking "ok" to an unrelated AI
+        // suggestion as permission to record a booking.
+        const relayed = await client.query(
+          [
+            "SELECT staff.id AS staff_message_id, staff.content AS staff_text,",
+            "  lead.id AS lead_id, lead.appointment_status, lead.stage_id AS old_stage_id,",
+            "  lead.appointment_at, relay.id AS relay_message_id,",
+            "  relay.content AS relay_text",
+            "FROM messages inbound",
+            "JOIN LATERAL (",
+            "  SELECT m.id, m.content, m.created_at FROM messages m",
+            "  WHERE m.contact_id=inbound.contact_id AND m.id < inbound.id",
+            "    AND m.role='assistant' AND m.sent_by_username IS NULL",
+            "    AND m.is_automated_follow_up=false AND m.whatsapp_message_id IS NOT NULL",
+            "    AND COALESCE(m.delivery_status,'pending') IN ('pending','sent','delivered','read')",
+            "  ORDER BY m.id DESC LIMIT 1",
+            ") relay ON true",
+            "JOIN LATERAL (",
+            "  SELECT l.id, l.appointment_status, l.stage_id, l.appointment_at",
+            "  FROM leads l WHERE l.contact_id=inbound.contact_id AND l.is_closed=false",
+            "  ORDER BY l.created_at DESC, l.id DESC LIMIT 1",
+            ") lead ON true",
+            "JOIN messages staff ON staff.contact_id=inbound.contact_id",
+            "  AND staff.role='assistant' AND staff.sent_by_username IS NOT NULL",
+            "  AND staff.is_automated_follow_up=false AND staff.whatsapp_message_id IS NOT NULL",
+            "  AND COALESCE(staff.delivery_status,'pending') IN ('pending','sent','delivered','read')",
+            "WHERE inbound.id=$2 AND inbound.contact_id=$1 AND inbound.role='user'",
+            "  AND relay.id=(SELECT MAX(previous.id) FROM messages previous",
+            "    WHERE previous.contact_id=inbound.contact_id AND previous.id<inbound.id)",
+            "  AND relay.created_at >= inbound.created_at - interval '24 hours'",
+            "  AND staff.id<relay.id AND staff.created_at >= inbound.created_at - interval '24 hours'",
+            "ORDER BY staff.id DESC LIMIT 25",
+          ].join("\n"),
+          [contactId, inboundMessageId]
+        );
+        offer = relayed.rows.find(row =>
+          sameSpecificOfferedSlot(row.staff_text, row.relay_text));
+      }
       if (!offer || !hasSpecificStaffTimeOffer(offer.staff_text)) {
         await client.query("COMMIT");
         return null;
@@ -144,6 +223,7 @@ function createStaffAppointmentAcceptanceService({
         source: "authenticated_staff_offer",
         inboundMessageId: Number(inboundMessageId),
         staffMessageId: Number(offer.staff_message_id),
+        ...(offer.relay_message_id ? { relayMessageId: Number(offer.relay_message_id) } : {}),
         agreedTimeText: String(offer.staff_text).trim().slice(0, 400),
       };
       const inserted = await client.query(
@@ -208,6 +288,7 @@ function createStaffAppointmentAcceptanceService({
 const recordStaffAppointmentAcceptance = createStaffAppointmentAcceptanceService();
 module.exports = {
   AGREED_TIME_REASON, isBriefAcceptance, hasSpecificStaffTimeOffer,
-  isExplicitRescheduleOffer, conflictsWithConfirmedSlot, createStaffAppointmentAcceptanceService,
+  isExplicitRescheduleOffer, conflictsWithConfirmedSlot, sameSpecificOfferedSlot,
+  createStaffAppointmentAcceptanceService,
   recordStaffAppointmentAcceptance,
 };

@@ -9,6 +9,7 @@ const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
   reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
+const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
 const realtimeEvents=require("../utils/realtimeEvents");
@@ -127,6 +128,7 @@ const CANDIDATES_SQL=`
    AND rule.slot_hours IN(48,66)
    AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
+   AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
