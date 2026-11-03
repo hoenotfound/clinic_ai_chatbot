@@ -11,8 +11,8 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
   const [mediaApproved,setMediaApproved]=useState({2:false,6:false});
   const [config,setConfig]=useState(null);
   const [marketing,setMarketing]=useState({
-    48:{templates:{zh_CN:"",en_US:"",ms_MY:""},enabled:false,approved:false},
-    66:{templates:{zh_CN:"",en_US:"",ms_MY:""},enabled:false,approved:false},
+    48:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
+    66:{templates:{zh_CN:"",en_US:"",ms:""},enabled:false,approved:false},
   });
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(null);
@@ -37,7 +37,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
       setMarketing(Object.fromEntries([48,66].map(slot=>{
         const saved=(data.marketingRules||[]).filter(r=>Number(r.slot_hours)===slot);
         return [slot,{
-          templates:Object.fromEntries(["zh_CN","en_US","ms_MY"].map(lang=>[
+          templates:Object.fromEntries(["zh_CN","en_US","ms"].map(lang=>[
             lang,saved.find(r=>r.language_code===lang)?.template_name||"",
           ])),
           enabled:saved.some(r=>r.enabled===true),approved:false,
@@ -204,7 +204,7 @@ export default function ArielFollowUpRules({ active = true, section = "service" 
           {[48,66].map(slot=>{
             const row=marketing[slot];
             const choices=config.marketingTemplates||[];
-            const languages=[["zh_CN","Chinese"],["en_US","English"],["ms_MY","Malay"]];
+            const languages=[["zh_CN","Chinese"],["en_US","English"],["ms","Malay"]];
             const selected=languages.map(([locale])=>choices.find(t=>
               t.languageCode===locale&&t.name===row.templates[locale])).filter(Boolean);
             const selectedCount=languages.filter(([locale])=>Boolean(row.templates[locale])).length;
