@@ -8,6 +8,9 @@ const messagesRepo = require("../db/messagesRepo");
 const { getPricePromotionBundle } = require("../utils/activePromotion");
 const { mediaVariants } = require("../utils/mediaLocalization");
 const { resolveRepeatVisitPriceReply } = require("../utils/repeatVisitPriceReply");
+const { hasExplicitPriceRequest } = require("../utils/customerEnquiryEvidence");
+const { hasClinicalMediaRisk } = require("../utils/aiReviewPolicy");
+const { findServicesInText, serviceCandidates } = require("../utils/conversationPromptContext");
 
 const SUPPORTED = new Set(["3D 小颜术", "9D 逆龄抗衰"]);
 const PROMO_LOOKBACK_HOURS = 168;
@@ -43,6 +46,30 @@ function staffPriceReference(service, services = []) {
   return match ? match[1].replace(/\s+/gu, "") : "refer to Treatment configuration";
 }
 
+// After an ACCEPTED package pitch, "But how much?" is still a request for
+// the later-session rate. Do not require the customer to repeat "second".
+// A new named treatment price enquiry or a package-price enquiry is NOT this
+// continuation, and must retain the ordinary promotion rules.
+function isPersistentIndividualPriceQuestion(customerText, services, serviceAliases) {
+  const text = String(customerText || "").trim();
+  if (!text || text.length > 180 ||
+      hasClinicalMediaRisk(text) || !hasExplicitPriceRequest(text)) return false;
+  const mentions = [...new Set(findServicesInText(
+    text, serviceCandidates(services, serviceAliases)
+  ))];
+  if (mentions.length > 1) return false;
+  const explicitIndividual = /(?:第二次|第2次|续做|續做|后续|後續|之后|之後|正常价|正常價|原价|原價|单次|單次|每次|\b(?:second|next|subsequent|repeat|regular|normal|individual|per[\s-]?session)\b|\b(?:sesi|rawatan)\s+(?:kedua|seterusnya)\b)/iu.test(text);
+  const trialOnly = /(?:first[\s-]*trial|首次体验|首次體驗|体验价|體驗價|优惠价|優惠價|\b(?:promotion|promo|offer)\b)/iu.test(text)
+    && !explicitIndividual;
+  const packageRequest = /(?:配套|套餐|\b(?:packages?|pakej)\b)/iu.test(text);
+  const packageRefusal = /(?:不要|不需要|不想|不用|只想|不考虑|不考慮|don't|do not|not interested|just want|only want)/iu.test(text);
+  if (trialOnly || (packageRequest && !packageRefusal && !explicitIndividual)) return false;
+  // If the new question names a treatment, require a clear regular-session
+  // marker; otherwise "3D多少钱" remains eligible for the First Trial graphic.
+  if (mentions.length && !explicitIndividual) return false;
+  return true;
+}
+
 function createNeutroSubsequentPricingService({
   wasMediaRecentlySent = messagesRepo.wasMediaRecentlySent,
   hasRecentAcceptedPackageSuggestion = messagesRepo.hasRecentAcceptedPackageSuggestion,
@@ -55,9 +82,34 @@ function createNeutroSubsequentPricingService({
     const classification = resolveRepeatVisitPriceReply({
       customerText, conversationHistory, services, serviceAliases, language, now,
     });
-    const service = classification?.treatment;
-    if (!SUPPORTED.has(service) || !Number.isSafeInteger(Number(contactId)) ||
+    if (!Number.isSafeInteger(Number(contactId)) ||
         !Number.isSafeInteger(Number(inboundMessageId))) return null;
+    let service = classification?.treatment;
+    let priorSuggested = false;
+
+    // A customer may reply "But how much?" after the package invitation.
+    // Recover the treatment from the exact accepted invitation, NOT an ad,
+    // lead label, or model guess. Keep the match sender/contact scoped.
+    if (!SUPPORTED.has(service) &&
+        isPersistentIndividualPriceQuestion(customerText, services, serviceAliases)) {
+      const named = [...new Set(findServicesInText(
+        customerText, serviceCandidates(services, serviceAliases)
+      ))];
+      const candidates = [...SUPPORTED].filter(name =>
+        named.length === 0 || (named.length === 1 && named[0] === name)
+      );
+      const matches = [];
+      for (const name of candidates) {
+        if (await hasRecentAcceptedPackageSuggestion(
+          contactId, packageSuggestionVariants(name), inboundMessageId
+        )) matches.push(name);
+      }
+      if (matches.length === 1) {
+        service = matches[0];
+        priorSuggested = true;
+      }
+    }
+    if (!SUPPORTED.has(service)) return null;
 
     // Only current, independently configured FIRST TRIAL campaign images
     // qualify. In particular, a combined 3D+9D graphic is not evidence for
@@ -79,9 +131,10 @@ function createNeutroSubsequentPricingService({
       reply: textForStage(service, language, "before_promo"),
     };
 
-    const alreadySuggested = await hasRecentAcceptedPackageSuggestion(
-      contactId, packageSuggestionVariants(service), inboundMessageId
-    );
+    const alreadySuggested = priorSuggested ||
+      await hasRecentAcceptedPackageSuggestion(
+        contactId, packageSuggestionVariants(service), inboundMessageId
+      );
     if (!alreadySuggested) return {
       treatment: service, mode: "suggest_package",
       reply: textForStage(service, language, "suggest_package"),
@@ -104,4 +157,5 @@ module.exports = {
   textForStage,
   packageSuggestionVariants,
   staffPriceReference,
+  isPersistentIndividualPriceQuestion,
 };
