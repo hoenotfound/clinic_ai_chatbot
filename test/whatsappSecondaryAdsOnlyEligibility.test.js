@@ -218,7 +218,7 @@ function realIncomingHandlerForManualMedia({
       customerLabel:"customer",customerSingular:"customer"
     }),
     secondaryUsesPrimaryClinicContent:()=>true,
-    isSecondaryAdsOnlyEligible:async()=>{results.eligibilityQueries++;return false;},
+    isSecondaryAiReplyEligible:async()=>{results.eligibilityQueries++;return false;},
     aiReplyCancellation:{
       keyForWhatsAppNumber:()=> "test-sender-key",
       snapshot:()=>0,
