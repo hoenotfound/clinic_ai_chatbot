@@ -340,7 +340,7 @@ function continuedConversationFallback({
       current.pricingCreatedAtMs - previousCustomer.pricingCreatedAtMs > 3 * 60 * 60 * 1000 ||
       conversationHistory.some(turn => turn?.pricingStaffAuthored === true ||
         (turn?.role === "assistant" &&
-          /^\\[Verified STAFF message\\]/u.test(String(turn.content || ""))))) return null;
+          /^\[Verified STAFF message\]/u.test(String(turn.content || ""))))) return null;
 
   // Reuse the existing topic-change/negation checks. Assistant statements may
   // help the natural reply stay on-topic, but never permit a monetary quote.
