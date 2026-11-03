@@ -70,7 +70,24 @@ function createStaffBookingConfirmationService({
   return async function recordStaffConfirmedBooking(contactId, staffText, { providerAccepted = false } = {}) {
     if (!providerAccepted || !["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) return null;
     const appointmentAt = parseStaffConfirmedSlot(staffText, now());
-    if (!appointmentAt) return null;
+    if (!appointmentAt) {
+      if (!isStaffVisitAcknowledgement(staffText)) return null;
+      const proof = await pool.query(
+        "SELECT id FROM messages WHERE contact_id=$1 AND role='assistant' " +
+        "AND sent_by_username IS NOT NULL AND whatsapp_message_id IS NOT NULL " +
+        "AND is_automated_follow_up=false AND BTRIM(content)=BTRIM($2) " +
+        "AND created_at>=now()-interval '30 minutes' " +
+        "AND COALESCE(delivery_status,'pending') IN ('pending','sent','delivered','read') " +
+        "ORDER BY id DESC LIMIT 1",
+        [contactId,staffText]
+      );
+      if (!proof.rows?.[0]?.id) return null;
+      return markBookingReadyForContact(contactId,proof.rows[0].id,{
+        reason:"Booking ready: staff indicated a visit; confirm the date and time in CRM.",
+        activityDescription:"Provider-verified staff visit acknowledgement; CRM confirmation still required.",
+        details:{appointmentPreference:staffText},
+      });
+    }
     const lead = await pipeline.getActiveLeadForContact(contactId);
     if (!lead || lead.is_closed || ["visited", "cancelled"].includes(lead.appointment_status)) return null;
     // Existing updateLead handles validation, stage transition, booking alert
