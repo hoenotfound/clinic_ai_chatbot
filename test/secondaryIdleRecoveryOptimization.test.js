@@ -160,6 +160,9 @@ test("mutation recovery pending lookup is sender-scoped and fails closed on miss
    calls++;
    assert.equal(sql,mutations.PENDING_SQL);
    assert.match(sql,/j.status='pending'/);
+   assert.match(sql,/EXISTS \(/);
+   assert.match(sql,/m\.whatsapp_message_id=j\.target_wamid/);
+   assert.match(sql,/mc\.conversation_id=sc\.id/);
    assert.deepEqual(params,["ariel","100000000000002","200000000000002"]);
    return {rows:[{has_work:false}]};
  }};
@@ -169,6 +172,58 @@ test("mutation recovery pending lookup is sender-scoped and fails closed on miss
  assert.equal(calls,1);
  await assert.rejects(mutations.hasPendingWork({database:{query:async()=>({rows:[]})},env}),
    /status unavailable/);
+});
+
+
+test("unmatched Business App revoke is durable but not an every-minute Neon query",async()=>{
+ const clock=fakeClock();
+ const env={
+   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
+   WHATSAPP_SECONDARY_SENDER_KEY:"ariel",
+   WHATSAPP_SECONDARY_PHONE_NUMBER_ID:"100000000000002",
+   WHATSAPP_SECONDARY_WABA_ID:"200000000000002",
+ };
+ let queries=0,connects=0,actionable=false;
+ const db={
+   query:async(sql)=>{
+     queries++;
+     if(sql.includes("SELECT id FROM whatsapp_sender_accounts"))return{rows:[{id:8}]};
+     if(sql.startsWith("SELECT id FROM whatsapp_sender_coexistence_mutations")){
+       assert.match(sql,/AND EXISTS \(/);
+       assert.match(sql,/m\.whatsapp_message_id=j\.target_wamid/);
+       return{rows:actionable?[{id:17}]:[]};
+     }
+     if(sql===mutations.PENDING_SQL)return{rows:[{has_work:actionable}]};
+     return{rows:[],rowCount:0};
+   },
+   connect:async()=>{
+     connects++;
+     return{query:async(sql)=>{
+       if(sql===mutations.LOOKUP_SQL)return{rows:[]};
+       return{rows:[],rowCount:0};
+     },release(){}};
+   },
+ };
+ let runs=0;
+ const worker=createIdleAwareRecoveryWorker({
+   run:async()=>{runs++;await mutations.runOnce({env,database:db});},
+   hasPendingWork:()=>mutations.hasPendingWork({env,database:db}),
+   ...clock,
+ });
+ worker.start(0);
+ await clock.advance(0);
+ assert.equal(runs,1);
+ assert.equal(connects,0,"unmatched revoke must not run a write transaction");
+ assert.deepEqual(clock.pending(),[EMPTY_RECOVERY_MS]);
+ const before=queries;
+ await clock.advance(5*60*1000);
+ assert.equal(queries,before,"unmatched revoke must not query Neon every minute");
+ actionable=true;
+ assert.equal(worker.wake(0),true,"original staff echo wakes recovery");
+ await clock.advance(0);
+ assert.equal(runs,2);
+ assert.deepEqual(clock.pending(),[5*60*1000+ACTIVE_RECOVERY_MS]);
+ worker.stop();
 });
 
 test("staff echo and media queue wake only after durable commit, without provider replays",()=>{

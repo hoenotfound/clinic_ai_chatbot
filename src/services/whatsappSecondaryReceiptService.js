@@ -15,8 +15,11 @@ const SIGNATURE_PATTERN = /^sha256=[0-9a-f]{64}$/;
 
 function clean(v) { return typeof v === "string" ? v.trim() : ""; }
 function numeric(v) { return /^[0-9]+$/.test(clean(v)); }
-function blocked(code) {
-  return { accepted: false, sendAuthorized: false, autoRetryAllowed: false, code };
+function blocked(code, reason = null) {
+  // Only fixed validation categories are exposed. Never log raw Meta payloads,
+  // phone numbers, message IDs, pricing data, or signature material.
+  return { accepted: false, sendAuthorized: false, autoRetryAllowed: false, code,
+    ...(reason ? { reason } : {}) };
 }
 function receiptEnabled(env) {
   return env.WHATSAPP_MULTI_NUMBER_READ_ENABLED === "true" &&
@@ -43,16 +46,17 @@ function validateMetaSignature(rawBody, signatureHeader, secret) {
 
 function digest(input) { return crypto.createHash("sha256").update(input).digest("hex"); }
 
-function normalizedSignedEvents(rawBody, env) {
+function normalizedSignedEvents(rawBody, env, onInvalid = () => {}) {
+  const invalid = reason => { onInvalid(reason); return null; };
   let body;
-  try { body = JSON.parse(rawBody.toString("utf8")); } catch { return null; }
+  try { body = JSON.parse(rawBody.toString("utf8")); } catch { return invalid("invalid_json"); }
   if (body?.object !== "whatsapp_business_account" ||
       !Array.isArray(body.entry) || body.entry.length < 1 ||
-      body.entry.length > MAX_EVENTS) return null;
+      body.entry.length > MAX_EVENTS) return invalid("invalid_envelope");
   const statuses = [];
   for (const entry of body.entry) {
     if (!entry || clean(entry.id) !== clean(env.WHATSAPP_SECONDARY_WABA_ID) ||
-        !Array.isArray(entry.changes) || !entry.changes.length) return null;
+        !Array.isArray(entry.changes) || !entry.changes.length) return invalid("sender_scope_mismatch");
     for (const change of entry.changes) {
       if (change?.field !== "messages" || !change.value ||
           Array.isArray(change.value) ||
@@ -60,20 +64,21 @@ function normalizedSignedEvents(rawBody, env) {
             clean(env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID) ||
           change.value.messages !== undefined ||
           !Array.isArray(change.value.statuses) ||
-          !change.value.statuses.length) return null;
+          !change.value.statuses.length) return invalid("status_change_invalid");
       for (const item of change.value.statuses) {
-        if (!item || !/^wamid\.[A-Za-z0-9._:+/-]{1,448}={0,2}$/.test(clean(item.id)) ||
-            !DELIVERY_STATUSES.has(item.status) ||
-            !/^[0-9]{8,15}$/.test(clean(item.recipient_id)) ||
-            (item.timestamp !== undefined && !numeric(item.timestamp)) ||
-            (item.pricing !== undefined && (item.pricing === null ||
-              typeof item.pricing !== "object" || Array.isArray(item.pricing))) ||
-            (item.pricing?.billable !== undefined &&
-              typeof item.pricing.billable !== "boolean") ||
-            (item.pricing?.type !== undefined &&
-              !/^[a-z_]{1,64}$/.test(clean(item.pricing.type))) ||
-            (item.pricing?.category !== undefined &&
-              !/^[a-z_]{1,64}$/.test(clean(item.pricing.category)))) return null;
+        if (!item || !/^wamid\.[A-Za-z0-9._:+/-]{1,448}={0,2}$/.test(clean(item.id)))
+          return invalid("status_id_invalid");
+        if (!DELIVERY_STATUSES.has(item.status)) return invalid("status_value_unsupported");
+        if (!/^[0-9]{8,15}$/.test(clean(item.recipient_id)))
+          return invalid("status_recipient_invalid");
+        if (item.timestamp !== undefined && !numeric(item.timestamp))
+          return invalid("status_timestamp_invalid");
+        if (item.pricing !== undefined && (item.pricing === null ||
+            typeof item.pricing !== "object" || Array.isArray(item.pricing) ||
+            (item.pricing.billable !== undefined && typeof item.pricing.billable !== "boolean") ||
+            (item.pricing.type !== undefined && !/^[a-z_]{1,64}$/.test(clean(item.pricing.type))) ||
+            (item.pricing.category !== undefined && !/^[a-z_]{1,64}$/.test(clean(item.pricing.category)))))
+          return invalid("status_pricing_invalid");
         const pricingType = clean(item.pricing?.type) ||
           (typeof item.pricing?.billable === "boolean" ? "unknown" : null);
         const pricingBillable = typeof item.pricing?.billable === "boolean" ?
@@ -97,25 +102,27 @@ function normalizedSignedEvents(rawBody, env) {
         event.fingerprint = digest(JSON.stringify(signatureMaterial));
         event.wamidHash = digest(event.wamid);
         statuses.push(event);
-        if (statuses.length > MAX_EVENTS) return null;
+        if (statuses.length > MAX_EVENTS) return invalid("status_batch_too_large");
       }
     }
   }
-  return statuses.length ? statuses : null;
+  return statuses.length ? statuses : invalid("empty_status_batch");
 }
 
 // The real /webhook body can contain primary and secondary entries in one
 // HMAC-authenticated POST. Select only secondary statuses AFTER validating
 // the HMAC over the entire original byte stream. Never reinterpret primary
 // statuses as secondary, and reject mismatched account/phone combinations.
-function normalizedSecondarySubsetEvents(rawBody, env) {
+function normalizedSecondarySubsetEvents(rawBody, env, onInvalid = () => {}) {
+  const invalid = reason => { onInvalid(reason); return null; };
   let body;
-  try { body = JSON.parse(rawBody.toString("utf8")); } catch { return null; }
+  try { body = JSON.parse(rawBody.toString("utf8")); } catch { return invalid("invalid_json"); }
   if (body?.object !== "whatsapp_business_account" ||
-      !Array.isArray(body.entry) || body.entry.length > MAX_EVENTS) return null;
+      !Array.isArray(body.entry) || body.entry.length > MAX_EVENTS)
+    return invalid("invalid_envelope");
   const entry = [];
   for (const item of body.entry) {
-    if (!item || !Array.isArray(item.changes)) return null;
+    if (!item || !Array.isArray(item.changes)) return invalid("mixed_entry_invalid");
     const changes = [];
     for (const change of item.changes) {
       const statuses = change?.value?.statuses;
@@ -131,7 +138,7 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
       if (actualAccount !== secondaryAccount && actualPhone !== secondaryPhone) continue;
       if (actualAccount !== secondaryAccount || actualPhone !== secondaryPhone ||
           change.field !== "messages" || !Array.isArray(statuses) ||
-          !statuses.length) return null;
+          !statuses.length) return invalid("mixed_sender_or_status_mismatch");
       changes.push({
         field: "messages",
         value: { metadata: { phone_number_id: actualPhone }, statuses },
@@ -141,7 +148,7 @@ function normalizedSecondarySubsetEvents(rawBody, env) {
   }
   if (!entry.length) return [];
   return normalizedSignedEvents(
-    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env
+    Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry })), env, onInvalid
   );
 }
 
@@ -184,9 +191,12 @@ async function recordSignedSecondaryStatusBatch({
   if (!validateMetaSignature(rawBody, signatureHeader, env.WHATSAPP_APP_SECRET)) {
     return blocked("secondary_receipt_signature_invalid");
   }
+  let invalidReason = "unknown_validation_error";
+  const reportInvalid = reason => { invalidReason = reason; };
   const events = subsetFromVerifiedWebhook ?
-    normalizedSecondarySubsetEvents(rawBody, env) : normalizedSignedEvents(rawBody, env);
-  if (!events) return blocked("secondary_receipt_batch_invalid");
+    normalizedSecondarySubsetEvents(rawBody, env, reportInvalid) :
+    normalizedSignedEvents(rawBody, env, reportInvalid);
+  if (!events) return blocked("secondary_receipt_batch_invalid", invalidReason);
   if (events.length === 0) return {
     accepted: true, matched: 0, unmatched: 0, replayed: 0, held: 0,
     sendAuthorized: false, autoRetryAllowed: false,

@@ -522,7 +522,9 @@ function createApp({
         return;
       }
       if (!savedReceipts.accepted) {
-        console.error("Could not durably stage verified secondary WhatsApp status receipts:", savedReceipts.code);
+        // Only emit fixed parser categories. Never log webhook payloads or IDs.
+        console.error("Could not durably stage verified secondary WhatsApp status receipts:",
+          savedReceipts.code, savedReceipts.reason || "unspecified");
         res.sendStatus(503);
         scheduleAcceptedWhatsAppWork();
         return;
