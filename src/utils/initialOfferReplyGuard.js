@@ -320,6 +320,77 @@ function ensureFirstAssessmentInvitation({
   return { reply: original + "\n\n" + (oneQuestionInvitation || invitation), appended: true };
 }
 
+// This is conversational continuity only, never authority to quote a price.
+function continuedConversationFallback({
+  customerText, conversationHistory = [], services = [], serviceAliases = [],
+  promotions = [], language = "en", isFirstMessage = true,
+} = {}) {
+  if (isFirstMessage || !Array.isArray(conversationHistory) ||
+      conversationHistory.length < 3) return null;
+  const current = conversationHistory.at(-1);
+  const previousCustomer = conversationHistory.slice(0, -1).reverse()
+    .find(turn => turn?.role === "user");
+  const now = Date.now();
+  if (current?.role !== "user" || !previousCustomer ||
+      String(current.content || "").trim() !== String(customerText || "").trim() ||
+      !Number.isFinite(current.pricingCreatedAtMs) ||
+      !Number.isFinite(previousCustomer.pricingCreatedAtMs) ||
+      current.pricingCreatedAtMs > now + 60_000 ||
+      now - current.pricingCreatedAtMs > 3 * 60 * 60 * 1000 ||
+      current.pricingCreatedAtMs - previousCustomer.pricingCreatedAtMs > 3 * 60 * 60 * 1000 ||
+      conversationHistory.some(turn => turn?.pricingStaffAuthored === true ||
+        (turn?.role === "assistant" &&
+          /^\[Verified STAFF message\]/u.test(String(turn.content || ""))))) return null;
+
+  // Reuse the existing topic-change/negation checks. Assistant statements may
+  // help the natural reply stay on-topic, but never permit a monetary quote.
+  const { recentConversationServiceAnchor, serviceCandidates } =
+    require("./conversationPromptContext");
+  const anchor = recentConversationServiceAnchor(
+    conversationHistory, serviceCandidates(services, serviceAliases), 16, promotions
+  );
+  const name = anchor?.relevantServiceNames?.length === 1
+    ? anchor.relevantServiceNames[0] : null;
+  const locale = String(language || "").toLowerCase();
+  const zh = locale.startsWith("zh") ||
+    (!locale && /[\u3400-\u9fff]/u.test(customerText));
+  const ms = locale.startsWith("ms");
+  const askedPrice = hasExplicitPriceRequest(customerText);
+  let reply;
+  if (zh) {
+    reply = askedPrice
+      ? name
+        ? "你之前咨询的是" + name + " 😊 这项收费我暂时无法核对准确金额，需要由门店同事确认，避免给错报价。"
+        : "我明白你在询问收费 😊 我需要先确认具体项目，才能请同事核对准确价格。"
+      : /预算|預算/u.test(customerText)
+        ? "明白，你有预算上的考虑 😊" +
+          (name ? " 关于" + name + "，" : " ") +
+          "方便告诉我大概的预算范围吗？我可以帮你记录给同事。"
+        : /整体脸型|整體臉型|脸型|臉型/u.test(customerText) && name
+          ? "明白，你主要在意整体脸型和轮廓 😊 我们继续聊" + name + "，我可以进一步介绍护理方式。"
+          : "好的，我们继续聊" + (name || "你刚才咨询的护理") +
+            " 😊 你想进一步确认哪一部分呢？";
+  } else if (ms) {
+    reply = askedPrice
+      ? "Saya faham anda sedang bertanya tentang harga" +
+        (name ? " " + name : "") + ". Pihak pusat perlu sahkan jumlah sebenar dahulu."
+      : "Baik, kita sambung tentang " + (name || "rawatan yang anda tanya") +
+        " 😊 Apa lagi yang anda ingin tahu?";
+  } else {
+    reply = askedPrice
+      ? "You're asking about the price" + (name ? " of " + name : "") +
+        " 😊 Our team needs to confirm the correct amount before I quote it."
+      : "Let's continue with " + (name || "the treatment you asked about") +
+        " 😊 What would you like to check next?";
+  }
+  return { reply, treatment: name };
+}
+
+function isRepeatedWelcome(reply) {
+  return /^(?:Hi[～~!,.， ]*欢迎咨询|Hi[～~!,.， ]*欢迎了解|Hi! Thanks for getting in touch|Hai! Terima kasih kerana menghubungi kami)/iu
+    .test(String(reply || "").trim());
+}
+
 function stripUnsolicitedTreatmentPrice(reply) {
   const source = String(reply || "").trim();
   // Preserve complete, useful non-price sentences instead of throwing away
@@ -340,11 +411,18 @@ function guardAssessmentFirstPricingReply({
   requireVerifiedTreatment = false, clarifiedPriceService = null,
   verifiedPricingIntent = false,
   resultMedia = [], conversationHistory = [], promotions = [],
-  allowContinuedPriceContext = false,
+  allowContinuedPriceContext = false, isFirstMessage = true,
 } = {}) {
   const original = String(reply || "");
-  if (flagged || !hasTreatmentPriceContent(original)) {
-    return { reply: original, replaced: false };
+  if (flagged) return { reply: original, replaced: false };
+  const continuing = continuedConversationFallback({
+    customerText, conversationHistory, services, serviceAliases,
+    promotions, language, isFirstMessage,
+  });
+  if (!hasTreatmentPriceContent(original)) {
+    return continuing && isRepeatedWelcome(original)
+      ? { reply: continuing.reply, replaced: true }
+      : { reply: original, replaced: false };
   }
   // A single independently approved pricing decision has already checked
   // the customer-selected treatment, active price and related-service safety.
@@ -411,13 +489,14 @@ function guardAssessmentFirstPricingReply({
       : locale.startsWith("ms")
         ? "Boleh saya tahu harga untuk rawatan yang mana satu ya? 😊"
         : "Which treatment would you like the price for? I can help you check 😊";
-    return { reply: clarification, replaced: true };
+    return { reply: continuing?.treatment ? continuing.reply : clarification, replaced: true };
   }
   const retained = stripUnsolicitedTreatmentPrice(original);
   const fallback = hasClinicalMediaRisk(customerText)
     ? safeIntroReply({ customerText, language, services, serviceAliases })
     : assessmentFirstInvitation({ treatment, customerText, language, services, serviceAliases });
-  return { reply: retained || fallback, replaced: true };
+  return { reply: retained && !isRepeatedWelcome(retained)
+    ? retained : continuing?.reply || retained || fallback, replaced: true };
 }
 module.exports = {
   guardAssessmentFirstPricingReply,
