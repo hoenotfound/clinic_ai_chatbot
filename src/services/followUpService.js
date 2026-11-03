@@ -2278,6 +2278,8 @@ realtimeEvents.subscribe("config_changed", (payload) => {
 });
 
 module.exports = {
+  // Pure, side-effect-free selector exported for cross-sender regression tests.
+  messageForCandidate,
   isConfiguredPromotionPriceGraphic,
   enforceAssessmentFirstFollowUpCopy,
   FOLLOW_UP_CHECK_INTERVAL_MS,
