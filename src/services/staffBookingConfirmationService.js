@@ -53,6 +53,13 @@ function parseStaffConfirmedSlot(message, now = new Date()) {
   return instant.toISOString();
 }
 
+function isStaffVisitAcknowledgement(message) {
+  const value = String(message || "").trim();
+  if (!value || value.length > 160 || /[?？]/u.test(value)) return false;
+  if (/cancel|maybe|if you|如果|可能|取消|改期|not confirmed/iu.test(value)) return false;
+  return /see\\s*(?:u|you)\\s*(?:tmr|tomorrow|next\\s+(?:mon|tue|wed|thu|fri|sat|sun)|(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?)|(?:明天|後天|后天|星期[一二三四五六日天]).{0,18}(?:见|見)/iu.test(value);
+}
+
 function createStaffBookingConfirmationService({
   pipeline = pipelineRepo,
   config = clinicConfig,
