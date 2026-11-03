@@ -76,7 +76,14 @@ async function sendSecondaryStaffText({
   const authorizedOrigin = origin === "staff"
     ? env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
       (!aiTextOnly || (parity && aiTextAuthorized))
-    : (["ai_reply","system_fallback"].includes(origin) && aiTextAuthorized) ||
+    : (origin === "staff_forward" &&
+        env.WHATSAPP_SECONDARY_FORWARD_SEND_ENABLED === "true" &&
+        env.WHATSAPP_INBOX_CROSS_NUMBER_FORWARD_ENABLED === "true" &&
+        elevatedAi && aiTextAuthorized &&
+        secondaryUsesPrimaryClinicContent(env) &&
+        env.WHATSAPP_PRIMARY_SENDER_KEY === "neutro" &&
+        env.WHATSAPP_SECONDARY_SENDER_KEY === "neutro_secondary") ||
+      (["ai_reply","system_fallback"].includes(origin) && aiTextAuthorized) ||
       ((!aiTextOnly || (elevatedAi && aiTextAuthorized)) && origin === "ai_media" &&
         env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED === "true" &&
@@ -104,7 +111,9 @@ async function sendSecondaryStaffText({
          (origin === "followup" && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") ||
          (origin === "staff" && !templateRequest &&
            env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED !== "true") ||
-         !["staff","ai_media","followup","marketing_followup"].includes(origin))) ||
+         (origin === "staff_forward" &&
+           env.WHATSAPP_SECONDARY_FORWARD_SEND_ENABLED !== "true") ||
+         !["staff","staff_forward","ai_media","followup","marketing_followup"].includes(origin))) ||
       // Neither the existing follow-up sender nor an optional transport
       // callback may upload/dispatch media while sender media is disabled.
       (origin === "followup" && typeof dispatchTransport === "function" &&
@@ -130,6 +139,19 @@ async function sendSecondaryStaffText({
       (replyToProviderMessageId != null &&
        !/^wamid\.[A-Za-z0-9._:-]{1,450}$/.test(replyToProviderMessageId))) {
     return block("secondary_staff_send_invalid_input");
+  }
+  // A forwarded staff row is not general staff sending authority. Verify its
+  // persisted marker before any policy preview, billing reservation or Meta call.
+  if (origin === "staff_forward") {
+    try {
+      const evidence = await database.query(
+        "SELECT 1 FROM messages WHERE id=$1 AND contact_id=$2 AND is_forwarded=TRUE LIMIT 1",
+        [mid, cid]
+      );
+      if (evidence.rows?.length !== 1) return block("secondary_forward_message_not_verified");
+    } catch {
+      return block("secondary_forward_message_not_verified");
+    }
   }
   // Include paid automated marketing; staff templates never inherit AI restrictions.
   const automatedOrigin=["ai_reply","system_fallback","ai_media","followup","marketing_followup"].includes(origin);
