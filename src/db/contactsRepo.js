@@ -576,7 +576,28 @@ async function searchConversationDirectory({ term, accessibleContactIds = null, 
   return result.rows.map(row => presentPortalContact(row));
 }
 
-async function listConversations({ contactId = null, includeEmptyCoexistenceContacts = false } = {}) {
+async function listConversations({
+  contactId = null, includeEmptyCoexistenceContacts = false,
+  accessibleContactIds = null,
+} = {}) {
+  // Restrict large Inbox reads inside PostgreSQL, before thousands of joins
+  // and message/review columns leave Neon. The route still verifies current
+  // staff permission after the query, before returning any row to the browser.
+  if (accessibleContactIds !== null && !Array.isArray(accessibleContactIds)) {
+    throw new TypeError("Inbox access scope must be null or a contact ID array");
+  }
+  if (accessibleContactIds?.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new TypeError("Inbox access scope contains an invalid contact ID");
+  }
+  if (accessibleContactIds?.length === 0) return [];
+  const scopedFilter = accessibleContactIds === null ? ""
+    : `c.id = ANY(${contactId == null ? 1 : 2}::integer[]) AND `;
+  const scopedWhere = accessibleContactIds === null ? ""
+    : `AND c.id = ANY(${contactId == null ? 1 : 2}::integer[])`;
+  const scopedParams = [
+    ...(contactId == null ? [] : [contactId]),
+    ...(accessibleContactIds === null ? [] : [accessibleContactIds]),
+  ];
   // Inbox hides untouched contact-only Coexistence address-book imports; Contacts
   // retains them, and genuine history/live threads remain visible. This is a
   // read filter, never a delete or a change to sender routing/follow-up policy.
@@ -591,7 +612,7 @@ async function listConversations({ contactId = null, includeEmptyCoexistenceCont
   const candidatesSql = hideEmptyCoexistence ? `
     WITH eligible_inbox_contacts AS MATERIALIZED (
       SELECT c.id FROM contacts c
-      WHERE ${contactId == null ? "" : "c.id = $1 AND "}NOT (
+      WHERE ${contactId == null ? "" : "c.id = $1 AND "}${scopedFilter}NOT (
         c.whatsapp_sender_id IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM whatsapp_sender_accounts account
@@ -740,10 +761,10 @@ ${senderAwareInboxReadsEnabled() ? `
       LIMIT 1
     ) last_accepted_reply ON last_inbound_for_reply.id IS NOT NULL
     WHERE (m.created_at IS NOT NULL OR c.channel = 'whatsapp')
-     ${contactId == null ? "" : "AND c.id = $1"}
+     ${contactId == null ? "" : "AND c.id = $1"} ${scopedWhere}
     ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
     `,
-    contactId == null ? [] : [contactId]
+    scopedParams
   );
   const hydrated = await hydrateSocialContactRows(result.rows);
   return hydrated.map((row) => presentPortalContact(row));
