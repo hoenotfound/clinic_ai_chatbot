@@ -343,7 +343,7 @@ async function runOnce({
       adSource:candidate.ad_followup_source,
       headline:candidate.ad_followup_headline,body:candidate.ad_followup_body,
       customerTexts:candidate.customer_texts,
-      services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+      services:clinicConfig?.services,serviceAliases:clinicConfig?.serviceAliases,
     });
     const confirmedTreatment=adFollowUpPolicy
       ? adFollowUpPolicy.treatment
