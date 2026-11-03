@@ -171,7 +171,8 @@ test("stale, untrusted, contradictory and unavailable pricing never authorize me
   assert.equal(resolve({promotions:promotions.slice(1)}),null);
   const conflict=promotions.map(p=>p.linkedService==="骨盆调理"
     ? {...p,packages:p.packages.map(pkg=>pkg.name==="Package A"
-      ? {...pkg,caption:"优惠后仅需 RM399"}:pkg)}:p);
+      ? {...pkg,caption:"优惠后仅需 RM399",
+        followUpTranslations:{zh:"优惠后仅需 RM388"}}:pkg)}:p);
   assert.equal(resolve({promotions:conflict}),null);
   const repeated=promotions.map(p=>p.linkedService==="骨盆调理"
     ? {...p,name:"another current pelvic campaign"}:p);
