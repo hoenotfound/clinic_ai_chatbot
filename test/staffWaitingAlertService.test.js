@@ -131,6 +131,39 @@ test("clinic waiting reminder uses channel-aware identity and clinic terminology
   assert.match(text, /inbox\?contact=12/);
 });
 
+test("secondary staff waiting reminder never promises that Return to AI overrides audience exclusion", () => {
+  const base={...context,whatsapp_sender_key:"neutro_secondary",mode:"ai"};
+  const excluded=buildStaffWaitingAlertMessage({context:{...base,secondary_ai_eligible:false},
+    waitingMinutes:31,config:renovation});
+  assert.match(excluded,/Reply in the WhatsApp Business App/);
+  assert.match(excluded,/not eligible for secondary AI/);
+  assert.match(excluded,/Return to AI does not override/);
+  assert.doesNotMatch(excluded,/Return to AI after replying/);
+  const verified=buildStaffWaitingAlertMessage({context:{...base,secondary_ai_eligible:true},
+    waitingMinutes:11,config:renovation});
+  assert.match(verified,/Return to AI only for future eligible customer messages/);
+  assert.match(verified,/This enquiry will not be replayed/);
+  const primaryAi=buildStaffWaitingAlertMessage({
+    context:{...context,mode:"ai"},waitingMinutes:11,config:renovation
+  });
+  assert.match(primaryAi,/already in AI mode/);
+  assert.doesNotMatch(primaryAi,/Return to AI after replying/);
+});
+
+test("secondary staff waiting service checks eligibility before queuing guidance",async()=>{
+  let calls=0,queued=null;
+  const svc=createStaffWaitingAlertService({
+    env:enabledEnv,config:renovation,
+    getContext:async()=>({...context,mode:"ai",whatsapp_sender_key:"neutro_secondary"}),
+    stillWaiting:async()=>true,
+    eligibleForSecondaryAi:async()=>{calls++;return false;},
+    queueAlert:async x=>{queued=x;return{status:"queued"};}
+  });
+  await svc({contactId:12,waitingSinceMessageId:46,waitingMinutes:31});
+  assert.equal(calls,1);
+  assert.match(queued.messageText,/not eligible for secondary AI/);
+});
+
 test("Facebook waiting reminder uses Messenger identifier instead of a WhatsApp placeholder", () => {
   const text = buildStaffWaitingAlertMessage({
     context: {

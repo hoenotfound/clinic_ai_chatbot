@@ -6,7 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const {
   adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
-  eligibleSecondaryAdsOnlyContactIds,
+  eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
 } = require("../src/services/whatsappSecondaryAdsOnlyEligibility");
 const { sendSecondaryStaffText } = require("../src/services/whatsappSecondaryStaffDispatch");
 const followups = require("../src/services/whatsappSecondaryFollowUpService");
@@ -41,7 +41,11 @@ test("eligibility relies on sender-bound first provider inbound with actual Meta
     "ads_first.whatsapp_message_id IS NOT NULL",
     "c.created_at >= $2::timestamptz",
     "ads_first.created_at >= $2::timestamptz",
-    "earlier_clinic_contact.created_at < c.created_at",
+    "earlier_clinic_contact.created_at < ads_first.created_at",
+    "earlier_primary_message.source_created_at",
+    "whatsapp_secondary_ad_eligibility_reviews ads_review",
+    "ads_review.decision='no_prior_conversation_verified'",
+    "ads_review.primary_history_checked=TRUE",
     "earlier_clinic_contact.whatsapp_number IN",
     "primary_sender.sender_key='neutro'",
     "FROM messages ads_prior",
@@ -60,6 +64,15 @@ test("eligibility relies on sender-bound first provider inbound with actual Meta
   assert.equal(queries,1);
   assert.equal(await isSecondaryAdsOnlyEligible("invalid",{database,env}),false);
   assert.equal(queries,1);
+});
+
+test("reviewed old contacts only allow followups after operator verification",()=>{
+  const sql=reviewedContactFollowupGuardSql("c","inbound");
+  assert.match(sql,/whatsapp_secondary_ad_eligibility_reviews reviewed/);
+  assert.match(sql,/inbound.created_at <= reviewed.reviewed_at/);
+  assert.match(sql,/reviewed.decision='no_prior_conversation_verified'/);
+  assert.match(followups.CANDIDATES_SQL,/inbound.created_at <= reviewed.reviewed_at/);
+  assert.match(followups.RECHECK_SQL,/inbound.created_at <= reviewed.reviewed_at/);
 });
 
 test("missing referral/DB error cannot authorize secondary automation",async()=>{

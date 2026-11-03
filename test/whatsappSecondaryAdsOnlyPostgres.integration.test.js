@@ -95,15 +95,65 @@ test("PostgreSQL admits only new first-click ad contacts; imported, direct and o
     assert.equal(await qualify(direct.id),false,"later ad must not upgrade a direct chat");
     const history=await createContact(); await inbound(history,{ad:true,imported:true});
     assert.equal(await qualify(history.id),false,"imported history must never qualify");
-    const contactOnly=await createContact();
+    const contactOnly=await createContact({old:true});
     await db.query("UPDATE contacts SET whatsapp_coexistence_imported_at=NOW() WHERE id=$1",[contactOnly.id]);
-    await inbound(contactOnly,{ad:true});
-    assert.equal(await qualify(contactOnly.id),false,"contact-only Business App import stays manual");
+    const contactOnlyFirstAd=await inbound(contactOnly,{ad:true});
+    assert.equal(await qualify(contactOnly.id),false,
+      "six-month contact sync alone cannot prove absence of older chats");
+    // Staff checked the full Business App history on BOTH numbers and made
+    // a named decision. Creating a review has no send/replay side effect.
+    await db.query(
+      "INSERT INTO whatsapp_secondary_ad_eligibility_reviews "+
+      "(contact_id,origin_message_id,decision,reviewed_by,"+
+      " secondary_app_history_checked,primary_history_checked,review_note) "+
+      "VALUES($1,$2,'no_prior_conversation_verified',$3,TRUE,TRUE,$4)",
+      [contactOnly.id,contactOnlyFirstAd,"reviewer","Full history checked on both numbers; no prior chat"]
+    );
+    assert.equal(await qualify(contactOnly.id),true,
+      "staff-reviewed contact-only first CTWA lead may receive future AI replies");
+    // Historical evidence discovered after approval always revokes eligibility.
+    await inbound(contactOnly,{imported:true});
+    assert.equal(await qualify(contactOnly.id),false,
+      "review must never override an imported historical conversation");
     const delayed=await createContact();
     await inbound(delayed,{ad:true,sourceTime:new Date(Date.now()-86400000).toISOString()});
     assert.equal(await qualify(delayed.id),false,"old provider timestamp cannot become fresh ad");
-    const oldContact=await createContact({old:true}); await inbound(oldContact,{ad:true});
-    assert.equal(await qualify(oldContact.id),false,"old contact must remain manual even on a new ad click");
+    const oldContact=await createContact({old:true});
+    const oldAdId=await inbound(oldContact,{ad:true});
+    assert.equal(await qualify(oldContact.id),false,"old contact must remain manual until verified");
+    await db.query(
+      "INSERT INTO whatsapp_secondary_ad_eligibility_reviews "+
+      "(contact_id,origin_message_id,decision,reviewed_by,"+
+      " secondary_app_history_checked,primary_history_checked,review_note) "+
+      "VALUES($1,$2,'historical_or_unknown',$3,FALSE,FALSE,$4)",
+      [oldContact.id,oldAdId,"reviewer","Historical status remains unknown"]
+    );
+    assert.equal(await qualify(oldContact.id),false,"negative/unknown review cannot authorize AI");
+    await db.query(
+      "UPDATE whatsapp_secondary_ad_eligibility_reviews SET "+
+      "decision='no_prior_conversation_verified',reviewed_by='reviewer',"+
+      "secondary_app_history_checked=TRUE,primary_history_checked=TRUE,"+
+      "review_note='Full Business App history verified on both numbers', reviewed_at=NOW() "+
+      "WHERE contact_id=$1",[oldContact.id]
+    );
+    assert.equal(await qualify(oldContact.id),true,
+      "verified contact with an old contact row but no historic chats can qualify");
+    // A primary account row created after the ad can still contain an older
+    // provider-dated historical conversation; it must revoke the review.
+    const oldPhone=(await db.query(
+      "SELECT whatsapp_number FROM contacts WHERE id=$1",[oldContact.id]
+    )).rows[0].whatsapp_number;
+    const primary=(await db.query(
+      "INSERT INTO contacts(whatsapp_number,created_at) "+
+      "VALUES($1,NOW()) RETURNING id",[oldPhone]
+    )).rows[0];
+    await db.query(
+      "INSERT INTO messages(contact_id,role,content,source_created_at) "+
+      "VALUES($1,'user','Old primary conversation',NOW()-INTERVAL '7 days')",
+      [primary.id]
+    );
+    assert.equal(await qualify(oldContact.id),false,
+      "late-imported historical primary conversation must override approval");
     const missing=await createContact();await inbound(missing);
     assert.equal(await qualify(missing.id),false,"unknown first source fails closed");
     assert.equal(await isSecondaryAdsOnlyEligible(newAd.id,{database:db,env:{

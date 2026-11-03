@@ -54,12 +54,14 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
   const result = await query(
     `SELECT
        c.id AS contact_id, c.whatsapp_number, c.name, c.whatsapp_profile_name,
-       c.channel, c.channel_user_id,
+       c.channel, c.channel_user_id, c.mode, c.needs_attention,
+       sa.sender_key AS whatsapp_sender_key,
        l.id AS lead_id, l.temperature, l.treatment_interest, l.branch_name,
        s.name AS stage_name,
        latest.id AS latest_customer_message_id,
        latest.content AS latest_customer_message
      FROM contacts c
+     LEFT JOIN whatsapp_sender_accounts sa ON sa.id=c.whatsapp_sender_id
      LEFT JOIN LATERAL (
        SELECT * FROM leads
        WHERE contact_id = c.id AND is_closed = false
