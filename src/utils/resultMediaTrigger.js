@@ -308,6 +308,9 @@ function verifiedRecentChoiceAfterQuestion({
     customerNamedServices(resultMedia,current,serviceAliases,services),current);
   if (named.length!==1) return null;
   const service=named[0];
+  // This continuation is specifically for the configured 3D/9D choice.
+  // A different service cannot use an unrelated 3D/9D question as proof.
+  if (!/\b[39]\s*d\b/iu.test(service)) return null;
   const compact=v=>String(v||"").normalize("NFKC").toLocaleLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu,"");
   const exactTerms=[service,...(Array.isArray(serviceAliases)?serviceAliases:[])
