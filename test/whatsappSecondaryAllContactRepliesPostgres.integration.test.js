@@ -119,8 +119,7 @@ test("secondary all-contact AI replies accept only post-switch inbound on the co
       inboundMessageId:newMessage}),false,"ads-only mode still rejects known history");
 
     const unbound=await createContact();
-    await db.query("UPDATE whatsapp_sender_conversations SET state='disconnected' WHERE id=$1",
-      [unbound.conv]).catch(async()=>{await db.query("DELETE FROM whatsapp_sender_conversations WHERE id=$1",[unbound.conv]);});
+    await db.query("DELETE FROM whatsapp_sender_conversations WHERE id=$1",[unbound.conv]);
     assert.equal(await isSecondaryAiReplyEligible(unbound.id,{database:db,env}),false,
       "missing bound conversation blocks secondary sends");
   }finally{
