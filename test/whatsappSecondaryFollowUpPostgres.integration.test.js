@@ -32,7 +32,7 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
      "PREPARE sender_followup_candidates(text,text,text,timestamptz,integer,timestamptz) AS "+CANDIDATES_SQL
    );
    await db.query(
-     "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,timestamptz,timestamptz) AS "+RECHECK_SQL
+     "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,text,timestamptz) AS "+RECHECK_SQL
    );
    await db.query(
      "PREPARE sender_followup_due(text,text,text,timestamptz,timestamptz) AS "+POTENTIAL_DUE_SQL
