@@ -362,8 +362,12 @@ test("Ordinary first-trial and combination promo routing never relies on the rep
   ));
   assert.equal(withoutException,null);
   assert.equal(skipReason,"no_approved_pricing_decision");
+  // The classifier never verifies combo graphics as a standalone 3D/9D
+  // second-session enquiry. Without that verified signal, existing combo
+  // price-media authority still applies and cannot be bypassed.
   assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
-    "3D + 9D 组合","3D 和 9D 第二次收费多少"
+    "3D + 9D 组合","3D 和 9D 第二次收费多少",
+    {verifiedSubsequentTrialService:null}
   )),null,"no new combo or cross-treatment permission");
 });
 
