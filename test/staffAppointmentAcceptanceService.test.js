@@ -7,6 +7,7 @@ const {
   hasSpecificStaffTimeOffer,
   isExplicitRescheduleOffer,
   conflictsWithConfirmedSlot,
+  sameSpecificOfferedSlot,
   createStaffAppointmentAcceptanceService,
 } = require("../src/services/staffAppointmentAcceptanceService");
 
@@ -15,6 +16,7 @@ function harness({
   bookingStatus = "none",
   existing = false,
   staffAuthored = true,
+  relayedOfferText = null,
   appointmentAt = "2026-10-17T08:00:00.000Z",
   attentionUpdated = true,
   telegramStatus = "queued",
@@ -27,6 +29,14 @@ function harness({
           queries.push({ sql: String(sql), params });
           if (/^BEGIN$|^COMMIT$|^ROLLBACK$/.test(sql)) return { rows: [] };
           if (/SELECT id FROM contacts WHERE/.test(sql)) return { rows: [{ id: 372 }] };
+          if (sql.includes("relay.content AS relay_text")) {
+            return { rows: relayedOfferText ? [{
+              staff_message_id: 1474, staff_text: offerText,
+              relay_message_id: 1475, relay_text: relayedOfferText,
+              lead_id: 116, appointment_status: bookingStatus, old_stage_id: 3,
+              appointment_at: appointmentAt,
+            }] : [] };
+          }
           if (/SELECT staff\.id AS staff_message_id/.test(sql)) {
             return { rows: staffAuthored ? [{
               staff_message_id: 1475, staff_text: offerText,
@@ -157,4 +167,62 @@ test("clinical attention remains protected and cannot be replaced by a booking a
   assert.deepEqual(alerts, []);
   assert.deepEqual(pushes, []);
   assert.ok(queries.some(({ sql }) => /ai_review_items/.test(sql)));
+});
+
+test("AI relay of the exact staff-offered date and time records a pending booking hold", async () => {
+  const staffOffer = "10/11 星期2，10.30可以吗？";
+  const relay = "另外，前面中医师有问你 10/11 星期二 10:30am 这个时间合适吗？如果 ok 我们就帮你留这个 slot";
+  assert.equal(sameSpecificOfferedSlot(staffOffer, relay), true);
+  const { service, alerts, queries } = harness({
+    staffAuthored: false, offerText: staffOffer, relayedOfferText: relay,
+  });
+  const accepted = await service(372, 1476, "ok");
+  assert.ok(accepted);
+  assert.equal(accepted.leadId, 116);
+  const metadata = JSON.parse(queries.find(q => /INSERT INTO lead_activities/.test(q.sql)).params[1]);
+  assert.equal(metadata.outcome, "staff_time_accepted");
+  assert.equal(metadata.staffMessageId, 1474);
+  assert.equal(metadata.relayMessageId, 1475);
+  assert.equal(alerts.length, 1);
+  assert.equal(queries.some(q => q.sql.includes("UPDATE leads SET")), false);
+  const check = queries.find(q => q.sql.includes("relay.content AS relay_text"));
+  assert.match(check.sql, /staff\.sent_by_username IS NOT NULL/);
+  assert.match(check.sql, /relay\.id=\(SELECT MAX\(previous\.id\)/);
+});
+
+test("AI-only suggestions, different slots and generic yes never record a staff acceptance", async () => {
+  const staffOffer = "10/11 星期2，10.30可以吗？";
+  const otherTime = "10/11 星期二 11:30am 这个时间合适吗？";
+  const otherDate = "11/11 星期三 10:30am 这个时间合适吗？";
+  assert.equal(sameSpecificOfferedSlot(staffOffer, otherTime), false);
+  assert.equal(sameSpecificOfferedSlot(staffOffer, otherDate), false);
+  assert.equal(sameSpecificOfferedSlot(staffOffer, "Would you like to know the price?"), false);
+  for (const relayedOfferText of [otherTime, otherDate, "Would you like to know the price?"]) {
+    const { service, alerts, queries } = harness({
+      staffAuthored: false, offerText: staffOffer, relayedOfferText,
+    });
+    assert.equal(await service(372, 1476, "yes"), null);
+    assert.equal(alerts.length, 0);
+    assert.equal(queries.some(q => q.sql.includes("INSERT INTO lead_activities")), false);
+  }
+});
+
+test("pending staff-slot acceptance appears in every primary and secondary follow-up gate", () => {
+  const { pendingAcceptedAppointmentAllowedSql } =
+    require("../src/utils/pendingAcceptedAppointmentFollowUp");
+  const sql = pendingAcceptedAppointmentAllowedSql("c");
+  assert.match(sql, /booking_acceptance\.metadata->>'outcome'='staff_time_accepted'/);
+  assert.match(sql, /ORDER BY latest_booking_lead\.created_at DESC/);
+  assert.match(sql, /appointment_status,'none'\) NOT IN \('cancelled','reschedule'\)/);
+  assert.throws(() => pendingAcceptedAppointmentAllowedSql("c;DROP TABLE"), /alias/);
+  const { followUpAttentionAllowedSql } = require("../src/utils/aiReviewPolicy");
+  assert.match(followUpAttentionAllowedSql("c"), /staff_time_accepted/);
+  const secondary = require("../src/services/whatsappSecondaryFollowUpService");
+  const marketing = require("../src/services/whatsappSecondaryMarketingFollowUpService");
+  const extended = require("../src/services/whatsappFreeEntryFollowUpService");
+  for (const query of [secondary.CANDIDATES_SQL, secondary.RECHECK_SQL,
+    marketing.CANDIDATES_SQL, marketing.RECHECK_SQL,
+    extended.CANDIDATES_SQL, extended.POTENTIAL_DUE_SQL].filter(Boolean)) {
+    assert.match(query, /staff_time_accepted/);
+  }
 });
