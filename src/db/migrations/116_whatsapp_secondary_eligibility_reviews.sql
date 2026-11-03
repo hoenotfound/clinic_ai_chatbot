@@ -1,7 +1,7 @@
 -- A contact-only coexistence sync is not proof of a prior conversation.
 -- The six-month Meta history window is also not proof that no older chat exists.
--- Remain manual unless a named operator checked the WhatsApp Business App
--- history on BOTH Neutro numbers and recorded an explicit, auditable decision.
+-- Remain manual unless a named operator checked the full secondary Business
+-- App chat history and the primary number's authoritative chat history.
 -- This table grants no outbound permission on its own.
 CREATE TABLE IF NOT EXISTS whatsapp_secondary_ad_eligibility_reviews (
   contact_id INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_secondary_ad_eligibility_reviews (
   primary_history_checked BOOLEAN NOT NULL DEFAULT FALSE,
   review_note TEXT NOT NULL DEFAULT '',
   reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT secondary_review_requires_both_app_checks CHECK (
+  CONSTRAINT secondary_review_requires_both_history_checks CHECK (
     decision <> 'no_prior_conversation_verified'
     OR (
       secondary_app_history_checked = TRUE
