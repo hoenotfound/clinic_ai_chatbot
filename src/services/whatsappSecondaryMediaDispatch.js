@@ -7,6 +7,7 @@ const mediaStorage = require("./mediaStorageService");
 const contactsRepo = require("../db/contactsRepo");
 const secondaryPolicy = require("./whatsappSecondaryPolicyService");
 const { sendSecondaryStaffText } = require("./whatsappSecondaryStaffDispatch");
+const { secondaryUsesPrimaryClinicContent } = require("./whatsappSenderActivationGate");
 
 const LIMIT_BYTES = 16 * 1024 * 1024;
 const MIME = Object.freeze({
@@ -47,19 +48,42 @@ async function sendSecondaryStaffMedia(contact, method, args, {
   policyService=secondaryPolicy,
   textDispatcher=sendSecondaryStaffText,
 }={}) {
-  if (env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED!=="true" ||
-      env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED!=="true" ||
-      contact?.channel!=="whatsapp" ||
-      !contact?.whatsapp_sender_id ||
-      contact.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY ||
-      !Array.isArray(args)) return deny("secondary_staff_media_disabled");
-
+  if (!Array.isArray(args)) return deny("secondary_staff_media_disabled");
   const last=args[args.length-1];
   const options=last && typeof last==="object" && !Buffer.isBuffer(last) ? last : {};
+  const staffAllowed=env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED==="true" &&
+    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED==="true";
+  const forwardAllowed=options.staffForward===true &&
+    env.WHATSAPP_SECONDARY_FORWARD_SEND_ENABLED==="true" &&
+    env.WHATSAPP_INBOX_CROSS_NUMBER_FORWARD_ENABLED==="true" &&
+    env.WHATSAPP_PRIMARY_SENDER_KEY==="neutro" &&
+    env.WHATSAPP_SECONDARY_SENDER_KEY==="neutro_secondary" &&
+    secondaryUsesPrimaryClinicContent(env);
+  if ((!staffAllowed && !forwardAllowed) ||
+      contact?.channel!=="whatsapp" ||
+      !contact?.whatsapp_sender_id ||
+      contact.whatsapp_sender_key!==env.WHATSAPP_SECONDARY_SENDER_KEY)
+    return deny("secondary_staff_media_disabled");
+
   const messageId=Number(options.currentMessageId);
   if (options.staffMedia!==true || options.autoFollowUp===true ||
       !Number.isSafeInteger(messageId) || messageId<=0) {
     return deny("secondary_staff_media_unowned_message");
+  }
+
+  // Forward-only access cannot be borrowed by an ordinary staff/media send.
+  // The forwarding route must have persisted a target message marked forwarded.
+  if (options.staffForward===true) {
+    if (!forwardAllowed) return deny("secondary_forward_media_disabled");
+    try {
+      const proof=await database.query(
+        "SELECT 1 FROM messages WHERE id=$1 AND contact_id=$2 AND is_forwarded=TRUE LIMIT 1",
+        [messageId,contact.id]
+      );
+      if (proof.rows?.length!==1) return deny("secondary_forward_media_unverified");
+    } catch {
+      return deny("secondary_forward_media_unverified");
+    }
   }
 
   const allowedMethods=new Set([
@@ -136,7 +160,7 @@ async function sendSecondaryStaffMedia(contact, method, args, {
   };
 
   return textDispatcher({
-    contact,messageId,origin:"staff",
+    contact,messageId,origin:options.staffForward===true ? "staff_forward" : "staff",
     text:"[staff media]",
     preSendCheck,
     dispatchTransport: async(transport)=>{

@@ -1406,6 +1406,56 @@ test("forwarding from a closed source sends only to an eligible target in the sa
   expectNoUnexpectedApi(apiState);
 });
 
+// Both sender rows belong to Neutro, but they remain distinct WhatsApp
+// identities. The picker must not offer customers of another business.
+for (const direction of ["primary-to-secondary", "secondary-to-primary"]) {
+  test(`Neutro forwarding picker offers ${direction} without showing other senders`, async ({ page }) => {
+    const primary = {
+      whatsapp_sender_id: 1,
+      whatsapp_sender_key: "neutro",
+      whatsapp_sender_phone_number_id: "1408739622311791",
+      whatsapp_sender_account_id: "1593376338308612",
+      whatsapp_is_secondary: false,
+    };
+    const secondary = {
+      whatsapp_sender_id: 2,
+      whatsapp_sender_key: "neutro_secondary",
+      whatsapp_sender_phone_number_id: "1318355951360575",
+      whatsapp_sender_account_id: "1852014482431209",
+      whatsapp_sender_state: "active",
+      whatsapp_sender_coexistence_enabled: true,
+      whatsapp_is_secondary: true,
+    };
+    const from = direction === "primary-to-secondary" ? primary : secondary;
+    const to = direction === "primary-to-secondary" ? secondary : primary;
+    const targetName = direction === "primary-to-secondary" ? "Secondary Patient" : "Primary Patient";
+    const apiState = await installApi(page, {
+      initialConversations: [
+        conversation({ ...from }),
+        conversation({ ...to, contact_id: 202, name: targetName, whatsapp_profile_name: targetName,
+          whatsapp_number: "+60199887766" }),
+        conversation({ contact_id: 303, name: "Outside Business", whatsapp_profile_name: "Outside Business",
+          whatsapp_number: "+60199883344", whatsapp_sender_id: 3, whatsapp_sender_key: "other" }),
+      ],
+    });
+
+    await page.goto("/inbox");
+    await openInboxConversation(page);
+    await page.getByRole("button", { name: "Message actions" }).first().click();
+    await page.getByRole("menuitem", { name: /Forward/ }).click();
+    const picker = page.getByRole("dialog", { name: "Forward message" });
+    const target = picker.getByRole("button").filter({ hasText: targetName });
+    await expect(target).toBeEnabled();
+    await expect(target).toContainText(direction === "primary-to-secondary" ? "Secondary WhatsApp" : "Primary WhatsApp");
+    await expect(picker.getByText("Outside Business")).toHaveCount(0);
+    await target.click();
+    await picker.getByRole("button", { name: "Forward (1)" }).click();
+    const sent = findCall(apiState, "POST", "/api/conversations/101/messages/1/forward");
+    expect(sent?.body?.targetContactIds).toEqual([202]);
+    expectNoUnexpectedApi(apiState);
+  });
+}
+
 test("iPhone hold on message text opens actions without selecting text", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "iphone-portrait", "iPhone-specific long press interaction.");
   const closedAt = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
