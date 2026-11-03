@@ -578,7 +578,7 @@ async function searchConversationDirectory({ term, accessibleContactIds = null, 
 
 async function listConversations({
   contactId = null, includeEmptyCoexistenceContacts = false,
-  accessibleContactIds = null,
+  accessibleContactIds = null, contactIds = null,
 } = {}) {
   // Restrict large Inbox reads inside PostgreSQL, before thousands of joins
   // and message/review columns leave Neon. The route still verifies current
@@ -590,6 +590,12 @@ async function listConversations({
     throw new TypeError("Inbox access scope contains an invalid contact ID");
   }
   if (accessibleContactIds?.length === 0) return [];
+  if (contactIds !== null &&
+      (!Array.isArray(contactIds) ||
+        contactIds.some(id => !Number.isSafeInteger(id) || id <= 0))) {
+    throw new TypeError("Invalid Inbox page contact IDs");
+  }
+  if (contactIds?.length === 0) return [];
   const scopedFilter = accessibleContactIds === null ? ""
     : "c.id = ANY($" + (contactId == null ? 1 : 2) + "::integer[]) AND ";
   const scopedWhere = accessibleContactIds === null ? ""
@@ -597,7 +603,13 @@ async function listConversations({
   const scopedParams = [
     ...(contactId == null ? [] : [contactId]),
     ...(accessibleContactIds === null ? [] : [accessibleContactIds]),
+    ...(contactIds === null ? [] : [contactIds]),
   ];
+  const pageParam = scopedParams.length;
+  const pageFilter = contactIds === null ? "" :
+    "c.id = ANY($" + pageParam + "::integer[]) AND ";
+  const pageWhere = contactIds === null ? "" :
+    "AND c.id = ANY($" + pageParam + "::integer[])";
   // Inbox hides untouched contact-only Coexistence address-book imports; Contacts
   // retains them, and genuine history/live threads remain visible. This is a
   // read filter, never a delete or a change to sender routing/follow-up policy.
@@ -612,7 +624,7 @@ async function listConversations({
   const candidatesSql = hideEmptyCoexistence ? `
     WITH eligible_inbox_contacts AS MATERIALIZED (
       SELECT c.id FROM contacts c
-      WHERE ${contactId == null ? "" : "c.id = $1 AND "}${scopedFilter}NOT (
+      WHERE ${contactId == null ? "" : "c.id = $1 AND "}${scopedFilter}${pageFilter}NOT (
         c.whatsapp_sender_id IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM whatsapp_sender_accounts account
@@ -761,7 +773,7 @@ ${senderAwareInboxReadsEnabled() ? `
       LIMIT 1
     ) last_accepted_reply ON last_inbound_for_reply.id IS NOT NULL
     WHERE (m.created_at IS NOT NULL OR c.channel = 'whatsapp')
-     ${contactId == null ? "" : "AND c.id = $1"} ${scopedWhere}
+     ${contactId == null ? "" : "AND c.id = $1"} ${scopedWhere} ${pageWhere}
     ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
     `,
     scopedParams
