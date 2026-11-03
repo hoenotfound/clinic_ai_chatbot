@@ -1798,7 +1798,7 @@ async function processIncomingMessage(
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-      ? /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
+      ? channel === "whatsapp" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
         ? await resolveNeutroSubsequentPricing({
             contactId: contact.id, inboundMessageId: savedInbound.id,
             customerText: text, conversationHistory: history,
