@@ -136,8 +136,8 @@ router.put("/:slot",async(req,res)=>{
 router.put("/marketing/:slot",async(req,res)=>{
  try {
   const slot=Number(req.params.slot);
-  if(![48,72].includes(slot))
-   return res.status(400).json({error:"Only 48h and 72h marketing templates are supported."});
+  if(![48,66].includes(slot))
+   return res.status(400).json({error:"Only 48h and 66h marketing templates are supported."});
   const enabled=req.body?.enabled;
   if(typeof enabled!=="boolean")
    return res.status(400).json({error:"A valid enabled setting is required."});
