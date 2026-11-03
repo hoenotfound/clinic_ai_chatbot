@@ -105,3 +105,31 @@ test("20h fallback uses primary treatment-specific customer language, never a Ch
  assert.equal(en,"Primary 9D assessment English");
  assert.equal(localizedFollowUpText({slot:20,originalText:"Secondary Chinese fallback",customerTexts:["ok"],clinicConfig:liveClinic}),null);
 });
+
+
+test("explicit combined 3D + 9D enquiry selects the combo, not a single treatment",()=>{
+ const combined={...liveClinic,
+  services:[...liveClinic.services,{name:"3D + 9D 组合"},{name:"3D 小颜术"}],
+  serviceAliases:[...liveClinic.serviceAliases,
+   {alias:"3D",officialService:"3D 小颜术"},
+   {alias:"3D + 9D",officialService:"3D + 9D 组合"},
+   {alias:"9D+3D",officialService:"3D + 9D 组合"}],
+  automatedFollowUp:{...liveClinic.automatedFollowUp,
+   serviceOverrides:[...liveClinic.automatedFollowUp.serviceOverrides,
+    {serviceName:"3D + 9D 组合",translations:{en:"Approved combined 3D+9D follow-up"}}]},
+ };
+ for(const msg of ["I want the 3D + 9D combo","I want both 3D and 9D",
+  "我想3D和9D一起做","I prefer 9D+3D", "Nak buat 3D dan 9D"]){
+  assert.equal(resolveFollowUpTreatment({clinicConfig:combined,
+   customerTexts:[msg],treatmentInterest:"9D 逆龄抗衰"}),"3D + 9D 组合",msg);
+ }
+ assert.equal(localizedFollowUpText({slot:2,
+  originalText:"Old text",customerTexts:["I want the 3D + 9D combo"],
+  treatmentInterest:"9D 逆龄抗衰",clinicConfig:combined}),
+  "Approved combined 3D+9D follow-up");
+ for(const msg of ["Should I choose 3D or 9D?","What is the difference between 3D and 9D?",
+  "3D还是9D哪个比较适合?"]){
+  assert.equal(resolveFollowUpTreatment({clinicConfig:combined,
+   customerTexts:[msg],treatmentInterest:"9D 逆龄抗衰"}),null,msg);
+ }
+});
