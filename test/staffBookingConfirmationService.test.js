@@ -87,3 +87,23 @@ test("staff visit acknowledgment requires a concrete visit day", () => {
   for (const s of ["See u", "See u if you want", "See u tomorrow maybe",
     "Your booking was cancelled"]) assert.equal(isStaffVisitAcknowledgement(s),false,s);
 });
+
+test("staff acknowledgment is held for review, not automatically booked", async () => {
+  const events=[];
+  const service=createStaffBookingConfirmationService({
+    config:{businessType:"tcm_clinic"},now:()=>NOW,
+    database:{query:async(sql)=>{events.push(sql);return {rows:[{id:200}]};}},
+    markPendingBooking:async(contactId,messageId,options)=>{
+      events.push({contactId,messageId,options});return {review:true};
+    },
+    pipeline:{
+      getActiveLeadForContact:async()=>{throw Error("No CRM booking");},
+      updateLead:async()=>{throw Error("No CRM booking");},
+    },
+  });
+  assert.equal(await service(7,"See u tmr",{providerAccepted:false}),null);
+  assert.equal(events.length,0);
+  assert.deepEqual(await service(7,"See u tmr",{providerAccepted:true}),{review:true});
+  assert.equal(events[1].messageId,200);
+  assert.match(events[0],/whatsapp_message_id IS NOT NULL/);
+});
