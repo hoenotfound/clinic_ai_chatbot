@@ -90,3 +90,18 @@ test("changes in clinic config update future secondary reminders without redeplo
  assert.equal(a,"Primary pelvic English 2h");
  assert.equal(b,"Updated primary offer-free copy");
 });
+
+
+test("20h fallback uses primary treatment-specific customer language, never a Chinese default",()=>{
+ const en=localizedFollowUpText({slot:20,originalText:"Secondary Chinese fallback",
+  customerTexts:["Can I book an assessment for 9D?"],treatmentInterest:"9D 逆龄抗衰",clinicConfig:{
+   ...liveClinic,automatedFollowUp:{...liveClinic.automatedFollowUp,
+    additionalSteps:[liveClinic.automatedFollowUp.additionalSteps[0],{
+     message:"Primary 20h Chinese",translations:{en:"Primary 20h English",zh:"Primary 20h Chinese",ms:"Primary 20h Malay"},
+     serviceOverrides:[{serviceName:"9D 逆龄抗衰",translations:{en:"Primary 9D assessment English"}}],
+    }],
+   },
+  }});
+ assert.equal(en,"Primary 9D assessment English");
+ assert.equal(localizedFollowUpText({slot:20,originalText:"Secondary Chinese fallback",customerTexts:["ok"],clinicConfig:liveClinic}),null);
+});
