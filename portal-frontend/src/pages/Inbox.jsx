@@ -2009,6 +2009,11 @@ function ConversationList({
   onSelectArchived,
   onVisibleConversationsChange,
   onExplicitFilterChange,
+  onFiltersChange,
+  paging,
+  onLoadMore,
+  pageLoading,
+  olderPageLoading,
   mobileThreadOpen,
   currentUsername,
   canViewAllLeads,
@@ -2024,6 +2029,7 @@ function ConversationList({
     replyWindow: "all",
     query: "",
   });
+  const filtersRef = useRef(filters);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [revealedArchiveId, setRevealedArchiveId] = useState(null);
   const [visibleRowCount, setVisibleRowCount] = useState(60);
@@ -2067,7 +2073,7 @@ function ConversationList({
   }, [directoryMatches, conversationList, filters.channel, filters.sender]);
   // Only show business-number switching once the server has verified and
   // linked more than one sender. Legacy single-number clients stay simple.
-  const senderOptions = useMemo(() => {
+  const localSenderOptions = useMemo(() => {
     const found = new Map();
     for (const item of conversationList) {
       if (item.channel === "whatsapp" && item.whatsapp_sender_key) {
@@ -2077,13 +2083,16 @@ function ConversationList({
     }
     return [...found.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [conversationList]);
+  const senderOptions = paging?.senderOptions || localSenderOptions;
   const showSenderFilter = senderOptions.length > 1;
-  const assignmentOptions = useMemo(
+  const localAssignmentOptions = useMemo(
     () => buildLeadAssignmentFilterOptions(conversationList, currentUsername, {
       includeUnassigned: showUnassignedAssignment,
     }),
     [conversationList, currentUsername, showUnassignedAssignment]
   );
+  const assignmentOptions = (paging?.assignmentOptions || localAssignmentOptions)
+    .filter(([value])=>showUnassignedAssignment || value!=="unassigned");
   useEffect(() => {
     if (
       (!canViewAllLeads && filters.assignment !== "all") ||
@@ -2123,7 +2132,11 @@ function ConversationList({
     };
   }, [conversationList, filters, replyWindowNow, canViewAllLeads, currentUsername]);
 
-  const { filtered: filteredConversations, statusCounts, replyWindowCounts } = contextualFilterMatches;
+  const { filtered: filteredConversations, statusCounts: localStatusCounts,
+    replyWindowCounts: localReplyWindowCounts } = contextualFilterMatches;
+  // Server counts include older pages. Legacy mocked arrays use local counts.
+  const statusCounts = paging?.statusCounts || localStatusCounts;
+  const replyWindowCounts = paging?.replyWindowCounts || localReplyWindowCounts;
   // Bound DOM size without changing search, filters or accurate badge totals.
   const renderedConversations = useMemo(
     () => filteredConversations.slice(0, visibleRowCount),
@@ -2194,27 +2207,26 @@ function ConversationList({
     return active;
   }, [assignmentOptions, canViewAllLeads, senderOptions, filters.assignment, filters.channel, filters.sender, filters.control, filters.replyWindow, filters.status]);
 
+  function applyFilters(next) {
+    onExplicitFilterChange();
+    filtersRef.current=next;
+    setFilters(next);
+    onFiltersChange?.(next);
+  }
   function updateFilter(key, value) {
-    onExplicitFilterChange();
-    setFilters((current) => ({ ...current, [key]: value }));
+    applyFilters({ ...filtersRef.current, [key]: value });
   }
-
   function clearAppliedFilters() {
-    onExplicitFilterChange();
-    setFilters((current) => ({
-      ...current,
-      status: "all",
-        channel: "all",
-      sender: "all",
-      control: "all",
-      assignment: "all",
-      replyWindow: "all",
-    }));
+    applyFilters({
+      ...filtersRef.current,status:"all",channel:"all",sender:"all",
+      control:"all",assignment:"all",replyWindow:"all",
+    });
   }
-
   function clearFilters() {
-    onExplicitFilterChange();
-    setFilters({ status: "all", channel: "all", sender: "all", control: "all", assignment: "all", replyWindow: "all", query: "" });
+    applyFilters({
+      status:"all",channel:"all",sender:"all",control:"all",
+      assignment:"all",replyWindow:"all",query:"",
+    });
   }
 
   return (
@@ -2229,7 +2241,7 @@ function ConversationList({
             {!conversations
               ? "Loading…"
               : hasActiveFilters
-              ? `${filteredConversations.length} / ${conversationList.length}`
+              ? `${paging?.total ?? filteredConversations.length} / ${paging?.allCount ?? conversationList.length}`
               : statusCounts.all}
           </p>
         </div>
@@ -2396,7 +2408,16 @@ function ConversationList({
         </nav>
       </header>
 
-      <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
+      <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5"
+        onScroll={(event)=>{
+          const element=event.currentTarget;
+          if (paging?.hasMore && !olderPageLoading && !pageLoading &&
+              visibleRowCount>=filteredConversations.length &&
+              element.scrollHeight-element.scrollTop-element.clientHeight<220) {
+            setVisibleRowCount(current=>current+100);
+            void onLoadMore?.();
+          }
+        }}>
         {!conversations && <ConversationListSkeleton />}
 
         {conversations && conversations.length === 0 &&
@@ -2527,13 +2548,24 @@ function ConversationList({
             </SwipeArchiveRow>
           );
         })}
-        {filteredConversations.length > visibleRowCount && (
+        {(filteredConversations.length > visibleRowCount || paging?.hasMore) && (
           <button
             type="button"
-            onClick={() => setVisibleRowCount((current) => current + 60)}
-            className="my-3 w-full rounded-xl border border-[var(--color-border)] px-3 py-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+            disabled={olderPageLoading || pageLoading}
+            onClick={()=>{
+              if (filteredConversations.length > visibleRowCount) {
+                setVisibleRowCount(current=>current+60);
+              } else {
+                setVisibleRowCount(current=>current+100);
+                void onLoadMore?.();
+              }
+            }}
+            className="my-3 w-full rounded-xl border border-[var(--color-border)] px-3 py-3 text-sm font-semibold text-[var(--color-primary)] hover:bg-[var(--color-primary-light)] disabled:opacity-60"
           >
-            Show more conversations ({filteredConversations.length - visibleRowCount} remaining)
+            {olderPageLoading ? "Loading older conversations…" :
+              filteredConversations.length > visibleRowCount
+                ? `Show more conversations (${Math.max(0,(paging?.total ?? filteredConversations.length)-visibleRowCount)} remaining)`
+                : `Load older conversations (${Math.max(0,(paging?.total ?? 0)-filteredConversations.length)} remaining)`}
           </button>
         )}
         {filters.query.trim().length >= 2 && (directorySearching || externalMatches.length > 0) && (
