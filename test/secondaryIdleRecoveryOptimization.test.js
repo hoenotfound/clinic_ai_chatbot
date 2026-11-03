@@ -239,5 +239,5 @@ test("staff echo and media queue wake only after durable commit, without provide
  assert.match(mutationRepo,/if\(!applied\)wake\(\)/);
  assert.match(mediaSource,/quarantineStaleClaims/);
  assert.match(mediaSource,/STILL_VALID_SQL/);
- assert.match(mediaSource,/isSecondaryAdsOnlyEligible/);
+ assert.match(mediaSource,/isSecondaryAutomationEligible/);
 });

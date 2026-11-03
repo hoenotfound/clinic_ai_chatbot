@@ -7,7 +7,8 @@ const messagesRepo=require("../db/messagesRepo");
 const policy=require("./whatsappSecondaryPolicyService");
 const tools=require("./whatsappTemplateService");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
-const {adsOnlyActivation,adsOnlyEligibleSql,reviewedContactFollowupGuardSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {secondaryAutomationActivation,secondaryAutomationEligibleSql,adsOnlyEligibleSql,
+  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const {secondaryAdsOnlyFullAiMode}=require("./whatsappSenderActivationGate");
 const {detectConversationLanguage}=require("../utils/chatLanguage");
@@ -28,7 +29,7 @@ function extendedEnabled(env=process.env){
  return enabled(env) && env.WHATSAPP_SECONDARY_EXTENDED_DAY4_DAY6_ENABLED==="true";
 }
 function enabled(env=process.env){
- return Boolean(adsOnlyActivation(env)) &&
+ return Boolean(secondaryAutomationActivation(env)) &&
    env.PR395_STAGING_MODE!=="true" &&
    env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
    ((env.WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED==="true" &&
@@ -69,8 +70,12 @@ const FIRST_REPLY_SQL=`
      AND reply.whatsapp_message_id IS NOT NULL
      AND reply.sent_by_username IS NULL
      AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
-     AND reply.created_at>=c.created_at
-     AND reply.created_at<c.created_at+INTERVAL '24 hours'
+     AND reply.created_at>=CASE WHEN $7::text='all_contacts'
+        AND NOT (${adsOnlyEligibleSql("c","$8")})
+      THEN inbound.created_at ELSE c.created_at END
+     AND reply.created_at<(CASE WHEN $7::text='all_contacts'
+        AND NOT (${adsOnlyEligibleSql("c","$8")})
+      THEN inbound.created_at ELSE c.created_at END)+INTERVAL '24 hours'
    ORDER BY reply.created_at,reply.id LIMIT 1
  ) first_reply ON TRUE
 `;
@@ -95,7 +100,7 @@ const CANDIDATES_SQL=`
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL(
-   SELECT m.id,m.created_at, ARRAY(
+   SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role, ARRAY(
      SELECT LEFT(recent.content,500) FROM messages recent
      JOIN whatsapp_sender_message_context recent_ctx
        ON recent_ctx.message_id=recent.id AND recent_ctx.conversation_id=sc.id
@@ -121,7 +126,7 @@ const CANDIDATES_SQL=`
  ) lead ON TRUE
  WHERE rule.enabled=TRUE AND rule.operator_billing_approved=TRUE
    AND rule.slot_hours IN(48,66)
-   AND ${adsOnlyEligibleSql("c","$6")}
+   AND ${secondaryAutomationEligibleSql("c","$6","inbound","$7","$8")}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
@@ -306,14 +311,15 @@ async function runOnce({
  contacts=contactsRepo,store=messagesRepo,templatePolicy=policy,
  send=sendSecondaryStaffText,fetchImpl=global.fetch,
 }={}){
- const cutoff=adsOnlyActivation(env);
+ const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
  const maxAttempts=Math.max(1,Math.min(20,Number(limit)||10));
  // A customer can have several configured languages but is only eligible
  // for ONE. Allow up to three candidate rows per slot, not extra attempts.
  const params=[env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,env.WHATSAPP_SECONDARY_WABA_ID,
-   now,maxAttempts*3,cutoff];
+   now,maxAttempts*3,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   originalAdsOnlyCutoff(env)];
  const candidates=(await database.query(CANDIDATES_SQL,params)).rows||[];
  if(extendedEnabled(env)){
    const extra=(await database.query(EXTENDED_CANDIDATES_SQL,params)).rows||[];
@@ -341,7 +347,8 @@ async function runOnce({
    if(EXTENDED_SLOTS.has(slot) && !extendedEnabled(env))return false;
    const result=await database.query(EXTENDED_SLOTS.has(slot)?
      EXTENDED_RECHECK_SQL:RECHECK_SQL,[
-    params[0],params[1],params[2],new Date(),1000,cutoff]);
+    params[0],params[1],params[2],new Date(),1000,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+      originalAdsOnlyCutoff(env)]);
    return result.rows?.some(x=>
     Number(x.contact_id)===Number(candidate.contact_id) &&
     Number(x.inbound_id)===Number(candidate.inbound_id) &&
@@ -390,7 +397,7 @@ async function runOnce({
     [id,saved.id]);
    const result=await send({
      contact,messageId:saved.id,text:"[approved-marketing-template]",
-     origin:"marketing_followup",
+     origin:"marketing_followup",anchorMessageId:candidate.inbound_id,
      templateRequest:{
       name:template.name,languageCode:template.language,
       treatmentInterest:candidate.treatment_interest,
@@ -418,12 +425,14 @@ async function runOnce({
  return{disabled:false,attempted,accepted};
 }
 async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
- const cutoff=adsOnlyActivation(env);
+ const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
  const result=await database.query(POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
+   env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   originalAdsOnlyCutoff(env),
  ]);
  return result.rows?.[0]||null;
 }

@@ -7,13 +7,16 @@
 // Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
 
-function adsOnlyActivation(env = process.env) {
-  if (env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "ads_only") return null;
+function originalAdsOnlyCutoff(env = process.env) {
   const raw = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw)) return null;
   const parsed = new Date(raw);
   return Number.isFinite(parsed.getTime()) && parsed.getTime() > 0
     ? parsed.toISOString() : null;
+}
+function adsOnlyActivation(env = process.env) {
+  return env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "ads_only"
+    ? originalAdsOnlyCutoff(env) : null;
 }
 
 // contactSql must be a trusted server-authored SQL alias. cutoffSql is a bound
@@ -289,7 +292,104 @@ async function eligibleSecondaryAiReplyContactIds(ids, {
   return result;
 }
 
+
+/**
+ * A distinct cutover for secondary automatic media and follow-ups.
+ * It never backfills a previously received message and is intentionally
+ * later than, or equal to, the conversational AI reply cutover.
+ */
+function secondaryAutomationActivation(env = process.env) {
+  if (env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "ads_only")
+    return adsOnlyActivation(env);
+  if (env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "all_contacts")
+    return null;
+  const replyCutoff = secondaryAllContactReplyActivation(env);
+  if (!originalAdsOnlyCutoff(env)) return null;
+  const raw = String(env.WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT || "");
+  if (!replyCutoff ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw))
+    return null;
+  const cutoff = new Date(raw);
+  if (!Number.isFinite(cutoff.getTime()) ||
+      cutoff.getTime() < new Date(replyCutoff).getTime()) return null;
+  return cutoff.toISOString();
+}
+
+// The *anchor inbound* is mandatory for non-ad automation. No imported,
+// echo-only, unbound, or pre-cutover message can create a fresh marketing
+// campaign, result-media job or reminder. Legacy ads-only rules remain intact.
+// audienceSql is a bound SQL parameter, never an untrusted SQL string.
+function secondaryAutomationEligibleSql(
+  contactSql = "c", cutoffSql = "$6", anchorSql = "inbound",
+  audienceSql = "$7", legacyCutoffSql = "$8"
+) {
+  return `(
+    (${audienceSql}::text='ads_only'
+      AND ${adsOnlyEligibleSql(contactSql,cutoffSql)})
+    OR
+    (${audienceSql}::text='all_contacts'
+      AND (${adsOnlyEligibleSql(contactSql,legacyCutoffSql)}
+      OR (
+      ${contactSql}.channel='whatsapp'
+      AND ${anchorSql}.role='user'
+      AND ${anchorSql}.whatsapp_message_id IS NOT NULL
+      AND ${anchorSql}.source_created_at IS NOT NULL
+      AND ${anchorSql}.source_created_at >= ${cutoffSql}::timestamptz
+      AND ${anchorSql}.created_at >= ${cutoffSql}::timestamptz
+      AND EXISTS (
+        SELECT 1 FROM whatsapp_sender_accounts verified_sa
+        JOIN whatsapp_sender_conversations verified_sc
+          ON verified_sc.sender_id=verified_sa.id
+         AND verified_sc.contact_id=${contactSql}.id
+         AND verified_sc.customer_wa_id=${contactSql}.whatsapp_number
+         AND verified_sc.state='bound'
+        JOIN whatsapp_sender_message_context verified_context
+          ON verified_context.conversation_id=verified_sc.id
+         AND verified_context.message_id=${anchorSql}.id
+        WHERE verified_sa.id=${contactSql}.whatsapp_sender_id
+          AND verified_sa.sender_key='neutro_secondary'
+          AND verified_sa.state='active'
+      )
+      AND NOT EXISTS(
+        SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_sync
+        WHERE old_sync.message_id=${anchorSql}.id
+      )
+      ))
+    )
+  )`;
+}
+
+async function isSecondaryAutomationEligible(contactId, {
+  database = pool, env = process.env, inboundMessageId,
+} = {}) {
+  const cutoff = secondaryAutomationActivation(env);
+  const cid = Number(contactId);
+  const mid = Number(inboundMessageId);
+  if (!cutoff || !Number.isSafeInteger(cid) || cid <= 0 ||
+      !Number.isSafeInteger(mid) || mid <= 0 ||
+      env.WHATSAPP_SECONDARY_SENDER_KEY !== "neutro_secondary" ||
+      env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED !== "true" ||
+      env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return false;
+  try {
+    const out = await database.query(
+      `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5")} AS eligible
+         FROM contacts c
+         JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
+        WHERE c.id=$1 AND c.mode='ai' AND c.needs_attention IS NOT TRUE
+          AND c.whatsapp_opt_out_at IS NULL`,
+      [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+        originalAdsOnlyCutoff(env)]
+    );
+    return out.rows?.length === 1 && out.rows[0].eligible === true;
+  } catch (error) {
+    console.error("[secondary automation] Eligibility failed closed:",error?.message);
+    return false;
+  }
+}
+
 module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
   eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
   secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
-  eligibleSecondaryAiReplyContactIds };
+  eligibleSecondaryAiReplyContactIds, secondaryAutomationActivation,
+  secondaryAutomationEligibleSql, isSecondaryAutomationEligible,
+  originalAdsOnlyCutoff };

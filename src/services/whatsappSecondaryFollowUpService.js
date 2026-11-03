@@ -13,7 +13,8 @@ const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./w
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
-const {adsOnlyActivation,adsOnlyEligibleSql,reviewedContactFollowupGuardSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
+  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
 const { pendingAcceptedAppointmentAllowedSql }=require("../utils/pendingAcceptedAppointmentFollowUp");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
@@ -103,7 +104,7 @@ const CANDIDATES_SQL=`
  JOIN contacts c ON c.id=sc.contact_id AND c.whatsapp_sender_id=sa.id
    AND c.channel='whatsapp' AND c.whatsapp_number=sc.customer_wa_id
  JOIN LATERAL (
-   SELECT m.id,m.created_at FROM messages m
+   SELECT m.id,m.created_at,m.source_created_at,m.whatsapp_message_id,m.role FROM messages m
    JOIN whatsapp_sender_message_context mc ON mc.message_id=m.id
      AND mc.conversation_id=sc.id
    WHERE m.contact_id=c.id AND m.role='user'
@@ -126,7 +127,7 @@ const CANDIDATES_SQL=`
  ) lead ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
-   AND ${adsOnlyEligibleSql('c','$6')}
+   AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
@@ -187,7 +188,7 @@ const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
 });
 
 function enabled(env) {
- return Boolean(adsOnlyActivation(env)) &&
+ return Boolean(secondaryAutomationActivation(env)) &&
    env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED==="true" &&
    env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
@@ -223,7 +224,7 @@ const RECHECK_SQL=`
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND EXTRACT(EPOCH FROM rule.updated_at)::text=$7::text
-   AND ${adsOnlyEligibleSql('c','$8')}
+   AND ${secondaryAutomationEligibleSql('c','$8','inbound','$9','$10')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
@@ -280,13 +281,15 @@ async function runOnce({
  videoApproved=isCurrentApprovedFollowUpVideo,
  videoSelection=selectApprovedTreatmentVideo,
 }={}) {
-  const cutoff=adsOnlyActivation(env);
+  const cutoff=secondaryAutomationActivation(env);
   if (!enabled(env)||!cutoff)return{disabled:true,attempted:0,accepted:0};
   const allowedLimit=Math.max(1,Math.min(20,Number(limit)||10));
   const items=(await database.query(CANDIDATES_SQL,[
     env.WHATSAPP_SECONDARY_SENDER_KEY,
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
+    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+    originalAdsOnlyCutoff(env),
   ])).rows||[];
   let attempted=0,accepted=0;
   for(const candidate of items) {
@@ -332,6 +335,8 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID,
         candidate.rule_version,cutoff,
+        env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+        originalAdsOnlyCutoff(env),
       ]);
       return result.rows?.[0]?.allowed===true;
     };
@@ -409,7 +414,7 @@ async function runOnce({
       );
       const result=await sendText({
         contact,messageId,text:outboundText,
-        origin:"followup",preSendCheck,
+        origin:"followup",preSendCheck,anchorMessageId:candidate.inbound_id,
         ...(bytes?{dispatchTransport:async transport=>{
           if(!liveVideoApproval() || !await preSendCheck())
             return {success:false,unknown:true,ambiguous:true,retryable:false};
@@ -447,12 +452,14 @@ async function runOnce({
 }
 
 async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}={}){
- const cutoff=adsOnlyActivation(env);
+ const cutoff=secondaryAutomationActivation(env);
  if(!enabled(env)||!cutoff)return null;
  const result=await database.query(POTENTIAL_DUE_SQL,[
    env.WHATSAPP_SECONDARY_SENDER_KEY,
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
+   env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   originalAdsOnlyCutoff(env),
  ]);
  return result.rows?.[0]||null;
 }
