@@ -14,8 +14,12 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
       LIMIT 1
     )
       AND (COALESCE(booking_lead.appointment_status,'none') = 'reschedule'
-        OR (booking_acceptance.metadata->>'outcome' IN ('staff_time_accepted','booking_ready','staff_visit_acknowledged')
-          AND COALESCE(booking_lead.appointment_status,'none') <> 'cancelled'))
+        OR (booking_acceptance.metadata->>'outcome' IN ('staff_time_accepted','booking_ready','staff_visit_acknowledged','booking_intent_pending')
+          AND COALESCE(booking_lead.appointment_status,'none') <> 'cancelled'
+          AND NOT EXISTS (SELECT 1 FROM lead_activities booking_resolution
+            WHERE booking_resolution.lead_id=booking_lead.id
+              AND booking_resolution.metadata->>'outcome'='booking_hold_resolved'
+              AND booking_resolution.id > booking_acceptance.id)))
   )`;
 }
 module.exports = { pendingAcceptedAppointmentAllowedSql };
