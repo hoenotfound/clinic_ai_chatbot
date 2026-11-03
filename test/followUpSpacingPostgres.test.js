@@ -90,7 +90,18 @@ test(
           UNIQUE (automated_follow_up_for_message_id, automated_follow_up_step)
         );
 
-        CREATE TABLE outbound_message_evidence (
+        -- The production follow-up selector reads the current lead's
+      -- authenticated creative; no ad data is required for these staff/spacing
+      -- fixtures, but the relation must exist in the isolated test schema.
+      CREATE TABLE lead_attributions (
+        id BIGSERIAL PRIMARY KEY,
+        lead_id INTEGER,
+        source TEXT,
+        headline TEXT,
+        body TEXT,
+        attributed_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE outbound_message_evidence (
           message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
           contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
           channel TEXT NOT NULL,
