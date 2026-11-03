@@ -18,7 +18,7 @@ const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
 // Malay from Latin characters or silently send English to an unknown speaker.
 function customerTemplateLocale(messages){
  const detected=detectConversationLanguage(Array.isArray(messages)?messages:[],null);
- return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms_MY":null;
+ return detected==="zh"?"zh_CN":detected==="en"?"en_US":detected==="ms"?"ms":null;
 }
 
 const SLOTS=new Set([48,66,96,144]);
