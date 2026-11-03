@@ -117,11 +117,12 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   );
   const staleCurrentBranch = Boolean(form.branchName) && !configuredBranches.includes(form.branchName);
   const bookingReviewOpen = useMemo(() => {
-    if (!activities || !["none", null].includes(lead.appointment_status)) return false;
+    if (!activities || ui.conversionStageKeys?.set !== "appointment_set" ||
+        !["none", null].includes(lead.appointment_status)) return false;
     const outcomes = new Set(["staff_time_accepted","booking_ready","staff_visit_acknowledged","booking_intent_pending","booking_hold_resolved"]);
     const latest = activities.find((activity) => outcomes.has(activity.metadata?.outcome));
     return !!latest && latest.metadata?.outcome !== "booking_hold_resolved";
-  }, [activities,lead.appointment_status]);
+  }, [activities,lead.appointment_status,ui.conversionStageKeys?.set]);
 
 
   function markDirty(...keys) {
