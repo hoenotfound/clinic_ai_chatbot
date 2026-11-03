@@ -115,7 +115,8 @@ function sameSpecificOfferedSlot(staffText, relayText) {
     return {
       date: date ? [Number(date[1]), Number(date[2]), date[3] || ""].join("/") : "",
       weekday: weekday ? weekday[0].toLowerCase() : "",
-      hour, minute, daypart,
+      hour: daypart ? (hour % 12) + (daypart === 'pm' ? 12 : 0) : hour,
+      minute, daypart,
     };
   }
   const offered = slot(staffText), relayed = slot(relayText);
@@ -124,7 +125,7 @@ function sameSpecificOfferedSlot(staffText, relayText) {
     if (!offered.date || !relayed.date || offered.date !== relayed.date) return false;
   } else if (!offered.weekday || !relayed.weekday ||
       offered.weekday !== relayed.weekday) return false;
-  return offered.hour === relayed.hour && offered.minute === relayed.minute &&
+  return offered.hour % 12 === relayed.hour % 12 && offered.minute === relayed.minute &&
     (!offered.daypart || !relayed.daypart || offered.daypart === relayed.daypart);
 }
 
