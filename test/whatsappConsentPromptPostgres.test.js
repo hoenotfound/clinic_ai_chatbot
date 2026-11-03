@@ -54,6 +54,18 @@ test("Postgres final consent: eligible FU3 -> atomic prompt -> verified button o
         consent_service TEXT
       );
     `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await admin.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
     await admin.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/067_whatsapp_final_consent_prompt.sql"),"utf8"));
     await admin.query(`
