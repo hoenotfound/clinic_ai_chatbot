@@ -25,6 +25,33 @@ const ALLOWED_MIME={
   image:new Set(["image/jpeg","image/png"]),
   audio:new Set(["audio/ogg","audio/mpeg","audio/mp4","audio/aac"]),
 };
+
+ // Use the first verified AI reply to the latest customer message as the
+ // anchor for FU1/FU2, just as the primary WhatsApp does. A later customer
+ // message starts a new sequence; staff replies never authorize automation.
+const FIRST_REPLY_SQL=`
+ JOIN LATERAL (
+   SELECT reply.created_at AS at FROM messages reply
+   JOIN whatsapp_sender_message_context reply_context
+     ON reply_context.message_id=reply.id
+    AND reply_context.conversation_id=sc.id
+   WHERE reply.contact_id=c.id AND reply.role='assistant'
+     AND reply.whatsapp_message_id IS NOT NULL
+     AND reply.sent_by_username IS NULL
+     AND reply.is_automated_follow_up IS DISTINCT FROM TRUE
+     AND reply.created_at>=inbound.created_at
+     AND reply.created_at<inbound.created_at + INTERVAL '24 hours'
+   ORDER BY reply.created_at ASC,reply.id ASC LIMIT 1
+ ) first_reply ON TRUE
+`;
+// FU3 remains four hours before the latest inbound 24h window expires.
+const FOLLOWUP_DUE_SQL=`(CASE WHEN rule.slot_hours=20
+   THEN inbound.created_at ELSE first_reply.at END)
+   + rule.slot_hours * INTERVAL '1 hour'`;
+const NEWER_DUE_SQL=`(CASE WHEN newer_rule.slot_hours=20
+   THEN inbound.created_at ELSE first_reply.at END)
+   + newer_rule.slot_hours * INTERVAL '1 hour'`;
+
 const CANDIDATES_SQL=`
  SELECT c.id AS contact_id,c.channel,c.whatsapp_number,c.whatsapp_sender_id,
    sa.sender_key AS whatsapp_sender_key,
@@ -35,6 +62,7 @@ const CANDIDATES_SQL=`
    rule.sender_id,rule.slot_hours,rule.message_text,rule.media_key,
    rule.media_type,rule.media_mime_type,rule.media_filename,
    rule.updated_at AS rule_updated_at,
+   EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
    ARRAY(SELECT language_turn.content FROM messages language_turn
      JOIN whatsapp_sender_message_context language_context
@@ -65,6 +93,7 @@ const CANDIDATES_SQL=`
      )
    ORDER BY m.created_at DESC,m.id DESC LIMIT 1
  ) inbound ON true
+ ${FIRST_REPLY_SQL}
  LEFT JOIN LATERAL (
    SELECT lead.marketing_consent,lead.is_closed,lead.appointment_status,
      lead.treatment_interest,
@@ -87,10 +116,10 @@ const CANDIDATES_SQL=`
    AND COALESCE(lead.stage_key,'') NOT IN('appointment_set','visited')
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
        BETWEEN 7 AND 23
-   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour' <= $4::timestamptz
+   AND ${FOLLOWUP_DUE_SQL} <= $4::timestamptz
    -- Catch up after quiet hours or a worker interruption, but never send
    -- a stale follow-up more than eight hours after its original due time.
-   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour'
+   AND ${FOLLOWUP_DUE_SQL}
        > $4::timestamptz - INTERVAL '8 hours'
    -- Never send an old 2h slot if a newer configured 6h/20h slot is due.
    AND NOT EXISTS (
@@ -98,7 +127,7 @@ const CANDIDATES_SQL=`
      WHERE newer_rule.sender_id=rule.sender_id AND newer_rule.enabled=TRUE
        AND newer_rule.slot_hours IN(2,6,20)
        AND newer_rule.slot_hours>rule.slot_hours
-       AND inbound.created_at + newer_rule.slot_hours * INTERVAL '1 hour'
+       AND ${NEWER_DUE_SQL}
            <= $4::timestamptz
    )
    AND inbound.created_at > $4::timestamptz - INTERVAL '24 hours'
@@ -135,7 +164,7 @@ const CANDIDATES_SQL=`
 
 const POTENTIAL_DUE_SQL=deriveSecondaryPotentialDueSql(CANDIDATES_SQL,{
   fromTable:"whatsapp_sender_followup_rules",
-  dueExpression:"inbound.created_at + rule.slot_hours * INTERVAL '1 hour'",
+  dueExpression:FOLLOWUP_DUE_SQL,
   quietWindowEndMarker:"   -- Never send an old 2h slot",
 });
 
@@ -168,12 +197,13 @@ const RECHECK_SQL=`
    )
  JOIN whatsapp_sender_message_context mc ON mc.message_id=inbound.id
    AND mc.conversation_id=sc.id
+ ${FIRST_REPLY_SQL}
  JOIN whatsapp_sender_followup_attempts attempt ON
    attempt.sender_id=sa.id AND attempt.contact_id=c.id
    AND attempt.anchor_message_id=inbound.id
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
-   AND rule.updated_at=$7::timestamptz
+   AND EXTRACT(EPOCH FROM rule.updated_at)::text=$7::text
    AND ${adsOnlyEligibleSql('c','$8')}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
@@ -205,15 +235,15 @@ const RECHECK_SQL=`
        AND human.created_at>=inbound.created_at
    )
    AND inbound.created_at + INTERVAL '24 hours' > NOW() + INTERVAL '2 minutes'
-   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour' <= NOW()
-   AND inbound.created_at + rule.slot_hours * INTERVAL '1 hour'
+   AND ${FOLLOWUP_DUE_SQL} <= NOW()
+   AND ${FOLLOWUP_DUE_SQL}
        > NOW() - INTERVAL '8 hours'
    AND NOT EXISTS (
      SELECT 1 FROM whatsapp_sender_followup_rules newer_rule
      WHERE newer_rule.sender_id=rule.sender_id AND newer_rule.enabled=TRUE
        AND newer_rule.slot_hours IN(2,6,20)
        AND newer_rule.slot_hours>rule.slot_hours
-       AND inbound.created_at + newer_rule.slot_hours * INTERVAL '1 hour' <= NOW()
+       AND ${NEWER_DUE_SQL} <= NOW()
    )
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
@@ -245,7 +275,7 @@ async function runOnce({
       clinicConfig,customerTexts:candidate.customer_texts,
       treatmentInterest:candidate.treatment_interest,
     });
-    const localized=slot===20 ? candidate.message_text : localizedFollowUpText({
+    const localized=localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
       treatmentInterest:confirmedTreatment,
@@ -279,7 +309,7 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_SENDER_KEY,
         env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID,
-        candidate.rule_updated_at,cutoff,
+        candidate.rule_version,cutoff,
       ]);
       return result.rows?.[0]?.allowed===true;
     };
