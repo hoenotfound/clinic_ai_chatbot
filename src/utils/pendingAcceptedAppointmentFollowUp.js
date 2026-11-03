@@ -21,7 +21,8 @@ function pendingAcceptedAppointmentAllowedSql(contactAlias = "c") {
           AND NOT EXISTS (SELECT 1 FROM lead_activities booking_resolution
             WHERE booking_resolution.lead_id=booking_lead.id
               AND booking_resolution.metadata->>'outcome'='booking_hold_resolved'
-              AND booking_resolution.id > booking_acceptance.id)))
+              AND (to_jsonb(booking_resolution)->>'id')::bigint >
+                  (to_jsonb(booking_acceptance)->>'id')::bigint)))
   )`;
 }
 module.exports = { pendingAcceptedAppointmentAllowedSql };
