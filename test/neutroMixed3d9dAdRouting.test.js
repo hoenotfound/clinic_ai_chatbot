@@ -133,6 +133,7 @@ test("after explicit 3D or 9D selection, existing Before & After rules pick only
        role:"assistant",
        content:"你是想了解脸型轮廓还是皮肤松弛紧致呢？",
        sent_by_username:null,media_url:null,media_mime_type:null,
+       delivery_status:"delivered",whatsapp_message_id:"wamid.verified-clarification",
      }],
    });
    assert.equal(result?.service,service,customerText);
@@ -162,6 +163,25 @@ test("after explicit 3D or 9D selection, existing Before & After rules pick only
    ...base,customerText:"3D",needsAttention:true}),null);
  assert.equal(await resolveResultMediaForReply({
    ...base,customerText:"9D",wasMediaRecentlySent:async()=>true}),null);
+ // An undelivered, unconfirmed or staff-authored question is not proof.
+ assert.equal(await resolveResultMediaForReply({
+   ...base,customerText:"3D",priorResultContextRows:[{
+     role:"assistant",content:"Would you prefer 3D or 9D?",
+     sent_by_username:null,delivery_status:"failed",
+     whatsapp_message_id:"wamid.not-delivered",
+   }],
+ }),null,"failed clarification cannot authorize photos");
+ const chosenOverStaleModel=await resolveResultMediaForReply({
+   ...base,customerText:"3D",serviceQuery:true,serviceQuerySource:"meta_ad",
+   treatment:"9D 逆龄抗衰",metaAdCreativeService:null,
+   priorResultContextRows:[{
+     role:"assistant",content:"Would you prefer 3D or 9D?",
+     sent_by_username:null,delivery_status:"sent",
+     whatsapp_message_id:"wamid.accepted-clarification",
+   }],
+ });
+ assert.equal(chosenOverStaleModel?.service,"3D 小颜术",
+   "verified customer choice overrides a stale model-selected treatment");
 });
 test("verified single-service ad can provide context for a generic explicit enquiry",async()=>{
  const media=[{
