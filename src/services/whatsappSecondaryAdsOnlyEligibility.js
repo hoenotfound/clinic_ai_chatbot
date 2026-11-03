@@ -7,13 +7,16 @@
 // Neither setting grants permission to replay earlier customer messages.
 const { pool } = require("../db/db");
 
-function adsOnlyActivation(env = process.env) {
-  if (env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "ads_only") return null;
+function originalAdsOnlyCutoff(env = process.env) {
   const raw = String(env.WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT || "");
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw)) return null;
   const parsed = new Date(raw);
   return Number.isFinite(parsed.getTime()) && parsed.getTime() > 0
     ? parsed.toISOString() : null;
+}
+function adsOnlyActivation(env = process.env) {
+  return env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE === "ads_only"
+    ? originalAdsOnlyCutoff(env) : null;
 }
 
 // contactSql must be a trusted server-authored SQL alias. cutoffSql is a bound
@@ -301,6 +304,7 @@ function secondaryAutomationActivation(env = process.env) {
   if (env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE !== "all_contacts")
     return null;
   const replyCutoff = secondaryAllContactReplyActivation(env);
+  if (!originalAdsOnlyCutoff(env)) return null;
   const raw = String(env.WHATSAPP_SECONDARY_ALL_AUTOMATION_ACTIVATED_AT || "");
   if (!replyCutoff ||
       !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw))
@@ -317,14 +321,16 @@ function secondaryAutomationActivation(env = process.env) {
 // audienceSql is a bound SQL parameter, never an untrusted SQL string.
 function secondaryAutomationEligibleSql(
   contactSql = "c", cutoffSql = "$6", anchorSql = "inbound",
-  audienceSql = "$7"
+  audienceSql = "$7", legacyCutoffSql = "$8"
 ) {
   return `(
     (${audienceSql}::text='ads_only'
       AND ${adsOnlyEligibleSql(contactSql,cutoffSql)})
     OR
     (${audienceSql}::text='all_contacts'
-      AND ${contactSql}.channel='whatsapp'
+      AND (${adsOnlyEligibleSql(contactSql,legacyCutoffSql)}
+      OR (
+      ${contactSql}.channel='whatsapp'
       AND ${anchorSql}.role='user'
       AND ${anchorSql}.whatsapp_message_id IS NOT NULL
       AND ${anchorSql}.source_created_at IS NOT NULL
@@ -348,6 +354,7 @@ function secondaryAutomationEligibleSql(
         SELECT 1 FROM whatsapp_sender_coexistence_history_messages old_sync
         WHERE old_sync.message_id=${anchorSql}.id
       )
+      ))
     )
   )`;
 }
@@ -365,12 +372,13 @@ async function isSecondaryAutomationEligible(contactId, {
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED !== "true") return false;
   try {
     const out = await database.query(
-      `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4")} AS eligible
+      `SELECT ${secondaryAutomationEligibleSql("c","$3","inbound","$4","$5")} AS eligible
          FROM contacts c
          JOIN messages inbound ON inbound.contact_id=c.id AND inbound.id=$2
         WHERE c.id=$1 AND c.mode='ai' AND c.needs_attention IS NOT TRUE
           AND c.whatsapp_opt_out_at IS NULL`,
-      [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE]
+      [cid,mid,cutoff,env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+        originalAdsOnlyCutoff(env)]
     );
     return out.rows?.length === 1 && out.rows[0].eligible === true;
   } catch (error) {
@@ -383,4 +391,5 @@ module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyElig
   eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql,
   secondaryAllContactReplyActivation, isSecondaryAiReplyEligible,
   eligibleSecondaryAiReplyContactIds, secondaryAutomationActivation,
-  secondaryAutomationEligibleSql, isSecondaryAutomationEligible };
+  secondaryAutomationEligibleSql, isSecondaryAutomationEligible,
+  originalAdsOnlyCutoff };
