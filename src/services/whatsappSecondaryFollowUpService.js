@@ -13,7 +13,7 @@ const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./w
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
-const {adsOnlyActivation,adsOnlyEligibleSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+const {adsOnlyActivation,adsOnlyEligibleSql,reviewedContactFollowupGuardSql}=require("./whatsappSecondaryAdsOnlyEligibility");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
@@ -126,6 +126,7 @@ const CANDIDATES_SQL=`
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
    AND ${adsOnlyEligibleSql('c','$6')}
+   AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
    AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
@@ -221,6 +222,7 @@ const RECHECK_SQL=`
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND EXTRACT(EPOCH FROM rule.updated_at)::text=$7::text
    AND ${adsOnlyEligibleSql('c','$8')}
+   AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
