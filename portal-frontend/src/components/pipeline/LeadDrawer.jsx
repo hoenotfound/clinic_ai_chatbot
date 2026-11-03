@@ -34,6 +34,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   const [form, setForm] = useState(() => formFromLead(lead));
   const [dirtyFields, setDirtyFields] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
+  const [resolvingBooking, setResolvingBooking] = useState(false);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -115,6 +116,14 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
     [activities, lead, ui.qualificationView]
   );
   const staleCurrentBranch = Boolean(form.branchName) && !configuredBranches.includes(form.branchName);
+  const bookingReviewOpen = useMemo(() => {
+    if (!activities || ui.conversionStageKeys?.set !== "appointment_set" ||
+        !["none", null].includes(lead.appointment_status)) return false;
+    const outcomes = new Set(["staff_time_accepted","booking_ready","staff_visit_acknowledged","booking_intent_pending","booking_hold_resolved"]);
+    const latest = activities.find((activity) => outcomes.has(activity.metadata?.outcome));
+    return !!latest && latest.metadata?.outcome !== "booking_hold_resolved";
+  }, [activities,lead.appointment_status,ui.conversionStageKeys?.set]);
+
 
   function markDirty(...keys) {
     if (!canManageLeads) return;
@@ -192,6 +201,21 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
       onToast(err.message || "Couldn't update this lead.", "error");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleResolveBookingReview() {
+    if (!canManageLeads || !bookingReviewOpen || resolvingBooking) return;
+    if (!window.confirm("Staff reviewed this conversation and no appointment was confirmed. Release the booking follow-up hold?")) return;
+    setResolvingBooking(true);
+    try {
+      await api.resolveLeadBookingReview(lead.id);
+      setActivities(await api.listLeadActivities(lead.id));
+      onToast("Booking review resolved. Normal consent and follow-up rules still apply.", "info");
+    } catch(err) {
+      onToast(err.message || "Couldn't resolve the booking review.", "error");
+    } finally {
+      setResolvingBooking(false);
     }
   }
 
@@ -384,6 +408,21 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
               </div>
             )}
           </form>
+
+          {canManageLeads && bookingReviewOpen && (
+            <section className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <p className="text-sm font-semibold">Pending booking review</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                Automatic sales follow-ups are held until staff confirms the appointment or reviews this request.
+                This does not change the customer's marketing consent.
+              </p>
+              <button type="button" disabled={resolvingBooking}
+                onClick={handleResolveBookingReview}
+                className="mt-3 rounded-xl border border-[var(--color-border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">
+                {resolvingBooking ? "Resolving…" : "Not booked · release hold"}
+              </button>
+            </section>
+          )}
 
           {user?.features?.assessmentVoucherTrackingEnabled === true && (
             <AssessmentVoucherPanel

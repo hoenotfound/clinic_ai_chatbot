@@ -3,6 +3,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const telegramAlertRepo = require("../db/telegramImmediateAlertRepo");
 const webPushNotifications = require("./webPushNotificationService");
+const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
 const AGREED_TIME_REASON =
   "Booking ready: customer accepted a staff-offered time; clinic should finalize the appointment.";
@@ -11,6 +12,13 @@ function isBriefAcceptance(value) {
   const text = String(value || "").trim().replace(/[.!！。～~😊🙏👍\s]+$/gu, "").trim();
   if (!text || text.length > 45) return false;
   return /^(?:ok(?:ay)?|yes|sure|can|confirmed?|alright|fine|好的?|可以(?:的)?|没问题|沒問題|行|嗯|好呀|可以呀|是的|boleh|baik|ya|setuju)$/iu.test(text);
+}
+
+function isDirectBookingIntent(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 220) return false;
+  if (/(?:how\s+to\s+book|how\s+much|price|cost|discount|if\s+i\s+book|cancel|not\s+booking|多少钱|价格|价钱|优惠|如何预约|怎样预约|不想预约|取消|berapa\s+harga)/iu.test(text)) return false;
+  return /(?:我想(?:要)?(?:预约|預約)|我要(?:预约|預約)|帮我(?:预约|預約)|幫我(?:预约|預約)|请帮我(?:预约|預約)|請幫我(?:預約|预约)|(?:i\s+(?:want|would\s+like|need)\s+to\s+book|please\s+book\s+me|book\s+me\s+(?:in|for))\b|(?:saya\s+nak|nak)\s+(?:book|temujanji|appointment))/iu.test(text);
 }
 
 function hasSpecificStaffTimeOffer(value) {
@@ -94,27 +102,35 @@ function sameSpecificOfferedSlot(staffText, relayText) {
     const weekday = String(text).match(/星期[一二三四五六日天1-7]|(?:周|週)[一二三四五六日天1-7]|\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)\b/iu);
     const numbered = String(text).match(/\b(\d{1,2})[:：.](\d{2})\s*(a\.?m\.?|p\.?m\.?)?/iu);
     const chinese = numbered ? null : String(text).match(/(\d{1,2})\s*[点點]\s*(半|\d{1,2}\s*分)?/u);
-    if (!numbered && !chinese) return null;
-    const hour = Number(numbered ? numbered[1] : chinese[1]);
+    const clockAmPm = numbered || chinese ? null : String(text).match(/\b(\d{1,2})\s*(a\.?m\.?|p\.?m\.?)\b/iu);
+    if (!numbered && !chinese && !clockAmPm) return null;
+    const hour = Number(numbered ? numbered[1] : chinese ? chinese[1] : clockAmPm[1]);
     const minute = numbered ? Number(numbered[2]) : chinese?.[2]
       ? chinese[2] === "半" ? 30 : Number(chinese[2].replace(/\s*分/u, "")) : 0;
     if (hour > 23 || minute > 59) return null;
-    const daypart = numbered && numbered[3] ? /p/i.test(numbered[3]) ? "pm" : "am"
+    const suffix = numbered?.[3] || clockAmPm?.[2] || "";
+    const daypart = suffix ? /p/i.test(suffix) ? "pm" : "am"
       : /下午|傍晚|晚上/u.test(text) ? "pm"
         : /早上|上午/u.test(text) ? "am" : "";
     return {
       date: date ? [Number(date[1]), Number(date[2]), date[3] || ""].join("/") : "",
       weekday: weekday ? weekday[0].toLowerCase() : "",
-      hour, minute, daypart,
+      hour: daypart ? (hour % 12) + (daypart === 'pm' ? 12 : 0) : hour,
+      minute, daypart,
     };
   }
   const offered = slot(staffText), relayed = slot(relayText);
   if (!offered || !relayed) return false;
   if (offered.date || relayed.date) {
-    if (!offered.date || !relayed.date || offered.date !== relayed.date) return false;
+    if (!offered.date || !relayed.date) return false;
+    const aParts = offered.date.split("/"), bParts = relayed.date.split("/");
+    if (aParts[0] !== bParts[0] || aParts[1] !== bParts[1] ||
+        (aParts[2] && bParts[2] && aParts[2] !== bParts[2])) return false;
   } else if (!offered.weekday || !relayed.weekday ||
       offered.weekday !== relayed.weekday) return false;
-  return offered.hour === relayed.hour && offered.minute === relayed.minute &&
+  if (offered.hour > 12 && relayed.daypart && offered.hour !== relayed.hour) return false;
+  if (relayed.hour > 12 && offered.daypart && offered.hour !== relayed.hour) return false;
+  return offered.hour % 12 === relayed.hour % 12 && offered.minute === relayed.minute &&
     (!offered.daypart || !relayed.daypart || offered.daypart === relayed.daypart);
 }
 
@@ -125,10 +141,20 @@ function createStaffAppointmentAcceptanceService({
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   wakeAlertQueue = telegramImmediateAlerts.wakeImmediateAlertQueue,
   sendWebPush = webPushNotifications.sendContactAlertBestEffort,
+  markPendingBooking = markBookingReadyForContact,
 } = {}) {
   return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
-    if (!isBriefAcceptance(customerText)) return null;
+    if (!isBriefAcceptance(customerText)) {
+      if (isDirectBookingIntent(customerText)) {
+        await markPendingBooking(contactId,inboundMessageId,{
+          reason:"Booking ready: customer explicitly requested an appointment; staff should confirm availability.",
+          activityDescription:"Customer explicitly requested booking. Staff must verify an available date and time.",
+          details:{appointmentPreference:String(customerText).trim().slice(0,200)},
+        });
+      }
+      return null;
+    }
     const client = await database.connect();
     let outcome = null;
     let alertQueued = false;
@@ -287,7 +313,7 @@ function createStaffAppointmentAcceptanceService({
 }
 const recordStaffAppointmentAcceptance = createStaffAppointmentAcceptanceService();
 module.exports = {
-  AGREED_TIME_REASON, isBriefAcceptance, hasSpecificStaffTimeOffer,
+  AGREED_TIME_REASON, isBriefAcceptance, isDirectBookingIntent, hasSpecificStaffTimeOffer,
   isExplicitRescheduleOffer, conflictsWithConfirmedSlot, sameSpecificOfferedSlot,
   createStaffAppointmentAcceptanceService,
   recordStaffAppointmentAcceptance,

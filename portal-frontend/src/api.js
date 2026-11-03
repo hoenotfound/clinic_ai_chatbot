@@ -564,6 +564,7 @@ export const api = {
   updateLead: (leadId, data) =>
     request(`/pipeline/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(data) }),
   listLeadActivities: (leadId) => request(`/pipeline/leads/${leadId}/activities`),
+  resolveLeadBookingReview: (leadId) => request(`/pipeline/leads/${leadId}/booking-review/resolve`, {method:"POST", body:JSON.stringify({confirmed:true})}),
   getAssessmentVoucher: (leadId) =>
     request(`/pipeline/leads/${leadId}/assessment-voucher`),
   updateAssessmentVoucher: (leadId, payload) =>
