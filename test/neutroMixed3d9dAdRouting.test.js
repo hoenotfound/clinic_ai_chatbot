@@ -50,6 +50,14 @@ test("Cherry: two-service creative + PM must not infer 3D from CRM or ad name",(
  const selected=messageForCandidate(step,candidate(policy),"zh",1);
  assert.equal(selected.targetedService,null);
  assert.equal(selected.targetedMediaService,null);
+ const withDefaultMedia=messageForCandidate({...step,
+   imageUrl:"https://example.test/3d-default.jpg",
+   videoKey:"3d-video",
+   videoFilename:"3d.mp4",
+ },candidate(policy),"zh",1);
+ assert.equal(withDefaultMedia.selectedImageUrl,"");
+ assert.equal(withDefaultMedia.selectedVideoKey,"");
+ assert.equal(withDefaultMedia.selectedVoiceNote,null);
  assert.match(selected.message,/3D/);
  assert.match(selected.message,/9D/);
  assert.doesNotMatch(selected.message,/3D 小颜术专属跟进|9D 逆龄专属跟进/);
@@ -132,6 +140,26 @@ test("after explicit 3D or 9D selection, existing Before & After rules pick only
  assert.equal(await resolveResultMediaForReply({
    ...base,customerText:"9D",wasMediaRecentlySent:async()=>true}),null);
 });
+test("verified single-service ad can provide context for a generic explicit enquiry",async()=>{
+ const media=[{
+   service:"3D 小颜术",enabled:true,triggerMode:"service_enquiry",
+   autoSendCount:1,items:[{imageUrl:"https://example.test/3d.jpg",caption:"3D example"}],
+ }];
+ const selected=await resolveResultMediaForReply({
+   customerText:"Can I know more on this",priorCustomerTexts:[],
+   metaAdCreativeService:"3D 小颜术",
+   serviceQuerySource:"meta_ad",serviceQuery:false,treatment:null,
+   flagged:false,bookingReady:false,needsAttention:false,
+   textSendSucceeded:true,keywordReason:null,priceQuery:false,packageQuery:false,
+   resultMedia:media,services,serviceAliases,contactId:49,
+   wasMediaRecentlySent:async()=>false,
+   hasUnconfirmedMediaDelivery:async()=>false,
+   getMostRecentlySentMediaUrl:async()=>null,
+ });
+ assert.equal(selected?.service,"3D 小颜术");
+ assert.deepEqual(selected?.items?.map(item=>item.imageUrl),["https://example.test/3d.jpg"]);
+});
+
 test("production paths use DB creative rather than model/CRM labels for both WhatsApps",()=>{
  const primary=fs.readFileSync(path.join(__dirname,"../src/db/followUpRepo.js"),"utf8");
  const secondary=fs.readFileSync(path.join(__dirname,"../src/services/whatsappSecondaryFollowUpService.js"),"utf8");
