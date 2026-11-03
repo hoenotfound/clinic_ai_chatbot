@@ -1626,7 +1626,7 @@ test("assessment-first clinics cannot enable an ineffective pricing reminder but
   await expectNoHorizontalPageOverflow(page);
 });
 
-test("Follow-up sender workspaces keep drafts and save secondary rules independently on phones", async ({ page }) => {
+test("Follow-up sender workspaces preserve primary drafts and save secondary sender switches on phones", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 740 });
   await mockPortalApi(page, { loggedIn: true });
   let reads = 0;
@@ -1641,7 +1641,11 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
         configured: true, senderDisplayName: "DA Second Number",
         workerEnabled: false, mediaEnabled: true,
-        availableClinicVideos: [{ key: "clinic-video-2h", label: "Clinic testimonial" }],
+        primaryFollowUpMessages: {
+          2: "Primary approved first reminder.",
+          6: "Primary approved second reminder.",
+          20: "Primary approved third reminder.",
+        },
         rules: [{ slot_hours: 2, enabled: true, message_text: "First reminder.", media_key: null },
           { slot_hours: 6, enabled: false, message_text: "Second reminder.", media_key: null },
           { slot_hours: 20, enabled: false, message_text: "Third reminder.", media_key: null }],
@@ -1654,7 +1658,7 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
       writes.push(body);
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
         saved: true, rule: { slot_hours: 2, enabled: body.enabled,
-          message_text: body.messageText, has_media: Boolean(body.mediaKey) },
+          message_text: "Primary approved first reminder.", has_media: false },
       }) });
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
@@ -1675,24 +1679,22 @@ test("Follow-up sender workspaces keep drafts and save secondary rules independe
   const twoHour = service.locator("details").first();
   await expect(twoHour.locator("summary")).toContainText("On");
   await twoHour.locator("summary").click();
-  await service.getByLabel("After 2 hours").fill("Updated reminder for secondary only.");
+  const inherited=service.getByLabel("After 2 hours");
+  await expect(inherited).toHaveValue("Primary approved first reminder.");
+  await expect(inherited).toHaveAttribute("readonly", "");
+  await expect(twoHour.getByText(/approved treatment video is chosen automatically/)).toBeVisible();
+  // Secondary owns only its sending switch, not the primary message wording.
+  await twoHour.getByLabel("Enabled").uncheck();
   await expect(twoHour.locator("summary")).toContainText("Unsaved");
-
-  await twoHour.getByLabel("Optional clinic follow-up video").selectOption("clinic-video-2h");
-  await twoHour.getByText(/I approve this clinic-owned video/).click();
-  await twoHour.getByRole("button", { name: "Save secondary rule" }).click();
+  await twoHour.getByRole("button", { name: "Save sender switch" }).click();
   await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0]).toMatchObject({
-    messageText: "Updated reminder for secondary only.",
-    enabled: true, mediaKey: "clinic-video-2h",
-    confirmClinicVideoReuse: true,
-  });
+  expect(writes[0]).toEqual({ enabled: false });
   await expect(twoHour.locator("summary")).not.toContainText("Unsaved");
 
   await sections.getByRole("tab", { name: "Templates" }).click();
   await expect(page.getByRole("heading", { name: "Extended marketing templates" })).toBeVisible();
   await sections.getByRole("tab", { name: "Messages" }).click();
-  await expect(service.getByLabel("After 2 hours")).toHaveValue("Updated reminder for secondary only.");
+  await expect(service.getByLabel("After 2 hours")).toHaveValue("Primary approved first reminder.");
   await page.getByRole("tab", { name: "Primary WhatsApp" }).click();
   await expect(page.getByRole("switch", { name: "Enable 24-hour follow-ups" })).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => reads).toBe(1);
