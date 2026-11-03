@@ -24,6 +24,6 @@ CREATE TABLE IF NOT EXISTS whatsapp_secondary_ad_eligibility_reviews (
   )
 );
 COMMENT ON TABLE whatsapp_secondary_ad_eligibility_reviews IS
-  'Manual, audited, sender-specific review of an otherwise excluded first CTWA lead. Both numbers' full history sources (including the secondary Business App outside its imported history window), must be checked. A verified decision does not replay or send the original message.';
+  'Manual, audited, sender-specific review of an otherwise excluded first CTWA lead. The full history of both numbers must be checked, including secondary Business App chats outside the imported history window. A verified decision does not replay or send the original message.';
 CREATE INDEX IF NOT EXISTS idx_secondary_ad_eligibility_review_origin
   ON whatsapp_secondary_ad_eligibility_reviews(origin_message_id);
