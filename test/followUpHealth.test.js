@@ -79,6 +79,18 @@ test("PostgreSQL follow-up monitoring counts persisted evidence separately from 
       INSERT INTO pricing_reminder_decisions(id,contact_id,reason)
         VALUES (202,2,'delivery_review');
     `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
     const execute=(sql,params)=>client.query(sql,params);
     const all=await health.getFollowUpHealth({days:7,channel:"all"},null,execute);
     assert.equal(all.eventCount,5);
