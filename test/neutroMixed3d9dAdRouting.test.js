@@ -128,13 +128,36 @@ test("after explicit 3D or 9D selection, existing Before & After rules pick only
    ["3D","3D 小颜术","https://example.test/3d.jpg"],
    ["9D","9D 逆龄抗衰","https://example.test/9d.jpg"],
  ]) {
-   const result=await resolveResultMediaForReply({...base,customerText});
+   const result=await resolveResultMediaForReply({...base,customerText,
+     priorResultContextRows:[{
+       role:"assistant",
+       content:"你是想了解脸型轮廓还是皮肤松弛紧致呢？",
+       sent_by_username:null,media_url:null,media_mime_type:null,
+     }],
+   });
    assert.equal(result?.service,service,customerText);
    assert.deepEqual(result?.items?.map(i=>i.imageUrl),[url]);
  }
  for(const customerText of ["Pm","3D or 9D?","What about both 3D and 9D?"]){
    assert.equal(await resolveResultMediaForReply({...base,customerText}),null,customerText);
  }
+ // Bare treatment names do NOT generally authorize images. Only a
+ // recent, same-contact bot question about treatment choice does.
+ assert.equal(await resolveResultMediaForReply({
+   ...base,customerText:"3D",priorResultContextRows:[],
+ }),null,"no prior treatment-choice question");
+ assert.equal(await resolveResultMediaForReply({
+   ...base,customerText:"9D",priorResultContextRows:[{
+     role:"assistant",content:"How can I help?",
+     sent_by_username:null,
+   }],
+ }),null,"generic bot reply cannot authorize images");
+ assert.equal(await resolveResultMediaForReply({
+   ...base,customerText:"3D",priorResultContextRows:[{
+     role:"assistant",content:"3D or 9D? Which would you prefer?",
+     sent_by_username:"staff",
+   }],
+ }),null,"staff question is not an automatic media trigger");
  assert.equal(await resolveResultMediaForReply({
    ...base,customerText:"3D",needsAttention:true}),null);
  assert.equal(await resolveResultMediaForReply({
