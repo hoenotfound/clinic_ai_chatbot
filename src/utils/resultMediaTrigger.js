@@ -296,6 +296,19 @@ function verifiedRecentResultTreatment({
 // customer to choose between treatments. A staff message cannot unlock media.
 const TREATMENT_CHOICE_QUESTION =
   /(?:\b(?:or|which|prefer|either)\b|还是|還是|或者|哪种|哪種|哪一个|哪個|atau|pilih).{0,100}(?:\b[39]\s*d\b|小颜|小顏|脸型|臉型|轮廓|輪廓|松弛|鬆弛|紧致|緊緻|contour|tighten|lifting|skin)/iu;
+function isExactBareTreatmentChoice(customerText,service,serviceAliases=[]) {
+  const raw=String(customerText||"").normalize("NFKC").trim();
+  if (!raw || raw.length>36 || !/\b[39]\s*d\b/iu.test(String(service||"")))
+    return false;
+  const compact=value=>String(value||"").normalize("NFKC").toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu,"");
+  const normalizedService=compact(service);
+  const terms=[service,...(Array.isArray(serviceAliases)?serviceAliases:[])
+    .filter(a=>compact(a?.officialService)===normalizedService)
+    .flatMap(a=>String(a.alias||"").split(/[,/|;，、]+/u))];
+  return terms.some(term=>compact(term)===compact(raw));
+}
+
 function verifiedRecentChoiceAfterQuestion({
   customerText,priorConversationRows,resultMedia,services=[],serviceAliases=[],
 }={}) {
@@ -308,15 +321,7 @@ function verifiedRecentChoiceAfterQuestion({
     customerNamedServices(resultMedia,current,serviceAliases,services),current);
   if (named.length!==1) return null;
   const service=named[0];
-  // This continuation is specifically for the configured 3D/9D choice.
-  // A different service cannot use an unrelated 3D/9D question as proof.
-  if (!/\b[39]\s*d\b/iu.test(service)) return null;
-  const compact=v=>String(v||"").normalize("NFKC").toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu,"");
-  const exactTerms=[service,...(Array.isArray(serviceAliases)?serviceAliases:[])
-    .filter(a=>compact(a?.officialService)===compact(service))
-    .flatMap(a=>String(a.alias||"").split(/[,/|;，、]+/u))];
-  if (!exactTerms.some(term=>compact(term)===compact(current))) return null;
+  if (!isExactBareTreatmentChoice(current,service,serviceAliases)) return null;
   const preceding=priorConversationRows[0];
   const prompt=String(preceding?.content||"").normalize("NFKC").trim();
   if (preceding?.role!=="assistant" || preceding?.sent_by_username ||
@@ -523,7 +528,7 @@ async function resolveResultMediaForReply(options = {}) {
   const namedNow=customerNamedServices(
     options.resultMedia,options.customerText,options.serviceAliases,options.services);
   const couldBeBareChoice=namedNow.length===1 &&
-    String(options.customerText||"").trim().length<=36;
+    isExactBareTreatmentChoice(options.customerText,namedNow[0],options.serviceAliases);
   const couldBeOutcome=isContextualResultOutcomeQuestion(options.customerText) &&
     namedNow.length===0;
   const verifiedChoiceMayOverrideModelHint=couldBeBareChoice &&
@@ -592,4 +597,5 @@ module.exports = {
   isContextualResultOutcomeQuestion,
   verifiedRecentResultTreatment,
   verifiedRecentChoiceAfterQuestion,
+  isExactBareTreatmentChoice,
 };
