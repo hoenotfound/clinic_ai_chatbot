@@ -3,6 +3,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const telegramAlertRepo = require("../db/telegramImmediateAlertRepo");
 const webPushNotifications = require("./webPushNotificationService");
+const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
 const AGREED_TIME_REASON =
   "Booking ready: customer accepted a staff-offered time; clinic should finalize the appointment.";
@@ -11,6 +12,13 @@ function isBriefAcceptance(value) {
   const text = String(value || "").trim().replace(/[.!！。～~😊🙏👍\s]+$/gu, "").trim();
   if (!text || text.length > 45) return false;
   return /^(?:ok(?:ay)?|yes|sure|can|confirmed?|alright|fine|好的?|可以(?:的)?|没问题|沒問題|行|嗯|好呀|可以呀|是的|boleh|baik|ya|setuju)$/iu.test(text);
+}
+
+function isDirectBookingIntent(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 220) return false;
+  if (/(?:how\s+to\s+book|how\s+much|price|cost|discount|if\s+i\s+book|cancel|not\s+booking|多少钱|价格|价钱|优惠|如何预约|怎样预约|不想预约|取消|berapa\s+harga)/iu.test(text)) return false;
+  return /(?:我想(?:要)?(?:预约|預約)|我要(?:预约|預約)|帮我(?:预约|預約)|幫我(?:预约|預約)|请帮我(?:预约|預約)|請幫我(?:預約|预约)|(?:i\s+(?:want|would\s+like|need)\s+to\s+book|please\s+book\s+me|book\s+me\s+(?:in|for))\b|(?:saya\s+nak|nak)\s+(?:book|temujanji|appointment))/iu.test(text);
 }
 
 function hasSpecificStaffTimeOffer(value) {
@@ -289,7 +297,7 @@ function createStaffAppointmentAcceptanceService({
 }
 const recordStaffAppointmentAcceptance = createStaffAppointmentAcceptanceService();
 module.exports = {
-  AGREED_TIME_REASON, isBriefAcceptance, hasSpecificStaffTimeOffer,
+  AGREED_TIME_REASON, isBriefAcceptance, isDirectBookingIntent, hasSpecificStaffTimeOffer,
   isExplicitRescheduleOffer, conflictsWithConfirmedSlot, sameSpecificOfferedSlot,
   createStaffAppointmentAcceptanceService,
   recordStaffAppointmentAcceptance,
