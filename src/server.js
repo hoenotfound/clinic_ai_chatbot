@@ -76,7 +76,7 @@ const { bareServiceName, isStandaloneSpinalConcern, planTcmReviewReply } = requi
 const whatsappPolicy = require("./services/whatsappPolicyService");
 const clinicConfig = require("./config/clinicConfig");
 const { secondaryUsesPrimaryClinicContent } = require("./services/whatsappSenderActivationGate");
-const { isSecondaryAdsOnlyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
+const { isSecondaryAiReplyEligible } = require("./services/whatsappSecondaryAdsOnlyEligibility");
 const { isSecondarySupervisedAiTextTestEligible } = require("./services/whatsappSecondarySupervisedAiTextTest");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const { formatUnsupportedReview } = require("./utils/unsupportedWhatsAppReview");
@@ -200,16 +200,15 @@ async function sendTrackedText(
     };
   }
 
-  // The ad-only eligibility check must run BEFORE reserving an assistant
-  // message or an outbound attempt. An existing primary WhatsApp patient may
-  // arrive through a new secondary ad, but must remain manual there. This
-  // protects even callers that bypass the ordinary incoming-message handler.
+  // Recheck the sender's current AI-reply audience BEFORE reserving any
+  // assistant message or outbound attempt. No prior inbound is replayed.
+  // The send path independently checks sender, takeover, consent and billing.
   const secondaryAutomatedText = contact.channel === "whatsapp" &&
     contact.whatsapp_sender_id != null &&
     contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY &&
     ["ai_reply", "system_fallback"].includes(origin);
   if (secondaryAutomatedText) {
-    const audienceEligible = await isSecondaryAdsOnlyEligible(contact.id) ||
+    const audienceEligible = await isSecondaryAiReplyEligible(contact.id) ||
       (origin === "ai_reply" &&
        await isSecondarySupervisedAiTextTestEligible(contact.id));
     if (!audienceEligible) {
@@ -636,8 +635,8 @@ async function processIncomingMessage(
       contact?.whatsapp_sender_id != null &&
       Boolean(process.env.WHATSAPP_PRIMARY_SENDER_KEY) &&
       contact.whatsapp_sender_key !== process.env.WHATSAPP_PRIMARY_SENDER_KEY;
-    // An ad click by an existing/imported/direct customer never promotes the
-    // conversation into AI. Check persisted FIRST inbound, not lead source labels.
+    // Under all-contact reply mode, a sender-verified message after activation
+    // may enter AI even for imported/older contacts, unless staff has taken over.
     // Check the no-send gates first. Avoid even calling the eligibility
     // helper on every incoming manual chat when secondary AI is OFF.
     const secondaryAiReady = secondaryContact &&
@@ -646,16 +645,16 @@ async function processIncomingMessage(
       process.env.WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED === "true" &&
       process.env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
       secondaryUsesPrimaryClinicContent(process.env);
-    // In test_only, no ad lead qualifies. Only the strictly pinned personal
-    // contact can exercise a plain-text AI reply, for at most one hour.
+    // A separate activation timestamp restricts all-contact AI to NEW inbound
+    // messages. Old received messages and unfinished jobs are not replayed.
     const secondaryAudienceEligible = secondaryAiReady
-      ? (await isSecondaryAdsOnlyEligible(contact.id) ||
+      ? (await isSecondaryAiReplyEligible(contact.id, { inboundMessageId: savedInbound.id }) ||
         (!mediaType && !unsupportedType &&
          typeof incoming.text === "string" && incoming.text.trim().length > 0 &&
          await isSecondarySupervisedAiTextTestEligible(contact.id))) : false;
     const secondaryAiConversation = secondaryAiReady && secondaryAudienceEligible;
-    // All other secondary conversations stay in staff-managed Inbox, even
-    // when a global AI switch is ON or the sender's contact mode says "ai".
+    // Ineligible or staff-owned secondary conversations stay manual even if
+    // the global AI setting is enabled.
     secondaryInboxOnly = secondaryContact && !secondaryAiConversation;
     aiCancellationKey = channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(
