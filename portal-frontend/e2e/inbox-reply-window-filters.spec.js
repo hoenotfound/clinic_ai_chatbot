@@ -36,6 +36,10 @@ function conversation(id, name, changes = {}) {
 }
 
 async function mockInbox(page, conversations) {
+  // Preserve the server-side state of the mocked conversations. A static
+  // is_unread=true response can overwrite the Inbox's optimistic read update
+  // when the iPad suite reloads its conversation list.
+  let currentConversations = conversations.map(item => ({ ...item }));
   await page.addInitScript(() => {
     class TestEventSource {
       addEventListener() {}
@@ -53,7 +57,17 @@ async function mockInbox(page, conversations) {
     } else if (pathname === "/api/auth/me") {
       value = { user, username: user.username };
     } else if (pathname === "/api/conversations") {
-      value = conversations;
+      value = currentConversations.map(item => ({ ...item }));
+    } else if (/^\\/api\\/conversations\\/\\d+\\/read-state$/.test(pathname) &&
+      route.request().method() === "PATCH") {
+      const id = Number(pathname.split("/")[3]);
+      const payload = JSON.parse(route.request().postData() || "{}");
+      currentConversations = currentConversations.map(item =>
+        Number(item.contact_id) === id
+          ? { ...item, is_unread: payload.unread === true }
+          : item
+      );
+      value = currentConversations.find(item => Number(item.contact_id) === id) || {};
     } else if (pathname === "/api/conversations/directory-search") {
       // The real directory endpoint returns an array. An unmocked {} response
       // arrives after the 300ms debounce and crashes slower iPad test runs.
