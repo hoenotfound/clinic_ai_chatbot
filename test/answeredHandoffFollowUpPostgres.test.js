@@ -62,6 +62,17 @@ test("Postgres resumes an answered staff-handoff cycle without bypassing review 
         stage_id integer, treatment_interest text, is_closed boolean DEFAULT false,
         appointment_status text, created_at timestamptz DEFAULT now()
       );
+      -- The production follow-up selector reads the current lead's
+      -- authenticated creative; no ad data is required for these staff/spacing
+      -- fixtures, but the relation must exist in the isolated test schema.
+      CREATE TABLE lead_attributions (
+        id BIGSERIAL PRIMARY KEY,
+        lead_id INTEGER,
+        source TEXT,
+        headline TEXT,
+        body TEXT,
+        attributed_at TIMESTAMPTZ DEFAULT now()
+      );
       CREATE TABLE outbound_message_evidence (
         message_id integer PRIMARY KEY, contact_id integer, channel text, origin text,
         accepted boolean NOT NULL

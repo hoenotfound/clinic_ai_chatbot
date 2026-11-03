@@ -290,6 +290,50 @@ function verifiedRecentResultTreatment({
   return null;
 }
 
+
+// A bare "3D" or "9D" can be a real customer choice, but not on its own.
+// Require the latest, recent, same-contact bot message to have asked the
+// customer to choose between treatments. A staff message cannot unlock media.
+const TREATMENT_CHOICE_QUESTION =
+  /(?:\b(?:or|which|prefer|either)\b|还是|還是|或者|哪种|哪種|哪一个|哪個|atau|pilih).{0,100}(?:\b[39]\s*d\b|小颜|小顏|脸型|臉型|轮廓|輪廓|松弛|鬆弛|紧致|緊緻|contour|tighten|lifting|skin)/iu;
+function isExactBareTreatmentChoice(customerText,service,serviceAliases=[]) {
+  const raw=String(customerText||"").normalize("NFKC").trim();
+  if (!raw || raw.length>36 || !/\b[39]\s*d\b/iu.test(String(service||"")))
+    return false;
+  const compact=value=>String(value||"").normalize("NFKC").toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu,"");
+  const normalizedService=compact(service);
+  const terms=[service,...(Array.isArray(serviceAliases)?serviceAliases:[])
+    .filter(a=>compact(a?.officialService)===normalizedService)
+    .flatMap(a=>String(a.alias||"").split(/[,/|;，、]+/u))];
+  return terms.some(term=>compact(term)===compact(raw));
+}
+
+function verifiedRecentChoiceAfterQuestion({
+  customerText,priorConversationRows,resultMedia,services=[],serviceAliases=[],
+}={}) {
+  const current=String(customerText||"").normalize("NFKC").trim();
+  if (!current || current.length>36 || NON_RESULT_OR_DECLINE.test(current) ||
+      hasClinicalMediaRisk(current) ||
+      !Array.isArray(priorConversationRows) || !priorConversationRows.length)
+    return null;
+  const named=qualifiedTreatmentMentions(
+    customerNamedServices(resultMedia,current,serviceAliases,services),current);
+  if (named.length!==1) return null;
+  const service=named[0];
+  if (!isExactBareTreatmentChoice(current,service,serviceAliases)) return null;
+  const preceding=priorConversationRows[0];
+  const prompt=String(preceding?.content||"").normalize("NFKC").trim();
+  if (preceding?.role!=="assistant" || preceding?.sent_by_username ||
+      preceding?.media_url || preceding?.media_mime_type ||
+      !["sent","delivered","read","accepted"].includes(preceding?.delivery_status) ||
+      !preceding?.whatsapp_message_id ||
+      /^\[Verified STAFF message\]/iu.test(prompt) ||
+      !prompt || !TREATMENT_CHOICE_QUESTION.test(prompt)) return null;
+  const configured=matchingResultMediaSet(resultMedia,service);
+  return configured?.triggerMode==="service_enquiry"?service:null;
+}
+
 async function resolveResultMediaForReplyAttempt({
   serviceQuery,
   serviceQuerySource,
@@ -481,14 +525,18 @@ async function resolveResultMediaForReply(options = {}) {
     if (typeof options.onSkip === "function") options.onSkip(reason);
     return null;
   };
-  if (!CONTEXTUAL_FALLBACK_SKIP_REASONS.has(originalSkip) ||
-      !isContextualResultOutcomeQuestion(options.customerText) ||
-      // A current-turn named treatment belongs to the original triggers;
-      // contextual recovery must never override a same-turn intent decision.
-      customerNamedServices(
-        options.resultMedia, options.customerText,
-        options.serviceAliases, options.services
-      ).length !== 0 ||
+  const namedNow=customerNamedServices(
+    options.resultMedia,options.customerText,options.serviceAliases,options.services);
+  const couldBeBareChoice=namedNow.length===1 &&
+    isExactBareTreatmentChoice(options.customerText,namedNow[0],options.serviceAliases);
+  const couldBeOutcome=isContextualResultOutcomeQuestion(options.customerText) &&
+    namedNow.length===0;
+  const verifiedChoiceMayOverrideModelHint=couldBeBareChoice &&
+    ["meta_creative_conflicts_with_ai","no_matching_enabled_result_media"]
+      .includes(originalSkip);
+  if (!(CONTEXTUAL_FALLBACK_SKIP_REASONS.has(originalSkip) ||
+        verifiedChoiceMayOverrideModelHint) ||
+      !(couldBeBareChoice || couldBeOutcome) ||
       !(Array.isArray(options.resultMedia) && options.resultMedia.some((entry) =>
         entry?.enabled === true &&
         normalizeResultMediaTriggerMode(entry) === "service_enquiry"
@@ -507,13 +555,19 @@ async function resolveResultMediaForReply(options = {}) {
       return emitSkip(originalSkip); // fail closed without changing the reply
     }
   }
-  const contextualTreatment = verifiedRecentResultTreatment({
-    customerText: options.customerText,
-    priorConversationRows: priorRows,
-    resultMedia: options.resultMedia,
-    services: options.services,
-    serviceAliases: options.serviceAliases,
-  });
+  const contextualTreatment = couldBeBareChoice
+    ? verifiedRecentChoiceAfterQuestion({
+        customerText:options.customerText,priorConversationRows:priorRows,
+        resultMedia:options.resultMedia,services:options.services,
+        serviceAliases:options.serviceAliases,
+      })
+    : verifiedRecentResultTreatment({
+        customerText: options.customerText,
+        priorConversationRows: priorRows,
+        resultMedia: options.resultMedia,
+        services: options.services,
+        serviceAliases: options.serviceAliases,
+      });
   if (!contextualTreatment) return emitSkip(originalSkip);
 
   let fallbackSkip = null;
@@ -542,4 +596,6 @@ module.exports = {
   resolveResultMediaForReply,
   isContextualResultOutcomeQuestion,
   verifiedRecentResultTreatment,
+  verifiedRecentChoiceAfterQuestion,
+  isExactBareTreatmentChoice,
 };

@@ -12,6 +12,8 @@ const { createCoalescedImmediateWake, followUpChangeRequiresWake } =
   require("../utils/followUpWakePolicy");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const { inferConfiguredServiceFromText } = require("../utils/serviceInterest");
+const { resolveAdFollowUpTreatment, neutralMixedAdFollowUp } =
+  require("../utils/adFollowUpTreatment");
 const { termSpans, pruneCoveredServiceMentions } = require("../utils/serviceMentionResolution");
 const {
   getActivePromotions,
@@ -482,6 +484,7 @@ function localizedPromotionFollowUp(value, language) {
 }
 
 function promotionFollowUpForCandidate(candidate, language = "en") {
+  if (candidate.adFollowUpPolicy?.ambiguous) return null;
   // Never substitute a fixed promotional price/caption for an assessment-first follow-up.
   if (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true) return null;
   const recentInbound = Array.isArray(candidate.recent_inbound_messages)
@@ -504,7 +507,9 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
   let serviceName = customerService.serviceName;
   if (!serviceName && customerService.mentioned) return null;
 
-  if (!serviceName) {
+  if (candidate.adFollowUpPolicy?.treatment) {
+    serviceName = candidate.adFollowUpPolicy.treatment;
+  } else if (!serviceName) {
     serviceName = configuredServiceByName(candidate.treatment_interest);
   }
 
@@ -670,7 +675,9 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
 
-  const currentService = followUpServiceContext(candidate);
+  const currentService = candidate.adFollowUpPolicy
+    ? {mentioned:true,serviceName:candidate.adFollowUpPolicy.treatment}
+    : followUpServiceContext(candidate);
   const overrideForService = (serviceName) =>
     step.serviceOverrides.find(
       (item) =>
@@ -700,15 +707,20 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
   // as the safe fallback, preserving the existing general-image behavior.
   const targetedMedia =
     targeted && (targeted.imageUrl || targeted.videoKey || voiceNotesPresent(targeted.voiceNotes)) ? targeted : null;
-  const mediaSource = targetedMedia || step;
+  // Mixed ads must not inherit a configured generic/CRM media asset that
+  // could depict 3D or 9D before the customer confirms a treatment.
+  const mediaSource = candidate.adFollowUpPolicy?.ambiguous
+    ? null : (targetedMedia || step);
   return {
-    message: source.translations[language] || source.message,
+    message: neutralMixedAdFollowUp({
+      policy:candidate.adFollowUpPolicy,language,slot:stepIndex===1?2:0,
+    }) || source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
     targetedMediaService: targetedMedia?.serviceName || null,
-    selectedImageUrl: mediaSource.imageUrl || "",
-    selectedVideoKey: mediaSource.videoKey || "",
-    selectedVideoFilename: mediaSource.videoFilename || "",
-    selectedVoiceNote: selectedVoiceNote(mediaSource.voiceNotes, language),
+    selectedImageUrl: mediaSource?.imageUrl || "",
+    selectedVideoKey: mediaSource?.videoKey || "",
+    selectedVideoFilename: mediaSource?.videoFilename || "",
+    selectedVoiceNote: mediaSource ? selectedVoiceNote(mediaSource.voiceNotes, language) : null,
     promotionFollowUp: false,
     promotionPackageSelection,
   };
@@ -1237,6 +1249,19 @@ async function sendCandidate(candidate) {
   const settings = getActiveSettings();
   if (!settings) return;
 
+  // Treat the latest lead's verified Meta creative as the advertisement
+  // evidence. A guessed CRM treatment must never select one of two advertised
+  // services until the customer names that treatment.
+  const adFollowUpPolicy = resolveAdFollowUpTreatment({
+    adSource:candidate.ad_followup_source,
+    headline:candidate.ad_followup_headline,body:candidate.ad_followup_body,
+    customerTexts:candidate.recent_service_messages,
+    services:clinicConfig.services,serviceAliases:clinicConfig.serviceAliases,
+  });
+  if (adFollowUpPolicy) {
+    candidate={...candidate,adFollowUpPolicy,
+      treatment_interest:adFollowUpPolicy.treatment || null};
+  }
   const stepIndex = Number(candidate.next_follow_up_step) || 1;
   const step = settings.steps[stepIndex - 1];
   if (!step) return;
@@ -1317,8 +1342,9 @@ async function sendCandidate(candidate) {
   let followUpMessageMode = "fixed";
   let aiLeaseToken = null;
   const needsAiWork =
-    Boolean(promotionPackageSelection) ||
-    (step.messageMode === "ai" && !promotionFollowUp);
+    !candidate.adFollowUpPolicy?.ambiguous &&
+    (Boolean(promotionPackageSelection) ||
+     (step.messageMode === "ai" && !promotionFollowUp));
 
   if (needsAiWork) {
     aiLeaseToken = randomUUID();
@@ -2255,6 +2281,8 @@ realtimeEvents.subscribe("config_changed", (payload) => {
 });
 
 module.exports = {
+  // Pure, side-effect-free selector exported for cross-sender regression tests.
+  messageForCandidate,
   isConfiguredPromotionPriceGraphic,
   enforceAssessmentFirstFollowUpCopy,
   FOLLOW_UP_CHECK_INTERVAL_MS,

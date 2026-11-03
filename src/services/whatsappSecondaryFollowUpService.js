@@ -11,6 +11,9 @@ const mediaStorage=require("./mediaStorageService");
 const configRepo=require("../db/configRepo");
 const {isCurrentApprovedFollowUpVideo,selectApprovedTreatmentVideo}=require("./whatsappSecondaryFollowUpVideoApproval");
 const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecondaryFollowUpLanguage");
+const {resolveAdFollowUpTreatment,neutralMixedAdFollowUp}=
+  require("../utils/adFollowUpTreatment");
+const {detectConversationLanguage}=require("../utils/chatLanguage");
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
@@ -47,7 +50,7 @@ const ALLOWED_MIME={
  // message starts a new sequence; staff replies never authorize automation.
 const FIRST_REPLY_SQL=`
  JOIN LATERAL (
-   SELECT reply.created_at AS at FROM messages reply
+   SELECT reply.created_at AS at, reply.content AS text FROM messages reply
    JOIN whatsapp_sender_message_context reply_context
      ON reply_context.message_id=reply.id
     AND reply_context.conversation_id=sc.id
@@ -97,9 +100,13 @@ const CANDIDATES_SQL=`
    inbound.id AS inbound_id,inbound.created_at AS inbound_at,
    rule.sender_id,rule.slot_hours,rule.message_text,rule.media_key,
    rule.media_type,rule.media_mime_type,rule.media_filename,
+   first_reply.text AS first_reply_text,
    rule.updated_at AS rule_updated_at,
    EXTRACT(EPOCH FROM rule.updated_at)::text AS rule_version,
    lead.treatment_interest,
+   ad_followup.source AS ad_followup_source,
+   ad_followup.headline AS ad_followup_headline,
+   ad_followup.body AS ad_followup_body,
    ARRAY(SELECT language_turn.content FROM messages language_turn
      JOIN whatsapp_sender_message_context language_context
        ON language_context.message_id=language_turn.id
@@ -132,13 +139,20 @@ const CANDIDATES_SQL=`
  ${FIRST_REPLY_SQL}
  ${PREVIOUS_STEP_SQL}
  LEFT JOIN LATERAL (
-   SELECT lead.marketing_consent,lead.is_closed,lead.appointment_status,
+   SELECT lead.id,lead.marketing_consent,lead.is_closed,lead.appointment_status,
      lead.treatment_interest,
      stage.system_key AS stage_key
    FROM leads lead LEFT JOIN pipeline_stages stage ON stage.id=lead.stage_id
    WHERE lead.contact_id=c.id ORDER BY lead.created_at DESC,lead.id DESC
    LIMIT 1
  ) lead ON true
+ LEFT JOIN LATERAL (
+   SELECT attribution.source,attribution.headline,attribution.body
+   FROM lead_attributions attribution
+   WHERE attribution.lead_id = lead.id
+   ORDER BY attribution.attributed_at DESC,attribution.id DESC
+   LIMIT 1
+ ) ad_followup ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
    AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
@@ -321,25 +335,44 @@ async function runOnce({
     serviceFollowupParityActivation(env),
   ])).rows||[];
   let attempted=0,accepted=0;
-  for(const candidate of items) {
+  for(let candidate of items) {
     const slot=Number(candidate.slot_hours);
     if(!SLOTS.has(slot) || !Number.isSafeInteger(Number(candidate.contact_id)))continue;
     const clinicConfig=getConfig();
-    const confirmedTreatment=resolveFollowUpTreatment({
-      clinicConfig,customerTexts:candidate.customer_texts,
-      treatmentInterest:candidate.treatment_interest,
+    const adFollowUpPolicy=resolveAdFollowUpTreatment({
+      adSource:candidate.ad_followup_source,
+      headline:candidate.ad_followup_headline,body:candidate.ad_followup_body,
+      customerTexts:candidate.customer_texts,
+      services:clinicConfig?.services,serviceAliases:clinicConfig?.serviceAliases,
     });
-    const localized=localizedFollowUpText({
+    const confirmedTreatment=adFollowUpPolicy
+      ? adFollowUpPolicy.treatment
+      : resolveFollowUpTreatment({
+          clinicConfig,customerTexts:candidate.customer_texts,
+          treatmentInterest:candidate.treatment_interest,
+        });
+    candidate={...candidate,adFollowUpPolicy};
+    const customerLanguage=detectConversationLanguage(candidate.customer_texts||[],null);
+    // A generic "PM" provides no language evidence; fall back to the already
+    // delivered first reply, not the internal ad name or CRM treatment.
+    const replyLanguage=customerLanguage ||
+      detectConversationLanguage([candidate.first_reply_text].filter(Boolean),null);
+    const localized=neutralMixedAdFollowUp({
+      policy:adFollowUpPolicy,language:replyLanguage,slot,
+    }) || localizedFollowUpText({
       slot,originalText:candidate.message_text,
       customerTexts:candidate.customer_texts,
+      languageEvidenceTexts:[...candidate.customer_texts||[],candidate.first_reply_text],
       treatmentInterest:confirmedTreatment,
       clinicConfig,
+      forceGeneral:adFollowUpPolicy?.ambiguous === true,
     });
     // Do not burn a one-shot attempt for a language we cannot establish.
     if(!localized)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
-    if(candidate.media_key && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
+    if(candidate.media_key && !adFollowUpPolicy?.ambiguous &&
+       env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
       `INSERT INTO whatsapp_sender_followup_attempts
@@ -372,15 +405,17 @@ async function runOnce({
     };
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
-      const selectedVideo=!candidate.media_key && slot!==20 &&
+      const selectedVideo=!adFollowUpPolicy?.ambiguous &&
+        !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=candidate.media_key || selectedVideo?.mediaKey || null;
-      const mediaType=candidate.media_key?candidate.media_type:selectedVideo?.mediaType;
-      const mediaMime=candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType;
-      const mediaFilename=candidate.media_key?candidate.media_filename:selectedVideo?.mediaFilename;
+      const key=adFollowUpPolicy?.ambiguous ? null
+        : candidate.media_key || selectedVideo?.mediaKey || null;
+      const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
+      const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
+      const mediaFilename=key ? (candidate.media_key?candidate.media_filename:selectedVideo?.mediaFilename) : null;
       // Never inherit approval forever from the saved rule. The source
       // clinic may remove/replace a video after rule creation.
       const liveVideoApproval=()=>{
@@ -410,7 +445,8 @@ async function runOnce({
       // claim, and never send a static substitute when AI mode is explicitly on.
       let outboundText=localized;
       let aiMode=null;
-      if(slot===20 && env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
+      if(slot===20 && !adFollowUpPolicy?.ambiguous &&
+         env.WHATSAPP_SECONDARY_20H_AI_PERSONALIZATION_ENABLED==="true"){
         const personalized=await personalize20h({candidate,database,env});
         if(!personalized?.ok){
           await fail(personalized?.code||"secondary_20h_ai_unavailable");continue;
