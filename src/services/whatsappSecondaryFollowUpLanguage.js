@@ -18,6 +18,13 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
    .map(x=>String(x?.name||"").trim()).filter(Boolean);
  const aliases=Array.isArray(clinicConfig?.serviceAliases)?clinicConfig.serviceAliases:[];
  const normalize=x=>String(x||"").trim().toLocaleLowerCase();
+ // The clinic config lists a combined 3D + 9D treatment as well as its
+ // individual services. A combined enquiry naturally matches all three
+ // aliases. Prefer the explicitly requested combination, but never assume
+ // that an "or" / comparison enquiry is a combined treatment.
+ const combined=services.filter(name=>/3\s*d/i.test(name)&&/9\s*d/i.test(name));
+ const joint=/3\s*d[\s\S]{0,28}(?:\+|&|\band\b|dan|和|跟|与|一起)[\s\S]{0,28}9\s*d|9\s*d[\s\S]{0,28}(?:\+|&|\band\b|dan|和|跟|与|一起)[\s\S]{0,28}3\s*d/i;
+ const comparison=/\b(?:or|vs|versus|compare|difference|either)\b|还是|或者|比较|区别|分别|哪个|哪一个/i;
  for(const message of Array.isArray(customerTexts)?customerTexts:[]){
    const msg=normalize(message);if(!msg)continue;
    const named=services.filter(service=>{
@@ -25,6 +32,15 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
        .map(a=>a.alias)].map(normalize).filter(t=>t.length>1);
      return terms.some(term=>msg.includes(term));
    });
+   if(combined.length===1 && /3\s*d/i.test(msg) && /9\s*d/i.test(msg) &&
+     !comparison.test(msg)){
+     const combinedName=combined[0];
+     const names=[combinedName,...aliases.filter(a=>
+       normalize(a?.officialService)===normalize(combinedName)).map(a=>a.alias)];
+     const explicit=names.map(normalize).some(term=>term.length>3&&
+       /3\s*d/i.test(term)&&/9\s*d/i.test(term)&&msg.includes(term));
+     if(explicit||joint.test(msg))return combinedName;
+   }
    if(named.length>1)return null;
    if(named.length===1)return named[0];
  }
