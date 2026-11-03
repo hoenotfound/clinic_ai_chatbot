@@ -9,7 +9,7 @@ const { serviceCandidates, findServicesInText, NON_TREATMENT_ANCHOR_PATTERN } = 
 
 const SECOND_VISIT = /(?:第\s*[二兩两2]\s*(?:次|回)|(?:下次|下一次|再做|续做|續做|后续|後續|之后|之後|往后|往後)\s*(?:做|护理|護理|疗程|療程|收费|收費|价|價)?|\b(?:second|subsequent|repeat|next)\s+(?:session|visit|treatment)|\bafter\s+(?:the\s+)?first\s+(?:session|visit|treatment|trial)|\bkali\s+kedua\b)/iu;
 const PRICE_WORDS = /(?:价钱|價錢|价格|價格|价位|價位|收费|收費|费用|費用|多少钱|多少錢|几多钱|幾多錢|\b(?:price|cost|charge|fee|harga|berapa)\b)/iu;
-const TOPIC_RESET = /(?:换个|換個|改聊|换话题|換話題|另外想|不要|不想|不考虑|不考慮|没兴趣|沒興趣|\b(?:switch|instead|another\s+treatment|not\s+interested|stop|unsubscribe)\b)/iu;
+const TOPIC_RESET = /(?:换个(?:疗程|療程|护理|護理)|換個(?:療程|护理|護理)|改聊|换话题|換話題|另外想(?:了解|问|問)(?:别的|別的|其他)|不要(?:这个|這個)(?:疗程|療程|护理|護理)|不想(?:做|了解)(?:这个|這個)(?:疗程|療程|护理|護理)|\b(?:switch\s+treatment|another\s+treatment|different\s+treatment|not\s+interested\s+in\s+this\s+treatment|stop|unsubscribe)\b)/iu;
 const MAX_SESSION_AGE_MS = 3 * 60 * 60 * 1000;
 
 function resolveRepeatVisitPriceReply({
@@ -23,9 +23,11 @@ function resolveRepeatVisitPriceReply({
 
   const turns = (Array.isArray(conversationHistory) ? conversationHistory : [])
     .filter(turn => turn?.role === "user" || turn?.role === "assistant");
-  if (turns.length < 3 || turns.at(-1)?.role !== "user" ||
+  if (!turns.length || turns.at(-1)?.role !== "user" ||
       pricingMessageText(turns.at(-1)).trim() !== current ||
-      !isRecentPricingThread(turns, 0, now) ||
+      !Number.isFinite(turns.at(-1)?.pricingCreatedAtMs) ||
+      turns.at(-1).pricingCreatedAtMs > now + 60_000 ||
+      now - turns.at(-1).pricingCreatedAtMs > MAX_SESSION_AGE_MS ||
       turns.some(turn => isVerifiedStaffTurn(turn) ||
         (turn.role === "user" && hasClinicalMediaRisk(pricingMessageText(turn))))) return null;
 
@@ -33,14 +35,15 @@ function resolveRepeatVisitPriceReply({
   // General 1-on-1 assessment invitations are not competing paid treatments.
   const treatmentMentions = value => findServicesInText(value, candidates)
     .filter(name => !NON_TREATMENT_ANCHOR_PATTERN.test(name));
-  // A customer asking about a new named service must go through the normal
-  // single-service clarification/verification, not inherit an older topic.
-  if (treatmentMentions(current).length) return null;
-
+  // A clearly customer-NAMED service is stronger than the older context.
+  // This also protects "3D second session price" from being treated as a
+  // request for the RM488 first-trial graphic.
+  const currentServices = [...new Set(treatmentMentions(current))];
+  if (currentServices.length > 1) return null;
   const earlier = turns.slice(0, -1);
-  let selected = null;
+  let selected = currentServices[0] || null;
   let selectionAt = -1;
-  for (let index = earlier.length - 1; index >= 0; index--) {
+  for (let index = selected ? -1 : earlier.length - 1; index >= 0; index--) {
     const turn = earlier[index];
     if (turn.role !== "user") continue;
     const text = pricingMessageText(turn).trim();
@@ -54,6 +57,11 @@ function resolveRepeatVisitPriceReply({
     }
   }
   if (!selected) return null;
+  // Contextual replies need both a recent customer-authored selection and a
+  // matching accepted assistant turn. Current explicit naming is sufficient
+  // on its own and does not require a previous bot to have repeated the name.
+  if (selectionAt === -1) return { treatment: selected };
+  if (!isRecentPricingThread(turns, selectionAt, now)) return null;
   const selectedAt = earlier[selectionAt].pricingCreatedAtMs;
   if (!Number.isFinite(selectedAt) || now - selectedAt > MAX_SESSION_AGE_MS) return null;
 
