@@ -22,7 +22,7 @@ test("page index scopes SQL before reading contact/message metadata",async t=>{
     assert.deepEqual(args,["customer",[11,12]]);
     assert.match(sql,/WITH eligible_inbox_contacts AS MATERIALIZED/);
     assert.match(sql,/SELECT c.id FROM contacts c WHERE TRUE AND c.id = ANY\(\$2::integer\[\]\)/);
-    assert.match(sql,/pending_ai_review_rows/,{invert:true});
+    assert.doesNotMatch(sql,/pending_ai_review_rows/);
     assert.doesNotMatch(sql,/media_base64|JSONB_AGG|STRING_AGG/);
     assert.match(sql,/ORDER BY c.needs_attention DESC,latest.created_at DESC NULLS LAST/);
     assert.match(sql,/POSITION\(\$1::text IN LOWER\(CONCAT_WS/);
