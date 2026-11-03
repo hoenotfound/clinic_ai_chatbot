@@ -37,7 +37,7 @@ const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
-const {eligibleSecondaryAdsOnlyContactIds}=require("../services/whatsappSecondaryAdsOnlyEligibility");
+const {eligibleSecondaryAiReplyContactIds}=require("../services/whatsappSecondaryAdsOnlyEligibility");
 const {secondaryUsesPrimaryClinicContent}=require("../services/whatsappSenderActivationGate");
 function secondaryAiForContact(c, eligibleIds) {
   return c.channel==="whatsapp" &&
@@ -918,7 +918,7 @@ router.get("/", async (req, res) => {
     if (wal) res.locals.inboxWalProof = { wal, permittedIds };
     const allowedSet = permittedIds === null ? null : new Set(permittedIds.map(Number));
     const eligibleIds=await withDatabaseActivitySource("Inbox secondary eligibility",
-      () => eligibleSecondaryAdsOnlyContactIds(
+      () => eligibleSecondaryAiReplyContactIds(
         conversations.filter(c=>c.whatsapp_sender_key==="neutro_secondary" &&
           c.mode==="ai" && c.needs_attention!==true)
           .map(c=>Number(c.contact_id))
@@ -978,7 +978,7 @@ router.get("/:contactId/summary", async (req, res) => {
       }));
     if (!rows.length) return res.status(404).json({ error: "Conversation not in active Inbox." });
     const c = rows[0];
-    const eligibleIds=await eligibleSecondaryAdsOnlyContactIds([Number(c.contact_id)]);
+    const eligibleIds=await eligibleSecondaryAiReplyContactIds([Number(c.contact_id)]);
     const secondary = c.channel === "whatsapp" &&
       c.whatsapp_sender_id != null &&
       Boolean(c.whatsapp_sender_phone_number_id) &&
