@@ -242,7 +242,15 @@ async function isSecondaryAiReplyEligible(contactId, {
          WHERE c.id=$1 AND c.channel='whatsapp'
            AND sa.sender_key='neutro_secondary' AND sa.state='active'
            AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
-           AND c.mode='ai' AND c.needs_attention IS NOT TRUE
+           AND c.mode='ai' AND (
+           c.needs_attention IS NOT TRUE OR (
+             c.attention_reason LIKE 'Booking ready:%'
+             AND NOT EXISTS (SELECT 1 FROM ai_review_items booking_review
+               WHERE booking_review.contact_id=c.id
+                 AND booking_review.status='pending'
+                 AND booking_review.category <> 'information')
+           )
+         )
            AND c.whatsapp_opt_out_at IS NULL
            ${proof}
        ) AS eligible`,
@@ -280,7 +288,15 @@ async function eligibleSecondaryAiReplyContactIds(ids, {
        WHERE c.id=ANY($1::integer[]) AND c.channel='whatsapp'
          AND sa.sender_key='neutro_secondary' AND sa.state='active'
          AND sa.meta_phone_number_id=$2 AND sa.meta_account_id=$3
-         AND c.mode='ai' AND c.needs_attention IS NOT TRUE
+         AND c.mode='ai' AND (
+           c.needs_attention IS NOT TRUE OR (
+             c.attention_reason LIKE 'Booking ready:%'
+             AND NOT EXISTS (SELECT 1 FROM ai_review_items booking_review
+               WHERE booking_review.contact_id=c.id
+                 AND booking_review.status='pending'
+                 AND booking_review.category <> 'information')
+           )
+         )
          AND c.whatsapp_opt_out_at IS NULL`,
       [valid,env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
         env.WHATSAPP_SECONDARY_WABA_ID]
