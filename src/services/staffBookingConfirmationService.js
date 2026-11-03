@@ -1,5 +1,7 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const clinicConfig = require("../config/clinicConfig");
+const { pool } = require("../db/db");
+const { markBookingReadyForContact } = require("./bookingReadyOutcomeService");
 
 // Only explicit staff confirmations with a complete calendar date can
 // update CRM only AFTER Meta accepted the outbound staff-authored text. A
@@ -79,6 +81,7 @@ function createStaffBookingConfirmationService({
 const recordStaffConfirmedBooking = createStaffBookingConfirmationService();
 module.exports = {
   parseStaffConfirmedSlot,
+  isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
   recordStaffConfirmedBooking,
 };
