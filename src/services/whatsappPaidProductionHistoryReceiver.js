@@ -85,10 +85,12 @@ const PARITY_OPERATIONS=new Set([
   "WHATSAPP_PAID_SECONDARY_AUTOMATION_MODE_ENABLED",
   "WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED",
 ]);
-// Full AI is a separately approved ADS-ONLY mode. It deliberately permits
-// automated media and reviewed follow-ups without granting staff Inbox sending.
+// Full AI is separately approved. Optional staff Inbox sends remain guarded
+// by sender-specific transport, service-window and billing checks.
 const ADS_ONLY_FULL_AI_OPERATIONS=new Set([
   ...AUTOMATION_OPERATIONS,
+  "WHATSAPP_SECONDARY_STAFF_SEND_ENABLED",
+  "WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED",
   "WHATSAPP_SECONDARY_AI_MEDIA_ENABLED",
   "WHATSAPP_SECONDARY_TEMPLATE_SEND_ENABLED",
   "WHATSAPP_SECONDARY_MARKETING_FOLLOWUPS_ENABLED",
@@ -143,16 +145,13 @@ function liveOperationsAllowed(env){
       !DISALLOWED.some(key=>!PARITY_OPERATIONS.has(key) && env[key]==="true");
   }
   if(env.WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED==="true"){
-    // The sender startup gate has supported full AI for ads-origin contacts
-    // without staff sending, but the paid callback receiver's old text-only
-    // allowlist rejected these already-authorized media flags with HTTP 503.
+    // Reuse the verified startup safety policy for full AI with optional
+    // sender-qualified staff sending, not the unrelated staff-only mode.
     // Reuse the exact startup safety policy, not a new weaker sender policy.
     if(!secondaryAdsOnlyFullAiMode(env))return false;
     try{assertSecondaryOperationalSafety(env);}catch{return false;}
     return env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED!=="true" &&
       env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED==="true" &&
-      env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED!=="true" &&
-      env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED!=="true" &&
       env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED!=="true" &&
       env.WHATSAPP_SECONDARY_AI_SEND_ENABLED==="true" &&
       env.WHATSAPP_SECONDARY_OUTBOUND_TRANSPORT_ENABLED==="true" &&

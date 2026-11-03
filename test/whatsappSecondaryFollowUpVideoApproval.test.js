@@ -114,9 +114,10 @@ test("ads-only secondary AI can reuse verified video without enabling Inbox staf
  const v=await verifyApprovedVideo({...input,env:adsOnlyEnv,storage});
  assert.equal(v.approved,true);
  assert.equal(isCurrentApprovedFollowUpVideo({...input,env:adsOnlyEnv,storage}),true);
+ assert.equal((await verifyApprovedVideo({...input,storage,env:{...adsOnlyEnv,
+  WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true"}})).approved,true);
  for(const difference of [
   {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"},
-  {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
   {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
   {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},
  ]){
@@ -139,5 +140,5 @@ test("only the exact configured treatment video is selected for the appropriate 
  assert.equal(selectApprovedTreatmentVideo({...base,slot:2,treatmentInterest:"unknown"}),null);
  assert.equal(selectApprovedTreatmentVideo({...base,slot:20,treatmentInterest:"骨盆调理"}),null);
  assert.equal(selectApprovedTreatmentVideo({...base,slot:2,treatmentInterest:"骨盆调理",
-  env:{...adsOnlyEnv,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"}}),null);
+  env:{...adsOnlyEnv,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"}}).mediaKey,key);
 });

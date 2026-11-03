@@ -396,7 +396,6 @@ test("ads-only full AI can send treatment text and media without granting staff 
  assert.equal(noFull.code,"secondary_staff_send_disabled");
  for(const override of [
   {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"},
-  {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
   {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
   {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},
  ]){
@@ -405,4 +404,35 @@ test("ads-only full AI can send treatment text and media without granting staff 
   });
   assert.equal(blocked.code,"secondary_staff_send_disabled",JSON.stringify(override));
  }
+});
+
+test("full AI retains AI replies with verified staff text and image dispatch",async()=>{
+ const withStaff={
+   ...aiOnlyEnv,
+   WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"ads_only",
+   WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:"2026-11-01T15:30:00Z",
+   WHATSAPP_PAID_SECONDARY_ADS_ONLY_FULL_AI_MODE_ENABLED:"true",
+   WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"false",
+   WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"true",
+   WHATSAPP_SECONDARY_AI_MEDIA_ENABLED:"true",
+   WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
+   WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true",
+   WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true",
+ };
+ const {opts,calls}=setup();
+ const staff=await sendSecondaryStaffText({...data,origin:"staff"},{...opts,env:withStaff});
+ assert.equal(staff.success,true);
+ const image=await sendSecondaryStaffText({...data,origin:"staff",
+   dispatchTransport:async()=>({success:true,wamid:"wamid.verified-media"}),
+ },{...opts,env:withStaff});
+ assert.equal(image.success,true);
+ const ai=await sendSecondaryStaffText({...data,origin:"ai_reply"},{...opts,env:withStaff});
+ assert.equal(ai.success,true);
+ assert.equal(calls.reserved,3);
+ assert.equal(calls.send.length,2,"media goes through distinct sender-owned transport");
+ const blocked=await sendSecondaryStaffText({...data,origin:"staff",
+   dispatchTransport:async()=>{throw Error("blocked media cannot reach provider");},
+ },{...opts,env:{...withStaff,WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"false"}});
+ assert.equal(blocked.code,"secondary_staff_send_disabled");
+ assert.equal(calls.reserved,3);
 });

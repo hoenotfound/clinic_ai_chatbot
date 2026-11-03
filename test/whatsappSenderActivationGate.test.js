@@ -341,7 +341,7 @@ test("signed inbound-only QA and production need no send token, outbound still d
 });
 
 
-test("secondary ads-only full AI keeps staff sending disabled and requires verified receipts",()=>{
+test("secondary full AI allows separately authorized staff sending while protecting receipts",()=>{
  const full={
   ...safe,
   WHATSAPP_SECONDARY_INBOX_ONLY_ENABLED:"true",
@@ -377,12 +377,16 @@ test("secondary ads-only full AI keeps staff sending disabled and requires verif
   WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED:"true",
  };
  assert.doesNotThrow(()=>assertSenderIngressSafety(full));
+ const staffText={...full,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"};
+ assert.doesNotThrow(()=>assertSenderIngressSafety(staffText));
+ assert.doesNotThrow(()=>assertSenderIngressSafety({...staffText,
+   WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true"}));
+ assert.throws(()=>assertSenderIngressSafety({...full,
+   WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true"}),/Unsafe WhatsApp secondary/);
  for(const changed of [
   {WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"},
   {WHATSAPP_SECONDARY_ADS_ONLY_ACTIVATED_AT:""},
   {WHATSAPP_PAID_SECONDARY_PARITY_MODE_ENABLED:"true"},
-  {WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"},
-  {WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED:"true"},
   {WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED:"true"},
   {WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED:"false"},
   {WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"},

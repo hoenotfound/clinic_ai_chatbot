@@ -66,7 +66,7 @@ async function sendSecondaryStaffText({
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_SERVICE_CHARGES_ACKNOWLEDGED === "true" &&
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
-    (parity || env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true") &&
+    (parity || fullAi || env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true") &&
     (elevatedAi || env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED !== "true") &&
     (elevatedAi || (env.WHATSAPP_SECONDARY_FOLLOWUPS_ENABLED === "true") ===
       (env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true")) &&
@@ -75,7 +75,7 @@ async function sendSecondaryStaffText({
     secondaryUsesPrimaryClinicContent(env);
   const authorizedOrigin = origin === "staff"
     ? env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED === "true" &&
-      (!aiTextOnly || (parity && aiTextAuthorized))
+      (!aiTextOnly || ((parity || fullAi) && aiTextAuthorized))
     : (origin === "staff_forward" &&
         env.WHATSAPP_SECONDARY_FORWARD_SEND_ENABLED === "true" &&
         env.WHATSAPP_INBOX_CROSS_NUMBER_FORWARD_ENABLED === "true" &&

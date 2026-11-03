@@ -38,8 +38,8 @@ function assertSecondaryLifecyclePin(env = process.env) {
     throw new Error("Unsafe WhatsApp secondary lifecycle pin: set the verified secondary E164 phone number before activation.");
   }
 }
-// Automated secondary treatment replies, media, and opted-in follow-ups
-// must never require granting chatbot Inbox staff sending privileges.
+// Automated replies, treatment media and follow-ups remain independent of
+// optional Inbox staff grants. Both paths retain sender and billing checks.
 function secondaryAdsOnlyFullAiMode(env = process.env) {
   const audience = env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE;
   const cutoff = String(audience === "all_contacts"
@@ -61,8 +61,6 @@ function secondaryAdsOnlyFullAiMode(env = process.env) {
     env.WHATSAPP_SECONDARY_AI_SEND_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_RECEIPT_INGRESS_ENABLED === "true" &&
     env.WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED === "true" &&
-    env.WHATSAPP_SECONDARY_STAFF_SEND_ENABLED !== "true" &&
-    env.WHATSAPP_SECONDARY_STAFF_MEDIA_ENABLED !== "true" &&
     env.WHATSAPP_SECONDARY_TEMPLATE_MEDIA_ENABLED !== "true" &&
     env.WHATSAPP_PAID_SECONDARY_LIVE_RECEIVER_ENABLED === "true" &&
     env.WHATSAPP_PAID_SECONDARY_HISTORY_RECEIVER_ENABLED !== "true";

@@ -202,7 +202,7 @@ test("marketing worker accepts consented ads-only full AI mode without Inbox sta
  assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE:"test_only"}),false);
  assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_AUTO_RECONCILE_ENABLED:"false"}),false);
  assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_MARKETING_BILLING_APPROVED:"false"}),false);
- assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"}),false);
+ assert.equal(svc.enabled({...fullAi,WHATSAPP_SECONDARY_STAFF_SEND_ENABLED:"true"}),true);
  const f=fake();
  const result=await svc.runOnce({...f,env:fullAi});
  assert.deepEqual(result,{disabled:false,attempted:1,accepted:1});
