@@ -14,7 +14,7 @@ const {localizedFollowUpText,resolveFollowUpTreatment}=require("./whatsappSecond
 const {sendSecondaryStaffText}=require("./whatsappSecondaryStaffDispatch");
 const {createPersonalized20h}=require("./whatsappSecondaryPersonalizedFollowUp");
 const {secondaryAutomationActivation,secondaryAutomationEligibleSql,
-  reviewedContactFollowupGuardSql}=require("./whatsappSecondaryAdsOnlyEligibility");
+  reviewedContactFollowupGuardSql,originalAdsOnlyCutoff}=require("./whatsappSecondaryAdsOnlyEligibility");
 const realtimeEvents=require("../utils/realtimeEvents");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
@@ -126,7 +126,7 @@ const CANDIDATES_SQL=`
  ) lead ON true
  WHERE rule.enabled=TRUE
    AND rule.slot_hours IN(2,6,20)
-   AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7')}
+   AND ${secondaryAutomationEligibleSql('c','$6','inbound','$7','$8')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL
@@ -222,7 +222,7 @@ const RECHECK_SQL=`
    AND attempt.slot_hours=$3 AND attempt.status='claimed'
  WHERE rule.sender_id=sa.id AND rule.slot_hours=$3 AND rule.enabled
    AND EXTRACT(EPOCH FROM rule.updated_at)::text=$7::text
-   AND ${secondaryAutomationEligibleSql('c','$8','inbound','$9')}
+   AND ${secondaryAutomationEligibleSql('c','$8','inbound','$9','$10')}
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND c.mode='ai' AND c.needs_attention=FALSE
    AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
@@ -286,6 +286,7 @@ async function runOnce({
     env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+    originalAdsOnlyCutoff(env),
   ])).rows||[];
   let attempted=0,accepted=0;
   for(const candidate of items) {
@@ -332,6 +333,7 @@ async function runOnce({
         env.WHATSAPP_SECONDARY_WABA_ID,
         candidate.rule_version,cutoff,
         env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+        originalAdsOnlyCutoff(env),
       ]);
       return result.rows?.[0]?.allowed===true;
     };
@@ -454,6 +456,7 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_PHONE_NUMBER_ID,
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
+   originalAdsOnlyCutoff(env),
  ]);
  return result.rows?.[0]||null;
 }
