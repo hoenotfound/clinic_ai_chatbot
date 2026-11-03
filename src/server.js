@@ -29,7 +29,8 @@ const { recordStaffAppointmentAcceptance } = require("./services/staffAppointmen
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply, selectPromoDuplicateCheck } = require("./utils/pricePromotionTrigger");
 const { resolveAiPricingDecision, hasCustomerRequestedPriceReply } = require("./utils/aiPricingIntentDecision");
-const { resolveScopedPackagePriceContinuation } = require("./utils/scopedPackagePriceContinuation");
+const { resolveScopedPackagePriceContinuation,
+  resolveCurrentThreadPackageRequest } = require("./utils/scopedPackagePriceContinuation");
 const { resolveClarifiedPriceService } = require("./utils/priceClarificationContext");
 const { resolveNumberedPricingMenuSelection } = require("./utils/numberedPricingMenuSelection");
 const { resolveShadowPriceException, recentVerifiedPricingSession } = require("./utils/shadowPriceException");
@@ -1434,6 +1435,20 @@ async function processIncomingMessage(
           services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
           promotions: clinicConfig.promotions,
         }) : null;
+    // A customer who directly accepts the bot's ONE service-specific
+    // package offer is authorizing that current offer, not all clinic prices.
+    // This independently verifies the current thread before Shadow-mode
+    // approval, without trusting the ad label or model's treatment guess.
+    // It never replays an earlier inbound or bypasses clinical/staff gates.
+    if (!scopedPackagePrice && (!flagged || scopedReviewCandidate) &&
+        !keywordReason && !urgentSafety && !isActiveSafetyConcern(text) &&
+        !isExplicitStaffRequest(text) && !marketingStopQuestion) {
+      scopedPackagePrice = resolveCurrentThreadPackageRequest({
+        customerText: text, conversationHistory: history,
+        services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+        promotions: clinicConfig.promotions,
+      });
+    }
     if (scopedPackagePrice && scopedReviewCandidate) {
       // A verified amount request is answerable without staffing a generic
       // INFORMATION review. Clinical/safety reviews never enter this branch.
