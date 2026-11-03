@@ -39,6 +39,7 @@ const whatsapp = require("../services/whatsappService");
 const { sendSecondaryStaffText } = require("../services/whatsappSecondaryStaffDispatch");
 const {eligibleSecondaryAiReplyContactIds}=require("../services/whatsappSecondaryAdsOnlyEligibility");
 const {secondaryUsesPrimaryClinicContent}=require("../services/whatsappSenderActivationGate");
+const { canForwardBetweenInboxContacts } = require("../utils/inboxForwardSenderPermission");
 function secondaryAiForContact(c, eligibleIds) {
   return c.channel==="whatsapp" &&
     c.whatsapp_sender_key==="neutro_secondary" &&
@@ -2796,14 +2797,10 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
 
     const targets = targetChecks.map((item) => item.target);
-    const sourceOwner = String(sourceContact.whatsapp_sender_id || "");
-    if (targets.some(target =>
-      (target.channel || "whatsapp") !== (sourceContact.channel || "whatsapp") ||
-      (sourceContact.channel === "whatsapp" &&
-        String(target.whatsapp_sender_id || "") !== sourceOwner))) {
+    if (targets.some(target => !canForwardBetweenInboxContacts(sourceContact, target))) {
       return res.status(409).json({
         code:"cross_business_forward_disallowed",
-        error:"Forwarding between business WhatsApp numbers is disabled to protect customer privacy.",
+        error:"Forwarding is only allowed within the same WhatsApp number or the explicitly approved Neutro primary/secondary pair.",
       });
     }
     if (
