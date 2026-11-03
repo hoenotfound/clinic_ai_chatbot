@@ -139,12 +139,13 @@ function createStaffAppointmentAcceptanceService({
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   wakeAlertQueue = telegramImmediateAlerts.wakeImmediateAlertQueue,
   sendWebPush = webPushNotifications.sendContactAlertBestEffort,
+  markPendingBooking = markBookingReadyForContact,
 } = {}) {
   return async function recordStaffAppointmentAcceptance(contactId, inboundMessageId, customerText) {
     if (!Number.isSafeInteger(Number(contactId)) || !Number.isSafeInteger(Number(inboundMessageId))) return null;
     if (!isBriefAcceptance(customerText)) {
       if (isDirectBookingIntent(customerText)) {
-        await markBookingReadyForContact(contactId,inboundMessageId,{
+        await markPendingBooking(contactId,inboundMessageId,{
           reason:"Booking ready: customer explicitly requested an appointment; staff should confirm availability.",
           activityDescription:"Customer explicitly requested booking. Staff must verify an available date and time.",
           details:{appointmentPreference:String(customerText).trim().slice(0,200)},
