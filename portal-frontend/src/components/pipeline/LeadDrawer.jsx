@@ -34,6 +34,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   const [form, setForm] = useState(() => formFromLead(lead));
   const [dirtyFields, setDirtyFields] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
+  const [resolvingBooking, setResolvingBooking] = useState(false);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -115,6 +116,13 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
     [activities, lead, ui.qualificationView]
   );
   const staleCurrentBranch = Boolean(form.branchName) && !configuredBranches.includes(form.branchName);
+  const bookingReviewOpen = useMemo(() => {
+    if (!activities || !["none", null].includes(lead.appointment_status)) return false;
+    const outcomes = new Set(["staff_time_accepted","booking_ready","staff_visit_acknowledged","booking_intent_pending","booking_hold_resolved"]);
+    const latest = activities.find((activity) => outcomes.has(activity.metadata?.outcome));
+    return !!latest && latest.metadata?.outcome !== "booking_hold_resolved";
+  }, [activities,lead.appointment_status]);
+
 
   function markDirty(...keys) {
     if (!canManageLeads) return;
@@ -192,6 +200,21 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
       onToast(err.message || "Couldn't update this lead.", "error");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleResolveBookingReview() {
+    if (!canManageLeads || !bookingReviewOpen || resolvingBooking) return;
+    if (!window.confirm("Staff reviewed this conversation and no appointment was confirmed. Release the booking follow-up hold?")) return;
+    setResolvingBooking(true);
+    try {
+      await api.resolveLeadBookingReview(lead.id);
+      setActivities(await api.listLeadActivities(lead.id));
+      onToast("Booking review resolved. Normal consent and follow-up rules still apply.", "info");
+    } catch(err) {
+      onToast(err.message || "Couldn't resolve the booking review.", "error");
+    } finally {
+      setResolvingBooking(false);
     }
   }
 
