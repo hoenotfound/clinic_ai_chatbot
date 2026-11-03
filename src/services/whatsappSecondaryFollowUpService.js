@@ -409,7 +409,7 @@ async function runOnce({
       );
       const result=await sendText({
         contact,messageId,text:outboundText,
-        origin:"followup",preSendCheck,
+        origin:"followup",preSendCheck,anchorMessageId:candidate.inbound_id,
         ...(bytes?{dispatchTransport:async transport=>{
           if(!liveVideoApproval() || !await preSendCheck())
             return {success:false,unknown:true,ambiguous:true,retryable:false};
