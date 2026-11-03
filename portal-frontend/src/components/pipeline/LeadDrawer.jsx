@@ -408,6 +408,21 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
             )}
           </form>
 
+          {canManageLeads && bookingReviewOpen && (
+            <section className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <p className="text-sm font-semibold">Pending booking review</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                Automatic sales follow-ups are held until staff confirms the appointment or reviews this request.
+                This does not change the customer's marketing consent.
+              </p>
+              <button type="button" disabled={resolvingBooking}
+                onClick={handleResolveBookingReview}
+                className="mt-3 rounded-xl border border-[var(--color-border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">
+                {resolvingBooking ? "Resolving…" : "Not booked · release hold"}
+              </button>
+            </section>
+          )}
+
           {user?.features?.assessmentVoucherTrackingEnabled === true && (
             <AssessmentVoucherPanel
               lead={lead}
