@@ -9,7 +9,7 @@ const { serviceCandidates, findServicesInText, NON_TREATMENT_ANCHOR_PATTERN } = 
 
 const SECOND_VISIT = /(?:第\s*[二兩两2]\s*(?:次|回)|(?:下次|下一次|再做|续做|續做|后续|後續|之后|之後|往后|往後)\s*(?:做|护理|護理|疗程|療程|收费|收費|价|價)?|(?:正常|原)[价價]|(?:单次|單次|每次|每回)(?:收[费費]|[价價]|多少钱|多少錢)?|\b(?:second|subsequent|repeat|next)\s+(?:session|visit|treatment)|\bafter\s+(?:the\s+)?(?:first\s+)?(?:session|visit|treatment|trial|promotion|promo)|\b(?:normal|regular)\s+(?:session\s+)?(?:price|rate|fee)|\b(?:per[\s-]?session|individual[\s-]?session)\s*(?:price|cost|rate|fee)?|\b(?:kali|sesi|rawatan)\s+(?:kedua|seterusnya)\b)/iu;
 const PRICE_WORDS = /(?:价钱|價錢|价格|價格|价位|價位|收费|收費|费用|費用|多少钱|多少錢|几多钱|幾多錢|\bhow\s+much\b|\b(?:price|cost|charge|fee|rate|harga|berapa)\b)/iu;
-const TOPIC_RESET = /(?:换个(?:疗程|療程|护理|護理)|換個(?:療程|护理|護理)|改聊|换话题|換話題|另外想(?:了解|问|問)(?:别的|別的|其他)|不要(?:这个|這個)(?:疗程|療程|护理|護理)|不想(?:做|了解)(?:这个|這個)(?:疗程|療程|护理|護理)|\b(?:switch\s+treatment|another\s+treatment|different\s+treatment|not\s+interested\s+in\s+this\s+treatment|stop|unsubscribe)\b)/iu;
+const TOPIC_RESET = /(?:换个(?:疗程|療程|护理|護理)|換個(?:療程|护理|護理)|改聊|换话题|換話題|另外想(?:了解|问|問)(?:别的|別的|其他)|不要(?:这个|這個)(?:疗程|療程|护理|護理)|(?:不要|不想做|不考虑|不考慮|没兴趣|沒興趣)\s*(?:3D|9D)(?:\s*小颜术|\s*逆龄)?|不想(?:做|了解)(?:这个|這個)(?:疗程|療程|护理|護理)|\b(?:switch\s+treatment|another\s+treatment|different\s+treatment|not\s+interested\s+in\s+this\s+treatment|stop|unsubscribe)\b)/iu;
 const MAX_SESSION_AGE_MS = 3 * 60 * 60 * 1000;
 
 function resolveRepeatVisitPriceReply({
