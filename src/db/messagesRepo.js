@@ -1787,6 +1787,48 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
   return result.rows[0] || null;
 }
 
+// One lightweight indexed contact-message lookup, only for second-session
+// questions after a verified promotion graphic. The package invitation must
+// itself have been accepted by WhatsApp, not merely generated or queued.
+// Keep this decision bounded to the next one or two customer turns, and stop
+// if a staff member has replied in the meantime.
+async function hasRecentAcceptedPackageSuggestion(contactId, localizedReplies, inboundMessageId) {
+  const replies = Array.isArray(localizedReplies)
+    ? [...new Set(localizedReplies.filter(value => typeof value === "string" && value.trim()))]
+    : [];
+  if (!Number.isSafeInteger(Number(contactId)) ||
+      !Number.isSafeInteger(Number(inboundMessageId)) ||
+      Number(contactId) <= 0 || Number(inboundMessageId) <= 0 || !replies.length) return false;
+
+  const result = await pool.query(
+    `SELECT 1 FROM messages pitch
+     WHERE pitch.contact_id = $1
+       AND pitch.id < $3
+       AND pitch.role = 'assistant'
+       AND pitch.content = ANY($2::text[])
+       AND pitch.sent_by_username IS NULL
+       AND pitch.is_automated_follow_up IS NOT TRUE
+       AND pitch.whatsapp_message_id IS NOT NULL
+       AND pitch.created_at > NOW() - INTERVAL '3 hours'
+       AND (pitch.delivery_status IS NULL
+            OR pitch.delivery_status NOT IN ('failed', 'unknown', 'cancelled'))
+       AND (SELECT COUNT(*) FROM messages later
+            WHERE later.contact_id = $1 AND later.id > pitch.id
+              AND later.id <= $3 AND later.role = 'user') BETWEEN 1 AND 2
+       AND NOT EXISTS (
+         SELECT 1 FROM messages later
+         WHERE later.contact_id = $1 AND later.id > pitch.id
+           AND later.id < $3 AND later.role = 'assistant'
+           AND later.sent_by_username IS NOT NULL
+           AND later.sent_by_username <> 'Follow-up automation'
+       )
+     ORDER BY pitch.id DESC
+     LIMIT 1`,
+    [contactId, replies, inboundMessageId]
+  );
+  return result.rowCount > 0;
+}
+
 module.exports = {
   saveMessage,
   saveInboundMessageIfNew,
@@ -1798,6 +1840,7 @@ module.exports = {
   wasPromoRecentlySentWithExecutor,
   wasMediaRecentlySent,
   wasMediaRecentlySentWithExecutor,
+  hasRecentAcceptedPackageSuggestion,
   hasUnconfirmedMediaDelivery,
   hasUnconfirmedMediaDeliveryWithExecutor,
   getMostRecentlySentMediaUrl,

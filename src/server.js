@@ -41,6 +41,7 @@ const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpCo
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
+const { resolveNeutroSubsequentPricing, resolveNeutroFirstTrialPromotion } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -1788,28 +1789,41 @@ async function processIncomingMessage(
       }
     }
 
-    // An independently confirmed repeat-visit enquiry is not a request for
-    // the first-trial promotional amount. The normal price formatter above
-    // may only know that first-trial price. Never send it as a second price.
-    // Route the precise, text-only question to staff and stop AI ownership.
+    // A first-trial image must be provider-accepted for this same treatment
+    // before we suggest later-session packages. If the customer then repeats
+    // their later-session price request AFTER an accepted package suggestion,
+    // staff takes over. This text-only path never licenses RM488 trial media
+    // or the configured standing normal price as an automated reply.
     const repeatVisitPriceReply = !flagged && !bookingReady &&
       !keywordReason && !marketingStopQuestion &&
       clinicConfig.businessType === "tcm_clinic" &&
       clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
-      ? resolveRepeatVisitPriceReply({
-          customerText: text, conversationHistory: history,
-          services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
-          language: mediaLanguage,
-        }) : null;
+      ? channel === "whatsapp" && /^neutro\s+sense\b/iu.test(String(clinicConfig.businessName || clinicConfig.clinicName || ""))
+        ? await resolveNeutroSubsequentPricing({
+            contactId: contact.id, inboundMessageId: savedInbound.id,
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            promotions: clinicConfig.promotions, language: mediaLanguage,
+          })
+        : resolveRepeatVisitPriceReply({
+            customerText: text, conversationHistory: history,
+            services: clinicConfig.services, serviceAliases: clinicConfig.serviceAliases,
+            language: mediaLanguage,
+          })
+      : null;
     if (repeatVisitPriceReply) {
       reply = repeatVisitPriceReply.reply;
-      flagged = true;
-      reviewRequired = false;
-      reviewType = null;
+      if (repeatVisitPriceReply.mode === "staff_handoff" || !repeatVisitPriceReply.mode) {
+        flagged = true;
+        reviewRequired = false;
+        reviewType = null;
+      }
       priceQuery = false;
       packageQuery = false;
-      console.info("[Pricing] Repeat visit requires staff-confirmed rate contact=" +
-        contact.id + " inbound=" + savedInbound.id);
+      console.info("[Pricing] Neutro subsequent-session contact=" +
+        contact.id + " inbound=" + savedInbound.id +
+        " stage=" + (repeatVisitPriceReply.mode || "legacy_staff_confirmation") +
+        " treatment=" + repeatVisitPriceReply.treatment);
     }
 
     // A marketing STOP must not become a price/promotion reply even if the
@@ -1885,7 +1899,9 @@ async function processIncomingMessage(
       // cases distinct so the normal handoff recovery never clears them.
       const handoffReason = urgentSafety || isActiveSafetyConcern(text)
         ? (keywordReason || "Medical safety concern requires staff attention.")
-        : "AI handed off this conversation.";
+        : repeatVisitPriceReply?.mode === "staff_handoff"
+          ? repeatVisitPriceReply.staffReason
+          : "AI handed off this conversation.";
       const pausedContact = await pauseAiForHumanHandoff(
         contact.id,
         handoffReason
@@ -2034,9 +2050,10 @@ async function processIncomingMessage(
       }
       console.info(`[Result media] contact=${contact.id} inbound=${savedInbound.id} decision=skipped reason=${reason}`);
     };
-    if (repeatVisitPriceReply) {
-      // A human-confirmed follow-up price is needed. No promo or result image.
-      await auditResultMediaEarlyExit("repeat_visit_price_staff_confirmation");
+    if (repeatVisitPriceReply && repeatVisitPriceReply.mode !== "before_promo") {
+      // Once the matching First Trial image has been accepted, package and
+      // staff-handoff turns are strictly text only.
+      await auditResultMediaEarlyExit("subsequent_session_" + repeatVisitPriceReply.mode);
       return { wasFirstMessage, keywordReason };
     }
     {
@@ -2056,7 +2073,22 @@ async function processIncomingMessage(
           ? "two_treatments_text_only" : "not_evaluated";
       // A verified combo quote MUST NOT fall back to the unrelated 3D or 9D
       // picture when the combo image has missing or conflicting evidence.
-      const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
+      // Before-promo repeat-session enquiries are still eligible for the
+      // matching First Trial image. The normal selector does not handle this
+      // distinction because it correctly refuses to quote a follow-up price.
+      // Reuse the existing delivery queue, pacing and provider safeguards.
+      const promoBundle = repeatVisitPriceReply?.mode === "before_promo"
+        ? sendOutcome.sendResult.success && !flagged &&
+            await contactsRepo.canSendAutomaticReviewMedia(contact.id)
+          ? await resolveNeutroFirstTrialPromotion({
+              contactId: contact.id,
+              treatment: repeatVisitPriceReply.treatment,
+              language: mediaLanguage,
+              promotions: clinicConfig.promotions,
+              trustAdminConfiguredContent: clinicConfig.trustAdminConfiguredContent === true,
+            })
+          : null
+        : (twoTreatmentQuote && !comboMediaPricingDecision) ||
         comboMediaUnavailable ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
@@ -2275,6 +2307,10 @@ async function processIncomingMessage(
           automaticPromoMediaSent += 1;
         }
       }
+    }
+    if (repeatVisitPriceReply?.mode === "before_promo") {
+      await auditResultMediaEarlyExit("subsequent_session_first_trial_promo_checked");
+      return { wasFirstMessage, keywordReason };
     }
 
     // Result examples are optional social proof. Independently evaluate them

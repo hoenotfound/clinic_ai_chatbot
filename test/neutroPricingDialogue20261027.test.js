@@ -340,7 +340,8 @@ test("two-treatment decisions are audited as approved text-only and never select
   assert.match(source,/approved: Boolean\(approvedPricingDecision \|\| twoTreatmentQuote \|\|/u);
   assert.match(source,/approvalReason: twoTreatmentQuote \? "two_treatments_verified_text_only"/u);
   assert.match(source,/twoTreatmentQuote\?\.source \|\| approvedPricingDecision\?\.source/u);
-  assert.match(source,/const promoBundle = \(twoTreatmentQuote && !comboMediaPricingDecision\) \|\|/u);
+  assert.ok(source.includes('const promoBundle = repeatVisitPriceReply?.mode === "before_promo"'));
+  assert.ok(source.includes(': (twoTreatmentQuote && !comboMediaPricingDecision) ||'));
   assert.match(source,/replyStatus: !sendOutcome\.sendResult\.success \? "text_not_accepted"/u);
 });
 
@@ -475,7 +476,8 @@ test("outbound two-treatment quote is guarded before the model information hando
   assert.ok(sendPosition>approvalPosition);
   assert.match(source,/getTcmReviewEvidence\(\s*contact\.id, savedInbound\.id\s*\)/u);
   assert.match(source,/if \(twoTreatmentQuote\) \{\s*\/\/ A verified multi-treatment request/u);
-  assert.match(source,/const promoBundle = \(twoTreatmentQuote && !comboMediaPricingDecision\) \|\|/u);
+  assert.ok(source.includes('const promoBundle = repeatVisitPriceReply?.mode === "before_promo"'));
+  assert.ok(source.includes(': (twoTreatmentQuote && !comboMediaPricingDecision) ||'));
   assert.match(source,/mediaReason: promoBundle \? null : pricingMediaSkipReason/u);
 });
 
@@ -670,7 +672,8 @@ test("separately verified two prices remain text-only when production combo alia
   const source=require("node:fs").readFileSync(require("node:path")
     .join(__dirname,"../src/server.js"),"utf8");
   assert.match(source,/reply = twoTreatmentQuote\.reply;/u);
-  assert.match(source,/const promoBundle = \(twoTreatmentQuote && !comboMediaPricingDecision\) \|\|/u);
+  assert.ok(source.includes('const promoBundle = repeatVisitPriceReply?.mode === "before_promo"'));
+  assert.ok(source.includes(': (twoTreatmentQuote && !comboMediaPricingDecision) ||'));
   const quote=dual([turn("user",current,75)],current);
   assert.equal(quote?.source,"verified_two_separate_treatments");
   assert.deepEqual(quote?.prices.map(x=>x.label),["first_trial","first_trial"]);
