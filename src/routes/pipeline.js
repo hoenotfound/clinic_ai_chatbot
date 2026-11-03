@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const assessmentVoucherRepo = require("../db/assessmentVoucherRepo");
+const bookingHoldReviewRepo = require("../db/bookingHoldReviewRepo");
 const { hasCapability } = require("../utils/permissions");
 const analyticsRepo = require("../db/analyticsRepo");
 const aiCostAnalyticsRepo = require("../db/aiCostAnalyticsRepo");
@@ -302,6 +303,28 @@ router.patch("/leads/:leadId", async (req, res) => {
     res.json(await enrichLead(await pipelineRepo.getLeadById(updated.id)));
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong updating the lead.");
+  }
+});
+
+router.post("/leads/:leadId/booking-review/resolve", async (req,res)=>{
+  try {
+    if (!["aesthetic_clinic","tcm_clinic"].includes(clinicConfig.businessType))
+      return res.status(404).json({error:"Booking review is not enabled."});
+    if (!hasCapability(req.user,"manage_assigned_leads"))
+      return res.status(403).json({error:"You cannot manage this lead."});
+    if (!(await canAccessLead(req.user,req.params.leadId)))
+      return res.status(404).json({error:"Lead not found."});
+    if (req.body?.confirmed !== true)
+      return res.status(400).json({error:"Confirm staff reviewed the booking before releasing its hold."});
+    const outcome=await bookingHoldReviewRepo.resolveBookingReview(
+      req.params.leadId,req.session.username
+    );
+    if(!outcome) return res.status(409).json({
+      error:"No unresolved pending booking review, or the appointment is confirmed/rescheduling."
+    });
+    return res.json(outcome);
+  } catch(err) {
+    handlePipelineError(res,err,"Something went wrong resolving this booking review.");
   }
 });
 
