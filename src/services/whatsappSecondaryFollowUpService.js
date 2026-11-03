@@ -20,6 +20,20 @@ const realtimeEvents=require("../utils/realtimeEvents");
 const {deriveSecondaryPotentialDueSql,createSecondaryDueScheduler}=
   require("../utils/secondaryDueTimeScheduler");
 
+// Primary-parity 24h service follow-ups are separate from opted-in marketing.
+// Newly included contacts must initiate a fresh provider-timestamped chat.
+function serviceFollowupParityActivation(env=process.env) {
+  if(env.WHATSAPP_SECONDARY_SENDER_KEY!=="neutro_secondary" ||
+     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE!=="all_contacts")return null;
+  const automationCutoff=secondaryAutomationActivation(env);
+  const raw=String(env.WHATSAPP_SECONDARY_SERVICE_FOLLOWUP_PARITY_ACTIVATED_AT||"");
+  if(!automationCutoff ||
+     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw))return null;
+  const ms=Date.parse(raw);
+  return Number.isFinite(ms) && ms>=Date.parse(automationCutoff)
+    ? new Date(ms).toISOString() : null;
+}
+
 const SLOTS=new Set([2,6,20]);
 const MAX_MEDIA=16*1024*1024;
 const ALLOWED_MIME={
@@ -131,14 +145,23 @@ const CANDIDATES_SQL=`
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
-   AND c.whatsapp_opt_in_at IS NOT NULL
-   AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
-   AND lead.marketing_consent='opted_in'
-   AND lead.is_closed=FALSE
-   AND COALESCE(lead.appointment_status,'none') NOT IN('set','visited')
-   AND COALESCE(lead.stage_key,'') NOT IN('appointment_set','visited')
+   AND (
+     (c.whatsapp_opt_in_at IS NOT NULL
+       AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
+       AND lead.marketing_consent='opted_in')
+     OR
+     ($9::timestamptz IS NOT NULL
+       AND inbound.created_at >= $9::timestamptz
+       AND inbound.source_created_at >= $9::timestamptz
+       AND COALESCE(lead.marketing_consent,'unknown')<>'opted_out')
+   )
+   AND COALESCE(lead.is_closed,FALSE)=FALSE
+   AND COALESCE(lead.appointment_status,'none')
+     NOT IN('set','visited','confirmed','booked','completed')
+   AND COALESCE(lead.stage_key,'')
+     NOT IN('appointment_set','visited','confirmed','booked','completed')
    AND EXTRACT(HOUR FROM ($4::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur'))
        BETWEEN 7 AND 23
    AND ${SEQUENCE_DUE_SQL} <= $4::timestamptz
@@ -218,6 +241,12 @@ const RECHECK_SQL=`
    AND mc.conversation_id=sc.id
  ${FIRST_REPLY_SQL}
  ${PREVIOUS_STEP_SQL}
+ LEFT JOIN LATERAL (
+   SELECT l.marketing_consent,l.is_closed,l.appointment_status,
+     stage.system_key AS stage_key
+   FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
+   WHERE l.contact_id=c.id ORDER BY l.created_at DESC,l.id DESC LIMIT 1
+ ) latest_lead ON TRUE
  JOIN whatsapp_sender_followup_attempts attempt ON
    attempt.sender_id=sa.id AND attempt.contact_id=c.id
    AND attempt.anchor_message_id=inbound.id
@@ -228,23 +257,23 @@ const RECHECK_SQL=`
    AND ${reviewedContactFollowupGuardSql("c","inbound")}
    AND ${pendingAcceptedAppointmentAllowedSql("c")}
    AND c.mode='ai' AND c.needs_attention=FALSE
-   AND c.whatsapp_opt_in_at IS NOT NULL AND c.whatsapp_opt_out_at IS NULL
+   AND c.whatsapp_opt_out_at IS NULL
    AND c.whatsapp_marketing_opt_out_at IS NULL
-   -- Match exactly the same authoritative latest lead as selection.
-   -- An old opted-in lead cannot override a new opted-out or booked lead.
-   AND EXISTS (
-     SELECT 1 FROM (
-       SELECT l.marketing_consent,l.is_closed,l.appointment_status,
-              stage.system_key AS stage_key
-       FROM leads l LEFT JOIN pipeline_stages stage ON stage.id=l.stage_id
-       WHERE l.contact_id=c.id
-       ORDER BY l.created_at DESC,l.id DESC LIMIT 1
-     ) latest_lead
-     WHERE latest_lead.marketing_consent='opted_in'
-       AND latest_lead.is_closed=FALSE
-       AND COALESCE(latest_lead.appointment_status,'none') NOT IN('set','visited')
-       AND COALESCE(latest_lead.stage_key,'') NOT IN('appointment_set','visited')
+   AND (
+     (c.whatsapp_opt_in_at IS NOT NULL
+       AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
+       AND latest_lead.marketing_consent='opted_in')
+     OR
+     ($11::timestamptz IS NOT NULL
+       AND inbound.created_at >= $11::timestamptz
+       AND inbound.source_created_at >= $11::timestamptz
+       AND COALESCE(latest_lead.marketing_consent,'unknown')<>'opted_out')
    )
+   AND COALESCE(latest_lead.is_closed,FALSE)=FALSE
+   AND COALESCE(latest_lead.appointment_status,'none')
+     NOT IN('set','visited','confirmed','booked','completed')
+   AND COALESCE(latest_lead.stage_key,'')
+     NOT IN('appointment_set','visited','confirmed','booked','completed')
    AND NOT EXISTS(
      SELECT 1 FROM messages newer
      WHERE newer.contact_id=c.id AND newer.role='user'
@@ -268,7 +297,6 @@ const RECHECK_SQL=`
        AND prior_problem.id<>attempt.id
        AND prior_problem.status IN('unknown','blocked')
    )
-   AND NULLIF(BTRIM(c.whatsapp_opt_in_source),'') IS NOT NULL
    AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Kuala_Lumpur')) BETWEEN 7 AND 23
  ) AS allowed`;
 
@@ -290,6 +318,7 @@ async function runOnce({
     env.WHATSAPP_SECONDARY_WABA_ID,now,allowedLimit,cutoff,
     env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
     originalAdsOnlyCutoff(env),
+    serviceFollowupParityActivation(env),
   ])).rows||[];
   let attempted=0,accepted=0;
   for(const candidate of items) {
@@ -337,6 +366,7 @@ async function runOnce({
         candidate.rule_version,cutoff,
         env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
         originalAdsOnlyCutoff(env),
+        serviceFollowupParityActivation(env),
       ]);
       return result.rows?.[0]?.allowed===true;
     };
@@ -460,6 +490,7 @@ async function nextPotentialDueAt({database=pool,env=process.env,now=new Date()}
    env.WHATSAPP_SECONDARY_WABA_ID,now,cutoff,
    env.WHATSAPP_SECONDARY_AUTOMATION_AUDIENCE,
    originalAdsOnlyCutoff(env),
+   serviceFollowupParityActivation(env),
  ]);
  return result.rows?.[0]||null;
 }
@@ -476,6 +507,7 @@ function start({env=process.env,run=runOnce,readNextDue=nextPotentialDueAt,
 }
 function stop(){scheduler?.stop();scheduler=null;}
 module.exports={
- CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,runOnce,
+ CANDIDATES_SQL,RECHECK_SQL,POTENTIAL_DUE_SQL,enabled,
+ serviceFollowupParityActivation,runOnce,
  nextPotentialDueAt,start,stop,
 };
