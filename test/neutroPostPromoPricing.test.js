@@ -184,6 +184,61 @@ test("Source routing is sender-owned: checks use the supplied contact, not custo
   assert.ok(seen.some(([id]) => id===8));
 });
 
+
+test("A bare follow-up price question after an accepted package suggestion still reaches staff", async () => {
+  const checked = [];
+  const resolve = createNeutroSubsequentPricingService({
+    wasMediaRecentlySent: async (_,url) => url.endsWith("/32"),
+    hasRecentAcceptedPackageSuggestion: async (_,messages) => {
+      checked.push(messages[0]);
+      return messages.some(x => x.includes("3D 小颜术"));
+    },
+  });
+  for (const q of ["But how much?", "What's the normal price?", "单次多少钱"]) {
+    const outcome = await resolve(params(q, {
+      conversationHistory: [{role:"user",content:q,pricingCreatedAtMs:now-1000}],
+      language:"en",
+    }));
+    assert.equal(outcome?.mode,"staff_handoff",q);
+    assert.match(outcome.staffReason,/RM888/u);
+    assert.doesNotMatch(outcome.reply,/RM888|RM488/u);
+  }
+  assert.ok(checked.length>=3);
+});
+
+test("First Trial and package price questions do not become persistent single-session enquiries", async () => {
+  let escalations = 0;
+  const resolve = createNeutroSubsequentPricingService({
+    wasMediaRecentlySent: async () => true,
+    hasRecentAcceptedPackageSuggestion: async () => {
+      escalations++;
+      return true;
+    },
+  });
+  for(const question of ["3D 小颜术多少钱", "Can you resend the First Trial promo price?",
+    "How much is the 3D package?", "RM488 是体验价吗？"]) {
+    const outcome = await resolve(params(question, {
+      conversationHistory:[{role:"user",content:question,pricingCreatedAtMs:now-1000}],
+    }));
+    assert.equal(outcome,null,question);
+  }
+  assert.equal(escalations,0);
+});
+
+test("English second-session question with how much and no literal price word is caught", async () => {
+  const q="How much for the second session of 3D 小颜术?";
+  const resolve = createNeutroSubsequentPricingService({
+    wasMediaRecentlySent: async ()=>true,
+    hasRecentAcceptedPackageSuggestion: async ()=>false,
+  });
+  const outcome=await resolve(params(q, {
+    conversationHistory:[{role:"user",content:q,pricingCreatedAtMs:now-1000}],
+    language:"en",
+  }));
+  assert.equal(outcome?.mode,"suggest_package");
+  assert.doesNotMatch(outcome.reply,/RM888|RM488/u);
+});
+
 test("The generated package pitch can be matched exactly in the accepted-message lookup", () => {
   const texts = packageSuggestionVariants("3D 小颜术");
   assert.equal(new Set(texts).size,3);
