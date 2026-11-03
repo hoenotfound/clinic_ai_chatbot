@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   createNeutroSubsequentPricingService,
+  resolveNeutroFirstTrialPromotion,
   packageSuggestionVariants,
   staffPriceReference,
 } = require("../src/services/neutroSubsequentPricingService");
@@ -244,4 +245,63 @@ test("The generated package pitch can be matched exactly in the accepted-message
   assert.equal(new Set(texts).size,3);
   assert.ok(texts.every(text => text.includes("3D 小颜术")));
   assert.ok(texts.every(text => !/RM\s*(?:488|888|1,288)/u.test(text)));
+});
+
+test("Pre-promo pricing can select only the matching active graphic through the existing sender", async () => {
+  const checked = [];
+  const selected = await resolveNeutroFirstTrialPromotion({
+    contactId: 45, treatment: "3D 小颜术", promotions, language: "en", now,
+    wasMediaRecentlySent: async (_contact,url,hours) => {
+      checked.push(["accepted",url,hours]);
+      return false;
+    },
+    hasUnconfirmedMediaDelivery: async (_contact,url) => {
+      checked.push(["unconfirmed",url]);
+      return false;
+    },
+  });
+  assert.equal(selected.packages.length, 1);
+  assert.equal(selected.packages[0].imageUrl, "https://example.test/promo-images/33");
+  assert.deepEqual(new Set(checked.map(([,url])=>url)), new Set([
+    "https://example.test/promo-images/32",
+    "https://example.test/promo-images/33",
+  ]));
+  assert.ok(checked.some(([type,,hours])=>type==="accepted"&&hours===168));
+});
+
+test("Pre-promo sender refuses a prior accepted variant, unresolved attempt and manual pause", async () => {
+  const base = {
+    contactId:45, treatment:"3D 小颜术", promotions, language:"zh", now,
+    hasUnconfirmedMediaDelivery:async()=>false,
+    wasMediaRecentlySent:async()=>false,
+  };
+  assert.equal(await resolveNeutroFirstTrialPromotion({
+    ...base, wasMediaRecentlySent:async (_,url)=>url.endsWith("/33"),
+  }), null, "an English image already accepted must block resending Chinese artwork");
+  assert.equal(await resolveNeutroFirstTrialPromotion({
+    ...base, hasUnconfirmedMediaDelivery:async()=>true,
+  }), null, "unresolved provider receipt must never be retried");
+  assert.equal(await resolveNeutroFirstTrialPromotion({
+    ...base, promotions: promotions.map(p=>p.linkedService==="3D 小颜术"
+      ? {...p,automaticMediaHold:true}:p),
+  }), null, "a manually paused campaign must block this new path");
+  assert.equal(await resolveNeutroFirstTrialPromotion({
+    ...base,treatment:"3D + 9D 组合",
+  }), null, "combo graphics cannot qualify as an individual First Trial");
+  assert.equal(await resolveNeutroFirstTrialPromotion({
+    ...base,treatment:"9D 逆龄抗衰",
+    promotions: promotions.map(p=>p.linkedService==="9D 逆龄抗衰"
+      ? {...p,validUntil:"2026-10-01"}:p),
+  }), null, "expired promotions cannot be revived by the pre-promo branch");
+});
+
+test("Neutro server retains normal guarded promo sender for pre-promo but not package and staff turns", () => {
+  const fs = require("node:fs");
+  const source = fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+  assert.match(source,/repeatVisitPriceReply\\?\\.mode === "before_promo"/u);
+  assert.match(source,/resolveNeutroFirstTrialPromotion\\(/u);
+  assert.match(source,/repeatVisitPriceReply\\.mode !== "before_promo"/u);
+  assert.ok(source.indexOf("resolveNeutroFirstTrialPromotion({") <
+    source.indexOf("const pacedPromotions = planPromotionMediaPacing(promoBundle.packages)"));
+  assert.match(source,/secondaryAiConversation \\? secondaryAiMediaQueue : whatsappResultMediaQueue/u);
 });
