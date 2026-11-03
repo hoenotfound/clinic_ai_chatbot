@@ -371,7 +371,8 @@ async function runOnce({
     if(!localized)continue;
     // Do not consume a one-shot follow-up attempt or send media from a
     // configured 2h/6h rule until secondary media has independent approval.
-    if(candidate.media_key && env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
+    if(candidate.media_key && !adFollowUpPolicy?.ambiguous &&
+       env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED!=="true")continue;
     // Atomic unique one-shot claim across Render worker instances.
     const claimed=await database.query(
       `INSERT INTO whatsapp_sender_followup_attempts
@@ -404,15 +405,17 @@ async function runOnce({
     };
     try {
       if(!await preSendCheck()){await fail("sender_followup_policy_changed");continue;}
-      const selectedVideo=!candidate.media_key && slot!==20 &&
+      const selectedVideo=!adFollowUpPolicy?.ambiguous &&
+        !candidate.media_key && slot!==20 &&
         env.WHATSAPP_SECONDARY_AI_MEDIA_ENABLED==="true" ? videoSelection({
           slot,treatmentInterest:confirmedTreatment,
           env,clinicConfig,storage:mediaStorage,
         }) : null;
-      const key=candidate.media_key || selectedVideo?.mediaKey || null;
-      const mediaType=candidate.media_key?candidate.media_type:selectedVideo?.mediaType;
-      const mediaMime=candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType;
-      const mediaFilename=candidate.media_key?candidate.media_filename:selectedVideo?.mediaFilename;
+      const key=adFollowUpPolicy?.ambiguous ? null
+        : candidate.media_key || selectedVideo?.mediaKey || null;
+      const mediaType=key ? (candidate.media_key?candidate.media_type:selectedVideo?.mediaType) : null;
+      const mediaMime=key ? (candidate.media_key?candidate.media_mime_type:selectedVideo?.mediaMimeType) : null;
+      const mediaFilename=key ? (candidate.media_key?candidate.media_filename:selectedVideo?.mediaFilename) : null;
       // Never inherit approval forever from the saved rule. The source
       // clinic may remove/replace a video after rule creation.
       const liveVideoApproval=()=>{
