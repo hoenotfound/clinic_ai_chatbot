@@ -47,17 +47,21 @@ function resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest}
  return services.find(service=>normalize(service)===normalize(treatmentInterest))||null;
 }
 function localizedFollowUpText({
- slot,originalText,customerTexts,treatmentInterest,clinicConfig,
+ slot,originalText,customerTexts,languageEvidenceTexts,treatmentInterest,clinicConfig,
+ forceGeneral=false,
 }={}){
  const config=clinicConfig?.automatedFollowUp;
  if(config && [2,6,20].includes(Number(slot))){
    const lang=detectConversationLanguage(
-     Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null);
+     Array.isArray(customerTexts)?customerTexts.filter(x=>typeof x==="string"):[],null) ||
+     detectConversationLanguage(
+       Array.isArray(languageEvidenceTexts)?languageEvidenceTexts.filter(x=>typeof x==="string"):[],null);
    if(!lang)return null;
    const step=Number(slot)===2?config:Number(slot)===6?config.additionalSteps?.[0]:config.additionalSteps?.[1];
    if(!step)return null;
    const overrides=Array.isArray(step.serviceOverrides)?step.serviceOverrides:[];
-   const service=resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
+   const service=forceGeneral ? null
+     : resolveFollowUpTreatment({clinicConfig,customerTexts,treatmentInterest});
    const selected=service?overrides.find(x=>x.serviceName===service):null;
    const source=selected||step;
    return String(source?.translations?.[lang]||source?.message||"").trim()||null;
