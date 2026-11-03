@@ -122,7 +122,10 @@ function sameSpecificOfferedSlot(staffText, relayText) {
   const offered = slot(staffText), relayed = slot(relayText);
   if (!offered || !relayed) return false;
   if (offered.date || relayed.date) {
-    if (!offered.date || !relayed.date || offered.date !== relayed.date) return false;
+    if (!offered.date || !relayed.date) return false;
+    const aParts = offered.date.split("/"), bParts = relayed.date.split("/");
+    if (aParts[0] !== bParts[0] || aParts[1] !== bParts[1] ||
+        (aParts[2] && bParts[2] && aParts[2] !== bParts[2])) return false;
   } else if (!offered.weekday || !relayed.weekday ||
       offered.weekday !== relayed.weekday) return false;
   return offered.hour % 12 === relayed.hour % 12 && offered.minute === relayed.minute &&
