@@ -107,3 +107,13 @@ test("secondary message preview is read-only and cannot overwrite inherited prim
  assert.match(route,/const text=primaryFollowUpMessages\(configRepo\.getConfig\(\)\)\[slot\]/);
  assert.match(route,/primaryFollowUpMessages:primaryFollowUpMessages/);
 });
+
+
+test("secondary follow-up disable remains available even if primary content is temporarily missing",()=>{
+ const ui=read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+ const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
+ assert.match(ui,/enabled\[slot\]&&inherited\.length<3/);
+ assert.match(route,/if\(!enabled\)\{/);
+ assert.match(route,/UPDATE whatsapp_sender_followup_rules SET enabled=FALSE/);
+ assert.match(route,/text=primaryFollowUpMessages\(configRepo\.getConfig\(\)\)\[slot\]/);
+});
