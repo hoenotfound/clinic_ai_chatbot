@@ -12,7 +12,7 @@ const { createVerifiedSecondaryOutboundTransport } =
   require("./whatsappSenderOutboundTransport");
 const { secondaryUsesPrimaryClinicContent, secondaryAdsOnlyFullAiMode } =
   require("./whatsappSenderActivationGate");
-const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible,secondaryAllContactReplyActivation}=
+const {isSecondaryAdsOnlyEligible,isSecondaryAiReplyEligible}=
   require("./whatsappSecondaryAdsOnlyEligibility");
 const {isSecondarySupervisedAiTextTestEligible}=require("./whatsappSecondarySupervisedAiTextTest");
 
@@ -136,7 +136,7 @@ async function sendSecondaryStaffText({
   // continue to prove the genuine first-ad referral.
   // Broader AI reply audience never expands media, follow-up, or marketing.
   const allContactText = ["ai_reply","system_fallback"].includes(origin) &&
-    Boolean(secondaryAllContactReplyActivation(env));
+    env.WHATSAPP_SECONDARY_AI_REPLY_AUDIENCE === "all_contacts";
   const stillEligible=async()=>!automatedOrigin ||
     (allContactText
       ? await replyAudienceEligible(cid,{database,env})
