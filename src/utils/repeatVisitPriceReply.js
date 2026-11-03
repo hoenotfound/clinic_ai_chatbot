@@ -5,7 +5,7 @@
 const { hasExplicitPriceRequest } = require("./customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("./aiReviewPolicy");
 const { isRecentPricingThread, isVerifiedStaffTurn, pricingMessageText } = require("./priceFollowUpContext");
-const { serviceCandidates, findServicesInText } = require("./conversationPromptContext");
+const { serviceCandidates, findServicesInText, NON_TREATMENT_ANCHOR_PATTERN } = require("./conversationPromptContext");
 
 const SECOND_VISIT = /(?:第\s*[二兩两2]\s*(?:次|回)|(?:下次|下一次|再做|续做|續做|后续|後續|之后|之後|往后|往後)\s*(?:做|护理|護理|疗程|療程|收费|收費|价|價)?|\b(?:second|subsequent|repeat|next)\s+(?:session|visit|treatment)|\bafter\s+(?:the\s+)?first\s+(?:session|visit|treatment|trial)|\bkali\s+kedua\b)/iu;
 const PRICE_WORDS = /(?:价钱|價錢|价格|價格|价位|價位|收费|收費|费用|費用|多少钱|多少錢|几多钱|幾多錢|\b(?:price|cost|charge|fee|harga|berapa)\b)/iu;
@@ -30,9 +30,12 @@ function resolveRepeatVisitPriceReply({
         (turn.role === "user" && hasClinicalMediaRisk(pricingMessageText(turn))))) return null;
 
   const candidates = serviceCandidates(services, serviceAliases);
+  // General 1-on-1 assessment invitations are not competing paid treatments.
+  const treatmentMentions = value => findServicesInText(value, candidates)
+    .filter(name => !NON_TREATMENT_ANCHOR_PATTERN.test(name));
   // A customer asking about a new named service must go through the normal
   // single-service clarification/verification, not inherit an older topic.
-  if (findServicesInText(current, candidates).length) return null;
+  if (treatmentMentions(current).length) return null;
 
   const earlier = turns.slice(0, -1);
   let selected = null;
@@ -42,7 +45,7 @@ function resolveRepeatVisitPriceReply({
     if (turn.role !== "user") continue;
     const text = pricingMessageText(turn).trim();
     if (TOPIC_RESET.test(text)) return null;
-    const names = [...new Set(findServicesInText(text, candidates))];
+    const names = [...new Set(treatmentMentions(text))];
     if (names.length > 1) return null;
     if (names.length === 1) {
       selected = names[0];
@@ -59,12 +62,12 @@ function resolveRepeatVisitPriceReply({
   // cannot establish which repeat-visit price the customer means.
   const subsequent = earlier.slice(selectionAt + 1);
   if (!subsequent.some(turn => turn.role === "assistant" &&
-      findServicesInText(pricingMessageText(turn), candidates).includes(selected))) return null;
+      treatmentMentions(pricingMessageText(turn)).includes(selected))) return null;
   if (subsequent.some(turn => turn.role === "user" &&
-      findServicesInText(pricingMessageText(turn), candidates)
+      treatmentMentions(pricingMessageText(turn))
         .some(name => name !== selected))) return null;
   if (subsequent.some(turn => turn.role === "assistant" &&
-      findServicesInText(pricingMessageText(turn), candidates)
+      treatmentMentions(pricingMessageText(turn))
         .some(name => name !== selected))) return null;
 
   const locale = String(language || "").toLowerCase();
