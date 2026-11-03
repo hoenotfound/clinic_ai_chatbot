@@ -43,11 +43,11 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
    assert.equal(due.rows?.[0]?.next_due_at,null);
    assert.equal(due.rows?.[0]?.has_overdue,false);
    const c=await db.query(
-     "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW(),'ads_only',NOW())"
+     "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW(),'ads_only',NOW(),NULL)"
    );
    assert.deepEqual(c.rows,[]);
    const status=await db.query(
-     "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW())"
+     "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW(),NULL)"
    );
    assert.equal(status.rows?.[0]?.allowed,false);
    await db.query("DEALLOCATE sender_followup_due");
