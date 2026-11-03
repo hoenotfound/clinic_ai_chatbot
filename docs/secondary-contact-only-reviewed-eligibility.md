@@ -10,12 +10,12 @@ Do not automatically upgrade pre-activation contacts based on zero DB messages.
 - New secondary contacts whose **first** provider message is a verified
   post-activation Meta Click-to-WhatsApp ad continue through existing AI rules.
 - Pre-activation/contact-only contacts stay manual, even if they send an ad
-  enquiry, until a named operator checks the complete WhatsApp Business App
-  history for **both** the primary and secondary numbers.
+  enquiry, until a named operator checks the complete full secondary WhatsApp Business App history and the primary number's
+  complete available history from its authoritative business records.
 - If *either* number has an earlier customer/business conversation, or staff
   cannot reliably verify the full history, record `historical_or_unknown`;
   keep AI blocked. The absence of six-month imported history is not proof.
-- If both Business App histories have been checked and there was genuinely no
+- If both numbers' authoritative histories have been checked and there was genuinely no
   prior conversation, record `no_prior_conversation_verified` for the exact
   first verified ad message. The stored decision includes an operator, both
   independent checks, and an explanatory note.
@@ -28,13 +28,15 @@ Do not automatically upgrade pre-activation contacts based on zero DB messages.
   before the operator's review are blocked as well.
 
 ## Operator workflow
-1. Open the contact in the Inbox and the WhatsApp Business App for both
-   numbers; inspect the **complete** conversation history, not only the six-
-   month import. If older messages are unavailable, do not approve.
+1. Open the contact in the Inbox and the secondary WhatsApp Business App and the primary number's authoritative
+   chat records; inspect the **complete** conversation history, not only the six-
+   month import. If the primary number has no Business App, use its
+   authoritative CRM/WhatsApp history instead. If older history on either
+   number is unavailable, do not approve.
 2. Ensure the first real customer message belongs to the secondary number,
    and contains a verified Meta ad referral. A later ad click after a direct
    or historical chat cannot qualify.
-3. Record a review only after checking both app histories. Use the logged
+3. Record a review only after checking both history sources. Use the logged
    operator username and a note explaining the evidence. This is a database
    administration action, not a WhatsApp outbound API call.
 4. Check the decision in the read-only audience selector. **Do not replay**
@@ -52,7 +54,7 @@ histories have been checked:
 BEGIN;
 INSERT INTO whatsapp_secondary_ad_eligibility_reviews
   (contact_id, origin_message_id, decision, reviewed_by,
-   secondary_app_history_checked, primary_app_history_checked, review_note)
+   secondary_app_history_checked, primary_history_checked, review_note)
 VALUES (
   :contact_id, :first_ad_message_id, 'no_prior_conversation_verified',
   :reviewer, TRUE, TRUE, :documented_history_review
@@ -62,7 +64,7 @@ ON CONFLICT (contact_id) DO UPDATE
       decision = EXCLUDED.decision,
       reviewed_by = EXCLUDED.reviewed_by,
       secondary_app_history_checked = EXCLUDED.secondary_app_history_checked,
-      primary_app_history_checked = EXCLUDED.primary_app_history_checked,
+      primary_history_checked = EXCLUDED.primary_history_checked,
       review_note = EXCLUDED.review_note,
       reviewed_at = NOW();
 COMMIT;
