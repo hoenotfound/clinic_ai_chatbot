@@ -41,7 +41,7 @@ const { resolveVerifiedPriceFollowUpService } = require("./utils/priceFollowUpCo
 const { ensureVerifiedPriceReply, verifiedPricesForService, guardUnfulfilledPriceQuote } = require("./utils/verifiedPriceReply");
 const { guardUnconfirmedMediaPromise } = require("./utils/unconfirmedMediaPromiseGuard");
 const { improveRepeatedPriceClarification } = require("./utils/repeatedPriceClarification");
-const { resolveNeutroSubsequentPricing, resolveNeutroFirstTrialPromotion } = require("./services/neutroSubsequentPricingService");
+const { resolveNeutroSubsequentPricing } = require("./services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("./utils/repeatVisitPriceReply");
 const { appendRequestedBusinessFacts } = require("./utils/verifiedPricingBusinessFacts");
 const { planInformationPriceRecovery } = require("./utils/informationPriceReviewRecovery");
@@ -2071,24 +2071,12 @@ async function processIncomingMessage(
       let pricingMediaSkipReason = comboMediaUnavailable
         ? "verified_combo_media_not_authorized" : twoTreatmentQuote
           ? "two_treatments_text_only" : "not_evaluated";
-      // A verified combo quote MUST NOT fall back to the unrelated 3D or 9D
-      // picture when the combo image has missing or conflicting evidence.
-      // Before-promo repeat-session enquiries are still eligible for the
-      // matching First Trial image. The normal selector does not handle this
-      // distinction because it correctly refuses to quote a follow-up price.
-      // Reuse the existing delivery queue, pacing and provider safeguards.
-      const promoBundle = repeatVisitPriceReply?.mode === "before_promo"
-        ? sendOutcome.sendResult.success && !flagged &&
-            await contactsRepo.canSendAutomaticReviewMedia(contact.id)
-          ? await resolveNeutroFirstTrialPromotion({
-              contactId: contact.id,
-              treatment: repeatVisitPriceReply.treatment,
-              language: mediaLanguage,
-              promotions: clinicConfig.promotions,
-              trustAdminConfiguredContent: clinicConfig.trustAdminConfiguredContent === true,
-            })
-          : null
-        : (twoTreatmentQuote && !comboMediaPricingDecision) ||
+      // A verified combo quote MUST NOT fall back to an unrelated 3D or 9D
+      // image. Repeat-session enquiries enter the existing single selector
+      // with independently verified First Trial context, not a second media
+      // selector. The same safety, pause, language, duplicate and provider
+      // rules therefore apply to ordinary and repeat-session promotions.
+      const promoBundle = (twoTreatmentQuote && !comboMediaPricingDecision) ||
         comboMediaUnavailable ? null : await resolvePricePromotionForReply({
         priceQuery,
         packageQuery,
@@ -2096,10 +2084,15 @@ async function processIncomingMessage(
           (pricingAuthorityRequired ? approvedPricingDecision : null),
         aiPricingEnabled: pricingAuthorityRequired || Boolean(comboMediaPricingDecision),
         metaAdContext,
-        treatment: comboMediaPricingDecision?.treatment || verifiedPriceService?.name ||
-          (pricingAuthorityRequired ? null : details?.treatment),
-        verifiedServiceFromText: comboMediaPricingDecision?.treatment ||
-          verifiedPriceService?.name || null,
+        verifiedSubsequentTrialService: repeatVisitPriceReply?.mode === "before_promo"
+          ? repeatVisitPriceReply.treatment : null,
+        treatment: repeatVisitPriceReply?.mode === "before_promo"
+          ? repeatVisitPriceReply.treatment
+          : comboMediaPricingDecision?.treatment || verifiedPriceService?.name ||
+            (pricingAuthorityRequired ? null : details?.treatment),
+        verifiedServiceFromText: repeatVisitPriceReply?.mode === "before_promo"
+          ? repeatVisitPriceReply.treatment
+          : comboMediaPricingDecision?.treatment || verifiedPriceService?.name || null,
         verifiedNumberedSelection: pricingAuthorityRequired
           ? (approvedPricingDecision?.source === "numbered_price_menu"
               ? approvedPricingDecision.treatment : null)
@@ -2122,11 +2115,16 @@ async function processIncomingMessage(
         resultMedia: clinicConfig.resultMedia,
         language: mediaLanguage,
         contactId: contact.id,
+        // Preserve PR #528's stronger 7-day, URL-only duplicate protection
+        // for repeat-session First Trial images, without changing the normal
+        // 24-hour promotion policy for ordinary price enquiries.
+        duplicateWindowHours: repeatVisitPriceReply?.mode === "before_promo" ? 168 : 24,
         // The verified pricing paths must not resend manually delivered images
         // when staff used an older caption than the current promotion copy.
         // Unverified legacy behaviour retains its existing matching rules.
         wasPromoRecentlySent: selectPromoDuplicateCheck({
-          aiPricingEnabled: pricingAuthorityRequired || Boolean(comboMediaPricingDecision),
+          aiPricingEnabled: pricingAuthorityRequired || Boolean(comboMediaPricingDecision) ||
+            repeatVisitPriceReply?.mode === "before_promo",
           numberedPricingSelection: pricingAuthorityRequired
             ? (approvedPricingDecision?.source === "numbered_price_menu"
                 ? numberedPricingSelection : null)

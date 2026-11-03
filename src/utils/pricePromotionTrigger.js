@@ -60,6 +60,10 @@ async function resolvePricePromotionForReply({
   aiPricingEnabled = false,
   metaAdContext = null,
   treatment,
+  // Independently classified 3D/9D repeat-session price enquiries may
+  // still show the First Trial artwork through this one shared selector.
+  // This is not permission to quote a subsequent-session rate.
+  verifiedSubsequentTrialService = null,
   verifiedServiceFromText = null,
   verifiedNumberedSelection = null,
   verifiedShadowPriceService = null,
@@ -79,12 +83,21 @@ async function resolvePricePromotionForReply({
   wasPromoRecentlySent,
   hasUnconfirmedMediaDelivery,
   duplicateWindowHours = 24,
+  now = new Date(),
   onSkip = null,
 }) {
   const skip = (reason) => {
     if (typeof onSkip === "function") onSkip(reason);
     return null;
   };
+  // The caller has already verified a CURRENT, explicit repeat-session
+  // question and its single treatment. Normal price/First Trial requests
+  // never set this field and retain every existing promotion rule.
+  const verifiedFollowUpTrialPrice = Boolean(
+    verifiedSubsequentTrialService &&
+    verifiedSubsequentTrialService === treatment &&
+    hasExplicitPriceRequest(customerText, { treatment })
+  );
   // Questions about the separately verified FREE introductory experience
   // are not a request for paid treatment price graphics.
   if (isComplimentaryAssessmentFeeQuestion(
@@ -108,20 +121,22 @@ async function resolvePricePromotionForReply({
   }
   // Enabled mode uses one already-verified pricing result for both text and
   // media. Leave the old keyword-backed path intact for Off/Shadow clients.
-  if (aiPricingEnabled && (
+  if (aiPricingEnabled && !verifiedFollowUpTrialPrice && (
     !pricingDecision || pricingDecision.treatment !== treatment ||
     !Array.isArray(pricingDecision.prices) || !pricingDecision.prices.length ||
     !["price", "package_options"].includes(pricingDecision.type)
   )) return skip("no_approved_pricing_decision");
   // A confirmed old quote should not generate a second marketing graphic.
-  if (aiPricingEnabled && pricingDecision?.source === "customer_concern_both") {
+  if (aiPricingEnabled && !verifiedFollowUpTrialPrice &&
+      pricingDecision?.source === "customer_concern_both") {
     return skip("ambiguous_both_concerns_text_only");
   }
-  if (aiPricingEnabled && pricingDecision?.source === "confirmed_prior_quote") {
+  if (aiPricingEnabled && !verifiedFollowUpTrialPrice &&
+      pricingDecision?.source === "confirmed_prior_quote") {
     return skip("price_confirmation_no_new_graphic");
   }
   const clarificationService = aiPricingEnabled
-    ? pricingDecision.clarifiedPriceService
+    ? pricingDecision?.clarifiedPriceService || null
     : clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? resolveClarifiedPriceService({
           customerText, conversationHistory, services, serviceAliases,
@@ -139,9 +154,10 @@ async function resolvePricePromotionForReply({
       scopedPackagePrice?.treatment === treatment ||
       verifiedNumberedSelection === treatment ||
       verifiedShadowPriceService === treatment);
-  const verifiedPriceRequest = hasExplicitPriceRequest(customerText, { treatment }) ||
+  const verifiedPriceRequest = verifiedFollowUpTrialPrice ||
+    hasExplicitPriceRequest(customerText, { treatment }) ||
     verifiedClarification;
-  const legacyBlocked = !aiPricingEnabled && (
+  const legacyBlocked = !aiPricingEnabled && !verifiedFollowUpTrialPrice && (
     (clinicConfig.automatedFollowUp?.assessmentFirstPricingEnabled === true
       ? (!treatment || !verifiedServiceFromText ||
           verifiedServiceFromText !== treatment || !verifiedPriceRequest)
@@ -166,6 +182,7 @@ async function resolvePricePromotionForReply({
   );
 
   const verifiedContinuedService =
+    verifiedFollowUpTrialPrice ||
     (aiPricingEnabled === true && pricingDecision?.treatment === treatment) ||
     verifiedNumberedSelection === treatment ||
     verifiedShadowPriceService === treatment ||
@@ -186,12 +203,18 @@ async function resolvePricePromotionForReply({
   const genericBundle = getPricePromotionBundle(
     promotions,
     treatment,
-    null
+    null,
+    now
   );
   if (!genericBundle) return skip("no_active_promotion_graphic");
 
   let bundle;
-  if (aiPricingEnabled) {
+  if (verifiedFollowUpTrialPrice) {
+    // Only one current service-specific graphic is unambiguous here.
+    // The normal multi-package pricing menu is deliberately unchanged.
+    if (genericBundle.packages.length !== 1) return skip("ambiguous_first_trial_promotion");
+    bundle = genericBundle;
+  } else if (aiPricingEnabled) {
     // The decision was verified before the text reply. Do not parse prices or
     // choose package options a second time for the image path.
     const approved = new Set(pricingDecision.prices.map(option => option.name));

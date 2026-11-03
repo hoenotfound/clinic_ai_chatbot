@@ -6,8 +6,7 @@
 // never inferred from a model flag, lead label, or queued WhatsApp image.
 const messagesRepo = require("../db/messagesRepo");
 const { getPricePromotionBundle } = require("../utils/activePromotion");
-const { mediaVariants, resolveLocalizedMedia } = require("../utils/mediaLocalization");
-const { configuredPromotionCopyBlocked } = require("../utils/promotionClinicalCopyPolicy");
+const { mediaVariants } = require("../utils/mediaLocalization");
 const { resolveRepeatVisitPriceReply } = require("../utils/repeatVisitPriceReply");
 const { hasExplicitPriceRequest } = require("../utils/customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("../utils/aiReviewPolicy");
@@ -153,43 +152,9 @@ function createNeutroSubsequentPricingService({
   };
 }
 
-// Only the pre-promo stage can select a First Trial image for a later-session
-// enquiry. server.js reuses the normal queued/direct sender and its live guards.
-async function resolveNeutroFirstTrialPromotion({
-  contactId, treatment, language = "zh", promotions = [],
-  trustAdminConfiguredContent = false, now = Date.now(),
-  wasMediaRecentlySent = messagesRepo.wasMediaRecentlySent,
-  hasUnconfirmedMediaDelivery = messagesRepo.hasUnconfirmedMediaDelivery,
-} = {}) {
-  if (!Number.isSafeInteger(Number(contactId)) || Number(contactId) <= 0 ||
-      !SUPPORTED.has(treatment)) return null;
-  const bundle = getPricePromotionBundle(promotions, treatment, null, new Date(now));
-  // A multi-package campaign is not one unambiguous First Trial graphic.
-  if (!bundle || bundle.packages.length !== 1 ||
-      configuredPromotionCopyBlocked(bundle.promotion, trustAdminConfiguredContent)) return null;
-  const [option] = bundle.packages;
-  if (typeof wasMediaRecentlySent !== "function" ||
-      typeof hasUnconfirmedMediaDelivery !== "function") return null;
-  try {
-    for (const variant of mediaVariants(option)) {
-      // Never repeat an accepted image or retry an unresolved attempt. Check
-      // every translated URL, even if this request uses a different language.
-      if (await hasUnconfirmedMediaDelivery(contactId, variant.imageUrl) ||
-          await wasMediaRecentlySent(contactId, variant.imageUrl, PROMO_LOOKBACK_HOURS)) {
-        return null;
-      }
-    }
-  } catch (error) {
-    console.warn("[Pricing] First Trial receipt unavailable; skipping optional image:", error);
-    return null;
-  }
-  return { ...bundle, packages: [resolveLocalizedMedia(option, language)] };
-}
-
 module.exports = {
   createNeutroSubsequentPricingService,
   resolveNeutroSubsequentPricing: createNeutroSubsequentPricingService(),
-  resolveNeutroFirstTrialPromotion,
   textForStage,
   packageSuggestionVariants,
   staffPriceReference,

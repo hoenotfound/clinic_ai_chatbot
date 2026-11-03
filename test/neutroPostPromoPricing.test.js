@@ -4,11 +4,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   createNeutroSubsequentPricingService,
-  resolveNeutroFirstTrialPromotion,
   packageSuggestionVariants,
   staffPriceReference,
 } = require("../src/services/neutroSubsequentPricingService");
 const { resolveRepeatVisitPriceReply } = require("../src/utils/repeatVisitPriceReply");
+const { resolvePricePromotionForReply } = require("../src/utils/pricePromotionTrigger");
 
 const now = Date.parse("2026-11-03T11:20:00Z");
 const services = [
@@ -247,61 +247,138 @@ test("The generated package pitch can be matched exactly in the accepted-message
   assert.ok(texts.every(text => !/RM\s*(?:488|888|1,288)/u.test(text)));
 });
 
-test("Pre-promo pricing can select only the matching active graphic through the existing sender", async () => {
-  const checked = [];
-  const selected = await resolveNeutroFirstTrialPromotion({
-    contactId: 45, treatment: "3D 小颜术", promotions, language: "en", now,
-    wasMediaRecentlySent: async (_contact,url,hours) => {
-      checked.push(["accepted",url,hours]);
+
+function firstTrialImageParams(treatment = "3D 小颜术", customerText = "第二次收费多少", overrides = {}) {
+  return {
+    priceQuery: false,
+    packageQuery: false,
+    // This is a separately verified repeat-session request, not an AI model
+    // estimate of the price. Both routes enter the SAME promotion selector.
+    verifiedSubsequentTrialService: treatment,
+    treatment,
+    verifiedServiceFromText: treatment,
+    aiPricingEnabled: true,
+    pricingDecision: null,
+    customerText,
+    conversationHistory: thread(customerText),
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    promotions,
+    services,
+    serviceAliases,
+    resultMedia: [],
+    language: "zh",
+    contactId: 45,
+    duplicateWindowHours: 168,
+    now: new Date(now),
+    wasPromoRecentlySent: async () => false,
+    hasUnconfirmedMediaDelivery: async () => false,
+    ...overrides,
+  };
+}
+
+test("Repeat-session 3D and 9D graphics use the same selector as ordinary pricing", async () => {
+  const checks = [];
+  const threeD = await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D 小颜术", "3D 小颜术第二次收费多少",
+    { language: "en", wasPromoRecentlySent: async (id,url,caption,hours) => {
+      checks.push({ id,url,caption,hours });
       return false;
-    },
-    hasUnconfirmedMediaDelivery: async (_contact,url) => {
-      checked.push(["unconfirmed",url]);
-      return false;
-    },
-  });
-  assert.equal(selected.packages.length, 1);
-  assert.equal(selected.packages[0].imageUrl, "https://example.test/promo-images/33");
-  assert.deepEqual(new Set(checked.map(([,url])=>url)), new Set([
+    }}
+  ));
+  assert.equal(threeD?.promotion?.name, "3D First Trial");
+  assert.equal(threeD?.packages[0]?.imageUrl, "https://example.test/promo-images/33");
+  assert.deepEqual(new Set(checks.map(x=>x.url)), new Set([
     "https://example.test/promo-images/32",
     "https://example.test/promo-images/33",
   ]));
-  assert.ok(checked.some(([type,,hours])=>type==="accepted"&&hours===168));
+  assert.ok(checks.every(x=>x.id===45&&x.hours===168));
+  const nineD = await resolvePricePromotionForReply(firstTrialImageParams(
+    "9D 逆龄抗衰", "9D 第二次价格多少",
+    { language: "ms" }
+  ));
+  assert.equal(nineD?.promotion?.name,"9D First Trial");
+  assert.equal(nineD?.packages[0]?.imageUrl,"https://example.test/promo-images/21");
 });
 
-test("Pre-promo sender refuses a prior accepted variant, unresolved attempt and manual pause", async () => {
-  const base = {
-    contactId:45, treatment:"3D 小颜术", promotions, language:"zh", now,
-    hasUnconfirmedMediaDelivery:async()=>false,
-    wasMediaRecentlySent:async()=>false,
-  };
-  assert.equal(await resolveNeutroFirstTrialPromotion({
-    ...base, wasMediaRecentlySent:async (_,url)=>url.endsWith("/33"),
-  }), null, "an English image already accepted must block resending Chinese artwork");
-  assert.equal(await resolveNeutroFirstTrialPromotion({
-    ...base, hasUnconfirmedMediaDelivery:async()=>true,
-  }), null, "unresolved provider receipt must never be retried");
-  assert.equal(await resolveNeutroFirstTrialPromotion({
-    ...base, promotions: promotions.map(p=>p.linkedService==="3D 小颜术"
-      ? {...p,automaticMediaHold:true}:p),
-  }), null, "a manually paused campaign must block this new path");
-  assert.equal(await resolveNeutroFirstTrialPromotion({
-    ...base,treatment:"3D + 9D 组合",
-  }), null, "combo graphics cannot qualify as an individual First Trial");
-  assert.equal(await resolveNeutroFirstTrialPromotion({
-    ...base,treatment:"9D 逆龄抗衰",
-    promotions: promotions.map(p=>p.linkedService==="9D 逆龄抗衰"
-      ? {...p,validUntil:"2026-10-01"}:p),
-  }), null, "expired promotions cannot be revived by the pre-promo branch");
+test("An accepted image in another language or an unconfirmed send blocks another graphic", async () => {
+  assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D 小颜术", "第二次收费多少",
+    {wasPromoRecentlySent:async (_,url)=>url.endsWith("/33")}
+  )),null);
+  assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D 小颜术", "第二次收费多少",
+    {hasUnconfirmedMediaDelivery:async (_,url)=>url.endsWith("/33")}
+  )),null);
 });
 
-test("Neutro server retains the guarded promo sender for pre-promo only", () => {
+test("Current promotion validity, manual hold and ambiguous packages still control repeat-session graphics", async () => {
+  const paused = promotions.map(p=>p.linkedService==="3D 小颜术"
+    ? {...p,automaticMediaHold:true}:p);
+  assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D 小颜术", "第二次收费多少",{promotions:paused}
+  )),null,"manually paused campaign");
+  const expired = promotions.map(p=>p.linkedService==="9D 逆龄抗衰"
+    ? {...p,validUntil:"2026-10-01"}:p);
+  assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
+    "9D 逆龄抗衰", "9D 第二次收费多少",{promotions:expired}
+  )),null,"expired campaign");
+  const ambiguous = promotions.map(p=>p.linkedService==="3D 小颜术"
+    ? {...p,packages:[
+        {name:"First Trial A",imageUrl:p.imageUrl,caption:"Trial A"},
+        {name:"First Trial B",imageUrl:"https://example.test/other",caption:"Trial B"},
+      ]}:p);
+  assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D 小颜术", "第二次收费多少",{promotions:ambiguous}
+  )),null,"no arbitrary choice among multiple price graphics");
+});
+
+test("No accepted text, no AI ownership or no explicit price request means no repeat-session promo", async () => {
+  for (const changes of [
+    {textSendSucceeded:false},
+    {needsAttention:true},
+    {flagged:true},
+    {bookingReady:true},
+    {keywordReason:"opt_out"},
+    {contactId:null},
+    {customerText:"3D 小颜术治疗是怎样的"},
+    {verifiedSubsequentTrialService:"9D 逆龄抗衰"},
+  ]) {
+    const result=await resolvePricePromotionForReply(firstTrialImageParams(
+      "3D 小颜术", "3D 第二次收费多少",changes
+    ));
+    assert.equal(result,null,JSON.stringify(changes));
+  }
+});
+
+test("Ordinary first-trial and combination promo routing never relies on the repeat-session exception", async () => {
+  let skipReason;
+  const withoutException=await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D 小颜术","3D 小颜术第二次收费多少",
+    {verifiedSubsequentTrialService:null,onSkip:reason=>skipReason=reason}
+  ));
+  assert.equal(withoutException,null);
+  assert.equal(skipReason,"no_approved_pricing_decision");
+  // The classifier never verifies combo graphics as a standalone 3D/9D
+  // second-session enquiry. Without that verified signal, existing combo
+  // price-media authority still applies and cannot be bypassed.
+  assert.equal(await resolvePricePromotionForReply(firstTrialImageParams(
+    "3D + 9D 组合","3D 和 9D 第二次收费多少",
+    {verifiedSubsequentTrialService:null}
+  )),null,"no new combo or cross-treatment permission");
+});
+
+test("Server uses only the original promotion selector and queue for First Trial follow-up graphics", () => {
   const fs = require("node:fs");
-  const source = fs.readFileSync(require.resolve("../src/server.js"), "utf8");
-  assert.ok(source.includes('repeatVisitPriceReply?.mode === "before_promo"'));
-  assert.ok(source.includes("resolveNeutroFirstTrialPromotion({"));
+  const source = fs.readFileSync(require.resolve("../src/server.js"),"utf8");
+  assert.ok(source.includes('verifiedSubsequentTrialService: repeatVisitPriceReply?.mode === "before_promo"'));
   assert.ok(source.includes('repeatVisitPriceReply.mode !== "before_promo"'));
-  assert.ok(source.indexOf("resolveNeutroFirstTrialPromotion({") <
+  assert.equal(source.includes("resolveNeutroFirstTrialPromotion"),false);
+  assert.ok(source.includes("resolvePricePromotionForReply({"));
+  assert.ok(source.indexOf("resolvePricePromotionForReply({") <
     source.indexOf("const pacedPromotions = planPromotionMediaPacing(promoBundle.packages)"));
   assert.ok(source.includes("secondaryAiConversation ? secondaryAiMediaQueue : whatsappResultMediaQueue"));
   assert.ok(source.includes('channel === "whatsapp" && /^neutro'));
