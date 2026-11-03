@@ -1037,6 +1037,7 @@ async function handleInboxPage(req,res) {
         return res.status(409).json({error:"Inbox permissions changed. Refresh the list."});
       }
     }
+    res.set("Cache-Control","private, no-store");
     sendMeasuredInboxJson(res,result,startedAt,"page");
   } catch(err) {
     console.error("Failed to load paginated Inbox:",err);
