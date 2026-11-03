@@ -2411,11 +2411,13 @@ function ConversationList({
       <div className="wa-inbox-rows min-h-0 flex-1 overflow-y-auto px-2 py-1.5"
         onScroll={(event)=>{
           const element=event.currentTarget;
-          if (paging?.hasMore && !olderPageLoading && !pageLoading &&
-              visibleRowCount>=filteredConversations.length &&
-              element.scrollHeight-element.scrollTop-element.clientHeight<220) {
-            setVisibleRowCount(current=>current+100);
-            void onLoadMore?.();
+          if (element.scrollHeight-element.scrollTop-element.clientHeight<220) {
+            if (visibleRowCount<filteredConversations.length) {
+              setVisibleRowCount(current=>current+60);
+            } else if (paging?.hasMore && !olderPageLoading && !pageLoading) {
+              setVisibleRowCount(current=>current+100);
+              void onLoadMore?.();
+            }
           }
         }}>
         {!conversations && <ConversationListSkeleton />}
