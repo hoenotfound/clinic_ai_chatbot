@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   parseStaffConfirmedSlot,
+  isStaffVisitAcknowledgement,
   createStaffBookingConfirmationService,
 } = require("../src/services/staffBookingConfirmationService");
 
@@ -78,4 +79,11 @@ test("closed, visited or cancelled lead is not reopened by a staff message", asy
     });
     assert.equal(await service(5, "预约已确认 17/10/2026 下午4点", { providerAccepted: true }), null);
   }
+});
+
+test("staff visit acknowledgment requires a concrete visit day", () => {
+  for (const s of ["See u tmr", "See u, Thursday 1pm", "好的明天见",
+    "预约已确认 10/11 10:30am"]) assert.equal(isStaffVisitAcknowledgement(s),true,s);
+  for (const s of ["See u", "See u if you want", "See u tomorrow maybe",
+    "Your booking was cancelled"]) assert.equal(isStaffVisitAcknowledgement(s),false,s);
 });
