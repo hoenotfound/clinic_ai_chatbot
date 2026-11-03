@@ -1,9 +1,11 @@
 "use strict";
 
-// Neutro's second WhatsApp remains manual unless the very FIRST customer
-// message is a verified, new Click-to-WhatsApp ad entry after activation.
-// Never promote imported contacts or older/direct chats after a later ad click.
-// All consumers use the same read-only Neon evidence; no extra worker/ledger.
+// Secondary AI requires a genuine first Click-to-WhatsApp ad after activation.
+// Pre-activation/contact-only-sync records have UNKNOWN older history (Meta may
+// import only recent chats). They remain manual unless both Business App
+// histories have been explicitly checked and an audited decision recorded.
+// Actual historical chats and prior primary-number customers remain excluded.
+// Every automated send continues to use the same sender- and message-bound check.
 const { pool } = require("../db/db");
 
 function adsOnlyActivation(env = process.env) {
@@ -43,8 +45,23 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
       AND ads_sa.sender_key='neutro_secondary'
       AND ads_sa.state='active'
       AND ${contactSql}.channel='whatsapp'
-      AND ${contactSql}.created_at >= ${cutoffSql}::timestamptz
-      AND ${contactSql}.whatsapp_coexistence_imported_at IS NULL
+      AND (
+        (${contactSql}.created_at >= ${cutoffSql}::timestamptz
+         AND ${contactSql}.whatsapp_coexistence_imported_at IS NULL)
+        OR EXISTS (
+          -- A contact-only sync is not proof of a prior conversation, but
+          -- cannot be auto-cleared: six-month import omits older conversations.
+          -- Only an explicit review of BOTH business app histories can
+          -- authorize future inbound AI on a verified first ad.
+          SELECT 1 FROM whatsapp_secondary_ad_eligibility_reviews ads_review
+          WHERE ads_review.contact_id=${contactSql}.id
+            AND ads_review.origin_message_id=ads_first.id
+            AND ads_review.decision='no_prior_conversation_verified'
+            AND ads_review.secondary_app_history_checked=TRUE
+            AND ads_review.primary_app_history_checked=TRUE
+            AND ads_review.reviewed_at >= ads_first.created_at
+        )
+      )
       -- Only genuinely new Neutro patients may enter secondary AI.
       -- Look up older primary contacts by indexed E.164 or legacy local 01x.
       -- Never modify those contacts or their existing conversations.
@@ -52,7 +69,19 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
         SELECT 1 FROM contacts earlier_clinic_contact
         WHERE earlier_clinic_contact.id <> ${contactSql}.id
           AND earlier_clinic_contact.channel='whatsapp'
-          AND earlier_clinic_contact.created_at < ${contactSql}.created_at
+          AND (
+            earlier_clinic_contact.created_at < ads_first.created_at
+            OR EXISTS (
+              -- A primary chat imported later can still have occurred before
+              -- the secondary ad. Honor original provider timestamps.
+              SELECT 1 FROM messages earlier_primary_message
+              WHERE earlier_primary_message.contact_id=earlier_clinic_contact.id
+                AND earlier_primary_message.role IN ('user','assistant')
+                AND COALESCE(earlier_primary_message.source_created_at,
+                             earlier_primary_message.created_at)
+                    < ads_first.source_created_at
+            )
+          )
           AND earlier_clinic_contact.whatsapp_number IN (
             ${contactSql}.whatsapp_number,
             CASE WHEN ${contactSql}.whatsapp_number ~ '^601[0-9]{8,9}$'
@@ -83,6 +112,19 @@ function adsOnlyEligibleSql(contactSql = "c", cutoffSql = "$2") {
         JOIN messages ads_old ON ads_old.id=ads_import.message_id
         WHERE ads_old.contact_id=${contactSql}.id
       )
+  )`;
+}
+
+// A reviewed, pre-activation contact must not suddenly receive a delayed
+// 2h/6h/20h/48h+ reminder for the unanswered ad sent BEFORE staff reviewed it.
+// Follow-up anchors on later customer messages can proceed under normal
+// consent, billing, mode and treatment rules.
+function reviewedContactFollowupGuardSql(contactSql = "c", anchorSql = "inbound") {
+  return `NOT EXISTS (
+    SELECT 1 FROM whatsapp_secondary_ad_eligibility_reviews reviewed
+    WHERE reviewed.contact_id=${contactSql}.id
+      AND reviewed.decision='no_prior_conversation_verified'
+      AND ${anchorSql}.created_at <= reviewed.reviewed_at
   )`;
 }
 
@@ -143,4 +185,4 @@ async function eligibleSecondaryAdsOnlyContactIds(ids, {
   return result;
 }
 module.exports = { adsOnlyActivation, adsOnlyEligibleSql, isSecondaryAdsOnlyEligible,
-  eligibleSecondaryAdsOnlyContactIds };
+  eligibleSecondaryAdsOnlyContactIds, reviewedContactFollowupGuardSql };
