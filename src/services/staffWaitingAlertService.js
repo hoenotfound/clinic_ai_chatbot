@@ -1,6 +1,7 @@
 const { pool } = require("../db/db");
 const { staffWaitingOwnershipSql } = require("../db/staffWaitingEligibility");
-const { isSecondaryAiReplyEligible } = require("./whatsappSecondaryAdsOnlyEligibility");
+const { isSecondaryAiReplyEligible, secondaryAllContactReplyActivation } =
+  require("./whatsappSecondaryAdsOnlyEligibility");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -203,9 +204,15 @@ function buildStaffWaitingAlertMessage({
   // Never tell an excluded contact to "Return to AI" as a repair.
   let action;
   if (context.whatsapp_sender_key === "neutro_secondary") {
-    action = context.secondary_ai_eligible === true
-      ? `Action: Reply in the WhatsApp Business App. Return to AI only for future eligible customer messages. This enquiry will not be replayed.`
-      : `Action: Reply in the WhatsApp Business App. This contact is not eligible for secondary AI. Return to AI does not override the eligibility restriction.`;
+    if (secondaryAllContactReplyActivation(env)) {
+      action = context.secondary_ai_eligible === true
+        ? "Action: Check staff ownership and reply in the WhatsApp Business App if staff is handling this chat. AI can handle new incoming messages; old enquiries are never replayed."
+        : "Action: Reply in the WhatsApp Business App. AI is paused while staff attention, handoff or opt-out restrictions apply. Return to AI only for future incoming messages when appropriate; previous enquiries are never replayed.";
+    } else {
+      action = context.secondary_ai_eligible === true
+        ? `Action: Reply in the WhatsApp Business App. Return to AI only for future eligible customer messages. This enquiry will not be replayed.`
+        : `Action: Reply in the WhatsApp Business App. This contact is not eligible for secondary AI. Return to AI does not override the eligibility restriction.`;
+    }
   } else if (context.mode === "ai") {
     action = `Action: Resolve the outstanding staff attention and reply to the ${labels.customerSingular}. This conversation is already in AI mode.`;
   } else {
