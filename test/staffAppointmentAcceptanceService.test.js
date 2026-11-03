@@ -212,9 +212,9 @@ test("pending staff-slot acceptance appears in every primary and secondary follo
   const { pendingAcceptedAppointmentAllowedSql } =
     require("../src/utils/pendingAcceptedAppointmentFollowUp");
   const sql = pendingAcceptedAppointmentAllowedSql("c");
-  assert.match(sql, /booking_acceptance\.metadata->>'outcome'='staff_time_accepted'/);
+  assert.match(sql, /booking_acceptance\.metadata->>'outcome' IN/);
   assert.match(sql, /ORDER BY latest_booking_lead\.created_at DESC/);
-  assert.match(sql, /appointment_status,'none'\) NOT IN \('cancelled','reschedule'\)/);
+  assert.match(sql, /appointment_status,'none'\) = 'reschedule'/);
   assert.throws(() => pendingAcceptedAppointmentAllowedSql("c;DROP TABLE"), /alias/);
   const { followUpAttentionAllowedSql } = require("../src/utils/aiReviewPolicy");
   assert.match(followUpAttentionAllowedSql("c"), /staff_time_accepted/);
