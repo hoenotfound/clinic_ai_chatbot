@@ -72,6 +72,18 @@ test("pricing reminder is atomically claimed without advancing regular steps", {
         contact_id INTEGER, trigger_message_id INTEGER, action TEXT, reason TEXT
       );
     `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
 
     // Verify both production migrations apply to the current schema.
     await client.query(fs.readFileSync(

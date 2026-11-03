@@ -184,6 +184,18 @@ test(
           true
         );
       `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
 
       pool.query = client.query.bind(client);
 

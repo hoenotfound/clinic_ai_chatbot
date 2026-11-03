@@ -35,6 +35,18 @@ test("technical message reviews do not block follow-ups or promotional pictures,
         role text, content text
       );
     `);
+    // Keep isolated Postgres fixtures aligned with the booking follow-up hold.
+    // Real production schema already defines both tables.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id INTEGER PRIMARY KEY, contact_id INTEGER,
+        created_at TIMESTAMPTZ DEFAULT now(), appointment_status TEXT
+      );
+      CREATE TABLE IF NOT EXISTS lead_activities (
+        lead_id INTEGER, metadata JSONB
+      );
+    `);
+
     await client.query(fs.readFileSync(path.join(__dirname,
       "../src/db/migrations/064_ai_review_items.sql"), "utf8"));
     await client.query(`
