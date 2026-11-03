@@ -4291,6 +4291,7 @@ function ThreadView({
         message={forwardingMessage}
         conversations={conversations}
         currentContactId={contact.contact_id}
+        sourceContact={contact}
         onClose={() => setForwardingMessage(null)}
         onConfirm={handleForwardConfirm}
       />
@@ -4313,7 +4314,7 @@ function ComposerAttachmentOption({ icon: Icon, label, onClick }) {
   );
 }
 
-function ForwardMessageModal({ message, conversations, currentContactId, onClose, onConfirm }) {
+function ForwardMessageModal({ message, conversations, currentContactId, sourceContact, onClose, onConfirm }) {
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [sending, setSending] = useState(false);
@@ -4378,7 +4379,7 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     !forwardMimeType.startsWith("audio/") &&
     !forwardMimeType.startsWith("video/")
   );
-  const source = (conversations || []).find((item) =>
+  const source = sourceContact || (conversations || []).find((item) =>
     Number(item.contact_id) === Number(currentContactId));
   const combined = [...(conversations || [])];
   const knownIds = new Set(combined.map((item) => Number(item.contact_id)));
@@ -4391,13 +4392,17 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     }
   }
   const choices = combined.filter((item) => {
-    // Match the backend's cross-business forward guard, rather than offering
-    // targets that will be rejected because they belong to another sender.
+    // Show the two Neutro senders together; the backend still verifies actual
+    // sender identities, staff access and deployment-level permission.
     const channel = item.channel || "whatsapp";
     if (source && channel !== (source.channel || "whatsapp")) return false;
-    if (source && channel === "whatsapp" &&
-        String(item.whatsapp_sender_id || "") !== String(source.whatsapp_sender_id || "")) {
-      return false;
+    if (source && channel === "whatsapp") {
+      const sameSender = String(item.whatsapp_sender_id || "") ===
+        String(source.whatsapp_sender_id || "");
+      const approvedNeutroPair = source.whatsapp_sender_key !== item.whatsapp_sender_key &&
+        ["neutro", "neutro_secondary"].includes(source.whatsapp_sender_key) &&
+        ["neutro", "neutro_secondary"].includes(item.whatsapp_sender_key);
+      if (!sameSender && !approvedNeutroPair) return false;
     }
     if (forwardingDocument && channel !== "whatsapp") return false;
     if (!normalizedQuery) return true;
@@ -4513,7 +4518,11 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
                   <span className="block truncate text-sm font-semibold">
                     {displayName(item)}{Number(item.contact_id) === Number(currentContactId) ? " (current)" : ""}
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{unavailableReason || contactMeta(item)}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">
+                    {item.channel === "whatsapp" && ["neutro", "neutro_secondary"].includes(item.whatsapp_sender_key)
+                      ? `${item.whatsapp_sender_key === "neutro_secondary" ? "Secondary" : "Primary"} WhatsApp · ` : ""}
+                    {unavailableReason || contactMeta(item)}
+                  </span>
                 </span>
               </button>
             );
