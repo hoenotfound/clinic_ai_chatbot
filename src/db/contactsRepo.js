@@ -591,9 +591,9 @@ async function listConversations({
   }
   if (accessibleContactIds?.length === 0) return [];
   const scopedFilter = accessibleContactIds === null ? ""
-    : `c.id = ANY(${contactId == null ? 1 : 2}::integer[]) AND `;
+    : "c.id = ANY($" + (contactId == null ? 1 : 2) + "::integer[]) AND ";
   const scopedWhere = accessibleContactIds === null ? ""
-    : `AND c.id = ANY(${contactId == null ? 1 : 2}::integer[])`;
+    : "AND c.id = ANY($" + (contactId == null ? 1 : 2) + "::integer[])";
   const scopedParams = [
     ...(contactId == null ? [] : [contactId]),
     ...(accessibleContactIds === null ? [] : [accessibleContactIds]),
