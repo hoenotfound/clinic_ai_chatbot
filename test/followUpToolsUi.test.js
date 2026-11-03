@@ -68,7 +68,10 @@ test("sender-specific follow-up controls are separated without mixing save actio
   assert.match(secondary, /Changes not saved/);
   assert.match(secondary, /setConfig\(prev=>prev\?/);
   assert.match(secondary, /operatorBillingApproved:row.enabled && row.approved===true/);
-  assert.match(secondary, /confirmClinicVideoReuse:true/);
+  assert.match(secondary, /readOnly aria-readonly="true"/);
+  assert.match(secondary, /primaryFollowUpMessages/);
+  assert.match(secondary, /Primary WhatsApp/);
+  assert.doesNotMatch(secondary, /confirmClinicVideoReuse:true/);
 });
 
 
@@ -91,4 +94,16 @@ test("secondary follow-up status is based on effective ads-only worker and media
  assert.match(route,/workerEnabled:serviceWorkerEnabled\(process\.env\)/);
  assert.match(route,/secondaryAdsOnlyFullAiMode\(process\.env\)/);
  assert.match(route,/WHATSAPP_SECONDARY_AI_MEDIA_ENABLED/);
+});
+
+
+test("secondary message preview is read-only and cannot overwrite inherited primary copy",()=>{
+ const ui=read("portal-frontend/src/components/ArielFollowUpRules.jsx");
+ const route=read("src/routes/whatsappSecondaryFollowUpRules.js");
+ assert.match(ui,/value=\{inherited\} readOnly/);
+ assert.match(ui,/saveSecondaryFollowUpRule\(slot,\{enabled:enabled\[slot\]\}\)/);
+ assert.doesNotMatch(ui,/onChange=\{e=>setRules/);
+ assert.doesNotMatch(ui,/messageText:rules\[slot\]/);
+ assert.match(route,/const text=primaryFollowUpMessages\(configRepo\.getConfig\(\)\)\[slot\]/);
+ assert.match(route,/primaryFollowUpMessages:primaryFollowUpMessages/);
 });
