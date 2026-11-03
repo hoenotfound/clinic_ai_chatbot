@@ -2490,7 +2490,7 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
   const providerPromise = (async () => {
     if (normalizedImage) {
       return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, normalizedImage.buffer,
-        normalizedImage.mimeType, content || undefined, "image.jpg", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
+        normalizedImage.mimeType, content || undefined, "image.jpg", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), staffForward: true, requestId: timings.requestId, inboxMediaTimings: timings })));
     }
     let preparedTemporaryMedia;
     try {
@@ -2510,10 +2510,10 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
         };
       }
       return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, buffer,
-        sourceMessage.media_mime_type, content || undefined, "image", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
+        sourceMessage.media_mime_type, content || undefined, "image", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), staffForward: true, requestId: timings.requestId, inboxMediaTimings: timings })));
     }
     return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageByUrl(preparedContact, preparedTemporaryMedia.url,
-      content || undefined, socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
+      content || undefined, socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), staffForward: true, requestId: timings.requestId, inboxMediaTimings: timings })));
   })();
   const persistencePromise = (async () => {
     let targetMediaKey;
@@ -2683,9 +2683,25 @@ async function forwardOtherStoredMessage(sourceMessage, targetContact, username)
   };
 
   const providerStartedAt = Date.now();
-  const sendResult = await sendStoredMessage(preparedContact, messageForSend, {
-    purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-  });
+  // A forwarded text to the secondary number MUST use its sender-scoped
+  // ledger/Cloud API transport, never the legacy primary WhatsApp sender.
+  // The separate staff-forward origin does not grant general Inbox sending.
+  const secondaryTarget = preparedContact.channel === "whatsapp" &&
+    preparedContact.whatsapp_sender_id != null &&
+    preparedContact.whatsapp_sender_key === "neutro_secondary";
+  const textOnly = !messageForSend.media_key &&
+    !messageForSend.media_url && !messageForSend.media_mime_type;
+  const sendResult = secondaryTarget && textOnly
+    ? await sendSecondaryStaffText({
+        contact: preparedContact,
+        messageId: saved.id,
+        text: forwardedContent,
+        origin: "staff_forward",
+      })
+    : await sendStoredMessage(preparedContact, messageForSend, {
+        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        staffForward: true,
+      });
   const providerMs = Date.now() - providerStartedAt;
 
   const errorText = deliveryErrorForSend(
