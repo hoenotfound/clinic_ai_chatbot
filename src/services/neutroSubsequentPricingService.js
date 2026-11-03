@@ -6,7 +6,8 @@
 // never inferred from a model flag, lead label, or queued WhatsApp image.
 const messagesRepo = require("../db/messagesRepo");
 const { getPricePromotionBundle } = require("../utils/activePromotion");
-const { mediaVariants } = require("../utils/mediaLocalization");
+const { mediaVariants, resolveLocalizedMedia } = require("../utils/mediaLocalization");
+const { configuredPromotionCopyBlocked } = require("../utils/promotionClinicalCopyPolicy");
 const { resolveRepeatVisitPriceReply } = require("../utils/repeatVisitPriceReply");
 const { hasExplicitPriceRequest } = require("../utils/customerEnquiryEvidence");
 const { hasClinicalMediaRisk } = require("../utils/aiReviewPolicy");
@@ -20,9 +21,9 @@ function textForStage(service, language = "zh", stage = "suggest_package") {
   const zh = locale.startsWith("zh");
   const ms = locale.startsWith("ms");
   if (stage === "before_promo") {
-    if (ms) return "Promosi First Trial untuk " + service + " adalah berbeza daripada caj sesi seterusnya 😊 Saya boleh kongsikan promosi First Trial dahulu jika anda mahu. Harga sesi susulan boleh disemak oleh staf pusat.";
-    if (!zh) return "The First Trial promotion for " + service + " is separate from subsequent-session pricing 😊 I can share our First Trial offer first if you'd like. Our team can confirm the later-session rate.";
-    return service + " 的 First Trial 体验优惠和第二次之后的收费是不同的哦 😊 如果你还没看过，我可以先分享目前的体验优惠；续做单次收费可以由门店同事确认。";
+    if (ms) return "Harga First Trial untuk " + service + " berbeza daripada caj sesi seterusnya 😊 Promosi First Trial boleh dijadikan rujukan, tetapi staf pusat perlu mengesahkan harga sesi susulan.";
+    if (!zh) return "The First Trial promotion for " + service + " is separate from subsequent-session pricing 😊 The First Trial offer is a reference only; our team can confirm the later-session rate.";
+    return service + " 的 First Trial 体验优惠和第二次之后的收费是不同的哦 😊 体验优惠只能作为参考，续做单次收费可以由门店同事确认。";
   }
   if (stage === "staff_handoff") {
     if (ms) return "Boleh 😊 Saya faham anda ingin tahu harga sesi susulan " + service + " secara khusus. Saya akan minta staf pusat mengesahkan harga sesi individu dan pilihan pakej untuk anda.";
@@ -81,6 +82,7 @@ function createNeutroSubsequentPricingService({
   } = {}) {
     const classification = resolveRepeatVisitPriceReply({
       customerText, conversationHistory, services, serviceAliases, language, now,
+      allowDirectNamedService: true,
     });
     if (!Number.isSafeInteger(Number(contactId)) ||
         !Number.isSafeInteger(Number(inboundMessageId))) return null;
@@ -151,9 +153,43 @@ function createNeutroSubsequentPricingService({
   };
 }
 
+// Only the pre-promo stage can select a First Trial image for a later-session
+// enquiry. server.js reuses the normal queued/direct sender and its live guards.
+async function resolveNeutroFirstTrialPromotion({
+  contactId, treatment, language = "zh", promotions = [],
+  trustAdminConfiguredContent = false, now = Date.now(),
+  wasMediaRecentlySent = messagesRepo.wasMediaRecentlySent,
+  hasUnconfirmedMediaDelivery = messagesRepo.hasUnconfirmedMediaDelivery,
+} = {}) {
+  if (!Number.isSafeInteger(Number(contactId)) || Number(contactId) <= 0 ||
+      !SUPPORTED.has(treatment)) return null;
+  const bundle = getPricePromotionBundle(promotions, treatment, null, new Date(now));
+  // A multi-package campaign is not one unambiguous First Trial graphic.
+  if (!bundle || bundle.packages.length !== 1 ||
+      configuredPromotionCopyBlocked(bundle.promotion, trustAdminConfiguredContent)) return null;
+  const [option] = bundle.packages;
+  if (typeof wasMediaRecentlySent !== "function" ||
+      typeof hasUnconfirmedMediaDelivery !== "function") return null;
+  try {
+    for (const variant of mediaVariants(option)) {
+      // Never repeat an accepted image or retry an unresolved attempt. Check
+      // every translated URL, even if this request uses a different language.
+      if (await hasUnconfirmedMediaDelivery(contactId, variant.imageUrl) ||
+          await wasMediaRecentlySent(contactId, variant.imageUrl, PROMO_LOOKBACK_HOURS)) {
+        return null;
+      }
+    }
+  } catch (error) {
+    console.warn("[Pricing] First Trial receipt unavailable; skipping optional image:", error);
+    return null;
+  }
+  return { ...bundle, packages: [resolveLocalizedMedia(option, language)] };
+}
+
 module.exports = {
   createNeutroSubsequentPricingService,
   resolveNeutroSubsequentPricing: createNeutroSubsequentPricingService(),
+  resolveNeutroFirstTrialPromotion,
   textForStage,
   packageSuggestionVariants,
   staffPriceReference,
