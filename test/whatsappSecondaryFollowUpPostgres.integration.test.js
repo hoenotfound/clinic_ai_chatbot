@@ -29,25 +29,25 @@ test("PostgreSQL compiles both sender-specific followup queries against migrated
      "SELECT COUNT(*)::int AS n FROM whatsapp_sender_followup_rules"
    )).rows[0].n,0,"No Ariel followup rules may be enabled by schema migration");
    await db.query(
-     "PREPARE sender_followup_candidates(text,text,text,timestamptz,integer,timestamptz,text,timestamptz) AS "+CANDIDATES_SQL
+     "PREPARE sender_followup_candidates(text,text,text,timestamptz,integer,timestamptz,text,timestamptz,timestamptz) AS "+CANDIDATES_SQL
    );
    await db.query(
-     "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,text,timestamptz,text,timestamptz) AS "+RECHECK_SQL
+     "PREPARE sender_followup_recheck(integer,integer,integer,text,text,text,text,timestamptz,text,timestamptz,timestamptz) AS "+RECHECK_SQL
    );
    await db.query(
-     "PREPARE sender_followup_due(text,text,text,timestamptz,timestamptz,text,timestamptz) AS "+POTENTIAL_DUE_SQL
+     "PREPARE sender_followup_due(text,text,text,timestamptz,timestamptz,text,timestamptz,timestamptz) AS "+POTENTIAL_DUE_SQL
    );
    const due=await db.query(
-     "EXECUTE sender_followup_due('ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW())"
+     "EXECUTE sender_followup_due('ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW(),NULL)"
    );
    assert.equal(due.rows?.[0]?.next_due_at,null);
    assert.equal(due.rows?.[0]?.has_overdue,false);
    const c=await db.query(
-     "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW(),'ads_only',NOW())"
+     "EXECUTE sender_followup_candidates('ariel','100000000000002','200000000000002',NOW(),10,NOW(),'ads_only',NOW(),NULL)"
    );
    assert.deepEqual(c.rows,[]);
    const status=await db.query(
-     "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW())"
+     "EXECUTE sender_followup_recheck(1,1,2,'ariel','100000000000002','200000000000002',NOW(),NOW(),'ads_only',NOW(),NULL)"
    );
    assert.equal(status.rows?.[0]?.allowed,false);
    await db.query("DEALLOCATE sender_followup_due");

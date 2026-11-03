@@ -28,7 +28,9 @@ test("sender due hints keep all consent, ad, history and one-shot gates",()=>{
   assert.match(sql,/next_due_at/);
   assert.match(sql,/has_overdue/);
   assert.doesNotMatch(sql,/LIMIT \$5/);
-  assert.doesNotMatch(sql,/\$8\b/);
+  assert.doesNotMatch(sql,/\$9\b/);
+  if(sql===service.POTENTIAL_DUE_SQL)assert.match(sql,/\$8::timestamptz/);
+  else assert.doesNotMatch(sql,/\$8\b/);
   assert.match(sql,/\$6::text/);
   assert.match(sql,/\$7::timestamptz/);
   assert.match(sql,/\$5::timestamptz/);

@@ -79,6 +79,10 @@ test("secondary followups never inherit Neutro content or start by default",asyn
   assert.match(worker.RECHECK_SQL,/attempt\.status='claimed'/);
   assert.match(worker.RECHECK_SQL,/ORDER BY l\.created_at DESC,l\.id DESC LIMIT 1/);
   assert.match(worker.RECHECK_SQL,/latest_lead\.marketing_consent='opted_in'/);
+  assert.match(worker.CANDIDATES_SQL,/inbound\.source_created_at >= \$9::timestamptz/);
+  assert.match(worker.RECHECK_SQL,/inbound\.source_created_at >= \$11::timestamptz/);
+  assert.match(worker.CANDIDATES_SQL,/lead\.marketing_consent,'unknown'\)<>'opted_out'/);
+  assert.match(worker.CANDIDATES_SQL,/appointment_status,'none'\)/);
   assert.match(worker.RECHECK_SQL,/latest_lead\.stage_key/);
   assert.match(worker.RECHECK_SQL,/NULLIF\(BTRIM\(c\.whatsapp_opt_in_source\)/);
   assert.match(worker.CANDIDATES_SQL,/INTERVAL '8 hours'/);
