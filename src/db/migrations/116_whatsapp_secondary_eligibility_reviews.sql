@@ -11,19 +11,19 @@ CREATE TABLE IF NOT EXISTS whatsapp_secondary_ad_eligibility_reviews (
   )),
   reviewed_by TEXT NOT NULL CHECK (LENGTH(BTRIM(reviewed_by)) >= 3),
   secondary_app_history_checked BOOLEAN NOT NULL DEFAULT FALSE,
-  primary_app_history_checked BOOLEAN NOT NULL DEFAULT FALSE,
+  primary_history_checked BOOLEAN NOT NULL DEFAULT FALSE,
   review_note TEXT NOT NULL DEFAULT '',
   reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT secondary_review_requires_both_app_checks CHECK (
     decision <> 'no_prior_conversation_verified'
     OR (
       secondary_app_history_checked = TRUE
-      AND primary_app_history_checked = TRUE
+      AND primary_history_checked = TRUE
       AND LENGTH(BTRIM(review_note)) >= 10
     )
   )
 );
 COMMENT ON TABLE whatsapp_secondary_ad_eligibility_reviews IS
-  'Manual, audited, sender-specific review of an otherwise excluded first CTWA lead. Both WhatsApp Business App histories, including chats outside the imported history window, must be checked. A verified decision does not replay or send the original message.';
+  'Manual, audited, sender-specific review of an otherwise excluded first CTWA lead. Both numbers' full history sources (including the secondary Business App outside its imported history window), must be checked. A verified decision does not replay or send the original message.';
 CREATE INDEX IF NOT EXISTS idx_secondary_ad_eligibility_review_origin
   ON whatsapp_secondary_ad_eligibility_reviews(origin_message_id);
